@@ -11,7 +11,7 @@ import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
 import {
-  BalanceRefused, NotHandedOver, payForThePage, readWhatThePageAsks, whyThePaymentFailed,
+  BalanceRefused, NotHandedOver, payForThePage, readWhatThePageAsksToBalance, whyThePaymentFailed,
 } from '../chain/balance-for-page.js';
 import type {
   BalanceDoors, FacadeForBalancing, LedgerForBalancing, PageAskPays, UnboundTransactionLike,
@@ -28,9 +28,11 @@ import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
 
 /**
- * THE SCREEN FOR A PAGE ASKING THIS WALLET TO PAY FOR A TRANSACTION.
+ * THE SCREEN FOR A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT IT BUILT.
+ * A private deposit a page built is refused here: this wallet makes a private
+ * deposit whole, in its own action, from its own reads.
  *
- * **THE ONLY ASK THAT MOVES MONEY OUT OF THIS WALLET**, so it is written the
+ * **THE ONLY ASK THAT PAYS FOR A TRANSACTION A PAGE BUILT**, so it is written the
  * way the send screen is: what leaves, read from the transaction itself; where
  * it goes, as the page names it and whole; and a press that is the only way
  * anything is paid - this screen's Pay, or the Approve in the locked wallet's
@@ -105,6 +107,7 @@ type Stage =
 export function ApproveBalance({
   request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
   doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader, answerAtOnce = false,
+  reads = readWhatThePageAsksToBalance,
 }: {
   readonly request: BalanceRequest;
   readonly identity: Identity;
@@ -125,6 +128,11 @@ export function ApproveBalance({
   readonly readLabel?: LabelReader;
   /** True when the person approved this ask before the passkey: it is then answered without a press once the checks its button waits for agree and the wallet that pays is one no other site has. */
   readonly answerAtOnce?: boolean;
+  /**
+   * How what the page sent is read: a public deposit is paid, and a private deposit the page built is refused, since
+   * this wallet makes a private deposit whole as an action. Replaceable so a test can read a payment of any kind.
+   */
+  readonly reads?: typeof readWhatThePageAsksToBalance;
 }): ReactNode {
   const doors = useMemo(() => doorsFor(identity, account), [doorsFor, identity, account]);
   /* **NOTHING IS PAID UNTIL THE COMPANY'S ACCOUNT IS READ OFF THE CHAIN AND
@@ -200,14 +208,14 @@ export function ApproveBalance({
     void doors.ledger().then((ledger) => {
       if (!alive) return;
       try {
-        const read = readWhatThePageAsks(ledger, request.transaction, request.vault);
+        const read = reads(ledger, request.transaction, request.vault);
         setStage({ of: 'ready', tx: read.tx, leaves: read.leaves, pays: read.pays });
       } catch (e) {
         refuse(e instanceof BalanceRefused ? e.message : 'Nothing has been paid.');
       }
     }, () => { if (alive) refuse('This wallet could not load what it reads a transaction with. Nothing has been paid.'); });
     return () => { alive = false; };
-  }, [doors, request.transaction, request.vault]);
+  }, [doors, request.transaction, request.vault, reads]);
 
   const pay = useCallback((): void => {
     if (stage.of !== 'ready' || channel === null || channel.over() || pressing.current.size > 0 || !onChain) return;

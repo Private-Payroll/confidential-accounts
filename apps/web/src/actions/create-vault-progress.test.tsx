@@ -62,19 +62,19 @@ beforeEach(() => { vi.useFakeTimers(); vi.spyOn(console, 'error').mockImplementa
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('the vault step while the vault is made', () => {
-  /* RED WHEN: a stage shows no running time, the time does not tick, or its usual duration is not stated. */
+  /* RED WHEN: a stage shows no running time, the time does not tick, or its usual duration is not stated where one is known, or is stated for the stage whose time was never measured. */
   it('shows the stage words, the time the stage has run as it ticks, and how long it usually takes', async () => {
     const view = await startCreating();
     expect(q(view.container, '[data-stage]')?.textContent).toBe(EN['createVault.stage.checking']);
     expect(q(view.container, '[data-elapsed]')?.textContent).toBe('Running for 0:00.');
-    expect(q(view.container, '[data-usual]')?.textContent).toBe('This usually takes about 5 seconds.');
+    expect(q(view.container, '[data-usual]')?.textContent).toBe(EN['stageProgress.noUsual']);
     await settle(3000);
     expect(q(view.container, '[data-elapsed]')?.textContent).toBe('Running for 0:03.');
-    await act(async () => { stages.show!(CREATING.waitingForChain); });
+    await act(async () => { stages.show!(CREATING.building); });
     await settle(2000);
-    expect(q(view.container, '[data-stage]')?.textContent).toBe(EN['createVault.stage.waitingForChain']);
+    expect(q(view.container, '[data-stage]')?.textContent).toBe(EN['createVault.stage.building']);
     expect(q(view.container, '[data-elapsed]')?.textContent).toBe('Running for 0:02.');
-    expect(q(view.container, '[data-usual]')?.textContent).toBe('This usually takes about a minute.');
+    expect(q(view.container, '[data-usual]')?.textContent).toBe('This usually takes about 2 minutes.');
     await settle(10_000);
     expect(q(view.container, '[data-elapsed]')?.textContent).toBe('Running for 0:12.');
   });
@@ -85,13 +85,13 @@ describe('the vault step while the vault is made', () => {
     const view = await startCreating();
     await settle(3000);
     expect(warn).not.toHaveBeenCalled();
-    await act(async () => { stages.show!(CREATING.waitingForChain); });
+    await act(async () => { stages.show!(CREATING.building); });
     await settle(2000);
-    expect(warn.mock.calls.map((c) => c[0])).toEqual([{ stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: 5 }]);
+    expect(warn.mock.calls.map((c) => c[0])).toEqual([{ stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: null }]);
     view.unmount();
     expect(warn.mock.calls.map((c) => c[0])).toEqual([
-      { stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: 5 },
-      { stageTime: ['waiting-for-chain'], measuredSeconds: expect.closeTo(2, 0), usualShownSeconds: 60 },
+      { stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: null },
+      { stageTime: ['building'], measuredSeconds: expect.closeTo(2, 0), usualShownSeconds: 120 },
     ]);
   });
 
@@ -102,7 +102,7 @@ describe('the vault step while the vault is made', () => {
     await settle(3000);
     await act(async () => { stages.show!(CREATING.done); });
     await settle(1000);
-    expect(warn.mock.calls.map((c) => c[0])).toEqual([{ stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: 5 }]);
+    expect(warn.mock.calls.map((c) => c[0])).toEqual([{ stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: null }]);
     view.unmount();
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -122,11 +122,4 @@ describe('the vault step while the vault is made', () => {
     expect(VAULT_USUAL_SECONDS[CREATING.building]).toBe(120);
   });
 
-  /* RED WHEN: a stage that waits on other people states a duration as though it were this device's. */
-  it('says waiting for other signers depends on them, with no duration', async () => {
-    const view = await startCreating();
-    await act(async () => { stages.show!(CREATING.waitingForApprovals); });
-    await settle(1000);
-    expect(q(view.container, '[data-usual]')?.textContent).toBe(EN['stageProgress.noUsual']);
-  });
 });

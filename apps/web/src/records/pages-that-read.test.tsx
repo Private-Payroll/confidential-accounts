@@ -17,6 +17,8 @@ import { untilPageShown, untilShown } from '../page-shown.test-support.js';
 const state = vi.hoisted(() => ({
   company: null as unknown, handover: { of: 'held' } as unknown, publicMoney: null as unknown, privateMoney: null as unknown,
   opened: 0, names: new Map<string, string>(), ready: { of: 'ready' } as unknown,
+  /* The companies whose pages say they are open, as the adapter is told. */
+  pagesOpen: [] as string[],
   /* The name the company filed for a vault, and each vault a name was asked for. */
   vaultName: null as string | null, namesAsked: [] as string[],
   /* What the creation adapter says of the company: nothing known, so not confirmed finished; and a gate a test holds the read at. */
@@ -31,6 +33,7 @@ vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => state.company,
   openWithYourAccount: async () => { state.opened += 1; return { of: 'done' }; },
+  companyPagesOpen: (id: string) => { state.pagesOpen.push(id); return () => { state.pagesOpen.splice(state.pagesOpen.lastIndexOf(id), 1); }; },
   readVaultPublicMoney: async () => state.publicMoney,
   readVaultName: async (_person: string, _company: string, vault: string) => { state.namesAsked.push(vault); return state.vaultName; },
 }));
@@ -415,6 +418,18 @@ describe('home', () => {
     await act(async () => { fireEvent.click(q(c, '[data-action=open-with-your-account]')!); await new Promise((r) => setTimeout(r, 10)); });
     expect(state.opened).toBe(1);
     expect(q(c, '[data-company-name]')?.textContent).toBe('Northwind');
+  });
+
+  it('says the company\'s pages are open while they are on screen, and gone once they are left', async () => {
+    state.company = { of: 'locked' };
+    state.pagesOpen = [];
+    const c = await draw('home');
+    /* RED WHEN: the company's pages do not say they are open, so opening the saved keys there cannot name the company. */
+    expect(q(c, '[data-records=locked]')).not.toBeNull();
+    expect(state.pagesOpen.length > 0 && state.pagesOpen.every((id) => id === state.pagesOpen[0])).toBe(true);
+    cleanup();
+    /* RED WHEN: leaving the company's pages leaves them said to be open, so the open press elsewhere names the company. */
+    expect(state.pagesOpen).toEqual([]);
   });
 });
 

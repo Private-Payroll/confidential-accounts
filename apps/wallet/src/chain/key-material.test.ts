@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  makePinnedKeyMaterialProvider, recordKeyAsk, recordingKeyMaterial, sha256Hex,
+  ACCOUNT_KEYS_FOLDER, VAULT_KEYS_FOLDER, idbArtefactCache, makePinnedKeyMaterialProvider, recordKeyAsk, recordingKeyMaterial, sha256Hex,
 } from './key-material.js';
 import type { ArtefactCache, KeyAskRecord, KeyMaterialAsk } from './key-material.js';
 
@@ -39,12 +39,14 @@ const fakeOrigin = async (files: Record<string, Uint8Array>) => {
   return { manifest, fetched, fetchFn };
 };
 
-const mapCache = (): ArtefactCache & { readonly store: Map<string, Uint8Array> } => {
+const mapCache = (): ArtefactCache & { readonly store: Map<string, Uint8Array>; readonly read: string[] } => {
   const store = new Map<string, Uint8Array>();
+  const read: string[] = [];
   return {
     store,
-    get: async (path) => store.get(path) ?? null,
-    put: async (path, bytes) => { store.set(path, bytes); },
+    read,
+    get: async (path) => { read.push(path); return store.get(path)?.slice() ?? null; },
+    put: async (path, bytes) => { store.set(path, bytes.slice()); },
     remove: async (path) => { store.delete(path); },
   };
 };
@@ -93,7 +95,7 @@ describe('nothing unpinned reaches the prover', () => {
     await expect(provider.getParams(14)).rejects.toThrow(/never falls back/u);
   });
 
-  it('verified material comes back whole, and is served from memory after', async () => {
+  it('verified material comes back whole, and the origin is not asked for it again', async () => {
     const origin = await fakeOrigin(dustFiles());
     const provider = makePinnedKeyMaterialProvider({
       fetchFn: origin.fetchFn, cache: mapCache(),
@@ -235,5 +237,256 @@ describe('a circuit ask is recorded, and who asked is kept', () => {
     await provider.getParams(14);
     expect(into.circuitsAsked?.map((c) => c.keyLocation)).toEqual(['midnight/dust/spend']);
     expect(into.paramsFetched?.map((p) => p.k)).toEqual([14]);
+  });
+});
+
+const ADDRESS = 'c0'.repeat(32);
+const accountFiles = (): Record<string, Uint8Array> => ({
+  [`${ACCOUNT_KEYS_FOLDER}/propose.prover`]: bytesOf('the proposal prover key'),
+  [`${ACCOUNT_KEYS_FOLDER}/propose.verifier`]: bytesOf('the proposal verifier key'),
+  [`${ACCOUNT_KEYS_FOLDER}/propose.bzkir`]: bytesOf('the proposal circuit'),
+  [`${ACCOUNT_KEYS_FOLDER}/clearRun.prover`]: bytesOf('a prover key the wallet does not use'),
+  [`${ACCOUNT_KEYS_FOLDER}/clearRun.verifier`]: bytesOf('a verifier key the wallet does not use'),
+  [`${ACCOUNT_KEYS_FOLDER}/clearRun.bzkir`]: bytesOf('a circuit the wallet does not prove'),
+});
+const locationOf = async (circuit: string, verifier: Uint8Array): Promise<string> =>
+  `contract:${ADDRESS}/${circuit}?vk=${await sha256Hex(verifier)}`;
+/** The verifier keys this build compiled, as the account's module names them. */
+const compiledFrom = async (files: Record<string, Uint8Array>): Promise<Record<string, string>> => ({
+  propose: await sha256Hex(files[`${ACCOUNT_KEYS_FOLDER}/propose.verifier`]!),
+  clearRun: await sha256Hex(files[`${ACCOUNT_KEYS_FOLDER}/clearRun.verifier`]!),
+});
+
+describe('a company account circuit is served by the location the contract names', () => {
+  it('a circuit the wallet proves is served from its own pinned files, by the contract\'s location', async () => {
+    // RED WHEN: the provider answers a contract's key location with nothing, so the wallet cannot prove a call to the company account
+    const files = accountFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: mapCache(), accountCircuits: ['propose'], compiledVerifierKeys: await compiledFrom(files) });
+    const material = await provider.lookupKey(await locationOf('propose', files[`${ACCOUNT_KEYS_FOLDER}/propose.verifier`]!));
+    expect(new TextDecoder().decode(material?.proverKey)).toBe('the proposal prover key');
+    expect(new TextDecoder().decode(material?.ir)).toBe('the proposal circuit');
+    expect(new TextDecoder().decode(await provider.accountVerifierKey('propose'))).toBe('the proposal verifier key');
+  });
+
+  it('a location naming another verifier key is refused, and nothing is proved', async () => {
+    // RED WHEN: a key is served for a call that names a different verifier key, so a proof is made against a key the contract does not hold
+    const files = accountFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: mapCache(), accountCircuits: ['propose'], compiledVerifierKeys: await compiledFrom(files) });
+    await expect(provider.lookupKey(await locationOf('propose', bytesOf('another build\'s verifier key'))))
+      .rejects.toThrow(/REFUSING TO PROVE: the call asks for "propose" with the verifier key/u);
+  });
+
+  it('a circuit of the account the wallet does not prove is refused before any file is read', async () => {
+    // RED WHEN: the wallet serves a key for any circuit of the contract, not only the ones it proves
+    const files = accountFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: mapCache(), accountCircuits: ['propose'], compiledVerifierKeys: await compiledFrom(files) });
+    await expect(provider.lookupKey(await locationOf('clearRun', files[`${ACCOUNT_KEYS_FOLDER}/clearRun.verifier`]!)))
+      .rejects.toThrow(/"clearRun" is not a circuit of the company account or the vault this wallet proves/u);
+    await expect(provider.accountVerifierKey('clearRun')).rejects.toThrow(/not a circuit of the company account/u);
+    const transfer = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: mapCache() });
+    await expect(transfer.lookupKey(await locationOf('propose', files[`${ACCOUNT_KEYS_FOLDER}/propose.verifier`]!)))
+      .rejects.toThrow(/not a circuit of the company account/u);
+    expect(origin.fetched.filter((u) => u.includes('clearRun') || u.includes('propose'))).toEqual([]);
+  });
+});
+
+describe('a proving key leaves memory with the proof, and a key not kept is said', () => {
+  it('each ask reads its key again rather than from a copy kept in memory', async () => {
+    // RED WHEN: the provider keeps every key it served in memory for as long as the wallet is open
+    const origin = await fakeOrigin(dustFiles());
+    const cache = mapCache();
+    const provider = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache });
+    const first = await provider.lookupKey('midnight/dust/spend');
+    const second = await provider.lookupKey('midnight/dust/spend');
+    expect(cache.read.filter((p) => p === 'dust/9/spend.prover')).toHaveLength(2);
+    expect(second?.proverKey).not.toBe(first?.proverKey);
+    await provider.getParams(14);
+    await provider.getParams(14);
+    expect(cache.read.filter((p) => p === 'bls_midnight_2p14')).toHaveLength(2);
+  });
+
+  it('a key this device could not keep is reported with the browser\'s reason, and the proof still gets it', async () => {
+    // RED WHEN: a refused write to the device's store is swallowed, so nobody can say the keys are not kept here
+    const origin = await fakeOrigin(dustFiles());
+    const told: Array<[string, string]> = [];
+    const refusing: ArtefactCache = {
+      get: async () => null,
+      put: async () => { throw new Error('QuotaExceededError: the store is full'); },
+      remove: async () => {},
+    };
+    const provider = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: refusing, onNotKept: (file, why) => told.push([file, why]) });
+    const params = await provider.getParams(14);
+    expect(new TextDecoder().decode(params)).toBe('the shared parameters, size 14');
+    expect(told).toEqual([['bls_midnight_2p14', expect.stringContaining('the store is full')]]);
+  });
+
+  it('the device\'s own store rejects a write the browser refused, instead of reporting it kept', async () => {
+    // RED WHEN: the device's store resolves a write the browser aborted, so a full store reads as kept
+    const was = (globalThis as { indexedDB?: unknown }).indexedDB;
+    const db = {
+      transaction: () => {
+        const tx: Record<string, unknown> = { error: new Error('QuotaExceededError') };
+        tx['objectStore'] = () => ({
+          put: () => {
+            const request: Record<string, unknown> = {};
+            queueMicrotask(() => (request['onsuccess'] as (() => void) | undefined)?.());
+            queueMicrotask(() => queueMicrotask(() => (tx['onabort'] as (() => void) | undefined)?.()));
+            return request;
+          },
+        });
+        return tx;
+      },
+    };
+    (globalThis as { indexedDB?: unknown }).indexedDB = {
+      open: () => {
+        const request: Record<string, unknown> = { result: db };
+        queueMicrotask(() => (request['onsuccess'] as (() => void) | undefined)?.());
+        return request;
+      },
+    };
+    try {
+      await expect(idbArtefactCache().put('bls_midnight_2p14', bytesOf('x'))).rejects.toThrow(/QuotaExceededError/u);
+    } finally {
+      (globalThis as { indexedDB?: unknown }).indexedDB = was;
+    }
+  });
+});
+
+describe('an account key is served only from the compile the wallet was built with', () => {
+  it('a key the call names, but this build did not compile, is refused when a proof asks for it', async () => {
+    // RED WHEN: a proof uses an account key from another compile because the call it was built from named that key
+    const files = accountFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), accountCircuits: ['propose'], compiledVerifierKeys: { propose: 'ab'.repeat(32) },
+    });
+    await expect(provider.lookupKey(await locationOf('propose', files[`${ACCOUNT_KEYS_FOLDER}/propose.verifier`]!)))
+      .rejects.toThrow(/REFUSING TO PROVE: the verifier key this wallet holds for "propose" .* different compiles/u);
+  });
+
+  it('and a call is not built against a verifier key this build did not compile', async () => {
+    // RED WHEN: a call is built against an account verifier key from another compile
+    const files = accountFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), accountCircuits: ['propose'],
+    });
+    await expect(provider.accountVerifierKey('propose')).rejects.toThrow(/different compiles/u);
+  });
+});
+
+
+const vaultFiles = (): Record<string, Uint8Array> => ({
+  [`${VAULT_KEYS_FOLDER}/setNonceSecret.prover`]: bytesOf('the vault secret prover key'),
+  [`${VAULT_KEYS_FOLDER}/setNonceSecret.verifier`]: bytesOf('the vault secret verifier key'),
+  [`${VAULT_KEYS_FOLDER}/setNonceSecret.bzkir`]: bytesOf('the vault secret circuit'),
+  [`${VAULT_KEYS_FOLDER}/deposit.verifier`]: bytesOf('the deposit verifier key'),
+  [`${VAULT_KEYS_FOLDER}/deposit.prover`]: bytesOf('a deposit prover key the wallet does not use'),
+  [`${VAULT_KEYS_FOLDER}/deposit.bzkir`]: bytesOf('a deposit circuit the wallet does not prove'),
+});
+const vaultCompiled = async (files: Record<string, Uint8Array>): Promise<Record<string, string>> => ({
+  setNonceSecret: await sha256Hex(files[`${VAULT_KEYS_FOLDER}/setNonceSecret.verifier`]!),
+  deposit: await sha256Hex(files[`${VAULT_KEYS_FOLDER}/deposit.verifier`]!),
+});
+
+describe('a vault circuit the wallet proves is served by the vault\'s location, from the vault\'s own compile', () => {
+  it('serves the vault\'s first secret from its own pinned files, and a deploy\'s verifier key for every circuit it holds one of', async () => {
+    // RED WHEN: the wallet cannot prove setting a vault's first secret, or cannot build a vault's deploy from keys it holds
+    const files = vaultFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['setNonceSecret'], vaultVerifiers: ['deposit'], compiledVaultVerifierKeys: await vaultCompiled(files),
+    });
+    const material = await provider.lookupKey(await locationOf('setNonceSecret', files[`${VAULT_KEYS_FOLDER}/setNonceSecret.verifier`]!));
+    expect(new TextDecoder().decode(material?.proverKey)).toBe('the vault secret prover key');
+    expect(new TextDecoder().decode(await provider.vaultVerifierKey('deposit'))).toBe('the deposit verifier key');
+    expect(new TextDecoder().decode(await provider.vaultVerifierKey('setNonceSecret'))).toBe('the vault secret verifier key');
+  });
+
+  it('refuses to prove a vault circuit it holds only a verifier key for, one from another compile, and one another key names', async () => {
+    const files = vaultFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['setNonceSecret'], vaultVerifiers: ['deposit'], compiledVaultVerifierKeys: await vaultCompiled(files),
+    });
+    // RED WHEN: the wallet proves any circuit of the vault, not only the ones it builds
+    await expect(provider.lookupKey(await locationOf('deposit', files[`${VAULT_KEYS_FOLDER}/deposit.verifier`]!)))
+      .rejects.toThrow(/not a circuit of the company account or the vault this wallet proves/u);
+    // RED WHEN: a vault verifier key the wallet does not hold for any circuit is served
+    await expect(provider.vaultVerifierKey('payout')).rejects.toThrow(/not a circuit of the vault this wallet builds/u);
+    // RED WHEN: a proof asks for the vault circuit with another verifier key and is served the wallet's
+    await expect(provider.lookupKey(await locationOf('setNonceSecret', bytesOf('another vault\'s verifier key'))))
+      .rejects.toThrow(/REFUSING TO PROVE: the call asks for "setNonceSecret" with the verifier key/u);
+    const another = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['setNonceSecret'], compiledVaultVerifierKeys: { setNonceSecret: 'ab'.repeat(32) },
+    });
+    // RED WHEN: a vault key from another compile than this build's vault is served for a proof or a deploy
+    await expect(another.lookupKey(await locationOf('setNonceSecret', files[`${VAULT_KEYS_FOLDER}/setNonceSecret.verifier`]!)))
+      .rejects.toThrow(/this build's vault was compiled with .* different compiles/u);
+    await expect(another.vaultVerifierKey('setNonceSecret')).rejects.toThrow(/different compiles/u);
+  });
+});
+
+const calleeFiles = (): Record<string, Uint8Array> => ({
+  ...vaultFiles(),
+  [`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.prover`]: bytesOf('the account approval prover key'),
+  [`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.verifier`]: bytesOf('the account approval verifier key'),
+  [`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.bzkir`]: bytesOf('the account approval circuit'),
+  [`${ACCOUNT_KEYS_FOLDER}/recordPaymentFromVault.prover`]: bytesOf('a payment prover key the wallet does not use'),
+  [`${ACCOUNT_KEYS_FOLDER}/recordPaymentFromVault.verifier`]: bytesOf('a payment verifier key the wallet does not use'),
+  [`${ACCOUNT_KEYS_FOLDER}/recordPaymentFromVault.bzkir`]: bytesOf('a payment circuit the wallet does not prove'),
+});
+const calleeCompiled = async (files: Record<string, Uint8Array>): Promise<Record<string, string>> => ({
+  approveVaultChange: await sha256Hex(files[`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.verifier`]!),
+  recordPaymentFromVault: await sha256Hex(files[`${ACCOUNT_KEYS_FOLDER}/recordPaymentFromVault.verifier`]!),
+});
+
+describe('the account circuit a vault circuit the wallet proves calls is served for that call alone', () => {
+  it('serves the account\'s approval that setting a vault\'s secret asks for, from the account\'s own pinned files', async () => {
+    // RED WHEN: the wallet holds no key for the account call that setting a vault's secret makes, so every new vault stops before its first secret
+    const files = calleeFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['setNonceSecret'],
+      compiledVerifierKeys: await calleeCompiled(files), compiledVaultVerifierKeys: await vaultCompiled(files),
+    });
+    const material = await provider.lookupKey(await locationOf('approveVaultChange', files[`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.verifier`]!));
+    expect(new TextDecoder().decode(material?.proverKey)).toBe('the account approval prover key');
+    expect(new TextDecoder().decode(material?.ir)).toBe('the account approval circuit');
+  });
+
+  it('refuses that key to a wallet that does not prove its caller, refuses an account call no vault circuit it proves makes, and builds no call to it', async () => {
+    const files = calleeFiles();
+    const origin = await fakeOrigin(files);
+    const compiled = await calleeCompiled(files);
+    const withoutCaller = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['writeSecretCopy', 'deposit'], compiledVerifierKeys: compiled,
+    });
+    // RED WHEN: the account's approval is served to any wallet that proves a vault circuit, not only one that proves the circuit calling it
+    await expect(withoutCaller.lookupKey(await locationOf('approveVaultChange', files[`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.verifier`]!)))
+      .rejects.toThrow(/"approveVaultChange" is not a circuit of the company account or the vault this wallet proves/u);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['setNonceSecret', 'writeSecretCopy', 'deposit'], compiledVerifierKeys: compiled,
+    });
+    // RED WHEN: the wallet serves a key for an account circuit only a vault payment calls, which no circuit it proves makes
+    await expect(provider.lookupKey(await locationOf('recordPaymentFromVault', files[`${ACCOUNT_KEYS_FOLDER}/recordPaymentFromVault.verifier`]!)))
+      .rejects.toThrow(/"recordPaymentFromVault" is not a circuit of the company account or the vault this wallet proves/u);
+    // RED WHEN: the wallet builds a call of its own to the account's approval, which only a vault's circuit may make
+    await expect(provider.accountVerifierKey('approveVaultChange')).rejects.toThrow(/not a circuit of the company account this wallet proves/u);
+    expect(origin.fetched.filter((u) => u.includes('recordPaymentFromVault') || u.includes('approveVaultChange'))).toEqual([]);
+  });
+
+  it('refuses the account\'s approval from another compile than this build\'s account', async () => {
+    // RED WHEN: the key for the account call a vault's secret makes is served without being checked against this build's account
+    const files = calleeFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['setNonceSecret'], compiledVerifierKeys: { approveVaultChange: 'ab'.repeat(32) },
+    });
+    await expect(provider.lookupKey(await locationOf('approveVaultChange', files[`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.verifier`]!)))
+      .rejects.toThrow(/this build's company account was compiled with .* different compiles/u);
   });
 });

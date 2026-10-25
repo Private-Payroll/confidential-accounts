@@ -603,6 +603,20 @@ describe('THE RULE — no record of wallet B is ever shown over wallet A', () =>
     expect(walletOfCredential('cred-from-a-cleared-browser')).toBeNull();
   });
 
+  it('A RECORD KEPT BESIDE THE SECRET IS SEALED UNDER THAT WALLET\'S OWN KEY, OPENS ONLY THERE, AND LEAVES THE SECRET\'S SEAL AS IT WAS', async () => {
+    const { aSlot, bSlot, a } = await twoWallets();
+    const { openHere, sealHere } = await import('./storage.js');
+    const kept = await sealHere('{"vault":"the record"}', aSlot);
+    /* RED WHEN: the record is kept in the open. */
+    expect(JSON.stringify(kept)).not.toContain('the record');
+    /* RED WHEN: it does not open under the wallet that sealed it, or opens under another wallet's key. */
+    expect(await openHere(kept, aSlot)).toBe('{"vault":"the record"}');
+    expect(await openHere(kept, bSlot)).toBeNull();
+    expect(await openHere({ ...kept, sealed: kept.sealed.slice(0, -2) + 'AA' }, aSlot)).toBeNull();
+    /* RED WHEN: sealing beside it changes the key the secret is sealed and opened with. */
+    expect([...(await loadSecret(aSlot))!]).toEqual([...a]);
+  });
+
   it('BALANCE CHECKPOINTS — THE STORE KEEPS NO SNAPSHOT HOLDING ANYTHING IN FLIGHT, AND NONE IT CANNOT READ', async () => {
     const { aSlot } = await twoWallets();
     const { loadWalletCheckpoint, saveWalletCheckpoint } = await import('./storage.js');

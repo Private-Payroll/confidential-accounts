@@ -13,7 +13,15 @@ import { untilPageShown, untilShown } from '../page-shown.test-support.js';
  * adapter keeps for the vault is set by the test, as the adapter would, and the check of the last deposit answers what the
  * test says; the panel is the real one.
  */
-const state = vi.hoisted(() => ({ company: null as unknown, publicReads: 0, companyReads: 0, priv: { of: 'nothing-yet' } as unknown, pub: { amounts: [], unrecognised: 0 } as unknown }));
+const state = vi.hoisted(() => ({
+  company: null as unknown, publicReads: 0, companyReads: 0, privateReads: 0, priv: { of: 'nothing-yet' } as unknown, pub: { amounts: [], unrecognised: 0 } as unknown,
+  /* Who is told when the person's wallet releases a company's key to this tab. */
+  released: new Set<(accountId: string) => void>(),
+}));
+vi.mock('vaults-web-shared/keyring.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
+  watchCompanyKeyReleased: (watch: (accountId: string) => void) => { state.released.add(watch); return () => { state.released.delete(watch); }; },
+}));
 const dp = vi.hoisted(() => ({
   now: null as unknown, watchers: new Set<() => void>(), checks: [] as unknown[][], checkGate: null as Promise<unknown> | null, checkAnswer: null as unknown, keyHeld: true,
   set(now: unknown) { this.now = now; for (const w of [...this.watchers]) w(); },
@@ -34,7 +42,7 @@ vi.mock('../adapters/handover-state.js', async (real) => ({
 }));
 vi.mock('../adapters/vault-private-money.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-private-money.js')>()),
-  readVaultPrivateMoney: async () => state.priv,
+  readVaultPrivateMoney: async () => { state.privateReads += 1; return state.priv; },
 }));
 vi.mock('../adapters/vault-rows.js', async (real) => ({ ...(await real<typeof import('../adapters/vault-rows.js')>()), readVaultRows: async () => [] }));
 vi.mock('../adapters/session.js', async (real) => ({ ...(await real<typeof import('../adapters/session.js')>()), companyNamesFor: async () => new Map() }));
@@ -93,9 +101,9 @@ const running = (n: number) => {
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  state.company = company(); state.publicReads = 0; state.companyReads = 0; state.priv = { of: 'nothing-yet' }; state.pub = { amounts: [], unrecognised: 0 };
+  state.company = company(); state.publicReads = 0; state.companyReads = 0; state.privateReads = 0; state.priv = { of: 'nothing-yet' }; state.pub = { amounts: [], unrecognised: 0 };
   dp.now = null; dp.watchers.clear(); dp.checks = []; dp.checkGate = null; dp.keyHeld = true;
-  dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, forSupport: '' };
+  dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null };
   window.sessionStorage.clear();
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -153,15 +161,15 @@ describe('the vault page\'s deposit', () => {
   it('shows a deposit that runs with its step and a way back to the panel, and holds Check my last deposit meanwhile', async () => {
     const c = await draw();
     expect(q(c, '[data-deposit-strip]')).toBeNull();
-    await act(async () => { dp.set(running(3)); });
-    expect(q(c, '[data-deposit-strip=running]')!.textContent).toContain('Putting money in: step 3 of 6.');
+    await act(async () => { dp.set(running(1)); });
+    expect(q(c, '[data-deposit-strip=running]')!.textContent).toContain('Putting money in: step 1 of 2.');
     expect(q(c, '[data-check-waits]')!.textContent).toBe('Check my last deposit opens once this deposit has ended.');
     expect(button(c, 'check-last-deposit').disabled).toBe(true);
-    await act(async () => { dp.set(running(4)); });
-    expect(q(c, '[data-deposit-strip]')!.textContent).toContain('step 4 of 6');
+    await act(async () => { dp.set(running(2)); });
+    expect(q(c, '[data-deposit-strip]')!.textContent).toContain('step 2 of 2');
     await act(async () => { fireEvent.click(q(c, '[data-action=open-deposit]')!); });
     await untilShown(() => document.querySelector('[data-panel] [data-deposit=running]'), 'the running deposit in the panel');
-    expect(document.querySelector('[data-panel] [data-step-of]')!.textContent).toBe('Step 4 of 6');
+    expect(document.querySelector('[data-panel] [data-step-of]')!.textContent).toBe('Step 2 of 2');
     await act(async () => { dp.set(null); });
     expect(q(c, '[data-deposit-strip]')).toBeNull();
     expect(button(c, 'check-last-deposit').disabled).toBe(false);
@@ -171,7 +179,7 @@ describe('the vault page\'s deposit', () => {
   it('reads the vault\'s money again when a deposit finishes, and keeps the ended deposit on the page', async () => {
     const c = await draw();
     const before = state.publicReads;
-    await act(async () => { dp.set(running(6)); });
+    await act(async () => { dp.set(running(2)); });
     expect(state.publicReads).toBe(before);
     const done = { of: 'done', kind: 'private', amount: privateAmount(1_250_000n, 6, 'PRV'), chainTransaction: 'ee'.repeat(32), notYetSpendable: false, earlier: null };
     await act(async () => { dp.set(done); });
@@ -207,7 +215,7 @@ describe('the page is told once that a deposit finished', () => {
   /* RED WHEN: one deposit that finishes while the panel is open reads the company's records again as well as the vault's money. */
   it('reads the vault\'s money once, and not the company\'s records, for a deposit that finishes with the panel open', async () => {
     const c = await draw();
-    await act(async () => { dp.set(running(6)); });
+    await act(async () => { dp.set(running(2)); });
     await act(async () => { fireEvent.click(q(c, '[data-action=open-deposit]')!); });
     await untilShown(() => document.querySelector('[data-panel] [data-deposit=running]'), 'the running deposit in the panel');
     const money = state.publicReads;
@@ -222,6 +230,23 @@ describe('the page is told once that a deposit finished', () => {
 
 describe('the money held, and its tabs', () => {
   const tabs = (c: ParentNode) => Object.fromEntries([...c.querySelectorAll<HTMLElement>('[data-part=money] [data-slot=tabs-list] [data-filter]')].map((t) => [t.dataset.filter, t.querySelector('[data-slot=count-pill]')?.textContent ?? null]));
+
+  /* RED WHEN: the private side stays unread for want of the company's key after the wallet released that key (by Check my last deposit), or a release for another company reads this vault again. */
+  it('reads what the vault holds privately again once the wallet releases the company\'s key to this tab', async () => {
+    state.priv = { of: 'unreadable', why: 'no-keys' };
+    const c = await draw();
+    expect(q(c, '[data-unreadable=private]')).not.toBeNull();
+    const before = state.privateReads;
+    await act(async () => { for (const w of [...state.released]) w('c-2'); });
+    await settle();
+    expect(state.privateReads).toBe(before);
+    state.priv = { of: 'held', amounts: [privateAmount(1_500_000n, 6, 'PRV')], unrecognised: 0 };
+    await act(async () => { for (const w of [...state.released]) w('c-1'); });
+    await settle();
+    expect(state.privateReads).toBe(before + 1);
+    expect(q(c, '[data-unreadable=private]')).toBeNull();
+    expect(tabs(c)).toEqual({ all: '1', private: '1', public: '0' });
+  });
 
   /* RED WHEN: a vault that holds nothing privately yet (which it truly does) shows no 0 on its tabs, or a side that was read and holds something is not counted. */
   it('counts the sides that were read, 0 for a vault that holds nothing yet', async () => {

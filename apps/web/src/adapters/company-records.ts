@@ -6,7 +6,7 @@ import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
 import type { RefusedEntry, RosterEntryRefusal } from '../../../../src/core/roster-record.js';
 import { api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
-import { anchoredOnTheWayInFor, companyKeysFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import { companyKeysFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
 import { keyOf, type CompanyKeys } from '../../../../src/core/company-key.js';
 import { theVaultBuilder } from './vault-builder.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -25,8 +25,9 @@ export { OPENED, READ, type Read };
  *
  * The service stores a company's name, signers, runs and proposals sealed.
  * The legacy application opens them the way
- * this file does: the shared keyring opens the keys saved for the person
- * (`openKeysWithWallet`, after the person approves in their account), derives
+ * this file does: the person's wallet reads the keys saved for them and opens
+ * this seat's copy of each company's viewing key (`openKeysWithWallet`, after
+ * the person approves in their account); this page then derives
  * the company's keys from its directory (`companyKeysFor`), and opens the
  * company's record (`openAccount`); each run, proposal and person is opened
  * with the key of the epoch it was sealed at and the same `openRecord` the
@@ -409,9 +410,27 @@ export async function vaultListOf(
   return (await chainOfTheCompany(companyId, sealed, read)).vaults;
 }
 
+/* The companies whose pages are open, newest last: the newest is the one opening the saved keys opens too. */
+const pagesOpen: string[] = [];
+
+/**
+ * A company's pages say they are on screen while they are, and the closer they are handed says they have gone:
+ * "Open with your account" names the company whose pages are open, and none once they are all left.
+ */
+export function companyPagesOpen(companyId: string): () => void {
+  pagesOpen.push(companyId);
+  return () => {
+    const at = pagesOpen.lastIndexOf(companyId);
+    if (at >= 0) pagesOpen.splice(at, 1);
+  };
+}
+
 /**
  * THE COMPANY `companyId`'S RECORDS, FOR THE PERSON `personId`: opened with
- * the keys saved for them, then read, each read on its own.
+ * what their wallet read from the keys saved for them, then read, each read on
+ * its own. Reading signs,
+ * files and anchors nothing: the company's records are anchored at the end of
+ * each seat action in a signer's wallet.
  */
 export async function readCompany(personId: string, companyId: string): Promise<Company> {
   let sealed: SealedAccount;
@@ -420,15 +439,13 @@ export async function readCompany(personId: string, companyId: string): Promise<
   try {
     if (!(await keyringFor(personId))) return { of: OPENED.refused, why: ACT_REFUSAL.notSignedIn };
     sealed = await ask(SERVICE.company + companyId) as SealedAccount;
-    /* Keys saved in another tab since are read first, so a person who opened them there is not asked again here, and a seat this device did not finish is finished. */
-    const keys = await keysOnTheWayIn(companyId, async () => sealed);
-    if (keys === null) return { of: canOpenCompanies() ? OPENED.noKeysHere : OPENED.locked };
+    /* Keys saved in another tab since are read first, so a person who opened them there is not asked again here. */
+    const keys = await keysOnTheWayIn(companyId);
+    if (keys === null) return { of: canOpenCompanies(companyId) ? OPENED.noKeysHere : OPENED.locked };
     const opened = await openedHere(sealed);
     if (opened === null) return { of: OPENED.noKeysHere };
     account = opened;
-    /* The one-a-day anchor, not waited on: entering the company never waits on a proof, and one not made is made by the next. */
-    void anchoredOnTheWayInFor(sealed, keys, async () => opened);
-    viewingKey = await companyKeysFor(companyId, sealed, keys);
+    viewingKey = await companyKeysFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey });
   } catch (e) {
     return { of: OPENED.refused, why: refusalOf(e) };
   }
@@ -460,15 +477,20 @@ export async function readCompany(personId: string, companyId: string): Promise<
 }
 
 /**
- * OPEN THE KEYS SAVED FOR THE PERSON, with their account: it asks them to
- * approve, and releases the key the saved keys are sealed under. Nothing is
- * signed or sent but that approval.
+ * HAVE THE PERSON'S ACCOUNT READ THE KEYS SAVED FOR THEM: it asks them to
+ * approve, opens the saved keys itself, and gives this page what they hold
+ * that is not secret, with the key that reads the vault balances of the company
+ * on screen (`companyId`, by default the one whose pages are open, `companyPagesOpen`)
+ * when its own read of the chain confirms that company.
+ * Nothing is signed or sent but that approval.
  */
-export async function openWithYourAccount(personId: string): Promise<{ of: typeof ACTED.done } | { of: typeof ACTED.refused; why: ActRefusal }> {
+export async function openWithYourAccount(
+  personId: string, companyId: string | null = pagesOpen.at(-1) ?? null,
+): Promise<{ of: typeof ACTED.done } | { of: typeof ACTED.refused; why: ActRefusal }> {
   if (ACCOUNT_ORIGIN === '') return { of: ACTED.refused, why: ACT_REFUSAL.notSetUp };
   try {
     if (!(await keyringFor(personId))) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
-    await openKeysWithWallet(ACCOUNT_ORIGIN);
+    await openKeysWithWallet(ACCOUNT_ORIGIN, undefined, undefined, undefined, companyId ?? undefined);
     return { of: ACTED.done };
   } catch (e) {
     return { of: ACTED.refused, why: refusalOf(e) };
@@ -520,14 +542,14 @@ export async function readVaultName(
     const label = sealed.companyLabel ?? null;
     const address = sealed.contractAddress ?? null;
     if (label === null || address === null) return notRead;
-    const keys = await keysOnTheWayIn(companyId, async () => sealed);
+    const keys = await keysOnTheWayIn(companyId);
     if (keys === null) return notRead;
     const account = await openedHere(sealed);
     if (account === null) return notRead;
-    const companyKeys: CompanyKeys = await companyKeysFor(companyId, sealed, keys);
+    const companyKeys: CompanyKeys = await companyKeysFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey });
     const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, companyKeys, async () => account);
     const { vaultInfoHere, vaultInfoRecordsFor } = await import('vaults-web-shared/vault-info-here.js');
-    const filed = await vaultInfoHere({ companyKeys, records: vaultInfoRecordsFor(companyId, keys.signingSecret, judge, () => currentUser()?.id ?? null) }, vault);
+    const filed = await vaultInfoHere({ companyKeys, records: vaultInfoRecordsFor(companyId, null, judge, () => currentUser()?.id ?? null) }, vault);
     if (filed.state === 'unread') return notRead;
     return filed.state === 'named' && filed.name.trim() !== '' ? filed.name : null;
   } catch {

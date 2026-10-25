@@ -1,5 +1,7 @@
 import type { KeyMaterialProvider } from '@midnight-ntwrk/zkir-v2';
+import { parseContractKeyLocation } from '@midnight-ntwrk/compact-js/effect/ContractKeyLocation';
 import { describeFailure } from '../lib/failure-text.js';
+import { ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS } from './account-circuits.js';
 
 /**
  * KEY MATERIAL FROM OUR OWN ORIGIN, HASH-PINNED — closing the CORS defect and the
@@ -35,7 +37,23 @@ import { describeFailure } from '../lib/failure-text.js';
  *     it somewhere less checked.
  *  3. **Verified bytes are cached in IndexedDB**, so proving is not a
  *     20 MB download every session — and the cache is re-verified on every
- *     read, because a cache is one more place bytes can rot.
+ *     read, because a cache is one more place bytes can rot. A write the
+ *     browser refuses is reported, so the person can be told the keys are not
+ *     kept on this device, rather than paying the download again unseen.
+ *
+ * Nothing is held in memory between asks: each ask hands out its own copy and
+ * keeps none, so a proving key leaves memory with the proof that used it.
+ *
+ * A company account's or a vault's circuit is asked for by the location the
+ * contract SDK gives it (`contract:<address>/<circuit>?vk=<hash of its
+ * verifier key>`). It is served only for a circuit the caller names as one
+ * this wallet proves, from the files the vendoring copied under `account/` or
+ * `vault/`, and only when the verifier key served hashes both to the key this
+ * build compiled for that contract and to the `vk` the location carries. A
+ * vault circuit the wallet only deploys is served its verifier key alone. An
+ * account circuit that a vault circuit the caller names calls inside the same
+ * transaction is a proof of its own, asked for by its own location, so it is
+ * served from `account/` too, checked the same way; no call to it is built here.
  */
 
 /* The SDK's own keyLocation → path map, verbatim (WasmProver.js:166–171),
@@ -60,7 +78,9 @@ export interface KeyManifest {
 }
 
 /** A place verified bytes rest between sessions. Injectable so tests need
- * no IndexedDB; the default is the real one below. */
+ * no IndexedDB; the default is the real one below. `get` hands back a copy the
+ * caller owns (it may be moved to a worker); `put` rejects when the bytes were
+ * not kept. */
 export interface ArtefactCache {
   get(path: string): Promise<Uint8Array | null>;
   put(path: string, bytes: Uint8Array): Promise<void>;
@@ -79,9 +99,11 @@ function keysDb(): Promise<IDBDatabase> {
   });
 }
 
-/** The real cache. Any storage failure is treated as a MISS, never an
- * error: the artefacts re-fetch from our own origin and re-verify, so a
- * broken IndexedDB costs bandwidth, not correctness. */
+/** The real cache. A failed read is a MISS, never an error: the artefacts
+ * re-fetch from our own origin and re-verify, so a broken IndexedDB costs
+ * bandwidth, not correctness. A failed write rejects, with the browser's
+ * reason, once the write's transaction has failed (a full quota surfaces only
+ * there), so the provider can report that nothing was kept. */
 export const idbArtefactCache = (): ArtefactCache => ({
   get: async (path) => {
     try {
@@ -98,15 +120,14 @@ export const idbArtefactCache = (): ArtefactCache => ({
     }
   },
   put: async (path, bytes) => {
-    try {
-      const db = await keysDb();
-      await new Promise<void>((resolve) => {
-        const request = db.transaction(KEYS_STORE, 'readwrite').objectStore(KEYS_STORE)
-          .put(bytes, path);
-        request.onsuccess = () => resolve();
-        request.onerror = () => resolve();
-      });
-    } catch { /* a cache that cannot write is a cache that misses */ }
+    const db = await keysDb();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(KEYS_STORE, 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? new Error('the browser ended the write'));
+      transaction.onerror = () => reject(transaction.error ?? new Error('the browser refused the write'));
+      transaction.objectStore(KEYS_STORE).put(bytes, path);
+    });
   },
   remove: async (path) => {
     try {
@@ -135,7 +156,43 @@ export interface PinnedKeyMaterialOptions {
   readonly fetchFn?: typeof fetch;
   /** Injectable for tests; the app uses IndexedDB. */
   readonly cache?: ArtefactCache;
+  /** The company account's circuits this provider may serve, by name. None
+   * unless named: a provider made for a transfer proves no contract call. */
+  readonly accountCircuits?: readonly string[];
+  /** The hash of each account circuit's verifier key as this build compiled it.
+   * A key is served only when the file the wallet holds hashes to it, so every
+   * proof uses keys from the same compile as the calls it proves. */
+  readonly compiledVerifierKeys?: Readonly<Record<string, string>>;
+  /** The vault's circuits this provider may serve proving keys for, by name, and with each the company
+   * account's circuits it calls in the same transaction. None unless named. */
+  readonly vaultCircuits?: readonly string[];
+  /** The vault's circuits whose verifier key alone this provider may serve: what a vault's deploy is built with. */
+  readonly vaultVerifiers?: readonly string[];
+  /** The hash of each vault circuit's verifier key as this build compiled the vault, checked as the account's are. */
+  readonly compiledVaultVerifierKeys?: Readonly<Record<string, string>>;
+  /** Told each time verified bytes could not be kept on this device, with the
+   * file and the browser's reason. Proving goes on: the bytes are verified,
+   * only the next action downloads them again. */
+  readonly onNotKept?: (path: string, why: string) => void;
 }
+
+/**
+ * The SDK's two-method provider, and one more ask: the verifier key of one of
+ * the account circuits this provider serves, pinned like every other file. A
+ * contract call is built against it, so the location the SDK then asks the
+ * prover for names the same key.
+ */
+export interface PinnedKeyMaterial extends KeyMaterialProvider {
+  accountVerifierKey(circuit: string): Promise<Uint8Array>;
+  /** The verifier key of one of the vault's circuits this provider serves, pinned and checked against this build's vault. */
+  vaultVerifierKey(circuit: string): Promise<Uint8Array>;
+}
+
+/** The folder under `/keys/` the account circuits' files are vendored into. */
+export const ACCOUNT_KEYS_FOLDER = 'account';
+
+/** The folder under `/keys/` the vault circuits' files are vendored into. */
+export const VAULT_KEYS_FOLDER = 'vault';
 
 /** What a refused artefact says — one shape, so every failure names the
  * file, the reason, and the remedy in the same breath. */
@@ -147,17 +204,36 @@ class KeyMaterialError extends Error {
 }
 
 /**
- * The provider. One instance per facade — its in-memory map means a warm
- * proof re-reads nothing, its IndexedDB means a new session re-downloads
- * nothing, and its pins mean neither of those conveniences is trusted.
+ * The provider. Its IndexedDB means a new session re-downloads nothing, and
+ * its pins mean that convenience is never trusted. It keeps nothing in
+ * memory: every ask is read from the cache or the origin and verified again.
  */
 export function makePinnedKeyMaterialProvider(
   options: PinnedKeyMaterialOptions = {},
-): KeyMaterialProvider {
+): PinnedKeyMaterial {
   const base = options.baseUrl ?? '/keys';
   const fetchFn = options.fetchFn ?? fetch.bind(globalThis);
   const cache = options.cache ?? idbArtefactCache();
-  const inMemory = new Map<string, unknown>();
+  const accountCircuits = new Set(options.accountCircuits ?? []);
+  const compiled = options.compiledVerifierKeys ?? {};
+  const vaultCircuits = new Set(options.vaultCircuits ?? []);
+  const vaultVerifiers = new Set([...(options.vaultVerifiers ?? []), ...vaultCircuits]);
+  const calledByTheVault = new Set([...vaultCircuits].flatMap((c) => (
+    Object.hasOwn(ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, c) ? ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS[c]! : [])));
+  const compiledVault = options.compiledVaultVerifierKeys ?? {};
+
+  /** Refuses an account verifier key that is not the one this build compiled. */
+  const thisBuildsIn = (of: Readonly<Record<string, string>>, contract: string) => async (circuit: string, verifierKey: Uint8Array): Promise<void> => {
+    const wanted = Object.hasOwn(of, circuit) ? of[circuit] : undefined;
+    const held = await sha256Hex(verifierKey);
+    if (typeof wanted !== 'string' || held !== wanted.toLowerCase()) {
+      throw new KeyMaterialError(`REFUSING TO PROVE: the verifier key this wallet holds for "${circuit}" hashes to ${held}, `
+        + `and this build's ${contract} was compiled with ${wanted ?? 'no key for it'}. The keys and the wallet come `
+        + `from different compiles, so nothing was proved. Re-vendor the ${contract}'s keys from the same compile.`);
+    }
+  };
+  const thisBuilds = thisBuildsIn(compiled, 'company account');
+  const thisBuildsVault = thisBuildsIn(compiledVault, 'vault');
 
   let manifestPromise: Promise<KeyManifest> | null = null;
   const manifest = (): Promise<KeyManifest> => {
@@ -209,12 +285,14 @@ export function makePinnedKeyMaterialProvider(
   const artefact = async (path: string, wanted: string): Promise<Uint8Array> => {
     const pins = await manifest();
     const pin = pins.artefacts[path];
+    const remedy = path.startsWith(`${ACCOUNT_KEYS_FOLDER}/`) || path.startsWith(`${VAULT_KEYS_FOLDER}/`)
+      ? '`npm run compact` then `npm run vendor-keys:account`' : '`npm run vendor-keys`';
     if (!pin) {
       throw new KeyMaterialError(`"${path}" is not in the vendored key material — `
         + `the manifest (made ${pins.generatedAt}) has no pin for it, and an unpinned `
         + `file must not be trusted to ${wanted}. If the SDK now asks for artefacts `
         + 'the vendoring did not cover (a new circuit, a new parameter size, a new '
-        + 'circuit version), re-run `npm run vendor-keys` and read its report.');
+        + `circuit version), run ${remedy} and read its report.`);
     }
     const cached = await cache.get(path);
     if (cached) {
@@ -232,8 +310,8 @@ export function makePinnedKeyMaterialProvider(
     }
     if (!response.ok) {
       throw new KeyMaterialError(`the vendored "${path}" is missing from this wallet's `
-        + `own origin (${response.status}) though the manifest pins it. Re-run `
-        + '`npm run vendor-keys`; this wallet never falls back to the bucket.');
+        + `own origin (${response.status}) though the manifest pins it. Run `
+        + `${remedy}; this wallet never falls back to the bucket.`);
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     const got = await sha256Hex(bytes);
@@ -244,34 +322,66 @@ export function makePinnedKeyMaterialProvider(
         + 'never be used — no proof was built, and there is no fallback. Find out '
         + 'what changed the file before re-vendoring.');
     }
-    await cache.put(path, bytes);
+    try {
+      await cache.put(path, bytes);
+    } catch (e) {
+      options.onNotKept?.(path, describeFailure(e));
+    }
     return bytes;
+  };
+
+  /** A circuit's three files, each verified against its pin. */
+  const circuitFiles = async (path: string, keyLocation: string) => {
+    const [proverKey, verifierKey, ir] = await Promise.all([
+      artefact(`${path}.prover`, `prove ${keyLocation}`),
+      artefact(`${path}.verifier`, `verify ${keyLocation}`),
+      artefact(`${path}.bzkir`, `run ${keyLocation}'s circuit`),
+    ]);
+    return { proverKey, verifierKey, ir };
   };
 
   return {
     lookupKey: async (keyLocation: string) => {
-      /* Unknown keyLocation → undefined, exactly as the SDK's own provider
-       * answers it (WasmProver.js:167–173) — the zkir side owns that error. */
       const path = CIRCUIT_PATHS[keyLocation];
-      if (path === undefined) return undefined;
-      if (inMemory.has(path)) {
-        return inMemory.get(path) as { proverKey: Uint8Array; verifierKey: Uint8Array; ir: Uint8Array };
+      if (path !== undefined) return circuitFiles(path, keyLocation);
+      const located = parseContractKeyLocation(keyLocation);
+      /* Neither a network circuit nor a contract's: undefined, exactly as the
+       * SDK's own provider answers it - the prover owns that error. */
+      if (located === undefined) return undefined;
+      const ofTheAccount = accountCircuits.has(located.circuitId) || calledByTheVault.has(located.circuitId);
+      const ofTheVault = !ofTheAccount && vaultCircuits.has(located.circuitId);
+      if (!ofTheAccount && !ofTheVault) {
+        throw new KeyMaterialError(`REFUSING TO PROVE: "${located.circuitId}" is not a circuit of the company `
+          + 'account or the vault this wallet proves, so no key is served for it and nothing was proved.');
       }
-      const [proverKey, verifierKey, ir] = await Promise.all([
-        artefact(`${path}.prover`, `prove ${keyLocation}`),
-        artefact(`${path}.verifier`, `verify ${keyLocation}`),
-        artefact(`${path}.bzkir`, `run ${keyLocation}'s circuit`),
-      ]);
-      const material = { proverKey, verifierKey, ir };
-      inMemory.set(path, material);
+      const material = await circuitFiles(`${ofTheVault ? VAULT_KEYS_FOLDER : ACCOUNT_KEYS_FOLDER}/${located.circuitId}`, keyLocation);
+      await (ofTheVault ? thisBuildsVault : thisBuilds)(located.circuitId, material.verifierKey);
+      const served = await sha256Hex(material.verifierKey);
+      if (served !== located.verifierKeyHash) {
+        throw new KeyMaterialError(`REFUSING TO PROVE: the call asks for "${located.circuitId}" with the verifier `
+          + `key ${located.verifierKeyHash}, and the key this wallet holds for it hashes to ${served}. A proof `
+          + 'made with another key would not be the call that was built, so nothing was proved. The wallet '
+          + 'and the contract it was built for disagree: re-vendor its keys from the same compile.');
+      }
       return material;
     },
-    getParams: async (k: number) => {
-      const path = `bls_midnight_2p${k}`;
-      if (inMemory.has(path)) return inMemory.get(path) as Uint8Array;
-      const bytes = await artefact(path, `prove with parameter size 2^${k}`);
-      inMemory.set(path, bytes);
-      return bytes;
+    getParams: async (k: number) => artefact(`bls_midnight_2p${k}`, `prove with parameter size 2^${k}`),
+    accountVerifierKey: async (circuit: string) => {
+      if (!accountCircuits.has(circuit)) {
+        throw new KeyMaterialError(`"${circuit}" is not a circuit of the company account this wallet proves, `
+          + 'so no call to it is built here.');
+      }
+      const key = await artefact(`${ACCOUNT_KEYS_FOLDER}/${circuit}.verifier`, `build a call to ${circuit}`);
+      await thisBuilds(circuit, key);
+      return key;
+    },
+    vaultVerifierKey: async (circuit: string) => {
+      if (!vaultVerifiers.has(circuit)) {
+        throw new KeyMaterialError(`"${circuit}" is not a circuit of the vault this wallet builds, so no key for it is served.`);
+      }
+      const key = await artefact(`${VAULT_KEYS_FOLDER}/${circuit}.verifier`, `build the vault's ${circuit}`);
+      await thisBuildsVault(circuit, key);
+      return key;
     },
   };
 }

@@ -89,8 +89,7 @@ describe.skipIf(!CAN_RUN_HERE)('THE CREATION SCREEN OVER A REAL DEPLOY, IN A BRO
     built = await webPage.evaluate(`(async () => {
       const m = await import('/src/adapters/vault-builder.ts');
       const w = await m.theVaultBuilder();
-      const seat = await w.foundingSeat({ signingSecret: '1'.repeat(64), blinding: '2'.repeat(64) });
-      return w.accountDeploy({ foundingLeaf: seat.seat, label: ${JSON.stringify(label)}, foundingKey: ${JSON.stringify(key)} });
+      return w.accountDeploy({ foundingLeaf: '7c'.repeat(32), label: ${JSON.stringify(label)}, foundingKey: ${JSON.stringify(key)} });
     })()`) as typeof built;
     const request = {
       schema: 'midnight-identity/disclosure-request/v1', kind: 'creation',

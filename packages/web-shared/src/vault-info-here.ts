@@ -32,7 +32,7 @@ import {
 } from '../../../src/midnight/vault-info-record.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import { mayFile } from '../../../src/midnight/seat-directory.js';
-import { FilingNotBelieved, HttpCompanyRecordStore, pageWireSend, type FreshJudge } from './http-sealed-pool-store.js';
+import { FilingNotBelieved, HttpCompanyRecordStore, pageWireSend, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
 import { seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
 import type { RecordsEntered } from './record-entered-here.js';
 
@@ -189,13 +189,15 @@ const sameInfo = (rec: SealedCompanyRecord, keys: KeysHeld, info: VaultInfo): bo
 };
 
 /**
- * The company's records as a page reads and files a vault's name: through the
- * one check (`judge`), signed with this seat's filing key.
+ * The company's records as a device reads and files a vault's name: through
+ * the one check (`judge`), signed with this seat's filing key, sent through
+ * `send` (this page's own requests unless the caller gives another way). Given
+ * no filing key (null), as on a page that holds no seat secret, it only reads.
  */
 export const vaultInfoRecordsFor = (
-  accountId: string, signingSecret: Hex, judge: FreshJudge, signedInAs: () => string | null,
+  accountId: string, signingSecret: Hex | null, judge: FreshJudge, signedInAs: () => string | null,
+  send: WireSend = pageWireSend(signedInAs),
 ): VaultInfoRecords => {
-  const send = pageWireSend(signedInAs);
   const store = new HttpCompanyRecordStore(accountId, send, signingSecret, judge);
   return {
     get: (kind, id) => store.get(kind, id),

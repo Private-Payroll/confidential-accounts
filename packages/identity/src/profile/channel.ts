@@ -5,10 +5,12 @@ import type { CreationSignature } from './creation-sign.js';
 import { PROGRESS_SCHEMA, parseAsk } from './request.js';
 import type { Ask, RequestError } from './request.js';
 import type { DisclosureResponse } from './disclosure.js';
-import type { KeyringRelease, UnlockRelease } from './unlock.js';
+import type { KeyringRelease, KeysRead, SealedKeyring, UnlockRelease } from './unlock.js';
 import type { SealedAcceptance } from './inbox.js';
 import type { JoinCode } from './join-code.js';
 import type { AddressesAndBalances } from './addresses-and-balances.js';
+import { countFrom1, readActCall, readActKeep, readActRelay } from './act-channel.js';
+export { readOutcome } from './act-channel.js';
 
 /**
  * HOW A REQUEST GETS IN, AND HOW THE ANSWER GETS OUT.
@@ -48,7 +50,11 @@ import type { AddressesAndBalances } from './addresses-and-balances.js';
  * and this file learned nothing about kinds: it still filters on one schema and
  * still hands `parseAsk` the browser's origin and the untouched message. **Which
  * kind it is, is the parser's answer and not the channel's** — a channel that
- * branched on kind would be a second place to keep in step with the first.
+ * branched on kind would be a second place to keep in step with the first. The
+ * one kind it does act on, once parsed, is `act`: an action hands the page its
+ * transactions, and the saved keys it sealed again, one at a time over this
+ * channel and hears back what the page did with each, so the channel carries
+ * more than one message for it.
  */
 
 export const READY_PING = 'midnight-identity/wallet-ready/v1';
@@ -64,7 +70,12 @@ export const READY_PING = 'midnight-identity/wallet-ready/v1';
  *
  * **ONLY ON AN EVENT, NEVER FROM A CLOCK.** A message sent on a timer keeps
  * arriving after the read or the proof it describes has died, and a page that
- * restarts its wait on each one would wait for ever on a dead wallet.
+ * restarts its wait on each one would wait for ever on a dead wallet. The one
+ * exception is an action (`act`), which says which step it is on, as `step` of
+ * `steps`, and says it again on a clock while a step runs: an action keeps its
+ * own deadline and stops there whatever its steps are doing, and the page stops
+ * waiting at the deadline it wrote into the ask, so a dead step is waited for
+ * no longer than the action was ever allowed to take.
  *
  * **ONLY TO A PAGE THAT SAID IT KNOWS THIS MESSAGE** - `hearsProgress` on the
  * ask. A page that does not know it takes anything else from the wallet as the
@@ -77,6 +88,180 @@ export type ProgressStage = (typeof PROGRESS_STAGES)[number];
 export interface WalletProgress {
   readonly schema: typeof PROGRESS_SCHEMA;
   readonly stage: ProgressStage;
+  /** On an action only: the step running now, counted from 1, and how many steps the action has. */
+  readonly step?: number;
+  readonly steps?: number;
+}
+
+/**
+ * **AN ACTION'S OWN MESSAGES, BESIDES PROGRESS.** While an action runs, the
+ * wallet hands the page each transaction it built (`ACT_RELAY_SCHEMA`), one
+ * message each, numbered from 1; the page answers each with
+ * `ACT_RELAYED_SCHEMA`, saying whether it handed it to the service or refused
+ * to. **That answer means "handed over", never "on the chain"**: a step that
+ * needs to know what landed reads the chain itself. The action ends with one
+ * `ACT_ENDED_SCHEMA` message, done or stopped, which is its one terminal answer.
+ *
+ * **AN ACTION THAT CHANGES THE PERSON'S SAVED KEYS HANDS THEM BACK SEALED**
+ * (`ACT_KEEP_SCHEMA`), numbered from 1 apart from transactions, with the
+ * service's version they are to be written over; the page answers each with
+ * `ACT_KEPT_SCHEMA`, `kept` with the version the service now holds only once
+ * the service has taken the write, or `refused`. They go in turn with the
+ * transactions, so saved keys are kept before a transaction that needs them is
+ * handed over.
+ */
+export const ACT_RELAY_SCHEMA = 'midnight-identity/act-relay/v1';
+export const ACT_RELAYED_SCHEMA = 'midnight-identity/act-relayed/v1';
+export const ACT_KEEP_SCHEMA = 'midnight-identity/act-keep/v1';
+export const ACT_KEPT_SCHEMA = 'midnight-identity/act-kept/v1';
+export const ACT_ENDED_SCHEMA = 'midnight-identity/act-ended/v1';
+export const ACT_CALL_SCHEMA = 'midnight-identity/act-call/v1';
+export const ACT_CALLED_SCHEMA = 'midnight-identity/act-called/v1';
+
+/** The most steps one action may have, and the most transactions it may hand over; a wallet stops at either. */
+export const MOST_ACT_STEPS = 64;
+export const MOST_ACT_RELAYS = 256;
+
+/** The largest transaction an action hands over, in base64 characters. */
+export const MOST_ACT_TRANSACTION = 1_000_000;
+
+/** The most service calls one action may ask the page to make: its reads are many, polling the records as the chain moves. */
+export const MOST_ACT_CALLS = 4_096;
+
+/** The longest body one call may carry, in characters: a filing with a transaction inside it. */
+export const MOST_ACT_CALL_BODY = 4_000_000;
+
+/** Where an action is: the step running, counted from 1, of how many. */
+export interface StepAt {
+  readonly step: number;
+  readonly steps: number;
+}
+
+/**
+ * One built transaction, handed to the page to send. `n` counts the transactions of this action from 1. `what`
+ * names what it is for, from the action's own list (`act-intents.ts`), so the page knows where to send it; `also`
+ * is a second transaction the service takes in the same request (an account's deploy and its signed second step).
+ */
+export interface ActRelay {
+  readonly schema: typeof ACT_RELAY_SCHEMA;
+  readonly nonce: string;
+  readonly n: number;
+  readonly step: number;
+  readonly steps: number;
+  readonly transaction: string;
+  readonly what?: string;
+  readonly also?: string;
+}
+
+/** What one relay is for, and the second transaction sent with it, if any. */
+export interface RelayLabel {
+  readonly what: string;
+  readonly also?: string;
+}
+
+/** Saved keys an action sealed again, for the page to write over the version given. */
+/**
+ * One call to the service the wallet asks the page to make for an action:
+ * numbered on their own from 1, a method, a path under `/api/`, and for a
+ * write the JSON text it carries. The page makes it only when the action's own
+ * route list names it, and answers with what the service said, which the wallet
+ * takes as the page's word.
+ */
+export interface ActCall {
+  readonly schema: typeof ACT_CALL_SCHEMA;
+  readonly nonce: string;
+  readonly n: number;
+  readonly step: number;
+  readonly steps: number;
+  readonly method: 'GET' | 'PUT' | 'POST';
+  readonly path: string;
+  readonly body?: string;
+}
+
+/**
+ * What became of a call: the service's status and body as the page reports
+ * them; `refused` when the page would not make it; `unanswered` when the action
+ * ended first; `gone` when the page could not be handed it.
+ */
+export type CalledOver = { readonly of: 'answered'; readonly status: number; readonly body: unknown } | 'refused' | 'unanswered' | 'gone';
+
+export interface ActKeep {
+  readonly schema: typeof ACT_KEEP_SCHEMA;
+  readonly nonce: string;
+  readonly n: number;
+  readonly step: number;
+  readonly steps: number;
+  readonly sealed: SealedKeyring;
+  readonly ifVersion: number;
+}
+
+/**
+ * What became of saved keys a channel was asked to hand back: kept, with the service's version now; the page's
+ * refusal; `unanswered` when the action ended before the page said; `gone` when they were never handed over.
+ */
+export type KeptOver = { readonly of: 'kept'; readonly version: number } | 'refused' | 'unanswered' | 'gone';
+
+/** What the page did with one transaction: handed it to the service, or refused to. Never whether it landed. */
+export type Relayed = 'relayed' | 'refused';
+
+/**
+ * What became of one transaction a channel was asked to hand over: the page's answer; `unanswered` when it was
+ * handed to the page and the action ended before the page said; `gone` when it was never handed over.
+ */
+export type HandedOver = Relayed | 'unanswered' | 'gone';
+
+/**
+ * WHY AN ACTION STOPPED BEFORE ITS LAST STEP, IN A CLOSED LIST.
+ *
+ *   - `stopped` - the person pressed Stop.
+ *   - `relay-refused` - the page said it would not send a transaction.
+ *   - `no-relay-answer` - the page did not say what it did with one in time.
+ *   - `out-of-time` - the action reached its own deadline.
+ *   - `too-many` - the action would have had more steps or transactions than any action may.
+ *   - `check-failed` - what this wallet checked after the passkey did not hold, so it built nothing.
+ *   - `step-failed` - a step could not be built.
+ *   - `keys-did-not-open` - the saved keys the page handed over did not open with this wallet's key for the person.
+ *   - `older-keys` - the saved keys the page handed over are an older copy than ones this wallet has opened.
+ *   - `keep-refused` - the page said the service did not keep the saved keys this wallet sealed again.
+ *   - `no-keep-answer` - the page did not say in time whether they were kept.
+ *   - `call-refused` - the page would not make a call to the service the action needed.
+ *   - `no-call-answer` - the page did not say in time what the service answered to one.
+ */
+export const ACT_STOPS = [
+  'stopped', 'relay-refused', 'no-relay-answer', 'out-of-time', 'too-many', 'check-failed', 'step-failed',
+  'keys-did-not-open', 'older-keys', 'keep-refused', 'no-keep-answer', 'call-refused', 'no-call-answer',
+] as const;
+export type ActStop = (typeof ACT_STOPS)[number];
+
+/**
+ * **HOW AN ACTION ENDED: ITS ONE TERMINAL ANSWER.** `step` is the step it
+ * ended at: on `done` the last; on `stopped` the first step that did not
+ * finish, which is where it can be taken up again. `relayed` is how many
+ * transactions the page said it handed over; `unconfirmed` is how many it was
+ * handed and refused or did not answer: the page holds those and may still
+ * send them, so whether they landed is read from the chain, never from these
+ * counts. `outcome`, when the action's entry names one, carries only the
+ * public facts it lists (a vault's address, a count, a short code), on either
+ * ending, so the page can say where the action got to.
+ */
+export interface ActEnded {
+  readonly schema: typeof ACT_ENDED_SCHEMA;
+  readonly nonce: string;
+  readonly intent: string;
+  readonly ended: 'done' | 'stopped';
+  readonly step: number;
+  readonly steps: number;
+  readonly relayed: number;
+  readonly unconfirmed: number;
+  readonly why?: ActStop;
+  readonly outcome?: Readonly<Record<string, string | number>>;
+  /**
+   * When the action opened the person's saved keys: what they hold that is not secret, as the action left them
+   * (`KeysRead`: the seats' public halves, the metadata, this wallet's public name, and no copy). Its one viewing key
+   * at most is the action's own company's, given only when the ask handed that company's served keys in and the key
+   * makes its inbox public key.
+   */
+  readonly keys?: KeysRead;
 }
 
 export type ChannelState =
@@ -190,7 +375,7 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  */
 export type Answer =
   | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures
-  | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode | AddressesAndBalances;
+  | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode | AddressesAndBalances | ActEnded;
 
 /**
  * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**
@@ -246,6 +431,38 @@ export interface Channel {
   /** Whether the one terminal message has gone. */
   over(): boolean;
   stop(): void;
+}
+
+/**
+ * **THE SAME CHANNEL, FOR AN ACTION THAT RUNS FOR MINUTES ON ONE WINDOW.**
+ * Besides the one terminal answer, it says which step is running and hands the
+ * page each built transaction, any saved keys it sealed again and each call to
+ * the service it needs made, then waits for the page to say what it did with
+ * each. Every one of these is sent only to the page that asked, only for an
+ * `act` ask, and only until the action has ended.
+ */
+export interface ActingChannel extends Channel {
+  /** Say which step is running; said again while it runs, so the page keeps waiting. */
+  step(at: StepAt): boolean;
+  /**
+   * Hand one built transaction to the page. Resolves with what the page said it
+   * did with it; `unanswered` if the action ended first; `gone` if the page could
+   * not be handed it.
+   */
+  relay(at: StepAt, transaction: string, label?: RelayLabel): Promise<HandedOver>;
+  /**
+   * Hand the person's saved keys, sealed again, to the page to keep over the
+   * service's version given. Resolves with the version the page says the
+   * service now holds, or the page's refusal; `unanswered` if the action ended
+   * first; `gone` if the page could not be handed them.
+   */
+  keep(at: StepAt, sealed: SealedKeyring, ifVersion: number): Promise<KeptOver>;
+  /**
+   * Ask the page to make one call to the service. Resolves with the status and
+   * body the page reports, or the page's refusal; `unanswered` if the action
+   * ended first; `gone` if the page could not be asked.
+   */
+  call(at: StepAt, method: ActCall['method'], path: string, body?: string): Promise<CalledOver>;
 }
 
 const REFUSED_SCHEMA = 'midnight-identity/disclosure-refused/v1';
@@ -318,7 +535,10 @@ const answeredIn = (view: ChannelWindow): Set<string> => {
  *
  * **ONE REQUEST, AND THE SECOND IS IGNORED.** A page that can send a second
  * request while the first is on screen can change what the person is looking
- * at while they read it, so a second request on this channel is ignored.
+ * at while they read it, so a second request on this channel is ignored. After
+ * an `act` ask, the only thing still heard is the page saying what it did with
+ * a transaction or saved keys this channel handed it, from the same window and
+ * origin.
  */
 export function listen(
   view: ChannelWindow,
@@ -331,13 +551,21 @@ export function listen(
    * nobody and shows `NoPageToAnswer`.
    */
   embedder: string | null = null,
-): Channel {
+): ActingChannel {
   let settled = false;
   let source: MessageEventSource | null = null;
   let origin: string | null = null;
   /* Set once, from the parsed request; a request that did not parse hears nothing but its refusal. */
   let hearsProgress = false;
   let ended = false;
+  /* Set once, from the parsed request: only an `act` ask hands transactions over and hears what became of them. */
+  let acting: string | null = null;
+  let relays = 0;
+  const waiting = new Map<number, (relayed: HandedOver) => void>();
+  let keeps = 0;
+  const waitingKeeps = new Map<number, (kept: KeptOver) => void>();
+  let calls = 0;
+  const waitingCalls = new Map<number, (called: CalledOver) => void>();
   /* Which ask this channel is answering: the observed origin and the ask's own nonce. */
   let ask: string | null = null;
   const framing = framingOf(view, embedder);
@@ -355,12 +583,59 @@ export function listen(
     if (!send(message)) return false;
     ended = true;
     if (ask !== null) answeredIn(view).add(ask);
+    for (const [, resolve] of waiting) resolve('unanswered');
+    waiting.clear();
+    for (const [, resolve] of waitingKeeps) resolve('unanswered');
+    waitingKeeps.clear();
+    for (const [, resolve] of waitingCalls) resolve('unanswered');
+    waitingCalls.clear();
     return true;
   };
 
+  /*
+   * WHAT THE PAGE SAID IT DID WITH A TRANSACTION OR WITH SAVED KEYS. Heard
+   * only on an `act` ask, only from the window and origin that asked, only for
+   * this ask's nonce and a transaction or saved keys still waiting for their
+   * answer; anything else is ignored.
+   */
+  const heardAfterTheAsk = (event: MessageEvent): void => {
+    if (acting === null || ended || event.source !== source || event.origin !== origin) return;
+    const body = (event.data ?? null) as Record<string, unknown> | null;
+    if (body === null || typeof body !== 'object' || body['nonce'] !== acting) return;
+    if (body['schema'] === ACT_KEPT_SCHEMA) {
+      const k = body['n'];
+      const kept = typeof k === 'number' ? waitingKeeps.get(k) : undefined;
+      if (kept === undefined) return;
+      waitingKeeps.delete(k as number);
+      const version = body['version'];
+      /* Kept only with the version the service now holds: a `kept` without one is not taken as kept. */
+      kept(body['outcome'] === 'kept' && typeof version === 'number' && Number.isSafeInteger(version) && version >= 0
+        ? Object.freeze({ of: 'kept' as const, version })
+        : 'refused');
+      return;
+    }
+    if (body['schema'] === ACT_CALLED_SCHEMA) {
+      const c = body['n'];
+      const called = typeof c === 'number' ? waitingCalls.get(c) : undefined;
+      if (called === undefined) return;
+      waitingCalls.delete(c as number);
+      const status = body['status'];
+      called(body['outcome'] === 'answered' && typeof status === 'number' && Number.isSafeInteger(status) && status >= 100 && status <= 599
+        ? Object.freeze({ of: 'answered' as const, status, body: body['body'] ?? null })
+        : 'refused');
+      return;
+    }
+    if (body['schema'] !== ACT_RELAYED_SCHEMA) return;
+    const n = body['n'];
+    const resolve = typeof n === 'number' ? waiting.get(n) : undefined;
+    if (resolve === undefined) return;
+    waiting.delete(n as number);
+    resolve(body['outcome'] === 'relayed' ? 'relayed' : 'refused');
+  };
+
   const handler = (event: MessageEvent): void => {
-    if (settled) return;
     if (!askerIsAllowed(view, framing, event, embedder)) return;
+    if (settled) { heardAfterTheAsk(event); return; }
     const body = (event.data ?? null) as { schema?: unknown } | null;
     if (body === null || typeof body !== 'object') return;
     if (body.schema !== 'midnight-identity/disclosure-request/v1') return;
@@ -398,6 +673,7 @@ export function listen(
       return;
     }
     hearsProgress = request.hearsProgress === true;
+    if (request.kind === 'act') acting = request.nonce;
     onState({ of: 'request', request });
   };
 
@@ -436,5 +712,45 @@ export function listen(
     /* Over once this channel has ended, or once another channel on this window has answered the same ask. */
     over: () => ended || (ask !== null && answeredIn(view).has(ask)),
     stop: () => view.removeEventListener('message', handler),
+    step: (at: StepAt) => {
+      if (ended || acting === null || !countFrom1(at.steps, MOST_ACT_STEPS) || !countFrom1(at.step, at.steps)) return false;
+      return send({ schema: PROGRESS_SCHEMA, stage: 'proving', step: at.step, steps: at.steps });
+    },
+    relay: (at: StepAt, transaction: string, label?: RelayLabel): Promise<HandedOver> => {
+      if (ended || acting === null || relays >= MOST_ACT_RELAYS) return Promise.resolve('gone');
+      const n = relays + 1;
+      const message = {
+        schema: ACT_RELAY_SCHEMA, nonce: acting, n, step: at.step, steps: at.steps, transaction,
+        ...(label === undefined ? {} : { what: label.what, ...(label.also === undefined ? {} : { also: label.also }) }),
+      };
+      if (readActRelay(message, acting) === null) return Promise.resolve('gone');
+      return new Promise<HandedOver>((resolve) => {
+        waiting.set(n, resolve);
+        relays = n;
+        if (!send(message)) { waiting.delete(n); resolve('gone'); }
+      });
+    },
+    keep: (at: StepAt, sealed: SealedKeyring, ifVersion: number): Promise<KeptOver> => {
+      if (ended || acting === null || keeps >= MOST_ACT_RELAYS) return Promise.resolve('gone');
+      const n = keeps + 1;
+      const message = { schema: ACT_KEEP_SCHEMA, nonce: acting, n, step: at.step, steps: at.steps, sealed, ifVersion };
+      if (readActKeep(message, acting) === null) return Promise.resolve('gone');
+      return new Promise<KeptOver>((resolve) => {
+        waitingKeeps.set(n, resolve);
+        keeps = n;
+        if (!send(message)) { waitingKeeps.delete(n); resolve('gone'); }
+      });
+    },
+    call: (at: StepAt, method: ActCall['method'], path: string, body?: string): Promise<CalledOver> => {
+      if (ended || acting === null || calls >= MOST_ACT_CALLS) return Promise.resolve('gone');
+      const n = calls + 1;
+      const message = { schema: ACT_CALL_SCHEMA, nonce: acting, n, step: at.step, steps: at.steps, method, path, ...(body === undefined ? {} : { body }) };
+      if (readActCall(message, acting) === null) return Promise.resolve('gone');
+      return new Promise<CalledOver>((resolve) => {
+        waitingCalls.set(n, resolve);
+        calls = n;
+        if (!send(message)) { waitingCalls.delete(n); resolve('gone'); }
+      });
+    },
   });
 }

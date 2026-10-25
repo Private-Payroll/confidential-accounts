@@ -38,8 +38,11 @@ export { answerDigestOf };
 /** What finding this device's company key needs. */
 interface CompanyKeyDoors {
   readonly accountId: string;
-  /** This device's filing key for the company: how its own seat is found in the directory. */
-  readonly material: { readonly signingSecret: string };
+  /**
+   * This device's filing key for the company, or only its public half: how its own seat is found in the directory. A
+   * read of the company's keys needs the public half alone; a rotation signs, so its doors carry the secret.
+   */
+  readonly material: { readonly signingSecret: string } | { readonly signingPublicKey: string };
   /**
    * The company's directory as this device believes it, read afresh. Whether a rotation's payout seed repeats one of
    * the company's first state is held where every seed is read (`seedsOfEveryEpoch`).
@@ -158,8 +161,8 @@ const anchoredRotationsIn = (
 };
 
 /**
- * What this tab's last try to change each company's key answered, so the pause says why it still holds: a try made on
- * the way into the company leaves no other trace on the page.
+ * What this device's last try to change each company's key answered, so the pause says why it still holds: a try made
+ * at the start of a seat action in the wallet leaves no other trace there.
  */
 const triedHere = new Map<string, KeyRotated>();
 
@@ -175,13 +178,13 @@ const pauseIn = (here: DirectoryHere, lastRotated: number, accountId: string): s
   const tried = triedHere.get(accountId);
   const why = tried !== undefined && 'why' in tried ? tried.why : null;
   return 'the company\'s key is being changed: a signer\'s removal is carried out on the chain, and the key they held is not yet '
-    + 'replaced. A signer who stays opens the company, which changes it'
+    + 'replaced. The next action a signer who stays makes in their wallet changes it first'
     + (why === null ? '' : `. This device tried to change it and could not yet: ${why}`);
 };
 
-/** This device's own seat in the directory, by its filing key. */
-const ownSeatIn = (here: DirectoryHere, signingSecret: string): DirectorySeat | undefined => {
-  const mine = signingPublicKeyOf(signingSecret as Hex).toLowerCase();
+/** This device's own seat in the directory, by its filing key or that key's public half. */
+const ownSeatIn = (here: DirectoryHere, material: CompanyKeyDoors['material']): DirectorySeat | undefined => {
+  const mine = ('signingPublicKey' in material ? material.signingPublicKey : signingPublicKeyOf(material.signingSecret as Hex)).toLowerCase();
   return here.dir.seats.find((x) => x.signingKey.toLowerCase() === mine);
 };
 
@@ -202,7 +205,7 @@ const ownSeatIn = (here: DirectoryHere, signingSecret: string): DirectorySeat | 
 export async function companyKeyHere(doors: CompanyKeyDoors, released = releasedOnce(doors)): Promise<CompanyKeyHere> {
   const here = await doors.records.directory();
   const rotations = anchoredRotationsIn(here, (here.dir.rotations ?? []).length === 0 ? [] : await doors.filings());
-  const own = ownSeatIn(here, doors.material.signingSecret);
+  const own = ownSeatIn(here, doors.material);
   const newest = rotations.length === 0 ? 0 : rotations[rotations.length - 1]!.rotation.epoch;
   const lastRotated = rotations.length === 0 ? 0 : rotations[rotations.length - 1]!.rotation.version;
   const keys = new Map<number, Hex>();
@@ -308,6 +311,8 @@ export async function companyKeyHere(doors: CompanyKeyDoors, released = released
 
 /** What changing the company's key needs, beyond finding it. */
 export interface RotationDoors extends CompanyKeyDoors {
+  /** The seat's filing key itself: a rotation is signed with it. */
+  readonly material: { readonly signingSecret: string };
   /** Files the signed change at the version it names and anchors it at once (`directoryChangeFiledHere`). */
   readonly file: (change: RotateChange, signedFor: number) => Promise<{ readonly version: number; readonly anchor: object }>;
   /** Every waiting seat request and payee handover the service serves, sealed to the company's inbox. */
@@ -394,7 +399,7 @@ export async function rotateTheCompanyKeyHere(doors: RotationDoors, o: { readonl
 
 const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }): Promise<KeyRotated> => {
   const here = await doors.records.directory();
-  const seat = ownSeatIn(here, doors.material.signingSecret);
+  const seat = ownSeatIn(here, doors.material);
   if (seat === undefined) return { state: 'not-this-seat', why: 'this device\'s seat has no entry in the company\'s directory' };
   if (seat.retired !== null) return { state: 'not-this-seat', why: 'this seat is retired from the company' };
   if (typeof o.leaf === 'string' && o.leaf.toLowerCase() === seat.seat) return { state: 'not-this-seat', why: 'this seat is the one leaving' };

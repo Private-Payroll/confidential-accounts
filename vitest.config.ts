@@ -156,9 +156,9 @@ export default defineConfig({
      */
     setupFiles: ['./src/test-setup.ts', './packages/identity/src/test-setup.ts'],
     /*
-     * **TWO REFUSALS BEFORE ANY TEST RUNS: A COMPILED CONTRACT OLDER THAN ITS
-     * SOURCE, AND A CONTRACT LEDGER WITH MORE TOP-LEVEL FIELDS THAN ITS LAYOUT
-     * ALLOWS.**
+     * **THREE REFUSALS BEFORE ANY TEST RUNS: A COMPILED CONTRACT OLDER THAN ITS
+     * SOURCE, A CONTRACT LEDGER WITH MORE TOP-LEVEL FIELDS THAN ITS LAYOUT
+     * ALLOWS, AND AN IDENTITY LIBRARY OLDER THAN ITS SOURCE.**
      *
      * `globalSetup` and not `setupFiles`. `setupFiles` above runs once per test
      * file, inside each worker, so a refusal there would be one failure per
@@ -171,7 +171,10 @@ export default defineConfig({
      * top-level fields: sixteen compiles and deploys, but the state nests and
      * every field's path moves, field 0 included, with no error from the
      * compiler. It is here rather than in a test file because it is a property
-     * of the built artifact. They are two entries rather than one module that
+     * of the built artifact. `identity-lib-fresh` refuses when
+     * `packages/identity/lib`, which tests outside the wallet import, is older
+     * than its source, so a run after a change there without a rebuild does not
+     * test the code from before it. They are two entries rather than one module that
      * calls both, so each one's test can import its wiring module and call its
      * default export against a fixture, and neither can be disarmed with the
      * other. `scripts/artifact-freshness.test.ts` and
@@ -189,6 +192,7 @@ export default defineConfig({
     globalSetup: [
       './scripts/artifact-freshness.globalSetup.ts',
       './scripts/ledger-limit.globalSetup.ts',
+      './scripts/identity-lib-fresh.globalSetup.ts',
     ],
     /*
      * **THE SUITE'S OWN REFUSALS DO NOT GO IN THE FILE A PERSON READS AFTER

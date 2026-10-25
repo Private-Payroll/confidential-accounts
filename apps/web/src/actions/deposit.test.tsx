@@ -291,22 +291,18 @@ describe('what the panel says before the press', () => {
     expect(q(pub.container, '[data-paid-from-public]')!.textContent).toBe("A public token is paid from this account's public address, which this page does not show.");
   });
 
-  /* RED WHEN: the payment window is not named before the press, the company-records window is not named first when this tab holds no company key, or it is named when the key is held or the deposit is public. */
-  it('names every wallet window before it opens, the company records first only when the key is not held', async () => {
+  /* RED WHEN: the one window a private deposit opens is not named before the press, with the records it signs, or a second window is named for it in a tab that holds no company key. */
+  it('names the one wallet window before it opens, whether or not this tab holds the company key', async () => {
+    const PRIVATE_WINDOW = "Your wallet opens to make this deposit from this account: it lists the vault's records it signs for it, and this service pays the network fee. In your wallet, press Approve.";
     dp.keyHeld = false;
     const view = await atTheAmount('private');
     const named = all(view.container, '[data-wallet-window-named]').filter((n) => !n.closest('[data-account-tokens-ask]'));
-    expect(named.map((n) => n.textContent)).toEqual([
-      "Your wallet opens first, to open your company's records on this device. Nothing is paid. In your wallet, press Sign my records key.",
-      'Your wallet opens to pay this deposit from this account. This service pays the network fee. In your wallet, press Pay into the vault.',
-    ]);
+    expect(named.map((n) => n.textContent)).toEqual([PRIVATE_WINDOW]);
     expect(dp.put).toHaveLength(0);
     cleanup();
     dp.keyHeld = true;
     const held = await atTheAmount('private');
-    expect(all(held.container, '[data-deposit-amount] [data-wallet-window-named]').map((n) => n.textContent)).toEqual([
-      'Your wallet opens to pay this deposit from this account. This service pays the network fee. In your wallet, press Pay into the vault.',
-    ]);
+    expect(all(held.container, '[data-deposit-amount] [data-wallet-window-named]').map((n) => n.textContent)).toEqual([PRIVATE_WINDOW]);
     cleanup();
     dp.keyHeld = false;
     const pub = await atTheAmount('public');
@@ -336,20 +332,18 @@ describe('the steps', () => {
     dp.now = running(1);
     const view = draw();
     const at = () => [q(view.container, '[data-step-of]')!.textContent, q(view.container, '[data-step-name]')!.textContent];
-    expect(at()).toEqual(['Step 1 of 6', 'Checking the vault']);
+    expect(at()).toEqual(['Step 1 of 2', 'Paying in your wallet']);
     await act(async () => { dp.set(running(2)); });
-    expect(at()).toEqual(['Step 2 of 6', 'Choosing the money to put in']);
-    await act(async () => { dp.set(running(4)); });
-    expect(at()).toEqual(['Step 4 of 6', 'Paying in your wallet']);
-    await act(async () => { dp.set(running(6)); });
-    expect(at()).toEqual(['Step 6 of 6', 'Waiting for the network to show the deposit']);
+    expect(at()).toEqual(['Step 2 of 2', 'Proving the deposit on this device']);
     await act(async () => { dp.set(running(2, 'public')); });
     expect(at()).toEqual(['Step 2 of 5', 'Proving the deposit on this device']);
+    await act(async () => { dp.set(running(4, 'public')); });
+    expect(at()).toEqual(['Step 4 of 5', 'Sending the deposit to the network']);
     await act(async () => { dp.set(running(1, 'private', false)); });
-    expect(at()).toEqual(['Step 1 of 7', "Opening your company's records"]);
-    expect(all(view.container, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(Array(7).fill('false'));
-    await act(async () => { dp.set(running(3, 'private', false)); });
-    expect(all(view.container, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['true', 'true', ...Array(5).fill('false')]);
+    expect(at()).toEqual(['Step 1 of 2', 'Paying in your wallet']);
+    expect(all(view.container, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['false', 'false']);
+    await act(async () => { dp.set(running(2, 'private', false)); });
+    expect(all(view.container, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['true', 'false']);
   });
 
   /* RED WHEN: a step with no measured usual time says how long it usually takes (or that it depends on other signers), the running time is missing, or a step with one does not say it. */
@@ -359,40 +353,47 @@ describe('the steps', () => {
     expect(q(view.container, '[data-elapsed]')!.textContent).toBe('Running for 0:00.');
     expect(q(view.container, '[data-usual]')).toBeNull();
     expect(view.container.textContent).not.toContain(EN['stageProgress.noUsual']);
-    await act(async () => { dp.set(running(3)); });
-    expect(q(view.container, '[data-usual]')!.textContent).toBe('This usually takes about 2 minutes.');
-    await act(async () => { dp.set(running(4)); });
+    await act(async () => { dp.set(running(2)); });
+    expect(q(view.container, '[data-usual]')).toBeNull();
+    await act(async () => { dp.set(running(2, 'public')); });
+    expect(q(view.container, '[data-usual]')!.textContent).toBe('This usually takes about 2 seconds.');
+    await act(async () => { dp.set(running(3, 'public')); });
     expect(q(view.container, '[data-usual]')).toBeNull();
   });
 
-  /* RED WHEN: while the deposit is being proved the panel does not name the wallet window that opens next, the amount and token it pays, the press, and who pays the fee. */
+  /* RED WHEN: while a public deposit is being proved the panel does not name the wallet window that opens next, the amount and token it pays, the press, and who pays the fee; or a private deposit's panel names a window still to come once it was approved. */
   it('names the payment window while proving, with what it pays and what to press', async () => {
-    dp.now = running(3);
+    dp.now = running(1);
+    const priv = draw();
+    expect(q(priv.container, '[data-wallet-open]')!.textContent).toBe('Your wallet is open. Press Approve there to pay.');
+    await act(async () => { dp.set(running(2)); });
+    expect(q(priv.container, '[data-next-window]')).toBeNull();
+    expect(q(priv.container, '[data-wallet-makes]')!.textContent).toBe(EN['deposit.walletMakes']);
+    cleanup();
+    dp.now = { ...running(2, 'public'), amount: privateAmountOf(1_250_000n) };
     const view = draw();
-    expect(q(view.container, '[data-next-window]')!.textContent).toBe('Your wallet opens next to pay 1.25 PRV. You press Pay into the vault there. This service pays the network fee.');
+    expect(q(view.container, '[data-next-window]')!.textContent).toBe('Your wallet opens next to pay 1.25 PRV. You press Pay publicly into the vault there. This service pays the network fee.');
     /* One phrase that flows as text: the sentence's own text and the amount are the paragraph's direct content, not items of a row, so its full stop stays on the amount's line. */
     const next = q(view.container, '[data-next-window]')!;
     expect(next.className).not.toMatch(/(^|\s)(flex|inline-flex|grid)(\s|$)/u);
     const parts = [...next.childNodes].map((n) => (n.nodeType === Node.TEXT_NODE ? 'text' : (n as HTMLElement).dataset.slot)).filter((x, i, xs) => x !== 'text' || xs[i - 1] !== 'text');
     expect(parts).toEqual(['text', 'amount', 'text']);
     expect(next.lastChild!.textContent!.startsWith('.')).toBe(true);
-    await act(async () => { dp.set(running(4)); });
+    await act(async () => { dp.set(running(3, 'public')); });
     expect(q(view.container, '[data-next-window]')).toBeNull();
-    expect(q(view.container, '[data-wallet-open]')!.textContent).toBe('Your wallet is open. Press Pay into the vault there to pay.');
-    await act(async () => { dp.set(running(2, 'public')); });
-    expect(q(view.container, '[data-next-window]')!.textContent).toContain('Pay publicly into the vault');
+    expect(q(view.container, '[data-wallet-open]')!.textContent).toBe('Your wallet is open. Press Pay publicly into the vault there to pay.');
   });
 
   /* RED WHEN: closing the panel and opening it again does not show the deposit that is running, or loses where it is up to, or shows the form while one runs. */
   it('shows the same deposit after the panel is closed and opened again', async () => {
-    dp.now = running(3);
+    dp.now = running(1);
     const first = draw();
-    expect(q(first.container, '[data-step-of]')!.textContent).toBe('Step 3 of 6');
+    expect(q(first.container, '[data-step-of]')!.textContent).toBe('Step 1 of 2');
     first.unmount();
     expect(dp.watchers.size).toBe(0);
-    await act(async () => { dp.set(running(5)); });
+    await act(async () => { dp.set(running(2)); });
     const second = draw();
-    expect(q(second.container, '[data-step-of]')!.textContent).toBe('Step 5 of 6');
+    expect(q(second.container, '[data-step-of]')!.textContent).toBe('Step 2 of 2');
     expect(q(second.container, '[data-deposit-methods]')).toBeNull();
     expect(putButton(second.container).disabled).toBe(true);
     expect(dp.started).toBe(0);
@@ -512,7 +513,7 @@ describe('how it ended', () => {
   it('names the wallet window before Check my last deposit opens it, in a tab that holds no company key, and checks on the next press', async () => {
     dp.keyHeld = false;
     dp.now = failed({ mayHaveBeenSent: true, reasons: ['x'] });
-    dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, forSupport: '' } satisfies LastDepositChecked;
+    dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null } satisfies LastDepositChecked;
     const view = draw();
     await click(q(view.container, '[data-action=check-last-deposit]'));
     expect(dp.checks).toHaveLength(0);
@@ -550,7 +551,7 @@ describe('how it ended', () => {
   /* RED WHEN: the failure of a deposit that may have been sent has no Check my last deposit, a second press runs a second check, or the answer is not shown on the panel. */
   it('checks the last deposit from a failed one, once for two presses, and shows the answer', async () => {
     dp.now = failed({ mayHaveBeenSent: true, reasons: ['x'] });
-    dp.checkAnswer = { of: 'checked', deposit: 'still-on-its-way', until: Date.UTC(2026, 9, 23, 12, 0), notYetSpendable: false, named: 0, unnamed: 0, forSupport: 'for support' } satisfies LastDepositChecked;
+    dp.checkAnswer = { of: 'checked', deposit: 'still-on-its-way', until: Date.UTC(2026, 9, 23, 12, 0), notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: 'for support', deposited: null, unshown: null } satisfies LastDepositChecked;
     const view = draw();
     await act(async () => { const b = q(view.container, '[data-action=check-last-deposit]')!; b.click(); b.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(dp.checks).toEqual([['u1', 'c-1', VAULT]]);
@@ -561,24 +562,28 @@ describe('how it ended', () => {
 
 describe('Check my last deposit, as the panel says it', () => {
   const checked = (over: Partial<Extract<LastDepositChecked, { of: 'checked' }>>): LastDepositChecked => ({
-    of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, forSupport: '', ...over,
+    of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '',
+    deposited: null, unshown: null, ...over,
   });
 
-  /* RED WHEN: the panel does not say that only deposits made privately from this browser are checked here and that a public deposit is checked in the wallet. */
+  /* RED WHEN: the panel does not say what the check reads (the newest private deposit filed for the vault, and one this browser kept from before) and that a public deposit is checked in the wallet. */
   it('says that a public deposit is checked in the wallet', () => {
     const view = draw(checked({}));
     expect(q(view.container, '[data-private-only]')!.textContent).toBe(
-      'This checks deposits made privately from this browser. A public deposit is checked in your wallet, not here.',
+      'This checks the newest private deposit filed for this vault, and one this browser kept from before your wallet made deposits. A public deposit is checked in your wallet, not here.',
     );
   });
 
   /* RED WHEN: any answer of the check is said as another, or an answer with money not yet usable, or deposits not yet matched, leaves that out. */
   it.each([
     ['none', 'This browser has no deposit into this vault waiting to be seen.'],
-    ['already-recorded', "Your last deposit from this browser is in the vault's record."],
+    ['already-recorded', "The deposit checked is already in the vault's record."],
     ['never-landed', 'Your last deposit from this browser never reached the vault, and now it never will. No money moved.'],
     ['recorded', 'Your last deposit from this browser has reached the vault and is now in its record.'],
     ['landed-not-recorded', 'Your last deposit from this browser is in the vault, and this page cannot yet read the transfer that brought it in. Check again in a minute.'],
+    ['landed-owed-its-record', "The deposit is in the vault, and not yet in its record. The vault's deposit journal names it, so it is not lost; a check here files nothing. Do not put the same money in again."],
+    ['journalled-not-seen', 'The newest deposit filed for this vault has not reached the vault yet. It may still arrive. Do not put the same money in again.'],
+    ['landed-and-since-spent', 'The deposit reached the vault, and the vault has since paid it out or combined it.'],
   ] as const)('says %s', (state, words) => {
     const view = draw(checked({ deposit: state }));
     expect(q(view.container, '[data-check-says]')!.textContent).toBe(words);
@@ -590,9 +595,25 @@ describe('Check my last deposit, as the panel says it', () => {
     expect(q(view.container, '[data-not-spendable]')!.textContent).toBe('It cannot be used for a payment yet.');
     expect(q(view.container, '[data-unnamed]')!.textContent).toBe('2 deposits in the vault are not yet matched to their transactions.');
     expect(q(view.container, '[data-details]')!.textContent).toBe('Details for support: Everything the check read.');
+    /* RED WHEN: an amount this check, which files nothing, could name and left for a signer's wallet is not said. */
+    expect(q(view.container, '[data-to-name]')).toBeNull();
+    cleanup();
+    const owed = draw(checked({ deposit: 'none', toName: 1 }));
+    expect(q(owed.container, '[data-to-name]')!.textContent).toBe("1 deposit in the vault can be used for payments once a signer's wallet next files this vault's records.");
     cleanup();
     const waiting = draw(checked({ deposit: 'still-on-its-way', until: Date.UTC(2026, 9, 23, 12, 0) }));
     expect(q(waiting.container, '[data-check-says]')!.textContent).toMatch(/^Your last deposit from this browser has not reached the vault yet\. If it has not arrived by .*2026.*, it never will and no money moved\. Do not put the same money in again\.$/u);
+  });
+
+  /* RED WHEN: a deposit the check judged is said without what it was, or a token the page does not list is shown with no reason. */
+  it('says what the deposit it checked was, or why its amount is not shown', () => {
+    const view = draw(checked({ deposit: 'already-recorded', deposited: privateAmountOf(1_500_000n) }));
+    expect(q(view.container, '[data-checked-amount]')!.textContent).toMatch(/^1\.5\s*PRV/u);
+    expect(q(view.container, '[data-checked-amount] [data-slot=amount][data-visibility=private]')).not.toBeNull();
+    cleanup();
+    const unlisted = draw(checked({ deposit: 'already-recorded', unshown: 'token-not-listed' }));
+    expect(q(unlisted.container, '[data-checked-amount]')).toBeNull();
+    expect(q(unlisted.container, '[data-checked-unshown]')!.textContent).toBe('1 amount is in a token this app does not know, so it is not shown.');
   });
 
   /* RED WHEN: a check the wallet or device refused is shown as a finding, without the refusal's words, or without a way back to the deposit. */
@@ -609,13 +630,15 @@ describe('the deposit steps and their words', () => {
   /* RED WHEN: a step the adapter lists has no words of its own on the panel. */
   it('has words for every step', async () => {
     const seen = new Set<string>();
-    dp.now = running(1, 'private', false);
+    dp.now = running(1, 'public');
     const view = draw();
-    for (let n = 1; n <= 7; n += 1) {
-      await act(async () => { dp.set(running(n, 'private', false)); });
-      const name = q(view.container, '[data-step-name]')!.textContent!;
-      expect(name.length).toBeGreaterThan(5);
-      seen.add(name);
+    for (const [kind, count] of [['public', 5], ['private', 2]] as const) {
+      for (let n = 1; n <= count; n += 1) {
+        await act(async () => { dp.set(running(n, kind)); });
+        const name = q(view.container, '[data-step-name]')!.textContent!;
+        expect(name.length).toBeGreaterThan(5);
+        seen.add(name);
+      }
     }
     expect(seen.size).toBe(Object.values(DEPOSIT_STEP).length);
   });

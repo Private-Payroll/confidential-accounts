@@ -301,8 +301,8 @@ export async function payslipAddressesFor(
 /**
  * **A LIST OF COMPANY LABELS, AND NOTHING ELSE, KEPT FOR ONE SIGNED-IN
  * PERSON.** The list that follows a person to every device is inside their own
- * saved keys (`keyring.ts`). This one holds, in this browser only, a label
- * that could not be saved there yet, until it can be. It is keyed by the
+ * saved keys (`keyring.ts`), which only their wallet changes. This one holds,
+ * in this browser only, a label that is not saved there. It is keyed by the
  * person, so somebody else signing in in this browser is never shown it.
  * Labels are public on the companies' accounts, and nothing here opens
  * anything. A list written when companies were named by their accounts'
@@ -325,42 +325,6 @@ export function rememberedCompanies(
   } catch {
     return [];
   }
-}
-
-/** Empties one person's list in this browser, once what it held has been saved with them. */
-export function forgetRememberedCompanies(
-  person: string, storage: Pick<Storage, 'removeItem'> | null = safeStorage(),
-): void {
-  try { storage?.removeItem(REMEMBERED + person); } catch { /* nothing to empty */ }
-}
-
-/**
- * **THE LIST AN OLDER PAYSLIPS PAGE KEPT IN THIS BROWSER, FOR NOBODY IN
- * PARTICULAR.** It is read once, into the saved keys of whoever opens theirs
- * here first, and then marked as taken. It is never emptied: what it holds is
- * left exactly as that page wrote it.
- */
-const OLDER_LIST = 'payslip-companies';
-const OLDER_LIST_TAKEN = 'payslip-companies-taken';
-
-/** What the older list holds, or nothing once it has been taken. */
-export function olderListNotYetTaken(
-  storage: Pick<Storage, 'getItem'> | null = safeStorage(),
-): string[] {
-  try {
-    if (storage === null || (storage.getItem(OLDER_LIST_TAKEN) ?? null) !== null) return [];
-    const raw = storage.getItem(OLDER_LIST);
-    return onlyCompanyLabels(raw ? JSON.parse(raw) : []);
-  } catch {
-    return [];
-  }
-}
-
-/** Marks the older list as taken, so it is read no more. The list itself is left alone. */
-export function markOlderListTaken(
-  storage: Pick<Storage, 'setItem'> | null = safeStorage(),
-): void {
-  try { storage?.setItem(OLDER_LIST_TAKEN, '1'); } catch { /* not marked, so it is read again at the next unlock here */ }
 }
 
 function safeStorage(): Storage | null {

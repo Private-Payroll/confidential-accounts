@@ -521,7 +521,7 @@ export function removalBoundaryRefusal(
 }
 
 /** What sealing the policies in force to the signers seated since needs of this device: its own filing key, and the key epoch a bare key names. */
-export type PolicyResealDoors = SpendingPolicyDoors & { readonly keyEpoch: number; readonly filingKey: string };
+type PolicyResealDoors = SpendingPolicyDoors & { readonly keyEpoch: number; readonly filingKey: string };
 
 /** What `sealPoliciesToNewSignersHere` did: the policies it sealed again, and each it could not, with why. */
 export interface PoliciesResealed {
@@ -537,8 +537,8 @@ export interface PoliciesResealed {
  * filed again as the record's next version, sealed to every seat this device
  * believes now and to no retired seat. The commitment, and so the vault's
  * period total, do not change, and no proposal is raised. A device that cannot
- * open the policy in force files nothing for it. Run on every way into the
- * company; a policy that fails is said and stops no other.
+ * open the policy in force files nothing for it. No seat action runs it yet;
+ * a policy that fails is said and stops no other.
  */
 export async function sealPoliciesToNewSignersHere(doors: PolicyResealDoors): Promise<PoliciesResealed> {
   const policies = policiesOf(doors.records);

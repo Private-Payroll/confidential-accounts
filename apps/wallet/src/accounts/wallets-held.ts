@@ -55,10 +55,11 @@
 export const ORIGINAL_SLOT = '';
 
 /**
- * THE RECORDS ONE WALLET OWNS. Every one of these was a fixed key before this
- * change, and all seven move together or the split is a hole: a wallet whose
- * name is namespaced and whose passkeys are not is a wallet that opens with
- * somebody else's credential.
+ * THE RECORDS ONE WALLET OWNS, and all of them move and are forgotten together
+ * or the split is a hole: a wallet whose name is namespaced and whose passkeys
+ * are not is a wallet that opens with somebody else's credential.
+ * `keyring-marks` is the highest count of writes of each person's saved keys
+ * this wallet has opened or had kept, so it can refuse an older copy.
  */
 export type RecordKind =
   | 'keyring'
@@ -67,10 +68,11 @@ export type RecordKind =
   | 'arrived'
   | 'created'
   | 'subwallets'
-  | 'wallet-name';
+  | 'wallet-name'
+  | 'keyring-marks';
 
 export const RECORD_KINDS: readonly RecordKind[] = Object.freeze([
-  'keyring', 'passkeys', 'secured', 'arrived', 'created', 'subwallets', 'wallet-name',
+  'keyring', 'passkeys', 'secured', 'arrived', 'created', 'subwallets', 'wallet-name', 'keyring-marks',
 ]);
 
 const PREFIX = 'midnight-identity';

@@ -1218,9 +1218,22 @@ app.get('/api/me/keys', authed, wrap(async (req, res) => {
 app.put('/api/me/keys', authed, wrap(async (req, res) => {
   const b = z.object({
     keyBundle: z.object({ iv: z.string(), tag: z.string(), body: z.string() }),
-    /* Optional on the wire so an old client still works, and every client we ship sends it. */
+    /* Needed once saved keys exist: the first write has nothing to replace, and every write after it names the one it
+     * replaces, so a writer that never read the newest copy cannot put an older one over it. */
     ifVersion: z.number().int().min(0).optional(),
   }).parse(req.body);
+  if (b.ifVersion === undefined) {
+    const held = identity.user(req.userId!);
+    if (held.keyBundle) {
+      res.status(409).json({
+        code: 'version-required',
+        error: 'your saved keys were not written: saved keys are already kept for you, and this write did not say which '
+          + 'version it replaces. Read your saved keys again and write over the version you read.',
+        currentVersion: held.keyBundleVersion ?? 0,
+      });
+      return;
+    }
+  }
   try {
     const u = identity.updateKeyBundle(req.userId!, b.keyBundle, b.ifVersion);
     res.json({ ok: true, version: u.keyBundleVersion });

@@ -32,6 +32,10 @@
       "types": "./lib/profile/channel.d.ts",
       "default": "./lib/profile/channel.js"
     },
+    "./profile/act-channel": {
+      "types": "./lib/profile/act-channel.d.ts",
+      "default": "./lib/profile/act-channel.js"
+    },
     "./profile/unlock": {
       "types": "./lib/profile/unlock.d.ts",
       "default": "./lib/profile/unlock.js"

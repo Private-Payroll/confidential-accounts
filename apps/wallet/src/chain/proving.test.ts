@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { KEPT_IDLE_MS, keptProvers, makeBrowserProvingService } from './proving.js';
+import { buffersOf, KEPT_IDLE_MS, keptProvers, makeBrowserProvingService } from './proving.js';
 import type { ProofEvent, ProvingWorkerLike } from './proving.js';
 
 /*
@@ -14,11 +14,12 @@ import type { ProofEvent, ProvingWorkerLike } from './proving.js';
 class AWorker {
   static made: AWorker[] = [];
   readonly sent: unknown[] = [];
+  readonly moved: (Transferable[] | undefined)[] = [];
   terminated = false;
   private onMessage: ((e: { data: never }) => void)[] = [];
   private onError: ((e: { message?: string }) => void)[] = [];
   constructor() { AWorker.made.push(this); }
-  postMessage(m: unknown): void { this.sent.push(m); }
+  postMessage(m: unknown, transfer?: Transferable[]): void { this.sent.push(m); this.moved.push(transfer); }
   addEventListener(type: 'message' | 'error', l: (e: { data: never } & { message?: string }) => void): void {
     if (type === 'message') this.onMessage.push(l as (e: { data: never }) => void);
     else this.onError.push(l as (e: { message?: string }) => void);
@@ -344,4 +345,35 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
       expect(await second).toBe('two');
     });
   }
+
+  it('a key and a parameter file are moved to the worker that asked, not copied and kept', async () => {
+    // RED WHEN: the thread that owns the workers posts a proving key by copy, so a second copy of every key stays in its memory
+    const material = { proverKey: new Uint8Array([1, 2]), verifierKey: new Uint8Array([3]), ir: new Uint8Array([4]) };
+    const params = new Uint8Array([5, 6, 7]);
+    const keys = { lookupKey: vi.fn(async () => material), getParams: vi.fn(async () => params) };
+    const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
+    const proof = provers.run('prove', SPEND, new Uint8Array([1]), keys as never);
+    const w = AWorker.made[0]!;
+    w.says({ op: 'ready' });
+    w.says({ op: 'lookupKey', askId: 0, keyLocation: SPEND });
+    w.says({ op: 'getParams', askId: 1, k: 14 });
+    await settle();
+    const answers = w.sent.map((m, i) => [m, w.moved[i]] as const).filter(([m]) => (m as { op: string }).op === 'answer');
+    expect(answers.map(([, t]) => t)).toEqual([
+      [material.proverKey.buffer, material.verifierKey.buffer, material.ir.buffer],
+      [params.buffer],
+    ]);
+    w.says({ op: 'result', value: 'proof' });
+    expect(await proof).toBe('proof');
+    provers.stop();
+  });
+
+  it('the buffers moved are each file\'s own, once each, and nothing for an answer that carries none', () => {
+    // RED WHEN: one buffer is listed twice and the move throws, or an answer with no key moves something
+    const shared = new Uint8Array([1, 2, 3]);
+    expect(buffersOf({ proverKey: shared, verifierKey: shared, ir: new Uint8Array([4]) })).toHaveLength(2);
+    expect(buffersOf(undefined)).toEqual([]);
+    expect(buffersOf(new Uint8Array([9])).length).toBe(1);
+  });
 });
+

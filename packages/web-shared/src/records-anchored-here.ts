@@ -922,8 +922,8 @@ const firstAnchorRefusal = (
     && e.id === id && e.version === 1 && e.filer.toLowerCase() === mine);
   if (held('state', stateRecordId(FOUNDING_KEY_EPOCH)) && held('roster', ROSTER_ID)) return null;
   return 'the company\'s first anchor holds the records it was founded with - its first state and its first roster - entered by '
-    + 'its founding signer\'s device, and this device did not enter them. Nothing was sent. The company\'s founding signer '
-    + 'opens the company on their own device to anchor them';
+    + 'its founding signer\'s device, and this device did not enter them. Nothing was sent. The company\'s founding signer\'s '
+    + 'next action in their wallet anchors them';
 };
 
 /**
@@ -1091,21 +1091,21 @@ export async function anchorTheRecordsHere(doors: AnchorDoors): Promise<Anchored
     : 'nothing was anchored. Reload the page and anchor again');
 }
 
-/** How long a company's records may wait, with filings not yet anchored, before a device entering it anchors them. */
+/** How long a company's records may wait, with nothing of the directory waiting, before the anchor at a seat action's end anchors them unasked. */
 export const ANCHORED_AT_LEAST_EVERY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * What entering the company did about the anchor: anchored now (none when
- * nothing was waiting), left for later and why, or not anchored and why - in
- * words that say what resolves it. Never thrown: entering the company does
- * not wait on the anchor, and a filing left waiting is anchored by the next.
+ * What the anchor at a seat action's end did: anchored now (none when nothing
+ * was waiting), left for later and why, or not anchored and why - in words
+ * that say what resolves it. Never thrown: the action it ends is never undone
+ * by it, and a filing left waiting is anchored by the next.
  */
-export type OnTheWayIn =
+type OnTheWayIn =
   | (Anchored & FiledAgainOnTheWayIn)
   | { readonly waits: 'anchored-within-a-day' | 'this-seat-does-not-anchor' }
   | ({ readonly notAnchored: string } & FiledAgainOnTheWayIn);
 
-/** What the way in filed again before it anchored at once: this seat's own entry, or signed changes passed over. */
+/** What the anchor filed again before it anchored at once: this seat's own entry, or signed changes passed over. */
 interface FiledAgainOnTheWayIn { readonly filedAgain?: 'own-entry' | 'directory-changes' }
 
 /**
@@ -1134,7 +1134,7 @@ async function ownEntryFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): 
  * was signed for. A quorum's change is kept in this device's database before it is
  * filed, and let go of only once a version carrying it is anchored, so a
  * change the service drops, passes over or stops serving is filed again from
- * here on a later way in (`quorumChangesFiledAgain`) without being signed
+ * here by a later anchor (`quorumChangesFiledAgain`) without being signed
  * again. A change of key is never kept: one lost or passed over is made again
  * on the key the directory holds. Refused, with nothing filed or kept, when the directory already holds
  * that version: the signatures bind it, so the change is signed again as the
@@ -1173,8 +1173,8 @@ export async function directoryChangeFiledHere(
  * the directory's next versions, each only when the replay would believe it
  * there (`refiledRefusalOf`). Each is kept in this device's database before it
  * is filed, and let go of once a version carrying it is anchored, so a change
- * the service passes over again or stops serving is filed again on a later way
- * in. What the replay refuses is said by `passedOverSaid`. How many it filed.
+ * the service passes over again or stops serving is filed again by a later
+ * anchor. What the replay refuses is said by `passedOverSaid`. How many it filed.
  */
 async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): Promise<number> {
   if (doors.fileDirectory === undefined || here.refiled === undefined) return 0;
@@ -1196,14 +1196,14 @@ async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBeliev
   let n = 0;
   for (const f of filed) {
     await doors.changes?.keep(doors.accountId, { signedAt: f.signedAt!, change: f.change as KeptDirectoryChange['change'] });
-    /* One the service refuses, or another filing raced, stays kept for a later way in; the anchor is not held back by it. */
+    /* One the service refuses, or another filing raced, stays kept for a later anchor; this one is not held back by it. */
     try { await doors.fileDirectory(f); } catch { break; }
     n += 1;
   }
   return n;
 }
 
-/** Anchors what the way in just filed again, saying what it filed; a refusal is said, never thrown. */
+/** Anchors what was just filed again, saying what it filed; a refusal is said, never thrown. */
 async function anchoredAtOnce(doors: AnchorDoors, filedAgain: NonNullable<FiledAgainOnTheWayIn['filedAgain']>): Promise<OnTheWayIn> {
   try {
     return { ...(await anchorTheRecordsHere(doors)), filedAgain };
@@ -1212,22 +1212,23 @@ async function anchoredAtOnce(doors: AnchorDoors, filedAgain: NonNullable<FiledA
   }
 }
 
-/* One anchor on the way in at a time per company, on this page: a second read of the company while one runs waits on it. */
+/* One such anchor at a time per company on this device: a second asked for while one runs waits on it. */
 const onTheWayIn = new Map<string, Promise<OnTheWayIn>>();
 
 /**
- * **THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY.** A seat whose role may
- * anchor, entering the company, anchors every filing not yet anchored when the
- * account's last anchor call landed a day ago or more - or never - and at once
- * whenever a directory version is applied and not yet anchored, since a rise
+ * **THE ANCHOR A SEAT ACTION ASKS FOR, AFTER WHAT IT OWES IS FILED AGAIN.** A
+ * seat whose role may anchor files again its own entry or a quorum's change the
+ * company's records passed over, then anchors every filing not yet anchored when
+ * the account's last anchor call landed a day ago or more - or never - and at
+ * once whenever a directory version is applied and not yet anchored, since a rise
  * of the account's threshold waits for it (`directoryNotYetAnchored`). When it
  * landed is the time the author of its block set, as the account's history at
  * the indexer the person's own wallet names holds it, never a time a seat
  * wrote; a time ahead of this device's clock holds nothing off. A directory version
  * no entry names yet is witnessed then, as every anchor witnesses it, so a
  * change of seats waits no longer than a filing. Nothing waiting sends nothing.
- * Between raises - each of which anchors as it files - the records are so
- * anchored at least once a day by whichever seat enters first.
+ * Within the day it waits: a seat action that must anchor its own filings
+ * anchors them itself (`anchorTheRecordsHere`) when this waits.
  */
 export function anchoredOnTheWayIn(doors: AnchorDoors): Promise<OnTheWayIn> {
   const running = onTheWayIn.get(doors.accountId);
@@ -1244,7 +1245,7 @@ export function anchoredOnTheWayIn(doors: AnchorDoors): Promise<OnTheWayIn> {
         return { waits: 'this-seat-does-not-anchor' };
       }
       /*
-       * Filing changes again holds nothing back: the way in goes on to anchor when one is due, with the directory read
+       * Filing changes again holds nothing back: this goes on to anchor when one is due, with the directory read
        * again, so a service that passes a change over again and again cannot put the company's anchor off with it.
        */
       if (await quorumChangesFiledAgain(doors, here) > 0) return await anchoredAtOnce(doors, 'directory-changes');

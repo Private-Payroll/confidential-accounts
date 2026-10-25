@@ -13,11 +13,12 @@ import { describeFailure } from '../lib/failure-text.js';
  * later is.
  *
  * So this worker's contract is a HANDSHAKE: it says `ready` only after its
- * listener stands, and the page posts nothing before it hears that. The
+ * listener stands, and whoever started it posts nothing before it hears that. The
  * proving itself is the SDK's own dependency doing the SDK's own work —
  * `check` and `prove` from `@midnight-ntwrk/zkir-v2`, exactly the two calls
  * the SDK's worker makes (wallet-sdk-prover-client/dist/proof-worker.js) —
- * with key material asked of the page over the same kind of message bridge.
+ * with key material asked of the thread that started it over the same kind of
+ * message bridge.
  */
 
 type Ask =
@@ -39,8 +40,10 @@ const ask = <T>(payload: Omit<Ask, 'askId'>): Promise<T> => new Promise<T>((reso
   postMessage({ ...payload, askId });
 });
 
-/** Key material comes from the page — the page owns the provider (and its
- * cache), the worker owns nothing but compute. */
+/** Key material comes from the thread that started this worker (the page, or
+ * the wallet's account builder): it owns the provider and its cache, and moves
+ * each answer here rather than copying it. The worker owns nothing but compute,
+ * and holds a key only for the proof that asked for it. */
 const keyMaterial = {
   lookupKey: (keyLocation: string) => ask<never>({ op: 'lookupKey', keyLocation } as Omit<Ask, 'askId'>),
   getParams: (k: number) => ask<never>({ op: 'getParams', k } as Omit<Ask, 'askId'>),
@@ -52,7 +55,7 @@ addEventListener('message', ({ data }: MessageEvent<FromPage>) => {
     pending.delete(data.askId);
     if (!waiting) return;
     if (data.ok) waiting.resolve(data.value as never);
-    else waiting.reject(new Error(data.error ?? 'the page could not supply key material'));
+    else waiting.reject(new Error(data.error ?? 'no key material was supplied for this proof'));
     return;
   }
   if (data.op === 'prove') {

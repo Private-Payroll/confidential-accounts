@@ -5,12 +5,16 @@ import { identityFromWords, newWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { Ask, KeyringRequest } from 'midnight-identity/profile/request';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { keyringKeyFor, keyringReleaseFor, unlockKeyFor } from 'midnight-identity/profile/unlock';
+import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import type { Openable } from 'vaults-web-shared/wallet-sign-in.js';
-import type { AccountCreationBuilder, CompanyToFound } from 'vaults-web-shared/keyring.js';
+import type { CompanyToFound } from 'vaults-web-shared/keyring.js';
+import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../testing/a-wallet-founds-a-company.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Sealed } from './crypto.js';
-import { fromHex, seal, toHex, unseal, unwrapKey, wrapKey } from './crypto.js';
+import { fromHex, seal, signingPublicKeyOf, toHex, unseal, unwrapKey, wrapKey } from './crypto.js';
+
+/** A seat's signing public key, as the wallet reads it from the saved keys for a page. */
+const publicOf = (secret: string | undefined): string | null => (secret === undefined ? null : signingPublicKeyOf(secret).toLowerCase());
 import { x25519 } from '@noble/curves/ed25519.js';
 
 /**
@@ -65,8 +69,6 @@ const WALLET = 'https://wallet.example';
 
 /** The company's account on the chain, as the deploy this device builds names it. */
 const DEPLOYED = 'a1'.repeat(32);
-/** The founding seat's leaf, scope and public key, as the builder works them out. */
-const LEAF = 'ab'.repeat(32);
 /** Every label a wallet on this journey made up, in order, so a test can say which one the page used. */
 const drawn: CompanyLabel[] = [];
 const draw = (): CompanyLabel => {
@@ -92,11 +94,6 @@ const SOMEBODY_ELSE_ADDRESS = 'mn_addr_test1pppppppppppppppppppp';
 const NORTHWIND: CompanyToFound = { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 };
 const SOUTHWIND: CompanyToFound = { name: 'Southwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 };
 
-/** What builds the account's deploy, standing in for the worker: the first press needs only the seat and the deploy. */
-const aBuilder = (): AccountCreationBuilder => ({
-  foundingSeat: async () => ({ seat: LEAF, scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
-  accountDeploy: async () => ({ account: DEPLOYED, tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] }),
-} as unknown as AccountCreationBuilder);
 
 /**
  * **ONE TIMELINE FOR BOTH ENDS.** The server and the wallet write into the same
@@ -182,15 +179,14 @@ class WalletAtTheOtherEnd implements Openable {
  */
 const honestly = (words: readonly string[] | string, address: string) => (ask: Ask): unknown => {
   if (ask.kind === 'sign-in') return { schema: 'a-sign-in', address };
-  if (ask.kind === 'keyring') {
-    return keyringReleaseFor(identityOf(words), ask, 0, held => held === address, draw);
-  }
+  if (ask.kind === 'keyring' && ask.drawLabel) return foundedAsTheWalletAnswers(identityOf(words), ask, (held) => held === address, 0, draw);
+  if (ask.kind === 'keyring') return keyringAsTheWalletAnswers(identityOf(words), ask, held => held === address, 0);
   return { schema: 'not-something-this-journey-asks-a-wallet-for' };
 };
 
 /** The key a person's saved keys are sealed under, derived here, away from the tab. */
 const theKeyringKey = (words: readonly string[] | string, ask: KeyringRequest): string =>
-  toHex(keyringKeyFor(identityOf(words), { ...ask, person: PERSON, signedInAs: null, company: null }));
+  savedKeysSealKey(identityOf(words), { requester: ask.requester, person: PERSON });
 
 /** The ordinary key of one company, as an unlock of that company would release it. */
 const theCompanyKey = (words: readonly string[] | string, ask: KeyringRequest, company: CompanyLabel): string =>
@@ -356,7 +352,7 @@ const theSignInEndsOnTheFirstSave = (server: ReturnType<typeof aServer>) => {
 
 /** The first press for `NORTHWIND`, and the id of the company it made. */
 const startedBy = async (view: WalletAtTheOtherEnd, keyring: typeof import('vaults-web-shared/keyring.js'), company = NORTHWIND) => {
-  const started = await keyring.startCompanyHeldFromTheStart(company, WALLET, aBuilder(), view, US);
+  const started = await keyring.startCompanyHeldFromTheStart(company, WALLET, view, US);
   return started.accountId;
 };
 
@@ -372,10 +368,12 @@ describe('§1 - OPEN YOUR KEYS, SAVE THE SEAT, THEN SEND THE COMPANY - IN THAT O
 
     expect(accountId).toBe(server.madeId());
     expect(keyring.canOpenCompanies()).toBe(true);
-    const held = keyring.keysFor(accountId);
-    expect(held?.signingSecret).toMatch(/^[0-9a-f]{64}$/u);
+    const held = keyring.seatHeldHere(accountId);
+    expect(held?.signingPublicKey).toMatch(/^[0-9a-f]{64}$/u);
     const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
-    expect(inside?.accounts[accountId]?.signingSecret).toBe(held?.signingSecret);
+    /* RED WHEN: the tab holds the seat by anything but its public half: its secret stays in the saved keys only the wallet opens. */
+    expect(publicOf(inside?.accounts[accountId]?.signingSecret)).toBe(held?.signingPublicKey);
+    expect(JSON.stringify(held)).not.toContain(inside!.accounts[accountId]!.signingSecret);
   });
 
   it('THE WALLET IS ASKED ONCE, FOR THIS PERSON AND THE ADDRESS THEY SIGNED IN AS, AND THE KEYS ARE SAVED BEFORE THE COMPANY IS SENT',
@@ -427,8 +425,8 @@ describe('§1 - OPEN YOUR KEYS, SAVE THE SEAT, THEN SEND THE COMPANY - IN THAT O
         .toBeNull();
       const inside = opened(bundle, theKeyringKey(FOUNDER_WORDS, ask));
       expect(inside, 'it opens with this person\'s keyring key').not.toBeNull();
-      expect(inside?.accounts[accountId]?.signingSecret).toBe(keyring.keysFor(accountId)?.signingSecret);
-      expect(inside?.accounts[accountId]?.blinding).toBe(keyring.keysFor(accountId)?.blinding);
+      expect(publicOf(inside?.accounts[accountId]?.signingSecret)).toBe(keyring.seatHeldHere(accountId)?.signingPublicKey);
+      expect(JSON.stringify(keyring.seatHeldHere(accountId))).not.toContain(inside!.accounts[accountId]!.blinding);
     });
 });
 
@@ -438,17 +436,17 @@ describe('§2 - A FRESH TAB OPENS WHAT WAS SAVED', () => {
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
     const accountId = await startedBy(view, keyring);
-    const secret = keyring.keysFor(accountId)!.signingSecret;
+    const secret = keyring.seatHeldHere(accountId)!.signingPublicKey;
 
     keyring.forgetLocally();
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(keyring.keysFor(accountId)).toBeNull();
+    expect(keyring.seatHeldHere(accountId)).toBeNull();
 
     await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await keyring.openKeysWithWallet(WALLET, view, US);
 
     expect(keyring.canOpenCompanies()).toBe(true);
-    expect(keyring.keysFor(accountId)?.signingSecret).toBe(secret);
+    expect(keyring.seatHeldHere(accountId)?.signingPublicKey).toBe(secret);
   });
 });
 
@@ -499,7 +497,7 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      */
     const src = readFileSync(new URL('../../packages/web-shared/src/keyring.ts', import.meta.url), 'utf8');
     const opens = src.indexOf('/* ---------------- bringing a company into being');
-    const closes = src.indexOf(' * Derives the viewing key from the account');
+    const closes = src.indexOf(' * Opens an account the server just served us.');
     /* The markers are asserted before the slice is used. A slice taken between
      * two indexes that have moved is a test that passes over the wrong text —
      * which is the shape of every vacuous grep this project has written. */
@@ -509,7 +507,7 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
 
     /* It really is the creation path and not an empty slice. */
     expect(path).toContain('export async function startCompanyHeldFromTheStart');
-    expect(path).toContain('export async function finishCompanyOnTheChain');
+    expect(path).toContain('export async function finishCompanyInTheWallet');
 
     /*
      * **COMMENTS MAY SAY THE WORDS; CODE MAY NOT.** `wallet-unlock.test.ts`'s
@@ -542,21 +540,20 @@ describe('§4 - THE FOUNDING SIGNER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     const server = aServer();
     const { view: deviceOne, keyring } = await signedInWith(server);
     const accountId = await startedBy(deviceOne, keyring);
-    const first = keyring.keysFor(accountId)!;
+    const first = keyring.seatHeldHere(accountId)!;
     expect(server.bundle().keyBundle).toBeTruthy();
 
     /* Everything device one held is gone. This is the new laptop. */
     keyring.forgetLocally();
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(keyring.keysFor(accountId)).toBeNull();
+    expect(keyring.seatHeldHere(accountId)).toBeNull();
 
     const { view: deviceTwo } = await signedInWith(server, FOUNDER_WORDS, FOUNDER_ADDRESS, ELSEWHERE);
     const writes = server.wrote().length;
     await keyring.openKeysWithWallet(WALLET, deviceTwo, ELSEWHERE);
 
     expect(keyring.canOpenCompanies()).toBe(true);
-    expect(keyring.keysFor(accountId)?.signingSecret).toBe(first.signingSecret);
-    expect(keyring.keysFor(accountId)?.blinding).toBe(first.blinding);
+    expect(keyring.seatHeldHere(accountId)).toEqual(first);
     /* Opening wrote nothing. */
     expect(server.wrote()).toHaveLength(writes);
 
@@ -566,9 +563,10 @@ describe('§4 - THE FOUNDING SIGNER\'S FIRST DEVICE IS NOT SPECIAL', () => {
      * record, so unwrapping it here is the last link in a chain that starts at
      * twenty-four words: words to the person's key, that key to the saved keys,
      * saved keys to the wrapping secret, wrapping secret to the key that reads
-     * the company.
+     * the company. Here the wallet's own read of the saved keys stands for it:
+     * this tab never holds the wrapping secret.
      */
-    const keys = keyring.keysFor(accountId)!;
+    const keys = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, deviceTwo.keyringAsks[0]!))!.accounts[accountId] as unknown as { wrappingSecret: string };
     const viewingKey = 'ff'.repeat(32);
     const forTheFounder = wrapKey(viewingKey, x25519PublicOf(keys.wrappingSecret));
     expect(unwrapKey(forTheFounder, keys.wrappingSecret)).toBe(viewingKey);
@@ -597,7 +595,8 @@ describe('§4 - THE FOUNDING SIGNER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     expect(somebodyElse.refused).toEqual(['address-not-held']);
     expect(somebodyElse.released, 'no key was sent').toHaveLength(0);
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(server.seen.slice(requestsBefore), 'nothing was read or written').toEqual([]);
+    /* The tab read the sealed saved keys and the companies' served keys to hand them in, and wrote nothing. */
+    expect(server.seen.slice(requestsBefore).map((r) => `${r.method} ${r.url}`), 'nothing was written').toEqual(['GET /api/me/keys', 'GET /api/accounts']);
   });
 
   /* RED WHEN: another wallet's key opens the person's keys, or starting a company from that tab saves over what the person had saved. */
@@ -620,17 +619,17 @@ describe('§4 - THE FOUNDING SIGNER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     expect(await keyring.resumeSession()).toMatchObject({ id: PERSON });
 
     const failure = await keyring.openKeysWithWallet(WALLET, somebodyElse, US).catch((e: unknown) => e);
-    expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
-    expect((failure as Error).message).toMatch(/did not open with the key your wallet gave/);
+    /* RED WHEN: a wallet whose key does not open the saved keys answers anything: it opens them itself and refuses. */
+    expect(failure).toBeInstanceOf(Error);
     expect(somebodyElse.keyringAsks[0]?.signedInAs, 'the tab did not know the address').toBeNull();
-    expect(somebodyElse.refused).toEqual([]);
-    expect(somebodyElse.released, 'the wallet did give its own key').toHaveLength(1);
+    expect(somebodyElse.refused).toEqual(['keys-did-not-open']);
+    expect(somebodyElse.released, 'that wallet gave nothing').toHaveLength(0);
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(keyring.keysFor(accountId)).toBeNull();
+    expect(keyring.seatHeldHere(accountId)).toBeNull();
 
-    /* And starting a company here does not save over what could not be opened. */
-    await expect(keyring.startCompanyHeldFromTheStart(SOUTHWIND, WALLET, aBuilder(), somebodyElse, US))
-      .rejects.toBeInstanceOf(keyring.SavedKeysDidNotOpen);
+    /* And starting a company here does not save over what could not be opened: that wallet refuses to found over them. */
+    await expect(keyring.startCompanyHeldFromTheStart(SOUTHWIND, WALLET, somebodyElse, US)).rejects.toThrow();
+    expect(somebodyElse.refused).toEqual(['keys-did-not-open', 'keys-did-not-open']);
     expect(server.wrote()).toHaveLength(writesBefore);
     expect(server.createdCount()).toBe(1);
     expect(JSON.stringify(server.bundle())).toBe(savedBefore);
@@ -644,8 +643,10 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
     const server = aServer({ saved: theirs });
     const { view, keyring } = await signedInWith(server);
 
-    const failure = await keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US).catch((e: unknown) => e);
-    expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
+    /* The wallet is handed them, does not open them, and founds nothing: it refuses on its own screen. */
+    const failure = await keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, view, US).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(Error);
+    expect(view.refused).toEqual(['keys-did-not-open']);
 
     expect(journey, 'no company was created').not.toContain('POST /api/accounts');
     expect(server.createdCount()).toBe(0);
@@ -670,7 +671,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       expect(await keyring.resumeSession()).toMatchObject({ id: PERSON });
       expect(keyring.signedInWallet()).toBeNull();
 
-      await expect(keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US))
+      await expect(keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, view, US))
         .rejects.toThrow(/nothing is saved for you here yet, and this tab did not sign you in/);
 
       expect(view.keyringAsks[0]?.signedInAs).toBeNull();
@@ -687,7 +688,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       const { view, keyring } = await signedInWith(server, FOUNDER_WORDS, FOUNDER_ADDRESS, US,
         () => theSignInEndsOnTheFirstSave(server));
 
-      const failure = await keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US).catch((e: unknown) => e);
+      const failure = await keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, view, US).catch((e: unknown) => e);
       expect(failure).toBeInstanceOf(keyring.AuthError);
       expect(server.wrote(), 'exactly one save').toHaveLength(1);
       expect(server.reads(), 'nothing was read again').toBe(1);
@@ -705,7 +706,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       });
 
       /* RED WHEN: the save of the keys does not carry the version it read, so it overwrites what another device saved in between. */
-      await expect(keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US))
+      await expect(keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, view, US))
         .rejects.toThrow(/changed on another device/);
 
       expect(server.createdCount(), 'the company was never sent').toBe(0);
@@ -719,14 +720,16 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       const server = aServer();
       const { view, keyring } = await signedInWith(server);
       const accountId = await startedBy(view, keyring);
-      const held = keyring.keysFor(accountId)!.signingSecret;
+      const held = keyring.seatHeldHere(accountId);
       server.savedElsewhere(seal(JSON.stringify({ accounts: {} }), 'ab'.repeat(32)));
       const writes = server.wrote().length;
 
-      const failure = await keyring.reopenSavedKeys().catch((e: unknown) => e);
-      expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
+      /* The wallet opens the saved keys and refuses ones that do not open with its key. */
+      const failure = await keyring.openKeysWithWallet(WALLET, view, US).catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(Error);
+      expect(view.refused).toContain('keys-did-not-open');
       expect(server.wrote(), 'nothing was saved over them').toHaveLength(writes);
-      expect(keyring.keysFor(accountId)?.signingSecret, 'the keys this tab holds are kept').toBe(held);
+      expect(keyring.seatHeldHere(accountId), 'what this tab holds is kept').toEqual(held);
     });
 
   /* RED WHEN: a tab accepts saved keys older than what it already read, and so loses the keys of a company it holds. */
@@ -736,13 +739,16 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       const { view, keyring } = await signedInWith(server);
       const nothingYet = { ...server.bundle() };
       const accountId = await startedBy(view, keyring);
-      const held = keyring.keysFor(accountId)!.signingSecret;
+      const held = keyring.seatHeldHere(accountId);
       /* The server now answers from before the company's keys were saved. */
       server.goesBackTo(nothingYet);
 
-      const failure = await keyring.reopenSavedKeys().catch((e: unknown) => e);
+      const asked = view.keyringAsks.length;
+      const failure = await keyring.openKeysWithWallet(WALLET, view, US).catch((e: unknown) => e);
+      /* RED WHEN: an older copy is handed on to the wallet as the saved keys, or taken in place of what this tab holds. */
       expect(failure).toBeInstanceOf(keyring.SavedKeysWentBack);
       expect((failure as Error).message).toMatch(/older than what this tab already read/);
-      expect(keyring.keysFor(accountId)?.signingSecret, 'the keys this tab holds are kept').toBe(held);
+      expect(view.keyringAsks).toHaveLength(asked);
+      expect(keyring.seatHeldHere(accountId), 'what this tab holds is kept').toEqual(held);
     });
 });

@@ -13,12 +13,13 @@ import type { Account, SealedProposal, SealedRun } from '../../../src/core/types
 import { digestOfBody, type WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
-import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge } from './http-sealed-pool-store.js';
+import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
 import {
   asAMember, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
   type AccountHeld, type DirectoryRefusalCode, type DirectoryReplayKept, type DirectoryReplayed, type QuorumChange, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
 } from '../../../src/midnight/seat-directory.js';
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
+import type { OwedDirectoryEntry } from './keyring-blob.js';
 import { openSeatProof, type LeafOf, type SeatOpening } from '../../../src/core/seat-opening.js';
 import type { SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
@@ -578,8 +579,8 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
  * **WHAT A DIRECTORY VERSION PASSED OVER MEANS, AND THE WAY PAST IT**, or null
  * when none was. Its change is not applied, so the directory may disagree with
  * who holds the account on chain; it is never lost: a seat's own entry is filed
- * again, as a new version, the next time that seat opens the company on its
- * own device, and a change its quorum signed is filed again under the
+ * again, as a new version, at the next action that seat makes in its
+ * wallet, and a change its quorum signed is filed again under the
  * signatures it was made with by a device that may anchor - or, where the
  * replay would not believe it filed again, why not. A change filed again and
  * not applied is said with why.
@@ -601,9 +602,9 @@ export const passedOverSaid = (here: Pick<DirectoryHere, 'passedOver' | 'refiled
   const again = filedAgain.filter((v) => over.filter((f) => (f.signedAt ?? f.version) === v).length > 1);
   const passed = over.length === 0 ? [] : [`the company's records passed over version${over.length > 1 ? 's' : ''} `
     + `${over.map((f) => f.version).join(', ')} of its directory - never entered while a later version was anchored - so their changes are not applied`
-    + (claims.length > 0 ? `; the seat whose entry version ${claims.join(', ')} holds files it again by opening the company on its own device` : '')
+    + (claims.length > 0 ? `; the seat whose entry version ${claims.join(', ')} holds files it again in its next action in its wallet` : '')
     + (filedAgain.length > 0 ? `; the change signed for version ${filedAgain.join(', ')} is filed again, under the signatures it was `
-      + 'made with, by the next device of the company that may anchor as it opens the company'
+      + 'made with, at the next action a seat of the company that may anchor makes in its wallet'
       + (filedAgain.some(waitsForItsEntry) ? ', once the entry of the seat it rests on is filed again' : '') : '')
     + (again.length > 0 ? `; the change signed for version ${again.join(', ')} was passed over again after it was filed again: if it keeps `
       + 'happening, the service is withholding it from the devices that anchor' : '')];
@@ -897,8 +898,8 @@ const onlyPassedOverAbove = (here: DirectoryHere, recordKey: string, read: Recor
  * holds that the replay applied. A version below it that the anchor does not
  * hold was passed over, and is filed again rather than anchored; one the replay
  * refused changes nothing, so a service filing such versions holds nothing
- * back. What a rise of the account's threshold, and the way into the company,
- * wait for.
+ * back. What a rise of the account's threshold, and the anchor at a seat
+ * action's end, wait for.
  */
 export const directoryNotYetAnchored = (here: Pick<DirectoryHere, 'dir' | 'records' | 'refusedAt'>): readonly number[] => {
   const newest = Math.max(0, ...here.records.directory.keys());
@@ -1134,11 +1135,29 @@ export async function giveEachVaultSecretHere(input: {
   return { given, had };
 }
 
+/**
+ * Each vault record this seat files and reads, signed with its filing key,
+ * judged by `judge` and entered as it is filed, sent through `send` (this
+ * page's own requests unless the caller gives another way).
+ */
 export const deviceRecordsFor = (
   signingSecret: Hex, judge: FreshJudge, signedInAs: () => string | null, entered: RecordsEntered,
+  send: WireSend = pageWireSend(signedInAs),
 ): DeviceRecords => {
-  const send = pageWireSend(signedInAs);
   return (record: WireRecord) => new HttpSealedPoolStore(record, send, signingSecret, judge, entered);
+};
+
+/**
+ * **THE VAULT'S RECORDS AS A READ REACHES THEM**: the same stores `deviceRecordsFor` makes, read and believed the same
+ * way, holding no signing key. Filing through one refuses before anything is sent (`ReadFilesNothing`), so a read of a
+ * vault's private money signs nothing with the seat's secret: what it finds owed is filed by a seat action in the
+ * signer's wallet.
+ */
+export const recordsReadHere = (
+  judge: FreshJudge, signedInAs: () => string | null, send: WireSend = pageWireSend(signedInAs),
+): DeviceRecords => {
+  const enteredNothing: RecordsEntered = { enter: async () => { throw new Error('a read enters nothing in the company\'s records.'); } };
+  return (record: WireRecord) => new HttpSealedPoolStore(record, send, null, judge, enteredNothing);
 };
 
 /**
@@ -1189,26 +1208,8 @@ export const fileDirectoryFiling = async (api: Api, accountId: string, filing: D
   await api(`/api/accounts/${encodeURIComponent(accountId)}/directory/${filing.version}`, { method: 'PUT', body: JSON.stringify(filing) });
 };
 
-/**
- * A directory entry this signer's own wallet signed, kept on their device until
- * the company's directory holds it, with the seat's opening made when the seat
- * was taken on this device.
- */
-export interface OwedDirectoryEntry {
-  /** The signed-in person the entry names: only they may file it. */
-  readonly person: string;
-  readonly company: CompanyLabel;
-  readonly signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement };
-  /** Absent where the seat was taken on a device that made no opening: such an entry is never filed. */
-  readonly opening?: SeatOpening;
-  /**
-   * Who the seat is for, as the seat that invited signed it, kept from the
-   * invitation this device accepted. It names no leaf, so the entry carries
-   * the one the proposal that seated it holds; absent for the founding seat
-   * and for a seat added from a code.
-   */
-  readonly invited?: SignedSeatInvitation;
-}
+/* The directory entry a signer is owed is kept in their saved keys, so its shape is defined with the keyring's. */
+export type { OwedDirectoryEntry } from './keyring-blob.js';
 
 /**
  * What became of an owed entry: filed now, found already there, nothing owed, not yet taken and why, or held back
@@ -1220,8 +1221,8 @@ export type OwedEntryFiled = 'filed' | 'already-there' | 'nothing-owed' | { read
 /** Said while a seat's own entry waits for the invitation behind it: what is waited for, and what happens next. */
 export const WAITING_FOR_ITS_INVITATION = 'your seat\'s entry in the company\'s directory is not filed yet: it must carry the invitation a '
   + 'seat of the company signed for you, and this device could not read it from the company\'s proposals. Until it is filed '
-  + 'no device believes your seat, so you cannot approve or file anything. It is tried again each time you open the company; '
-  + 'if this stays, ask the signer who added you to open the company, or to invite you again';
+  + 'no device believes your seat, so you cannot approve or file anything. It is tried again in your next action in your wallet; '
+  + 'if this stays, ask the signer who added you to make an action on the company in their wallet, or to invite you again';
 
 /**
  * **A SIGNER'S DIRECTORY ENTRY, FILED FROM THEIR OWN DEVICE AS SOON AS THE
@@ -1231,8 +1232,8 @@ export const WAITING_FOR_ITS_INVITATION = 'your seat\'s entry in the company\'s 
  * for them, sealed under the company's roster key and signed by the seat's
  * filing key (`keys`), so it is filed only once this device can open the
  * company's key; it is believed only while the account holds the seat, which
- * may be later. So it is kept (`owed`) and filed again on every way into the
- * company until the directory holds it, and let go then.
+ * may be later. So it is kept (`owed`) and filed again by this seat's
+ * actions in its wallet until the directory holds it, and let go then.
  *
  * **NO ENTRY BUT THE FOUNDING SEAT'S IS FILED WITHOUT ITS INVITATION.** Every
  * member's device refuses one, so filing it would leave the seat on the chain

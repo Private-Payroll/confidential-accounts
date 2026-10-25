@@ -4,7 +4,7 @@ import { identityFromWords } from 'midnight-identity';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
-import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
+import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers } from '../../../src/testing/a-wallet-founds-a-company.js';
 import {
   PAYMENT_FAILED_SAYS, WALLET_DIALOG_NAME, WALLET_DIALOG_SIZE, WalletClosed, askWallet, openWalletDialog,
 } from './wallet-sign-in.js';
@@ -46,11 +46,12 @@ const US = 'https://payroll.example';
 const SIGNED_IN = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
 const identity = identityFromWords(TEST_MNEMONIC);
 
-/** A wallet that holds the signed-in address and gives the keyring key for it. */
+/** A wallet that holds the signed-in address and gives the keyring key for it, founding a company as the wallet does when asked to start one. */
 const givesTheKeys = (ask: unknown): unknown => {
   const parsed = parseAsk(ask, US, Date.now());
   if (parsed.kind !== 'keyring') return { schema: 'a-sign-in' };
-  return keyringReleaseFor(identity, parsed as KeyringRequest, Date.now(), (a) => a === SIGNED_IN);
+  if ((parsed as KeyringRequest).drawLabel) return foundedAsTheWalletAnswers(identity, parsed as KeyringRequest, (a) => a === SIGNED_IN);
+  return keyringAsTheWalletAnswers(identity, parsed as KeyringRequest, (a) => a === SIGNED_IN);
 };
 
 interface Opened { url: string; target: string; features: string }
@@ -753,17 +754,17 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     keyring.forgetLocally();
   });
 
-  /** What works out the founding seat, standing in for the worker: the first press fails at the service before any deploy is built. */
-  const aBuilderThatMakesTheSeat = {
-    foundingSeat: async () => ({ seat: 'ab'.repeat(32), scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
-  } as unknown as import('./keyring.js').AccountCreationBuilder;
-
-  /** A server that answers everything, except the one path it falls over on. */
-  const aServerThatFails = (failsOn: (method: string, url: string) => boolean) =>
-    (async (url: string, init?: RequestInit) => {
+  /** A server that answers everything, except the one path it falls over on, and keeps the saved keys written to it. */
+  const aServerThatFails = (failsOn: (method: string, url: string) => boolean) => {
+    let saved: { keyBundle: unknown; version: number } = { keyBundle: null, version: 0 };
+    return (async (url: string, init?: RequestInit) => {
       const method = String(init?.method ?? 'GET');
       if (failsOn(method, String(url))) {
         return { ok: false, status: 500, json: async () => ({ error: 'the server fell over' }) } as Response;
+      }
+      if (String(url) === '/api/me/keys') {
+        if (method === 'PUT') saved = { keyBundle: JSON.parse(String(init?.body)).keyBundle, version: saved.version + 1 };
+        return { ok: true, status: 200, json: async () => saved } as Response;
       }
       return {
         ok: true,
@@ -777,6 +778,7 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
         }),
       } as Response;
     }) as typeof fetch;
+  };
 
   const signedIn = async (view: ARecordingView) => {
     (globalThis as { window?: unknown }).window = Object.assign(view, { location: { origin: US } });
@@ -805,7 +807,7 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     view.answers = givesTheKeys;
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
     await expect(keyring.startCompanyHeldFromTheStart(
-      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, aBuilderThatMakesTheSeat, view, US,
+      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
     )).rejects.toThrow('the server fell over');
     expect(view.stillOpen()).toEqual([]);
   });
@@ -831,7 +833,7 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     const stop = keyring.onWalletWaiting((d) => said.push(d === null ? 'done' : 'waiting'));
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
     await keyring.startCompanyHeldFromTheStart(
-      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, aBuilderThatMakesTheSeat, view, US,
+      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
     ).catch(() => {});
     stop();
     expect(said).toEqual(['waiting', 'done']);

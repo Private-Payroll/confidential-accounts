@@ -6,6 +6,12 @@ import type { Registry } from './attributes.js';
 import { readAccountAddress, readCompanyLabel, readVaultAddress } from './company-label.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from './company-label.js';
 import { readJoinParts, type JoinParts } from './join-parts.js';
+import { ACT_INTENTS } from './act-intents.js';
+import { readKeyringHandedIn, type KeyringHandedIn } from './unlock.js';
+import type { ActIntentName, IntentFieldKind, IntentShape } from './act-intents.js';
+export type { ActIntentName, CallRoute, IntentFieldKind, IntentShape, OutcomeKind } from './act-intents.js';
+export { routeOf } from './act-intents.js';
+export { intentShapeOf } from './act-shape.js';
 
 /**
  * WHAT AN APPLICATION SENDS, AND THE ONE FIELD IT MAY NEVER SEND.
@@ -155,11 +161,12 @@ import { readJoinParts, type JoinParts } from './join-parts.js';
 export const REQUEST_SCHEMA = 'midnight-identity/disclosure-request/v1';
 
 /**
- * **THE ONE MESSAGE A WALLET SENDS WHILE IT WORKS**, named here so that an
+ * **THE MESSAGE A WALLET SENDS WHILE IT WORKS**, named here so that an
  * asker can say it knows it: an ask carrying `progress` set to exactly this
  * string is told what the wallet is doing while it works. An ask without it,
  * or with any other value, is told nothing until the answer - which is all a
- * page that does not know this message can safely hear.
+ * page that does not know this message can safely hear. An action (`act`)
+ * always hears it, and is also handed each transaction it builds.
  */
 export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
 
@@ -175,9 +182,10 @@ export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
  * **THE ORDER IS THE ORDER THIS ARRAY IS READ OUT IN**, by `namedKinds` below,
  * onto a screen a person is standing in front of. `join` is appended rather
  * than inserted, so the sentence a refusal already produced does not change
- * shape for the three kinds that were there before it.
+ * shape for the three kinds that were there before it. `act` is appended for
+ * the same reason.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances', 'act'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -351,6 +359,130 @@ export interface KeyringRequest extends Asking {
    * with `company` or `account`.
    */
   readonly drawLabel: boolean;
+  /**
+   * **TRUE WHEN THE COMPANY IS NAMED BESIDE OPENING THE SAVED KEYS**, as the company the person opened: its key is
+   * given in the same answer only when this wallet's own read of the chain shows `account` carrying `company`, and
+   * otherwise the saved keys are opened alone. Only with `company`, `account` and the saved keys handed in.
+   */
+  readonly companyIfOnChain?: true;
+  /**
+   * With `drawLabel` only: what the new company is called and who its founding
+   * signer is, as the page was told them. The page's words, shown as the
+   * page's; this wallet signs the founding roster and state with them.
+   */
+  readonly founding?: FoundingAsked;
+  /**
+   * The person's saved keys as the service holds them. This wallet opens them itself and answers with what they
+   * hold that is not secret (`KeysRead` in unlock.ts); to start a company it writes the new seat into them and seals
+   * them again.
+   */
+  readonly keyring?: KeyringHandedIn;
+  /**
+   * Each company's viewing key as the service holds it for its seats, wrapped to each seat's wrapping key, with the
+   * company's inbox public key. This wallet opens the one wrapped to its own seat and gives it only when it makes
+   * that inbox public key, so nothing else wrapped to the seat is opened for the page.
+   */
+  readonly served?: readonly ServedHandedIn[];
+  /** Changes to the saved keys' creations the page asks for, which this wallet makes only when its own read agrees. */
+  readonly tidy?: readonly TidyAsked[];
+}
+
+/** One company's viewing key wrapped to its seats, as the service holds it, and the company's inbox public key. */
+export interface ServedHandedIn {
+  readonly accountId: string;
+  readonly inboxPublicKey: string;
+  readonly wrappedKeys: ReadonlyArray<{ readonly signerId: string; readonly iv: string; readonly tag: string; readonly body: string; readonly ephemeral: string }>;
+}
+
+/** A change to one creation kept in the saved keys: set it aside (kept, reversible), or drop one nothing was signed for. */
+export interface TidyAsked {
+  readonly record: string;
+  readonly what: 'aside' | 'forget';
+}
+
+/** The most companies, and wrapped keys per company, a keyring ask may hand in. */
+export const MOST_SERVED = 64;
+/** The most creation changes a keyring ask may carry. */
+export const MOST_TIDY = 16;
+
+const SERVED_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+const SERVED_HEX = (n: number) => new RegExp(`^[0-9a-f]{0,${n}}$`, 'u');
+const HEX_64 = /^[0-9a-f]{64}$/u;
+const WRAP_PART = SERVED_HEX(4096);
+
+/** Served viewing keys as handed in, read whole, or null for anything else. */
+export function readServedHandedIn(value: unknown): readonly ServedHandedIn[] | null {
+  if (!Array.isArray(value) || value.length > MOST_SERVED) return null;
+  const out: ServedHandedIn[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return null;
+    const v = item as Record<string, unknown>;
+    if (Object.keys(v).some((k) => !['accountId', 'inboxPublicKey', 'wrappedKeys'].includes(k))) return null;
+    const { accountId, inboxPublicKey, wrappedKeys } = v;
+    if (typeof accountId !== 'string' || !SERVED_ID.test(accountId)) return null;
+    if (typeof inboxPublicKey !== 'string' || !HEX_64.test(inboxPublicKey)) return null;
+    if (!Array.isArray(wrappedKeys) || wrappedKeys.length > MOST_SERVED) return null;
+    const wraps: ServedHandedIn['wrappedKeys'][number][] = [];
+    for (const w of wrappedKeys) {
+      if (typeof w !== 'object' || w === null || Array.isArray(w)) return null;
+      const x = w as Record<string, unknown>;
+      if (Object.keys(x).some((k) => !['signerId', 'iv', 'tag', 'body', 'ephemeral'].includes(k))) return null;
+      const { signerId, iv, tag, body, ephemeral } = x;
+      if (typeof signerId !== 'string' || !SERVED_ID.test(signerId)) return null;
+      for (const h of [iv, tag, body, ephemeral]) if (typeof h !== 'string' || !WRAP_PART.test(h)) return null;
+      wraps.push(Object.freeze({ signerId, iv, tag, body, ephemeral } as ServedHandedIn['wrappedKeys'][number]));
+    }
+    out.push(Object.freeze({ accountId, inboxPublicKey, wrappedKeys: Object.freeze(wraps) }));
+  }
+  return Object.freeze(out);
+}
+
+/** Creation changes as asked, read whole, or null for anything else. */
+export function readTidyAsked(value: unknown): readonly TidyAsked[] | null {
+  if (!Array.isArray(value) || value.length > MOST_TIDY) return null;
+  const out: TidyAsked[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return null;
+    const v = item as Record<string, unknown>;
+    if (Object.keys(v).some((k) => k !== 'record' && k !== 'what')) return null;
+    if (typeof v['record'] !== 'string' || !SERVED_ID.test(v['record'])) return null;
+    if (v['what'] !== 'aside' && v['what'] !== 'forget') return null;
+    out.push(Object.freeze({ record: v['record'], what: v['what'] }));
+  }
+  return Object.freeze(out);
+}
+
+/** The founding signer's role, one of a company's four. */
+export const FOUNDING_ROLES = ['admin', 'approver', 'initiator', 'viewer'] as const;
+
+/** What a page asks a new company to be founded with: its name and its founding signer's name and role. */
+export interface FoundingAsked {
+  readonly name: string;
+  readonly signer: { readonly name: string; readonly role: (typeof FOUNDING_ROLES)[number] };
+}
+
+/** The longest name a founding may carry, for the company or its signer. */
+export const MOST_FOUNDING_NAME = 200;
+
+const aFoundingName = (v: unknown): v is string =>
+  typeof v === 'string' && v.trim() !== '' && v.length <= MOST_FOUNDING_NAME;
+
+/** A founding as asked, read whole, or null for anything else. */
+export function readFoundingAsked(value: unknown): FoundingAsked | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (Object.keys(v).some((k) => k !== 'name' && k !== 'signer')) return null;
+  const signer = v['signer'];
+  if (typeof signer !== 'object' || signer === null || Array.isArray(signer)) return null;
+  const w = signer as Record<string, unknown>;
+  if (Object.keys(w).some((k) => k !== 'name' && k !== 'role')) return null;
+  if (!aFoundingName(v['name']) || !aFoundingName(w['name'])) return null;
+  const role = w['role'];
+  if (!(FOUNDING_ROLES as readonly unknown[]).includes(role)) return null;
+  return Object.freeze({
+    name: v['name'] as string,
+    signer: Object.freeze({ name: w['name'] as string, role: role as FoundingAsked['signer']['role'] }),
+  });
 }
 
 /**
@@ -742,10 +874,52 @@ export interface AddressesAndBalancesRequest extends Asking {
   readonly kind: 'addresses-and-balances';
 }
 
+/** One action a page asks the wallet to run, by its name and the ids and amounts it acts on. */
+export interface ActIntent {
+  readonly name: ActIntentName;
+  /** Each field the action's entry names and the ask gave, as read: a label, an address, a seat, an amount, a record's name or the page's words, never bytes. */
+  readonly fields: Readonly<Record<string, string>>;
+}
+
+/**
+ * ASKING THIS WALLET TO RUN ONE ACTION WHOLE (`act-intents.ts`).
+ *
+ * The page names the action and what it acts on; the wallet shows what it
+ * will do, takes one passkey, then builds each transaction from its own reads
+ * and hands each back to the page to send, over this one window, until the
+ * action ends or is stopped. **It carries nothing but what every ask carries,
+ * the intent, the person's saved keys still sealed, and its own company's
+ * viewing key as the service holds it, wrapped**, and a page may not
+ * hand it a transaction, a deploy or anything else it built: what the wallet
+ * signs is what the wallet built. The saved keys are sealed under a key only
+ * this wallet derives, so the page carries them without reading them, and the
+ * wallet refuses a copy older than one it has opened. It always hears
+ * progress, because a page that cannot hear the steps cannot relay them.
+ */
+export interface ActRequest extends Asking {
+  readonly kind: 'act';
+  readonly intent: ActIntent;
+  readonly hearsProgress: true;
+  /**
+   * The site's own identifier for the signed-in person, which the key their saved keys are sealed under is derived
+   * from, and those saved keys as the service holds them. Both or neither: an action that opens no saved keys carries
+   * neither.
+   */
+  readonly person?: string;
+  readonly keyring?: KeyringHandedIn;
+  /**
+   * The action's own company's viewing key as the service holds it, wrapped to its seats, with the company's inbox
+   * public key: one entry at most, and only with the saved keys. The action's end answer gives that one viewing key,
+   * opened with this wallet's seat and only when it makes that inbox public key, as a keyring answer does; nothing
+   * else wrapped to the seat is opened.
+   */
+  readonly served?: readonly ServedHandedIn[];
+}
+
 /** What an application may open this wallet with. */
 export type Ask =
   | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest
-  | RecordsKeyRequest | HoldersRequest | CreationRequest | JoinCodeRequest | AddressesAndBalancesRequest;
+  | RecordsKeyRequest | HoldersRequest | CreationRequest | JoinCodeRequest | AddressesAndBalancesRequest | ActRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -836,7 +1010,12 @@ export type RequestFailure =
   | 'not-a-join-code'
   | 'join-code-fields-on-another-kind'
   /* A request for a wallet's addresses and balances carries nothing of its own, and anything more is refused. */
-  | 'more-than-addresses-and-balances';
+  | 'more-than-addresses-and-balances'
+  /* A request to run an action: an action this wallet does not run, its fields, and anything more than an action carries. */
+  | 'unknown-intent'
+  | 'not-an-act'
+  | 'more-than-an-act'
+  | 'act-fields-on-another-kind';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -1483,6 +1662,15 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
 
 const SEAT = /^[0-9a-f]{64}$/u;
 
+/** The service's name for a record, as an action may name it: never a path, never more than one segment. */
+const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+
+/** The longest text an action carries as the page's words. */
+export const MOST_WORDS = 2_000;
+
+/** A control character other than a new line, which the page's words never carry. */
+const PAGE_WORDS_REFUSED = /[\u0000-\u0009\u000b-\u001f\u007f]/u;
+
 const HEX128 = /^[0-9a-f]{128}$/u;
 
 /** The inviting signer an ask hands over, read whole: a schnorr committee key, a signed entry and the inviter's own opening, every part lower-case hex. */
@@ -1696,6 +1884,148 @@ function addressesAndBalancesAskOf(body: Record<string, unknown>, asking: Asking
 }
 
 /** Every field a holders ask may carry: the ones every ask carries, then its own four. */
+/** Everything an `act` ask may carry. Anything else is refused, never ignored. */
+const ACT_FIELDS: ReadonlySet<string> = new Set([
+  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'progress', 'intent', 'person', 'keyring', 'served',
+]);
+
+/** An amount on the wire: a whole number of a token's smallest unit, written in decimal, with no sign and no leading zero. */
+const AMOUNT = /^(?:0|[1-9][0-9]{0,38})$/u;
+
+/**
+ * Reads one field of an action by the kind its entry gives it. Every kind is
+ * an id or an amount the wallet checks on its own; there is no kind for bytes.
+ */
+function intentFieldOf(kind: IntentFieldKind, value: unknown, field: string, asks: string, nothing: string): string {
+  const notOne = (what: string) => new RequestError('not-an-act', `${asks}, and its '${field}' is not ${what}. ${nothing}`);
+  switch (kind) {
+    case 'company': return labelIn(value, asks, nothing);
+    case 'account': return accountIn(value, asks, nothing);
+    case 'vault': {
+      const vault = readVaultAddress(value);
+      if (vault === null) throw notOne('a vault\'s sixty-four character address');
+      return vault;
+    }
+    case 'seat':
+      if (typeof value !== 'string' || !SEAT.test(value)) throw notOne('a seat: sixty-four lower-case hex characters');
+      return value;
+    case 'amount':
+      if (typeof value !== 'string' || !AMOUNT.test(value)) throw notOne('an amount: a whole number written in decimal');
+      return value;
+    case 'token':
+      if (typeof value !== 'string' || !SEAT.test(value)) throw notOne('a private token: sixty-four lower-case hex characters');
+      return value;
+    case 'record':
+      if (typeof value !== 'string' || !RECORD_ID.test(value)) throw notOne('the name of a record: up to sixty-four letters, digits, - or _');
+      return value;
+    case 'words':
+      if (typeof value !== 'string' || value.length > MOST_WORDS || PAGE_WORDS_REFUSED.test(value)) {
+        throw notOne(`a short text: at most ${MOST_WORDS} characters, with no control characters but a new line`);
+      }
+      return value;
+    default: throw notOne('a field this wallet can read');
+  }
+}
+
+/**
+ * READS AN `act` ASK: the action must be one this wallet runs, and its fields
+ * exactly the ones that action's entry names, each read by its kind. A field
+ * too many or too few is refused rather than ignored or guessed.
+ */
+function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
+  const asks = 'this asks your wallet to run an action for a page';
+  const nothing = 'Nothing has been shown to them and nothing has been signed.';
+  const extra = Object.keys(body).filter((k) => !ACT_FIELDS.has(k));
+  if (extra.length > 0) {
+    throw new RequestError(
+      'more-than-an-act',
+      `${asks}, and it also carries ${extra.map((k) => `'${k}'`).join(', ')}. An action names what it acts on and `
+      + `nothing else, because this wallet builds everything it signs itself, so anything more is refused. ${nothing}`);
+  }
+  const intent = body['intent'];
+  if (typeof intent !== 'object' || intent === null || Array.isArray(intent)) {
+    throw new RequestError('not-an-act', `${asks} and does not say which action. ${nothing}`);
+  }
+  const named = intent as Record<string, unknown>;
+  const name = named['name'];
+  const shapes = ACT_INTENTS as Readonly<Record<string, IntentShape>>;
+  const shape = typeof name === 'string' && Object.prototype.hasOwnProperty.call(shapes, name) ? shapes[name] : undefined;
+  if (shape === undefined) {
+    throw new RequestError(
+      'unknown-intent',
+      `${asks}, and '${String(name)}' is not an action this wallet runs. It is refused rather than run as one it `
+      + `does, because a wallet guessing what it is doing is a wallet doing the wrong thing behind the right screen. ${nothing}`);
+  }
+  const wanted = Object.keys(shape.fields);
+  const given = Object.keys(named).filter((k) => k !== 'name');
+  const unasked = given.filter((k) => !Object.prototype.hasOwnProperty.call(shape.fields, k));
+  if (unasked.length > 0) {
+    throw new RequestError(
+      'not-an-act',
+      `${asks}, and it carries ${unasked.map((k) => `'${k}'`).join(', ')}, which that action does not take, so it is refused. ${nothing}`);
+  }
+  const optional = new Set(shape.optional ?? []);
+  const missing = wanted.filter((k) => !given.includes(k) && !optional.has(k));
+  if (missing.length > 0) {
+    throw new RequestError(
+      'not-an-act',
+      `${asks}, and it does not name ${missing.map((k) => `'${k}'`).join(', ')}, which that action needs. ${nothing}`);
+  }
+  const fields: Record<string, string> = {};
+  for (const field of wanted) {
+    if (!given.includes(field)) continue;
+    fields[field] = intentFieldOf(shape.fields[field] as IntentFieldKind, named[field], field, asks, nothing);
+  }
+  const keys = savedKeysIn(body, asks, nothing);
+  let served: readonly ServedHandedIn[] | undefined;
+  if ('served' in body) {
+    const s = keys.keyring === undefined ? null : readServedHandedIn(body['served']);
+    if (s === null || s.length > 1) {
+      throw new RequestError(
+        'not-an-act',
+        `${asks}, and it names a company's keys ${keys.keyring === undefined ? 'without your saved keys' : 'in a form this wallet does not read, or more than its own'}. ${nothing}`);
+    }
+    served = s;
+  }
+  return Object.freeze({
+    ...asking,
+    kind: 'act' as const,
+    hearsProgress: true as const,
+    intent: Object.freeze({ name: name as ActIntentName, fields: Object.freeze(fields) }),
+    ...keys,
+    ...(served === undefined ? {} : { served }),
+  });
+}
+
+/**
+ * THE PERSON AND THEIR SAVED KEYS ON AN `act` ASK, both or neither. A person
+ * named in a shape this wallet cannot use, or saved keys that are not sealed
+ * keys of the size this wallet reads, are refused rather than dropped: an
+ * action that needs them would otherwise run on none.
+ */
+function savedKeysIn(body: Record<string, unknown>, asks: string, nothing: string): { person?: string; keyring?: KeyringHandedIn } {
+  const hasPerson = 'person' in body;
+  const hasKeys = 'keyring' in body;
+  if (!hasPerson && !hasKeys) return {};
+  if (!hasPerson || !hasKeys) {
+    throw new RequestError(
+      'not-an-act',
+      `${asks}, and it carries ${hasPerson ? 'a person without their saved keys' : 'saved keys without the person they are for'}. `
+      + `The two go together or not at all, so it is refused. ${nothing}`);
+  }
+  const person = body['person'];
+  if (typeof person !== 'string' || !PERSON.test(person)) {
+    throw new RequestError('not-a-person', `${asks}, and it does not name you in a way this wallet can use. ${nothing}`);
+  }
+  const keyring = readKeyringHandedIn(body['keyring']);
+  if (keyring === null) {
+    throw new RequestError(
+      'not-an-act',
+      `${asks}, and what it carries as your saved keys is not sealed saved keys this wallet reads. ${nothing}`);
+  }
+  return { person, keyring };
+}
+
 const HOLDERS_FIELDS: ReadonlySet<string> = new Set([
   'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account', 'movements', 'roles',
 ]);
@@ -1766,12 +2096,13 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   const kind = kindOf(body);
 
   /*
-   * **A PERSON AND A SIGNED-IN ADDRESS BELONG TO A KEYRING ASK AND TO NOTHING
-   * ELSE.** Refused by presence on every other kind: a requester that named
+   * **A SIGNED-IN ADDRESS BELONGS TO A KEYRING ASK AND TO NOTHING ELSE, AND A
+   * PERSON TO A KEYRING ASK, A JOIN CODE AND AN ACTION THAT OPENS THEIR SAVED
+   * KEYS.** Refused by presence on every other kind: a requester that named
    * one and was answered with something else would be entitled to believe the
    * wallet had read it.
    */
-  if (kind !== 'keyring' && ('signedInAs' in body || 'drawLabel' in body || (kind !== 'join-code' && 'person' in body))) {
+  if (kind !== 'keyring' && ('signedInAs' in body || 'drawLabel' in body || (kind !== 'join-code' && kind !== 'act' && 'person' in body))) {
     throw new RequestError(
       'keyring-fields-on-another-kind',
       `this is a '${kind}' and it names a person, the address a page signed in as, or asks to start a company. Those `
@@ -1841,6 +2172,18 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       `this is a '${kind}' and it carries the parts of a join code, which are refused. Nothing has been shown to them.`);
   }
 
+  /*
+   * **AN ACTION'S INTENT BELONGS TO AN `act` ASK AND TO NOTHING ELSE**, refused
+   * by presence on every other kind for the keyring fields' reason.
+   */
+  if (kind !== 'act' && 'intent' in body) {
+    throw new RequestError(
+      'act-fields-on-another-kind',
+      `this is a '${kind}' and it names an action for your wallet to run. That belongs only to a request to run one, `
+      + 'so it is refused rather than ignored. Nothing has been shown to them.');
+  }
+
+  if (kind === 'act') return actAskOf(body, asking);
   if (kind === 'join-code') return joinCodeAskOf(body, asking);
   if (kind === 'committee') return committeeChangeOf(body, asking);
   if (kind === 'creation') return creationAskOf(body, asking);
@@ -1956,6 +2299,59 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
         'malformed-field',
         `this names a company's account and no company. ${keyringNothing}`);
     }
+    const companyIfOnChain = body['companyIfOnChain'];
+    if (companyIfOnChain !== undefined
+      && (companyIfOnChain !== true || company === null || account === null || drawLabel === true || !('keyring' in body))) {
+      throw new RequestError(
+        'malformed-field',
+        'this asks your wallet to open a company beside your saved keys, and does not name that company, its account '
+          + `and your saved keys with it. ${keyringNothing}`);
+    }
+    /* What a new company is founded with belongs to starting one and to nothing else. */
+    if (drawLabel !== true && 'founding' in body) {
+      throw new RequestError(
+        'malformed-field',
+        `this carries what a new company is founded with, and does not ask your wallet to start one. ${keyringNothing}`);
+    }
+    let founding: FoundingAsked | undefined;
+    let handedIn: KeyringHandedIn | undefined;
+    if ('founding' in body) {
+      const read = readFoundingAsked(body['founding']);
+      if (read === null) {
+        throw new RequestError(
+          'malformed-field',
+          'this names the new company and its founding signer in a form this wallet does not read: a name for '
+          + `each, of 1 to ${MOST_FOUNDING_NAME} characters, and one of the four roles. ${keyringNothing}`);
+      }
+      founding = read;
+    }
+    if ('keyring' in body) {
+      const read = readKeyringHandedIn(body['keyring']);
+      if (read === null) {
+        throw new RequestError(
+          'malformed-field',
+          `this carries your saved keys in a form this wallet does not read. ${keyringNothing}`);
+      }
+      handedIn = read;
+    }
+    let served: readonly ServedHandedIn[] | undefined;
+    let tidy: readonly TidyAsked[] | undefined;
+    if ('served' in body || 'tidy' in body) {
+      if (handedIn === undefined) {
+        throw new RequestError(
+          'malformed-field',
+          `this names companies' keys or changes to your saved keys, and hands no saved keys in. ${keyringNothing}`);
+      }
+      const s = 'served' in body ? readServedHandedIn(body['served']) : Object.freeze([]);
+      const t = 'tidy' in body ? readTidyAsked(body['tidy']) : Object.freeze([]);
+      if (s === null || t === null) {
+        throw new RequestError(
+          'malformed-field',
+          `this names companies' keys, or changes to your saved keys, in a form this wallet does not read. ${keyringNothing}`);
+      }
+      served = s;
+      tidy = t;
+    }
     return Object.freeze({
       ...asking,
       kind,
@@ -1964,6 +2360,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       company,
       account,
       drawLabel: drawLabel === true,
+      ...(companyIfOnChain === true ? { companyIfOnChain: true as const } : {}),
+      ...(founding === undefined ? {} : { founding }),
+      ...(handedIn === undefined ? {} : { keyring: handedIn }),
+      ...(served === undefined ? {} : { served }),
+      ...(tidy === undefined ? {} : { tidy }),
     });
   }
 

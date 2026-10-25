@@ -1,19 +1,44 @@
+/// <reference types="vite/client" />
 /** The one bound on every read this page makes of the service or the chain while a company is being finished or its vault made. */
 export const SERVICE_READ_BOUND_MS = 20_000;
 
 /** The same bound in seconds, for the words that name it. */
 export const SERVICE_READ_BOUND_SECONDS = '20';
 
-/** A read that was given SERVICE_READ_BOUND_MS and did not answer. Only reads raise it: a send is never cut short. */
+/**
+ * **WHERE THE PAGE'S READS ARE WRITTEN DOWN, IN A DEVELOPMENT BUILD.** With the console report on (`error-sink.ts`, on
+ * the same test), each read bound here writes one console warning when it ends, which the report carries to the
+ * service's log: what it read, its status and how long it took, what it failed with, or that it ran out of time. Only
+ * the read's name, a status, a time and an error's kind and message: never what it answered. Every line sits behind
+ * `import.meta.env.DEV`, so a production build carries none of it; outside a bundler `import.meta` has no `env` and
+ * nothing is written.
+ */
+const readsAreNoted = (): boolean => import.meta.env?.DEV === true && import.meta.env.VITE_DEV_ERROR_SINK === '1';
+const noteRead = (line: string): void => { try { console.warn(`read ${line}`); } catch { /* a line that cannot be written never stops a read */ } };
+const statusOf = (v: unknown): string => {
+  const o = (v ?? {}) as { status?: unknown; response?: { status?: unknown } };
+  const status = typeof o.status === 'number' ? o.status : typeof o.response?.status === 'number' ? o.response.status : null;
+  return status === null ? '' : `${status} `;
+};
+const errorOf = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+
+/**
+ * A read that was given SERVICE_READ_BOUND_MS and did not answer. Only reads raise it: a send is never cut short.
+ * Made wherever a read is bounded, so it is also where every read that ran out of time is written down.
+ */
 export class ReadRanOutOfTime extends Error {
   constructor(readonly what: string) {
     super(`${what} did not answer within ${SERVICE_READ_BOUND_SECONDS} seconds, so this page stopped waiting for it. Nothing was changed by this read.`);
     this.name = 'ReadRanOutOfTime';
+    if (import.meta.env?.DEV && readsAreNoted()) {
+      noteRead(`${what}: did not answer within ${SERVICE_READ_BOUND_SECONDS} seconds, so the page stopped waiting for it`);
+    }
   }
 }
 
 /** Runs one read with an abort signal; once the bound has passed the signal is aborted and the read is refused with ReadRanOutOfTime. */
 export function boundedRead<T>(what: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const started = import.meta.env?.DEV ? Date.now() : 0;
   return new Promise<T>((answer, refuse) => {
     const stopper = new AbortController();
     const timer = setTimeout(() => {
@@ -21,8 +46,16 @@ export function boundedRead<T>(what: string, work: (signal: AbortSignal) => Prom
       refuse(new ReadRanOutOfTime(what));
     }, SERVICE_READ_BOUND_MS);
     work(stopper.signal).then(
-      (v) => { clearTimeout(timer); answer(v); },
-      (e: unknown) => { clearTimeout(timer); refuse(e); },
+      (v) => {
+        clearTimeout(timer);
+        if (import.meta.env?.DEV && readsAreNoted()) noteRead(`${what}: answered ${statusOf(v)}in ${Date.now() - started} ms`);
+        answer(v);
+      },
+      (e: unknown) => {
+        clearTimeout(timer);
+        if (import.meta.env?.DEV && readsAreNoted()) noteRead(`${what}: failed after ${Date.now() - started} ms: ${errorOf(e)}`);
+        refuse(e);
+      },
     );
   });
 }

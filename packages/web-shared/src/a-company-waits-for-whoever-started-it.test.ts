@@ -4,10 +4,10 @@ import { identityFromWords } from 'midnight-identity';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
-import { keyringKeyFor, keyringReleaseFor } from 'midnight-identity/profile/unlock';
-import { seal, toHex, unseal } from '../../../src/core/crypto.js';
+import { seal, unseal } from '../../../src/core/crypto.js';
 import { keyringAsk, KEYRING_PURPOSE } from '../../../src/core/wallet-unlock.js';
 import * as keyring from './keyring.js';
+import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
 import type { Openable } from './wallet-sign-in.js';
 
 /**
@@ -20,8 +20,8 @@ import type { Openable } from './wallet-sign-in.js';
  * nothing, the keyring is as it always was.
  *
  * The wallet at the other end is the wallet's own code answering over the real
- * conversation; the company is made by the first press, with a builder that
- * stands in for the worker.
+ * conversation; the company is founded by the first press, as the wallet
+ * founds it.
  */
 const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
@@ -53,9 +53,10 @@ class WalletAtTheOtherEnd implements Openable {
     try {
       const ask = parseAsk(message, US, Date.now());
       if (ask.kind === 'keyring') this.askedFor.push((ask as KeyringRequest).signedInAs ?? null);
-      answer = ask.kind === 'keyring'
-        ? keyringReleaseFor(identity, ask as KeyringRequest, Date.now(), (address) => address === this.holds)
-        : { schema: 'a-sign-in' };
+      const k = ask as KeyringRequest;
+      answer = ask.kind !== 'keyring' ? { schema: 'a-sign-in' }
+        : k.drawLabel ? foundedAsTheWalletAnswers(identity, k, (address) => address === this.holds)
+          : keyringAsTheWalletAnswers(identity, k, (address) => address === this.holds);
     } catch {
       answer = { schema: 'nothing-given' };
     }
@@ -64,19 +65,12 @@ class WalletAtTheOtherEnd implements Openable {
 }
 
 /** The keyring key the wallet above gives `person`. */
-const keyringHexFor = (person: string) => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
+const keyringHexFor = (person: string) => (savedKeysSealKey(identity, parseAsk(keyringAsk({
   name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
   person, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
-const LEAF = 'ab'.repeat(32);
-const ACCOUNT = 'c0'.repeat(32);
 
-/** What builds the account's deploy, standing in for the worker: the first press needs only the seat and the deploy. */
-const aBuilder = (): keyring.AccountCreationBuilder => ({
-  foundingSeat: async () => ({ seat: LEAF, scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
-  accountDeploy: async () => ({ account: ACCOUNT, tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] }),
-} as unknown as keyring.AccountCreationBuilder);
 
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
 const answerFor = (user: typeof A, address: string) => ({ user, address, created: true, session: {} });
@@ -125,7 +119,7 @@ describe('a sign-in picked up after a reload', () => {
     expect(await keyring.resumeSession({ personId: A.id, address: ADDRESS_A })).toEqual(A);
     expect(keyring.signedInWallet()).toBe(ADDRESS_A);
     const wallet = new WalletAtTheOtherEnd(ADDRESS_A);
-    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
+    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     expect(wallet.askedFor).toEqual([ADDRESS_A]);
     expect(companiesIn(service.savedFor(A.id), A.id)).toEqual([started.accountId]);
   });
@@ -135,7 +129,7 @@ describe('a sign-in picked up after a reload', () => {
     const service = aService({ signedIn: () => A });
     expect(await keyring.resumeSession({ personId: B.id, address: ADDRESS_B })).toEqual(A);
     expect(keyring.signedInWallet()).toBeNull();
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), new WalletAtTheOtherEnd(ADDRESS_B), US))
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_B), US))
       .rejects.toBeInstanceOf(keyring.FirstKeysNeedTheSignIn);
     expect(service.sent('POST /api/accounts')).toEqual([]);
   });
@@ -145,7 +139,7 @@ describe('a sign-in picked up after a reload', () => {
     const service = aService({ signedIn: () => A });
     await keyring.resumeSession({ personId: A.id, address: ADDRESS_A });
     const elsewhere = new WalletAtTheOtherEnd(ADDRESS_B);
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), elsewhere, US)).rejects.toThrow();
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, elsewhere, US)).rejects.toThrow();
     expect(elsewhere.askedFor).toEqual([ADDRESS_A]);
     expect(service.sent('POST /api/accounts')).toEqual([]);
     expect(service.sent('PUT /api/me/keys')).toEqual([]);
@@ -173,7 +167,7 @@ describe('what a person\'s devices once kept of each company\'s roster', () => {
     }), keyringHexFor(A.id) as never));
     keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
     await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
-    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), new WalletAtTheOtherEnd(ADDRESS_A), US);
+    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
     const written = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
     expect(Object.keys(written.accounts)).toEqual([started.accountId]);
     expect(written).not.toHaveProperty('rostersBelieved');
@@ -189,12 +183,12 @@ describe('what a person\'s devices kept of each company they have not finished',
   const IN_KEYS = (creations: unknown, setAside?: unknown) =>
     seal(JSON.stringify({ accounts: {}, creations, ...(setAside === undefined ? {} : { creationsSetAside: setAside }) }), keyringHexFor(A.id) as never);
 
-  /* RED WHEN: a kept creation whose request holds no readable name (kept by older code) is listed with no name although the creation's own sealed roster, opened with the person's own seat key, still holds it; or a blank name is given back as a name; or the name is taken from anywhere but the device. */
-  it('reads the name of a kept creation whose request holds none from its own sealed roster, and gives back no blank', async () => {
+  /* RED WHEN: a kept creation whose request holds no readable name (kept by older code) is given a name read from its sealed roster with the seat's key on the page, a blank name is given back as a name, or the name is taken from anywhere but the device. */
+  it('gives back no name, and no blank, for a kept creation whose request holds none: the sealed roster is never opened on the page', async () => {
     const service = aService({ signedIn: () => A });
     keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
     const wallet = new WalletAtTheOtherEnd(ADDRESS_A);
-    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
+    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     const mine = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
     for (const request of [{ ...mine.creations[started.accountId].request, name: undefined }, { ...mine.creations[started.accountId].request, name: '   ' }]) {
       const older = { ...mine, creations: { [started.accountId]: { ...mine.creations[started.accountId], request } } };
@@ -202,7 +196,7 @@ describe('what a person\'s devices kept of each company they have not finished',
       keyring.forgetLocally();
       keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
       await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
-      expect(keyring.companyNameKeptHere(started.accountId)).toBe(A_COMPANY.name);
+      expect(keyring.companyNameKeptHere(started.accountId)).toBeNull();
     }
     expect(keyring.companyNameKeptHere('acc_NOTKEPTHERE')).toBeNull();
   });
@@ -216,7 +210,7 @@ describe('what a person\'s devices kept of each company they have not finished',
     expect(keyring.companiesBeingCreated()).toEqual(['acc_AAAAAAAAAAAA']);
     expect(keyring.companyNameKeptHere('acc_AAAAAAAAAAAA')).toBe('Acme Ltd');
     expect(keyring.companyNameKeptHere('acc_BBBBBBBBBBBB')).toBe('Brick Ltd');
-    const started = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Third Ltd' }, WALLET, aBuilder(), new WalletAtTheOtherEnd(ADDRESS_A), US);
+    const started = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Third Ltd' }, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
     const written = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
     expect(Object.keys(written.creations).sort()).toEqual(['acc_AAAAAAAAAAAA', 'acc_BBBBBBBBBBBB', started.accountId].sort());
     expect(written.creations.acc_BBBBBBBBBBBB.setAside).toBe(true);
@@ -237,11 +231,11 @@ describe('what a person\'s devices kept of each company they have not finished',
     const service = aService({ signedIn: () => A });
     keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
     const wallet = new WalletAtTheOtherEnd(ADDRESS_A);
-    const first = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
+    const first = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     const mine = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
     const otherTabs = { ...mine, creations: { ...mine.creations, acc_CCCCCCCCCCCC: kept('acc_CCCCCCCCCCCC', 'Kept by another tab') } };
     service.replaceSaved(A.id, seal(JSON.stringify(otherTabs), keyringHexFor(A.id) as never));
-    const second = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, aBuilder(), wallet, US);
+    const second = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, wallet, US);
     const written = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
     expect(Object.keys(written.creations).sort()).toEqual([first.accountId, 'acc_CCCCCCCCCCCC', second.accountId].sort());
   });

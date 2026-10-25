@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as keyring from './keyring.js';
 import { manifestServiceFor, treeServiceFor } from './record-entered-here.js';
 import { accountPresenceAt } from './vault-on-chain-here.js';
-import { vaultBuilderOver } from './vault-worker-client.js';
+import { ASK_STARTED, vaultBuilderOver } from './vault-worker-client.js';
 import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
 
 /**
  * **A READ THAT NEVER ANSWERS ENDS AT TWENTY SECONDS, WITH WORDS, AND IS ABORTED; A SEND IS NEVER CUT SHORT.**
  *
  * Every read the company and vault steps make of the service or the chain is held to one bound. A send (a creation,
- * a pay key, a vault deploy) is not a read: cutting it short could still land after the page gave up.
+ * a pay key, a vault deploy) is not a read: cutting it short could still land after the page gave up. A read the vault
+ * worker makes is timed from when the worker says it has started it, its code loaded.
  *
  * RED WHEN: a read of the service or the network is still waiting after twenty seconds, ends before twenty seconds,
  * ends without its request being aborted, ends without words that say what did not answer; or a send is aborted or
@@ -91,10 +92,14 @@ describe('reads of the network', () => {
     expect(signals[0]?.aborted).toBe(true);
   });
 
+  /* A worker whose code is loaded: it says it has started each ask as it is posted, and then answers nothing. */
   const hanging = () => {
     const posted: unknown[] = [];
     let hear: (data: unknown) => void = () => {};
-    const worker = { postMessage: (m: unknown) => { posted.push(m); }, addEventListener: (_t: 'message', l: (e: { data: unknown }) => void) => { hear = (data) => l({ data }); } };
+    const worker = {
+      postMessage: (m: unknown) => { posted.push(m); hear({ kind: ASK_STARTED, started: (m as { id: number }).id }); },
+      addEventListener: (_t: 'message', l: (e: { data: unknown }) => void) => { hear = (data) => l({ data }); },
+    };
     return { client: vaultBuilderOver(worker, 'undeployed'), posted, hear: (d: unknown) => hear(d) };
   };
   const indexer = { indexerUri: 'https://i.example/graphql', indexerWsUri: 'wss://i.example/ws' };

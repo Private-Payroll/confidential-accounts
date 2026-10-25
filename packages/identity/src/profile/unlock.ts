@@ -2,8 +2,6 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Purposes } from '../keys/derivation.js';
 import { committeeKeyFor, readCommitteeKey } from './committee-key.js';
-import { seatKeysFor } from './seat-keys.js';
-import type { SeatKeys } from './seat-keys.js';
 import type { SignatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import type { Identity } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
@@ -120,9 +118,9 @@ export type { HeldScope } from './held-address.js';
  * a parent whose one job is this key and which never leaves this wallet.
  *
  * **THE SEAT PARENT HAS ANOTHER JOB, AND ITS CHILDREN ARE GIVEN AWAY.** It makes
- * each seat's keys (`seatKeysFor`), and those are handed to the page that holds
- * the seat. A key handed to a page must never be the parent of keys that are
- * not, so a company key and a seat's keys share no parent.
+ * each seat's keys (`seatKeysFor`), and a company key is handed to the page. A
+ * key handed to a page must never be the parent of keys that are not, so a
+ * company key and a seat's keys share no parent.
  *
  * ══ THE LABEL GOES IN AS ITS OWN TEXT, IN ITS ONE SPELLING ═════════════════
  *
@@ -485,7 +483,10 @@ export function readRelease(
 /* ============================ the keyring key ============================ */
 
 /*
- * **THE KEY A PERSON'S OWN SAVED KEYS AT ONE SITE ARE SEALED UNDER.**
+ * **THE KEY THAT OPENS A PERSON'S SAVED KEYS AT ONE SITE WHEN THEY ARE STILL SEALED THE EARLIER WAY.** The wallet
+ * seals saved keys under a key from the same parent with its own salt (`keyringSealKeyFor`) and hands no page
+ * either key. This one only opens a copy sealed the earlier way, once, in the wallet, so the copy can be sealed
+ * again under the new key. Everything below holds for both.
  *
  * ── WHY A COMPANY'S KEY COULD NOT BE IT ────────────────────────────────────
  *
@@ -515,8 +516,8 @@ export function readRelease(
  * spelling belongs to the chain's tooling and to the network's name; if either
  * ever spelled the same key differently, every set of keys sealed under a key
  * derived from the spelling would stop opening, with nothing failing until the
- * day somebody needed them. **The address gates instead**: the key is not given
- * unless one of this wallet's own accounts has exactly that address.
+ * day somebody needed them. **The address gates instead**: the saved keys are
+ * not read unless one of this wallet's own accounts has exactly that address.
  *
  * **WHAT THE IDENTIFIER COSTS, SAID OUT LOUD.** It is minted by the site, not by
  * a chain, so it is only as durable as the site's own record of the person - and
@@ -530,7 +531,7 @@ export function readRelease(
  * **The whole of the person's own keys at that site**: their vote on every
  * company they approve payments for there, not only the ability to read. A
  * company's key still opens that company's records and no other; this key is
- * not a company's key, and the screen that gives it says what it gives.
+ * not a company's key, and it never leaves the wallet.
  */
 
 /* The domain this expansion lives in. The day it changes, every person's saved
@@ -554,23 +555,75 @@ export type KeyringKey = Uint8Array & { readonly [keyringBrand]: true };
 
 export const KEYRING_RELEASE_SCHEMA = 'midnight-identity/keyring-release/v1';
 
-const personOf = (ask: KeyringRequest): string => {
+const personOf = (ask: { readonly person: string }): string => {
   const person = ask.person;
   if (typeof person !== 'string' || !PERSON.test(person)) {
     throw new UnlockError(
       'person-not-usable',
-      'this asks for the key your saved keys at a site are sealed under, and does not name '
+      'this asks to read your saved keys at a site, and does not name '
       + 'you in a way this wallet can use. Nothing has been given.');
   }
   return person;
 };
 
 /**
- * THE KEYRING KEY. A pure function of the person's seed and the site's own
- * identifier for them. **The origin is checked and is not an ingredient; the
- * signed-in address is not read here at all** - it gates in `keyringReleaseFor`.
+ * **A PERSON'S SAVED KEYS AS A PAGE HANDS THEM TO THIS WALLET, STILL SEALED**,
+ * with the version the service gave them, and as this wallet hands them back
+ * sealed again for the page to keep. Hex, as the service holds them. The
+ * wallet opens them with its own seal key and trusts nothing about which copy
+ * they are: the counter sealed inside says that.
  */
-export function keyringKeyFor(identity: Identity, ask: KeyringRequest): KeyringKey {
+export interface SealedKeyring {
+  readonly iv: string;
+  readonly tag: string;
+  readonly body: string;
+}
+
+export interface KeyringHandedIn {
+  /** Null when the service holds no saved keys for this person yet. */
+  readonly sealed: SealedKeyring | null;
+  /** The service's version of what it holds, for the page's write over it. Never evidence of which copy this is. */
+  readonly version: number;
+}
+
+/** The largest sealed keyring this wallet reads or hands back, in hex characters of its body. */
+export const MOST_SEALED_KEYRING = 16_000_000;
+
+const HEX_TEXT = /^(?:[0-9a-f]{2})*$/u;
+
+/** Sealed saved keys in the shape they are kept in, or null: a 12-byte nonce, and a body no larger than this wallet reads. */
+export function readSealedKeyring(value: unknown): SealedKeyring | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (Object.keys(v).some((k) => k !== 'iv' && k !== 'tag' && k !== 'body')) return null;
+  const { iv, tag, body } = v;
+  if (typeof iv !== 'string' || iv.length !== 24 || !HEX_TEXT.test(iv)) return null;
+  if (typeof tag !== 'string' || tag.length > 32 || !HEX_TEXT.test(tag)) return null;
+  if (typeof body !== 'string' || body.length < 32 || body.length > MOST_SEALED_KEYRING || !HEX_TEXT.test(body)) return null;
+  return Object.freeze({ iv, tag, body });
+}
+
+/** Saved keys a page hands in, sealed or none, with the service's version as a whole number from 0; or null. */
+export function readKeyringHandedIn(value: unknown): KeyringHandedIn | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (Object.keys(v).some((k) => k !== 'sealed' && k !== 'version')) return null;
+  const version = v['version'];
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 0) return null;
+  if (v['sealed'] === null) return Object.freeze({ sealed: null, version });
+  const sealed = readSealedKeyring(v['sealed']);
+  return sealed === null ? null : Object.freeze({ sealed, version });
+}
+
+/**
+ * THE KEYRING KEY, the one saved keys were sealed under before the seal key. A
+ * pure function of the person's seed and the site's own identifier for them.
+ * **The origin is checked and is not an ingredient; the signed-in address is not
+ * read here at all** - it gates in `keyringReleaseFor`. Only the wallet calls it,
+ * to check an ask and to open a copy sealed before
+ * (apps/wallet/src/keyring/seal-key.ts); no answer carries it.
+ */
+export function keyringKeyFor<A extends Pick<KeyringRequest, 'requester' | 'person'>>(identity: Identity, ask: A): KeyringKey {
   originOf(ask);
   const person = personOf(ask);
   const parent = identity.authority(Purposes.Keyring, KEYRING_PARENT_INDEX);
@@ -580,10 +633,12 @@ export function keyringKeyFor(identity: Identity, ask: KeyringRequest): KeyringK
 /**
  * WHAT CROSSES BACK FOR A KEYRING ASK.
  *
- * **`key`, `companyKey` AND `seat` ARE SECRETS ON THE WIRE**, with the rules
- * `key` has above: posted to the observed origin and nowhere else, never
- * written to storage, a history entry, a URL or a log, and rendered by no
- * screen.
+ * **NO KEY THE SAVED KEYS OPEN WITH CROSSES, AND NO SEAT'S SECRET.** The saved
+ * keys are opened, changed and sealed in this wallet only; the page is given
+ * what they hold that is not secret (`read`). **`companyKey` IS A SECRET ON
+ * THE WIRE**, with the rules an unlock's key has above: posted to the observed
+ * origin and nowhere else, never written to storage, a history entry, a URL or
+ * a log, and rendered by no screen.
  */
 export interface KeyringRelease {
   readonly schema: typeof KEYRING_RELEASE_SCHEMA;
@@ -602,8 +657,6 @@ export interface KeyringRelease {
   readonly account: AccountAddress | null;
   readonly nonce: string;
   readonly at: number;
-  /** Base64url of the 32-byte keyring key. **Do not log this. Do not store it.** */
-  readonly key: string;
   /** Base64url of the 32-byte key for `company`, or null when no company was asked about. */
   readonly companyKey: string | null;
   /**
@@ -613,23 +666,118 @@ export interface KeyringRelease {
    */
   readonly committeeKey: SignatureVerifyingKey | null;
   /**
-   * The founding seat's keys in the company this wallet drew, each base64url of
-   * 32 bytes (`seatKeysFor`, seat 0), or null when the ask started no company.
-   * The page makes the founding seat from these instead of making keys of its
-   * own, so the words alone make that seat again.
+   * When the ask started a company: what this wallet founded it with, the
+   * founding roster and state it signed and the company's sealed first records,
+   * none of it secret (the company's viewing key in it is wrapped to the seat),
+   * read by the page and sent on to the service. The founding seat's own keys
+   * never cross: they stay in this wallet, made again from its words.
    */
-  readonly seat: SeatKeysOnTheWire | null;
+  readonly founded?: unknown;
+  /** When the ask started a company: the person's saved keys with the new seat in them, sealed again by this wallet. */
+  readonly sealed?: SealedKeyring;
+  /** The service's version of the saved keys `sealed` is written over. */
+  readonly ifVersion?: number;
+  /**
+   * When the ask handed the person's saved keys in: what this wallet read from them for the page, and nothing secret
+   * (`KeysRead`). Always with a founding.
+   */
+  readonly read?: KeysRead;
 }
 
-/** A seat's three keys as they cross to the page: base64url of 32 bytes each. */
-export interface SeatKeysOnTheWire {
-  readonly signingSecret: string;
-  readonly wrappingSecret: string;
-  readonly salt: string;
+/** A seat's public halves and scope, as the wallet reads them from the saved keys: nothing here signs, opens or proves. */
+export interface SeatShown {
+  readonly signerId: string;
+  readonly signingPublicKey: string;
+  readonly wrappingPublicKey: string;
+  readonly scope: string;
 }
 
-/* A new company's founding seat is the first seat this wallet makes in it. */
-const FOUNDING_SEAT = 0;
+/**
+ * WHAT THE WALLET READ FROM THE SAVED KEYS FOR THE PAGE. `seats` gives each seat's public halves by company id;
+ * `viewing` each company's viewing key the wallet opened with the seat's wrapping secret and believed (its inbox
+ * public key matched); `metadata` the saved keys' parts that hold no secret (the creations, what is owed), read again
+ * by the page through its own allow-list; `holder` names this wallet and person without being a key; `resealed`, when
+ * the wallet changed the saved keys as asked, the copy the page writes over the one it handed in.
+ */
+export interface KeysRead {
+  readonly seats: Readonly<Record<string, SeatShown>>;
+  readonly viewing: Readonly<Record<string, string>>;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly holder: string;
+  readonly resealed: { readonly sealed: SealedKeyring; readonly ifVersion: number } | null;
+}
+
+const HEX64_TEXT = /^[0-9a-f]{64}$/u;
+const AN_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+const MOST_SEATS_READ = 256;
+
+const seatShownFrom = (value: unknown): SeatShown | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (Object.keys(v).some((k) => !['signerId', 'signingPublicKey', 'wrappingPublicKey', 'scope'].includes(k))) return null;
+  const { signerId, signingPublicKey, wrappingPublicKey, scope } = v;
+  if (typeof signerId !== 'string' || !AN_ID.test(signerId)) return null;
+  for (const h of [signingPublicKey, wrappingPublicKey, scope]) if (typeof h !== 'string' || !HEX64_TEXT.test(h)) return null;
+  return Object.freeze({ signerId, signingPublicKey, wrappingPublicKey, scope } as SeatShown);
+};
+
+/** What the wallet read from the saved keys, read whole, or null for anything else: a secret in it has no field to be in. */
+export function readKeysRead(value: unknown): KeysRead | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (Object.keys(v).some((k) => !['seats', 'viewing', 'metadata', 'holder', 'resealed'].includes(k))) return null;
+  const { seats, viewing, metadata, holder, resealed } = v;
+  if (typeof holder !== 'string' || !HEX64_TEXT.test(holder)) return null;
+  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return null;
+  if (typeof seats !== 'object' || seats === null || Array.isArray(seats)) return null;
+  if (typeof viewing !== 'object' || viewing === null || Array.isArray(viewing)) return null;
+  const seatsRead: Record<string, SeatShown> = {};
+  const seatIds = Object.keys(seats);
+  if (seatIds.length > MOST_SEATS_READ) return null;
+  for (const id of seatIds) {
+    const shown = AN_ID.test(id) ? seatShownFrom((seats as Record<string, unknown>)[id]) : null;
+    if (shown === null) return null;
+    seatsRead[id] = shown;
+  }
+  const viewingRead: Record<string, string> = {};
+  for (const [id, key] of Object.entries(viewing as Record<string, unknown>)) {
+    if (!Object.prototype.hasOwnProperty.call(seatsRead, id) || typeof key !== 'string' || !HEX64_TEXT.test(key)) return null;
+    viewingRead[id] = key;
+  }
+  let again: KeysRead['resealed'] = null;
+  if (resealed !== null && resealed !== undefined) {
+    if (typeof resealed !== 'object' || Array.isArray(resealed)) return null;
+    const r = resealed as Record<string, unknown>;
+    const sealed = readSealedKeyring(r['sealed']);
+    const ifVersion = r['ifVersion'];
+    if (sealed === null || typeof ifVersion !== 'number' || !Number.isSafeInteger(ifVersion) || ifVersion < 0
+      || Object.keys(r).some((k) => k !== 'sealed' && k !== 'ifVersion')) return null;
+    again = Object.freeze({ sealed, ifVersion });
+  }
+  return Object.freeze({
+    seats: Object.freeze(seatsRead), viewing: Object.freeze(viewingRead),
+    metadata: metadata as Readonly<Record<string, unknown>>, holder, resealed: again,
+  });
+}
+
+const KEYRING_HOLDER_SALT = new TextEncoder().encode('midnight-identity/keyring-holder/v1');
+
+/**
+ * A PUBLIC NAME FOR THIS WALLET AND PERSON, so a page can tell a second answer came from the wallet that gave the
+ * first, without holding any key: derived from the keyring's parent under its own salt, so it opens nothing.
+ */
+export function keyringHolderFor<A extends Pick<KeyringRequest, 'requester' | 'person'>>(identity: Identity, ask: A): string {
+  originOf(ask);
+  const person = personOf(ask);
+  const parent = identity.authority(Purposes.Keyring, KEYRING_PARENT_INDEX);
+  const named = hkdf(sha256, parent, KEYRING_HOLDER_SALT, new TextEncoder().encode(person), KEY_BYTES);
+  return Array.from(named, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Adds what the wallet read from the saved keys to a release. */
+export function withTheKeysRead(release: KeyringRelease, read: KeysRead): KeyringRelease {
+  return Object.freeze({ ...release, read });
+}
 
 /**
  * **THE MESSAGE A PERSON'S PRESS PRODUCES FOR A KEYRING ASK, AND THE GATE IS
@@ -644,8 +792,8 @@ const FOUNDING_SEAT = 0;
  * press, by this wallet: the page asked for a new company and did not choose
  * its name, so neither the page nor the service behind it can choose which
  * company's keys come back. `draw` is replaceable only so a test can know the
- * label in advance. The answer to that ask also carries the founding seat's
- * keys for the drawn label, and no other answer carries seat keys.
+ * label in advance. No answer carries a seat's keys: what the wallet founded
+ * the company with is added to the answer by `withTheFounding`.
  */
 export function keyringReleaseFor(
   identity: Identity, ask: KeyringRequest, at: number,
@@ -661,7 +809,7 @@ export function keyringReleaseFor(
       + 'anything saved there by the wallet that did, and anything saved under it could only '
       + 'ever be opened with this one. Nothing has been given.');
   }
-  const key = keyringKeyFor(identity, ask);
+  personOf(ask);
   if (ask.drawLabel && ask.company !== null) {
     throw new UnlockError(
       'company-not-usable',
@@ -691,31 +839,35 @@ export function keyringReleaseFor(
     account,
     nonce: ask.nonce,
     at,
-    key: toBase64Url(key),
     companyKey,
     committeeKey: company === null ? null : committeeKeyFor(identity, company),
-    seat: ask.drawLabel && company !== null ? seatOnTheWire(seatKeysFor(identity, company, FOUNDING_SEAT)) : null,
   });
 }
 
-const seatOnTheWire = (keys: SeatKeys): SeatKeysOnTheWire => Object.freeze({
-  signingSecret: toBase64Url(keys.signingSecret),
-  wrappingSecret: toBase64Url(keys.wrappingSecret),
-  salt: toBase64Url(keys.salt),
-});
+/** A release for a company this wallet founded, carrying what it founded the company with and the saved keys it sealed again. */
+export function withTheFounding(
+  release: KeyringRelease, founding: { readonly founded: unknown; readonly sealed: SealedKeyring; readonly ifVersion: number },
+): KeyringRelease {
+  return Object.freeze({ ...release, founded: founding.founded, sealed: founding.sealed, ifVersion: founding.ifVersion });
+}
 
 export type KeyringRead =
   | {
     readonly ok: true;
-    readonly key: Uint8Array;
     readonly companyKey: Uint8Array | null;
     /** Public, and present exactly when a company key is. */
     readonly committeeKey: SignatureVerifyingKey | null;
     /** The company the keys are for: the one asked about, or the one the wallet drew. */
     readonly company: CompanyLabel | null;
     readonly at: number;
-    /** The founding seat's keys, present exactly when the ask started a company. */
-    readonly seat: SeatKeys | null;
+    /**
+     * Present exactly when the ask started a company: what the wallet founded it
+     * with (read for its shape by the page that sends it on), and the saved keys
+     * it sealed again with the new seat in them, over the service's version given.
+     */
+    readonly founding: { readonly founded: Readonly<Record<string, unknown>>; readonly sealed: SealedKeyring; readonly ifVersion: number } | null;
+    /** What the wallet read from the saved keys the ask handed in; null when it handed none. */
+    readonly read: KeysRead | null;
   }
   | { readonly ok: false; readonly code: ReleaseFailure | 'person-mismatch'; readonly says: string };
 
@@ -757,6 +909,13 @@ export function readKeyringRelease(
     readonly forCompany: CompanyLabel | null | 'drawn';
     /** The account the page named as carrying that label, or null. */
     readonly forAccount: AccountAddress | null;
+    /** Whether the ask handed the person's saved keys in: then the answer must say what the wallet read from them. */
+    readonly handedIn?: boolean;
+    /**
+     * Whether the company was named beside opening the saved keys: then an answer for no company at all is the
+     * wallet saying its read of the chain did not confirm it, and is taken as the saved keys opened alone.
+     */
+    readonly companyIfOnChain?: boolean;
   },
 ): KeyringRead {
   const body = message as KeyringRelease | null;
@@ -781,10 +940,12 @@ export function readKeyringRelease(
   }
   const given = body.company === null || body.company === undefined ? null : readCompanyLabel(body.company);
   const givenAccount = body.account === null || body.account === undefined ? null : readAccountAddress(body.account);
-  const wanted = expecting.forCompany === 'drawn' ? given : expecting.forCompany;
+  const withheld = expecting.companyIfOnChain === true && expecting.forCompany !== 'drawn'
+    && (body.company === null || body.company === undefined) && (body.account === null || body.account === undefined);
+  const wanted = expecting.forCompany === 'drawn' ? given : withheld ? null : expecting.forCompany;
   if (given !== wanted || (expecting.forCompany === 'drawn' && given === null)
     || (body.company !== null && body.company !== undefined && given === null)
-    || givenAccount !== (expecting.forCompany === 'drawn' ? null : expecting.forAccount)) {
+    || givenAccount !== (expecting.forCompany === 'drawn' || withheld ? null : expecting.forAccount)) {
     return {
       ok: false,
       code: 'company-mismatch',
@@ -800,9 +961,13 @@ export function readKeyringRelease(
       says: 'this answers a different request from the one that was sent.',
     };
   }
-  const key = readKeyBytes(body.key);
-  if (key === null) {
-    return { ok: false, code: 'unusable-key', says: `a released key is ${KEY_BYTES} bytes and that one is not.` };
+  /* **A KEY THE SAVED KEYS OPEN WITH IS NEVER TAKEN**: an answer carrying one is refused, whoever sent it. */
+  if ((body as { key?: unknown }).key !== undefined) {
+    return {
+      ok: false,
+      code: 'unusable-key',
+      says: 'this answer carries a key for your saved keys, which a wallet never gives a page. It is refused rather than used.',
+    };
   }
   let companyKey: Uint8Array | null = null;
   let committeeKey: SignatureVerifyingKey | null = null;
@@ -824,16 +989,6 @@ export function readKeyringRelease(
         says: `a released company key is ${KEY_BYTES} bytes and that one is not.`,
       };
     }
-    /* The two keys are different derivations and are never the same bytes; an
-     * answer that says they are has put one where the other belongs. */
-    if (companyKey.every((byte, i) => byte === key[i])) {
-      return {
-        ok: false,
-        code: 'unusable-key',
-        says: 'this answer gives the same key for the company as for your saved keys, and they are '
-          + 'never the same. It is refused rather than used.',
-      };
-    }
   } else if ((body.companyKey !== null && body.companyKey !== undefined)
     || (body.committeeKey !== null && body.committeeKey !== undefined)) {
     return {
@@ -842,38 +997,45 @@ export function readKeyringRelease(
       says: 'this answer carries a company key nobody asked for. It is refused rather than used.',
     };
   }
-  let seat: SeatKeys | null = null;
+  let founding: { founded: Readonly<Record<string, unknown>>; sealed: SealedKeyring; ifVersion: number } | null = null;
   if (expecting.forCompany === 'drawn') {
-    seat = readSeatKeys(body.seat);
-    if (seat === null) {
+    const founded = body.founded;
+    const sealed = readSealedKeyring(body.sealed);
+    const ifVersion = body.ifVersion;
+    if (typeof founded !== 'object' || founded === null || Array.isArray(founded) || sealed === null
+      || typeof ifVersion !== 'number' || !Number.isSafeInteger(ifVersion) || ifVersion < 0) {
       return {
         ok: false,
         code: 'unusable-key',
-        says: 'your wallet started the company without usable keys for your seat in it, so nothing was created. '
-          + 'Close the wallet\'s window, reload this page and start the company again.',
+        says: 'your wallet drew a label for the new company and did not hand back what it founded the company with, '
+          + 'so nothing was created. Close the wallet\'s window, reload this page and start the company again.',
       };
     }
-  } else if (body.seat !== null && body.seat !== undefined) {
+    founding = { founded: founded as Readonly<Record<string, unknown>>, sealed, ifVersion };
+  } else if ((body as { seat?: unknown }).seat !== undefined || body.founded !== undefined || body.sealed !== undefined) {
     return {
       ok: false,
       code: 'company-mismatch',
-      says: 'this answer carries a seat\'s keys nobody asked for, so it is refused and nothing was kept. Start again from the page.',
+      says: 'this answer carries a seat or a founding nobody asked for, so it is refused and nothing was kept. Start again from the page.',
     };
   }
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
-  return { ok: true, key, companyKey, committeeKey, company: wanted, at: body.at, seat };
+  let read: KeysRead | null = null;
+  if (expecting.handedIn === true || expecting.forCompany === 'drawn') {
+    read = readKeysRead(body.read);
+    if (read === null) {
+      return {
+        ok: false,
+        code: 'unusable-key',
+        says: 'your wallet did not say what your saved keys hold in a form this page reads, so nothing from it was used. '
+          + 'Close the wallet\'s window, reload this page and try again.',
+      };
+    }
+  } else if (body.read !== undefined) {
+    return { ok: false, code: 'company-mismatch', says: 'this answer reads saved keys nobody handed in. It is refused rather than used.' };
+  }
+  return { ok: true, companyKey, committeeKey, company: wanted, at: body.at, founding, read };
 }
 
-/* A seat's three keys, each 32 bytes and no two the same; null for anything else. */
-const readSeatKeys = (value: unknown): SeatKeys | null => {
-  if (typeof value !== 'object' || value === null) return null;
-  const { signingSecret, wrappingSecret, salt } = value as Record<string, unknown>;
-  const parts = [readKeyBytes(signingSecret), readKeyBytes(wrappingSecret), readKeyBytes(salt)];
-  if (parts.some((p) => p === null)) return null;
-  const [s, w, n] = parts as [Uint8Array, Uint8Array, Uint8Array];
-  const same = (a: Uint8Array, b: Uint8Array): boolean => a.every((byte, i) => byte === b[i]);
-  if (same(s, w) || same(s, n) || same(w, n)) return null;
-  return Object.freeze({ signingSecret: s, wrappingSecret: w, salt: n });
-};

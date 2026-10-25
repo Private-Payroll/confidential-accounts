@@ -31,7 +31,7 @@ import { newSymmetricKey, signingPublicKeyOf, wrapKey, type Hex } from './crypto
 import {
   GENESIS_KEY_EPOCH, companyAtItsFounding, newAccountId, newSignerId, newStateBlinding, sealAccount, sealState,
   seatAtFounding,
-} from './account.js';
+} from './founding-parts.js';
 import { signedFoundingState } from './founding-state.js';
 import { signedFoundingRoster } from './roster-record.js';
 import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';

@@ -85,7 +85,7 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     expect(here.holders.seats).toContain(BO.seat);
     /* RED WHEN: the versions passed over are left unsaid, or said without the way past them. */
     expect(here.passedOver?.map((f) => f.version)).toEqual([2, 3]);
-    expect(passedOverSaid(here)).toMatch(/passed over versions 2, 3 of its directory .* the seat whose entry version 2 holds files it again by opening the company on its own device; the change signed for version 3 is filed again, under the signatures it was made with, by the next device of the company that may anchor as it opens the company, once the entry of the seat it rests on is filed again/u);
+    expect(passedOverSaid(here)).toMatch(/passed over versions 2, 3 of its directory .* the seat whose entry version 2 holds files it again in its next action in its wallet; the change signed for version 3 is filed again, under the signatures it was made with, at the next action a seat of the company that may anchor makes in its wallet, once the entry of the seat it rests on is filed again/u);
   });
 
   it('IS FILED AGAIN AS A NEW VERSION BY ITS OWN SEAT\'S DEVICE ON THE WAY IN, AND ANCHORED, SO ITS SEAT IS BELIEVED', async () => {

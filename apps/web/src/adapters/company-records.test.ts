@@ -23,7 +23,9 @@ const NIGHT_PUBLICLY = `${NIGHT.code}:unshielded`;
 const PRIVATE_ADDRESS = 'mn_shield-addr_preview1qqqq';
 const PUBLIC_ADDRESS = 'mn_addr_preview1qqqq';
 const kr = vi.hoisted(() => ({
-  answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0, seat: false,
+  answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0,
+  /* The company each opening of the saved keys named, as the company opened with them. */
+  openedWith: [] as Array<string | undefined>,
   account: { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }, { id: 's2', name: 'Sam' }] } as unknown,
   /* The indexer the person's own wallet names, and each vault the page's vault worker read there. */
   indexer: null as { indexerUri: string; indexerWsUri: string } | null,
@@ -36,7 +38,7 @@ const kr = vi.hoisted(() => ({
   /* The name the person gave each company this device holds a creation of (kept or set aside), by company. */
   kept: {} as Record<string, string>,
   /* Each company this page entered and started the one-a-day anchor for, with the keys it was handed. */
-  anchoring: [] as Array<{ company: string; signerId: string }>,
+  anchoring: [] as Array<{ company: string }>,
 }));
 vi.mock('./vault-builder.js', () => ({
   theVaultBuilder: async () => ({
@@ -48,16 +50,17 @@ vi.mock('./vault-builder.js', () => ({
     },
   }),
 }));
-/* The one-a-day anchor as entering a company starts it: recorded, and never finished, so a read that waited on it would never answer. */
+/* Any anchor started on this page, recorded: entering a company starts none. */
+vi.mock('vaults-web-shared/records-anchored-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/records-anchored-here.js')>()),
+  anchoredOnTheWayIn: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); },
+  anchorTheRecordsHere: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); },
+}));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
   /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
   filingJudgeFor: () => async () => null,
   companyKeysFor: async () => ({ epoch: 0, newest: 0, key: VK, keyAt: () => VK, sealing: () => ({ key: VK, epoch: 0 }) }),
-  anchoredOnTheWayInFor: (sealed: { id: string }, keys: { signerId: string }) => {
-    kr.anchoring.push({ company: sealed.id, signerId: keys.signerId });
-    return new Promise(() => undefined);
-  },
 }));
 /* The name a vault was filed under, as this device reads it: what the read answers, and what it was asked with. */
 const info = vi.hoisted(() => ({ answer: { state: 'none' } as unknown, asked: [] as Array<{ vault: string; keys: unknown; account: string }>, fails: false }));
@@ -77,18 +80,15 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   companiesBeingCreated: () => Object.keys(kr.kept),
   forgetLocally: () => {},
   resumeSession: async () => null,
-  keysFor: () => (kr.keys ? { signerId: 's1' } : null),
+  /* This seat as the wallet read it for the tab: its public halves only. */
+  seatHeldHere: () => (kr.keys ? { signerId: 's1', signingPublicKey: 'a1'.repeat(32), wrappingPublicKey: 'a2'.repeat(32), scope: 'a3'.repeat(32) } : null),
   canOpenCompanies: () => kr.canOpen,
-  reopenSavedKeys: async () => {},
-  /* A seat this device left unfinished: finishing it is what gives this device the company's keys. */
-  pendingSeatsFor: () => (kr.seat ? [{ accountId: 'c1' }] : []),
-  finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = true; return true; },
   openAccount: () => {
     if (kr.account instanceof Error) throw kr.account;
     return kr.account;
   },
   viewingKeyFor: () => VK,
-  openKeysWithWallet: async () => { kr.opened += 1; },
+  openKeysWithWallet: async (...a: unknown[]) => { kr.opened += 1; kr.openedWith.push(a[4] as string | undefined); },
   /* Who holds the company, as the person's own wallet reads it with no press: the vaults its account has adopted, and its indexer. */
   /* `threshold` on this answer is the account's maintenance committee's, never the approvals the account asks for. */
   holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted, threshold: 1, ...(kr.approvals === undefined ? {} : { approvals: kr.approvals }) }, indexer: kr.indexer }),
@@ -209,14 +209,11 @@ describe('opening a company', () => {
     expect(unsaid.of === 'open' && unsaid.approvalsNeeded).toEqual({ of: 'unreadable' });
   });
 
-  it('ENTERING THE COMPANY STARTS THE ONE-A-DAY ANCHOR WITH THIS SEAT\'S OWN KEYS, AND THE READ DOES NOT WAIT ON IT', async () => {
-    const { readCompany } = await load();
-    /* RED WHEN: the read waits on the anchor's proof, or entering the company starts no anchor, so between raises nothing is ever anchored. */
+  it('ENTERING THE COMPANY STARTS NO ANCHOR: ITS RECORDS ARE ANCHORED AT THE END OF A SEAT ACTION IN A SIGNER\'S WALLET', async () => {
+    const { readCompany, readVaultName } = await load();
     expect((await readCompany('u1', 'c1')).of).toBe('open');
-    expect(kr.anchoring).toEqual([{ company: 'c1', signerId: 's1' }]);
-    kr.anchoring = []; kr.keys = false; kr.canOpen = false;
-    /* RED WHEN: a device with no keys for the company starts an anchor it cannot sign. */
-    expect(await readCompany('u1', 'c1')).toEqual({ of: 'locked' });
+    await readVaultName('u1', 'c1', 'd1'.repeat(32));
+    /* RED WHEN: opening a company starts an anchor on the page, a transaction signed with no press and listed in no window. */
     expect(kr.anchoring).toEqual([]);
   });
 
@@ -244,10 +241,6 @@ describe('opening a company', () => {
     const { readCompany } = await load();
     kr.keys = false; kr.canOpen = false;
     expect(await readCompany('u1', 'c1')).toEqual({ of: 'locked' });
-    /* RED WHEN: a seat this device left unfinished is not finished on the way in, so the one device holding the company's keys is told they are elsewhere. */
-    kr.canOpen = true; kr.seat = true;
-    expect((await readCompany('u1', 'c1')).of).toBe('open');
-    kr.keys = false; kr.canOpen = false;
     kr.canOpen = true;
     expect(await readCompany('u1', 'c1')).toEqual({ of: 'no-keys-here' });
     kr.keys = true; kr.account = null;
@@ -271,6 +264,21 @@ describe('opening a company', () => {
     const bare = await import('./company-records.js');
     expect(await bare.openWithYourAccount('u1')).toEqual({ of: 'refused', why: 'not-set-up' });
     expect(kr.opened).toBe(1);
+  });
+
+  it('opens the saved keys with the company whose pages are open, and with none once they are left', async () => {
+    const { companyPagesOpen, openWithYourAccount, readCompany } = await load();
+    kr.openedWith = [];
+    await openWithYourAccount('u1');
+    const leave = companyPagesOpen('c1');
+    await openWithYourAccount('u1');
+    /* RED WHEN: the open press on a company's pages does not name that company, so its vault balances need another window. */
+    expect(kr.openedWith).toEqual([undefined, 'c1']);
+    leave();
+    await readCompany('u1', 'c1');
+    await openWithYourAccount('u1');
+    /* RED WHEN: the open press away from a company's pages names the company last read, so its key is held while it is not open. */
+    expect(kr.openedWith).toEqual([undefined, 'c1', undefined]);
   });
 });
 

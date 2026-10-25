@@ -41,6 +41,8 @@ import { zkConfigOver, byCircuitName } from './zk-config.js';
 import type {
   CreatingTransactionAnswer, StartStandingOnTheWire, VaultAsk, VaultAnswer, VaultRebuildAsked, VaultRebuilt,
 } from './vault-worker-client.js';
+import { ASK_STARTED, CHAIN_READS, WALLET_VAULT_BUILDER } from './vault-worker-client.js';
+import { SERVICE_READ_BOUND_MS } from './read-bound.js';
 import type { EventOnTheWire } from './vault-builder.js';
 import {
   establishCreatingTransaction, indexerTransactionsByIdentifier, NoteIndexRefused, publicDepositLandedAmong, type ServedEvent,
@@ -288,6 +290,35 @@ export const thisBuildsSources = (options: Omit<HttpKeyMaterialOptions, 'pins'>,
 const CIRCUITS_A_DEPOSIT_PROVES = ['deposit', 'depositUnshielded', 'midnight/zswap/output'] as const;
 
 /**
+ * The reads of the network this worker has been asked for and not yet answered, each counted from when it arrives
+ * until it is answered, or until SERVICE_READ_BOUND_MS after it started, when the page has stopped waiting for it.
+ */
+let readsUnderWay = 0;
+let whenNoReads: Array<() => void> = [];
+const aReadArrived = (): void => { readsUnderWay += 1; };
+const aReadEnded = (): void => {
+  readsUnderWay -= 1;
+  if (readsUnderWay > 0) return;
+  const go = whenNoReads;
+  whenNoReads = [];
+  for (const g of go) g();
+};
+
+/**
+ * Resolves when this worker has no read of the network under way, and after
+ * SERVICE_READ_BOUND_MS at the latest: the page stops waiting for a read then,
+ * so nothing waits on one longer.
+ */
+export const readsGoFirst = (): Promise<void> => {
+  if (readsUnderWay === 0) return Promise.resolve();
+  return new Promise((go) => {
+    const timer = setTimeout(() => { whenNoReads = whenNoReads.filter((g) => g !== done); go(); }, SERVICE_READ_BOUND_MS);
+    const done = (): void => { clearTimeout(timer); go(); };
+    whenNoReads.push(done);
+  });
+};
+
+/**
  * **THE PUBLIC PARAMETERS EVERY CIRCUIT THIS APP PROVES NEEDS, AND A DEPOSIT'S
  * KEYS, FETCHED AND CHECKED BEFORE ANY PROOF ASKS FOR THEM.** Works in two
  * stages. First a deposit's own circuits, whole: each one's circuit, its size
@@ -301,9 +332,14 @@ const CIRCUITS_A_DEPOSIT_PROVES = ['deposit', 'depositUnshielded', 'midnight/zsw
  * own checked source, so a file the service sends that is not the published one
  * is refused by name and not kept. Every file is tried even when one fails; it
  * then refuses with the first failure.
+ *
+ * **A READ OF THE NETWORK GOES FIRST.** Before each file it waits while this
+ * worker has a read under way (`readsGoFirst`), so the downloads started at
+ * sign-in do not slow the read a person is waiting on.
  */
 export const provingWarmed = async (
   source: ArtefactSource, sizeOf: (circuit: Uint8Array) => number | Promise<number>,
+  readsFirst: () => Promise<void> = readsGoFirst,
 ): Promise<void> => {
   const fetchedSizes = new Set<number>();
   const failures: unknown[] = [];
@@ -312,16 +348,17 @@ export const provingWarmed = async (
     await Promise.all(circuits.flatMap((location) => [
       (async () => {
         try {
+          await readsFirst();
           sizes.add(await sizeOf(await source.artefact('ir', location)));
         } catch (e) { failures.push(e); }
       })(),
       ...(keysToo ? (['prover', 'verifier'] as const) : []).map(async (kind) => {
-        try { await source.artefact(kind, location); } catch (e) { failures.push(e); }
+        try { await readsFirst(); await source.artefact(kind, location); } catch (e) { failures.push(e); }
       }),
     ]));
     for (const k of [...sizes].filter((k) => !fetchedSizes.has(k)).sort((a, b) => a - b)) {
       fetchedSizes.add(k);
-      try { await source.getParams(k); } catch (e) { failures.push(e); }
+      try { await readsFirst(); await source.getParams(k); } catch (e) { failures.push(e); }
     }
   };
   await stage(CIRCUITS_A_DEPOSIT_PROVES, true);
@@ -1042,53 +1079,9 @@ export const answerVaultAsk = async (
       }
       return { id: ask.id, ok: true, ask: 'own-seat', seat: storedSignerLeaf(m, MidnightCommitments).toLowerCase() };
     }
-    case 'founding-seat': {
-      /* The same definition as a seat already held, over keys made on this device, under the scope every new seat takes. */
-      const [{ storedSignerLeaf }, { MidnightCommitments }] = await Promise.all([
-        import('../../../src/core/signer-leaf.js'),
-        import('../../../src/midnight/commitments.js'),
-      ]);
-      const m = ask.material;
-      if (!/^[0-9a-f]{64}$/iu.test(m?.signingSecret ?? '') || !/^[0-9a-f]{64}$/iu.test(m?.blinding ?? '')) {
-        throw new Error('this device made no usable key for its seat, so its seat cannot be worked out.');
-      }
-      const scope = MidnightCommitments.allVaults().toLowerCase();
-      const seat = storedSignerLeaf({ signingSecret: m.signingSecret, blinding: m.blinding, scope }, MidnightCommitments).toLowerCase();
-      /* The public key the leaf is made over: the seat's opening names it beside the blinding and the scope. */
-      const publicKey = MidnightCommitments.signerPublicKey(m.signingSecret.toLowerCase() as Hex).toLowerCase();
-      return { id: ask.id, ok: true, ask: 'founding-seat', seat, scope, publicKey };
-    }
     case 'creation-again': {
       const again = await creationCarriedAgain(withNetwork, { deploy: fromBase64(ask.deploy), insert: fromBase64(ask.insert) });
       return { id: ask.id, ok: true, ask: 'creation-again', account: again.account, deploy: toBase64(again.deploy), insert: toBase64(again.insert) };
-    }
-    case 'pay-key-standing': {
-      /* Read with the account's own functions; the key and the secret only work keys out and seal, and go nowhere. */
-      const [{ payKeyStandingOf }, { sealPayKeyTo }] = await Promise.all([
-        import('../../../src/midnight/pay-key-round.js'),
-        import('../../../src/midnight/run-keys.js'),
-      ]);
-      const hex = /^[0-9a-f]{64}$/iu;
-      if (!hex.test(ask.account) || !hex.test(ask.key) || !hex.test(ask.signingSecret) || !hex.test(ask.wrappingPublicKey)) {
-        throw new Error('that is not an account, a pay-record key, a signer\'s key and a wrapping key, so nothing was read.');
-      }
-      const P = d.accountPure as unknown as Parameters<typeof payKeyStandingOf>[0];
-      const ledger = d.accountLedger((d.runtimeState.deserialize(fromBase64(ask.accountState)) as { data: unknown }).data);
-      const s = payKeyStandingOf(P, {
-        address: ask.account.toLowerCase(), account: ledger as never, key: ask.key.toLowerCase(), secretKey: ask.signingSecret.toLowerCase(),
-      });
-      return {
-        id: ask.id, ok: true, ask: 'pay-key-standing',
-        standing: {
-          committed: s.committed, isThisKey: s.isThisKey, sealedMine: s.sealedMine,
-          round: {
-            commitment: s.round.commitment, payload: s.round.payload, salt: s.round.salt, proposal: s.round.proposal,
-            open: s.round.open, approvals: s.round.approvals, needed: s.round.needed, stale: s.round.stale,
-          },
-          noVault: Array.from(P.noVault(), (b: number) => b.toString(16).padStart(2, '0')).join(''),
-          wrap: sealPayKeyTo(ask.key.toLowerCase(), ask.wrappingPublicKey.toLowerCase()),
-        },
-      };
     }
     case 'secret-is-the-vaults': {
       /* The vault's own commitment function over the secret, against the commitment the vault's state holds. */
@@ -1194,6 +1187,12 @@ export const answerVaultAsk = async (
  * the worker's own loader unless a test hands in another. Each proof is told to
  * the page as it starts and ends (`provingToldOf`).
  *
+ * **EACH ASK IS TOLD TO THE PAGE AS IT STARTS, ITS CODE LOADED** (`ASK_STARTED`):
+ * the code loads on the first ask, and a read's time limit on the page counts
+ * from here, so loading does not use it up. A read of the network is counted
+ * from when it arrives until it is answered or the page has stopped waiting for
+ * it, so the proving warm-up lets it go first (`readsGoFirst`).
+ *
  * **A FAILURE GOES BACK AS ITS WHOLE CHAIN OF REASONS, NOT ITS OUTER MESSAGE**,
  * with its name and its kind (`failureFor`). Only text crosses to the page, so
  * what is not said here is lost for good: the contract runtime's own failure
@@ -1206,17 +1205,35 @@ export const startVaultWorker = (scope: any, deps: () => Promise<WorkerDeps> = l
   scope.addEventListener('message', (event: MessageEvent) => {
     const ask = event.data as VaultAsk;
     if (typeof ask !== 'object' || ask === null || typeof ask.id !== 'number') return;
-    void answerVaultAsk(provingToldOf(deps, ask, say), ask).then(
+    let counted = CHAIN_READS.has(ask.ask);
+    let bound: ReturnType<typeof setTimeout> | undefined;
+    const noLongerCounted = (): void => {
+      clearTimeout(bound);
+      if (counted) { counted = false; aReadEnded(); }
+    };
+    if (counted) aReadArrived();
+    let told = false;
+    const loaded = (): Promise<WorkerDeps> => deps().then((d) => {
+      if (!told) {
+        told = true;
+        say({ kind: ASK_STARTED, started: ask.id });
+        if (counted) bound = setTimeout(noLongerCounted, SERVICE_READ_BOUND_MS);
+      }
+      return d;
+    });
+    void answerVaultAsk(provingToldOf(loaded, ask, say), ask).then(
       (answer) => {
         try { scope.postMessage(answer); } catch (e) { say(failureFor(ask.id, e)); }
       },
       (e: unknown) => say(failureFor(ask.id, e)),
-    );
+    ).finally(noLongerCounted);
   });
   scope.postMessage({ kind: 'vault-worker-ready' });
 };
 
+/* A worker the person's wallet starts under its own builder's name starts this builder itself, with the wallet's own keys and prover, so it is not also started here with the page's. */
 declare const self: any;
-if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typeof self.window === 'undefined') {
+if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typeof self.window === 'undefined'
+  && self.name !== WALLET_VAULT_BUILDER) {
   startVaultWorker(self);
 }

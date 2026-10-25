@@ -41,6 +41,10 @@ const st = vi.hoisted(() => ({
   publicRun: null as null | ((doors: Doors, vault: string, money: { token: string; value: bigint }) => Promise<unknown>),
   check: null as null | ((doors: Doors, vault: string) => Promise<unknown>),
   seat: null as null | ((personId: string, companyId: string, release?: () => Promise<unknown>) => Promise<unknown>),
+  /* Every private deposit asked of the wallet, as the page names it, and how the wallet's action ends. */
+  acts: [] as Array<Record<string, unknown>>,
+  act: null as null | ((ask: Record<string, unknown>, onStep: (at: { step: number; steps: number }) => void) => Promise<unknown>),
+  checkedHow: [] as unknown[],
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -52,6 +56,11 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   payIntoAVaultFromTheWallet: async (_origin: string, ask: unknown) => { st.paid.push(ask); return { transaction: 'cGFpZA==', leaves: [] }; },
   companyKeyReleasedFor: () => st.companyKey,
   companyKeysForVaults: async () => { st.released += 1; st.companyKey = COMPANY_KEY; return { companyKey: COMPANY_KEY }; },
+  /* The person's wallet, running the private deposit whole: what it is asked, and how its action ends. */
+  privateDepositInTheWallet: async (ask: Record<string, unknown>, _origin: string, opts: { onStep?: (at: { step: number; steps: number }) => void } = {}) => {
+    st.acts.push(ask);
+    return st.act!(ask, opts.onStep ?? (() => {}));
+  },
   api: async (path: string) => {
     if (path === '/api/accounts/c1') return { id: 'c1', companyLabel: LABEL, contractAddress: ACCOUNT };
     throw new Error(`no answer for ${path}`);
@@ -77,17 +86,29 @@ vi.mock('vaults-web-shared/vault-operation.js', async (real) => ({
     st.runs.push({ kind: 'public', doors, vault, money });
     return st.publicRun!(doors, vault, money);
   },
-  checkWhatThisBrowserDeposited: (doors: Doors, vault: string) => st.check!(doors, vault),
+  checkWhatThisBrowserDeposited: (doors: Doors, vault: string, how?: unknown) => { st.checkedHow.push(how); return st.check!(doors, vault); },
   checkWhatThisBrowserSent: async () => { throw new Error('a payment this browser kept was read'); },
 }));
 
 /** The seat this device holds for the company: what a private deposit is given is built from it. */
 const SIGNERS = async () => [];
+const MINE = { signerId: 'seat-1', wrappingSecret: '22'.repeat(32) };
 const HERE = {
   sealed: {}, company: LABEL, account: ACCOUNT, opened: { id: 'c1', signers: [], notBelieved: [] }, builder: { isTheBuilder: true },
-  companyKey: COMPANY_KEY, signingSecret: 'aa'.repeat(32), mine: { signerId: 'seat-1', wrappingSecret: '22'.repeat(32) },
+  companyKey: COMPANY_KEY, mine: MINE,
   directory: async () => ({}), readers: { signers: SIGNERS }, records: () => ({}),
 };
+
+/** The wallet's private deposit, ended done: its two steps told, one transaction relayed, and what it got to. */
+const aWalletDeposit = (outcome: Record<string, string> = { vault: VAULT, state: 'recorded', created: HASH }) =>
+  async (_ask: Record<string, unknown>, onStep: (at: { step: number; steps: number }) => void): Promise<unknown> => {
+    onStep({ step: 1, steps: 2 });
+    onStep({ step: 2, steps: 2 });
+    return { of: 'done', steps: 2, relayed: 1, outcome };
+  };
+/** The wallet's private deposit, stopped at step `step` with `relayed` and `unconfirmed` counted and `outcome` told. */
+const aStoppedDeposit = (why: string, step: number, relayed: number, unconfirmed: number, outcome?: Record<string, string>) =>
+  async (): Promise<unknown> => ({ of: 'stopped', step, steps: 2, relayed, unconfirmed, why, ...(outcome === undefined ? {} : { outcome }) });
 
 const asset = (symbol: string, decimals: number, shielded: string | null, unshielded: string | null): Asset => ({
   code: (shielded ?? unshielded)!, symbol, name: symbol, decimals, ledger: { shielded, unshielded }, enabled: true, sortOrder: symbol.length,
@@ -140,6 +161,7 @@ beforeAll(async () => { await load(); }, 120_000);
 beforeEach(() => {
   st.signedIn = true; st.companyKey = COMPANY_KEY; st.released = 0; st.holdersAsked = 0; st.holdersFail = 0; st.paid = []; st.runs = [];
   st.privateRun = aPrivateDeposit(); st.publicRun = aPublicDeposit(); st.check = null;
+  st.acts = []; st.act = aWalletDeposit(); st.checkedHow = [];
   st.seat = async (_p, _c, release) => {
     if (st.companyKey === null && release !== undefined) await release();
     return HERE;
@@ -211,43 +233,35 @@ describe('the amount a person types', () => {
     const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, m.MAX, held, REG);
     if (r.of !== m.PUT_IN.started) throw new Error('it starts');
     await r.ended;
-    expect(st.runs.map((x) => x.money)).toEqual([{ token: TDUST, value: held }]);
+    expect(st.acts.map((x) => [x['token'], x['units']])).toEqual([[TDUST, held]]);
   });
 });
 
-describe('a deposit\'s own reads of the vault ask the wallet who holds it once', () => {
-  it('reads the vault and the indexer of a private deposit on one ask of the person\'s wallet for who holds the vault, and asks again for the next deposit', async () => {
+describe('a private deposit is asked of the person\'s wallet by intent, and made there whole', () => {
+  it('asks the wallet once, naming only the company, the vault, the token and the amount, and reads, builds and signs nothing here', async () => {
     const { m } = await load();
+    st.companyKey = null;
     const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1.5', 5_000_000n, REG);
     if (r.of !== m.PUT_IN.started) throw new Error('it starts');
-    expect(await r.ended).toMatchObject({ of: 'done', chainTransaction: HASH });
-    /*
-     * RED WHEN: one deposit's reads of the vault and of the indexer ask the wallet who holds the vault more than once, each ask a hidden wallet window.
-     * The seat and the company records a private deposit opens ask the wallet on their own, and are stood in here, so their asks are not counted.
-     */
-    expect(st.holdersAsked).toBe(1);
-    /* RED WHEN: the vault is read at any indexer but the one the person's wallet named, or its holders taken from anywhere else. */
-    expect(await st.runs[0]!.doors.indexer()).toEqual(INDEXER);
-    expect(await st.runs[0]!.doors.onChain(VAULT)).toEqual({ holders: HOLDERS });
-    /* RED WHEN: who the vault's signers are is kept rather than read afresh each time the deposit asks. */
-    expect(st.runs[0]!.doors.signers).toBe(SIGNERS);
-    const again = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
-    if (again.of !== m.PUT_IN.started) throw new Error('it starts');
-    await again.ended;
-    /* RED WHEN: the wallet's answer for one deposit is kept and used by the next. */
-    expect(st.holdersAsked).toBe(2);
+    expect(await r.ended).toMatchObject({ of: 'done', kind: 'private', chainTransaction: HASH });
+    /* RED WHEN: the page asks the wallet for anything but the deposit by intent, or names more than ids and the amount. */
+    expect(st.acts).toEqual([{ record: 'c1', company: LABEL, account: ACCOUNT, vault: VAULT, token: TDUST, units: 1_500_000n }]);
+    /* RED WHEN: a private deposit builds the deposit here, asks the balance window, opens the seat or records here, or reads the vault itself. */
+    expect([st.runs, st.paid, st.holdersAsked]).toEqual([[], [], 0]);
+    /* RED WHEN: a private deposit opens a second wallet window to release the company key (the prompt count rises). */
+    expect(st.released).toBe(0);
   });
 
-  it('asks the wallet again after an ask that failed, and never keeps the failure', async () => {
+  it('asks the wallet again after a public ask that failed, and never keeps the failure', async () => {
     const { m } = await load();
     st.holdersFail = 1;
-    st.privateRun = async (doors) => {
+    st.publicRun = async (doors) => {
       await doors.indexer().catch(() => null);
-      const indexer = await doors.indexer();
+      await doors.indexer();
       await doors.onChain(VAULT);
-      return { txRef: 'r', transactionHash: SERVICE_HASH, note: { createdIn: HASH }, indexer };
+      return { txRef: 'r', transactionHash: HASH };
     };
-    const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
+    const r = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 500n, REG);
     if (r.of !== m.PUT_IN.started) throw new Error('it starts');
     /* RED WHEN: a failed answer from the wallet is kept, so the deposit fails every read after it; or a good answer is asked again. */
     expect(await r.ended).toMatchObject({ of: 'done' });
@@ -260,28 +274,24 @@ describe('the way money goes in is the row the person picked', () => {
     const { m } = await load();
     /* RED WHEN: a private pick of a token with no private form is put in publicly, or anything at all is started. */
     expect(m.putMoneyIn('u1', 'c1', VAULT, { code: PUB, kind: m.DEPOSIT_KIND.private }, '1', 500n, REG)).toEqual({ of: 'refused', why: m.AMOUNT_REFUSAL.noPrivateForm });
-    expect([st.runs, st.paid]).toEqual([[], []]);
+    expect([st.runs, st.paid, st.acts]).toEqual([[], [], []]);
     const priv = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
     if (priv.of !== m.PUT_IN.started) throw new Error('it starts');
     await priv.ended;
-    /* RED WHEN: a private pick is put in by the public deposit, or of another token. */
-    expect(st.runs.map((x) => [x.kind, x.money])).toEqual([['private', { token: TDUST, value: 1_000_000n }]]);
-    /* RED WHEN: a private deposit is not given this signer's seat, this browser's keeping and the person's own wallet. */
-    expect(st.runs[0]!.doors).toMatchObject({
-      company: LABEL, account: ACCOUNT, me: HERE.mine, records: HERE.records, builder: HERE.builder,
-      inFlight: { isDepositsInFlight: true, opener: HERE.mine }, kept: { isCoinsKept: true, opener: HERE.mine },
-      service: { isTheService: true, companyId: 'c1' },
-    });
+    /* RED WHEN: a private pick is put in by the public deposit, or of another token or amount. */
+    expect(st.runs).toEqual([]);
+    expect(st.acts.map((x) => [x['token'], x['units']])).toEqual([[TDUST, 1_000_000n]]);
     m.putAwayEndedDeposit(VAULT);
     const pub = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '2.5', 1_000n, REG);
     if (pub.of !== m.PUT_IN.started) throw new Error('it starts');
     expect(await pub.ended).toMatchObject({ of: 'done', kind: 'public', chainTransaction: HASH });
     /* RED WHEN: a public pick is put in privately, or of another token or amount. */
-    expect(st.runs.slice(1).map((x) => [x.kind, x.money])).toEqual([['public', { token: PUB, value: 250n }]]);
+    expect(st.runs.map((x) => [x.kind, x.money])).toEqual([['public', { token: PUB, value: 250n }]]);
+    expect(st.acts).toHaveLength(1);
     /* RED WHEN: the public deposit is handed this signer's seat, records or keeping as well as what a public deposit needs. */
-    expect(Object.keys(st.runs[1]!.doors).sort()).toEqual(['account', 'builder', 'company', 'indexer', 'onChain', 'pay', 'progress', 'service', 'sleep']);
+    expect(Object.keys(st.runs[0]!.doors).sort()).toEqual(['account', 'builder', 'company', 'indexer', 'onChain', 'pay', 'progress', 'service', 'sleep']);
     /* RED WHEN: a public deposit's reads of the vault and of the indexer ask the wallet who holds the vault more than once. */
-    expect(st.holdersAsked).toBe(2);
+    expect(st.holdersAsked).toBe(1);
   });
 });
 
@@ -289,21 +299,19 @@ describe('a deposit runs in this tab, whatever the screen does', () => {
   it('keeps running when the panel closes, and keeps its result until it is put away', async () => {
     const { m } = await load();
     let finish: () => void = () => {};
-    st.privateRun = async (doors) => {
-      doors.progress('checking the vault');
-      doors.progress('building the deposit');
+    st.act = async (_i, onStep) => {
+      onStep({ step: 1, steps: 2 });
+      onStep({ step: 2, steps: 2 });
       await new Promise<void>((r) => { finish = r; });
-      doors.progress('sending the deposit');
-      return { txRef: 'r', transactionHash: SERVICE_HASH, note: { createdIn: HASH } };
+      return { of: 'done', steps: 2, relayed: 1, outcome: { vault: VAULT, state: 'recorded', created: HASH } };
     };
     const seen: Array<string | undefined> = [];
     const stop = m.watchDeposit(VAULT, () => { seen.push(m.depositNow(VAULT)?.of); });
     const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
     if (r.of !== m.PUT_IN.started) throw new Error('it starts');
     await flush();
-    /* RED WHEN: a running deposit is not shown at the step it is on, as step n of the kind's steps. */
-    expect(m.depositNow(VAULT)).toMatchObject({ of: m.DEPOSITED.running, step: m.DEPOSIT_STEP.provingTheDeposit, n: 3, steps: { length: 6 } });
-    /* The panel closes: its watcher goes. */
+    /* RED WHEN: a running deposit is not shown at the step its wallet action is on, as step n of the kind's steps. */
+    expect(m.depositNow(VAULT)).toMatchObject({ of: m.DEPOSITED.running, step: m.DEPOSIT_STEP.provingTheDeposit, n: 2, steps: { length: 2 } });
     stop();
     m.putAwayEndedDeposit(VAULT);
     /* RED WHEN: closing the panel, or putting away while it runs, stops or forgets a deposit that is running. */
@@ -312,26 +320,19 @@ describe('a deposit runs in this tab, whatever the screen does', () => {
     await r.ended;
     /* RED WHEN: a deposit that ended while no panel watched loses its result. */
     expect(m.depositNow(VAULT)).toMatchObject({ of: 'done', chainTransaction: HASH });
-    expect(m.depositNow(VAULT)).toBe(m.depositNow(VAULT));
-    /* RED WHEN: a panel that closed is still told of the deposit. */
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((x) => x === 'running')).toBe(true);
-    /* RED WHEN: another vault's page shows this vault's deposit. */
     expect(m.depositNow(OTHER_VAULT)).toBeNull();
     m.putAwayEndedDeposit(VAULT);
-    /* RED WHEN: a result read and put away stays. */
     expect(m.depositNow(VAULT)).toBeNull();
   });
 
   it('sends nothing for a second press while a deposit into the vault runs', async () => {
     const { m } = await load();
     let finish: () => void = () => {};
-    st.privateRun = async (doors) => {
-      doors.progress('checking the vault');
+    st.act = async () => {
       await new Promise<void>((r) => { finish = r; });
-      await doors.pay({ vault: VAULT });
-      doors.progress('sending the deposit');
-      return { txRef: 'r', transactionHash: SERVICE_HASH, note: { createdIn: HASH } };
+      return { of: 'done', steps: 2, relayed: 1, outcome: { vault: VAULT, state: 'recorded' } };
     };
     const first: PutMoneyIn = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
     /* RED WHEN: a second press while the first runs starts another deposit, asks the wallet or sends anything. */
@@ -341,9 +342,8 @@ describe('a deposit runs in this tab, whatever the screen does', () => {
     finish();
     if (first.of !== m.PUT_IN.started) throw new Error('it starts');
     await first.ended;
-    expect([st.runs.length, st.paid.length]).toEqual([1, 1]);
-    /* RED WHEN: a deposit into another vault waits on this one, or a press after this one ended sends nothing. */
-    st.privateRun = aPrivateDeposit();
+    expect([st.acts.length, st.runs.length]).toEqual([1, 0]);
+    st.act = aWalletDeposit();
     expect(m.putMoneyIn('u1', 'c1', OTHER_VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG).of).toBe('started');
     expect(m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG).of).toBe('started');
     await flush();
@@ -353,26 +353,25 @@ describe('a deposit runs in this tab, whatever the screen does', () => {
 describe('the steps a deposit shows', () => {
   it('lists one step for each stage the deposit reports, in order, each with its usual time or none', async () => {
     const { m } = await load();
-    /* RED WHEN: a private deposit's steps are not the six it runs through, in order. */
-    expect(m.depositSteps('private', true)).toEqual(['checking-the-vault', 'choosing-the-coin', 'proving-the-deposit', 'paying-in-your-wallet', 'sending', 'waiting-for-the-chain']);
+    /* RED WHEN: a private deposit's steps are not the two its wallet action runs through: the window, then the deposit made in the wallet. */
+    expect(m.depositSteps('private', true)).toEqual(['paying-in-your-wallet', 'proving-the-deposit']);
     /* RED WHEN: a public deposit's steps are not the five it runs through, in order. */
     expect(m.depositSteps('public', true)).toEqual(['checking-the-vault', 'proving-the-deposit', 'paying-in-your-wallet', 'sending', 'waiting-for-the-chain']);
-    /* RED WHEN: a tab with no company key does not name the wallet window that opens the company's records before anything else. */
-    expect(m.depositSteps('private', false)).toEqual(['opening-the-company-records', ...m.depositSteps('private', true)]);
+    /* RED WHEN: a private deposit in a tab with no company key names a second wallet window: the wallet opens the records itself. */
+    expect(m.depositSteps('private', false)).toEqual(m.depositSteps('private', true));
     expect(m.depositSteps('public', false)).toEqual(m.depositSteps('public', true));
-    /* RED WHEN: a step has no usual time entry, or a usual time is shown that was not measured. */
     for (const kind of ['private', 'public'] as const satisfies readonly DepositKind[]) {
-      for (const s of m.depositSteps(kind, false)) expect(m.usualSecondsOf(kind, s), `${kind} ${s}`).toBe(s === 'proving-the-deposit' ? (kind === 'private' ? 125 : 2) : null);
+      /* RED WHEN: a private deposit made whole in the wallet shows the page's old proving time, which was never measured for it. */
+      for (const s of m.depositSteps(kind, false)) expect(m.usualSecondsOf(kind, s), `${kind} ${s}`).toBe(s === 'proving-the-deposit' && kind === 'public' ? 2 : null);
     }
-    /* RED WHEN: the one way money can be put in today is not listed, or lists a kind it cannot bring. */
     expect(m.DEPOSIT_METHODS).toEqual([{ id: 'from-your-wallet', kinds: ['private', 'public'] }]);
     expect(m.DEPOSIT_METHODS.map((x): DepositMethod => x.id)).toEqual(['from-your-wallet']);
   });
 
-  it('moves through the steps as the deposit reports its stages, a private one waiting for the chain while it records itself', async () => {
+  it('moves through the steps as the deposit reports them', async () => {
     const { m } = await load();
     for (const [pick, want] of [
-      [PRIVATE_TDUST, [[1, 'checking-the-vault'], [2, 'choosing-the-coin'], [3, 'proving-the-deposit'], [4, 'paying-in-your-wallet'], [5, 'sending'], [6, 'waiting-for-the-chain']]],
+      [PRIVATE_TDUST, [[1, 'paying-in-your-wallet'], [2, 'proving-the-deposit']]],
       [PUBLIC_PUB, [[1, 'checking-the-vault'], [2, 'proving-the-deposit'], [3, 'paying-in-your-wallet'], [4, 'sending'], [5, 'waiting-for-the-chain']]],
     ] as const) {
       const steps: Array<[number, DepositStep]> = [];
@@ -385,70 +384,68 @@ describe('the steps a deposit shows', () => {
       await r.ended;
       stop();
       m.putAwayEndedDeposit(VAULT);
-      /* RED WHEN: a stage the deposit reports is not shown as its step, or a step is shown out of order or with the wrong number. */
+      /* RED WHEN: a step the deposit reports is not shown as its step, or a step is shown out of order or with the wrong number. */
       expect(steps, pick.kind).toEqual(want);
     }
-  });
-
-  it('names the company records window first in a tab that holds no company key, and asks the wallet to release it', async () => {
-    const { m } = await load();
-    st.companyKey = null;
-    /* RED WHEN: whether this tab holds the company key is said wrongly, so the window opens unnamed or is named for nothing. */
-    expect(m.companyKeyHeldHere('c1')).toBe(false);
-    const firsts: Array<[number, string]> = [];
-    m.watchDeposit(VAULT, () => { const now = m.depositNow(VAULT); if (now?.of === 'running' && firsts.length === 0) firsts.push([now.n, now.step]); });
-    const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
-    if (r.of !== m.PUT_IN.started) throw new Error('it starts');
-    expect(await r.ended).toMatchObject({ of: 'done' });
-    /* RED WHEN: a private deposit in a tab with no company key does not name the window first, or does not ask the wallet to release the key. */
-    expect(firsts).toEqual([[1, 'opening-the-company-records']]);
-    expect(st.released).toBe(1);
-    expect(m.companyKeyHeldHere('c1')).toBe(true);
   });
 });
 
 describe('how a deposit ended, and whether anything may have been sent', () => {
-  it('shows the transaction the chain shows made a private deposit, never the service\'s answer, and none while the chain cannot name it', async () => {
+  it('shows the transaction the wallet saw the chain make a private deposit in, and none while the chain cannot name it', async () => {
     const { m } = await load();
     const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
     if (r.of !== m.PUT_IN.started) throw new Error('it starts');
-    /* RED WHEN: a private deposit's done state shows the hash the service answered with as what the chain shows. */
     expect(await r.ended).toMatchObject({ of: 'done', chainTransaction: HASH, notYetSpendable: false });
     m.putAwayEndedDeposit(VAULT);
-    st.privateRun = aPrivateDeposit({ txRef: 'r1', transactionHash: SERVICE_HASH, note: {}, notYetSpendable: 'the chain cannot say yet' });
+    st.act = aWalletDeposit({ vault: VAULT, state: 'not-yet-spendable' });
     const unnamed = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
     if (unnamed.of !== m.PUT_IN.started) throw new Error('it starts');
     /* RED WHEN: a deposit whose note the chain holds and whose transaction it cannot name yet shows any transaction, or is said to be payable out. */
     expect(await unnamed.ended).toMatchObject({ of: 'done', chainTransaction: null, notYetSpendable: true });
   });
 
-  it('says something may have been sent only when the deposit was sent or may have been', async () => {
+  it('says something may have been sent whenever the wallet relayed the deposit or could not tell, and never when nothing left', async () => {
     const { m, op } = await load();
+    const { WalletClosed } = await import('vaults-web-shared/wallet-sign-in.js');
     const at = (stages: string[], e: unknown) => async (doors: Doors) => { for (const s of stages) doors.progress(s); throw e; };
     const SENDING = ['checking the vault', 'building the deposit', 'asking your wallet', 'sending the deposit'];
-    const cases: Array<[string, 'private' | 'public', (doors: Doors) => Promise<unknown>, boolean, string]> = [
-      ['refused before the send', 'private', at(['checking the vault'], new Error('this vault is not adopted')), false, 'a refusal before anything was sent sends the person to check a deposit that never left'],
-      ['the wallet declined', 'private', at(['checking the vault', 'asking your wallet'], new Error('declined')), false, 'the wallet declining to pay is said to have sent money'],
-      ['another tab', 'private', at(['checking the vault'], new op.DepositStartedElsewhere(VAULT)), false, 'a deposit stopped for another tab is said to have sent money'],
-      ['an earlier one on its way', 'private', at([], new op.DepositStillInFlight(VAULT, 'r0', 1)), false, 'a deposit held back for an earlier one is said to have sent money'],
-      ['not sent', 'private', at(SENDING, new op.DepositNotSent(VAULT, 'refused')), false, 'a deposit the service says it did not send is said to have sent money'],
-      ['not yet seen', 'private', at(SENDING, new op.DepositNotYetSeen(VAULT, 'r1')), true, 'a deposit sent and not yet seen lets the person try again without checking'],
-      ['not yet seen, its stage unsaid', 'private', at([], new op.DepositNotYetSeen(VAULT, '')), true, 'a deposit that may have been sent is said to have sent nothing because its stage was not reported'],
-      ['an earlier deposit landed and not recorded, found before sending', 'private', at(['checking the vault'], new op.DepositLandedNotYetRecorded(VAULT, 'r0')), true, 'an earlier deposit found in the vault and not yet recorded, before this one is sent, lets the person try again without checking'],
-      ['public not yet seen, its stage unsaid', 'public', at([], new op.PublicDepositNotYetSeen(VAULT, 1)), true, 'a public deposit that may still arrive is said to have sent nothing because its stage was not reported'],
-      ['landed not recorded', 'private', at(SENDING, new op.DepositLandedNotYetRecorded(VAULT, 'r1')), true, 'a deposit in the vault and not yet recorded lets the person try again without checking'],
-      ['failed after the send', 'private', at(SENDING, new Error('the vault\'s record could not be saved')), true, 'a failure after the send is said to have sent nothing'],
-      ['public not yet seen', 'public', at(SENDING, new op.PublicDepositNotYetSeen(VAULT, 1, new Error('the indexer did not answer'))), true, 'a public deposit that may still arrive lets the person try again'],
-      ['public refused before the send', 'public', at(['checking the vault'], new Error('this vault is not adopted')), false, 'a public refusal before the send is said to have sent money'],
+    const privateCases: Array<[string, NonNullable<typeof st.act>, boolean, string, string]> = [
+      ['declined in the window', async () => { throw new WalletClosed({ of: 'declined' } as never, 'declined'); }, false, 'declined', 'a deposit declined in the wallet is said to have sent money'],
+      ['refused before the send', aStoppedDeposit('check-failed', 2, 0, 0), false, 'did-not-finish', 'a refusal before anything was relayed sends the person to check a deposit that never left'],
+      ['relayed, not yet seen', aStoppedDeposit('check-failed', 3, 1, 0, { vault: VAULT, state: 'not-yet-seen' }), true, 'did-not-finish', 'a deposit relayed and not yet seen lets the person try again'],
+      ['refused relay', aStoppedDeposit('check-failed', 3, 0, 1, { vault: VAULT }), true, 'did-not-finish', 'a deposit the page said it did not send is believed: the page may hold it'],
+      ['relayed in the deposit step', aStoppedDeposit('no-relay-answer', 3, 1, 0, { vault: VAULT }), true, 'did-not-finish', 'a deposit relayed with no answer after is said to have sent nothing'],
+      ['an anchor first, unconfirmed', aStoppedDeposit('check-failed', 2, 0, 1, { upkeep: 'partial' }), false, 'did-not-finish', 'a send the action made before the deposit\'s own step, the anchor of the company\'s records, is taken for the deposit, and the person waits out a deposit that was never built'],
+      ['window gone', aStoppedDeposit('stopped', 2, 0, 0, { vault: VAULT, state: 'landed-not-recorded' }), true, 'did-not-finish', 'a deposit the wallet saw land and not yet recorded is said to have sent nothing'],
     ];
-    for (const [name, kind, run, maybe, redWhen] of cases) {
-      if (kind === 'private') st.privateRun = run; else st.publicRun = run;
-      const r = m.putMoneyIn('u1', 'c1', VAULT, kind === 'private' ? PRIVATE_TDUST : PUBLIC_PUB, '1', 5_000_000n, REG);
+    for (const [name, act, maybe, refusal, redWhen] of privateCases) {
+      st.act = act;
+      const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
+      if (r.of !== m.PUT_IN.started) throw new Error('it starts');
+      const end: DepositNow = await r.ended;
+      expect(end.of === 'failed' ? [end.mayHaveBeenSent, end.refusal] : end.of, `RED WHEN: ${redWhen} (${name})`).toEqual([maybe, refusal]);
+      expect(end, name).not.toHaveProperty('until');
+      m.putAwayEndedDeposit(VAULT);
+    }
+    for (const [state, why] of [['recorded', 'check-failed'], ['not-yet-spendable', 'out-of-time']] as const) {
+      st.act = aStoppedDeposit(why, 4, 2, 1, { vault: VAULT, state, created: HASH });
+      const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
+      if (r.of !== m.PUT_IN.started) throw new Error('it starts');
+      /* RED WHEN: a deposit the wallet recorded, whose action stopped afterwards in its upkeep, is said to have failed, so the person puts the money in again. */
+      expect(await r.ended, state).toMatchObject({ of: 'done', kind: 'private', chainTransaction: HASH, notYetSpendable: state === 'not-yet-spendable' });
+      m.putAwayEndedDeposit(VAULT);
+    }
+    const publicCases: Array<[string, (doors: Doors) => Promise<unknown>, boolean, string]> = [
+      ['public not yet seen, its stage unsaid', at([], new op.PublicDepositNotYetSeen(VAULT, 1)), true, 'a public deposit that may still arrive is said to have sent nothing because its stage was not reported'],
+      ['public not yet seen', at(SENDING, new op.PublicDepositNotYetSeen(VAULT, 1, new Error('the indexer did not answer'))), true, 'a public deposit that may still arrive lets the person try again'],
+      ['public refused before the send', at(['checking the vault'], new Error('this vault is not adopted')), false, 'a public refusal before the send is said to have sent money'],
+    ];
+    for (const [name, run, maybe, redWhen] of publicCases) {
+      st.publicRun = run;
+      const r = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 5_000_000n, REG);
       if (r.of !== m.PUT_IN.started) throw new Error('it starts');
       const end: DepositNow = await r.ended;
       expect(end.of === 'failed' ? end.mayHaveBeenSent : end.of, `RED WHEN: ${redWhen} (${name})`).toBe(maybe);
-      /* RED WHEN: a private deposit hands on a time until which it can still arrive, which only a public deposit has. */
-      if (kind === 'private') expect(end, name).not.toHaveProperty('until');
       m.putAwayEndedDeposit(VAULT);
     }
   });
@@ -460,10 +457,8 @@ describe('how a deposit ended, and whether anything may have been sent', () => {
     if (r.of !== m.PUT_IN.started) throw new Error('it starts');
     const end = await r.ended;
     if (end.of !== 'failed') throw new Error('it fails');
-    /* RED WHEN: the reasons for support lose the error's own words or what caused it. */
     expect(end.reasons).toEqual([expect.stringMatching(/^the public deposit may have been sent/), 'the indexer did not answer']);
     expect(end.refusal).toBe('did-not-finish');
-    /* RED WHEN: a public deposit that may have been sent does not hand on the time until which it can still arrive, so a screen cannot say when it is safe to put the same money in again. */
     expect(end.until).toBe(1);
     m.putAwayEndedDeposit(VAULT);
     st.publicRun = async (doors) => { doors.progress('sending the deposit'); throw new Error('the public deposit was not sent, so no money has moved yet. Your wallet already signed it.'); };
@@ -471,19 +466,16 @@ describe('how a deposit ended, and whether anything may have been sent', () => {
     if (signed.of !== m.PUT_IN.started) throw new Error('it starts');
     const signedEnd = await signed.ended;
     if (signedEnd.of !== 'failed') throw new Error('it fails');
-    /* RED WHEN: a public deposit the wallet signed and the service did not send hands on no time until which it can still be sent by anyone, or a time that is not the transaction's time to live from when it was sent. */
     expect(signedEnd.until).toBeGreaterThan(Date.now() + 74 * 60_000);
     expect(signedEnd.until).toBeLessThanOrEqual(Date.now() + 75 * 60_000);
     m.putAwayEndedDeposit(VAULT);
-    /* RED WHEN: a seat this device cannot use starts a deposit, or ends it as anything but nothing sent with its own code. */
-    st.seat = async () => 'no-keys-here';
+    /* RED WHEN: a private deposit starts for somebody not signed in, or asks the wallet. */
+    st.signedIn = false;
     const s = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
     if (s.of !== m.PUT_IN.started) throw new Error('it starts');
-    expect(await s.ended).toMatchObject({ of: 'failed', mayHaveBeenSent: false, refusal: 'no-keys-here', reasons: [] });
-    expect(st.runs.filter((x) => x.kind === 'private')).toEqual([]);
+    expect(await s.ended).toMatchObject({ of: 'failed', mayHaveBeenSent: false, refusal: 'not-signed-in', reasons: [] });
+    expect(st.acts).toEqual([]);
     m.putAwayEndedDeposit(VAULT);
-    /* RED WHEN: a public deposit starts for somebody not signed in. */
-    st.signedIn = false;
     const p = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 500n, REG);
     if (p.of !== m.PUT_IN.started) throw new Error('it starts');
     expect(await p.ended).toMatchObject({ of: 'failed', mayHaveBeenSent: false, refusal: 'not-signed-in' });
@@ -492,25 +484,44 @@ describe('how a deposit ended, and whether anything may have been sent', () => {
 });
 
 describe('check my last deposit', () => {
-  it('checks this browser\'s private deposits only, and hands a screen what it found as codes', async () => {
+  it('checks this browser\'s private deposits only, files nothing, and hands a screen what it found as codes', async () => {
     const { m } = await load();
     const given: Doors[] = [];
-    st.check = async (doors) => { given.push(doors); return { deposit: { state: 'still-on-its-way', until: 1234 }, named: 1, unnamed: 2 }; };
+    st.check = async (doors) => { given.push(doors); return { deposit: { state: 'still-on-its-way', until: 1234 }, named: 0, unnamed: 2, toName: 1 }; };
     const found: LastDepositChecked = await m.checkMyLastDeposit('u1', 'c1', VAULT);
-    /* RED WHEN: the check reads or settles a payment, or is not a check of deposits alone. */
-    expect(found).toMatchObject({ of: m.CHECKED.checked, deposit: 'still-on-its-way', until: 1234, notYetSpendable: false, named: 1, unnamed: 2 });
+    expect(found).toMatchObject({ of: m.CHECKED.checked, deposit: 'still-on-its-way', until: 1234, notYetSpendable: false, named: 0, unnamed: 2, toName: 1 });
     expect(given).toHaveLength(1);
     expect('payments' in given[0]!).toBe(false);
-    /* RED WHEN: what was found is not also given in the shared code's own sentence, for support. */
+    /* RED WHEN: the page's check files what it finds, signing on the page, instead of leaving it to a signer's wallet. */
+    expect(st.checkedHow).toEqual([{ files: false }]);
+    /* RED WHEN: the check is handed a way to pay or a seat's secret. */
+    expect(given[0]).toMatchObject({ me: MINE, records: HERE.records, inFlight: { isDepositsInFlight: true, opener: MINE } });
+    await expect((given[0]!.pay as (a: unknown) => Promise<unknown>)({})).rejects.toThrow(/web-12-deposit-check-pays/);
     expect(found.of === 'checked' ? found.forSupport : '').toMatch(/has not reached the vault yet/);
-    st.check = async () => ({ deposit: { state: 'recorded', note: {}, notYetSpendable: 'the chain cannot say yet' }, named: 0, unnamed: 0 });
-    /* RED WHEN: a deposit recorded that cannot be paid out yet is said to be spendable. */
-    expect(await m.checkMyLastDeposit('u1', 'c1', VAULT)).toMatchObject({ of: 'checked', deposit: 'recorded', until: null, notYetSpendable: true });
-    /* RED WHEN: a check that cannot run says anything but why, as a code and the reasons for support. */
+    st.check = async () => ({ deposit: { state: 'landed-owed-its-record' }, named: 0, unnamed: 0, toName: 0 });
+    /* RED WHEN: a landed deposit owed its record is not handed on as such. */
+    expect(await m.checkMyLastDeposit('u1', 'c1', VAULT)).toMatchObject({ of: 'checked', deposit: 'landed-owed-its-record' });
     st.check = async () => { throw new Error('the chain does not show this vault'); };
     expect(await m.checkMyLastDeposit('u1', 'c1', VAULT)).toEqual({ of: 'refused', why: 'did-not-finish', reasons: ['the chain does not show this vault'] });
     st.seat = async () => 'not-signed-in';
     expect(await m.checkMyLastDeposit('u1', 'c1', VAULT)).toEqual({ of: 'refused', why: 'not-signed-in', reasons: [] });
+  });
+
+  it('says what the deposit it judged was, from what the check read, or why no amount is shown', async () => {
+    const { m } = await load();
+    const { visibilityOf, formatTokenAmount } = await import('vaults-ui/format/token-amount');
+    const judged = (checked: unknown) => async () => ({ deposit: { state: 'already-recorded' }, named: 0, unnamed: 0, toName: 0, checked });
+    st.check = judged({ from: 'the-vaults-journal', token: TDUST.toUpperCase(), value: 1_500_000n });
+    const found = await m.checkMyLastDeposit('u1', 'c1', VAULT, REG);
+    if (found.of !== m.CHECKED.checked || found.deposited === null) throw new Error('it read a deposit with an amount');
+    /* RED WHEN: the check says a deposit is in the record without saying what it was, or as another token, amount or side. */
+    expect([visibilityOf(found.deposited), found.deposited.symbol, formatTokenAmount(found.deposited, 'en'), found.unshown])
+      .toEqual(['private', 'TDUST', '1.5', null]);
+    /* RED WHEN: a deposit of a token the registry does not list is shown with a made-up amount, or with no reason. */
+    st.check = judged({ from: 'the-vaults-journal', token: 'ee'.repeat(32), value: 2n });
+    expect(await m.checkMyLastDeposit('u1', 'c1', VAULT, REG)).toMatchObject({ deposited: null, unshown: m.AMOUNT_UNSHOWN.tokenNotListed });
+    st.check = async () => ({ deposit: { state: 'none' }, named: 0, unnamed: 0, toName: 0 });
+    expect(await m.checkMyLastDeposit('u1', 'c1', VAULT, REG)).toMatchObject({ deposited: null, unshown: null });
   });
 
   it('asks the wallet to release the company key in a tab that holds none, so the check works in a fresh tab', async () => {
@@ -520,8 +531,7 @@ describe('check my last deposit', () => {
       if (st.companyKey === null && release !== undefined) await release();
       return st.companyKey === null ? 'no-keys-here' : HERE;
     };
-    st.check = async () => ({ deposit: { state: 'none' }, named: 0, unnamed: 0 });
-    /* RED WHEN: Check my last deposit in a tab with no company key refuses instead of opening the company's records in the wallet. */
+    st.check = async () => ({ deposit: { state: 'none' }, named: 0, unnamed: 0, toName: 0 });
     expect(await m.checkMyLastDeposit('u1', 'c1', VAULT)).toMatchObject({ of: 'checked', deposit: 'none' });
     expect(st.released).toBe(1);
   });

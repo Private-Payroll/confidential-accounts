@@ -95,18 +95,30 @@ const said = (body: unknown): string => {
   return typeof e === 'string' ? e : 'no reason given';
 };
 
+/** A version a store that only reads was asked to file. Nothing was sent. */
+export class ReadFilesNothing extends Error {
+  constructor(readonly record: string, readonly version: number) {
+    super(`version ${version} of this vault's ${record} was not filed: a read files nothing, and nothing was sent. `
+      + 'A seat action in a signer\'s wallet files it.');
+    this.name = 'ReadFilesNothing';
+  }
+}
+
 export class HttpSealedPoolStore implements SealedPoolStore {
   constructor(
     private readonly record: WireRecord,
     private readonly send: WireSend,
-    /** The signing secret of the signer this device files as. It is used here and sent nowhere. */
-    private readonly signWith: Hex,
+    /**
+     * The signing secret of the signer this device files as. It is used here and sent nowhere. Null makes a store that
+     * only reads (`recordsReadHere`): every read is the same, and `put` refuses before anything is sent.
+     */
+    private readonly signWith: Hex | null,
     /** Who this device believes filed a version, asked afresh for each read. */
     private readonly judge: FreshJudge,
     /** The one filing call, bound to the vault's company and this seat: a version filed here is entered in the company's records. */
     private readonly entered: RecordsEntered,
   ) {
-    if (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith)) {
+    if (signWith !== null && (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith))) {
       throw new Error('a sealed record is filed signed, and this device was given no signing key to sign it with.');
     }
   }
@@ -234,6 +246,7 @@ export class HttpSealedPoolStore implements SealedPoolStore {
     assertWireVault(vault);
     const unusable = whyThisIsNotASealedPool(rec, vault);
     if (unusable !== null) throw new Error(`this is not a sealed record for this vault (${unusable}), so nothing is filed.`);
+    if (this.signWith === null) throw new ReadFilesNothing(this.record, rec.version);
     const signed = signFiling(this.record, rec, this.signWith);
     const wire = toWire(this.record, signed);
     let r: { status: number; body: unknown };
@@ -351,7 +364,9 @@ export class FilingNotBelieved extends Error {
 /**
  * **A COMPANY'S OWN RECORDS, REACHED OVER HTTP**: filed signed by this
  * device's seat, and read back believed only when a seat the directory names
- * filed them, by the same fresh check as a vault's records.
+ * filed them, by the same fresh check as a vault's records. Given no signing
+ * key it only reads, and refuses to file (`ReadFilesNothing`), as a page that
+ * holds no seat secret reads.
  */
 /**
  * **A VERSION OF A COMPANY RECORD THE COMPANY'S RECORDS PASSED OVER**, as a
@@ -370,10 +385,10 @@ export class HttpCompanyRecordStore {
   constructor(
     private readonly company: string,
     private readonly send: WireSend,
-    private readonly signWith: Hex,
+    private readonly signWith: Hex | null,
     private readonly judge: FreshJudge,
   ) {
-    if (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith)) {
+    if (signWith !== null && (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith))) {
       throw new Error('a company record is filed signed, and this device was given no signing key to sign it with.');
     }
   }
@@ -424,6 +439,7 @@ export class HttpCompanyRecordStore {
 
   async put(rec: SealedCompanyRecord): Promise<void> {
     if (rec.company !== this.company) throw new Error('that record is another company\'s, so nothing is filed.');
+    if (this.signWith === null) throw new ReadFilesNothing(rec.kind, rec.version);
     const wire = toCompanyWire(signCompanyFiling(rec, this.signWith));
     let r: { status: number; body: unknown };
     try {

@@ -3,4 +3,5 @@ declare module 'virtual:this-builds-account-keys' {
   export const first: ReadonlyArray<readonly [string, string]>;
   export const second: ReadonlyArray<readonly [string, string]>;
   export const missing: string | null;
+  export const verifiers: ReadonlyArray<readonly [string, string]>;
 }

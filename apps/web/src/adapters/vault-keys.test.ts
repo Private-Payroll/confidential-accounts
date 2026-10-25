@@ -170,23 +170,20 @@ describe('giving a signer\'s vault keys', () => {
     expect(kr.offered).toEqual([]);
   });
 
-  /* RED WHEN: an entry the directory will not take yet is not kept owed, or is not filed on the next way into the company with no press, or is filed again on every way in after. */
-  it('keeps the entry owed, files it on the next way in with no press, and then gives the keys', async () => {
+  /* RED WHEN: an entry the directory will not take yet is not kept owed, or is filed on the way into the company with no press, rather than by the next seat action in the wallet. */
+  it('keeps the entry owed, files nothing on the way in, and files it at the next press', async () => {
     const m = await load();
     kr.filing = { notYet: 'not on the committee' };
     expect((await m.giveTheVaultKeys('c1', SIGNER, VIEWING, ROSTER)).of).toBe('refused');
     expect(kr.owed.c1?.person).toBe('u1');
     expect(kr.owed.c1?.signed).toEqual({ committeeKey: K(1), entry: ENTRY((kr.walletAsked[0] as { signingKey: string }).signingKey) });
     kr.filing = 'filed';
-    const asked = kr.walletAsked.length;
     const { keysOnTheWayIn } = await import('./keyring-person.js');
-    await keysOnTheWayIn('c1', async () => ({}) as never);
-    expect(kr.log).toEqual(['entry filed c1 u1']);
-    expect(kr.walletAsked.length).toBe(asked);
-    expect(kr.owed.c1).toBeUndefined();
-    await keysOnTheWayIn('c1', async () => ({}) as never);
-    expect(kr.log).toEqual(['entry filed c1 u1']);
+    await keysOnTheWayIn('c1');
+    expect(kr.log).toEqual([]);
+    expect(kr.owed.c1?.person).toBe('u1');
     expect((await m.giveTheVaultKeys('c1', SIGNER, VIEWING, ROSTER)).of).toBe('done');
+    expect(kr.log[0]).toBe('entry filed c1 u1');
     expect(kr.offered).toHaveLength(1);
   });
 });

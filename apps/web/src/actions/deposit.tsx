@@ -50,9 +50,7 @@ function useToldWhenDone(now: DepositNow | null, told: () => void): void {
 function useStepWords(): Record<DepositStep, string> {
   const t = useText();
   return {
-    [DEPOSIT_STEP.openingTheCompanyRecords]: t('deposit.step.openingTheCompanyRecords'),
     [DEPOSIT_STEP.checkingTheVault]: t('deposit.step.checkingTheVault'),
-    [DEPOSIT_STEP.choosingTheCoin]: t('deposit.step.choosingTheCoin'),
     [DEPOSIT_STEP.provingTheDeposit]: t('deposit.step.provingTheDeposit'),
     [DEPOSIT_STEP.payingInYourWallet]: t('deposit.step.payingInYourWallet'),
     [DEPOSIT_STEP.sending]: t('deposit.step.sending'),
@@ -239,7 +237,6 @@ function AmountEntry({ company, vault, chosen }: { company: string; vault: strin
   const took = useRef(false);
   const { side, token } = chosen;
   const isPrivate = side === DEPOSIT_KIND.private;
-  const keyOwed = isPrivate && !companyKeyHeldHere(company);
   const press = usePayPress(side);
 
   const put = (): void => {
@@ -273,8 +270,7 @@ function AmountEntry({ company, vault, chosen }: { company: string; vault: strin
         ) : null}
       </div>
       <p className="text-sm" data-privacy={side}>{isPrivate ? t('deposit.privacy.private') : t('deposit.privacy.public')}</p>
-      {keyOwed ? <WalletWindowNamed what={t('deposit.keyWindow.opens')} press={t('deposit.keyWindow.press')} /> : null}
-      <WalletWindowNamed what={t('deposit.payWindow.opens')} press={press} />
+      <WalletWindowNamed what={isPrivate ? t('deposit.payWindow.opensPrivate') : t('deposit.payWindow.opens')} press={press} />
       {isPrivate ? null : <p className="text-sm text-muted-foreground" data-paid-from-public>{t('deposit.payWindow.publicFrom')}</p>}
       {/* The refusal and the press are in the foot of the panel, which stays in view while the form above them scrolls: a refusal is seen where the press is made, and the press is never below the fold. */}
       <PanelFooter>
@@ -308,7 +304,10 @@ function Running({ now }: { now: Extract<DepositNow, { of: 'running' }> }) {
         stage={now.step} elapsedSeconds={secondsSince(tick, proofStartedAt ?? now.since)}
         usualSeconds={usualSecondsOf(now.kind, now.step)} usualLine={false}
       />
-      {now.step === DEPOSIT_STEP.provingTheDeposit ? (
+      {now.step === DEPOSIT_STEP.provingTheDeposit && now.kind === DEPOSIT_KIND.private ? (
+        <p className="text-sm" data-wallet-makes>{t('deposit.walletMakes')}</p>
+      ) : null}
+      {now.step === DEPOSIT_STEP.provingTheDeposit && now.kind !== DEPOSIT_KIND.private ? (
         <p className="text-sm" data-next-window>
           {t('deposit.next.lead')} <Amount value={now.amount} kind={AMOUNT_KIND.paid} />{t('deposit.next.tail', { press })}
         </p>
@@ -433,7 +432,7 @@ function useReasonsSaid(): (reasons: readonly string[]) => string {
 }
 
 
-/** WHAT CHECKING THE LAST DEPOSIT FOUND, in words, and that only deposits made privately from this browser are checked here. */
+/** WHAT CHECKING THE LAST DEPOSIT FOUND, in words: where the deposit it judged stands and how much it was, and that only private deposits are checked here. */
 function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?: () => void }) {
   const t = useText();
   const language = useLanguage();
@@ -446,6 +445,9 @@ function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?
     : d === 'never-landed' ? t('deposit.check.neverLanded')
     : d === 'recorded' ? t('deposit.check.recorded')
     : d === 'still-on-its-way' ? t('deposit.check.stillOnItsWay', { when: formatDate(new Date(found.until ?? 0), language, UNTIL) })
+    : d === 'landed-owed-its-record' ? t('deposit.check.owedItsRecord')
+    : d === 'journalled-not-seen' ? t('deposit.check.journalledNotSeen')
+    : d === 'landed-and-since-spent' ? t('deposit.check.landedAndSinceSpent')
     : t('deposit.check.landedNotRecorded');
   const details = answer.of === CHECKED.checked ? t('deposit.check.details', { text: answer.forSupport }) : answer.reasons.length === 0 ? '' : t('deposit.failed.details', { reasons: reasonsSaid(answer.reasons) });
   return (
@@ -454,8 +456,11 @@ function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?
       {answer.of === CHECKED.refused ? <ActRefused why={answer.why} /> : (
         <div className="flex flex-col gap-2" role="status">
           <p className="text-sm" data-check-says>{says}</p>
+          {answer.deposited !== null ? <p className="text-sm" data-checked-amount><Amount value={answer.deposited} kind={AMOUNT_KIND.held} /></p>
+            : answer.unshown !== null ? <p className="text-sm" data-checked-unshown={answer.unshown}>{t('records.unrecognised', { count: 1 })}</p> : null}
           {answer.notYetSpendable ? <p className="text-sm" data-not-spendable>{t('deposit.check.notSpendable')}</p> : null}
           {answer.unnamed === 0 ? null : <p className="text-sm" data-unnamed={answer.unnamed}>{t('deposit.check.unnamed', { count: answer.unnamed })}</p>}
+          {answer.toName === 0 ? null : <p className="text-sm" data-to-name={answer.toName}>{t('deposit.check.toName', { count: answer.toName })}</p>}
         </div>
       )}
       {details === '' || (found !== null && found.forSupport === '') ? null : <p className="break-words text-xs text-muted-foreground" data-details>{details}</p>}

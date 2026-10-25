@@ -472,6 +472,9 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
   // The network's shielded circuits are fetched by `npm run vendor-keys` into the
   // wallet's own folder, which the job that builds the keys runs before its tests.
   const NETWORK_KEY_DIR = ['apps', 'wallet', 'public', 'keys', 'zswap'].join('/');
+  // The company account's keys are copied into the wallet's own folder by a command of
+  // their own, after the build: a test that needs them names that command.
+  const WALLET_ACCOUNT_KEYS = ['npm run vendor-keys', 'account'].join(':');
   const GATE = `skip${'If'}(`;
 
   const gatedOnKeys = (dirs: readonly string[] = [KEY_DIR, VAULT_KEY_DIR]): string[] => {
@@ -494,6 +497,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
 
   const keysCoverageProblem = (
     workflow: string, gated: readonly string[], vaultGated: readonly string[] = gatedOnKeys([VAULT_KEY_DIR]),
+    walletAccountGated: readonly string[] = gatedOnKeys([WALLET_ACCOUNT_KEYS]),
   ): string | null => {
     if (gated.length === 0) return 'nothing in the tree gates on the verifier keys, so this rule is checking nothing';
     const jobs = parseWorkflow(workflow);
@@ -532,6 +536,20 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       const afterVault = job.steps.slice(v + 1).filter((s) => reads.includes(s));
       for (const missing of vaultGated.filter((f) => !afterVault.some((s) => (s.run as string).includes(f)))) {
         return `${missing} reads the vault's keys and is run by no step after they are built`;
+      }
+    }
+    // THE WALLET SERVES THE ACCOUNT'S KEYS FROM ITS OWN FOLDER, copied there from
+    // the build: a file that proves with them needs the copy after the build and
+    // before the step that runs it, or it stands down and reports green.
+    if (walletAccountGated.length > 0) {
+      const copies = (s: WorkflowStep) => s.run !== null && new RegExp(`(^|&&\\s*)${WALLET_ACCOUNT_KEYS}(\\s|$)`).test(s.run);
+      const c = job.steps.findIndex(copies);
+      if (c === -1 || c < at) return `nothing in ${job.id} copies the account's keys into the wallet after they are built, and ${walletAccountGated[0]} proves with them`;
+      if (job.steps[c].conditional) return `the step that copies the account's keys into the wallet in ${job.id} is conditional, so it need never run`;
+      if (job.steps[c].tolerated) return `the step that copies the account's keys into the wallet in ${job.id} tolerates its own failure`;
+      const afterCopy = job.steps.slice(c + 1).filter((s) => reads.includes(s));
+      for (const missing of walletAccountGated.filter((f) => !afterCopy.some((s) => (s.run as string).includes(f)))) {
+        return `${missing} proves with the account's keys in the wallet and is run by no step after they are copied there`;
       }
     }
     for (const s of reads) {
@@ -585,7 +603,11 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'src/wiring/vault-submission.test.ts',
       'apps/wallet/src/chain/creation-screen-in-a-browser.test.ts',
       'apps/wallet/src/chain/this-builds-account-keys.test.ts',
+      'apps/wallet/src/chain/the-wallet-proves-the-pay-key.test.ts',
+      'apps/wallet/src/chain/the-wallet-builds-a-vault-with-its-own-keys.test.ts',
       'apps/wallet/src/screens/approve-creation.test.tsx',
+      'apps/wallet/src/actions/finish-company.test.ts',
+      'apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts',
     ];
     expect(gated.filter((f) => !NAMED.includes(f)),
       'a test is gated on proving keys and this list does not name it').toEqual([]);
@@ -608,6 +630,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts',
       'contracts/test/a-payment-needs-a-vaults-receipt.test.ts',
       'contracts/test/a-run-is-raised-approved-and-paid-on-the-signers-devices.test.ts',
+      'apps/wallet/src/chain/the-wallet-builds-a-vault-with-its-own-keys.test.ts',
     ];
     const vaultGated = gatedOnKeys([VAULT_KEY_DIR]);
     expect(vaultGated.filter((f) => !VAULT_NAMED.includes(f)),
@@ -625,6 +648,18 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'a test is gated on the network\'s shielded circuits and this list does not name it').toEqual([]);
     expect(NETWORK_NAMED.filter((f) => existsSync(join(ROOT, f)) && !networkGated.includes(f)),
       'a test named here is still in this tree and is no longer gated on the network\'s shielded circuits')
+      .toEqual([]);
+    /* RED WHEN: a test is skipped without the account's keys in the wallet and this list does not name it, so it can stop running in every job unnoticed. */
+    const WALLET_ACCOUNT_NAMED = [
+      'apps/wallet/src/chain/the-wallet-proves-the-pay-key.test.ts',
+      'apps/wallet/src/chain/the-wallet-builds-a-vault-with-its-own-keys.test.ts',
+      'apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts',
+    ];
+    const walletAccountGated = gatedOnKeys([WALLET_ACCOUNT_KEYS]);
+    expect(walletAccountGated.filter((f) => !WALLET_ACCOUNT_NAMED.includes(f)),
+      'a test is gated on the account\'s keys in the wallet and this list does not name it').toEqual([]);
+    expect(WALLET_ACCOUNT_NAMED.filter((f) => existsSync(join(ROOT, f)) && !walletAccountGated.includes(f)),
+      'a test named here is still in this tree and is no longer gated on the account\'s keys in the wallet')
       .toEqual([]);
   });
 
@@ -663,13 +698,13 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     refuses('the run passes when it collects nothing',
       real.replace(/- run: npx vitest run /, '- run: npx vitest run --passWithNoTests '), /collects nothing/);
     refuses('THE CHEAP ONE: the keys are built AFTER the tests that read them',
-      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n((?:      #[^\n]*\n|      - name: (?:build the vault|fetch Midnight|fetch the network)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
+      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n((?:      #[^\n]*\n|      - name: (?:build the vault|fetch Midnight|fetch the network|copy the company account)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
         '$1$2      - name: build the proving and verifier keys\n        run: npm run compact\n'), /runs the suite after/);
     refuses('the vault\'s keys are never built',
       real.replace(/      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n/, ''),
       /nothing in keys builds the vault's keys/);
     refuses('the vault\'s keys are built AFTER the tests that read them',
-      real.replace(/(      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n)((?:      #[^\n]*\n|      - name: fetch (?:Midnight|the network)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
+      real.replace(/(      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n)((?:      #[^\n]*\n|      - name: (?:fetch (?:Midnight|the network)|copy the company account)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
         '$2$3$1'), /reads the vault's keys and is run by no step after they are built/);
     refuses('the vault\'s build is made conditional',
       real.replace(/\n(\s+)run: npm run compact:vault -- --full\n/, '\n$1if: false\n$1run: npm run compact:vault -- --full\n'), /vault's keys .* conditional/);
@@ -680,6 +715,19 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     refuses('a file that reads the vault\'s keys is dropped from the run',
       real.replace(/(- run: npx vitest run [^\n]*?) (src\/wiring\/vault-submission\.test\.ts)([^\n]*)\n/, '$1$3\n'),
       /vault-submission\.test\.ts gates on the keys/);
+
+    refuses('the account\'s keys are never copied into the wallet',
+      real.replace(/      - name: copy the company account's and the vault's keys into the wallet\n        run: npm run vendor-keys:account\n/, ''),
+      /copies the account's keys into the wallet/);
+    refuses('the account\'s keys are copied into the wallet AFTER the tests that prove with them',
+      real.replace(/(      - name: copy the company account's and the vault's keys into the wallet\n        run: npm run vendor-keys:account\n)(      - run: npx vitest run [^\n]*\n(?:        env:\n(?:          [^\n]*\n)*)?)/, '$2$1'),
+      /proves with the account's keys in the wallet and is run by no step after they are copied there/);
+    refuses('the copy into the wallet tolerates its own failure',
+      real.replace(/\n(\s+)run: npm run vendor-keys:account\n/, '\n$1continue-on-error: true\n$1run: npm run vendor-keys:account\n'),
+      /copies the account's keys into the wallet .* tolerates/);
+    refuses('a file that proves with the account\'s keys in the wallet is dropped from the run',
+      real.replace(/(- run: npx vitest run [^\n]*?) (apps\/wallet\/src\/chain\/the-wallet-proves-the-pay-key\.test\.ts)([^\n]*)\n/, '$1$3\n'),
+      /the-wallet-proves-the-pay-key\.test\.ts gates on the keys/);
 
     // AND A SHAPE IT CANNOT READ IS A REFUSAL RATHER THAN A PASS.
     expect(() => keysCoverageProblem('name: check\non: push\n', gated)).toThrow(/no `jobs:` block/);

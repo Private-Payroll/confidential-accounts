@@ -12,7 +12,9 @@
    * It includes the package, all of the product's own code under `src/`, the
    * contract's code under `contracts/src/`, and the listings the vault worker
    * checks its proving material against: the compiler's listing of each
-   * contract's files and the pins of the network's shielded circuits. That is more than the package
+   * contract's files and the pins of the network's shielded circuits, and the
+   * one wallet file the test helper under `src/testing/` seals saved keys with
+   * as the wallet does (`apps/wallet/src/keyring/seal-key.ts`). That is more than the package
    * reaches: a config that another references must name every file its program
    * reads, and the files the package reaches reach others across those folders.
    * So each of those files must also be one a declaration can be written for.
@@ -31,6 +33,6 @@
   },
   "include": ["../../packages/web-shared/src", "../../src", "../../src/**/*.json", "../../contracts/src", "../../scripts/dispatch-ceiling.ts",
     "../../contracts/managed-vault/compiler/contract-manifest.json", "../../contracts/managed/compiler/contract-manifest.json",
-    "../../apps/wallet/public/keys/manifest.json"],
+    "../../apps/wallet/public/keys/manifest.json", "../../apps/wallet/src/keyring/seal-key.ts"],
   "exclude": ["../../**/*.test.ts", "../../**/*.test.tsx", "../../**/*.test-support.ts"]
 }

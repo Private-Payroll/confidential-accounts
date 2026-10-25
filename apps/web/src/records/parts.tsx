@@ -2,8 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
 import { isPending, PendingPill, useStandingSays, VaultName } from './vault-pending.js';
-import { OPENED, PAID, READ, readVaultPublicMoney, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow } from '../adapters/company-records.js';
-import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
+import { companyPagesOpen, OPENED, PAID, READ, readVaultPublicMoney, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow } from '../adapters/company-records.js';
+import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, watchPrivateMoneyReadable, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
@@ -70,6 +70,8 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
   const { company, openKeys, reload } = useCompanyRecords();
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<ActRefusal | null>(null);
+  /* While these pages are on screen, opening the saved keys opens this company too; leaving them names none. */
+  useEffect(() => (shown === null ? undefined : companyPagesOpen(shown)), [shown]);
   if (shown === null) return <p className="text-sm text-muted-foreground" data-no-company>{t('records.noCompany')}</p>;
   if (company === null) return <PageLoading data-reading="" />;
   if (company.of === OPENED.open) return <>{children(company)}</>;
@@ -224,9 +226,10 @@ export interface VaultMoney {
 }
 
 /**
- * WHAT A VAULT HOLDS, READ WHEN IT IS SHOWN AND EACH TIME `asked` CHANGES:
- * privately on this device, with this signer's own keys, and publicly from
- * the company's service. Each side is read on its own, and one that could not
+ * WHAT A VAULT HOLDS, READ WHEN IT IS SHOWN, EACH TIME `asked` CHANGES, AND
+ * EACH TIME THE PERSON'S WALLET RELEASES THE COMPANY'S KEY TO THIS TAB (which
+ * the private side needs): privately on this device, with this signer's own
+ * keys, and publicly from the company's service. Each side is read on its own, and one that could not
  * be read is said as that, never as nothing held. The private side keeps
  * what it found: amounts, nothing held yet, a record not believed, or why it
  * could not be read.
@@ -234,13 +237,15 @@ export interface VaultMoney {
 export function useVaultMoney(company: string, vault: string, asked = 0): VaultMoney {
   const { person } = useSession();
   const [money, setMoney] = useState<VaultMoney>({ private: MONEY.reading, public: MONEY.reading });
+  const [released, setReleased] = useState(0);
+  useEffect(() => watchPrivateMoneyReadable(company, () => setReleased((n) => n + 1)), [company]);
   useEffect(() => {
     let alive = true;
     setMoney({ private: MONEY.reading, public: MONEY.reading });
     void readVaultPrivateMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, private: h })); });
     void readVaultPublicMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, public: h ?? MONEY.unreadable })); });
     return () => { alive = false; };
-  }, [person.id, company, vault, asked]);
+  }, [person.id, company, vault, asked, released]);
   return money;
 }
 

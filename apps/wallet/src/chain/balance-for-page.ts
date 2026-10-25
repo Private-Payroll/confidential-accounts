@@ -3,11 +3,15 @@ import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
 import type { PaymentFailure } from 'midnight-identity/profile/channel';
 
 /*
- * PAYING FOR THE COIN LEGS OF A TRANSACTION A COMPANY'S PAGE BUILT.
+ * PAYING FOR THE COIN LEGS OF A DEPOSIT INTO A COMPANY'S VAULT.
  *
- * A company's page builds and proves a call into the company's vault and asks
- * this wallet to put in the coins the call needs. This file is the whole of
- * what the wallet does with that ask, in order:
+ * A deposit is a proven call into the company's vault that needs this wallet
+ * to put in the coins it consumes. A public one a company's page builds and
+ * asks this wallet to pay (the balance ask); a private one this wallet builds
+ * itself, in its private deposit action, and pays through the same steps. A
+ * balance ask for a private deposit a page built is refused
+ * (`readWhatThePageAsksToBalance`). This file is the whole of what the wallet
+ * does to pay, in order:
  *
  *  1. READ the transaction for itself. It must be a proven, unbound
  *     transaction whose every action is a call into the one vault the ask
@@ -485,6 +489,24 @@ export function readWhatThePageAsks(
       + 'Nothing has been paid.');
   }
   return { tx, leaves, pays: 'private' };
+}
+
+/** Why a balance ask that pays a private deposit is refused: this wallet makes a private deposit whole, asked by intent. */
+export const A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT =
+  'what the page sent is a private deposit it built itself, and this wallet pays a private deposit only when it builds it, '
+  + 'proves it and signs its records itself, asked for as one action. The page asks for that action instead. Nothing has been paid.';
+
+/**
+ * What a page's balance ask pays for, read as `readWhatThePageAsks` reads it, refused when it is a private deposit:
+ * a page asks this wallet to make a private deposit whole (the `private-deposit` action), never to pay for one it
+ * built, whose coin it chose and whose records it would sign. A public deposit is read and paid as before.
+ */
+export function readWhatThePageAsksToBalance(
+  ledger: LedgerForBalancing, transaction: string, vault: string,
+): ReturnType<typeof readWhatThePageAsks> {
+  const read = readWhatThePageAsks(ledger, transaction, vault);
+  if (read.pays === 'private') throw new BalanceRefused(A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT);
+  return read;
 }
 
 const carriesDustActions = (tx: UnboundTransactionLike): boolean => {

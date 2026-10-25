@@ -499,6 +499,37 @@ interface StoredCheckpoints {
  * refused save writes nothing and answers `false`; missing a checkpoint costs
  * one slow read.
  */
+/** A record sealed under this wallet's own sealing key: the key that seals the secret, used as it is. */
+export interface SealedHere {
+  readonly iv: string;
+  readonly sealed: string;
+}
+
+/**
+ * **SEALS A RECORD UNDER THE KEY THAT SEALS THIS WALLET'S SECRET**, for a record the wallet keeps beside it (a new
+ * vault's secret until the vault has started). The key is the same non-extractable one `saveSecret` seals with, read
+ * as it is; nothing about how the secret itself is sealed changes.
+ */
+export async function sealHere(plain: string, walletId: string = openWalletId()): Promise<SealedHere> {
+  const key = await sealingKey(walletId);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain) as BufferSource));
+  return { iv: toBase64Url(iv), sealed: toBase64Url(sealed) };
+}
+
+/** Opens a record `sealHere` sealed, or answers null when it does not open under this wallet's key. */
+export async function openHere(kept: SealedHere, walletId: string = openWalletId()): Promise<string | null> {
+  try {
+    const key = await sealingKey(walletId);
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: fromBase64Url(kept.iv) as BufferSource }, key, fromBase64Url(kept.sealed) as BufferSource);
+    return new TextDecoder().decode(plain);
+  } catch {
+    return null;
+  }
+}
+
+
 export async function saveWalletCheckpoint(
   coinPublicKey: string, account: number, checkpoint: WalletCheckpoint,
   walletId: string,
@@ -628,6 +659,90 @@ export function arrivalOf(secret: Secret): ArrivalRecord | null {
   if (typeof parsed?.fingerprint !== 'string' || !isRealNumber(parsed?.at)) return null;
   if (parsed.fingerprint !== toBase64Url(fingerprintOf(secret))) return null;
   return { fingerprint: parsed.fingerprint, at: parsed.at };
+}
+
+/* ---- how far on each person's saved keys are, as this wallet last saw them. ----
+ *
+ * A page hands this wallet a person's saved keys sealed, as the service holds
+ * them, and the service can hand back an older copy, or another copy sealed at
+ * the same count. The sealed text counts its own writes, and this record keeps,
+ * per person, the highest count this wallet has opened or seen kept and a hash
+ * of the sealed copy it saw at that count: anything lower, or another copy at
+ * that count, is not the newest. Kept beside the wallet's other records and
+ * forgotten with them, and refused for any other secret as they are. Neither is
+ * a secret: a count says only how often the keys were written, and the hash
+ * opens nothing.
+ */
+
+/**
+ * The highest count of writes of a person's saved keys this wallet has seen, and which sealed copy it was; `under: 2`
+ * once it has opened a copy sealed under the key no page had (`keyring/seal-key.ts`), after which a copy under the old
+ * key is refused.
+ */
+export interface KeyringMarkKept {
+  readonly counter: number;
+  readonly digest: string;
+  readonly under?: 2;
+}
+
+interface KeyringMarksRecord {
+  readonly fingerprint: string;
+  readonly marks: Readonly<Record<string, KeyringMarkKept>>;
+}
+
+const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+const DIGEST = /^[0-9a-f]{64}$/u;
+const isMark = (m: unknown): m is KeyringMarkKept => typeof m === 'object' && m !== null
+  && isCount((m as KeyringMarkKept).counter) && typeof (m as KeyringMarkKept).digest === 'string'
+  && DIGEST.test((m as KeyringMarkKept).digest)
+  && ((m as KeyringMarkKept).under === undefined || (m as KeyringMarkKept).under === 2);
+
+function keyringMarksOf(secret: Secret): Record<string, KeyringMarkKept> | null {
+  const slot = slotOf(secret);
+  if (slot === null) return null;
+  const raw = localStorage.getItem(keyFor(slot, 'keyring-marks'));
+  if (!raw) return {};
+  let parsed: KeyringMarksRecord;
+  try {
+    parsed = JSON.parse(raw) as KeyringMarksRecord;
+  } catch {
+    return {};
+  }
+  if (typeof parsed?.fingerprint !== 'string' || parsed.fingerprint !== toBase64Url(fingerprintOf(secret))) return {};
+  if (typeof parsed.marks !== 'object' || parsed.marks === null) return {};
+  const marks: Record<string, KeyringMarkKept> = {};
+  for (const [person, m] of Object.entries(parsed.marks)) {
+    if (isMark(m)) marks[person] = { counter: m.counter, digest: m.digest, ...(m.under === 2 ? { under: 2 as const } : {}) };
+  }
+  return marks;
+}
+
+/** The highest count of writes of this person's saved keys this wallet has seen and its copy, or null when it has seen none. */
+export function keyringMarkOf(secret: Secret, person: string): KeyringMarkKept | null {
+  const marks = keyringMarksOf(secret);
+  if (marks === null || !Object.prototype.hasOwnProperty.call(marks, person)) return null;
+  return marks[person] ?? null;
+}
+
+/**
+ * Keeps `mark` for this person when its count is higher than the one kept, or when it is the same copy and says it was
+ * sealed under the new key. Never lowers the count, never replaces the copy kept at a count with another copy at the
+ * same count, and never takes `under: 2` away once kept.
+ */
+export function raiseKeyringMark(secret: Secret, person: string, mark: KeyringMarkKept): void {
+  if (!isMark(mark)) throw new Error('a mark of saved keys is a count from 0 and the hash of one sealed copy. Nothing was kept.');
+  const slot = slotToWrite(secret);
+  const marks = keyringMarksOf(secret) ?? {};
+  const kept = marks[person];
+  const higher = (kept?.counter ?? -1) < mark.counter;
+  const nowUnder = kept !== undefined && kept.counter === mark.counter && kept.digest === mark.digest && kept.under !== 2 && mark.under === 2;
+  if (!higher && !nowUnder) return;
+  const under = mark.under === 2 || kept?.under === 2;
+  const record: KeyringMarksRecord = {
+    fingerprint: toBase64Url(fingerprintOf(secret)),
+    marks: { ...marks, [person]: { counter: mark.counter, digest: mark.digest, ...(under ? { under: 2 as const } : {}) } },
+  };
+  localStorage.setItem(keyFor(slot, 'keyring-marks'), JSON.stringify(record));
 }
 
 /* ---- and when it WAS made here. ----

@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { useText } from 'vaults-ui';
 import { hrefOf } from '../routes.js';
+import { StatusAlert } from '../components/status.js';
+import type { EndedHere } from '../actions/ended-here.js';
 
 /**
  * **WHAT THE WALLET SAYS ONCE A REQUEST HAS BEEN ANSWERED AND NOTHING MORE IS
@@ -11,20 +14,76 @@ import { hrefOf } from '../routes.js';
  * reader is told where they are rather than left on the page's body.
  */
 export function AskOver({ framed }: { readonly framed: boolean }): ReactNode {
+  const t = useText();
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => { heading.current?.focus(); }, []);
   return (
     <>
-      <h1 ref={heading} tabIndex={-1} data-ask-over>This request is finished</h1>
-      <p className="lede">
-        The page has had its answer, and nothing more will be asked in this window.
+      <h1 ref={heading} tabIndex={-1} data-ask-over>{t('ask.over.title')}</h1>
+      <p className="lede">{t('ask.over.lede')}</p>
+      <p className="m-0 text-sm text-muted-foreground">{t(framed ? 'ask.over.framed' : 'ask.over.close')}</p>
+      {!framed && <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; {t('ask.over.home')}</a></p>}
+    </>
+  );
+}
+
+/**
+ * What pressing again on the page does, for an action where it differs from carrying on: Create vault starts a new
+ * vault, and putting money in again makes a new deposit.
+ */
+const CONTINUE: Readonly<Record<string, string>> = Object.freeze({
+  'create-vault': 'act.create-vault.over.continue',
+  'private-deposit': 'act.private-deposit.over.continue',
+});
+
+/**
+ * The stopped window's title. A check or step that did not hold is titled by what had left the wallet by then, from
+ * the runner's own counts: no transaction handed to the page, transactions the page confirmed it handed over, or one
+ * it did not confirm and may still send. Every other stop is titled by why it stopped.
+ */
+const titleOf = (ended: EndedHere['ended']): string => {
+  if (ended.why !== 'check-failed') return `act.why.${ended.why ?? 'step-failed'}`;
+  if (ended.unconfirmed > 0) return 'act.over.refused-maybe-sent';
+  if (ended.relayed > 0) return 'act.over.refused-sent';
+  return 'act.why.check-failed';
+};
+
+/**
+ * **WHAT THE WALLET SAYS ONCE AN ACTION HAS ENDED**, done or stopped. A stopped
+ * action is never said to be finished: it says the step it stopped at, why,
+ * how many transactions the page confirmed it handed over, how many it was
+ * handed and did not confirm, which may still land, and what pressing again on
+ * the page does. The wallet has locked itself by now, and says so; when a step
+ * was still running it says that step is cut off from the keys, never that its
+ * work is over.
+ */
+export function ActOver({ end, framed }: { readonly end: EndedHere; readonly framed: boolean }): ReactNode {
+  const t = useText();
+  const heading = useRef<HTMLHeadingElement | null>(null);
+  useEffect(() => { heading.current?.focus(); }, []);
+  const { ended, says } = end;
+  const stopped = ended.ended === 'stopped';
+  return (
+    <>
+      <h1 ref={heading} tabIndex={-1} data-ask-over data-act-ended={ended.ended}>
+        {stopped ? t('act.over.stopped-title', { step: ended.step, steps: ended.steps }) : t('act.over.done-title')}
+      </h1>
+      {stopped ? (
+        <StatusAlert tone="warning" title={t(titleOf(ended))}>
+          {says !== null && <p className="m-0" data-act-says>{t(says.key, { ...(says.values ?? {}) })}</p>}
+          <p className="m-0" data-act-relayed>{t('act.over.relayed', { relayed: ended.relayed })}</p>
+          {ended.unconfirmed > 0 && (
+            <p className="m-0" data-act-unconfirmed>{t('act.over.unconfirmed', { count: ended.unconfirmed })}</p>
+          )}
+          <p className="m-0" data-act-continue>{t(Object.prototype.hasOwnProperty.call(CONTINUE, ended.intent) ? CONTINUE[ended.intent]! : 'act.over.continue')}</p>
+        </StatusAlert>
+      ) : (
+        <p className="lede" data-act-relayed>{t('act.over.done', { steps: ended.steps, relayed: ended.relayed })}</p>
+      )}
+      <p className="m-0 text-sm text-muted-foreground" data-act-locked>
+        {t(end.abandoned ? 'act.over.locked-cut-off' : 'act.over.locked')}
       </p>
-      <p className="m-0 text-sm text-muted-foreground">
-        {framed
-          ? 'The page around this wallet will carry on from here.'
-          : 'You can close this window.'}
-      </p>
-      {!framed && <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>}
+      <p className="m-0 text-sm text-muted-foreground">{t(framed ? 'ask.over.framed' : 'ask.over.close')}</p>
     </>
   );
 }

@@ -35,9 +35,10 @@ function useStoppedSays(): (stopped: StartStopped) => string {
   return (stopped) => says[stopped];
 }
 
-/** What the person is being asked to confirm, if anything: creating a vault, or carrying on setting up the one named. */
+/* Every stage of creating a vault has its usual time, or null, in the usual times. */
 VAULT_USUAL_SECONDS satisfies Record<Creating, number | null>;
 
+/** What the person is being asked to confirm, if anything: creating a vault, or carrying on setting up the one named. */
 const ASKING = { create: 'create', start: 'start' } as const;
 type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.start; vault: string };
 
@@ -113,8 +114,8 @@ function StopResolvedBy({ result, disabled, ask }: {
 }
 
 /**
- * CREATE A VAULT: built and proved on this device and sent, held from its
- * first transaction by the company's super admins. One component, shown by
+ * CREATE A VAULT: built, proved and signed in the person's wallet and sent
+ * by this page, held from its first transaction by the company's super admins. One component, shown by
  * the setup wizard's vault step and in the right-hand panel the Vaults page
  * and a vault's page open.
  *
@@ -132,7 +133,8 @@ function StopResolvedBy({ result, disabled, ask }: {
  *
  * Once the super admins hold it, the vault is set up: it is added to the company's
  * account, its private records are made and its secret set, and each signer
- * is given a sealed copy. Each step is said as it happens. A step that waits
+ * is given a sealed copy. While the wallet runs, the stage its step is at is
+ * said, with how long it has run and usually takes. A start that waits
  * for other signers' approvals is named with how many it has and needs, and
  * says each of them approves it from their own device; a set up that stopped
  * is said as that, with what resolves it when it stopped at the check of who
@@ -234,14 +236,17 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
   const unfinished = creation !== null && !creation.confirmedFinished && !(creation.standing === 'finished' && ready?.of === READY.locked);
   const named = name.trim() !== '';
   const askingTheName = asking?.of === ASKING.start && nameOwed === asking.vault;
-  const canCreate = company !== null && creation !== null && !unfinished && ready?.of === READY.ready && named && !busy;
+  /* Creating a vault gives this person's own vault keys first, in the same action, so their keys still to give do not hold it back. */
+  /* Keys not open here hold nothing back either: the action in the wallet reads them itself and checks the vault can be created. */
+  const canCreate = company !== null && creation !== null && !unfinished
+    && (ready?.of === READY.ready || ready?.of === READY.yoursMissing || ready?.of === READY.locked) && named && !busy;
   const why = company === null ? t('createVault.why.noCompany')
     : ready === null || creation === null ? t('createVault.why.reading')
     : unfinished ? t('createVault.why.notFinished')
-    : ready.of === READY.yoursMissing ? t('createVault.why.yoursMissing')
+    : ready.of === READY.yoursMissing && !named ? t('createVault.why.yoursMissing')
     : ready.of === READY.othersMissing ? t('createVault.why.othersMissing')
     : ready.of === READY.notOnChain ? t('createVault.why.notOnChain')
-    : ready.of === READY.locked ? t('createVault.why.locked')
+    : ready.of === READY.locked && !named ? t('createVault.why.locked')
     : !named ? t('createVault.why.nameFirst')
     : null;
   const { now, proofStartedAt } = useTicker(proofsRunning);
@@ -255,15 +260,6 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
   const STAGE_SAYS: Record<Creating, string> = {
     [CREATING.checking]: t('createVault.stage.checking'),
     [CREATING.building]: t('createVault.stage.building'),
-    [CREATING.sending]: t('createVault.stage.sending'),
-    [CREATING.waitingForChain]: t('createVault.stage.waitingForChain'),
-    [CREATING.filingTheName]: t('createVault.stage.filingTheName'),
-    [CREATING.adopting]: t('createVault.stage.adopting'),
-    [CREATING.openingThePool]: t('createVault.stage.openingThePool'),
-    [CREATING.readingTheSecretBack]: t('createVault.stage.readingTheSecretBack'),
-    [CREATING.settingTheSecret]: t('createVault.stage.settingTheSecret'),
-    [CREATING.writingTheCopies]: t('createVault.stage.writingTheCopies'),
-    [CREATING.waitingForApprovals]: t('createVault.stage.waitingForApprovals'),
     [CREATING.done]: t('createVault.stage.done'),
   };
 

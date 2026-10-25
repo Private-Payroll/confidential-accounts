@@ -1,4 +1,4 @@
-import { first, missing, second } from 'virtual:this-builds-account-keys';
+import { first, missing, second, verifiers } from 'virtual:this-builds-account-keys';
 import type { ThisBuildsAccountKeys } from 'midnight-identity/profile/creation-sign';
 
 /**
@@ -21,4 +21,14 @@ export function builtAccountKeys(): BuiltAccountKeys {
       second: new Map(second.map(([c, h]) => [c, bytes(h)] as [string, Uint8Array])),
     },
   };
+}
+
+/**
+ * **THE VERIFIER KEYS THEMSELVES**, by circuit, both steps of a creation, as
+ * this wallet was built with them: what it builds a company's deploy and second
+ * step with, so it never takes them from a page. Null when it was built without.
+ */
+export function builtVerifierKeys(): ReadonlyMap<string, Uint8Array> | null {
+  if (missing !== null || verifiers.length === 0) return null;
+  return new Map(verifiers.map(([c, h]) => [c, bytes(h)] as [string, Uint8Array]));
 }

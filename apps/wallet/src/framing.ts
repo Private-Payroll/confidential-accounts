@@ -54,6 +54,13 @@ export type Consent =
  * each measure below must hold, and each refusal names what would make the
  * press possible - the person is never told only that it did not work.
  *
+ * **IT HOLDS APPROVE, AND NOTHING AFTER IT.** An action approved here runs to
+ * its end on that one press: a frame hidden or shrunk while it runs neither
+ * pauses nor stops it, because nothing it does after Approve waits for a press,
+ * and its Stop can always be pressed, because stopping gives nothing away. A
+ * frame the page removes takes the action with it; the page is then told
+ * nothing more and stops waiting at the step it last heard.
+ *
  * **WHAT IT DOES NOT MEASURE: THE FRAME BEING COVERED, FADED OR MOVED.** The one browser
  * signal for that - `IntersectionObserver`'s `trackVisibility` - was built in
  * and taken out again, on a measurement: in Chromium it reports every element

@@ -1,9 +1,9 @@
 /**
  * HOW LONG EACH LONG STEP USUALLY TAKES, in seconds, as the screen states it beside the time that has run.
  * Where each number came from:
- * - PROVING (2 minutes): a proof made in the browser took 98 to 112 seconds in the WASM proving report, and the
- *   founder's own run of each long step took over three minutes, most of it proving.
- * - Every other number for a company or a vault is an estimate from the same run (the rest of the three minutes), not a
+ * - PROVING (2 minutes): a proof made in the browser took 98 to 112 seconds in the WASM proving report, and a
+ *   full run of each long step took over three minutes, most of it proving.
+ * - Every other number for a company is an estimate from the same run (the rest of the three minutes), not a
  *   measured time.
  * - A deposit's numbers are measured ones only (DEPOSIT_USUAL_SECONDS); a step not measured has none.
  */
@@ -21,40 +21,29 @@ export const COMPANY_USUAL_SECONDS: Readonly<Record<CompanyPhase, number>> = {
 };
 
 /**
- * Null where how long it takes depends on other people, not on this device or the network. Keyed by stage name without
- * importing the vault adapter, which only its own action file may; actions/create-vault.tsx checks a number is here for every stage.
+ * Null where it was not measured: `checking` is every step of the wallet's action but the vault's own, and how long it
+ * takes depends on what the company's records owe, which may include recording them on the network. Keyed by stage
+ * name without importing the vault adapter, which only its own action file may; actions/create-vault.tsx checks a
+ * number, or null, is here for every stage.
  */
 export const VAULT_USUAL_SECONDS = {
-  checking: 5,
+  checking: null,
   building: USUAL_SECONDS_PROVING,
-  sending: USUAL_SECONDS_SENDING,
-  'waiting-for-chain': USUAL_SECONDS_WAITING_FOR_NETWORK,
-  'filing-the-name': 20,
-  adopting: 30,
-  'opening-the-pool': 5,
-  'reading-the-secret-back': 5,
-  'setting-the-secret': USUAL_SECONDS_PROVING,
-  'writing-the-copies': 30,
-  'waiting-for-approvals': null,
   done: null,
 } as const satisfies Readonly<Record<string, number | null>>;
 
 /**
  * HOW LONG EACH STEP OF A DEPOSIT USUALLY TAKES, in seconds, for each way money goes in; null where it was not measured
  * or waits on the person's own press in their wallet, so the screen shows the time that has run and no usual figure.
- * Measured in the browser: proving a private deposit took 124 and 127 seconds (its two proofs share one thread), and
- * proving a public one about 2 seconds. Keyed by the deposit adapter's step names without importing it; that adapter
- * checks every step it lists has an entry here.
+ * Measured in the browser: proving a public deposit took about 2 seconds. A private deposit's second step is made
+ * whole in the person's wallet (proved, paid, sent and recorded) and has not been measured there, so it has none.
+ * Keyed by the deposit adapter's step names without importing it; that adapter checks every step it lists has an entry
+ * here.
  */
 export const DEPOSIT_USUAL_SECONDS = {
   private: {
-    'opening-the-company-records': null,
-    'checking-the-vault': null,
-    'choosing-the-coin': null,
-    'proving-the-deposit': 125,
     'paying-in-your-wallet': null,
-    sending: null,
-    'waiting-for-the-chain': null,
+    'proving-the-deposit': null,
   },
   public: {
     'checking-the-vault': null,
