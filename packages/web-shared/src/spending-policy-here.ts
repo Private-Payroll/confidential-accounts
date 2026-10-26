@@ -32,14 +32,16 @@ import {
   SPENDING_POLICY_KIND, type PolicyOpeningOnTheWire, type SpendingPolicySecrets,
 } from '../../../src/midnight/spending-policy-record.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import { companyRecordKey, mayFile, notOnTheChainNow, type Directory } from '../../../src/midnight/seat-directory.js';
+import { companyRecordKey, mayFile, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry, recordKeyOf } from '../../../src/midnight/record-manifest.js';
 import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
 import type { AccountGovernance, AccountRoleEntry } from 'midnight-identity/profile/records-key';
 import { MOST_ROLES_ASKED } from 'midnight-identity/profile/request';
 import type { SpendingPolicyKeys } from './governed-call-builder.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
-import { judgeIn, kindAsked, namedHere, readersIn, seatNotBelievedHere, type DirectoryHere } from './vault-page-doors.js';
+import {
+  judgeIn, kindAsked, namedHere, readersIn, readersOf, sealedToARetiredSeat, seatNotBelievedHere, type DirectoryHere,
+} from './vault-page-doors.js';
 import { signedStateHere, type CompanyRecordsHere, type SpendingPoliciesHere } from './run-rebuilt-here.js';
 import { governOnDevice, type GovernanceDoors, type GovernedOutcome } from './governed-call-on-device.js';
 
@@ -127,37 +129,6 @@ async function versionsHere(
   }
   return { judged: passed, believed };
 }
-
-const readersOf = (rec: SealedCompanyRecord): Set<string> => new Set(rec.wrapped.map((w) => String(w.signerId).toLowerCase()));
-
-/**
- * Whether a version is sealed to a seat the directory had already retired
- * before the batch that anchored the version - the directory as anchored
- * through every earlier batch, without that batch's own changes - or, for one
- * not yet anchored, that the directory has retired now. A version filed while
- * the seat was seated and anchored together with its retirement stays
- * believed, so the signers who stay still read the policy in force. A version
- * whose directory this read cannot replay is not believed: nothing is guessed.
- */
-const sealedToARetiredSeat = (
-  here: DirectoryHere, held: { readonly batch: number; readonly dirVersion: number } | null, rec: SealedCompanyRecord,
-): boolean => {
-  let dir: Directory | null = here.dir;
-  if (held !== null) {
-    let before = 0;
-    for (let v = 1; v <= held.dirVersion; v += 1) {
-      const d = here.records.directory.get(v);
-      if (d === undefined) return true;
-      if (d.batch < held.batch) before = v;
-    }
-    /* Nothing anchored before its batch: no seat had been retired yet. */
-    if (before === 0) return false;
-    dir = here.at(before)?.dir ?? null;
-  }
-  if (dir === null) return true;
-  const readers = readersOf(rec);
-  return dir.seats.some((x) => x.retired !== null && readers.has(x.seat.toLowerCase()));
-};
 
 /**
  * Whether a version leaves out a reader of the believed version before it who

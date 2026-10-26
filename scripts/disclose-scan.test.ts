@@ -439,7 +439,13 @@ describe('the real sources', () => {
     // A recovery also compares the head the latest recovery carried out wrote
     // with the one the account holds (+1). The approval binds it and the
     // account holds it in the open, so nothing new is published.
-    expect(sites(account)).toBe(185);
+    // 185 -> 188. A raise counts as its raiser's approval (+3, -0): whether it
+    // is a run, read before the raiser's rights are opened; whether the raise is
+    // counted, which for a run is whether the raiser may approve on its vault
+    // and is public as the count; and the raiser's approval nullifier, as
+    // `approve` publishes it. The vault the rights are read on was already a
+    // site through `grants`.
+    expect(sites(account)).toBe(188);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the

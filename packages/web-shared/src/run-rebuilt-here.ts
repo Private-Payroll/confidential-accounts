@@ -48,6 +48,7 @@ import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { proposalEntry, runEntry } from '../../../src/midnight/record-manifest.js';
 import { proposalFilingRefusal } from '../../../src/core/proposal-filing.js';
 import { payRecordNonceOf } from '../../../src/midnight/run-keys.js';
+import { oneOffsHere, type OneOffsHere } from './one-off-here.js';
 import type { RaisingHere } from './what-this-device-made.js';
 import type { PeopleHere } from './people-on-device.js';
 import type { RunMadeHere, WalletReadFacts } from './what-this-device-made.js';
@@ -107,6 +108,8 @@ export interface CompanyRecordsHere {
   readonly registry?: AssetRegistry;
   /** A vault's spending policies, and what the chain holds for them (`spending-policy-here.ts`). */
   readonly spendingPolicies?: SpendingPoliciesHere;
+  /** The company's one-off payments from its vaults, read beside payroll's records and never among them (`one-off-here.ts`). */
+  readonly oneOffs: OneOffsHere;
 }
 
 /**
@@ -516,8 +519,10 @@ export async function withWhatTheWalletRead(records: CompanyRecordsHere, made: R
  * `run`: every proposal they hold, by its identity on the chain; every leaf and
  * payment nonce of every leg of every run they hold, the nonces under the
  * company's pay-record key; and what `run`, if it was drawn as a repeat,
- * confirmed it repeats. Read from the records this device opened, never from
- * an answer the service made.
+ * confirmed it repeats. Beside them, the leaf and nonce of every one-off
+ * payment this device reads, so a paid one-off is not taken for a payment the
+ * records cannot account for. Read from the records this device opened, never
+ * from an answer the service made.
  */
 async function whatTheRecordsAccountFor(
   records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: KeysHeld, read?: readonly SealedProposal[],
@@ -527,8 +532,9 @@ async function whatTheRecordsAccountFor(
     throw new RunNotReadHere('This page cannot read the company\'s proposals, so it cannot raise a run. Reload the page to get '
       + 'the current version.');
   }
-  const [proposals, runs, state] = await Promise.all([
-    proposalsListedHere({ ...records, proposals: readProposals }, read), runsListedHere(records), signedStateHere(records, accountId, viewingKey)]);
+  const [proposals, runs, state, oneOffs] = await Promise.all([
+    proposalsListedHere({ ...records, proposals: readProposals }, read), runsListedHere(records), signedStateHere(records, accountId, viewingKey),
+    oneOffsHere(records, accountId)]);
   const opened = runs.filter((r) => r.accountId === accountId).map((r) => openedHere(r, viewingKey, 'one of the company\'s payroll runs'));
   const legs = opened.flatMap((r) => Object.values(r.payout ?? {}));
   return {
@@ -536,6 +542,12 @@ async function whatTheRecordsAccountFor(
     knownRounds: proposals.filter((p: SealedProposal) => p.accountId === accountId).map((p) => p.chainId.toLowerCase()),
     knownLeaves: legs.flatMap((l) => l.leaves.map((x) => x.toLowerCase())),
     knownNonces: legs.flatMap((l) => (l.records ?? []).map((rec) => payRecordNonceOf(state.payKey as Hex, rec).toLowerCase())),
+    ...(oneOffs.believed.length === 0 ? {} : {
+      oneOffs: {
+        leaves: oneOffs.believed.map((o) => o.tree.tree.leaves[0]!.toLowerCase()),
+        nonces: oneOffs.believed.map((o) => o.secrets.nonce.toLowerCase()),
+      },
+    }),
     ...(run.repeats === undefined ? {} : {
       confirmed: { of: [...run.repeats.of], ...(run.repeats.chainPayments === undefined ? {} : { chainPayments: run.repeats.chainPayments }) },
     }),

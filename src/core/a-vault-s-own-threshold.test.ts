@@ -144,7 +144,8 @@ async function openAccountAt3(h: ReturnType<typeof harness>) {
  * the service correctly refuses with *"already approved"*, from a line that has
  * nothing to do with thresholds. Naming who signs makes the sequence readable
  * and makes a second approval by the same person a thing the test would have to
- * ask for.
+ * ask for. Index 0 raises every round here and the raise already counts as its
+ * approval, so no list below names 0.
  */
 async function approveAs(
   h: ReturnType<typeof harness>,
@@ -177,7 +178,7 @@ async function giveFastItsOwnThreshold(
 ) {
   const round = await h.accounts.proposeVaultThresholdChange(
     account.id, viewingKey, FAST, 2, at(secrets, 0).signerId);
-  const done = await approveAs(h, round, secrets, viewingKey, [0, 1, 2]);
+  const done = await approveAs(h, round, secrets, viewingKey, [1, 2]);
   expect(done.status).toBe('approved');
   await h.accounts.setVaultThreshold(account.id, viewingKey, FAST, 2);
 }
@@ -235,7 +236,7 @@ describe('the bar is the vault\'s own, and absence inherits the account\'s', () 
      * answer was read against. A second copy in this object would be one more
      * place for the same fact to be written and to disagree.
      */
-    const one = await approveAs(h, p, secrets, viewingKey, [0]);
+    const one = await h.accounts.refreshStanding(p.id, viewingKey);
     expect(one.vault).toBe(FAST);
     expect(one.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
 
@@ -277,7 +278,7 @@ describe('the bar is the vault\'s own, and absence inherits the account\'s', () 
       run: aRunAt(SLOW), payments: onePayment(25_00n), proposedBy: at(secrets, 0).signerId,
     });
 
-    const two = await approveAs(h, p, secrets, viewingKey, [0, 1]);
+    const two = await approveAs(h, p, secrets, viewingKey, [1]);
     expect(two.status).toBe('open');
     expect(two.vault).toBe(SLOW);
     expect(two.approvalRound).toEqual({ state: 'short', approvals: 2, threshold: 3 });
@@ -519,7 +520,6 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
 
     const { id, refs } = await runRoundNaming(h, account, viewingKey, FAST);
 
-    await h.ledger.approve(account.id, id, at(refs, 0));
     await h.ledger.approve(account.id, id, at(refs, 1));
 
     /* The vault's bar is met and the account's is not. The account's is the one. */
@@ -554,7 +554,6 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
 
     const { id, refs } = await runRoundNaming(h, account, viewingKey, FAST);
 
-    await h.ledger.approve(account.id, id, at(refs, 0));
     await h.ledger.approve(account.id, id, at(refs, 1));
 
     await expect(h.ledger.setVaultThreshold(account.id, FAST, 1, id, at(refs, 0)))
@@ -606,13 +605,12 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
 
     const seat = SimulatedCommitments.vaultThresholdPayload(FAST, 5);
     const seatRound = await governanceRound(h, account, viewingKey, seat);
-    for (const r of seatRound.refs) await h.ledger.approve(account.id, seatRound.id, r);
+    for (const r of seatRound.refs.slice(1)) await h.ledger.approve(account.id, seatRound.id, r);
     await h.ledger.setVaultThreshold(account.id, FAST, 5, seatRound.id, at(seatRound.refs, 0));
     expect((await h.ledger.status(account.id))!.vaultThresholds)
       .toEqual([{ vault: FAST, threshold: 5 }]);
 
     const { id, refs } = await runRoundNaming(h, account, viewingKey, FAST);
-    await h.ledger.approve(account.id, id, at(refs, 0));
     await h.ledger.approve(account.id, id, at(refs, 1));
 
     /* Two is short of the ACCOUNT's three, and the message names three — not
@@ -657,17 +655,16 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
 
     const seat = SimulatedCommitments.vaultThresholdPayload(NONE, 1);
     const seatRound = await governanceRound(h, account, viewingKey, seat);
-    for (const r of seatRound.refs) await h.ledger.approve(account.id, seatRound.id, r);
+    for (const r of seatRound.refs.slice(1)) await h.ledger.approve(account.id, seatRound.id, r);
     await h.ledger.setVaultThreshold(account.id, NONE, 1, seatRound.id, at(seatRound.refs, 0));
     expect((await h.ledger.status(account.id))!.vaultThresholds)
       .toEqual([{ vault: NONE, threshold: 1 }]);
 
     const payload = SimulatedCommitments.signerThresholdPayload(2);
     const { id, refs } = await governanceRound(h, account, viewingKey, payload);
-    await h.ledger.approve(account.id, id, at(refs, 0));
 
-    /* One approval meets the sentinel's seated bar of 1 and not the account's
-     * three, and the account's is the one. */
+    /* The raise's own approval meets the sentinel's seated bar of 1 and not the
+     * account's three, and the account's is the one. */
     await expect(h.ledger.setThreshold(account.id, 2, id, at(refs, 0)))
       .rejects.toThrow(/not enough approvals yet: 1 of 3/);
     expect((await h.ledger.status(account.id))!.threshold).toBe(3);
@@ -759,7 +756,6 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
     const doomed = at(refs, 2).leaf;
     const before = (await h.ledger.status(account.id))!.signerCount;
 
-    await h.ledger.approve(account.id, id, at(refs, 0));
     await h.ledger.approve(account.id, id, at(refs, 1));
 
     /* `FAST`'s bar is met at 2. The account's is 3, and the account's is the one. */

@@ -350,8 +350,9 @@ export class AccountSimulator {
    * id"*.
    *
    * **WHAT IT DOES INSTEAD IS NOT A SHORTCUT — IT IS THE REAL PATH.** Every
-   * seat after the first is `propose` → `approve` × threshold → `amendSigner`,
-   * and the threshold is raised at the end by the same three steps through
+   * seat after the first is `propose` (which counts its raiser) → `approve` by
+   * each other approver → `amendSigner`, and the threshold is raised at the end
+   * by the same steps through
    * `setThreshold`. Every one of those goes through the compiled circuits with
    * every assert live, which is the point of this simulator.
    *
@@ -386,7 +387,8 @@ export class AccountSimulator {
 
   /**
    * Seats `who` through the approved path, with `approvers` (who must already
-   * be seated) voting. `seed` picks the round's salt.
+   * be seated) voting: the first raises it, which counts as their approval, and
+   * the rest approve. `seed` picks the round's salt.
    *
    * **THE PROPOSING DEVICE AND THE AMENDING DEVICE MUST CARRY THE SAME SALT.**
    * `propose` commits to it and `amendSigner` recomputes
@@ -423,7 +425,7 @@ export class AccountSimulator {
     const by = approvers[0]!;
     await this.as(this.applying(by, c)).propose(payload);
     const id = this.proposalId(payload, c.salt);
-    for (const a of approvers) await this.as(a).approve(id);
+    for (const a of approvers.slice(1)) await this.as(a).approve(id);
     await this.as(this.applying(by, c)).addSigner(leaf, id);
     return id;
   }
@@ -443,7 +445,7 @@ export class AccountSimulator {
     const by = approvers[0]!;
     await this.as(this.applying(by, c)).propose(payload);
     const id = this.proposalId(payload, c.salt);
-    for (const a of approvers) await this.as(a).approve(id);
+    for (const a of approvers.slice(1)) await this.as(a).approve(id);
     await this.as(this.applying(by, c)).setThreshold(newThreshold, id);
     return id;
   }
@@ -794,7 +796,7 @@ export class AccountSimulator {
    * Raises a recovery of the record anchor resuming from `resumesFrom`, to be carried out before
    * `latest` (an hour after the block time by default), after the recovery whose head is
    * `lastRecovery` (the latest carried out, as the chain holds it now, by default), and has
-   * `approvers` approve it; returns its identity, its latest time, the head of the recovery it
+   * `approvers` approve it (the first by raising it); returns its identity, its latest time, the head of the recovery it
    * follows and the change its raiser's device carries, which carrying it out needs.
    */
   async approvedRecovery(
@@ -805,7 +807,7 @@ export class AccountSimulator {
     const payload = pureCircuits.recoverAnchorPayload(resumesFrom, latest, lastRecovery);
     await this.as(this.applying(approvers[0]!, c)).propose(payload);
     const id = this.proposalId(payload, c.salt);
-    for (const a of approvers) await this.as(a).approve(id);
+    for (const a of approvers.slice(1)) await this.as(a).approve(id);
     return { id, c, latest, lastRecovery };
   }
 
@@ -952,7 +954,7 @@ export class AccountSimulator {
     const acting = this.privateState;
     await this.as(this.applying(by, c)).propose(payload);
     const id = this.proposalId(payload, c.salt);
-    for (const a of approvers) await this.as(a).approve(id);
+    for (const a of approvers.slice(1)) await this.as(a).approve(id);
     await this.as(this.applying(by, c)).adopt(vault, id);
     this.as(acting);
   }

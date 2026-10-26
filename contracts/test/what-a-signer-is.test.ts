@@ -69,6 +69,7 @@
 import { describe, it, expect } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { AccountSimulator, leafOfDevice, privateStateFor, change } from './simulator.js';
+import { scopeOfRights } from '../src/witnesses.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { SimulatedCommitments } from '../../src/core/ledger.js';
@@ -509,8 +510,10 @@ describe('an account is founded at one, and one is a rule', () => {
      *
      * **WHAT HAPPENS THEN, SAID EXACTLY, BECAUSE AN EARLIER DRAFT OF THIS
      * PARAGRAPH OVERSTATED IT.** `setThreshold` runs `requireApproved` FIRST
-     * and its payload check SECOND. `id` below was raised over `payload(31)`,
-     * which is not a `setThresholdPayload`, so at a threshold of zero the
+     * and its payload check SECOND. `id` below is a run raised by a seat that
+     * may raise but not approve, so it is open at an approval count of nought
+     * (any raise by a seat that may approve counts its raiser, which would
+     * already meet a bar of one). It is not a `setThresholdPayload`, so at a threshold of zero the
      * approval bar PASSES and the payload check then refuses with *"that
      * proposal is not for this threshold"*. The rule does not move. **What the
      * assertion reads is WHICH refusal came back**, and that is the
@@ -519,9 +522,14 @@ describe('an account is founded at one, and one is a rule', () => {
      * gate waved it through and a different line stopped it. Either way this
      * test goes red for the mutation and for nothing else in the file.
      */
+    const rights = { mayRaise: true, mayApprove: false, mayHold: false, everyVault: true, vaults: [] };
+    const raiser = { ...privateStateFor(32), rights, scope: scopeOfRights(rights) };
+    await sim.seatSigner(raiser, [FOUNDING], 33);
     const c = change(0n, 31);
-    await sim.as(sim.applying(FOUNDING, c)).propose(payload(31));
-    const id = sim.proposalId(payload(31), c.salt);
+    const vault = new Uint8Array(32).fill(0xa1);
+    const root = new Uint8Array(32).fill(0x31);
+    await sim.as(sim.applying(raiser, c)).proposeRun({ root, payees: 1n, from: 1n, until: 2n, vault });
+    const id = sim.proposalId(pureCircuits.runPayload(root, 1n, 1n, 2n, 0n), c.salt, vault);
     expect(sim.approvalsFor(id)).toBe(0n);
     await expect(sim.as(sim.applying(FOUNDING, c)).setThreshold(2n, id))
       .rejects.toThrow(/not enough approvals yet/);

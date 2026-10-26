@@ -171,7 +171,8 @@ describe('A LEG CHARGED TO ITS VAULT\'S PERIOD, RETRIED, IS CHARGED ONCE', () =>
     const policyPayload = pureCircuits.setPolicyPayload(VAULT, pureCircuits.assetKeyOf(TEST_TOKEN_BYTES, A.assetBlinding), commitment);
     await sim.as(sim.applying(A, pc)).propose(policyPayload);
     const policyId = sim.proposalId(policyPayload, pc.salt);
-    for (const s of [A, B]) await sim.as(s).approve(policyId);
+    /* A's raise is A's approval. */
+    for (const s of [B]) await sim.as(s).approve(policyId);
     await sim.as({ ...sim.applying(A, pc), policy: POLICY }).setPolicy(VAULT, commitment, policyId);
     /* A leg of two people, raised with the salt a leg's raise names (no leg), approved, and charged. */
     const payments = [0, 1].map((i) => ({ details: toHex(bytes(10 + i)), nonce: toHex(bytes(70 + i)) }));
@@ -182,7 +183,7 @@ describe('A LEG CHARGED TO ITS VAULT\'S PERIOD, RETRIED, IS CHARGED ONCE', () =>
       const c = { ...change(0n, seed, TEST_TOKEN_BYTES), salt: pureCircuits.retrySaltOf(legRoot, fresh) };
       await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from, until, vault: VAULT, required: 2n });
       const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 2n), c.salt, VAULT);
-      for (const s of [A, B]) await sim.as(sim.applying(s, c)).approve(id);
+      for (const s of [B]) await sim.as(sim.applying(s, c)).approve(id);
       return { id, c, fresh, tree };
     };
     const charge = (r: Awaited<ReturnType<typeof raised>>, spent: bigint, retry?: { leg: Uint8Array; legTop: bigint; legTotal: bigint }) => {

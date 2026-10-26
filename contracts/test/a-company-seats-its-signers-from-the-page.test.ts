@@ -172,12 +172,12 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
   const onDevice = async (who: AccountPrivateState, order: GovernedCallOrder) =>
     send((await builder().governedCall({ account: company, order, material: keyringOf(who), chain: callState(), opened: openedFor(order) })).tx);
 
-  /** A seat raised, approved by every device named, and carried out by the first of them. */
+  /** A seat raised by the first device named (which counts as its approval), approved by the rest, and carried out by the first. */
   const seat = async (who: AccountPrivateState, approvers: AccountPrivateState[], seed: number) => {
     const leaf = hex(leafOfDevice(who));
     const r = aRound({ kind: 'add-signer', leaf }, seed);
     expect(await onDevice(approvers[0]!, r.raise)).toEqual({ ok: true, error: '' });
-    for (const a of approvers) expect(await onDevice(a, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
+    for (const a of approvers.slice(1)) expect(await onDevice(a, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
     return onDevice(approvers[0]!, { circuit: 'amendSigner', leaf, proposal: r.id, proposalSalt: r.salt });
   };
 
@@ -208,11 +208,14 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     expect(await seat(blake, [founder], 11)).toEqual({ ok: true, error: '' });
     expect(seated(leafOfDevice(blake))).toBe(true);
     expect(ledgerNow().signerLeaves.size()).toBe(2n);
-    /* The seated signer's own device proves membership: it can raise and approve. */
+    /* The seated signer's own device proves membership: it can raise, which counts as its approval, and approve another's. */
     const r = aRound({ kind: 'threshold', threshold: '2' }, 12);
     expect(await onDevice(blake, r.raise)).toEqual({ ok: true, error: '' });
-    expect(await onDevice(blake, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
     expect(approvalsOf(r.id)).toBe(1n);
+    const other = aRound({ kind: 'threshold', threshold: '1' }, 13);
+    expect(await onDevice(founder, other.raise)).toEqual({ ok: true, error: '' });
+    expect(await onDevice(blake, { circuit: 'approve', proposal: other.id })).toEqual({ ok: true, error: '' });
+    expect(approvalsOf(other.id)).toBe(2n);
   });
 
   it('THE THRESHOLD IS RAISED FROM A DEVICE, AND THE NEXT SIGNER BEYOND IT NEEDS TWO DEVICES\' APPROVALS BEFORE ANYBODY CAN SEAT THEM', async () => {
@@ -221,7 +224,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     expect(await seat(blake, [founder], 21)).toEqual({ ok: true, error: '' });
     const up = aRound({ kind: 'threshold', threshold: '2' }, 22);
     expect(await onDevice(founder, up.raise)).toEqual({ ok: true, error: '' });
-    expect(await onDevice(founder, { circuit: 'approve', proposal: up.id })).toEqual({ ok: true, error: '' });
     /* RED WHEN: the threshold cannot be changed from a device - the company can then never ask for more than one approval. */
     expect(await onDevice(founder, { circuit: 'setThreshold', threshold: '2', proposal: up.id, proposalSalt: up.salt }))
       .toEqual({ ok: true, error: '' });
@@ -230,7 +232,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     const leaf = hex(leafOfDevice(cleo));
     const r = aRound({ kind: 'add-signer', leaf }, 23);
     expect(await onDevice(founder, r.raise)).toEqual({ ok: true, error: '' });
-    expect(await onDevice(founder, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
     const carry = { circuit: 'amendSigner', leaf, proposal: r.id, proposalSalt: r.salt } as const;
     /* One approval of two: the contract refuses the seat, from the device, before anything is sent. */
     await expect(onDevice(founder, carry)).rejects.toThrow(/not enough approvals/u);
@@ -248,7 +249,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     const leaf = hex(leafOfDevice(blake));
     const r = aRound({ kind: 'add-signer', leaf }, 31);
     expect(await onDevice(founder, r.raise)).toEqual({ ok: true, error: '' });
-    expect(await onDevice(founder, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
     /* RED WHEN: a round approved for one person can seat another. */
     await expect(onDevice(founder, {
       circuit: 'amendSigner', leaf: hex(leafOfDevice(other)), proposal: r.id, proposalSalt: r.salt,
@@ -261,7 +261,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     const leaf = hex(leafOfDevice(outsider));
     const r = aRound({ kind: 'add-signer', leaf }, 41);
     expect(await onDevice(founder, r.raise)).toEqual({ ok: true, error: '' });
-    expect(await onDevice(founder, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
     await expect(onDevice(outsider, { circuit: 'amendSigner', leaf, proposal: r.id, proposalSalt: r.salt }))
       .rejects.toThrow(/not a signer/u);
     expect(seated(leafOfDevice(outsider))).toBe(false);

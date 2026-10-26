@@ -96,15 +96,16 @@ const LEG: LegPaymentsOnTheWire = {
 const PLENTY = [note(1, 1_000_000n)];
 const VAULT = '99'.repeat(32);
 const SALT = '66'.repeat(32);
-/* What a proposal written down for `payments` commits to paying, as its filing carries it, under ORDER's vault and salt. */
-const paysFor = (payments: LegPaymentsOnTheWire['payments'], asset: string = TOKEN): string => paysCommitmentOf({ vault: VAULT, asset, payments }, SALT);
+const ASSET_BLINDING = '55'.repeat(32);
+/* What a proposal written down for `payments` commits to paying, as its filing carries it, under ORDER's vault, salt and asset blinding. */
+const paysFor = (payments: LegPaymentsOnTheWire['payments'], asset: string = TOKEN): string => paysCommitmentOf({ vault: VAULT, asset, payments }, SALT, ASSET_BLINDING);
 
 const ORDER: RaiseOrderOnTheWire = {
   proposalId: 'prp_1', chainId: 'cc'.repeat(32),
   order: {
     circuit: 'propose',
     run: { root: '88'.repeat(32), payees: '3', opensAt: '1', closesAt: '2', vault: VAULT },
-    half: { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: SALT, changeAmount: '1', changeBatchDigest: '77'.repeat(32) },
+    half: { assetId: '44'.repeat(32), assetBlinding: ASSET_BLINDING, proposalSalt: SALT, changeAmount: '1', changeBatchDigest: '77'.repeat(32) },
     proposal: 'cc'.repeat(32),
   },
   pays: paysFor(LEG.payments),

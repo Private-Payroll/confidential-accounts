@@ -209,12 +209,15 @@ describe('confidential account contract', () => {
     await addSigners(blake);
     const c = change(0n, 41);
     const id = await propose(new Uint8Array(32), c);
-    await sim.as(sim.applying(ada, c)).approve(id);
+    await sim.as(sim.applying(blake, c)).approve(id);
     // The nullifier is already burned. Without this, one signer reaches any
     // threshold alone and M of N means nothing.
+    await expect(sim.as(sim.applying(blake, c)).approve(id))
+      .rejects.toThrow(/already approved/i);
+    /* The raiser's approval is burned by the raise itself, so the raiser is refused too. */
     await expect(sim.as(sim.applying(ada, c)).approve(id))
       .rejects.toThrow(/already approved/i);
-    expect(sim.approvalsFor(id)).toBe(1n);
+    expect(sim.approvalsFor(id)).toBe(2n);
   });
 
   it('COUNTS EVERY APPROVAL, AND COUNTS EACH ONE ONCE — the number the threshold is read against', async () => {
@@ -243,19 +246,19 @@ describe('confidential account contract', () => {
      * fails when the increment goes. It asserts nothing else, so a failure here
      * names the counter and not a policy it happens to be feeding.
      */
-    await addSigners(blake);
+    await addSigners(blake, cleo);
     const c = change(0n, 43);
     const id = await propose(new Uint8Array(32), c);
 
-    // Zero before anybody approves — a proposal starts at nothing rather than
-    // at whatever the map happened to hold for a previous id.
-    expect(sim.approvalsFor(id)).toBe(0n);
-
-    await sim.as(sim.applying(ada, c)).approve(id);
+    // One once raised, the raiser's own - a proposal starts at its raise rather
+    // than at whatever the map happened to hold for a previous id.
     expect(sim.approvalsFor(id)).toBe(1n);
 
     await sim.as(sim.applying(blake, c)).approve(id);
     expect(sim.approvalsFor(id)).toBe(2n);
+
+    await sim.as(sim.applying(cleo, c)).approve(id);
+    expect(sim.approvalsFor(id)).toBe(3n);
   });
 
   it('does not let a non-signer approve', async () => {
@@ -312,12 +315,12 @@ describe('confidential account contract', () => {
     await addSigners(blake);
     const first = change(0n, 41);
     const id = await propose(new Uint8Array(32), first);
-    await sim.as(sim.applying(ada, first)).approve(id);
+    await sim.as(sim.applying(blake, first)).approve(id);
     await sim.as(ada).cancel(id);
 
     const second = change(0n, 43);
     const next = await propose(new Uint8Array(32).fill(3), second);
-    await expect(sim.as(sim.applying(ada, second)).approve(next))
+    await expect(sim.as(sim.applying(blake, second)).approve(next))
       .resolves.not.toThrow();
   });
 
@@ -325,7 +328,6 @@ describe('confidential account contract', () => {
     await addSigners(blake);
     const first = change(0n, 41);
     const id = await propose(new Uint8Array(32), first);
-    await sim.as(sim.applying(ada, first)).approve(id);
     await sim.as(sim.applying(blake, first)).approve(id);
     expect(sim.approvalsFor(id)).toBe(2n);
 
@@ -338,9 +340,9 @@ describe('confidential account contract', () => {
      * Approvals inheriting across proposals would let a withdrawn one be
      * replaced by a different one carrying its signatures. It cannot happen by
      * construction now rather than by a reset: a count is per proposal, and a
-     * new proposal is a new entry starting at zero.
+     * new proposal is a new entry starting at its raiser's one approval.
      */
-    expect(sim.approvalsFor(next)).toBe(0n);
+    expect(sim.approvalsFor(next)).toBe(1n);
     /*
      * PROBED THROUGH `setThreshold` RATHER THAN `execute`.
      *
@@ -370,13 +372,13 @@ describe('confidential account contract', () => {
     const second = change(0n, 43);
     const a = await propose(new Uint8Array(32), first);
     const b = await propose(new Uint8Array(32).fill(1), second);
-    await sim.as(sim.applying(ada, second)).approve(b);
+    await sim.as(sim.applying(blake, second)).approve(b);
 
     await sim.as(ada).cancel(a);
 
     expect(sim.isOpen(a)).toBe(false);
     expect(sim.isOpen(b)).toBe(true);
-    expect(sim.approvalsFor(b)).toBe(1n);
+    expect(sim.approvalsFor(b)).toBe(2n);
   });
 
   /* ---------------- the tree is plain, not historic ---------------- */

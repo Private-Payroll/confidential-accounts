@@ -38,9 +38,12 @@ import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, ty
  *   in either step, a creation about to run out by the chain's clock is carried
  *      again and kept before it is handed over (`creation-again`);
  *   3. 4. 5. the account committed to the company's pay-record key: the proposal,
- *      the founding seat's approval, and the seat's sealed copy of the key, each
- *      proved here (`pay-key-propose`, `pay-key-approve`, `pay-key-seal`); then
- *      what was kept of the creation is dropped from the saved keys.
+ *      which the chain counts as the founding seat's own approval, and the seat's
+ *      sealed copy of the key, each proved here (`pay-key-propose`,
+ *      `pay-key-seal`); an approval is sent (`pay-key-approve`) only when the
+ *      chain shows the proposal open with no approval counted, which is how an
+ *      account built before a raise counted as an approval shows it; then what
+ *      was kept of the creation is dropped from the saved keys.
  *
  * What it reads, and from where: the label from the page's ask, checked against
  * this wallet's own record that it drew it (or pinned its account as one it

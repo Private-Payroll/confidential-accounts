@@ -32,8 +32,7 @@ import {
   countProvenance, decideList, refuseSelectionOver, refuseSelectionOverHistory,
   type ListVerdict, type Marked,
 } from '../core/provenance.js';
-import { assets as assetRegistry, type AssetId, type LedgerForm } from '../core/assets.js';
-import { refuseWhatTheVaultCannotPay } from '../core/vault-holdings.js';
+import { assets as assetRegistry } from '../core/assets.js';
 import { bigintJsonReplacer, wrapKey } from '../core/crypto.js';
 import { payslipProofSubject } from '../core/payslip-open.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, isCurrentPayslipPage } from '../core/payslip-page.js';
@@ -43,7 +42,7 @@ import {
 import { authedBy } from './authed.js';
 import type { Hex } from '../core/crypto.js';
 import { theNetwork } from '../midnight/network.js';
-import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+import { saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
@@ -402,16 +401,17 @@ const companyRecordStore = withTheRosterIn(store, companyRecords);
  * **IT DOES NOT ANSWER PRIVATE MONEY, AND A PAYROLL RUN IS ALL PRIVATE.** The
  * reader answers public money only. A private payment is checked on the
  * signer's device that raises the proposal, against the vault's pool that device
- * opens, before it asks for the raise; this service then asks only about the
- * public money on that round. A round this service would send itself is still
- * asked about both, so a private payment on it is refused, as before.
+ * opens, and the payments' public money is read there too, before it asks for the
+ * raise; a raise hands this service no payment's amount. A round this service
+ * would send itself is asked about both, so a private payment on it is
+ * refused.
  *
  * **WHAT IT WIDENS, EXACTLY.** A reader that answers nothing refuses every
  * round that moves money. This one refuses on what the chain says, so a round
  * whose payees are all PUBLIC and whose total the vault's public balance covers
- * is now raised where it was previously stopped. Every other answer this
- * reader gives - the chain unreadable, a read that failed, a private balance
- * this service cannot see - is still a refusal to raise.
+ * is raised. Every other answer this reader gives (the chain unreadable, a
+ * read that failed, a private balance this service cannot see) is a refusal
+ * to raise.
  *
  * The asset registry is named rather than skipped because the reader is the
  * argument after it and there is no way to pass the fifth without the fourth.
@@ -634,18 +634,6 @@ app.use(cors());
       if (address === null) return null;
       if (theChain.accountVaults === undefined) return null;
       try { return await theChain.accountVaults(address as Hex); } catch { return null; }
-    },
-    /* A raise is refused before it is written down when the vault's public money cannot pay what it says it pays. */
-    publicMoney: async ({ vault, asset, payments }) => {
-      const asked = payments.map((p) => ({ payee: { kind: p.kind as LedgerForm }, token: p.token, amount: BigInt(p.amount) }));
-      try {
-        await refuseWhatTheVaultCannotPay(holdings, {
-          vault: vault as Hex, asset: assetRegistry.require(asset as AssetId), total: asked.reduce((a, p) => a + p.amount, 0n),
-          payees: BigInt(asked.length), payments: asked,
-        }, ['unshielded']);
-      } catch (e) {
-        throw new NothingWasSent((e as Error).message);
-      }
     },
   }));
 

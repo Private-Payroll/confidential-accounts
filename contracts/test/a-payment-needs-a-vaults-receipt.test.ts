@@ -49,7 +49,7 @@ const STRANGER = bytes(0xc3);
 const CONTRACT_SOURCE = join(import.meta.dirname, '..', 'src', 'ConfidentialAccount.compact');
 const KEYS = join(import.meta.dirname, '..', 'managed', 'keys');
 
-/** Raises and approves a run of `payments` naming `vault`, with `approvers` voting. */
+/** Raises and approves a run of `payments` naming `vault`, with `approvers` voting; the first raises it, which counts as its approval. */
 const approvedRun = async (
   sim: AccountSimulator, vault: Uint8Array, payments: PayoutLeafInput[], c: Change,
   approvers: ReturnType<typeof privateStateFor>[] = [A, B],
@@ -61,7 +61,7 @@ const approvedRun = async (
   });
   const id = sim.proposalId(
     pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
-  for (const a of approvers) await sim.as(sim.applying(a, c)).approve(id);
+  for (const a of approvers.filter((d) => d !== by)) await sim.as(sim.applying(a, c)).approve(id);
   return { tree, id };
 };
 
@@ -163,7 +163,6 @@ describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, lea
       root: fromHex(tree.root), payees: tree.payees, from, until, vault: PAYROLL,
     });
     const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 0n), c.salt, PAYROLL);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
 
     const { tx, L } = await build(sim, [
@@ -209,7 +208,6 @@ describe('the roads a payment could be recorded on without a vault paying, each 
     const c = change(0n, 21);
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
 
     /* RED WHEN the step stops refusing `noVault()` as the run's vault. */
@@ -278,7 +276,6 @@ describe('which vault may pay', () => {
     const retire = pureCircuits.retireVaultPayload(PAYROLL);
     await sim.as(sim.applying(A, rc)).propose(retire);
     const rid = sim.proposalId(retire, rc.salt);
-    await sim.as(A).approve(rid);
     await sim.as(B).approve(rid);
     await sim.retireVault(rid, PAYROLL, rc.salt);
     expect(sim.adopted(PAYROLL)).toBe(false);
@@ -361,7 +358,6 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
     const bar = pureCircuits.setVaultThresholdPayload(vault, to);
     await sim.as(sim.applying(A, tc)).propose(bar);
     const bid = sim.proposalId(bar, tc.salt);
-    await sim.as(A).approve(bid);
     await sim.as(B).approve(bid);
     await sim.as(sim.applying(A, tc)).setVaultThreshold(vault, to, bid);
   };
@@ -387,7 +383,6 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
     const retire = pureCircuits.retireVaultPayload(PAYROLL);
     await sim.as(sim.applying(A, rc)).propose(retire);
     const rid = sim.proposalId(retire, rc.salt);
-    await sim.as(A).approve(rid);
     await sim.as(B).approve(rid);
     await sim.retireVault(rid, PAYROLL, rc.salt);
     expect(sim.adopted(PAYROLL)).toBe(false);

@@ -78,7 +78,6 @@ const approvedRun = async (
     from: window.from, until: window.until, vault,
   });
   const id = sim.proposalId(payload, c.salt, vault);
-  await sim.as(carrying(sim, A, c)).approve(id);
   await sim.as(carrying(sim, B, c)).approve(id);
   return { tree, id, payload, window };
 };
@@ -387,7 +386,7 @@ describe('a run is paid one payee at a time', () => {
       root: fromHex(tree.root), payees: tree.payees,
       from: OPENS, until: CLOSES, vault: PAYROLL });
     const id = sim.proposalId(payload, c.salt, PAYROLL);
-    await sim.as(carrying(sim, A, c)).approve(id);   // one of two
+    /* A's raise counted A: one approval of two. */
 
     await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
       proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,

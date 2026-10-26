@@ -161,27 +161,28 @@ const runAll = async (steps: readonly ActionStep[], ctx: (step: number) => StepC
 
 describe('FINISHING A COMPANY IN THE WALLET', () => {
   /* RED WHEN: a step proves with anything but the founding seat this wallet makes from its words, or reads the chain from anywhere but its own reads, or hands the page anything but built transactions in order. */
-  it('carries a company sent and not finished to its end: the second step, then the pay-record key\'s proposal, approval and seal', async () => {
+  it('carries a company sent and not finished to its end: the second step, then the pay-record key\'s proposal and seal, the raise having counted as the approval', async () => {
     const label = drawCompanyLabel();
     const { keys, creation } = await keptFor(label);
     const w = world({
       keys,
       finished: [false, true],
-      standings: [standingOf(), standingOf({ open: true }), standingOf({ open: true }), standingOf({ open: true, approvals: 1 }),
+      /* The chain counts the raise as the raiser's own approval, so the proposal reads open with one approval at once. */
+      standings: [standingOf(), standingOf({ open: true, approvals: 1 }), standingOf({ open: true, approvals: 1 }),
         standingOf({ open: true, approvals: 1 }), standingOf({ committed: 'c1'.repeat(32), sealedMine: true })],
     });
     const action = finishCompanyAction(w.reach);
     const steps = action.steps(intentFor(label));
     expect(steps).toHaveLength(5);
     await runAll(steps, w.ctx);
-    /* RED WHEN: a transaction is handed over for anything but what it is, or out of order. */
-    expect(w.relays.map((r) => r.label?.what)).toEqual(['creation-finish', 'pay-key-propose', 'pay-key-approve', 'pay-key-seal']);
+    /* RED WHEN: a transaction is handed over for anything but what it is, or out of order, or the raiser sends an approval of its own after a raise the chain already counted. */
+    expect(w.relays.map((r) => r.label?.what)).toEqual(['creation-finish', 'pay-key-propose', 'pay-key-seal']);
     expect(w.relays[0]!.tx).toBe(INSERT);
     /* RED WHEN: the account's deploy is sent again for an account the chain already holds. */
     expect(w.relays.some((r) => r.label?.what === 'creation')).toBe(false);
     const words = seatKeysFor(identity, label, 0);
     const calls = w.asks.filter((a) => a['ask'] === 'governed-call');
-    expect(calls.map((a) => (a['order'] as { circuit: string }).circuit)).toEqual(['propose', 'approve', 'sealPayKey']);
+    expect(calls.map((a) => (a['order'] as { circuit: string }).circuit)).toEqual(['propose', 'sealPayKey']);
     /* RED WHEN: a proof is made with a seat's secret from anywhere but this wallet's words. */
     for (const c of calls) expect((c['material'] as { signingSecret: string }).signingSecret).toBe(toHex(words.signingSecret));
     for (const a of w.asks.filter((x) => x['ask'] === 'pay-key-standing')) expect(a['signingSecret']).toBe(toHex(words.signingSecret));
@@ -196,6 +197,20 @@ describe('FINISHING A COMPANY IN THE WALLET', () => {
     /* RED WHEN: what was kept of the creation is left in the saved keys once the company is finished, or the seat is dropped with it. */
     expect(w.keysNow().creations?.[creation.accountId]).toBeUndefined();
     expect(w.keysNow().accounts[creation.accountId]).toBeDefined();
+  });
+
+  /* RED WHEN: a round a company's earlier account raised (the chain shows it open with no approval) is not approved by this seat before the seal, so the pay-record key is never committed. */
+  it('a round open with no approval, as an account built before the raise counted shows it, is still approved before the seal', async () => {
+    const label = drawCompanyLabel();
+    const { keys } = await keptFor(label);
+    const w = world({
+      keys,
+      standings: [standingOf({ open: true }), standingOf({ open: true }), standingOf({ open: true, approvals: 1 }),
+        standingOf({ open: true, approvals: 1 }), standingOf({ committed: 'c1'.repeat(32), sealedMine: true })],
+    });
+    await runAll(finishCompanyAction(w.reach).steps(intentFor(label)), w.ctx);
+    expect(w.relays.map((r) => r.label?.what)).toEqual(['pay-key-approve', 'pay-key-seal']);
+    expect(w.asks.filter((a) => a['ask'] === 'governed-call').map((a) => (a['order'] as { circuit: string }).circuit)).toEqual(['approve', 'sealPayKey']);
   });
 
   /* RED WHEN: an action taken up again proves or sends again what the chain already shows done. */

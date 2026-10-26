@@ -95,7 +95,7 @@ const device = await import('vaults-web-shared/governed-call-on-device.js');
 const { recordsEnteredOver, treeServiceFor } = await import('vaults-web-shared/record-entered-here.js');
 const { EMPTY_ROOT } = await import('../midnight/record-tree.js');
 const { companyRecordEntry } = await import('../midnight/record-manifest.js');
-const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, recordForOneCall, identityOfAChange } =
+const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, recordForOneCall, identityOfAChange, CallNotBuilt } =
   await import('vaults-web-shared/governed-call-builder.js');
 const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
 type Hex = import('../core/crypto.js').Hex;
@@ -117,6 +117,8 @@ const leaves = new Map<string, Hex>();
 const sent: Array<{ circuit: string; signer: string }> = [];
 /** The circuit of the call this file's chain took that closed each proposal, by its identity on chain. */
 const closedWith = new Map<string, string>();
+/* `<proposal> <signer>` for each signer the chain holds an approval of: the raise is its raiser's, and an approval is its approver's. */
+const counted = new Set<string>();
 /** Set by a case: a raise sent through the door reaches no chain. */
 let raisesLandNowhere = false;
 let throughTheDoor = false;
@@ -146,7 +148,11 @@ Object.assign(ledger, {
     };
     throughTheDoor = true;
     try {
-      if (o.circuit === 'approve') return await ledger.approve(accountId, o.proposal as Hex, by);
+      if (o.circuit === 'approve') {
+        const done = await ledger.approve(accountId, o.proposal as Hex, by);
+        counted.add(`${String(o.proposal).toLowerCase()} ${built.signer}`);
+        return done;
+      }
       if (o.circuit === 'cancel') return await closing(ledger.cancel(accountId, o.proposal as Hex, by));
       if (o.circuit === 'amendSigner') return await closing(ledger.addSigner(accountId, o.leaf as Hex, o.proposal as Hex, by));
       if (o.circuit === 'setThreshold') return await closing(ledger.setThreshold(accountId, Number(o.threshold), o.proposal as Hex, by));
@@ -160,9 +166,11 @@ Object.assign(ledger, {
         const payload = g.kind === 'add-signer' ? MidnightCommitments.signerAddPayload(g.leaf as Hex)
           : g.kind === 'vault-threshold' ? MidnightCommitments.vaultThresholdPayload(g.vault as Hex, Number(g.threshold))
             : MidnightCommitments.signerThresholdPayload(Number((g as { threshold: string }).threshold));
-        return await ledger.propose(accountId, payload, {
+        const raised = await ledger.propose(accountId, payload, {
           asset: NO_ASSET, amount: 0n, batchDigest: o.half.changeBatchDigest as Hex, salt: o.half.proposalSalt as Hex,
         }, by, MidnightCommitments.noVault());
+        counted.add(`${String(o.proposal).toLowerCase()} ${built.signer}`);
+        return raised;
       }
       throw new Error(`this door does not carry ${o.circuit}`);
     } finally {
@@ -513,6 +521,10 @@ const aDevice = (who: Who, signerId: string, o: { refuse?: string[]; adopted?: s
         const record = recordForOneCall(order, { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) }, opened);
         if (order.circuit === 'propose') blindingsProvedWith.push(Buffer.from(record.assetBlinding).toString('hex'));
         if (o.refuse?.includes(order.circuit)) throw new Error(`this device could not build ${order.circuit}`);
+        /* The circuit refuses a second approval from one seat, and the device builds the call by running it. */
+        if (order.circuit === 'approve' && counted.has(`${String(order.proposal).toLowerCase()} ${signerId}`)) {
+          throw new CallNotBuilt('approve', 'you have already approved this proposal');
+        }
         return { tx: Buffer.from(JSON.stringify({ signer: signerId, order })).toString('base64') };
       },
       proposalIdentity: async (change, salt) => identityOfAChange({ accountPure: pureCircuits as never }, change, salt),
@@ -659,7 +671,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     const out = await device.seatSignerOnDevice(aDevice('ada', ada.signerId), { viewingKey, signerId: blake.signerId, readOut: blake.fingerprint });
     /* RED WHEN: the page cannot raise, approve or carry out a seat - the company then stays one of one. */
     expect(out.state).toBe('done');
-    expect(circuits()).toEqual(['propose', 'approve', 'amendSigner']);
+    expect(circuits()).toEqual(['propose', 'amendSigner']);
     expect(refusedHere).toEqual([]);
     /* RED WHEN: the seat carried out is not admitted to the roster the devices file. */
     expect(await signersNow()).toEqual([{ name: 'Ada', status: 'active' }, { name: 'blake', status: 'active' }, { name: 'dora', status: 'pending' }]);
@@ -712,7 +724,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
      * not act on, written down by this very seat, stops it raising one.
      */
     expect((await device.changeVaultThresholdOnDevice(adaDevice, { viewingKey, vault: VAULT, newThreshold: 2, seated: 2 })).state).toBe('done');
-    expect(circuits()).toEqual(['propose', 'approve', 'setVaultThreshold']);
+    expect(circuits()).toEqual(['propose', 'setVaultThreshold']);
     expect((await ledger.status(company))!.vaultThresholds).toEqual([{ vault: VAULT, threshold: 2 }]);
     sent.length = 0;
     /* RED WHEN: a threshold no two signers can meet is raised: company-wide runs could then never be paid. */
@@ -733,14 +745,14 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     const first = await device.seatSignerOnDevice(adaDevice, { viewingKey, signerId: cleo.signerId, readOut: cleo.fingerprint });
     /* One approval of two: nothing is carried out, and the page is told the proposal waits for the others. */
     expect(first.state).toBe('waiting-for-approvals');
-    expect(circuits()).toEqual(['propose', 'approve']);
+    expect(circuits()).toEqual(['propose']);
     expect((await signersNow()).find(s => s.name === 'cleo')!.status).toBe('pending');
 
     /* RED WHEN: the second signer's device cannot approve, carry out or admit a seat - a company larger than its threshold is never finished. */
     const second = await device.seatSignerOnDevice(aDevice('blake', blake.signerId), { viewingKey, signerId: cleo.signerId, readOut: cleo.fingerprint });
     expect(second.state).toBe('done');
     expect(sent.map(s => `${s.circuit} ${s.signer === blake.signerId ? 'blake' : 'ada'}`))
-      .toEqual(['propose ada', 'approve ada', 'approve blake', 'amendSigner blake']);
+      .toEqual(['propose ada', 'approve blake', 'amendSigner blake']);
     expect((await signersNow()).filter((x) => x.name !== 'dora').map(s => s.status)).toEqual(['active', 'active', 'active']);
     expect((await ledger.status(company))!.signerCount).toBe(3);
     expect(refusedHere).toEqual([]);
@@ -754,7 +766,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     /* RED WHEN: a signer seated after the deploy cannot raise or approve - their seat then acts on nothing. */
     expect((await device.changeThresholdOnDevice(aDevice('blake', blake.signerId), { viewingKey, newThreshold: 3, seated: 3 })).state)
       .toBe('waiting-for-approvals');
-    expect(sent.map(s => `${s.circuit} ${s.signer === blake.signerId ? 'blake' : 'other'}`)).toEqual(['propose blake', 'approve blake']);
+    expect(sent.map(s => `${s.circuit} ${s.signer === blake.signerId ? 'blake' : 'other'}`)).toEqual(['propose blake']);
     /* RED WHEN: the raise is composed with anything but the asset blinding in the state the founding seat signed. */
     const kept = await ledger.fetch(company, 0);
     expect(blindingsProvedWith).toEqual([parseCanonical<any>(unseal(kept!.sealedState, viewingKey)).blinding.assetBlinding]);
@@ -784,7 +796,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect((await standingOnChainHere(recordsOf('ada'), [round]))[0]!.status).toBe('open');
     /* RED WHEN: a proposal the chain holds cannot be withdrawn from the device that raised it, or is withdrawn with no call. */
     expect((await device.withdrawOnDevice(adaDevice, { round, viewingKey })).status).toBe('cancelled');
-    expect(circuits()).toEqual(['propose', 'approve', 'cancel']);
+    expect(circuits()).toEqual(['propose', 'cancel']);
     /* The service's record of it says carried out: where it stands is read from the chain, which took the withdrawal. */
     const kept = new FileStore(process.env.DATA_PATH!).getProposal(round.id)!;
     new FileStore(process.env.DATA_PATH!).putProposal({ ...kept, status: 'executed' });

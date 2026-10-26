@@ -21,8 +21,8 @@ import { join } from 'node:path';
 import { SimulatedLedger } from '../../../src/core/ledger.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { FileStore } from '../../../src/core/store-file.js';
-import { AccountService, approvalMessage } from '../../../src/core/account.js';
-import { newBlinding, newSigningKeypair, newSymmetricKey, newWrappingKeypair, sign, signingPublicKeyOf, unwrapKey, type Hex } from '../../../src/core/crypto.js';
+import { AccountService } from '../../../src/core/account.js';
+import { newBlinding, newSigningKeypair, newSymmetricKey, newWrappingKeypair, signingPublicKeyOf, unwrapKey, type Hex } from '../../../src/core/crypto.js';
 import { answerDigestOf, type SealedAnswer } from '../../../src/core/answer-opened.js';
 import type { CompanyKeys } from '../../../src/core/company-key.js';
 import { sealGovernanceProposal } from '../../../src/core/proposal-filing.js';
@@ -467,8 +467,7 @@ const swapsKeepingDanasLeaf = (dana: { leafCommitment: Hex }) => [
 describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () => {
   it('a grant on an approved round refuses a key swapped in after the approvals, and wraps the viewing key to nobody', async () => {
     const r = await recorded();
-    const round = await accounts.proposeSigner(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId);
-    await accounts.approve(round.id, r.adaHere.signerId, sign(approvalMessage(round), r.adaHere.signingSecret), r.made.viewingKey);
+    await accounts.proposeSigner(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId);
     const before = r.wrapped();
     for (const [what, payload] of swapsKeepingDanasLeaf(r.dana)) {
       r.swap(payload === 'keep-proof'
@@ -494,7 +493,6 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
     const salt = accounts.seatOrderOf(r.at, r.made.viewingKey, r.dana.id).proposalSalt;
     await ledger.propose(r.at, MidnightCommitments.signerAddPayload(r.dana.leafCommitment),
       { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt }, r.adaRef, MidnightCommitments.noVault());
-    await ledger.approve(r.at, p.chainId as Hex, r.adaRef);
     return p;
   };
 

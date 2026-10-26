@@ -137,7 +137,6 @@ describe('adding a signer needs the threshold once the account is live', () => {
     const leafC = sim.leafOf(C);
     const seat = govChange(41);
     const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
     expect(sim.approvalsFor(id)).toBe(2n);
 
@@ -167,7 +166,6 @@ describe('adding a signer needs the threshold once the account is live', () => {
     const seat = govChange(42);
 
     const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
-    await sim.as(A).approve(id);
 
     await expect(sim.as(carrying(sim, A, seat)).addSigner(leafC, id))
       .rejects.toThrow(/not enough approvals/);
@@ -182,7 +180,6 @@ describe('adding a signer needs the threshold once the account is live', () => {
     const spend = govChange(43);
 
     const id = await proposeGov(sim, A, spend, payload(9));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
     expect(sim.approvalsFor(id)).toBe(2n);
 
@@ -199,7 +196,6 @@ describe('adding a signer needs the threshold once the account is live', () => {
     const seat = govChange(44);
 
     const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
 
     await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(impostor), id))
@@ -258,9 +254,9 @@ describe('the same signer approving the same proposal on two accounts', () => {
     expect(onPayroll).toEqual(onTreasury);
 
     const one = await nullifierAdded(payrollAccount,
-      () => payrollAccount.as(A).approve(onPayroll));
+      () => payrollAccount.as(B).approve(onPayroll));
     const two = await nullifierAdded(treasury,
-      () => treasury.as(A).approve(onTreasury));
+      () => treasury.as(B).approve(onTreasury));
     expect(one).toBeTruthy();
     expect(two).toBeTruthy();
 
@@ -275,9 +271,10 @@ describe('the same signer approving the same proposal on two accounts', () => {
     // The fix must not weaken what the nullifier was for.
     const sim = await liveAccount();
     const id = await proposeGov(sim, A, govChange(52), payload(5));
-    await sim.as(A).approve(id);
-    await expect(sim.as(A).approve(id)).rejects.toThrow(/already approved/);
-    expect(sim.approvalsFor(id)).toBe(1n);
+    await sim.as(B).approve(id);
+    /* RED WHEN `approve` stops refusing a nullifier already in `approvals`: B's second approval then counts. */
+    await expect(sim.as(B).approve(id)).rejects.toThrow(/already approved/);
+    expect(sim.approvalsFor(id)).toBe(2n);
   });
 
   it('still lets the same signer approve a LATER proposal', async () => {
@@ -293,12 +290,12 @@ describe('the same signer approving the same proposal on two accounts', () => {
      */
     const sim = await liveAccount();
     const one = await proposeGov(sim, A, govChange(53), payload(6));
-    await sim.as(A).approve(one);
+    await sim.as(B).approve(one);
     await sim.as(A).cancel(one);
 
     const two = await proposeGov(sim, A, govChange(54), payload(7));
-    await expect(sim.as(A).approve(two)).resolves.not.toThrow();
-    expect(sim.approvalsFor(two)).toBe(1n);
+    await expect(sim.as(B).approve(two)).resolves.not.toThrow();
+    expect(sim.approvalsFor(two)).toBe(2n);
   });
 });
 
@@ -396,7 +393,6 @@ describe('the same signer cannot be added twice', () => {
 
     const dup = govChange(211);
     const dupId = await proposeGov(sim, A, dup, pureCircuits.signerAddPayload(sim.leafOf(B)));
-    await sim.as(A).approve(dupId);
     await expect(sim.as(carrying(sim, A, dup)).addSigner(sim.leafOf(B), dupId)).rejects.toThrow();
 
     // The account is unharmed and still rescuable by adding a third PERSON.
@@ -422,7 +418,6 @@ describe('the same signer cannot be added twice', () => {
     const leafB = sim.leafOf(B);
     const seat = govChange(61);
     const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafB));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
 
     await expect(sim.as(carrying(sim, A, seat)).addSigner(leafB, id))
@@ -436,7 +431,6 @@ describe('the same signer cannot be added twice', () => {
     const leafC = sim.leafOf(C);
     const seat = govChange(62);
     const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
 
     await expect(sim.as(carrying(sim, A, seat)).addSigner(leafC, id)).resolves.not.toThrow();
@@ -487,7 +481,6 @@ describe('what the contract does when a signer is removed off chain', () => {
     const id = await proposeGov(
       sim, FA, govChange(71), pureCircuits.signerAddPayload(sim.leafOf(C)),
     );
-    await sim.as(FA).approve(id);
     expect(sim.approvalsFor(id)).toBe(1n);
 
     // THE POINT. B, whom the product now shows as removed and whose copy of the
@@ -660,7 +653,6 @@ describe('removing a signer by clearing one slot', () => {
     const leafC = sim.leafOf(FC);
     const seat = govChange(81);
     const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafC));
-    await sim.as(FA).approve(id);
     await sim.as(FB).approve(id);
     await sim.as(carrying(sim, FA, seat)).addSigner(leafC, id);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
@@ -674,7 +666,6 @@ describe('removing a signer by clearing one slot', () => {
   const removalApproved = async (sim: AccountSimulator, leaf: Uint8Array, seed = 82) => {
     const c = govChange(seed);
     const id = await proposeGov(sim, FA, c, pureCircuits.removeSignerPayload(leaf));
-    await sim.as(FA).approve(id);
     await sim.as(FB).approve(id);
     return { id, c };
   };
@@ -723,7 +714,6 @@ describe('removing a signer by clearing one slot', () => {
 
     // And they can still act, without being re-added by hand.
     const later = await proposeGov(sim, FA, govChange(85), payload(4));
-    await expect(sim.as(FA).approve(later)).resolves.not.toThrow();
     await expect(sim.as(FB).approve(later)).resolves.not.toThrow();
     expect(sim.approvalsFor(later)).toBe(2n);
   });
@@ -742,7 +732,6 @@ describe('removing a signer by clearing one slot', () => {
       const leaf = sim.leafOf(d);
       const seat = govChange(86 + i);
       const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leaf));
-      await sim.as(FA).approve(id);
       await sim.as(FB).approve(id);
       await sim.as(carrying(sim, FA, seat)).addSigner(leaf, id);
     }
@@ -788,7 +777,6 @@ describe('removing a signer by clearing one slot', () => {
       const leafD = sim.leafOf(FD);
       const seat = govChange(89);
       const seatId = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafD));
-      await sim.as(FA).approve(seatId);
       await sim.as(FB).approve(seatId);
       // The proposal id is the SECOND argument; reuse is the third.
       await sim.as(carrying(sim, FA, seat)).addSigner(leafD, seatId, true);
@@ -815,7 +803,6 @@ describe('removing a signer by clearing one slot', () => {
     const leafC = sim.leafOf(FC);
     const c = govChange(91);
     const id = await proposeGov(sim, FA, c, pureCircuits.removeSignerPayload(leafC));
-    await sim.as(FA).approve(id);
     await expect(sim.as(carrying(sim, FA, c)).removeSigner(leafC, id))
       .rejects.toThrow(/not enough approvals/);
   });
@@ -834,7 +821,6 @@ describe('removing a signer by clearing one slot', () => {
     const sim = await threeSigners();
     const spend = govChange(92);
     const id = await proposeGov(sim, FA, spend, payload(9));
-    await sim.as(FA).approve(id);
     await sim.as(FB).approve(id);
     await expect(sim.as(carrying(sim, FA, spend)).removeSigner(sim.leafOf(FC), id))
       .rejects.toThrow(/not for this removal/);
@@ -894,7 +880,6 @@ describe('removing a signer by clearing one slot', () => {
     // would be refused for stranding the account. Either way the count holds.
     const c = govChange(93);
     const id = await proposeGov(sim, FA, c, pureCircuits.removeSignerPayload(sim.leafOf(FC)));
-    await sim.as(FA).approve(id);
     await sim.as(FB).approve(id);
     await sim.as(FC).approve(id);
     await expect(sim.as(carrying(sim, FA, c)).removeSigner(sim.leafOf(FC), id))
@@ -917,7 +902,6 @@ describe('removing a signer by clearing one slot', () => {
     for (const [i, bad] of [new Uint8Array(32), sim.vacant].entries()) {
       const seat = govChange(94 + i);
       const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(bad));
-      await sim.as(FA).approve(id);
       await sim.as(FB).approve(id);
       await expect(sim.as(carrying(sim, FA, seat)).addSigner(bad, id))
         .rejects.toThrow(/not a usable signer leaf/);
@@ -939,7 +923,6 @@ describe('removing a signer by clearing one slot', () => {
     const leafD = sim.leafOf(FD);
     const seat = govChange(96);
     const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafD));
-    await sim.as(FA).approve(id);
     await sim.as(FB).approve(id);
     await expect(sim.as(carrying(sim, FA, seat)).addSigner(leafD, id, true)).rejects.toThrow();
   });
@@ -1001,7 +984,6 @@ describe('removing a signer by clearing one slot', () => {
       const leafD = sim.leafOf(FD);
       const seat = govChange(97);
       const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafD));
-      await sim.as(FA).approve(id);
       await sim.as(FB).approve(id);
 
       const liar = sim.dishonest(carrying(sim, FB, seat), sim.pathFor(FB));
@@ -1061,7 +1043,6 @@ describe('changing the threshold, against the compiled circuits', () => {
     const leafC = sim.leafOf(TC);
     const seat = govChange(101);
     const id = await proposeGov(sim, TA, seat, pureCircuits.signerAddPayload(leafC));
-    await sim.as(TA).approve(id);
     await sim.as(TB).approve(id);
     await sim.as(carrying(sim, TA, seat)).addSigner(leafC, id);
     expect(sim.ledger.threshold).toBe(2n);
@@ -1077,7 +1058,7 @@ describe('changing the threshold, against the compiled circuits', () => {
   ) => {
     const c = govChange(seed);
     const id = await proposeGov(sim, TA, c, pureCircuits.setThresholdPayload(to));
-    for (const d of who) await sim.as(d).approve(id);
+    for (const d of who.filter((a) => a !== TA)) await sim.as(d).approve(id);
     return { id, c };
   };
 
@@ -1090,7 +1071,6 @@ describe('changing the threshold, against the compiled circuits', () => {
     // The very next proposal needs three, not two. This is the assertion that
     // the old design could not make: our copy moved and the chain's did not.
     const next = await proposeGov(sim, TA, govChange(103), payload(1));
-    await sim.as(TA).approve(next);
     await sim.as(TB).approve(next);
     /*
      * PROBED THROUGH `setThreshold` RATHER THAN `execute`.
@@ -1183,7 +1163,6 @@ describe('changing the threshold, against the compiled circuits', () => {
     const sim = await threeSigners();
     const spend = govChange(104);
     const id = await proposeGov(sim, TA, spend, payload(7));
-    await sim.as(TA).approve(id);
     await sim.as(TB).approve(id);
     await expect(sim.as(carrying(sim, TA, spend)).setThreshold(3n, id))
       .rejects.toThrow(/not for this threshold/);

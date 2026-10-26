@@ -51,7 +51,7 @@ async function aCompany(opts: { door?: 'none' } = {}) {
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
   const payroll = new PayrollService(store, accounts, registry);
-  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
+  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }], 2, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(created.account.id, {
@@ -60,6 +60,7 @@ async function aCompany(opts: { door?: 'none' } = {}) {
   }
   const account = created.account.id;
   const me = created.secrets[0]!;
+  const other = created.secrets[1]!;
   const window = { opensAt: BigInt(now() - 60), closesAt: BigInt(now() + 3_600) };
   const materialFor = async (runId: string) => {
     const i = await payroll.runMaterialInputs(runId, viewingKey);
@@ -74,9 +75,9 @@ async function aCompany(opts: { door?: 'none' } = {}) {
   const raiseOnDevice = async () =>
     payroll.proposeRun(runId, viewingKey, me.signerId, await materialFor(runId), undefined, { onDevice: true });
   /** This signer as the simulated chain knows them: by the leaf the roster holds. */
-  const by = () => {
-    const seat = accounts.open(account, viewingKey).signers.find((x) => x.id === me.signerId)!;
-    return { signerId: me.signerId, leaf: seat.leafCommitment as Hex };
+  const by = (who: { signerId: string } = me) => {
+    const seat = accounts.open(account, viewingKey).signers.find((x) => x.id === who.signerId)!;
+    return { signerId: who.signerId, leaf: seat.leafCommitment as Hex };
   };
   const openOnChain = async () => (await ledger.status(account))?.openProposals.map((p) => p.id) ?? [];
   /** What the device's raise does on the chain: the proposal, as the order describes it. */
@@ -90,9 +91,9 @@ async function aCompany(opts: { door?: 'none' } = {}) {
       return { ref: `tx_${r.proposalId.slice(0, 8)}`, at: r.at };
     };
   const theApprovalLands = (chainId: Hex): Send => async (accountId) =>
-    ledger.approve(accountId, chainId, by());
+    ledger.approve(accountId, chainId, by(other));
   return {
-    accounts, payroll, ledger, viewingKey, account, me, runId, raiseOnDevice, openOnChain, sent,
+    accounts, payroll, ledger, viewingKey, account, me, other, runId, raiseOnDevice, openOnChain, sent,
     setEffect: (e: Send) => { effect = e; }, theRaiseLands, theApprovalLands,
   };
 }
@@ -227,7 +228,7 @@ describe('A PAYROLL PROPOSAL RAISED FROM A DEVICE', () => {
     const after = await c.accounts.refreshStanding(round.id, c.viewingKey);
     /* RED WHEN: the read does not write down what the chain shows - the page then waits for ever. */
     expect(after.raisedAt).toBeDefined();
-    expect(after.approvalRound).toEqual({ state: 'short', approvals: 0, threshold: 1 });
+    expect(after.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
     expect(await c.payroll.raiseOrderOf(c.runId, c.viewingKey)).toBeNull();
     await expect(c.accounts.sendRaise(round.id, c.viewingKey, BYTES, c.me.signerId)).rejects.toThrow(/already holds this proposal/u);
   });
@@ -300,7 +301,7 @@ describe('A PAYROLL PROPOSAL RAISED FROM A DEVICE', () => {
     meanwhile = (p) => { p.approvalRound = { state: 'unknown', why: 'no-status' }; };
     const counted = await c.accounts.refreshStanding(round.id, c.viewingKey);
     /* RED WHEN: a record another request touched is never written again by a read that started earlier. */
-    expect(counted.approvalRound).toEqual({ state: 'satisfied', approvals: 1, threshold: 1 });
+    expect(counted.approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
     expect(c.accounts.requireProposal(round.id, c.viewingKey).status).toBe('approved');
   });
 
@@ -324,30 +325,30 @@ describe('AN APPROVAL SENT FROM A DEVICE', () => {
     await c.accounts.refreshStanding(round.id, c.viewingKey);
     c.sent.length = 0;
     const fresh = c.accounts.requireProposal(round.id, c.viewingKey);
-    const signature = sign(approvalMessage(fresh), c.me.signingSecret);
+    const signature = sign(approvalMessage(fresh), c.other.signingSecret);
     return { ...c, round: fresh, signature };
   };
 
   it('IS SENT THROUGH THE DOOR IN PLACE OF A CHAIN CALL FROM HERE, AND IS RECORDED WITH ITS SIGNATURE', async () => {
     const c = await aRoundOnChain();
     c.setEffect(c.theApprovalLands(c.round.chainId));
-    const approved = await c.accounts.approve(c.round.id, c.me.signerId, c.signature, c.viewingKey, BYTES);
+    const approved = await c.accounts.approve(c.round.id, c.other.signerId, c.signature, c.viewingKey, BYTES);
     /* RED WHEN: the device's approval is not what is sent, or this process also approves from here. */
     expect(c.sent).toEqual([{ accountId: c.account, circuit: 'approve', bytes: [1, 2, 3, 4] }]);
-    expect(approved.approvals.map((a) => a.signerId)).toEqual([c.me.signerId]);
+    expect(approved.approvals.map((a) => a.signerId)).toEqual([c.other.signerId]);
     expect(approved.status).toBe('approved');
   });
 
   it('A REFUSAL BEFORE THE SEND SAYS NOTHING WAS SENT, AND NOTHING IS: a signature that does not verify, and an approval already recorded', async () => {
     const c = await aRoundOnChain();
-    const forged = await c.accounts.approve(c.round.id, c.me.signerId, 'ab'.repeat(64), c.viewingKey, BYTES).catch((e) => e);
+    const forged = await c.accounts.approve(c.round.id, c.other.signerId, 'ab'.repeat(64), c.viewingKey, BYTES).catch((e) => e);
     /* RED WHEN: a refusal before the send is not marked - the device then tells a person their approval may have landed. */
     expect(saysNothingWasSent(forged)).toBe(true);
     expect(String(forged.message)).toMatch(/Nothing was sent\.$/u);
     expect(c.sent).toEqual([]);
     c.setEffect(c.theApprovalLands(c.round.chainId));
-    await c.accounts.approve(c.round.id, c.me.signerId, c.signature, c.viewingKey, BYTES);
-    const twice = await c.accounts.approve(c.round.id, c.me.signerId, c.signature, c.viewingKey, BYTES).catch((e) => e);
+    await c.accounts.approve(c.round.id, c.other.signerId, c.signature, c.viewingKey, BYTES);
+    const twice = await c.accounts.approve(c.round.id, c.other.signerId, c.signature, c.viewingKey, BYTES).catch((e) => e);
     expect(saysNothingWasSent(twice)).toBe(true);
     expect(String(twice.message)).toMatch(/already approved/u);
     expect(c.sent).toHaveLength(1);
@@ -356,7 +357,7 @@ describe('AN APPROVAL SENT FROM A DEVICE', () => {
   it('A FAILURE FROM THE SEND ONWARDS IS NOT MARKED AS NOTHING SENT, AND NOTHING IS WRITTEN AS APPROVED', async () => {
     const c = await aRoundOnChain();
     c.setEffect(async () => { throw new Error('the node dropped the connection'); });
-    const failed = await c.accounts.approve(c.round.id, c.me.signerId, c.signature, c.viewingKey, BYTES).catch((e) => e);
+    const failed = await c.accounts.approve(c.round.id, c.other.signerId, c.signature, c.viewingKey, BYTES).catch((e) => e);
     /* RED WHEN: a failure at the send is marked as nothing sent - it may be an approval the chain holds. */
     expect(saysNothingWasSent(failed)).toBe(false);
     expect(String(failed.message)).toBe('the node dropped the connection');
@@ -365,7 +366,7 @@ describe('AN APPROVAL SENT FROM A DEVICE', () => {
 
   it('WITHOUT A DEVICE\'S TRANSACTION, AN APPROVAL IS MADE AS IT ALWAYS WAS AND THE DOOR IS NOT USED', async () => {
     const c = await aRoundOnChain();
-    const approved = await c.accounts.approve(c.round.id, c.me.signerId, c.signature, c.viewingKey);
+    const approved = await c.accounts.approve(c.round.id, c.other.signerId, c.signature, c.viewingKey);
     expect(c.sent).toEqual([]);
     expect(approved.status).toBe('approved');
   });

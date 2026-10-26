@@ -239,7 +239,7 @@ describe('a recovery of the record anchor', () => {
     const payload = pureCircuits.setPolicyBarPayload(3n);
     await sim.as(sim.applying(A, bar)).propose(payload);
     const barId = sim.proposalId(payload, bar.salt);
-    for (const d of [A, B]) await sim.as(d).approve(barId);
+    for (const d of [B]) await sim.as(d).approve(barId);
     await sim.as(sim.applying(A, bar)).setPolicyBar(3n, barId);
     held = sim.heldNow();
     const { resumes, now } = await twoAnchors();
@@ -348,7 +348,7 @@ describe('a recovery of the record anchor', () => {
     const payload = pureCircuits.removeSignerPayload(sim.leafOf(D));
     await sim.as(sim.applying(A, r)).propose(payload);
     const rid = sim.proposalId(payload, r.salt);
-    for (const d of [A, B]) await sim.as(d).approve(rid);
+    for (const d of [B]) await sim.as(d).approve(rid);
     await sim.as(sim.applying(A, r)).removeSigner(sim.leafOf(D), rid);
     await sim.as(C).approve(id);
     /* RED WHEN a removal only adds one approval to the bar instead of voiding the recovery: the removed seat's approval would still count. */

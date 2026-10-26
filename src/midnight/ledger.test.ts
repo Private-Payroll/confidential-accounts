@@ -1434,38 +1434,6 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
       .rejects.toThrow(/different change/i);
   });
 
-  it('V-66: raise-and-approve is TWO transactions, because they are two acts', async () => {
-    /*
-     * The contract keeps the stricter meaning — auto-approving the proposer
-     * would quietly turn a three-of-five into a two-of-five — so the client
-     * closes the gap by doing both, visibly.
-     */
-    const { ledger, calls } = harness({ openProposals: [] });
-    const r = await ledger.raiseAndApproveRun('acct', RUN, CHANGE, BY);
-
-    expect(calls.map(c => c.circuit)).toEqual(['propose', 'approve']);
-    expect(argHex(calls[1]!.args[0])).toBe(r.proposalId);
-    expect(r.approved).not.toBeNull();
-    expect(r.approvalError).toBeUndefined();
-  });
-
-  it('V-66: SAYS SO LOUDLY when the run was raised and the approval did not land', async () => {
-    /*
-     * There is nothing to roll back to — the proposal is on chain. A caller who
-     * believes they approved and did not is the exact confusion this method
-     * exists to remove, so the half-done state is reported rather than thrown
-     * away with the id.
-     */
-    const { ledger } = harness({ openProposals: [] });
-    (ledger as any).approve = async () => { throw new Error('wallet said no'); };
-
-    const r = await ledger.raiseAndApproveRun('acct', RUN, CHANGE, BY);
-    expect(r.proposalId).toBe(runId());
-    expect(r.approved).toBeNull();
-    expect(r.approvalError).toMatch(/raised as .* YOUR APPROVAL DID NOT LAND.*wallet said no/is);
-    expect(r.approvalError).toMatch(/open with no approvals/i);
-  });
-
   it('sweeps an expired run by id, and takes it out of the open set', async () => {
     const { ledger, calls } = harness({ openProposals: [] });
     const r = await ledger.proposeRun('acct', RUN, CHANGE, BY);

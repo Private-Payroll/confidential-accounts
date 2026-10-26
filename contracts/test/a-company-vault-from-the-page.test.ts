@@ -651,14 +651,15 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     expect(created.state).toBe('started');
     const vault = created.vault;
     /*
-     * The deploy, held by the committee from its first transaction; the adoption raised, approved and carried out;
-     * the first secret run raised and approved, the secret set and the founding signer's sealed copy written. Eight,
-     * every one applied, and no hand-over among them.
+     * The deploy, held by the committee from its first transaction; the adoption raised (the raise is the founding signer's
+     * approval, which meets a threshold of one) and carried out; the first secret run raised, the secret set and the
+     * founding signer's sealed copy written. Six, every one applied, and no hand-over among them.
      */
-    expect(chain.applied.map((a) => a.ok)).toEqual(Array(8).fill(true));
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(6).fill(true));
     const startedAt = chain.applied.length;
     /* RED WHEN the deploy reaches the service unproven, or a call of the start is read as something else. */
-    expect(readAsUnproven).toEqual(['propose', 'approve', 'adopt', 'propose', 'approve', 'setNonceSecret+approveVaultChange', 'writeSecretCopy']);
+    /* RED WHEN: the founding signer approves its own raise again: the build is refused and an approve is never sent. */
+    expect(readAsUnproven).toEqual(['propose', 'adopt', 'propose', 'setNonceSecret+approveVaultChange', 'writeSecretCopy']);
     /*
      * RED WHEN: any key but the company's committee ever holds the vault: it is held by that committee at its
      * threshold, never changed, and no key was kept on this device or sent to the service.
@@ -733,7 +734,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     expect(chain.applied.map((a) => a.ok)).toEqual(Array(startedAt + 1).fill(true));
     const depositAt = startedAt;
     /* The deposit arrives finished by the wallet, through the other reader. RED WHEN anything after the start is read as unproven. */
-    expect(readAsUnproven).toHaveLength(7);
+    expect(readAsUnproven).toEqual(['propose', 'adopt', 'propose', 'setNonceSecret+approveVaultChange', 'writeSecretCopy']);
 
     expect(shown).toEqual([[{ token: TOKEN_HEX, amount: '1000', kind: 'shielded' }]]);
     const notes = [...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c));

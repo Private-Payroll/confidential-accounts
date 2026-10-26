@@ -124,7 +124,6 @@ describe('a vault splits one of its own notes', () => {
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes() });
     const id = sim.proposalId(payload, c.salt, vaultBytes());
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
     return (i: number) => vaultRunOf({
       proposal: id, vault: vaultBytes(), tree, i,

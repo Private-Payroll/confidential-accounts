@@ -8,7 +8,7 @@
  *     each transaction as its own block, with signatures checked;
  *   · the company account is the compiled account, deployed with the state its
  *     own constructor writes for one founding signer and this build's circuits,
- *     and its run is raised and approved by calls built from that signer's own
+ *     and its run is raised (the raise is the raiser's approval) by calls built from that signer's own
  *     private state, applied by the chain;
  *   · the vault is the compiled vault, created, handed over, pooled and funded
  *     by the device's own operations, and the payment out is built by the
@@ -149,6 +149,7 @@ import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import type { PeopleHere } from 'vaults-web-shared/people-on-device.js';
 import { payAnApprovedLeg } from 'vaults-web-shared/leg-paid-here.js';
 import { anchoredOver, roundsOnATestChain } from '../../src/testing/record-tree-double.js';
+import { noOneOffsHere } from '../../src/testing/no-one-offs.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 /** The paying signer's seat as their device believes it: an admin's, which may file the vault's records. */
@@ -543,7 +544,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /*
      * The routes a run drawn and raised on a device is filed and relayed through, over this chain: the company's
      * directory as the service reads it, and the account's open proposals and approvals as the chain holds them. A
-     * raise is relayed by applying it to this chain. The vault's public money is not asked here: a private leg spends none.
+     * raise is relayed by applying it to this chain. The service is told nothing of what a raise pays: the raising device
+     * checks the vault's money itself.
      */
     const directoryNow = (id: string) => directoryOf(store, directoryChainOver(() => chain.contract(company)), id);
     app.use(runRoutes({ signedIn, member, store, directoryOf: directoryNow, wiring: () => 'simulated' }));
@@ -573,7 +575,6 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       },
       recordRefusal: () => undefined, wiring: () => 'simulated',
       proposalIdOf: (h, salt, v) => MidnightCommitments.proposalId(h as Hex, salt as Hex, v as Hex | undefined),
-      publicMoney: async () => undefined,
     }));
     /* The company's proposals as the service lists them, where a vault's start finds its own. */
     app.get('/api/accounts/:id/proposals', signedIn, member, (req, res) => { res.json(store.listProposals(String(req.params.id))); });
@@ -745,7 +746,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     return opened.secrets[opened.secrets.length - 1]! as Hex;
   };
 
-  /** A one-person run of `amount`, raised and approved on the account by its founder, and what the service would hand the device for it. */
+  /** A one-person run of `amount`, raised on the account by its founding signer (the raise is the founding signer's approval, and the only transaction sent), and what the service would hand the device for it. */
   const anApprovedRun = async (
     vault: Hex, amount: bigint, paying?: { payee: Payee; token: Hex },
     /** For a payroll raised as more than one run: the run's own id, its own change and who it pays. */
@@ -766,8 +767,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const id = idFrom(run.tree.leaves, window);
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
     /* No approvals beyond the vault's bar: `required` is nothing. */
+    /* The founding signer's raise is its own approval, which meets the vault's bar. */
     await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault)], staged);
-    await callAccount('approve', [fromHex(id)], founder);
     const paidNow = () => new Set(run.tree.leaves.filter((leaf) =>
       accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))));
     const order = () => {
@@ -786,9 +787,9 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
 
   it('ONE PERSON IS PAID: THE ACCOUNT RECORDS IT, THE VAULT SPENDS ITS NOTE AND KEEPS THE CHANGE, THE POOL SAYS SO, AND THE PAYEE HOLDS A COIN', async () => {
     const { vault, note } = await aFundedVault();
-    /* The deploy, born held, the seven steps of its start and the deposit, every one applied: no hand-over of either contract.
-     * RED WHEN: a step of the vault's start is skipped or sent twice, or a hand-over is sent. */
-    expect(chain.applied.map((a) => a.ok)).toEqual(Array(9).fill(true));
+    /* The deploy, born held, the five calls of its start (propose, adopt, propose, setNonceSecret, writeSecretCopy; the raiser's raise is its approval, so no approve) and the deposit, seven in all, every one applied: no hand-over of either contract.
+     * RED WHEN: a step of the vault's start is skipped or sent twice, the raiser approves its own raise again, or a hand-over is sent. */
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(7).fill(true));
     const run = await anApprovedRun(vault, 250n);
     expect(accountLedgerOf(chain.contract(company)).openProposals.member(fromHex(run.id))).toBe(true);
     const order = run.order();
@@ -921,7 +922,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
    *     (that is driven in `src/server/a-leg-is-raised-on-the-device.test.ts`), each with an address their own keys make;
    *   · the company's first state, signed by the founding seat's filing key, is kept here rather than filed;
    *   · the device's proving of the raise is building the account's own `propose` call from the founding signer's
-   *     private state with exactly the order the device made; the approval is the founding signer's own `approve` call, after the
+   *     private state with exactly the order the device made; the raise is the founding signer's approval (no `approve` call is sent), after the
    *     approving device opened the proposal and ran every raise check on it;
    *   · the vault's private money is not asked before the raise: the payment itself refuses what the vault cannot pay;
    *   · the company's ceilings are none (`policy`), and who the account records paid is read straight off this chain's
@@ -978,6 +979,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         }, checkedHere),
       }, asked);
     return {
+      oneOffs: noOneOffsHere(),
       directory,
       people: async () => ({ people: people.map((person) => ({ person, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }) as unknown as PeopleHere,
       state: async (id) => (id === '0' ? firstState : null),
@@ -1082,11 +1084,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       runId: drawn.id, viewingKey, vault, opensAt: String(now - 600), closesAt: String(now + 3_600),
     });
     expect(round.raisedAt, 'RED WHEN: the raise the device built does not reach the chain').toBeTruthy();
-    /* ---- approved by the bar: the approving device opens it and runs every raise check, then the founding signer approves ---- */
+    /* ---- approved by the bar: the founding signer's raise is its approval; the approving device opens it and runs every raise check ---- */
     const proposal = store.getProposal(round.id)!;
     await expect(openTheRoundHere({ ...governedCallServiceFor(api), sealedProposals: async () => store.listProposals(ACCOUNT_ID) }, ACCOUNT_ID, round.id, viewingKey, false, here))
       .resolves.toMatchObject({ vault, chainId: proposal.chainId });
-    await callAccount('approve', [fromHex(proposal.chainId)], founder);
 
     /* ---- paid from the vault by one function, from what the device made of the records ---- */
     const paidAmong = async (leaves: readonly Hex[]) => {
@@ -1134,7 +1135,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
    *     against are its wallet's read of this chain;
    *   · the company has one seat, so the second device is a second device of the same signer, made afresh: its own
    *     worker, its own reads of the company's records, nothing kept on it, and it never set the policy;
-   *   · each run is approved by the founding signer's own `approve` call, with the run's opening, after the approving
+   *   · each run is approved by the founding signer's raise (no `approve` call is sent), after the approving
    *     device opened it from the company's records and ran every raise check on it.
    */
   const DAY = 86_400n;
@@ -1181,14 +1182,15 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const round = raiseRunOnDevice(raisingOn(here), { runId: drawn.id, viewingKey, vault, opensAt: String(opensAt), closesAt: String(closesAt) });
     return { drawn, round };
   };
-  /** Approved: the approving device opens it and runs every raise check, then the founding signer approves it with its opening. */
+  /**
+   * Approved: the founding signer's raise was its approval, which meets the bar of a company with one signer. The
+   * approving device still opens it and runs every raise check, and the opening it makes is the run's own.
+   */
   const approved = async (roundId: string, here: CompanyRecordsHere, vault: Hex) => {
     const proposal = store.getProposal(roundId)!;
     const opened = await openTheRoundHere({ ...governedCallServiceFor(api), sealedProposals: async () => store.listProposals(ACCOUNT_ID) },
       ACCOUNT_ID, roundId, viewingKey, false, here);
-    await callAccount('approve', [fromHex(proposal.chainId)], {
-      ...founder, runOpenings: { [proposal.chainId]: { payload: fromHex(opened.digest), vault: fromHex(vault), salt: fromHex(opened.salt) } },
-    } as never);
+    expect(toHex(accountCircuits.proposalIdOf(fromHex(opened.digest), fromHex(vault), fromHex(opened.salt)))).toBe(proposal.chainId.toLowerCase());
     return proposal;
   };
 
@@ -1502,7 +1504,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     await expect(payPrivatelyFromCompanyVault(privateDoors, { order: pub, payment: { ...pub.payments[0]!, kind: 'shielded', token: TOKEN } }))
       .rejects.toThrow(/is not a payee address for undeployed[\s\S]*It must be a shield-addr/);
     expect(publicRun.order().payments.map((p) => p.paid)).toEqual([false]);
-    expect(chain.applied.length).toBe(applied + 2);
+    /* Only the public run's raise (propose) was sent since `applied`: the raise is the approval, and every refused payment above sent nothing. */
+    expect(chain.applied.length).toBe(applied + 1);
     expect(arrivals.length).toBe(sentBefore);
     expect(publicBalance(vault)).toBe(1_000n);
   });
@@ -1566,8 +1569,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       accountCircuits.runPayload(fromHex(rootOfTestLeaves(leaves, amounts, fromHex(token))), BigInt(leaves.length), w.from, w.until, 0n), fromHex(vault), c.salt));
     const id = idFrom(run.tree.leaves, window);
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
+    /* The founding signer's raise is its own approval, which meets the vault's bar. */
     await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault)], staged);
-    await callAccount('approve', [fromHex(id)], founder);
     const paidNow = () => new Set(run.tree.leaves.filter((leaf) =>
       accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))));
     const order = () => {

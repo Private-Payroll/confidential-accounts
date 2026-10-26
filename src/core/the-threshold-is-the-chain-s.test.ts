@@ -157,8 +157,10 @@ describe('a small payment is still a payment', () => {
     });
     expect(p.status).toBe('open');
 
-    const one = await h.accounts.approve(
-      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
+    const one = await h.accounts.refreshStanding(p.id, viewingKey);
+    await expect(h.accounts.approve(
+      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey,
+    )).rejects.toThrow(/already approved/);
     /*
      * The old rule made this `approved`. There is no amount that does that any
      * more, and the outcome names the ledger's two numbers rather than a
@@ -198,8 +200,7 @@ describe('a small payment is still a payment', () => {
       accountId: account.id, viewingKey, kind: 'transfer',
       summary: 'a modest sum', payload: entry(50_00n), proposedBy: present(secrets[0]).signerId,
     });
-    const one = await h.accounts.approve(
-      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
+    const one = await h.accounts.refreshStanding(p.id, viewingKey);
 
     expect(one.status).toBe('open');
     expect(one.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
@@ -223,8 +224,6 @@ describe('"we do not know" is not "not enough approvals"', () => {
       accountId: account.id, viewingKey, kind: 'transfer',
       summary: 'payroll', payload: entry(1_000_00n), proposedBy: present(secrets[0]).signerId,
     });
-    await h.accounts.approve(
-      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
     const last = await h.accounts.approve(
       p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey);
     return { viewingKey, proposal: last };
@@ -242,7 +241,7 @@ describe('"we do not know" is not "not enough approvals"', () => {
     expect(proposal.status).toBe('open');
     expect(proposal.approvalRound).toEqual({ state: 'unknown', why: 'no-status' });
     /* Two signatures held locally, and they still do not make the answer. */
-    expect(proposal.approvals).toHaveLength(2);
+    expect(proposal.approvals).toHaveLength(1);
   });
 
   it('says so when the ledger answers but does not carry the round', async () => {
@@ -260,7 +259,7 @@ describe('"we do not know" is not "not enough approvals"', () => {
 
     expect(proposal.status).toBe('open');
     expect(proposal.approvalRound).toEqual({ state: 'unknown', why: 'not-open' });
-    expect(proposal.approvals).toHaveLength(2);
+    expect(proposal.approvals).toHaveLength(1);
   });
 
   it('does NOT say so when the round is simply short, which is the whole point', async () => {
@@ -281,8 +280,7 @@ describe('"we do not know" is not "not enough approvals"', () => {
       accountId: account.id, viewingKey, kind: 'transfer',
       summary: 'payroll', payload: entry(1_000_00n), proposedBy: present(secrets[0]).signerId,
     });
-    const one = await h.accounts.approve(
-      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
+    const one = await h.accounts.refreshStanding(p.id, viewingKey);
 
     expect(one.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
     expect(one.approvalRound).not.toHaveProperty('why');
@@ -347,15 +345,13 @@ describe('a burnt approval survives a throw between the chain and the record', (
     return { n, bend };
   }
 
-  /** Opens 2-of-3 and gets the FIRST approval in cleanly, chain and record. */
+  /** Opens 2-of-3 and raises a proposal, which the chain counts as its raiser's approval (1 of 2). */
   async function oneApprovalIn(h: ReturnType<typeof harness>) {
     const { account, viewingKey, secrets } = await openAccountAt2of3(h);
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer',
       summary: 'payroll', payload: entry(1_000_00n), proposedBy: present(secrets[0]).signerId,
     });
-    await h.accounts.approve(
-      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
     return { account, viewingKey, secrets, p };
   }
 
@@ -380,7 +376,7 @@ describe('a burnt approval survives a throw between the chain and the record', (
     )).rejects.toThrow(/the node is unreachable/);
 
     const rec = stored(h, account, viewingKey, p.id);
-    expect(rec.approvals.map(a => a.signerId)).toEqual([present(secrets[0]).signerId, present(secrets[1]).signerId]);
+    expect(rec.approvals.map(a => a.signerId)).toEqual([present(secrets[1]).signerId]);
     /* The standing is what was lost, and it is honest about not knowing it. */
     expect(rec.status).toBe('open');
   });
@@ -477,12 +473,12 @@ describe('a burnt approval survives a throw between the chain and the record', (
     expect(stored(h, account, viewingKey, p.id).status).toBe('approved');
 
     /* One read per approval and not one more. Two approvals have happened. */
-    expect(n.reads).toBe(2);
+    expect(n.reads).toBe(1);
 
     await expect(h.accounts.approve(
       p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/^already approved$/);
-    expect(n.reads).toBe(2);
+    expect(n.reads).toBe(1);
   });
 
   it('does not reconcile for a signer who has not approved, and still records them', async () => {
@@ -502,7 +498,7 @@ describe('a burnt approval survives a throw between the chain and the record', (
     )).rejects.toThrow(/the node is unreachable/);
 
     const rec = stored(h, account, viewingKey, p.id);
-    expect(rec.approvals.map(a => a.signerId)).toEqual([present(secrets[0]).signerId, present(secrets[2]).signerId]);
+    expect(rec.approvals.map(a => a.signerId)).toEqual([present(secrets[2]).signerId]);
     expect(rec.status).toBe('open');
   });
 });
@@ -627,8 +623,8 @@ describe('the record is written before the chain call, so a lost round is never 
       .toEqual([expect.objectContaining({ id: present(live).chainId })]);
 
     const approved = await h.accounts.approve(
-      present(live).id, present(secrets[0]).signerId,
-      sign(approvalMessage(present(live)), present(secrets[0]).signingSecret), viewingKey);
+      present(live).id, present(secrets[1]).signerId,
+      sign(approvalMessage(present(live)), present(secrets[1]).signingSecret), viewingKey);
     expect(approved.raisedAt).toBeTruthy();
     expect(approved.approvals).toHaveLength(1);
   });
@@ -742,11 +738,9 @@ describe('the record is written before the chain call, so a lost round is never 
 
     const real = await accounts.proposeVaultThresholdChange(
       account.id, viewingKey, VAULT, 2, present(secrets[0]).signerId);
-    for (const i of [0, 1]) {
-      await accounts.approve(
-        real.id, present(secrets[i]).signerId,
-        sign(approvalMessage(real), present(secrets[i]).signingSecret), viewingKey);
-    }
+    await accounts.approve(
+      real.id, present(secrets[1]).signerId,
+      sign(approvalMessage(real), present(secrets[1]).signingSecret), viewingKey);
     expect(accounts.listProposals(account.id, viewingKey)
       .find(p => p.id === real.id)!.status).toBe('approved');
 
@@ -817,11 +811,9 @@ describe('the record is written before the chain call, so a lost round is never 
 
     const real = await accounts.proposeSigner(
       account.id, viewingKey, pending.id, present(secrets[0]).signerId);
-    for (const i of [0, 1]) {
-      await accounts.approve(
-        real.id, present(secrets[i]).signerId,
-        sign(approvalMessage(real), present(secrets[i]).signingSecret), viewingKey);
-    }
+    await accounts.approve(
+      real.id, present(secrets[1]).signerId,
+      sign(approvalMessage(real), present(secrets[1]).signingSecret), viewingKey);
     expect(accounts.listProposals(account.id, viewingKey)
       .find(p => p.id === real.id)!.status).toBe('approved');
 

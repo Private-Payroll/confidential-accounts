@@ -1565,10 +1565,11 @@ export class SimulatedLedger implements Ledger {
      * salt at spend time, so it keeps the payload and compares it directly —
      * the same rule, checked the way this layer can check it.
      */
+    /* The raise counts as the raiser's approval, as `propose` counts it: their own `approve` is then refused. */
     a.openProposals.set(id, {
       payloadHash,
       change: this.changeCommitmentOf(a, change),
-      approvals: new Set(),
+      approvals: new Set([`${by.leaf}@${id}`]),
       vault,
     });
     return this.touch(a);
@@ -1648,10 +1649,14 @@ export class SimulatedLedger implements Ledger {
     const id = this.commitments.proposalId(payloadHash, change.salt, run.vault);
     if (a.openProposals.has(id)) throw new Error('that proposal is already open');
 
+    /*
+     * The raise counts as the raiser's approval. The contract counts a run's raiser only when their rights let them
+     * approve on the run's vault; this simulation holds no rights, so every raiser here may approve and is counted.
+     */
     a.openProposals.set(id, {
       payloadHash,
       change: this.changeCommitmentOf(a, change),
-      approvals: new Set(),
+      approvals: new Set([`${by.leaf}@${id}`]),
       vault: run.vault,
     });
     /* `compact:2156` — the only write of a run's window, and it is here for the

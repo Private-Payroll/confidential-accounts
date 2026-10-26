@@ -838,9 +838,23 @@ circuit requireSigner(): Bytes<32> {
 // with `allVaults()` answers with an empty one, which is never read.
 circuit grants(scope: Bytes<32>, right: Uint<8>, vault: Bytes<32>, vaultIsTheRuns: Boolean): Boolean {
   const rights = signerRights();
-  const granted = right == 0 ? rights.mayRaise : (right == 1 ? rights.mayApprove : rights.mayHold);
+  const granted = rightIn(rights, right);
   return scope == allVaults() || (
     rightsScopeOf(rights) == scope && granted && vaultIsTheRuns && coversVault(rights, vault));
+}
+
+// The one right a rights record grants: `right` is 0 to raise, 1 to approve, 2 to hold.
+circuit rightIn(rights: Rights, right: Uint<8>): Boolean {
+  return right == 0 ? rights.mayRaise : (right == 1 ? rights.mayApprove : rights.mayHold);
+}
+
+// Whether a seat may raise, and whether it may approve, a run on that vault, read from one opening
+// of its rights record, as `grants` reads each: everything for a seat with `allVaults()`.
+circuit raisesAndApproves(scope: Bytes<32>, vault: Bytes<32>): [Boolean, Boolean] {
+  const rights = signerRights();
+  const all = scope == allVaults();
+  const covered = scope == rightsScopeOf(rights) && coversVault(rights, vault);
+  return [all || (covered && rightIn(rights, 0)), all || (covered && rightIn(rights, 1))];
 }
 
 // Whether a run's hold stops it: placed, and not yet released.
@@ -1164,8 +1178,8 @@ export circuit reseatSigner(oldLeaf: Bytes<32>, newLeaf: Bytes<32>, proposal: By
   closeProposal(id);
 }
 
-// Opens a proposal at zero approvals: a run built from its parts, with the approvals its
-// total needs, or a governance payload.
+// Opens a proposal, a run built from its parts or a governance payload, counting the raiser's
+// approval: always for a governance payload, and for a run only when the raiser may approve on its vault.
 export circuit propose(
   payloadHash: Bytes<32>,
   root: Bytes<32>,
@@ -1177,7 +1191,8 @@ export circuit propose(
   vault: Bytes<32>,
 ): [] {
   const caller = seat();
-
+  // A run's raiser has its rights opened once, for the raise right and the approve right.
+  const raiser = disclose(isRun) ? raisesAndApproves(caller.scope, disclose(vault)) : [true, true];
   // The change and the id are computed once, for a run and a governance proposal alike.
   const salt = proposalSalt();
   const change = disclose(changeCommitmentOf(
@@ -1194,7 +1209,7 @@ export circuit propose(
   assert(disclose(opensAt) < disclose(closesAt), "a run window ends before it opens");
   assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
   // Only a signer who may raise runs on that vault. A governance proposal needs a seat alone.
-  assert(grants(caller.scope, 0, disclose(vault), true),
+  assert(raiser[0],
     "your seat does not let you raise runs on that vault; ask a signer who may, or ask the company to change your rights");
   // The only place a window is written.
   runWindow.insert(id, Window { opensAt: disclose(opensAt), closesAt: disclose(closesAt) });
@@ -1204,7 +1219,13 @@ export circuit propose(
   }
 
   openProposals.insert(id, change);
-  approvalCounts.insert(id, 0);
+  // The raiser's approval, counted once: their own approve is then refused as a second one. No member
+  // check, so a withdrawn proposal with a fixed salt can be raised again by a signer who raised it before.
+  const counted = disclose(raiser[1]);
+  if (counted) {
+    approvals.insert(disclose(approvalNullifier(caller.sk, id)));
+  }
+  approvalCounts.insert(id, counted ? 1 : 0);
   // The bar it was raised at, who may withdraw it, and the removals so far. A run's bar is
   // the higher of its vault's threshold and the approvals its total needs.
   proposalHolds.insert(id, Hold {

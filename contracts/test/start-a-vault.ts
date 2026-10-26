@@ -48,7 +48,7 @@ export async function startTheVault(args: {
     root: fromHex(tree.root), payees: tree.payees, from: opensAt, until: closesAt, vault,
   });
   const id = sim.proposalId(P.runPayload(fromHex(tree.root), tree.payees, opensAt, closesAt, 0n), c.salt, vault);
-  for (const a of approvers) await sim.as(sim.applying(a, c)).approve(id);
+  for (const a of approvers.slice(1)) await sim.as(sim.applying(a, c)).approve(id);
   const run = {
     proposal: id, runVault: vault, root: fromHex(tree.root), payees: tree.payees, opensAt, closesAt,
     required: 0n, salt: c.salt, nonce: fromHex(leaves[0]!.nonce), ...sumArgsOf(tree, 0),

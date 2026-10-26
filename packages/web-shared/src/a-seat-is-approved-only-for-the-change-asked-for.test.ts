@@ -23,6 +23,7 @@ import { heldEntering } from '../../../src/testing/record-tree-double.js';
 import type { RoundOnChain } from './governed-call-builder.js';
 import { RecordWithheld } from './http-sealed-pool-store.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
+import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
 
 /*
  * What each proposal opens as on this device stands in for the company's records here, through the module that opens
@@ -111,11 +112,12 @@ const aDevice = (o: {
       file: async (_acc, body) => {
         log.push(`file ${body.proposal.chainId === ID ? 'ID' : body.proposal.chainId}`);
         filings.set(body.proposal.id, body.proposal);
-        rounds.set(body.proposal.id, { id: body.proposal.id, chainId: body.proposal.chainId, status: 'open', approvalCount: 0, raisedAt: 'now',
+        /* The raise counts as its raiser's approval, as the account's `propose` counts it. */
+        rounds.set(body.proposal.id, { id: body.proposal.id, chainId: body.proposal.chainId, status: 'open', approvalCount: 1, raisedAt: 'now',
           opened: { chainId: ID, digest: '', vault: '', salt: SALT, summary: '', governance: THREE } });
         return page(body.proposal.id);
       },
-      send: async (id) => { log.push(`send ${id}`); rounds.set(id, { ...rounds.get(id)!, raisedAt: 'now' }); return page(id); },
+      send: async (id) => { log.push(`send ${id}`); rounds.set(id, { ...rounds.get(id)!, raisedAt: 'now', approvalCount: Math.max(rounds.get(id)!.approvalCount ?? 0, 1) }); return page(id); },
       approve: async (id) => {
         log.push(`approve ${id}`);
         const r = rounds.get(id)!;
@@ -138,6 +140,7 @@ const aDevice = (o: {
     material: { signingSecret: founder.secret, blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: ACC,
     records: {
+      oneOffs: noOneOffsHere(),
       directory: async () => {
         const believed = {
           /* The directory's versions past the newest the anchor holds, which holds none: each one filed and not yet anchored. */
@@ -210,7 +213,7 @@ function describe_(order: GovernedCallOrder): string {
 }
 
 describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
-  it('writes a new proposal down, raises it with the founding state\'s blinding, approves it bound to its change and salt, and carries it out', async () => {
+  it('writes a new proposal down, raises it with the founding state\'s blinding, which is this seat\'s approval, and carries it out', async () => {
     const d = aDevice();
     const out = await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 });
     expect(out.state).toBe('done');
@@ -221,9 +224,8 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
       'file ID',
       /* RED WHEN: a proposal written down from a device is not entered in the company's records once the service has it. */
       'entered proposal prp_newproposal1 1',
+      /* RED WHEN: the raiser approves its own raise again: the chain counted it when the raise landed. */
       'vault check 2',
-      `build approve of={"governance":{"kind":"threshold","threshold":"3"},"proposalSalt":"${SALT}"}`,
-      'approve prp_newproposal1',
       'vault check 3',
       `build setThreshold {"threshold":"3","proposal":"ID","proposalSalt":"${SALT}"}`,
       'carry prp_newproposal1 setThreshold',
@@ -246,7 +248,6 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
     expect(out.state).toBe('waiting-for-approvals');
     expect(d.log.filter((l) => !l.startsWith('vault check'))).toEqual([
       `build propose {"kind":"threshold","threshold":"3"} salt=SALT blinding=founding`, 'send prp_same',
-      `build approve of={"governance":{"kind":"threshold","threshold":"3"},"proposalSalt":"${SALT}"}`, 'approve prp_same',
     ]);
   });
 
@@ -298,7 +299,7 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
     expect(out.state).toBe('done');
     /* RED WHEN: a second attempt resumes the proposal without entering it - it is never anchored, and no other device believes it. */
     expect(d.log.filter((l) => !l.startsWith('vault check') && !l.startsWith('build'))).toEqual([
-      'entered proposal prp_newproposal1 1', 'approve prp_newproposal1', 'carry prp_newproposal1 setThreshold',
+      'entered proposal prp_newproposal1 1', 'carry prp_newproposal1 setThreshold',
     ]);
   });
 

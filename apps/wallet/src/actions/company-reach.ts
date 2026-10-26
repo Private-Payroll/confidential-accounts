@@ -1,7 +1,7 @@
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import type { UnlockRequest } from 'midnight-identity/profile/request';
 import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
-import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
+import type { AccountHoldersRead, AccountPaymentFacts, AccountRoleEntry } from 'midnight-identity/profile/records-key';
 import { signingPublicKeyOf, toHex, unwrapKey, type Hex } from '../../../../src/core/crypto.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import type { CompanyKeyHere } from '../../../../packages/web-shared/src/company-key-here.js';
@@ -30,6 +30,10 @@ export interface CompanyChain {
   holders(account: AccountAddress, label: CompanyLabel): Promise<AccountHoldersRead | Words>;
   /** The account's state and the chain's parameters at one block, for a call built on them. */
   callState(account: AccountAddress): Promise<AccountCallChainOnTheWire | null>;
+  /** Which of these entries the account's record of payments holds, as this wallet's indexer shows it; a payment out of a vault reads it. */
+  payments?(account: AccountAddress, label: CompanyLabel, entries: readonly string[]): Promise<AccountPaymentFacts | Words>;
+  /** What the account holds under each of these keys, as this wallet's indexer shows it; a vault's spending policy is read from it. */
+  roles?(account: AccountAddress, label: CompanyLabel, keys: readonly string[]): Promise<readonly AccountRoleEntry[] | Words>;
   /** The indexer this wallet reads the chain through. */
   readonly indexer: { readonly indexerUri: string; readonly indexerWsUri: string };
 }

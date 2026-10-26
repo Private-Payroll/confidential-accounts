@@ -250,3 +250,20 @@ describe('an action keeps its own limits whatever the page does', () => {
     expect(end.says).toEqual({ key: 'act.over.check-threw' });
   });
 });
+
+describe('the running window is shown what the action has told so far', () => {
+  it('hands the watcher what each step told, so a later step can be listed as not needed', async () => {
+    const { channel } = channelThat(async () => 'gone' as never);
+    const seen: Array<Readonly<Record<string, string | number>> | undefined> = [];
+    await runAction({
+      definition: actionOf([
+        { title: { key: 'x' }, run: async (c) => { c.tell({ state: 'awaiting-approvals' }); } },
+        { title: { key: 'y' }, run: async () => {} },
+      ]),
+      request: request(), channel, held, stop: new AbortController().signal, watch: (at) => { seen.push(at.told); },
+    });
+    /* RED WHEN: the running window is not shown what a step told, so a step after it that had nothing to do is listed as done. */
+    expect(seen.at(-1)).toEqual({ state: 'awaiting-approvals' });
+  });
+});
+

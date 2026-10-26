@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../testing/record-tree-double.js';
+import { noOneOffsHere } from '../testing/no-one-offs.js';
 
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
@@ -40,7 +41,7 @@ const { MidnightCommitments } = await import('../midnight/commitments.js');
 const { handInWiring } = await import('../wiring/handed-in.js');
 const { FileStore } = await import('../core/store-file.js');
 const { walletKeyOf } = await import('../core/store.js');
-const { AccountService, approvalMessage } = await import('../core/account.js');
+const { AccountService } = await import('../core/account.js');
 const { PayrollService, runLegOf } = await import('../core/payroll.js');
 const { SEED_ASSETS, assets: productAssets } = await import('../core/assets.js');
 const { runMaterialFor, retryMaterialFor } = await import('../midnight/run-material.js');
@@ -50,7 +51,7 @@ const { vaultDetails } = await import('../testing/vault-details.js');
 const { aVaultHolding } = await import('../testing/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
-const { toHex, sign } = await import('../core/crypto.js');
+const { toHex } = await import('../core/crypto.js');
 const { unpaidToRetry } = await import('vaults-web-shared/governed-call-on-device.js');
 const { paymentViewHere, privatePaymentsHere } = await import('vaults-web-shared/payments-made-here.js');
 const { signedFoundingState } = await import('../core/founding-state.js');
@@ -156,11 +157,9 @@ const seeded = {
   stillPaying: await aCompany('Stillpaying', true),
   view: await aCompany('View'),
 };
-/* The retry the payout case pays: #2 and #3, raised, approved. */
+/* The retry the payout case pays: #2 and #3, raised (the raise is the one signer's approval), and its standing read. */
 const approvedRetry = await aRetry(seeded.paysARetry, [1, 2]);
-await accounts.approve(approvedRetry.id, seeded.paysARetry.seat.signerId,
-  sign(approvalMessage(accounts.requireProposal(approvedRetry.id, seeded.paysARetry.viewingKey)), seeded.paysARetry.seat.signingSecret),
-  seeded.paysARetry.viewingKey);
+await accounts.refreshStanding(approvedRetry.id, seeded.paysARetry.viewingKey);
 /* The payment view's case: a sent retry over #2, so #2 is owed but not stranded. */
 await aRetry(seeded.view, [1]);
 
@@ -225,6 +224,7 @@ const viewHere = (c: Company) => {
   const unread = async (): Promise<never> => { throw new Error('a payment view reads only the company\'s runs, its proposals and who filed them'); };
   const founder = newSigningKeypair();
   return paymentViewHere(everyRunAndProposalEntered({
+    oneOffs: noOneOffsHere(),
     directory: async () => aDirectoryOf(c.account, founder.publicKey), people: unread, state: unread,
     runs: async () => runsFiledBy(await api(`/api/accounts/${c.account}/runs`), c.account, founder.secret),
     proposals: () => api(`/api/accounts/${c.account}/proposals`),
@@ -248,6 +248,7 @@ const paysHere = async (c: Company, retry?: string) => {
   const founder = newSigningKeypair();
   const state = signedFoundingState(c.account, { keyEpoch: 0, sealed: (await ledger.fetch(c.account, 0))!.sealedState }, founder.secret);
   return privatePaymentsHere(everyRunAndProposalEntered({
+    oneOffs: noOneOffsHere(),
     directory: async () => aDirectoryOf(c.account, founder.publicKey),
     people: async () => ({ people: [], notBelieved: [], notPayable: [] }),
     state: async (id: string) => (id === '0' ? state : null),

@@ -81,12 +81,12 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
     await expect(refuseASeatNotForTheInvited(sealed, KEY, box, { ...payload, opening: another }, seating))
       .rejects.toThrow(/not made for the wallet it names/u);
 
-    /* Ada's device raises the proposal to seat Dee and approves it; Bo's device approves it, carries it out and admits her. */
+    /* Ada's device raises the proposal to seat Dee, which is her approval; Bo's device approves it, carries it out and admits her. */
     expect((await seatSignerOnDevice(seatingDevice(ADA), { viewingKey: KEY, signerId, readOut: accepted.fingerprint })).state).toBe('waiting-for-approvals');
     /* RED WHEN: the proposal to seat her is not carried out on the chain, or she is not admitted once it is. */
     expect(await seatSignerOnDevice(seatingDevice(BO), { viewingKey: KEY, signerId, readOut: accepted.fingerprint }).catch((e: unknown) => e))
       .toMatchObject({ state: 'done' });
-    expect(events).toEqual(['chain propose', 'chain approve', 'chain approve', `chain amendSigner adding ${leaf}`]);
+    expect(events).toEqual(['chain propose', 'chain approve', `chain amendSigner adding ${leaf}`]);
     expect(seatsOnTheChain()).toContain(leaf);
     /* RED WHEN: the person seated on the chain is not admitted to the roster. */
     expect(companyNow().signers.find((x) => x.name === 'dee')?.status).toBe('active');

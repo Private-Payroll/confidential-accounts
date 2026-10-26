@@ -323,8 +323,9 @@ const startRoutes = () => {
       return { id: rec.id, status: 'executed' };
     };
     if (body.tx !== undefined) {
-      if (body.vault === undefined) kr.start.open = true;
-      else kr.start.run = true;
+      /* The raise counts at once as the raiser's own approval, as the chain does. */
+      if (body.vault === undefined) { kr.start.open = true; kr.start.approvals = 1; }
+      else { kr.start.run = true; kr.start.runApprovals = 1; }
     }
     return { id: rec.id, chainId: rec.chainId, status: 'open', approvalCount: 0 };
   };

@@ -101,7 +101,6 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
       from: OPENS, until: CLOSES, vault: PAYROLL_VAULT,
     });
     const legId = fromHex(proposal.chainId);
-    await sim.as(legDevice).approve(legId);
     const rebuild = (await payroll.payoutRebuildOf(run.id, viewingKey))!;
     const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
     const first = whole.payeeArgs(0);
@@ -127,7 +126,6 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
       from: RETRY_OPENS, until: RETRY_CLOSES, vault: PAYROLL_VAULT,
     });
     const retryId = fromHex(raised.chainId);
-    await sim.as(retryDevice).approve(retryId);
     const smaller = buildRetryRun(whole, [1]);
     const onlyOne = smaller.payeeArgs(0);
     await sim.as(retryDevice).recordPaymentFromVault({

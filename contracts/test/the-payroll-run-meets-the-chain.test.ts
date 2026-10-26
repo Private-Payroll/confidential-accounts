@@ -226,7 +226,6 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
        */
       expect(sim.runWindow(id)).toEqual({ from: OPENS, until: CLOSES });
 
-      await sim.as(device).approve(id);
       expect(sim.approvalsFor(id)).toBe(1n);
 
       /*

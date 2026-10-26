@@ -1,31 +1,17 @@
 /**
  * HOW MANY APPROVALS A PROPOSAL HAS, SAID IN A WAY NOBODY MISREADS. V-66.
  *
- * The defect this exists to prevent was found the best way available:
- * **somebody building this read it wrong.** Working an example, "A creates the
- * proposal, B and C approve" was offered as reaching a three-of-five
- * threshold. It reaches two. `propose` ends with the approval count at zero;
- * the proposer has drafted something, not endorsed it.
+ * `propose` counts the raiser's approval when the raiser may approve what they
+ * raised: every governance proposal, and a run on a vault the raiser's rights
+ * let them approve. So "A raises it, B and C approve" is three approvals from
+ * three different signers, and the raiser cannot approve it a second time. A
+ * run raised by a seat that may raise but not approve on that vault starts at
+ * nought.
  *
- * If it reads that way to somebody building it, every customer will — Gnosis
- * Safe counts the creator's signature, and that is the model people arrive
- * with. A screen showing "2" while the operator believes they have three is a
- * payroll that silently does not run, discovered on payday.
- *
- * ------------------------------------------------------------------------
- * WHY THE FIX IS NOT "MAKE `propose` APPROVE"
- *
- * It was the obvious fix and it is wrong. Auto-approving the proposer quietly
- * turns a three-of-five into a two-of-five: the account would need two
- * deliberate judgements where its policy says three. **That is a security
- * change made for a user-interface convenience**, and the kind that is
- * impossible to spot afterwards because nothing about it looks like a change to
- * the threshold.
- *
- * So the chain keeps the stricter meaning and the client closes the gap: it
- * offers raising and approving as one action, and it never — anywhere — prints
- * an approval count without the threshold beside it. That second rule is what
- * this file is for. A bare number is the bug.
+ * Whichever it is, a count read without its threshold misleads: a screen
+ * showing "2" while the operator believes they have three is a payroll that
+ * silently does not run, discovered on payday. So nothing here ever prints an
+ * approval count without the threshold beside it. A bare number is the bug.
  */
 
 export interface ApprovalState {
@@ -56,7 +42,8 @@ export const describeApprovals = (s: ApprovalState): string => {
 };
 
 /**
- * What a proposer has to be told the moment they raise something.
+ * What a raiser has to be told the moment they raise something: whether their
+ * own approval was counted, with the count and its threshold.
  *
  * Written here rather than in a screen because it is the same sentence on every
  * screen, and because a sentence that only exists in one component is a
@@ -64,5 +51,5 @@ export const describeApprovals = (s: ApprovalState): string => {
  */
 export const proposerReminder = (s: ApprovalState): string =>
   s.approvals === 0
-    ? `Raised, and NOT yet approved — including by you. ${describeApprovals(s)}.`
-    : describeApprovals(s);
+    ? `Raised, and not yet approved: your seat may not approve here. ${describeApprovals(s)}.`
+    : `Raised, and your approval is counted. ${describeApprovals(s)}.`;

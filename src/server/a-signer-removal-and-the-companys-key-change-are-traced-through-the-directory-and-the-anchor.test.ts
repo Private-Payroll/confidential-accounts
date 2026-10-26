@@ -75,7 +75,7 @@ describe('A SIGNER REMOVED AND THE COMPANY\'S KEY CHANGED, TRACED FROM THE SIGNE
     /* RED WHEN: the device that finishes a removal does not change the company's key, or files the change of the key before the retirement is anchored. */
     expect(carried).toMatchObject({ state: 'done', rotation: { state: 'rotated', epoch: 1, version: 7 } });
     expect(events).toEqual([
-      'anchored', 'chain propose', 'chain approve', 'chain approve', 'directory 6 retire', 'anchored', `chain amendSigner removing ${CY.seat}`,
+      'anchored', 'chain propose', 'chain approve', 'directory 6 retire', 'anchored', `chain amendSigner removing ${CY.seat}`,
       'directory 7 rotate', 'anchored',
     ]);
     expect(seatsOnTheChain()).toEqual([ADA.seat, BO.seat]);

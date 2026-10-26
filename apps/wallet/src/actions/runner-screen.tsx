@@ -25,6 +25,13 @@ import type { RunState } from './run.js';
  * the action.
  */
 
+/** How the running window lists step `n`: passed steps are done, or not needed when the step says nothing was owed of it. */
+export const stepStateOf = (step: ActionStep, n: number, at: RunState): 'done' | 'not-needed' | 'running' | 'waiting' => {
+  if (n === at.step) return 'running';
+  if (n > at.step) return 'waiting';
+  return step.notNeeded?.(at.told ?? {}) === true ? 'not-needed' : 'done';
+};
+
 export type ShownState =
   | { readonly of: 'reading' }
   | { readonly of: 'read'; readonly lines: readonly ShownLine[] }
@@ -196,7 +203,7 @@ export function ActionRunner({
       <ol className="m-0 ps-6" data-act-steps>
         {steps.map((step, i) => {
           const n = i + 1;
-          const where = n < at.step ? 'done' : n === at.step ? 'running' : 'waiting';
+          const where = stepStateOf(step, n, at);
           return (
             <li key={i} className="text-sm" data-step={n} data-step-state={where}>
               {say(t, step.title)} <span className="text-muted-foreground">{t(`act.step.${where}`)}</span>

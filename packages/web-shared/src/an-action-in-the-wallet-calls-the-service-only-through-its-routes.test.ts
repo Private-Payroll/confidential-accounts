@@ -7,6 +7,7 @@ vi.mock('midnight-identity/profile/act-channel', async (importOriginal) => {
     calls: [
       { method: 'GET', path: '/api/accounts/:company' },
       { method: 'POST', path: '/api/accounts/:company/vaults', sends: true },
+      { method: 'POST', path: '/api/accounts/:company/proposals', sends: true, sendsWith: 'tx' },
     ],
   };
   return { ...actual, intentShapeOf: (name: string) => (name === 'name-a-vault' ? shape : actual.intentShapeOf(name)) };
@@ -106,5 +107,22 @@ describe('the page makes a call for an action only where its route list names on
     page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'stopped', why: 'step-failed', step: 1, steps: 1, relayed: 2, unconfirmed: 2 });
     /* RED WHEN: a read or a refused transaction is counted as handed over, or one handed over and not taken is not unconfirmed. */
     expect(await run).toMatchObject({ of: 'stopped', relayed: 2, unconfirmed: 2 });
+  });
+
+  it('a proposal written down with no transaction is never counted as handed over, and one raised with its transaction is', async () => {
+    const page = new APage();
+    let next = 500;
+    const { run } = start(page, async () => ({ status: next, body: {} }));
+    page.say(callOf(1, 'POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab"}'));
+    await settle();
+    page.say(callOf(2, 'POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab","tx":"AAAA"}'));
+    await settle();
+    next = 201;
+    page.say(callOf(3, 'POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab"}'));
+    page.say(callOf(4, 'POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab","tx":"AAAA"}'));
+    await settle();
+    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'stopped', why: 'step-failed', step: 1, steps: 1, relayed: 1, unconfirmed: 1 });
+    /* RED WHEN: a proposal written down with nothing for the chain counts as handed over, so a late or refused answer reads as maybe sent. */
+    expect(await run).toMatchObject({ of: 'stopped', relayed: 1, unconfirmed: 1 });
   });
 });

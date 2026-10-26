@@ -1315,51 +1315,6 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * RAISES A RUN AND APPROVES IT, AS ONE ACTION. V-66.
-   *
-   * Two transactions, because they are two acts: `propose` leaves a proposal at
-   * ZERO approvals, and the proposer has drafted something rather than endorsed
-   * it. That was read the other way round while working an example — "A creates,
-   * B and C approve" reaches TWO of five, not three — and if it reads that way
-   * to somebody building this, so will every customer. Gnosis Safe counts
-   * the creator's signature, and that is the model people arrive with.
-   *
-   * **THE FIX IS HERE AND NOT IN THE CONTRACT, deliberately.** Making `propose`
-   * auto-approve would quietly turn a three-of-five into a two-of-five: the
-   * account would need two deliberate judgements where its policy says three.
-   * That is a security change made for a user-interface convenience, and the
-   * kind nobody spots afterwards, because nothing about it looks like a change
-   * to the threshold.
-   *
-   * **If the approval fails, the run is left RAISED AND UNAPPROVED rather than
-   * rolled back** — there is nothing to roll back to, the proposal is on chain.
-   * Reported rather than swallowed, because a caller who believes they approved
-   * and did not is the exact confusion this method exists to remove. The run is
-   * still perfectly usable: anybody, including the proposer, can approve it.
-   */
-  async raiseAndApproveRun(
-    accountId: string,
-    run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint },
-    change: StateChange,
-    by: SignerRef,
-  ): Promise<{ proposalId: Hex; raised: TxRef; approved: TxRef | null; approvalError?: string }> {
-    const raised = await this.proposeRun(accountId, run, change, by);
-    try {
-      const approved = await this.approve(accountId, raised.proposalId, by);
-      return { proposalId: raised.proposalId, raised, approved };
-    } catch (e: any) {
-      return {
-        proposalId: raised.proposalId,
-        raised,
-        approved: null,
-        approvalError:
-          `the run was raised as ${raised.proposalId} and YOUR APPROVAL DID NOT LAND: ` +
-          `${String(e?.message ?? e)}. It is open with no approvals; approve it before counting it.`,
-      };
-    }
-  }
-
-  /**
    * Sweeps a run whose window has closed. V-67.
    *
    * Returns nothing anybody should read as "the run finished". It cannot mean
@@ -2823,9 +2778,9 @@ export class MidnightLedger implements Ledger {
        *
        * `lookup` rather than iteration, because the count is fetched per
        * proposal and every open proposal is guaranteed an entry by the contract
-       * itself — `propose` does `approvalCounts.insert(id, 0)` on both its
-       * branches (`contracts/src/ConfidentialAccount.compact:2139` and
-       * `:2314`), and `closeProposal` (`:1321`) removes the two together. Every
+       * itself — `propose` writes `approvalCounts` for every proposal it opens,
+       * one for a raiser who may approve and nought for a run's raiser who may
+       * not, and `closeProposal` removes the two together. Every
        * circuit that spends or withdraws a proposal goes through
        * `closeProposal` and there is no other remover; `execute` was one of its
        * callers and is gone, which is why this sentence used to name

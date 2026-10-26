@@ -43,7 +43,7 @@ const live = async (devices = [A, B], threshold = 2n) => {
   return sim;
 };
 
-/** A run of change leaves, each carrying no amount, naming `vault`, approved by `approvers`. */
+/** A run of change leaves, each carrying no amount, naming `vault`, approved by `approvers` (the first by raising it). */
 const approvedChanges = async (
   sim: AccountSimulator, vault: Uint8Array, leaves: PayoutLeafInput[], c: Change,
   approvers = [A, B],
@@ -54,7 +54,7 @@ const approvedChanges = async (
   });
   const id = sim.proposalId(
     pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
-  for (const a of approvers) await sim.as(sim.applying(a, c)).approve(id);
+  for (const a of approvers.slice(1)) await sim.as(sim.applying(a, c)).approve(id);
   return { tree, id };
 };
 
@@ -81,7 +81,6 @@ const setBar = async (sim: AccountSimulator, vault: Uint8Array, to: bigint, seed
   const bar = pureCircuits.setVaultThresholdPayload(vault, to);
   await sim.as(sim.applying(A, tc)).propose(bar);
   const bid = sim.proposalId(bar, tc.salt);
-  await sim.as(A).approve(bid);
   await sim.as(B).approve(bid);
   await sim.as(sim.applying(A, tc)).setVaultThreshold(vault, to, bid);
 };
@@ -200,7 +199,6 @@ describe('who a change can be approved for, and at what bar', () => {
     const retire = pureCircuits.retireVaultPayload(PAYROLL);
     await sim.as(sim.applying(A, rc)).propose(retire);
     const rid = sim.proposalId(retire, rc.salt);
-    await sim.as(A).approve(rid);
     await sim.as(B).approve(rid);
     await sim.retireVault(rid, PAYROLL, rc.salt);
     /* RED WHEN "holds now" becomes "ever adopted", as a payment's is. */
@@ -268,7 +266,6 @@ describe('who a change can be approved for, and at what bar', () => {
       root: fromHex(paying.root), payees: paying.payees, from: OPENS, until: CLOSES, vault: PAYROLL,
     });
     const pid = sim.proposalId(pureCircuits.runPayload(fromHex(paying.root), paying.payees, OPENS, CLOSES, 0n), pc.salt, PAYROLL);
-    await sim.as(sim.applying(A, pc)).approve(pid);
     await sim.as(sim.applying(B, pc)).approve(pid);
     /* RED WHEN the step reads the leaf's amount from its caller rather than taking zero. */
     await expect(sim.as(sim.applying(A, pc)).approveVaultChange(

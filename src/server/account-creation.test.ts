@@ -747,12 +747,12 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     expect(await first).toMatchObject({ status: 200 });
     expect(sent.filter((w) => w.startsWith('raising'))).toHaveLength(1);
     const s1 = await standingOnTheDevice();
-    expect([s1.round.open, s1.round.approvals, s1.round.needed, s1.committed]).toEqual([true, 0, 1, null]);
-    const approve = await onTheDevice({ circuit: 'approve', proposal: s0.round.proposal, of: { governance: payKey, proposalSalt: s0.round.salt } });
-    expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'approve', tx: approve })).toMatchObject({ status: 200 });
-    const s2 = await standingOnTheDevice();
-    expect([s2.round.approvals, s2.committed, s2.sealedMine]).toEqual([1, null, false]);
-    const seal = await onTheDevice({ circuit: 'sealPayKey', wrap: s2.wrap, commitment: s0.round.commitment, proposal: s0.round.proposal, proposalSalt: s0.round.salt });
+    /* RED WHEN: the raise is not counted as the raiser's own approval, so a company of one needs a second transaction before it can seal. */
+    expect([s1.round.open, s1.round.approvals, s1.round.needed, s1.committed]).toEqual([true, 1, 1, null]);
+    /* RED WHEN: the founding signer can approve its own raise a second time, which would count it twice. */
+    await expect(onTheDevice({ circuit: 'approve', proposal: s0.round.proposal, of: { governance: payKey, proposalSalt: s0.round.salt } }))
+      .rejects.toThrow(/you have already approved this proposal/);
+    const seal = await onTheDevice({ circuit: 'sealPayKey', wrap: s1.wrap, commitment: s0.round.commitment, proposal: s0.round.proposal, proposalSalt: s0.round.salt });
     expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'sealPayKey', tx: seal })).toMatchObject({ status: 200 });
     const s3 = await standingOnTheDevice();
     /* RED WHEN: the account is not committed to this key, or the founding signer's copy is not read as theirs. */

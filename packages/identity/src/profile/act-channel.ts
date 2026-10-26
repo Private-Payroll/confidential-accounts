@@ -5,7 +5,7 @@ import {
 import type { ActCall, ActEnded, ActKeep, ActRelay, ActStop } from './channel.js';
 import { readKeysRead, readSealedKeyring } from './unlock.js';
 import { ACT_INTENTS, type IntentShape } from './act-intents.js';
-export { routeOf } from './act-intents.js';
+export { routeOf, sendsIn } from './act-intents.js';
 export { intentShapeOf } from './act-shape.js';
 
 /**

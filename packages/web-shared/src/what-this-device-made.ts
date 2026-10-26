@@ -27,9 +27,15 @@
  *
  * A vault's first secret run is made again here from the secret, the vault and
  * the readers it is sealed to, so no run but a secret run can pass as one.
+ *
+ * A one-off payment is made again here from its record: its one leaf from the
+ * record's payee, amount and seed, the salt from the seed's fresh half, and the
+ * once-mark of the seed's nonce read by the person's own wallet as not yet
+ * held. A proposal whose run is anything else than what its record says is
+ * refused, whatever the record says.
  */
-import { buildRetryRun, buildRun, paidOnceOfNonce, type DetailsOfKind, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
-import { payRecordNonceOf, type PayoutSeed, type PayRecord, type RunIdentity } from '../../../src/midnight/run-keys.js';
+import { buildOneOffRun, buildRetryRun, buildRun, paidOnceOfNonce, type DetailsOfKind, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
+import { oneOffEntryOf, oneOffSaltOf, oneOffSecretsOf, payRecordNonceOf, type PayoutSeed, type PayRecord, type RunIdentity } from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
 import { firstSecretRunOf, type AccountStartPure, type VaultStartPure } from '../../../src/midnight/vault-start.js';
 import { NO_LEG } from '../../../src/midnight/spending-policy-record.js';
@@ -96,13 +102,17 @@ export interface WalletReadFacts {
 /**
  * **WHAT A RAISE IS CHECKED AGAINST ON THE CHAIN, BESIDES THE RUN ITSELF.**
  * Every round the company's records hold, every leaf and payment nonce of every
- * leg they hold, and what a run drawn as a repeat confirmed it repeats.
+ * leg they hold, and what a run drawn as a repeat confirmed it repeats; and,
+ * beside payroll's and never among them, the leaf and nonce of every one-off
+ * payment the company's records hold, which leave their own entries.
  */
 export interface RaisingHere {
   readonly period: string;
   readonly knownRounds: readonly string[];
   readonly knownLeaves: readonly string[];
   readonly knownNonces: readonly string[];
+  /** Every one-off payment's leaf and nonce this device read from the company's one-off records. */
+  readonly oneOffs?: { readonly leaves: readonly string[]; readonly nonces: readonly string[] };
   readonly confirmed?: { readonly of: readonly string[]; readonly chainPayments?: number };
 }
 
@@ -116,7 +126,22 @@ interface SecretRunMadeHere {
   readonly closesAt: string;
 }
 
-export type MadeHere = RunMadeHere | SecretRunMadeHere;
+/** A one-off payment from a vault, as this device read it from its record: what the run is made again from. */
+export interface OneOffMadeHere {
+  readonly kind: 'transfer';
+  readonly asset: string;
+  /** Its one payment: the payee, the token moved and the amount. */
+  readonly facts: PaymentFacts;
+  /** The seed its record seals, its secrets' one source (`oneOffSecretsOf`). */
+  readonly seed: string;
+  readonly opensAt: string;
+  readonly closesAt: string;
+  readonly required: string;
+  /** What the person's own wallet read of the once-mark of its nonce; absent, an approval is refused. */
+  readonly wallet?: { readonly asked: readonly string[]; readonly held: readonly string[] };
+}
+
+export type MadeHere = RunMadeHere | SecretRunMadeHere | OneOffMadeHere;
 
 /** The parts of the account's ledger this check reads. */
 export interface AccountLedgerView {
@@ -188,15 +213,15 @@ export function refuseWhatThisDeviceDidNotMake(
       + 'the page to see where it stands.');
   }
   if (when === 'raise') {
-    if (made.kind !== 'payroll') {
-      throw new NotMadeOnThisDevice('This device raises payroll runs here, and this is not one.');
+    if (made.kind !== 'payroll' && made.kind !== 'transfer') {
+      throw new NotMadeOnThisDevice('This device raises payroll runs and one-off payments here, and this is neither.');
     }
     if (ledger.openProposals.member(fromHex(opened.chainId))) {
       throw new NotMadeOnThisDevice('The chain already holds this proposal open, so there is nothing to send. Reload the '
         + 'page to see where it stands.');
     }
     /* What the chain holds beyond the company's records is judged by the raise checks over these, before anything is built. */
-    if (made.raising === undefined) {
+    if (made.kind === 'payroll' && made.raising === undefined) {
       throw new NotMadeOnThisDevice('This device did not read what the company\'s records account for on the chain, so it will '
         + 'not raise this run. Reload the page and raise it again.');
     }
@@ -216,6 +241,39 @@ export function refuseWhatThisDeviceDidNotMake(
     root = secretRun.root;
     payees = secretRun.payees;
     window = { opensAt: digits('window', made.opensAt), closesAt: digits('window', made.closesAt) };
+  } else if (made.kind === 'transfer') {
+    if (deps.vaultDetails === undefined || deps.retrySaltOf === undefined) {
+      throw new NotMadeOnThisDevice(`This page cannot make a one-off payment again, so it will not ${when === 'raise' ? 'raise' : 'approve'} one. `
+        + 'Reload the page to get the current version.');
+    }
+    let built: ReturnType<typeof buildOneOffRun>;
+    let secrets: ReturnType<typeof oneOffSecretsOf>;
+    try {
+      secrets = oneOffSecretsOf(made.seed as Hex);
+      built = buildOneOffRun(made.facts, secrets, deps.vaultDetails, made.asset);
+    } catch (e) {
+      throw new NotMadeOnThisDevice(`This one-off payment's record cannot be made into a payment (${(e as Error)?.message ?? String(e)}). ${DO_NOT}`);
+    }
+    /* Its salt is a first payment's, made from the record's own seed: never a leg's retry, which the chain charges nothing. */
+    if (opened.salt === undefined || !same(oneOffSaltOf(secrets, deps.retrySaltOf), opened.salt)) {
+      throw new NotMadeOnThisDevice(`This proposal's salt was not made from its one-off payment's record, so the chain would not charge it as `
+        + `that payment. ${DO_NOT}`);
+    }
+    if (when === 'approve') {
+      const read = made.wallet;
+      const entry = oneOffEntryOf(secrets, (nonce) => fromHex(paidOnceOfNonce(toHex(nonce))));
+      if (read === undefined || !read.asked.some((e) => e.toLowerCase() === entry)) {
+        throw new NotMadeOnThisDevice('Your wallet did not read whether this one-off payment was already paid, so this device will not '
+          + 'approve it. Reload the page and try again.');
+      }
+      if (read.held.some((e) => e.toLowerCase() === entry)) {
+        throw new NotMadeOnThisDevice(`This one-off payment is already recorded as paid, so it would be refused when paid. ${DO_NOT}`);
+      }
+    }
+    root = built.tree.root;
+    payees = built.tree.payees;
+    window = { opensAt: digits('window', made.opensAt), closesAt: digits('window', made.closesAt) };
+    required = digits('approvals required', made.required);
   } else {
     if (deps.payKeyCommitmentOf === undefined) {
       throw new NotMadeOnThisDevice('This page cannot read the company\'s pay-record key off the chain, so it will not '

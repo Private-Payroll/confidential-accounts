@@ -72,7 +72,6 @@ const approvedFor = async (
     from: RUN_OPENS, until: RUN_CLOSES, vault,
   });
   const id = sim.proposalId(runPayload, c.salt, vault);
-  await sim.as(carrying(sim, A, c)).approve(id);
   await sim.as(carrying(sim, B, c)).approve(id);
   return {
     id,
@@ -129,7 +128,6 @@ describe('a threshold per vault', () => {
     const raisePayload = pureCircuits.setVaultThresholdPayload(TREASURY, 3n);
     await sim.as(carrying(sim, A, g)).propose(raisePayload, NO_VAULT);
     const gid = sim.proposalId(raisePayload, g.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, g)).approve(gid);
     await sim.as(carrying(sim, B, g)).approve(gid);
     await sim.as(carrying(sim, A, g)).setVaultThreshold(TREASURY, 3n, gid);
 
@@ -153,7 +151,6 @@ describe('a threshold per vault', () => {
     const p = pureCircuits.setVaultThresholdPayload(PAYROLL, 0n);
     await sim.as(carrying(sim, A, g)).propose(p, NO_VAULT);
     const gid = sim.proposalId(p, g.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, g)).approve(gid);
     await sim.as(carrying(sim, B, g)).approve(gid);
 
     await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 0n, gid))
@@ -175,7 +172,6 @@ describe('a threshold per vault', () => {
     const p = pureCircuits.setVaultThresholdPayload(PAYROLL, 3n);
     await sim.as(carrying(sim, A, g)).propose(p, NO_VAULT);
     const gid = sim.proposalId(p, g.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, g)).approve(gid);
     await sim.as(carrying(sim, B, g)).approve(gid);
 
     // Same number, different vault.
@@ -200,7 +196,7 @@ describe('a threshold per vault', () => {
     const p = pureCircuits.setVaultThresholdPayload(PAYROLL, 1n);
     await sim.as(carrying(sim, A, g)).propose(p, NO_VAULT);
     const gid = sim.proposalId(p, g.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, g)).approve(gid);   // one of two
+    /* A's raise counted A: one approval of two. */
 
     await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 1n, gid))
       .rejects.toThrow(/not enough approvals/i);
@@ -220,7 +216,6 @@ describe('a threshold per vault', () => {
     const p = pureCircuits.setVaultThresholdPayload(PAYROLL, 3n);
     await sim.as(carrying(sim, A, g)).propose(p, NO_VAULT);
     const gid = sim.proposalId(p, g.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, g)).approve(gid);
     await sim.as(carrying(sim, B, g)).approve(gid);
 
     const mallory = privateStateFor(99);
@@ -240,7 +235,6 @@ describe('a threshold per vault', () => {
     const raise = pureCircuits.setVaultThresholdPayload(PAYROLL, 3n);
     await sim.as(carrying(sim, A, g)).propose(raise, NO_VAULT);
     const gid = sim.proposalId(raise, g.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, g)).approve(gid);
     await sim.as(carrying(sim, B, g)).approve(gid);
     await sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 3n, gid);
 
@@ -250,7 +244,6 @@ describe('a threshold per vault', () => {
     const p2 = pureCircuits.setVaultThresholdPayload(TREASURY, 2n);
     await sim.as(carrying(sim, A, g2)).propose(p2, NO_VAULT);
     const gid2 = sim.proposalId(p2, g2.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, g2)).approve(gid2);
     await sim.as(carrying(sim, B, g2)).approve(gid2);
     await sim.as(carrying(sim, A, g2)).setVaultThreshold(TREASURY, 2n, gid2);
     expect(sim.isOpen(gid2)).toBe(false);
@@ -303,14 +296,15 @@ describe('the reserved signer scope', () => {
     /* RED WHEN a seat with every right stops being granted everything without a record. */
     expect(code).toMatch(/return scope == allVaults\(\) \|\|/);
 
-    /* The three places a right is asked for: raising a run, approving a run, holding a run. */
-    const asks = code.match(/grants\(caller\.scope, [012],/g) ?? [];
+    /* The three places a right is asked for: raising a run (with the approve right, from one opening), approving a run, holding a run. */
+    const asks = code.match(/grants\(caller\.scope, [012],|raisesAndApproves\(caller\.scope,/g) ?? [];
     /* RED WHEN a fourth circuit starts asking for a right, which must be a run's and said here. */
-    expect(asks).toEqual(['grants(caller.scope, 0,', 'grants(caller.scope, 1,', 'grants(caller.scope, 2,']);
+    expect(asks).toEqual(['raisesAndApproves(caller.scope,', 'grants(caller.scope, 1,', 'grants(caller.scope, 2,']);
     /* RED WHEN the approve right is asked outside the branch a run's window opens. */
     expect(code).toMatch(/if \(runWindow\.member\(id\)\) \{\s*const opened = runOpening\(id\);\s*assert\(grants\(caller\.scope, 1,/);
-    /* RED WHEN the raise right is asked outside `propose`'s run branch. */
-    expect(code).toMatch(/if \(disclose\(isRun\)\) \{[^}]*assert\(grants\(caller\.scope, 0,/);
+    /* RED WHEN the raiser's rights are read for a governance proposal, or the raise right is asserted outside `propose`'s run branch. */
+    expect(code).toContain('const raiser = disclose(isRun) ? raisesAndApproves(caller.scope, disclose(vault)) : [true, true];');
+    expect(code).toMatch(/if \(disclose\(isRun\)\) \{[^}]*assert\(raiser\[0\],/);
   });
 
   it('a signer whose scope differs has a DIFFERENT leaf, and is not on the account', async () => {

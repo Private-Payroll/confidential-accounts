@@ -68,12 +68,11 @@ beforeEach(async () => {
   });
 });
 
-/** A seat proposal written down and approved on the simulated chain, as devices would have left it. */
+/** A seat proposal written down and approved on the simulated chain, as devices would have left it: at a threshold of one the raise is its raiser's approval. */
 const approvedSeat = async () => {
   const p = await accounts.seatRound(company, viewingKey, bo.signerId, ada.signerId);
   const change = { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: accounts.seatOrderOf(company, viewingKey, bo.signerId).proposalSalt };
   await ledger.propose(company, MidnightCommitments.signerAddPayload(bo.leaf), change, ada, MidnightCommitments.noVault());
-  await ledger.approve(company, p.chainId as Hex, ada);
   return p;
 };
 const seatTx = (p: { chainId: string }, leaf: Hex) =>

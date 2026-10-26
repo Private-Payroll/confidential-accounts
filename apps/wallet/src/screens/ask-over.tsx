@@ -34,7 +34,25 @@ export function AskOver({ framed }: { readonly framed: boolean }): ReactNode {
 const CONTINUE: Readonly<Record<string, string>> = Object.freeze({
   'create-vault': 'act.create-vault.over.continue',
   'private-deposit': 'act.private-deposit.over.continue',
+  'one-off-payment': 'act.one-off-payment.over.continue',
 });
+
+/**
+ * An action that can end with what it proposed still awaiting other signers' approvals: that end is titled and told as
+ * not carried out yet, with the approvals it has and needs, never as every step done.
+ */
+const AWAITING: Readonly<Record<string, string>> = Object.freeze({
+  'one-off-payment': 'act.one-off-payment.over.awaiting',
+});
+
+/** The awaiting words for an end that is done with what it proposed still short of its approvals, else null. */
+export const awaitingOf = (ended: EndedHere['ended']): { readonly key: string; readonly approvals: number; readonly needed: number } | null => {
+  const o = ended.outcome;
+  if (ended.ended !== 'done' || o === undefined || o['state'] !== 'awaiting-approvals') return null;
+  if (!Object.prototype.hasOwnProperty.call(AWAITING, ended.intent)) return null;
+  const { approvals, needed } = o;
+  return typeof approvals === 'number' && typeof needed === 'number' ? { key: AWAITING[ended.intent]!, approvals, needed } : null;
+};
 
 /**
  * The stopped window's title. A check or step that did not hold is titled by what had left the wallet by then, from
@@ -63,10 +81,12 @@ export function ActOver({ end, framed }: { readonly end: EndedHere; readonly fra
   useEffect(() => { heading.current?.focus(); }, []);
   const { ended, says } = end;
   const stopped = ended.ended === 'stopped';
+  const awaiting = awaitingOf(ended);
   return (
     <>
       <h1 ref={heading} tabIndex={-1} data-ask-over data-act-ended={ended.ended}>
-        {stopped ? t('act.over.stopped-title', { step: ended.step, steps: ended.steps }) : t('act.over.done-title')}
+        {stopped ? t('act.over.stopped-title', { step: ended.step, steps: ended.steps })
+          : awaiting !== null ? t(`${awaiting.key}-title`) : t('act.over.done-title')}
       </h1>
       {stopped ? (
         <StatusAlert tone="warning" title={t(titleOf(ended))}>
@@ -77,6 +97,8 @@ export function ActOver({ end, framed }: { readonly end: EndedHere; readonly fra
           )}
           <p className="m-0" data-act-continue>{t(Object.prototype.hasOwnProperty.call(CONTINUE, ended.intent) ? CONTINUE[ended.intent]! : 'act.over.continue')}</p>
         </StatusAlert>
+      ) : awaiting !== null ? (
+        <p className="lede" data-act-awaiting>{t(awaiting.key, { approvals: awaiting.approvals, needed: awaiting.needed })}</p>
       ) : (
         <p className="lede" data-act-relayed>{t('act.over.done', { steps: ended.steps, relayed: ended.relayed })}</p>
       )}

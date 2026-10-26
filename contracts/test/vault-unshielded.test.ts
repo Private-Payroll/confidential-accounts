@@ -154,7 +154,6 @@ describe('a vault holds public money as well as private', () => {
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
     return { tree, id };
   };

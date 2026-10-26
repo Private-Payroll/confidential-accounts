@@ -3547,10 +3547,12 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       return { envelope, body: parseCanonical<Record<string, unknown>>(unseal(envelope.sealedPayload as never, VIEWING)) };
     };
     /*
-     * A chain that holds what reaches it: the adoption opens once its raise is relayed, takes one approval and is
-     * adopted. Ada's wallet then reads nothing, so each press stops right after the adoption.
+     * A chain that holds what reaches it: the adoption opens once its raise is relayed, counted at once as the
+     * raiser's own approval (`counted: false` is a chain built before that, which counts none), and is adopted.
+     * Ada's wallet then reads nothing, so each press stops right after the adoption. `refuseApprove` makes the
+     * account's approve circuit refuse as the chain does for a seat that approved already.
      */
-    const adoptionPress = (over: { open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; failCarried?: boolean; kept?: SealedProposal[]; role?: 'viewer'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain' } = {}) => {
+    const adoptionPress = (over: { open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; failCarried?: boolean; kept?: SealedProposal[]; role?: 'viewer'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain'; counted?: boolean; refuseApprove?: boolean } = {}) => {
       const log: string[] = [];
       const chain = { open: over.open ?? false, approvals: 0, adopted: over.adopted ?? false };
       const kept = proposalsKeptInATest({
@@ -3559,12 +3561,18 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
         ...(over.role === undefined ? {} : { role: over.role }),
         ...(over.notBelieved === undefined ? {} : { notBelieved: over.notBelieved }),
         ...(over.failCarried === undefined ? {} : { failCarried: over.failCarried }),
-        onRaise: (id) => { if (id === ADOPTION.proposal) chain.open = true; },
+        onRaise: (id) => { if (id === ADOPTION.proposal) { chain.open = true; if (over.counted !== false) chain.approvals = 1; } },
       });
       const a = { ...ada([null], log), proposals: kept.doors };
       const b: VaultBuilderClient = {
         ...builder(log),
-        governedCall: async (i) => { log.push(`built ${i.order.circuit}`); return { tx: `T-${i.order.circuit}` }; },
+        governedCall: async (i) => {
+          log.push(`built ${i.order.circuit}`);
+          if (over.refuseApprove === true && i.order.circuit === 'approve') {
+            throw Object.assign(new Error('you have already approved this proposal'), { name: 'CallNotBuilt' });
+          }
+          return { tx: `T-${i.order.circuit}` };
+        },
         startStanding: async () => ({
           standing: { adopted: chain.adopted, adoption: { ...ADOPTION, open: chain.open, approvals: chain.approvals, needed: over.needed ?? 1, stale: false } },
         }),
@@ -3602,9 +3610,28 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       const { envelope, body } = opened(t.kept.kept[0]!);
       expect(envelope).toMatchObject({ kind: 'adopt-vault', vault: ADOPTION.named });
       expect(body).toMatchObject({ vault: VAULT, __change: { salt: ADOPTION.salt } });
-      /* Approved and carried out as before, on the start's own route; the raise never went there. */
+      /* RED WHEN: the raiser sends an approval of its own after a raise the chain counted as one, which the chain refuses. Carried out on the start's own route; the raise never went there. */
+      expect(t.log.filter((l) => l.startsWith('sent '))).toEqual(['sent adopt']);
+      expect(t.log).not.toContain('built approve');
+      expect(t.chain.adopted).toBe(true);
+    });
+
+    /* RED WHEN: a chain built before the raise counted (open, no approval) is carried out with no approval, or its approval is not sent before the adoption. */
+    it('an adoption raised on a chain that did not count the raise is approved by this seat before it is adopted', async () => {
+      const t = adoptionPress({ counted: false });
+      await t.press();
       expect(t.log.filter((l) => l.startsWith('sent '))).toEqual(['sent approve', 'sent adopt']);
       expect(t.chain.adopted).toBe(true);
+    });
+
+    /* RED WHEN: at two approvals needed the raiser sends a second approval of its own, or builds nothing, or the start goes on to adopt with one. */
+    it('with two approvals needed, a raise that counted leaves the raiser sending no approval and the start waiting for the other', async () => {
+      const t = adoptionPress({ needed: 2, refuseApprove: true });
+      await t.press();
+      expect(t.log.filter((l) => l.startsWith('sent '))).toEqual([]);
+      expect(t.log).toContain('built approve');
+      expect(t.came()).toMatchObject({ state: 'awaiting-approvals', awaiting: { round: 'adoption', approvals: 1, needed: 2 } });
+      expect(t.chain.adopted).toBe(false);
     });
 
     it('an adoption the service will not write down as carried out does not stop the start, and a later press writes it down', async () => {
@@ -3761,9 +3788,77 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       const t = adoptionPress({ open: true });
       t.kept.doors.service.sealedProposals = async () => { throw new Error('the service withheld the company\'s proposals'); };
       await t.press();
-      /* RED WHEN: the start stops because the company's proposals could not be read, where it needs nothing from them. */
+      /* RED WHEN: the start stops because the company's proposals could not be read, where it needs nothing from them. A round raised by another seat, so the chain holds no approval of this one's. */
       expect(t.log.filter((l) => l.startsWith('sent '))).toEqual(['sent approve', 'sent adopt']);
       expect(t.chain.adopted).toBe(true);
+    });
+
+    /*
+     * A chain that holds what reaches it for the first secret: the run opens when its raise is built, counted at once
+     * as the raiser's own approval unless `counted` is false (a chain built before that), and the secret is set when
+     * the secret transaction is sent. `refuseApprove` is the chain's refusal of a seat that approved already.
+     */
+    const secretPress = async (over: { counted?: boolean; needed?: number; refuseApprove?: boolean } = {}) => {
+      const log: string[] = [];
+      const chain = { run: false, approvals: 0, set: false };
+      const kept = proposalsKeptInATest({ signingSecret: '11'.repeat(32) as Hex });
+      const a = { ...ada([walletRead(committeeKey)], log), proposals: kept.doors };
+      const base = chainBuilder(log, {})();
+      const b: VaultBuilderClient = {
+        ...base,
+        governedCall: async (i) => {
+          log.push(`built ${i.order.circuit}`);
+          if (i.order.circuit === 'propose') { chain.run = true; chain.approvals = over.counted === false ? 0 : 1; }
+          if (i.order.circuit === 'approve' && over.refuseApprove === true) {
+            throw Object.assign(new Error('you have already approved this proposal'), { name: 'CallNotBuilt' });
+          }
+          return { tx: `T-${i.order.circuit}` };
+        },
+        startStanding: async (i) => {
+          const s = await base.startStanding(i);
+          const sec = s.standing.secret;
+          if (sec === undefined) return s;
+          return { ...s, standing: { ...s.standing, secret: { ...sec, set: chain.set, run: chain.run ? {
+            proposal: 'b7'.repeat(32), payload: 'b8'.repeat(32), named: 'b9'.repeat(32), salt: 'ba'.repeat(32),
+            open: true, approvals: chain.approvals, needed: over.needed ?? 1, stale: false, opensAt: '1', closesAt: '2', inWindow: true,
+          } : null } } };
+        },
+        setNonceSecret: async () => { log.push('built set'); return { tx: 'S' }; },
+      };
+      const service = serviceFrom([heldByThem], log, {
+        keys: async () => ({ committee, why: null, readers: [a.mine] }),
+        startAccountCall: async (_v, body) => { log.push(`sent ${body.call}`); if (body.call === 'approve') chain.approvals += 1; return { txRef: 't' }; },
+        startSecret: async () => { log.push('sent secret'); chain.set = true; return { txRef: 't' }; },
+        startCopy: async () => { log.push('sent copy'); return { txRef: 't' }; },
+      });
+      let came: VaultCreated | undefined;
+      await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...a, account: ACCOUNT, service, builder: b }, VAULT)
+        .then((r) => { came = r; }, () => undefined);
+      return { log, sent: log.filter((l) => l.startsWith('sent ') && l !== 'sent copy'), came: () => came };
+    };
+
+    /* RED WHEN: the raiser of the first secret run sends an approval of its own after a raise the chain counted as one, which the chain refuses. */
+    it('a first secret run whose raise the chain counted goes straight to setting the secret, with no approval of its own', async () => {
+      const t = await secretPress();
+      expect(t.sent).toEqual(['sent secret']);
+      expect(t.log).toContain('built propose');
+      expect(t.log).toContain('built set');
+      expect(t.log).not.toContain('built approve');
+    });
+
+    /* RED WHEN: a first secret run on a chain that did not count the raise is carried out with no approval, or its approval is not sent first. */
+    it('a first secret run raised on a chain that did not count the raise is approved by this seat before the secret is set', async () => {
+      const t = await secretPress({ counted: false });
+      expect(t.sent).toEqual(['sent approve', 'sent secret']);
+    });
+
+    /* RED WHEN: with two approvals needed the raiser sends a second approval, or sets the secret on one. */
+    it('with two approvals needed, a counted first secret raise sends no approval and waits for the other', async () => {
+      const t = await secretPress({ needed: 2, refuseApprove: true });
+      expect(t.sent).toEqual([]);
+      expect(t.log).toContain('built approve');
+      expect(t.log).not.toContain('built set');
+      expect(t.came()).toMatchObject({ state: 'awaiting-approvals', awaiting: { round: 'first-secret', approvals: 1, needed: 2 } });
     });
 
     it('a vault\'s first secret run is written down without the secret it sets', async () => {

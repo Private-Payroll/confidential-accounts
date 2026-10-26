@@ -120,7 +120,6 @@ describe('a run reports its progress from the chain', () => {
       root: fromHex(tree.root), payees: tree.payees,
       from: OPENS, until: CLOSES, vault: PAYROLL });
     id = sim.proposalId(payload, c.salt, PAYROLL);
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
   });
 

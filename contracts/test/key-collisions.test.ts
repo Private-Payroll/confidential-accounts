@@ -143,8 +143,10 @@ describe('every insert into the two shared maps is one this file knows', () => {
     /* RED WHEN the two share a tag: one signer's approval of a run would then count as their release of its hold, or the reverse. */
     expect(tag('releaseNullifier')).not.toBe(tag('approvalNullifier'));
     /* And both are written the same way: a nullifier computed in the circuit, never a caller's value. */
-    expect(SRC.match(/approvals\.insert\(/g)).toHaveLength(2);
+    expect(SRC.match(/approvals\.insert\(/g)).toHaveLength(3);
     expect(SRC.match(/approvals\.insert\(nul\);/g)).toHaveLength(2);
+    /* The third is the raise's: the raiser's approval nullifier, computed in `propose` from the proved seat. */
+    expect(bodyOf('propose')).toContain('approvals.insert(disclose(approvalNullifier(caller.sk, id)));');
   });
 });
 

@@ -67,6 +67,7 @@ import { periodOf, type PolicyOpeningOnTheWire } from '../../src/midnight/spendi
 import type { RunToChargeOnTheWire, RunTreeOnTheWire } from 'vaults-web-shared/run-charge-builder.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { governanceInAccountState } from 'midnight-identity/profile/account-state';
+import { noOneOffsHere } from '../../src/testing/no-one-offs.js';
 
 const NET = 'undeployed';
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -177,7 +178,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
       circuit: 'propose', ...(governance.kind === 'adopt-vault' ? { adoption: governance } : { governance }), proposal: id,
       half: { assetId: hex(c.asset), assetBlinding: hex(who.assetBlinding), proposalSalt: hex(c.salt), changeAmount: '0', changeBatchDigest: hex(c.batch) },
     } as GovernedCallOrder, opened);
-    await directly(who, { circuit: 'approve', proposal: id }, opened);
+    /* The raise is the raiser's approval: at the company's threshold of one nothing more is sent. */
     if (carry === null) return { id, salt: hex(c.salt), opened };
     await directly(who, carry(id, hex(c.salt)), opened);
     return { id, salt: hex(c.salt), opened };
@@ -243,6 +244,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     } as never, hex(founder.secretKey));
     const notHere = async () => { throw new Error('not read here'); };
     return {
+      oneOffs: noOneOffsHere(),
       directory: async () => {
         const believed = {
           dir: { company, version: 1, seats },
@@ -482,7 +484,8 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     await callDirectly(founder, 'propose', [new Uint8Array(32), root, BigInt(leaves.length), w.opensAt, w.closesAt, required, true, vault], {
       assetId: c.asset, assetBlinding: founder.assetBlinding, proposalSalt: c.salt, changeAmount: 0n, changeBatchDigest: c.batch,
     });
-    for (const who of approvers) {
+    /* The founding signer's raise is their approval; the other approvers named approve. */
+    for (const who of approvers.filter((a) => a !== founder)) {
       await callDirectly(who, 'approve', [id], { runOpenings: { [hex(id)]: { payload, vault, salt: c.salt } } });
     }
     const run: RunToChargeOnTheWire = {
@@ -550,17 +553,18 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
 
   it('A CHARGE IS REFUSED ON THE DEVICE, BEFORE ANYTHING IS SENT, FOR A RUN NOT ITS PROPOSAL, SHORT OF ITS APPROVALS, OVER THE PERIOD\'S LIMIT, OR AGAINST ANOTHER POLICY', async () => {
     const policy = await policySet();
-    const small = await raiseARun([500n], 61, [], 1n);
+    /* Raised needing two, so the founding signer's raise alone is one short. */
+    const small = await raiseARun([500n], 61, [], 2n);
     const run = opened(small.run, policy.opening);
     /* RED WHEN: the approvals the run is charged with are not the ones its identity was made with. */
-    await expect(charge({ ...run, required: '2' }, [small.tree])).rejects.toThrow(/not the ones its proposal was raised with/u);
+    await expect(charge({ ...run, required: '1' }, [small.tree])).rejects.toThrow(/not the ones its proposal was raised with/u);
     /* RED WHEN: a run is charged before it has the approvals it needs - the chain's own refusal, said on the device in its own words. */
     await expect(charge(run, [small.tree])).rejects.toThrow(/could not be charged to its period: not enough approvals yet\. Nothing was proved or sent\.$/u);
     /* RED WHEN: a charge is built against an opening the chain does not hold. */
     await expect(charge({ ...run, policy: { ...policy.opening, blinding: 'ee'.repeat(32) } }, [small.tree])).rejects.toThrow(/not the one the chain holds/u);
     /* A run of 49,700 needs two approvals; with 500 approved before it, it takes the period past its limit of 50,000. */
-    await callDirectly(founder, 'approve', [Buffer.from(run.proposal, 'hex')], {
-      runOpenings: { [run.proposal]: { payload: circuits.runPayload(Buffer.from(run.root, 'hex'), 1n, BigInt(run.opensAt), BigInt(run.closesAt), 1n), vault: Buffer.from(VAULT, 'hex'), salt: Buffer.from(run.salt, 'hex') } },
+    await callDirectly(blake, 'approve', [Buffer.from(run.proposal, 'hex')], {
+      runOpenings: { [run.proposal]: { payload: circuits.runPayload(Buffer.from(run.root, 'hex'), 1n, BigInt(run.opensAt), BigInt(run.closesAt), 2n), vault: Buffer.from(VAULT, 'hex'), salt: Buffer.from(run.salt, 'hex') } },
     });
     send((await charge(run, [small.tree])).tx!);
     const big = await raiseARun([49_700n], 62, [founder, blake], 2n);

@@ -63,7 +63,6 @@ describe('the service keeps no copy of the account threshold', () => {
     const ada = present(c.secrets[0]);
     const blake = present(c.secrets[1]);
     const p = await h.accounts.proposeThresholdChange(c.account.id, c.viewingKey, 3, ada.signerId);
-    await h.accounts.approve(p.id, ada.signerId, sign(approvalMessage(p), ada.signingSecret), c.viewingKey);
     await h.accounts.approve(p.id, blake.signerId, sign(approvalMessage(p), blake.signingSecret), c.viewingKey);
     await h.accounts.setThreshold(c.account.id, c.viewingKey, 3);
     expect((await h.accounts.ledgerStatus(c.account.id))!.threshold).toBe(3);

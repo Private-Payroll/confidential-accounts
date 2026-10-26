@@ -183,8 +183,8 @@ describe.skipIf(!CAN_PROVE_HERE)('THE WALLET PROVES THE PAY-RECORD KEY\'S CALLS 
     expect(fetched.filter((u) => !u.startsWith('/keys/'))).toEqual([]);
   }, 600_000);
 
-  it('the whole commitment of the pay-record key, its proposal, its approval and the seat\'s sealed copy, is proved in the wallet from the chain as it stands, and the chain takes each', async () => {
-    // RED WHEN: any of the three calls finishing a company proves is not built and proved in the wallet from the account as the chain holds it, or the chain does not take it
+  it('the whole commitment of the pay-record key, its proposal (which counts as the seat\'s approval) and the seat\'s sealed copy, is proved in the wallet from the chain as it stands, and the chain takes each', async () => {
+    // RED WHEN: any of the calls finishing a company proves is not built and proved in the wallet from the account as the chain holds it, or the chain does not take it
     const key = hex(new Uint8Array(randomBytes(32)));
     const wrapping = newWrappingKeypair();
     let id = 10;
@@ -208,11 +208,13 @@ describe.skipIf(!CAN_PROVE_HERE)('THE WALLET PROVES THE PAY-RECORD KEY\'S CALLS 
     const opened: OpenedRound = { chainId: r.proposal, digest: r.payload, vault: first.noVault, salt: r.salt, summary: '', governance: payKey, half };
     expect([first.committed, first.round.open, first.sealedMine]).toEqual([null, false, false]);
     expect(chain.apply(proved(await call({ circuit: 'propose', payKey, half: { ...half, assetBlinding: hex(new Uint8Array(randomBytes(32))), proposalSalt: r.salt }, proposal: r.proposal } as GovernedCallOrder, opened)), true)).toEqual({ ok: true, error: '' });
-    const proposed = await standing();
-    expect(proposed.round.open).toBe(true);
-    expect(chain.apply(proved(await call({ circuit: 'approve', proposal: r.proposal, of: { governance: payKey, proposalSalt: r.salt } } as GovernedCallOrder, opened)), true)).toEqual({ ok: true, error: '' });
     const approved = await standing();
+    expect(approved.round.open).toBe(true);
+    /* RED WHEN: the raise is not counted as the founding signer's own approval, so the proposal needs a second transaction before it can be sealed. */
     expect(BigInt(approved.round.approvals) >= BigInt(approved.round.needed)).toBe(true);
+    /* RED WHEN: the founding signer can approve its own raise again, which would count it twice. */
+    await expect(call({ circuit: 'approve', proposal: r.proposal, of: { governance: payKey, proposalSalt: r.salt } } as GovernedCallOrder, opened))
+      .rejects.toThrow(/you have already approved this proposal/);
     expect(chain.apply(proved(await call({ circuit: 'sealPayKey', wrap: approved.wrap, commitment: r.commitment, proposal: r.proposal, proposalSalt: r.salt } as GovernedCallOrder, opened)), true)).toEqual({ ok: true, error: '' });
     const sealed = await standing();
     expect([sealed.committed, sealed.isThisKey, sealed.sealedMine]).toEqual([r.commitment, true, true]);

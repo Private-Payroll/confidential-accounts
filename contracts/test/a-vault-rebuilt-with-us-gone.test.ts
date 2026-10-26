@@ -184,7 +184,6 @@ describe('a vault whose every record of ours is gone', () => {
       root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes,
     });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
     return { tree, id };
   };

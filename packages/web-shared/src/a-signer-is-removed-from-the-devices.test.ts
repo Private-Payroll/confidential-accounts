@@ -217,7 +217,8 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
           meanwhile?.();
           clock += 1;
           rounds.set(body.proposal.id, {
-            id: body.proposal.id, chainId: body.proposal.chainId, status: 'open', approvalCount: 0, raisedAt: 'now', signatures: [], removals, onChainAt: clock,
+            /* The raise counts as its raiser's approval, as the account's `propose` counts it. */
+            id: body.proposal.id, chainId: body.proposal.chainId, status: 'open', approvalCount: 1, raisedAt: 'now', signatures: [], removals, onChainAt: clock,
             filing: body.proposal,
             opened: {
               chainId: body.proposal.chainId, digest: 'dd'.repeat(32), vault: '00'.repeat(32), salt: SALT, summary: envelope.summary,
@@ -239,7 +240,7 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
           return page(id);
         },
         retire: async (id, body) => {
-          log.push(`${p.name} signs the retirement again for ${body.signature.signedFor}`);
+          log.push(`${p.name} signs the retirement for ${body.signature.signedFor}`);
           if (!withholds) rounds.get(id)!.signatures.push(body.signature);
           return page(id);
         },
@@ -264,7 +265,7 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
           if (order.circuit === 'approve' && approvedBy.has(`${order.proposal}:${material.signingSecret}`)) {
             throw Object.assign(new Error('you have already approved this proposal'), { name: 'CallNotBuilt' });
           }
-          if (order.circuit === 'approve') approvedBy.add(`${order.proposal}:${material.signingSecret}`);
+          if (order.circuit === 'approve' || order.circuit === 'propose') approvedBy.add(`${order.proposal}:${material.signingSecret}`);
           lastOrder = order;
           return { tx: `TX-${order.circuit}` };
         },
@@ -407,8 +408,10 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
       const filing = signProposalFiling(ACC, {
         id, digest: 'dd'.repeat(32), chainId, keyEpoch: 0, createdAt: '2026-10-17T00:00:00.000Z', sealed: { iv: '00', tag: '00', body: '00' } as never,
       }, by.signing.secret);
+      approvedBy.add(`${chainId}:${by.signing.secret}`);
       rounds.set(id, {
-        id, chainId, status: 'open', approvalCount: 0, raisedAt: 'now', signatures: [], removals, onChainAt: clock, filing,
+        /* Raised by `by`, whose raise counts as their approval. */
+        id, chainId, status: 'open', approvalCount: 1, raisedAt: 'now', signatures: [], removals, onChainAt: clock, filing,
         opened: {
           chainId, digest: 'dd'.repeat(32), vault: (governance === undefined ? 'fa' : '00').repeat(32), salt: SALT, summary: 'theirs',
           ...(o.believedFiler === false ? {} : { filedBy: by.signing.publicKey }), ...(governance === undefined ? {} : { governance }),
@@ -433,7 +436,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     /* RED WHEN: the chain is asked before a waiting directory version is anchored, or before the retirement is filed and anchored. */
     expect(co.log).toEqual([
       'raise remove bo',
-      'approve by ada signing the retirement for 4',
+      'ada signs the retirement for 4',
       'approve by cy signing the retirement for 4',
       'anchor the records',
       'file retirement 4',
@@ -449,7 +452,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     const co = aCompany({ bar: 2 });
     await co.deviceOf(BO).remove(BO);
     /* RED WHEN: a removal is carried out at the account's threshold of one, below the seat bar of two. */
-    expect(co.log).toEqual(['raise remove bo', 'approve by bo signing the retirement for 4']);
+    expect(co.log).toEqual(['raise remove bo', 'bo signs the retirement for 4']);
     expect(co.chain.has(BO.seat)).toBe(true);
     /* RED WHEN: the leaving seat's own approval and signature are not counted toward its removal, or its own raise of it is refused as a proposal a leaver filed. */
     expect((await co.deviceOf(ADA).remove(BO)).state).toBe('done');
@@ -471,7 +474,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     /* RED WHEN: a device whose roster holds the leaver's statement approves a retirement without it. */
     await expect(co.deviceOf(CY, { statement: STATEMENT }).remove(BO)).rejects.toThrow(/records-key statement/u);
     await expect(co.deviceOf(CY, { statement: { ...STATEMENT, signature: '8c'.repeat(64) } }).remove(BO)).rejects.toThrow(/records-key statement/u);
-    expect(co.log).toEqual(['raise remove bo', 'approve by ada signing the retirement for 4']);
+    expect(co.log).toEqual(['raise remove bo', 'ada signs the retirement for 4']);
     /* The control: raised with the statement, the same device approves it. */
     const again = aCompany({ bar: 3 });
     await again.deviceOf(ADA, { statement: STATEMENT }).remove(BO);
@@ -611,7 +614,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     await expect(co.deviceOf(CY).remove(BO)).rejects.toThrow(/does not keep exactly the last version of each record/u);
     round.opened = { ...round.opened, retirement: { ...round.opened.retirement!, filedUpTo: { 'spending-policy:pol_1': 2 } } };
     await expect(co.deviceOf(CY).remove(BO)).rejects.toThrow(/does not keep exactly the last version of each record/u);
-    expect(co.log).toEqual(['raise remove bo', 'approve by ada signing the retirement for 4']);
+    expect(co.log).toEqual(['raise remove bo', 'ada signs the retirement for 4']);
   });
 
   it('A SERVICE THAT WITHHOLDS THE RETIREMENT SIGNATURES HOLDS THE REMOVAL UP: THE CHAIN IS NEVER ASKED WITHOUT THE RETIREMENT', async () => {
@@ -635,8 +638,9 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     co.anotherVersion();
     await co.deviceOf(ADA).remove(BO);
     /* RED WHEN: a signature for a version another change took is left as the only one, so the retirement can never be filed. */
-    expect(co.log).toContain('ada signs the retirement again for 5');
-    expect(co.log.filter((x) => x.startsWith('approve by ada'))).toHaveLength(1);
+    expect(co.log).toContain('ada signs the retirement for 5');
+    /* Ada's raise was her approval, signed for 4 beside it: she never approves it on top. */
+    expect(co.log.filter((x) => x.startsWith('approve by ada'))).toHaveLength(0);
     expect((await co.deviceOf(CY).remove(BO)).state).toBe('done');
     expect(co.log).toContain('file retirement 5');
   });
@@ -683,7 +687,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     const refused = await co.deviceOf(CY).remove(BO).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(RemovalRaisedAgain);
     expect((refused as Error).message).toMatch(/raise the removal again/u);
-    expect(co.log).toEqual(['raise remove bo', 'approve by ada signing the retirement for 5']);
+    expect(co.log).toEqual(['raise remove bo', 'ada signs the retirement for 5']);
     expect(co.dir.seats.find((x) => x.seat === BO.seat)!.retired).toBeNull();
   });
 
@@ -738,11 +742,13 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     /* RED WHEN: a spending policy whose highest band this device was not given is taken as raising no bar. */
     await expect(governOnDevice(doors, { viewingKey: KEY, change: { kind: 'spending-policy', vault, assetKey: '0b'.repeat(32), commitment: '0c'.repeat(32) }, summary: 'policy', body: {} as never }))
       .rejects.toThrow(/while a removal of a signer is approved/u);
-    expect(co.log).toEqual(['raise remove bo', 'approve by ada signing the retirement for 4']);
-    /* The control: a policy whose highest band is at the seat bar waits for nothing here, and is raised and approved (carrying it out is the policy page's). */
+    expect(co.log).toEqual(['raise remove bo', 'ada signs the retirement for 4']);
+    /* The control: a policy whose highest band is at the seat bar waits for nothing here, and is raised, which is Cy's approval (carrying it out is the policy page's). */
+    const before = co.log.length;
     await governOnDevice(doors, { viewingKey: KEY, change: { kind: 'spending-policy', vault, assetKey: '0b'.repeat(32), commitment: '0c'.repeat(32) }, summary: 'policy', body: {} as never, highestBand: 2 })
       .catch(() => undefined);
-    expect(co.log.at(-1)).toBe('approve by cy');
+    expect(co.log.slice(before)).toHaveLength(1);
+    expect(co.log.at(-1)).toMatch(/^raise /u);
   });
 
   it('A SEAT RETIRED IN THE DIRECTORY THAT THE CHAIN STILL HOLDS IS A REMOVAL UNDER WAY, WITH NO REMOVAL RAISED', async () => {
@@ -779,7 +785,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     await co.deviceOf(ADA).remove(DEE);
     expect((await co.deviceOf(CY).remove(DEE)).state).toBe('done');
     /* RED WHEN: a leaf with no directory entry can never be removed, or is removed with a retirement nothing can believe. */
-    expect(co.log).toEqual(['raise remove dee', 'approve by ada', 'approve by cy', 'carry amendSigner removing']);
+    expect(co.log).toEqual(['raise remove dee', 'approve by cy', 'carry amendSigner removing']);
     expect(co.chain.has(DEE.seat)).toBe(false);
   });
 });
@@ -817,7 +823,7 @@ describe('A REMOVAL FREEZES NOTHING UNTIL IT IS APPROVED', () => {
     co.barRisesTo(3);
     /* RED WHEN: a removal whose retirement was signed at the old bar is approved once the bar has risen past it. */
     await expect(co.deviceOf(CY).remove(BO)).rejects.toThrow(/signed at 2 approvals, below the 3 a change of who is seated needs now/u);
-    expect(co.log).toEqual(['raise remove bo', 'approve by ada signing the retirement for 4']);
+    expect(co.log).toEqual(['raise remove bo', 'ada signs the retirement for 4']);
     expect(co.chain.has(BO.seat)).toBe(true);
   });
 
@@ -856,7 +862,9 @@ describe('A REMOVAL FREEZES NOTHING UNTIL IT IS APPROVED', () => {
     /* RED WHEN: an approved removal waits for the device that raised or approved it to carry it out. */
     expect((await co.deviceOf(DEE).remove(BO)).state).toBe('done');
     expect(co.chain.has(BO.seat)).toBe(false);
-    expect(co.log.filter((x) => x.startsWith('approve'))).toEqual(['approve by ada signing the retirement for 5']);
+    /* Ada's raise was her approval; her signature went with it. */
+    expect(co.log.filter((x) => x.startsWith('approve'))).toEqual([]);
+    expect(co.log).toContain('ada signs the retirement for 5');
     expect(co.log.slice(-1)).toEqual(['carry amendSigner removing']);
   });
 
@@ -1315,12 +1323,13 @@ describe('A REMOVAL IS RAISED OVER A RECENT HEAD', () => {
   it('A SEAT THAT SIGNED A RETIREMENT SIGNS IT AGAIN ONLY FOR A REMOVAL IT STILL APPROVES', async () => {
     const co = aCompany();
     expect((await co.deviceOf(ADA).remove(BO)).state).toBe('waiting-for-approvals');
+    const raised = co.log.length;
     /* The version Ada's signature named is taken, and the approvals a change of who is seated needs rise past the terms. */
     co.anotherVersion();
     co.barRisesTo(3);
     await expect(co.deviceOf(ADA).remove(BO)).rejects.toThrow(/below the 3 a change of who is seated needs now/u);
     /* RED WHEN: a seat signs the retirement again for terms its own device now refuses. */
-    expect(co.log.filter((x) => x.includes('signs the retirement again'))).toEqual([]);
+    expect(co.log.slice(raised).filter((x) => x.includes('signs the retirement'))).toEqual([]);
   });
 
   it('A SIGNATURE THE SERVICE LISTS UNDER A SEAT\'S KEY THAT THE SEAT NEVER MADE MAKES IT SIGN NOTHING AGAIN; AN HONEST REMOVAL GOES ON', async () => {
@@ -1328,7 +1337,8 @@ describe('A REMOVAL IS RAISED OVER A RECENT HEAD', () => {
     expect((await co.deviceOf(ADA).remove(BO)).state).toBe('waiting-for-approvals');
     /* RED WHEN: an entry under a seat's key that does not check over the terms makes that seat sign the retirement again. */
     expect((await primed(co, CY).remove()).state).toBe('done');
-    expect(co.log.filter((x) => x.includes('signs the retirement again'))).toEqual([]);
+    /* Only Ada's own signature, given with her raise. */
+    expect(co.log.filter((x) => x.includes('signs the retirement'))).toEqual(['ada signs the retirement for 4']);
     expect(co.log).toContain('approve by cy signing the retirement for 4');
     expect(co.chain.has(BO.seat)).toBe(false);
   });
@@ -1336,10 +1346,11 @@ describe('A REMOVAL IS RAISED OVER A RECENT HEAD', () => {
   it('A REMOVAL THE SERVICE KEEPS THAT THE WALLET\'S INDEXER NEVER SHOWED RAISED IS SENT AGAIN, NOT JUDGED AS RAISED', async () => {
     const co = aCompany();
     expect((await co.deviceOf(ADA).remove(BO)).state).toBe('waiting-for-approvals');
+    const raised = co.log.length;
     co.neverRaisedOnTheChain();
     /* RED WHEN: a staying device judges as raised a removal the chain never showed, and refuses where it should send the raise again. */
     await expect(co.deviceOf(CY).remove(BO)).rejects.toThrow(/has not shown it yet/u);
-    expect(co.log.filter((x) => x.includes('signs the retirement') || x.startsWith('approve by cy'))).toEqual([]);
+    expect(co.log.slice(raised).filter((x) => x.includes('signs the retirement') || x.startsWith('approve by cy'))).toEqual([]);
   });
 
   it('A DEVICE WHOSE CHECK OF THE RECORDS STOPPED SHORT OF THE HEAD A RAISE IS HELD TO DOES NOT APPROVE IT, AND SAYS TO CHECK THEM FURTHER', async () => {

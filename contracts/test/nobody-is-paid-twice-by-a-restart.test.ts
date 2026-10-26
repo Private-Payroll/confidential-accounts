@@ -342,7 +342,6 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
       from: OPENS, until: CLOSES, vault: PAYROLL_VAULT,
     });
     const legId = fromHex(leg.chainId);
-    await sim.as(legDevice).approve(legId);
 
     const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
     /* Rebuilt from the record the way a paying device rebuilds it, on another machine. */

@@ -27,7 +27,7 @@ import {
 import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-operation.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
-import { intentShapeOf, routeOf } from 'midnight-identity/profile/request';
+import { intentShapeOf, routeOf, sendsIn } from 'midnight-identity/profile/request';
 import { apiOver, sendOver, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
@@ -70,7 +70,7 @@ function watchedCalls(ctx: StepContext) {
         throw e;
       }
       const route = shape === undefined ? null : routeOf(shape, method, path);
-      if (route?.sends === true && (answer.status < 200 || answer.status >= 300)) seen.unconfirmed += 1;
+      if (route !== null && sendsIn(route, body) && (answer.status < 200 || answer.status >= 300)) seen.unconfirmed += 1;
       return answer;
     },
   };

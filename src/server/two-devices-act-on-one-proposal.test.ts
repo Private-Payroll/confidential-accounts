@@ -17,7 +17,7 @@
  *     read, and no contract exists here. The stand-in builder writes down which
  *     call it was asked for, and that is what the door carries out;
  *   - the chain's read of who holds each company's account, as the server
- *     checks a relay's seat against it: Ada's and Blake's seats, whose entries
+ *     checks a relay's seat against it: Ada's, Blake's and Cleo's seats, whose entries
  *     their wallets signed in each company's directory.
  *
  * **WHY THE PROPOSALS ARE WRITTEN BEFORE THE SERVER STARTS.** Raising a payroll
@@ -40,6 +40,7 @@ import type { Server } from 'node:http';
 import { TEST_TOKEN } from '../testing/assets.js';
 import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { standingOnChainHere } from 'vaults-web-shared/run-rebuilt-here.js';
+import { noOneOffsHere } from '../testing/no-one-offs.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -77,9 +78,9 @@ type Hex = import('../core/crypto.js').Hex;
 type Standing = import('vaults-web-shared/governed-call-on-device.js').RoundOnThePage;
 
 const NETWORK = theNetwork();
-const SLOTS = { ada: 71, blake: 72, cy: 73 } as const;
+const SLOTS = { ada: 71, blake: 72, cy: 73, cleo: 74 } as const;
 /** Cy signs in and is a member of none of these companies. */
-const USERS = { ada: 'usr_two_devices_ada', blake: 'usr_two_devices_blake', cy: 'usr_two_devices_cy' } as const;
+const USERS = { ada: 'usr_two_devices_ada', blake: 'usr_two_devices_blake', cy: 'usr_two_devices_cy', cleo: 'usr_two_devices_cleo' } as const;
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 
 /* ── the chain, and its door for a device's transaction ─────────────────── */
@@ -128,12 +129,12 @@ Object.assign(ledger, {
 
 /* ── the companies, written before the server starts ────────────────────── */
 
-/** Each company's seats as the chain holds them: Ada's and Blake's, whose wallets signed their directory entries. */
+/** Each company's seats as the chain holds them: Ada's, Blake's and Cleo's, whose wallets signed their directory entries. */
 const seats = directorySeats();
 
 const seeded = await (async () => {
   const store = new FileStore(process.env.DATA_PATH!);
-  for (const who of ['ada', 'blake', 'cy'] as const) {
+  for (const who of ['ada', 'blake', 'cy', 'cleo'] as const) {
     store.putUser({
       id: USERS[who], email: `${who}@northwind.example`, name: who, keyBundle: null, keyBundleVersion: 0,
       walletKey: walletKeyOf(addressOfSlot(SLOTS[who], NETWORK)), createdAt: '2026-09-17T00:00:00.000Z',
@@ -146,14 +147,15 @@ const seeded = await (async () => {
     const created = await accounts.create(name, [
       { name: 'Ada', role: 'admin', userId: USERS.ada },
       { name: 'Blake', role: 'approver', userId: USERS.blake },
-      { name: 'Cleo', role: 'approver' },
+      { name: 'Cleo', role: 'approver', userId: USERS.cleo },
     ], threshold, undefined, drawCompanyLabel());
     const viewingKey = created.viewingKey;
     const account = created.account.id;
     for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);
-    /* Ada's and Blake's wallets sign their entries in the company's directory, under the keys their devices file with. */
+    /* Ada's, Blake's and Cleo's wallets sign their entries in the company's directory, under the keys their devices file with. */
     seats.claim(store, account, USERS.ada, created.secrets[0]!.signingSecret, 0x51);
     seats.claim(store, account, USERS.blake, created.secrets[1]!.signingSecret, 0x52);
+    seats.claim(store, account, USERS.cleo, created.secrets[2]!.signingSecret, 0x53);
     for (let i = 0; i < 3; i++) {
       payroll.hireDirect(account, {
         name: `${name} payee ${i}`, email: `p${i}@${name.toLowerCase()}.example`, title: 'Eng', asset: TEST_TOKEN,
@@ -169,10 +171,10 @@ const seeded = await (async () => {
     });
     const proposal = await payroll.proposeRun(run.id, viewingKey, created.secrets[0]!.signerId, material, undefined,
       { onDevice: true });
-    /* What a filing from a seat's device commits to paying: the leg's recorded payments, from its vault, under its salt. */
+    /* What a filing from a seat's device commits to paying: the leg's recorded payments, from its vault, under its salt and the company's asset blinding. */
     const written = (await payroll.raiseOrderOf(run.id, viewingKey))!;
     const recorded = payroll.requireRun(run.id, viewingKey).payout![runLegOf(TEST_TOKEN, 'shielded')]!.facts;
-    store.putProposal({ ...store.getProposal(proposal.id)!, pays: paysCommitmentOf({ vault: VAULT, asset: TEST_TOKEN, payments: recorded.map(paymentChecked) }, written.half.proposalSalt) });
+    store.putProposal({ ...store.getProposal(proposal.id)!, pays: paysCommitmentOf({ vault: VAULT, asset: TEST_TOKEN, payments: recorded.map(paymentChecked) }, written.half.proposalSalt, written.half.assetBlinding) });
     if (onChain) {
       const order = (await payroll.raiseOrderOf(run.id, viewingKey))!;
       const built: Built = {
@@ -197,12 +199,13 @@ const seeded = await (async () => {
      * The run's proposal as the founding seat's device filed it, signed by that seat over what it pays: who every device
      * believes raised it.
      */
-    const kept = { ...store.getProposal(proposal.id)!, pays: paysCommitmentOf({ vault: VAULT, asset: TEST_TOKEN, payments: recorded.map(paymentChecked) }, written.half.proposalSalt) };
+    const kept = { ...store.getProposal(proposal.id)!, pays: paysCommitmentOf({ vault: VAULT, asset: TEST_TOKEN, payments: recorded.map(paymentChecked) }, written.half.proposalSalt, written.half.assetBlinding) };
     store.putProposal({ ...kept, ...signProposalFiling(account, kept as never, founder.secret) });
     const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
     const people = payroll.listPeople(account, viewingKey);
     const committee = { tag: 'schnorr', value: '7a'.repeat(32) };
     const records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere = everyRunAndProposalEntered({
+      oneOffs: noOneOffsHere(),
       directory: async () => ({
         dir: { company: account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USERS.ada, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null, opening: {} as never }] },
         holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
@@ -244,12 +247,12 @@ const seeded = await (async () => {
     }, account, [founder.secret], { seat: '4e'.repeat(32), signingSecret: founder.secret, records: [state], committee: [committee] });
     return {
       account, viewingKey, runId: run.id, proposalId: proposal.id,
-      ada: created.secrets[0]!, blake: created.secrets[1]!, records,
+      ada: created.secrets[0]!, blake: created.secrets[1]!, cleo: created.secrets[2]!, records,
     };
   };
   const result = {
     raisedTwice: await aCompany('Raisedtwice', 2, false),
-    twoSigners: await aCompany('Twosigners', 2, true),
+    twoSigners: await aCompany('Twosigners', 3, true),
     twoTabs: await aCompany('Twotabs', 3, true),
     withdrawn: await aCompany('Withdrawn', 3, true),
   };
@@ -269,7 +272,7 @@ const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
-const tokens: Record<keyof typeof USERS, string> = { ada: '', blake: '', cy: '' };
+const tokens: Record<keyof typeof USERS, string> = { ada: '', blake: '', cy: '', cleo: '' };
 
 type Res = { status: number; body: any };
 const call = async (method: string, path: string, opts: { token?: string; body?: unknown } = {}): Promise<Res> => {
@@ -289,7 +292,7 @@ beforeAll(async () => {
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
   base = `http://127.0.0.1:${a.port}`;
-  for (const who of ['ada', 'blake', 'cy'] as const) {
+  for (const who of ['ada', 'blake', 'cy', 'cleo'] as const) {
     const signedIn = await signInWithAWallet(call, { slot: SLOTS[who], origin: ORIGIN, network: NETWORK });
     expect(signedIn.userId).toBe(USERS[who]);
     tokens[who] = signedIn.token;
@@ -393,19 +396,19 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (_c, land) => { const r = await land(); await gate.opened; return r; };
-    const ada = aDevice('ada', c, c.ada.signerId, c.ada.signingSecret);
     const blake = aDevice('blake', c, c.blake.signerId, c.blake.signingSecret);
+    const cleo = aDevice('cleo', c, c.cleo.signerId, c.cleo.signingSecret);
     const both = Promise.all([
-      device.approveOnDevice(ada.doors, { round, viewingKey: c.viewingKey }),
       device.approveOnDevice(blake.doors, { round, viewingKey: c.viewingKey }),
+      device.approveOnDevice(cleo.doors, { round, viewingKey: c.viewingKey }),
     ]);
     await until(() => sent.length === 2);
     gate.open();
     const [a, b] = await both;
     /* RED WHEN: an approval relay writes back the count it read before its send, or a lower count after a higher one - one approval is dropped. */
     const after = await standing('blake', c);
-    expect(after.approvalCount).toBe(2);
-    expect(Math.max(a.approvalCount ?? 0, b.approvalCount ?? 0)).toBe(2);
+    expect(after.approvalCount).toBe(3);
+    expect(Math.max(a.approvalCount ?? 0, b.approvalCount ?? 0)).toBe(3);
     /* RED WHEN: the service writes "approved" itself: whether a proposal is approved is judged on a device, where the vault is opened. */
     expect(after.status).toBe('open');
   });
@@ -415,8 +418,8 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (_c, land) => { await gate.opened; return land(); };
-    const first = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey }));
-    const second = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey }));
+    const first = settle(device.approveOnDevice(aDevice('blake', c, c.blake.signerId, c.blake.signingSecret).doors, { round, viewingKey: c.viewingKey }));
+    const second = settle(device.approveOnDevice(aDevice('blake', c, c.blake.signerId, c.blake.signingSecret).doors, { round, viewingKey: c.viewingKey }));
     await until(() => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
     gate.open();
     await until(() => first.done && second.done);
@@ -426,7 +429,7 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     expect(won.error).toBeUndefined();
     expect(String(lost.error?.message)).toMatch(/is being sent from another request right now/u);
     expect(device.nothingWasSentBy(lost.error)).toBe(true);
-    expect((await standing('ada', c)).approvalCount).toBe(1);
+    expect((await standing('ada', c)).approvalCount).toBe(2);
   });
 
   it('A WITHDRAWAL FROM ANOTHER DEVICE WHILE AN APPROVAL IS BEING SENT STAYS A WITHDRAWAL, AND THE APPROVING DEVICE IS NOT TOLD NOTHING WAS SENT', async () => {
@@ -434,7 +437,7 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (circuit, land) => { const r = await land(); if (circuit === 'approve') await gate.opened; return r; };
-    const approving = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey }));
+    const approving = settle(device.approveOnDevice(aDevice('blake', c, c.blake.signerId, c.blake.signingSecret).doors, { round, viewingKey: c.viewingKey }));
     await until(() => sent.length === 1);
     /* Ada raised it; the chain lets the signer who raised a proposal withdraw it, from any device of theirs. */
     const withdrawn = await device.withdrawOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey });

@@ -185,18 +185,18 @@ describe('TWO SIGNERS APPROVING AT ONCE', () => {
     const round = await c.aRoundOnChain();
     const gate = aGate();
     c.setDoor(async (_c, _b, land) => { const r = await land(); await gate.opened; return r; });
-    const ada = c.approvalFrom(0, round);
     const blake = c.approvalFrom(1, round);
+    const cleo = c.approvalFrom(2, round);
     await until(() => c.sent.length === 2);
     gate.open();
-    await Promise.all([ada, blake]);
+    await Promise.all([blake, cleo]);
     const after = c.record(round.id);
     /* RED WHEN: an approval writes back the record it read before its send - the second write then drops the first signature. */
-    expect(after.approvals.map((a) => a.signerId).sort()).toEqual([c.seats[0]!.signerId, c.seats[1]!.signerId].sort());
-    expect((await c.onChain(round.chainId))!.approvals).toBe(2);
+    expect(after.approvals.map((a) => a.signerId).sort()).toEqual([c.seats[1]!.signerId, c.seats[2]!.signerId].sort());
+    expect((await c.onChain(round.chainId))!.approvals).toBe(3);
     /* RED WHEN: the standing either request read before the other landed is written over the later one. */
-    expect(after.approvalRound).toEqual({ state: 'short', approvals: 2, threshold: 3 });
-    expect(after.status).toBe('open');
+    expect(after.approvalRound).toEqual({ state: 'satisfied', approvals: 3, threshold: 3 });
+    expect(after.status).toBe('approved');
   });
 
   it('A WITHDRAWAL THAT LANDS WHILE AN APPROVAL IS BEING SENT STAYS A WITHDRAWAL', async () => {
@@ -204,12 +204,12 @@ describe('TWO SIGNERS APPROVING AT ONCE', () => {
     const round = await c.aRoundOnChain();
     const gate = aGate();
     c.setDoor(async (_c, _b, land) => { const r = await land(); await gate.opened; return r; });
-    const ada = c.approvalFrom(0, round).catch((e) => e);
+    const approving = c.approvalFrom(1, round).catch((e) => e);
     await until(() => c.sent.length === 1);
     const withdrawn = await c.accounts.cancel(round.id, c.viewingKey);
     expect(withdrawn.status).toBe('cancelled');
     gate.open();
-    const answer = await ada;
+    const answer = await approving;
     /* RED WHEN: the approval's write puts back the open record it read before the withdrawal. */
     expect(c.record(round.id).status).toBe('cancelled');
     expect(c.record(round.id).approvals).toEqual([]);
@@ -222,7 +222,7 @@ describe('TWO SIGNERS APPROVING AT ONCE', () => {
 
 describe('ONE THING SENT TWICE AT ONCE IS HANDED OVER ONCE', () => {
   it('A PROPOSAL SENT FROM TWO TABS AT ONCE: ONE TRANSACTION, AND THE OTHER SAYS NOTHING WAS SENT', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.raiseOnDevice();
     const gate = aGate();
     c.setDoor(async (_c, _b, land) => { await gate.opened; return land(); });
@@ -252,9 +252,9 @@ describe('ONE THING SENT TWICE AT ONCE IS HANDED OVER ONCE', () => {
     const round = await c.aRoundOnChain();
     const gate = aGate();
     c.setDoor(async (_c, _b, land) => { await gate.opened; return land(); });
-    const first = c.approvalFrom(0, round);
+    const first = c.approvalFrom(1, round);
     await until(() => c.sent.length === 1);
-    const pending = c.approvalFrom(0, round).catch((e) => e);
+    const pending = c.approvalFrom(1, round).catch((e) => e);
     await Promise.race([pending, until(() => c.sent.length === 2).catch(() => undefined)]);
     /* RED WHEN: the second approval is checked against a record the first has not written yet, and is sent too. */
     expect(c.sent).toHaveLength(1);
@@ -263,10 +263,10 @@ describe('ONE THING SENT TWICE AT ONCE IS HANDED OVER ONCE', () => {
     expect(String(second.message)).toMatch(/is being sent to the chain right now/u);
     gate.open();
     await first;
-    expect(c.record(round.id).approvals.map((a) => a.signerId)).toEqual([c.seats[0]!.signerId]);
+    expect(c.record(round.id).approvals.map((a) => a.signerId)).toEqual([c.seats[1]!.signerId]);
     /* The hold is released when the send answers: another signer is not held by it, and this one is told it has approved. */
-    await expect(c.approvalFrom(0, round)).rejects.toThrow(/already approved/u);
-    await c.approvalFrom(1, round);
+    await expect(c.approvalFrom(1, round)).rejects.toThrow(/already approved/u);
+    await c.approvalFrom(2, round);
     expect(c.sent).toHaveLength(2);
   });
 
@@ -274,17 +274,17 @@ describe('ONE THING SENT TWICE AT ONCE IS HANDED OVER ONCE', () => {
     const c = await aCompany({ threshold: 3 });
     const round = await c.aRoundOnChain();
     c.setDoor(async () => { throw new Error('the node dropped the connection'); });
-    await expect(c.approvalFrom(0, round)).rejects.toThrow(/dropped the connection/u);
+    await expect(c.approvalFrom(1, round)).rejects.toThrow(/dropped the connection/u);
     c.setDoor((_c, _b, land) => land());
     /* RED WHEN: a failed send keeps its hold - one unreachable node then refuses this signer for ever. */
-    const again = await c.approvalFrom(0, round);
-    expect(again.approvals.map((a) => a.signerId)).toEqual([c.seats[0]!.signerId]);
+    const again = await c.approvalFrom(1, round);
+    expect(again.approvals.map((a) => a.signerId)).toEqual([c.seats[1]!.signerId]);
   });
 });
 
 describe('THE LAST APPROVAL FROM A DEVICE', () => {
   it('IS RECORDED AS APPROVED WHEN THE CHAIN COUNTS IT, THOUGH NOBODY ASKS AGAIN', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.aRoundOnChain();
     /* The door answers when the transaction is handed over; the chain counts it a moment later. */
     let later: (() => Promise<unknown>) | null = null;
@@ -298,27 +298,27 @@ describe('THE LAST APPROVAL FROM A DEVICE', () => {
         return status(id);
       },
     });
-    const answered = await c.approvalFrom(0, round);
+    const answered = await c.approvalFrom(1, round);
     /* RED WHEN: the standing is read once, before the chain can have counted the approval, and never again. */
     expect(c.record(round.id).status).toBe('approved');
     expect(answered.status).toBe('approved');
-    expect(c.record(round.id).approvalRound).toEqual({ state: 'satisfied', approvals: 1, threshold: 1 });
+    expect(c.record(round.id).approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
   });
 
   it('A SEND THE CHAIN NEVER COUNTS STOPS BEING WAITED FOR, AND THE RECORD SAYS WHAT THE CHAIN SAID', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.aRoundOnChain();
     c.setDoor(async () => ({ ref: 'tx_dropped', at: new Date().toISOString() }));
     const status = c.ledger.status.bind(c.ledger);
     let reads = 0;
     Object.assign(c.ledger, { status: async (id: string) => { reads += 1; return status(id); } });
-    const answered = await c.approvalFrom(0, round);
+    const answered = await c.approvalFrom(1, round);
     /* RED WHEN: the wait is unbounded - a dropped transaction then holds the request for ever. */
     expect(reads).toBe(4);
     expect(answered.status).toBe('open');
-    expect(c.record(round.id).approvalRound).toEqual({ state: 'short', approvals: 0, threshold: 1 });
+    expect(c.record(round.id).approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
     /* The signature is still the service's to hold: the device sent it. */
-    expect(c.record(round.id).approvals.map((a) => a.signerId)).toEqual([c.seats[0]!.signerId]);
+    expect(c.record(round.id).approvals.map((a) => a.signerId)).toEqual([c.seats[1]!.signerId]);
   });
 
   it('AN APPROVAL MADE FROM HERE IS NOT WAITED ON, EVEN WHEN THE CHAIN DOES NOT ANSWER THE STANDING', async () => {
@@ -326,7 +326,7 @@ describe('THE LAST APPROVAL FROM A DEVICE', () => {
     const round = await c.aRoundOnChain();
     let reads = 0;
     Object.assign(c.ledger, { status: async () => { reads += 1; return null; } });
-    const s = c.seats[0]!;
+    const s = c.seats[1]!;
     const approved = await c.accounts.approve(round.id, s.signerId, sign(approvalMessage(round), s.signingSecret), c.viewingKey);
     /* RED WHEN: the wait for a device's transaction is applied to every approval - each then costs a chain read per attempt. */
     expect(reads).toBe(1);
@@ -334,12 +334,12 @@ describe('THE LAST APPROVAL FROM A DEVICE', () => {
   });
 
   it('AN APPROVED PROPOSAL IS NEVER GIVEN A LOWER COUNT BY A LATER APPROVAL\'S READ', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.aRoundOnChain();
-    const [ada, blake] = [c.seats[0]!, c.seats[1]!];
-    await c.accounts.approve(round.id, ada.signerId, sign(approvalMessage(round), ada.signingSecret), c.viewingKey);
-    expect(c.record(round.id).approvalRound).toEqual({ state: 'satisfied', approvals: 1, threshold: 1 });
-    /* Blake approves too, and the read after it answers from a chain that has not caught up. */
+    const [blake, cleo] = [c.seats[1]!, c.seats[2]!];
+    await c.accounts.approve(round.id, blake.signerId, sign(approvalMessage(round), blake.signingSecret), c.viewingKey);
+    expect(c.record(round.id).approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
+    /* Cleo approves too, and the read after it answers from a chain that has not caught up. */
     const status = c.ledger.status.bind(c.ledger);
     Object.assign(c.ledger, {
       status: async (id: string) => {
@@ -347,15 +347,15 @@ describe('THE LAST APPROVAL FROM A DEVICE', () => {
         return { ...answer, openProposals: answer.openProposals.map((p) => ({ ...p, approvals: 0 })) };
       },
     });
-    const after = await c.accounts.approve(round.id, blake.signerId, sign(approvalMessage(round), blake.signingSecret), c.viewingKey);
+    const after = await c.accounts.approve(round.id, cleo.signerId, sign(approvalMessage(round), cleo.signingSecret), c.viewingKey);
     /* RED WHEN: an approved record takes whatever a read says whenever nobody else wrote meanwhile. */
     expect(after.status).toBe('approved');
-    expect(after.approvalRound).toEqual({ state: 'satisfied', approvals: 1, threshold: 1 });
-    expect(after.approvals.map((a) => a.signerId)).toEqual([ada.signerId, blake.signerId]);
+    expect(after.approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
+    expect(after.approvals.map((a) => a.signerId)).toEqual([blake.signerId, cleo.signerId]);
   });
 
   it('A LATER READ THAT FAILS ENDS THE WAIT, AND THE APPROVAL STANDS', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.aRoundOnChain();
     c.setDoor(async () => ({ ref: 'tx_handed_over', at: new Date().toISOString() }));
     const status = c.ledger.status.bind(c.ledger);
@@ -367,18 +367,18 @@ describe('THE LAST APPROVAL FROM A DEVICE', () => {
         return status(id);
       },
     });
-    const answered = await c.approvalFrom(0, round);
+    const answered = await c.approvalFrom(1, round);
     /* RED WHEN: a failed later read is thrown to a device whose approval was sent and recorded - it is then told the approval failed. */
     expect(reads).toBe(2);
-    expect(answered.approvals.map((a) => a.signerId)).toEqual([c.seats[0]!.signerId]);
-    expect(c.record(round.id).approvals.map((a) => a.signerId)).toEqual([c.seats[0]!.signerId]);
+    expect(answered.approvals.map((a) => a.signerId)).toEqual([c.seats[1]!.signerId]);
+    expect(c.record(round.id).approvals.map((a) => a.signerId)).toEqual([c.seats[1]!.signerId]);
   });
 
   it('A WITHDRAWAL THAT LANDS WHILE THE STANDING IS BEING READ STAYS A WITHDRAWAL', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.aRoundOnChain();
     const held = c.holdChainRead(1);
-    const s = c.seats[0]!;
+    const s = c.seats[1]!;
     /* The chain counts the approval and answers `satisfied`; the answer is held while the proposal is withdrawn. */
     const approving = c.accounts.approve(round.id, s.signerId, sign(approvalMessage(round), s.signingSecret), c.viewingKey);
     await until(() => held.reads() === 1);
@@ -399,9 +399,9 @@ describe('A SEND IS CHECKED AGAIN AFTER THE CHAIN IS ASKED', () => {
     c.sent.length = 0;
     /* The chain holds the proposal and this record has not been told: an approval asks the chain first. */
     const held = c.holdChainRead(1);
-    const waiting = c.approvalFrom(0, round).catch((e) => e);
+    const waiting = c.approvalFrom(1, round).catch((e) => e);
     await until(() => held.reads() === 1);
-    await c.approvalFrom(0, round);
+    await c.approvalFrom(1, round);
     expect(c.sent).toHaveLength(1);
     held.open();
     const second = await waiting;
@@ -417,7 +417,7 @@ describe('A SEND IS CHECKED AGAIN AFTER THE CHAIN IS ASKED', () => {
     await c.raiseSentFrom(round);
     c.sent.length = 0;
     const held = c.holdChainRead(1);
-    const waiting = c.approvalFrom(0, round).catch((e) => e);
+    const waiting = c.approvalFrom(1, round).catch((e) => e);
     await until(() => held.reads() === 1);
     await c.accounts.cancel(round.id, c.viewingKey);
     held.open();
@@ -449,7 +449,7 @@ describe('A SEND IS CHECKED AGAIN AFTER THE CHAIN IS ASKED', () => {
   });
 
   it('A PROPOSAL SEEN ON THE CHAIN WHILE A SEND ASKED ABOUT IT IS NOT SENT AGAIN', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.raiseOnDevice();
     let arrive: (() => Promise<unknown>) | null = null;
     c.setDoor(async (_c, _b, land) => { arrive = land; return { ref: 'tx_slow', at: new Date().toISOString() }; });
@@ -556,7 +556,7 @@ describe('A WITHDRAWAL IS WRITTEN ONLY IF WHAT THE CHAIN WAS ASKED ABOUT IS STIL
   });
 
   it('ONE WHOSE ANSWER WAS "NOT ON THE CHAIN" DOES NOT CLOSE A PROPOSAL ANOTHER REQUEST HAS SINCE SEEN THERE', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     /* Raised from here: the chain call lands and its answer is lost, so the record says neither sent nor seen. */
     const propose = c.ledger.proposeRun.bind(c.ledger);
     const landing = aGate();
@@ -708,9 +708,9 @@ describe('A WITHDRAWN LEG', () => {
   });
 
   it('AN APPROVED LEG IS NOT RELEASED', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const round = await c.aRoundOnChain();
-    const s = c.seats[0]!;
+    const s = c.seats[1]!;
     expect((await c.accounts.approve(round.id, s.signerId, sign(approvalMessage(round), s.signingSecret), c.viewingKey)).status)
       .toBe('approved');
     /* RED WHEN: the release is wider than a withdrawal - an approved leg is raised a second time over the same people. */
@@ -756,7 +756,7 @@ describe('A WITHDRAWN LEG', () => {
   });
 
   it('IS NOT RAISED AGAIN WHILE AN APPROVED RETRY ON IT CAN STILL PAY', async () => {
-    const c = await aCompany({ threshold: 1 });
+    const c = await aCompany({ threshold: 2 });
     const first = await c.aRoundOnChain();
     await c.accounts.cancel(first.id, c.viewingKey);
     const rebuild = (await c.payroll.payoutRebuildOf(c.runId, c.viewingKey))!;
@@ -765,7 +765,7 @@ describe('A WITHDRAWN LEG', () => {
       detailsOf: vaultDetails,
     });
     const retry = await c.payroll.proposeRetry(c.runId, c.viewingKey, c.seats[0]!.signerId, material);
-    const s = c.seats[0]!;
+    const s = c.seats[1]!;
     expect((await c.accounts.approve(retry.id, s.signerId, sign(approvalMessage(retry), s.signingSecret), c.viewingKey)).status)
       .toBe('approved');
     /* RED WHEN: only an open retry is counted - an approved one, the one that can pay, then lets the leg be raised over it. */

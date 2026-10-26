@@ -439,8 +439,7 @@ describe('onboarding', () => {
      * one existing signer adding another freely would make the threshold
      * decorative. Propose the signer, reach the threshold, then grant.
      */
-    const seat = await h.accounts.proposeSigner(account.id, viewingKey, pending.id, present(secrets[0]).signerId);
-    await h.accounts.approve(seat.id, present(secrets[0]).signerId, sign(approvalMessage(seat), present(secrets[0]).signingSecret), viewingKey);
+    await h.accounts.proposeSigner(account.id, viewingKey, pending.id, present(secrets[0]).signerId);
 
     await h.accounts.grantAccess(account.id, viewingKey, pending.id);
     expect(h.accounts.recoverViewingKey(account.id, pending.id, wk.secret)).toBe(viewingKey);
@@ -1923,8 +1922,7 @@ describe('multi-tenancy', () => {
     expect(pending.status).toBe('pending');
     expect(h.accounts.membership(c.account.id, blake.id)).toBe(false);
 
-    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId);
-    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
+    await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId);
 
     await h.accounts.grantAccess(c.account.id, c.viewingKey, pending.id);
     expect(h.accounts.membership(c.account.id, blake.id)).toBe(true);
@@ -2131,8 +2129,6 @@ describe('the approval round, as the chain enforces it', () => {
     it('AND FINDS NONE IN WHAT AN OBSERVER ACTUALLY GETS', async () => {
       const c = await funded();
       const p = await propose(c, 12_000_00n, 'Payroll 2026-06, 8 recipients');
-      await h.accounts.approve(
-        p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
 
       const view = h.ledger.publicView();
 
@@ -2178,8 +2174,6 @@ describe('the approval round, as the chain enforces it', () => {
     const c = await funded();
     const stuck = await propose(c, 1_000_00n, 'never going to pass');
     const other = await propose(c, 2_000_00n, 'a good one');
-    await h.accounts.approve(stuck.id, present(c.secrets[0]).signerId, sign(approvalMessage(stuck), present(c.secrets[0]).signingSecret), c.viewingKey);
-    await h.accounts.approve(other.id, present(c.secrets[0]).signerId, sign(approvalMessage(other), present(c.secrets[0]).signingSecret), c.viewingKey);
 
     await h.accounts.cancel(stuck.id, c.viewingKey);
 
@@ -2197,16 +2191,24 @@ describe('the approval round, as the chain enforces it', () => {
      * a duplicate too, but the local check is bookkeeping: the chain holds the
      * nullifier set and is the only party that can say an approval has already
      * been spent, which is why `approve` calls it BEFORE writing anything down.
+     * The raise counts as its raiser's approval, so the raiser's own `approve`
+     * is the first duplicate, and another signer's is the first that counts.
      */
     const c = await funded();
     const p = await propose(c, 1_000_00n);
     const account = h.accounts.open(c.account.id, c.viewingKey);
     const by = { signerId: present(account.signers[0]).id, leaf: present(account.signers[0]).leafCommitment! };
+    const second = { signerId: present(account.signers[1]).id, leaf: present(account.signers[1]).leafCommitment! };
 
-    await h.ledger.approve(c.account.id, p.chainId, by);
+    expect(present((await openOnChain(c.account.id))[0]).approvals).toBe(1);
     await expect(h.ledger.approve(c.account.id, p.chainId, by))
       .rejects.toThrow(/already approved this proposal/i);
     expect(present((await openOnChain(c.account.id))[0]).approvals).toBe(1);
+
+    await h.ledger.approve(c.account.id, p.chainId, second);
+    await expect(h.ledger.approve(c.account.id, p.chainId, second))
+      .rejects.toThrow(/already approved this proposal/i);
+    expect(present((await openOnChain(c.account.id))[0]).approvals).toBe(2);
   });
 
   it('refuses to act for someone who is not in the on-chain signer set', async () => {
@@ -2281,10 +2283,9 @@ describe('granting access puts the signer in the on-chain set', () => {
       invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32),
       provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'be'.repeat(32)));
 
-    const seat = await h.accounts.proposeSigner(
+    await h.accounts.proposeSigner(
       c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId,
     );
-    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
     await h.accounts.grantAccess(c.account.id, c.viewingKey, blake.id);
 
     // The proposal that seated them is consumed, exactly as an execute consumes
@@ -2300,10 +2301,16 @@ describe('granting access puts the signer in the on-chain set', () => {
       payload: { entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 1_000_00n, counterparty: 'y', memo: '', at: '' }] },
       proposedBy: blake.id,
     });
-    const approved = await h.accounts.approve(p.id, blake.id, sign(approvalMessage(p), sk.secret), c.viewingKey);
-    expect(approved.approvals.map(a => a.signerId)).toEqual([blake.id]);
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([
       { id: p.chainId, change: expect.any(String), approvals: 1 },
+    ]);
+    await expect(h.accounts.approve(p.id, blake.id, sign(approvalMessage(p), sk.secret), c.viewingKey))
+      .rejects.toThrow(/already approved/);
+    const ada = present(c.secrets[0]);
+    const approved = await h.accounts.approve(p.id, ada.signerId, sign(approvalMessage(p), ada.signingSecret), c.viewingKey);
+    expect(approved.approvals.map(a => a.signerId)).toEqual([ada.signerId]);
+    expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([
+      { id: p.chainId, change: expect.any(String), approvals: 2 },
     ]);
   });
 
@@ -2358,7 +2365,6 @@ describe('granting access puts the signer in the on-chain set', () => {
       invite.token, null, sk.publicKey, wk.publicKey, wanted);
     const p = await h.accounts.proposeSigner(
       c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId);
-    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
     await h.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
 
     await expect(h.ledger.addSigner(c.account.id, other, p.chainId, by))
@@ -2393,7 +2399,6 @@ describe('granting access puts the signer in the on-chain set', () => {
       .rejects.toThrow(/not enough approvals/i);
 
     // One of two.
-    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id))
       .rejects.toThrow(/not enough approvals/i);
 
@@ -2417,10 +2422,9 @@ describe('granting access puts the signer in the on-chain set', () => {
     const wanted = mk('Blake', 'be'.repeat(32));
     const other = mk('Mallory', 'ma'.repeat(32));
 
-    const seat = await h.accounts.proposeSigner(
+    await h.accounts.proposeSigner(
       c.account.id, c.viewingKey, wanted.id, present(c.secrets[0]).signerId,
     );
-    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
 
     /*
      * The refusal comes from `approvedFor` rather than from the ledger now: an
@@ -2519,7 +2523,7 @@ describe('what the proposals table leaves in the store', () => {
       },
       proposedBy: present(c.secrets[0]).signerId,
     });
-    await h2.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
+    await h2.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
 
     const stored = readableStore((h2.store as any).data.proposals);
     expect(stored).not.toContain('Wilkinson Legal');
@@ -2745,7 +2749,6 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     const { h, c, pending, blake } = await company();
 
     const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId);
-    await h.accounts.approve(seat.id, present(c.secrets[0]).signerId, sign(approvalMessage(seat), present(c.secrets[0]).signingSecret), c.viewingKey);
     await h.accounts.approve(seat.id, present(c.secrets[1]).signerId, sign(approvalMessage(seat), present(c.secrets[1]).signingSecret), c.viewingKey);
     await h.accounts.grantAccess(c.account.id, c.viewingKey, pending.id);
 
@@ -2885,7 +2888,7 @@ describe('removing a signer', () => {
 
   /** Runs the whole round: raise, reach the threshold, remove. */
   async function removeCleo(h: ReturnType<typeof harness>, c: any) {
-    return carryOut(h, c, await raiseRemoval(h, c, 2, [0, 1]), 2);
+    return carryOut(h, c, await raiseRemoval(h, c, 2, [1]), 2);
   }
 
   it('the removed signer can no longer act on chain, which changing the locks alone could not do', async () => {
@@ -2909,7 +2912,7 @@ describe('removing a signer', () => {
 
   it('the ledger refuses a removal that has not reached the threshold', async () => {
     const { h, c } = await threeSigners();
-    const p = await raiseRemoval(h, c, 2, [0]);
+    const p = await raiseRemoval(h, c, 2, []);
 
     await expect(carryOut(h, c, p, 2)).rejects.toThrow(/approv/);
     // Nothing moved: they are still a signer on the chain and in the roster.
@@ -2933,7 +2936,7 @@ describe('removing a signer', () => {
      * thing that can invalidate it is a change to WHO is leaving.
      */
     const { h, c } = await threeSigners();
-    const p = await raiseRemoval(h, c, 2, [0, 1]);
+    const p = await raiseRemoval(h, c, 2, [1]);
 
     // Adding a signer between proposing and removing changes the survivor set,
     // so the approved digest no longer describes what would happen.
@@ -3149,7 +3152,6 @@ describe('removing a signer', () => {
 
     const p = await h.accounts.proposeThresholdChange(
       c.account.id, c.viewingKey, 3, present(ada).signerId);
-    await h.accounts.approve(p.id, present(ada).signerId, sign(approvalMessage(p), present(ada).signingSecret), c.viewingKey);
     await h.accounts.approve(p.id, present(blake).signerId, sign(approvalMessage(p), present(blake).signingSecret), c.viewingKey);
     await h.accounts.setThreshold(c.account.id, c.viewingKey, 3);
 
@@ -3164,9 +3166,8 @@ describe('removing a signer', () => {
      * stays the chain's.
      */
     const { h, c, ada } = await threeSigners();
-    const p = await h.accounts.proposeThresholdChange(
+    await h.accounts.proposeThresholdChange(
       c.account.id, c.viewingKey, 3, present(ada).signerId);
-    await h.accounts.approve(p.id, present(ada).signerId, sign(approvalMessage(p), present(ada).signingSecret), c.viewingKey);
 
     await expect(h.accounts.setThreshold(c.account.id, c.viewingKey, 3))
       .rejects.toThrow(/not enough approvals/);
@@ -3240,6 +3241,7 @@ describe('removing a signer', () => {
       SimulatedCommitments.noVault());
     const [round] = (await h.ledger.status(c.account.id))!.openProposals;
     for (const s of account.signers) {
+      if (s.id === by.signerId) continue;
       await h.ledger.approve(c.account.id, present(round).id, { signerId: s.id, leaf: s.leafCommitment! });
     }
 
@@ -3262,7 +3264,7 @@ describe('removing a signer', () => {
     const by = { signerId: present(ada).signerId, leaf: present(account.signers[0]).leafCommitment! };
     const blakeLeaf = account.signers.find(s => s.id === present(blake).signerId)!.leafCommitment!;
 
-    const p = await raiseRemoval(h, c, 2, [0, 1]);
+    const p = await raiseRemoval(h, c, 2, [1]);
 
     // Approved to remove Cleo; the ledger is asked to remove Blake, naming the
     // very proposal that approved Cleo's removal.

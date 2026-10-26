@@ -581,7 +581,7 @@ describe('the service layer meets the chain', () => {
       /* HALF ONE, AND IT WAS GREEN THROUGHOUT THE DEFECT. See the header. */
       expect(sim.isOpen(fromHex(proposal.chainId))).toBe(true);
 
-      await sim.as(device).approve(fromHex(proposal.chainId));
+      /* The raise counted the raising device's approval, which is the one approval this account needs. */
       expect(sim.approvalsFor(fromHex(proposal.chainId))).toBe(1n);
 
       /*

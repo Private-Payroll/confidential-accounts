@@ -1,7 +1,7 @@
 /**
  * **ONE RUN OF THE SIGNERS' SYSTEM, END TO END: RAISED ON A SIGNER'S DEVICE,
- * APPROVED ON ANOTHER DEVICE, CHARGED TO ITS VAULT'S PERIOD AND PAID, UNTIL THE
- * PAYMENT LANDS ON THE CHAIN.**
+ * WHICH COUNTS AS THAT SIGNER'S APPROVAL, CHARGED TO ITS VAULT'S PERIOD AND
+ * PAID, UNTIL THE PAYMENT LANDS ON THE CHAIN.**
  *
  * What is real: the devices' raise (`raiseRunOnDevice`), approval
  * (`approveOnDevice`), charge and payment (`payAnApprovedLeg`), the compiled
@@ -9,9 +9,9 @@
  * own state machine applying every transaction. The doubles are the edges: the
  * chain is held in memory, with no proof made and no fee paid; the wallets are
  * stand-ins that read the chain as a wallet does; and the service's own read of
- * the chain counts one approval more than the chain holds, so a device that
- * believed the service instead of the chain would wait for an approval that
- * never comes.
+ * the chain counts one approval more than the chain holds. The company has one
+ * signer, so a second device holding the same seat has its approval refused when
+ * it is built: the raise already counted it.
  *
  * While the run goes from raise to payment, the signers' side is given no way to
  * read who holds the contracts: every read of the account a device or the
@@ -31,7 +31,7 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { identityFromWords, newWords } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { parseAsk } from 'midnight-identity/profile/request';
+import { intentShapeOf, parseAsk, routeOf } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import { companyLabelOf, drawCompanyLabel, readAccountAddress } from 'midnight-identity/profile/company-label';
@@ -54,7 +54,7 @@ import type { SeatOpening } from '../../src/core/seat-opening.js';
 import { leavesOfTheContract } from '../../src/testing/directory-seats.js';
 import { seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
 import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifest-route.js';
-import { MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
+import { companyRecordsRoutes, MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
 import { companyRecordEntry } from '../../src/midnight/record-manifest.js';
 import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
@@ -72,7 +72,7 @@ import { signCompanyFiling, type SealedCompanyRecord } from '../../src/midnight/
 import { rolesInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { periodTotalHere, type ChargeInFlight } from 'vaults-web-shared/run-charged-here.js';
 import { periodOf } from '../../src/midnight/spending-policy-record.js';
-import { accountDeployedIn, spendingPolicyKeysOf, type AccountDeployed } from 'vaults-web-shared/governed-call-builder.js';
+import { accountDeployedIn, roundsOnChainIn, spendingPolicyKeysOf, type AccountDeployed } from 'vaults-web-shared/governed-call-builder.js';
 import {
   createCompanyVault, depositIntoCompanyVault, mergeNotesInCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   payPubliclyFromCompanyVault,
@@ -119,7 +119,7 @@ import { runRoutes } from '../../src/server/run-routes.js';
 import { openSealedRun } from '../../src/core/run-legs.js';
 import { proposalRelayRoutes } from '../../src/server/proposal-relays.js';
 import { directoryOf } from '../../src/server/seat-directory-route.js';
-import { attestedIn, directoryFilingsFrom, directoryHere, directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
+import { attestedIn, deviceSignerFrom, directoryFilingsFrom, directoryHere, directoryJudge, readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
 import { approveOnDevice, governedCallServiceFor, openTheRoundHere, raiseRunOnDevice, type GovernedCallDoors } from 'vaults-web-shared/governed-call-on-device.js';
 import type { LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
@@ -128,6 +128,7 @@ import type { PeopleHere } from 'vaults-web-shared/people-on-device.js';
 import { payAnApprovedLeg } from 'vaults-web-shared/leg-paid-here.js';
 import { anchoredOver, headsCheckedHere, onChainOf, roundsOnATestChain } from '../../src/testing/record-tree-double.js';
 import type { DirectoryChainRead } from '../../src/server/seat-directory-route.js';
+import { noOneOffsHere } from '../../src/testing/no-one-offs.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -366,6 +367,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       accountExpectedVk: (accountModule as any).expectedVk,
       /* What a vault's first secret run is made again with, where its approval is built. */
       vaultPure: (vaultModule as any).pureCircuits,
+      /* What a one-off payment's leaf is made again with, where its raise is built. */
+      vaultDetails,
       /* The vault's keys as the worker checks them before reading a vault as it was born. */
       vaultKeys: checkedAccountKeys(async (c) => await vaultZk.getVerifierKey(c) as unknown as Uint8Array, (vaultModule as any).expectedVk,
         (b) => new Uint8Array(createHash('sha256').update(b).digest()), 'the vault'),
@@ -547,7 +550,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     /*
      * The routes a run drawn and raised on a device is filed and relayed through, over this chain: the company's
      * directory as the service reads it, and the account's open proposals and approvals as the chain holds them. A
-     * raise is relayed by applying it to this chain. The vault's public money is not asked here: a private leg spends none.
+     * raise is relayed by applying it to this chain. The service is told nothing of what a raise pays: the raising device
+     * checks the vault's money itself.
      */
     const directoryNow = (id: string) => directoryOf(store, directoryChain, id);
     app.use(runRoutes({ signedIn, member, store, directoryOf: directoryNow, wiring: () => 'simulated' }));
@@ -577,10 +581,11 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       },
       recordRefusal: () => undefined, wiring: () => 'simulated',
       proposalIdOf: (h, salt, v) => MidnightCommitments.proposalId(h as Hex, salt as Hex, v as Hex | undefined),
-      publicMoney: async () => undefined,
     }));
     /* The company's proposals as the service lists them, where a vault's start finds its own. */
     app.get('/api/accounts/:id/proposals', signedIn, member, (req, res) => { res.json(store.listProposals(String(req.params.id))); });
+    app.get('/api/accounts/:id/runs', signedIn, member, (req, res) => { res.json(store.listRuns(String(req.params.id))); });
+    app.use(companyRecordsRoutes({ signedIn, member, records: companyRecords, accountOf: (id) => store.getAccount(id), directoryOf: directoryNow }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
       company: async () => ({
@@ -708,7 +713,9 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   };
 
   /** A vault born held by the committee, started, its pool open, and 1,000 in it: the existing path, run to its end. */
-  const aFundedVault = async (): Promise<{ vault: Hex; note: { nonce: Hex; token: Hex; value: bigint } }> => {
+  const aFundedVault = async (
+    as: { readonly me: DeviceSigner; readonly signers: () => Promise<Array<{ id: string; wrappingPublicKey: string }>> } = { me, signers },
+  ): Promise<{ vault: Hex; note: { nonce: Hex; token: Hex; value: bigint } }> => {
     await keysFoldedIntoTheRoster(store, ACCOUNT_ID, viewingKey, LABEL, company, 'ada', signVaultKeys(ACCOUNT_ID, 'ada', {
           committeeKey: committeeKeyFor(identityFromWords(words), LABEL), recordsKey: recordsReaderOf(me.companyKey).publicKey,
           ...((st) => ({ recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex }))(
@@ -716,7 +723,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         }, signing.secret));
     const poolDoors = {
       ...pacing, service, builder: builder(), account: readAccountAddress(company)!, onChain: walletReads,
-      me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+      me: as.me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers: as.signers, records,
     };
     /* The founding signer's press, with who holds the account as their wallet read it off the chain just then. */
     const press = (resume?: Hex) => createCompanyVault({
@@ -786,9 +793,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       accountCircuits.runPayload(fromHex(rootOfTestLeaves(leaves, leaves.map(() => amount), fromHex(token))), BigInt(leaves.length), w.from, w.until, 0n), fromHex(vault), c.salt));
     const id = idFrom(run.tree.leaves, window);
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
-    /* No approvals beyond the vault's bar: `required` is nothing. */
+    /* No approvals beyond the vault's bar: `required` is nothing. The founding seat's raise is its own approval. */
     await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault)], staged);
-    await callAccount('approve', [fromHex(id)], founder);
     const paidNow = () => new Set(run.tree.leaves.filter((leaf) =>
       accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))));
     const order = () => {
@@ -814,8 +820,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
    *     (that is driven in `src/server/a-leg-is-raised-on-the-device.test.ts`), each with an address their own keys make;
    *   · the company's first state, signed by the founding seat's filing key, is kept here rather than filed;
    *   · the device's proving of the raise is building the account's own `propose` call from the founding signer's
-   *     private state with exactly the order the device made; the approval is the founding signer's own `approve` call, after the
-   *     approving device opened the proposal and ran every raise check on it;
+   *     private state with exactly the order the device made; that raise is the founding signer's approval, and a second
+   *     device's `approve` call, after it opened the proposal and ran every raise check on it, is refused as a second one;
    *   · the vault's private money is not asked before the raise: the payment itself refuses what the vault cannot pay;
    *   · the company's ceilings are none (`policy`), and who the account records paid is read straight off this chain's
    *     account (`paidAmong`, and the wallet's `payments.read`), as the person's own wallet reads it; `paidYet` is never
@@ -857,6 +863,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     /* One first state per company: every device reads the same blinding the founding seat signed. */
     const firstState = firstStateKept ??= signedFoundingState(ACCOUNT_ID, sealState({ entries: [] }, newStateBlinding(), viewingKey, 0), signing.secret);
     return {
+      oneOffs: noOneOffsHere(),
       directory: (asked) => directoryHere({
         accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
         holders: async () => withoutWhoHolds('a device\'s read of the account', { ...holdersRead(), account: company as never }),
@@ -1016,14 +1023,15 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     const round = raiseRunOnDevice(raisingOn(here), { runId: drawn.id, viewingKey, vault, opensAt: String(opensAt), closesAt: String(closesAt) });
     return { drawn, round };
   };
-  /** Approved: the approving device opens it and runs every raise check, then the founding signer approves it with its opening. */
+  /**
+   * Approved: the founding signer's raise was its approval, which meets the bar of a company with one signer. The
+   * approving device still opens it and runs every raise check, and the opening it makes is the run's own.
+   */
   const approved = async (roundId: string, here: CompanyRecordsHere, vault: Hex) => {
     const proposal = store.getProposal(roundId)!;
     const opened = await openTheRoundHere({ ...governedCallServiceFor(api), sealedProposals: async () => store.listProposals(ACCOUNT_ID) },
       ACCOUNT_ID, roundId, viewingKey, false, here);
-    await callAccount('approve', [fromHex(proposal.chainId)], {
-      ...founder, runOpenings: { [proposal.chainId]: { payload: fromHex(opened.digest), vault: fromHex(vault), salt: fromHex(opened.salt) } },
-    } as never);
+    expect(toHex(accountCircuits.proposalIdOf(fromHex(opened.digest), fromHex(vault), fromHex(opened.salt)))).toBe(proposal.chainId.toLowerCase());
     return proposal;
   };
 
@@ -1055,8 +1063,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   /**
    * A vault made, funded and given a spending policy; then, the signers'
    * system alone: Dana's run raised on the founding signer's device at its
-   * band, approved on a second device that raised nothing, charged to its
-   * period and paid there. Returns what each step left, and every reach for
+   * band (the raise is the signer's approval; a second device holding the same
+   * seat is refused an approval of its own), charged to its period and paid there. Returns what each step left, and every reach for
    * who holds the contracts made before the payment and after it.
    */
   const raisedApprovedChargedAndPaid = async () => {
@@ -1098,12 +1106,11 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     /* RED WHEN: a run from a vault under a policy is raised needing none of the approvals its band needs. */
     expect.soft(t.leg.required).toBe(1n);
     /*
-     * RED WHEN: the approving device counts the approvals already given, or the
-     * ones after its own, from the service's answer and not from the chain: the
-     * service's read here counts one more than the chain holds, so the device
-     * either waits for an approval that never comes or reports one never given.
+     * The company has one signer, whose raise on the first device already counted as their approval and meets
+     * the band's one. The second device holds the same seat, so its approval is refused when it is built, before
+     * anything is sent. RED WHEN: the raise stops counting its raiser, or the raiser's approval counts twice.
      */
-    expect.soft(t.approval instanceof Error ? t.approval.message : t.approval.approvalCount).toBe(1);
+    expect.soft(t.approval instanceof Error ? t.approval.message : 'an approval was sent').toMatch(/you have already approved this proposal/);
     /* RED WHEN: the raise or the approval reads who holds the contracts, on a device or at the service; the payment is the next test's. */
     expect.soft(t.readsBeforePaying).toEqual([]);
     /*
@@ -1135,6 +1142,122 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
    * the chain answered for each contract's state, so from the raise to the
    * payment landing it reaches for no contract's maintenance authority.
    */
+  /*
+   * The wallet's own one-off payment, run step by step as the wallet runs it: its seat read, the raise, the charge and
+   * the payment, over the same ledger and the same service routes. The company's shared upkeep is left to its own tests.
+   */
+  const oneOffInTheWallet = async () => {
+    /* Named through a variable so the scripts' typecheck, which does not resolve the wallet's own packages, does not follow it. */
+    const walletAction = '../../apps/wallet/src/actions/one-off-payment.js';
+    const { oneOffPaymentAction } = await import(walletAction) as { oneOffPaymentAction: (reach: Record<string, unknown>) => {
+      check(intent: unknown, held: unknown): Promise<unknown>; steps(intent: unknown): ReadonlyArray<{ run(ctx: unknown): Promise<void> }>;
+    } };
+    const here = recordsHere([]);
+    const leaf = hex(leafOfDevice(founder));
+    const wallet = deviceSignerFrom(leaf, toHex(me.companyKey) as Hex);
+    const { vault } = await aFundedVault({ me: wallet, signers: () => readersIn(here.directory).signers() as never });
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const set = await setSpendingPolicyOnDevice(governingOn(here) as never, { viewingKey, vault, asset: TOKEN as never, terms: policyTermsAt(now) });
+    if (set.state !== 'done') throw new Error('the vault\'s spending policy was not set, so the one-off is not charged');
+    await companyRecords.put(firstStateKept!);
+    const judge = directoryJudge({
+      accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
+      holders: async () => ({ ...holdersRead(), account: company as never }),
+      attested: async () => attestedIn(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
+      anchored: anchoredOver(api, ACCOUNT_ID, () => onChainOf([], { approvals: 1, seats: [] }, deployRead())),
+      leaves: leavesOfTheContract,
+    });
+    const chainIdsOnChain = (chainIds: readonly string[]) => Object.fromEntries(roundsOnChainIn(
+      { accountPure: accountCircuits, accountLedger: (accountModule as any).ledger, runtimeState: (runtime as any).ContractState },
+      [{ kind: 'call', transaction: 'now', state: chain.contract(company).serialize(), block: { height: 1, at: Date.now() }, succeeded: true }], chainIds,
+    ));
+    const calls: string[] = [];
+    const told: Record<string, unknown> = {};
+    const keys = { epoch: 0, key: viewingKey, newest: 0, keyAt: () => viewingKey, sealing: () => ({ key: viewingKey, epoch: 0 }), seeds: [] };
+    const reach = {
+      accountId: ACCOUNT_ID, label: LABEL, account: company, leaf, companyKey: toHex(me.companyKey),
+      seat: { signerId: 'ada', signingSecret: signing.secret, wrappingSecret: wrapping.secret, blinding: hex(founder.blinding), scope: hex(founder.scope) },
+      api, send: wire, stepTo: () => {}, holders: async () => holdersRead(), sealed: store.getAccount(ACCOUNT_ID), served: () => viewingKey, companyKeys: keys,
+      roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+      judges: { directoryHereFor: () => here.directory, filingJudgeFor: () => judge, leavesFor: () => leavesOfTheContract },
+      builder: { ...builder(), roundsOnChain: async ({ chainIds }: { chainIds: readonly string[] }) => chainIdsOnChain(chainIds) },
+      chain: {
+        indexer: { indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' },
+        holders: async () => holdersRead(),
+        callState: async () => ({
+          blockHash: '00'.repeat(32), accountState: base64FromBytes(chain.contract(company).serialize()),
+          parameters: base64FromBytes(L.LedgerParameters.initialParameters().serialize()),
+        }),
+        payments: async (_a: string, _l: string, entries: readonly string[]) => {
+          const l = accountLedgerOf(chain.contract(company));
+          return { payKeyCommitment: null, held: entries.filter((e) => l.movements.member(fromHex(e))), openRounds: [], entries: Number(l.movements.size()) };
+        },
+        roles: async (_a: string, _l: string, asked: readonly string[]) => rolesInAccountState(chain.contract(company).serialize(), asked),
+      },
+    };
+    const payeeKeys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
+    const payee = payeeAddressFromKeys({ coinPublicKey: payeeKeys.coinPublicKey as Hex, encryptionPublicKey: payeeKeys.encryptionPublicKey as Hex }, NET).bech32;
+    const action = oneOffPaymentAction({
+      chain: () => reach.chain as never, builder: () => reach.builder as never, now: () => Date.now(), pause: async () => {},
+      secrets: () => ({ held: async () => null, keep: async () => {}, drop: async () => {} }), reachFor: async () => reach as never,
+      kept: () => ({ payments: paymentsInFlight(), charges: sealedOnThisDevice<ChargeInFlight>(inFlightRecordsInMemory(), { signerId: 'ada', wrappingSecret: newWrappingKeypair().secret }, 'charge') }),
+      assets: new StaticAssetRegistry([PAY_ROW]), network: NET, waitMs: 50, everyMs: 1,
+    });
+    const intent = { name: 'one-off-payment', fields: {
+      record: ACCOUNT_ID, company: LABEL, account: company, vault, token: TOKEN, amount: '250', payee, payeeName: 'Acme Printing', reason: 'Business cards',
+    } } as never;
+    const ctx = {
+      intent, asker: { origin: 'https://payroll.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'ada', held: {},
+      at: { step: 1, steps: 6 }, signal: new AbortController().signal,
+      relay: async () => { throw new Error('the one-off hands nothing over but through its calls'); },
+      call: async (method: string, path: string, body?: string) => {
+        calls.push(`${method} ${path}`);
+        if (body !== undefined) sent.push(body);
+        const r = await fetch(base + path, { method, ...(body === undefined ? {} : { body }), headers: { 'content-type': 'application/json', 'x-test-person': 'ada' } });
+        return { status: r.status, body: await r.json().catch(() => ({})) };
+      },
+      tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
+    } as never;
+    const before = chain.applied.length;
+    const known = new Set(store.listProposals(ACCOUNT_ID).map((p) => p.id));
+    const refused = await (async () => {
+      if (await action.check(intent, {} as never) !== null) return 'checked';
+      const steps = action.steps(intent);
+      for (const i of [0, 2, 3, 4]) await steps[i]!.run(ctx);
+      return null;
+    })().catch((e: unknown) => (e as { words?: { key: string; values?: unknown } }).words ?? String(e));
+    const proposal = store.listProposals(ACCOUNT_ID).find((p) => !known.has(p.id));
+    const open = accountLedgerOf(chain.contract(company)).openProposals;
+    return {
+      refused, told, calls, vault, payee, proposal,
+      landed: chain.applied.slice(before).map((a) => [a.ok, a.error]),
+      payments: vaultLedgerOf(chain.contract(vault)).payments as bigint,
+      charged: proposal === undefined || !open.member(fromHex(proposal.chainId)) ? null : hex(open.lookup(fromHex(proposal.chainId))) === hex(accountCircuits.clearedMark()),
+    };
+  };
+
+  /* Needs contracts/managed/keys and contracts/managed-vault/keys, as this file's other cases do: `npm run compact`, then `npm run compact:vault -- --full`, build them. */
+  it('a one-off payment made in the wallet\'s own action at one approval is raised, charged to its period and paid on the chain',
+    { timeout: 120_000 }, async () => {
+    sent = [];
+    const t = await oneOffInTheWallet();
+    /* RED WHEN: the wallet has no one-off payment action, or a step of it stops. */
+    expect.soft(t.refused).toBeNull();
+    expect.soft(t.told).toMatchObject({ state: 'paid', approvals: 1, needed: 1 });
+    /* RED WHEN: the raise, the charge or the payment does not land on the ledger. */
+    expect.soft(t.landed.length).toBeGreaterThanOrEqual(3);
+    expect.soft(t.landed.every(([ok]) => ok)).toBe(true);
+    /* RED WHEN: the vault pays nothing, or pays twice. */
+    expect.soft(t.payments).toBe(1n);
+    /* RED WHEN: a payment out of a vault under a spending policy is made without its charge to the period. */
+    expect.soft(t.charged).toBe(true);
+    /* RED WHEN: the action calls the service through a route its entry does not list, which the page would refuse. */
+    const shape = intentShapeOf('one-off-payment')!;
+    for (const c of t.calls) expect.soft(routeOf(shape, c.split(' ')[0]!, c.split(' ')[1]!), c).not.toBeNull();
+    /* RED WHEN: the payee's address, name or the reason reaches the service in the clear. */
+    for (const said of [t.payee, 'Acme Printing', 'Business cards']) expect.soft(sent.filter((b) => b.includes(said)), said).toEqual([]);
+  });
+
   it('the service pays the fee on a payment without reading who holds the vault or the account',
     { timeout: 120_000 }, async () => {
     const t = await raisedApprovedChargedAndPaid();
