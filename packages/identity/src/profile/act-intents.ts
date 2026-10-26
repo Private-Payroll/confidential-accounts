@@ -4,11 +4,10 @@
  * An `act` ask names one of these and the ids and amounts it acts on, and
  * nothing else: the wallet reads the chain itself, builds every transaction
  * itself and hands each back for the page to send. So every field an action
- * takes is one of the kinds below: an id or an amount the wallet can check
- * on its own, or a short text the wallet shows as the page's words, and none
- * of them is bytes the page built. An action not
- * named here is refused before anything is shown, and so is a field its
- * entry does not name.
+ * takes is one of the kinds below: an id or an amount the wallet can check on
+ * its own, or a short text the wallet shows as the page's words, and none of
+ * them is bytes the page built. An action not named here is refused before
+ * anything is shown, and so is a field its entry does not name.
  *
  * Adding an action is one entry here (its fields and their kinds, and what
  * each transaction it hands back is for) and one definition of the same name
@@ -17,12 +16,13 @@
 
 /**
  * What one field of an action may be: a company's label, its account, a vault,
- * a seat, an amount, a private token (`token`, its sixty-four hex characters
- * as the ledger names it), the service's own name for a company's record
- * (`record`, a short id the wallet only ever uses to say which record it asks
- * the page for, and checks nothing by), or the page's own words (`words`, a
- * short text such as a vault's name, which the wallet shows as the page's and
- * never treats as anything it read itself).
+ * a seat, an amount, a currency (`token`, sixty-four hex characters: a private
+ * token as the ledger names it, or the asset a one-off payment is made in), the
+ * service's own name for a company's record (`record`, a short id the wallet
+ * only ever uses to say which record it asks the page for, and checks nothing
+ * by), or the page's own words (`words`, a short text such as a vault's name,
+ * which the wallet shows as the page's and never treats as anything it read
+ * itself).
  */
 export type IntentFieldKind = 'company' | 'account' | 'vault' | 'seat' | 'amount' | 'token' | 'record' | 'words';
 
@@ -30,13 +30,16 @@ export type IntentFieldKind = 'company' | 'account' | 'vault' | 'seat' | 'amount
  * A call to the service an action may ask the page to make for it, and the
  * only calls it may: the method, and the path with `:name` standing for one
  * path segment. `sends` marks a call that carries a transaction to the chain,
- * which is counted with the relays. Every answer is the page's word, which the
- * wallet checks before it relies on it.
+ * which is counted with the relays; `sendsWith: 'tx'` marks one that carries a
+ * transaction only when its body names one (`sendsIn`). Every answer is the
+ * page's word, which the wallet checks before it relies on it.
  */
 export interface CallRoute {
   readonly method: 'GET' | 'PUT' | 'POST';
   readonly path: string;
   readonly sends?: boolean;
+  /** A call to it sends only when its body carries a transaction under this name. */
+  readonly sendsWith?: 'tx';
   /** The only query parameters a call to it may carry, each once with a plain value; none unless named. */
   readonly query?: readonly string[];
 }
@@ -88,6 +91,25 @@ export function routeOf(shape: IntentShape, method: string, path: string): CallR
     if (want.every((w, i) => (w.startsWith(':') ? true : w === parts[i]))) return route;
   }
   return null;
+}
+
+/**
+ * Whether one call to `route` with `body` hands a transaction to the chain, the one rule both the wallet and the page
+ * count sends by. A route marked `sendsWith` sends only when the body names a transaction, so a proposal written down
+ * with nothing for the chain is never counted as handed over; a body that does not read as JSON is counted as a send,
+ * since it cannot be shown to carry nothing.
+ */
+export function sendsIn(route: CallRoute, body: string | undefined): boolean {
+  if (route.sends !== true) return false;
+  if (route.sendsWith === undefined) return true;
+  if (body === undefined) return false;
+  try {
+    const read = JSON.parse(body) as Record<string, unknown> | null;
+    const carried = read === null || typeof read !== 'object' ? undefined : read[route.sendsWith];
+    return typeof carried === 'string' && carried.length > 0;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -157,7 +179,7 @@ const UPKEEP_OUTCOME = Object.freeze({ upkeep: 'code' as const, anchored: 'count
 const CREATE_VAULT_CALLS: readonly CallRoute[] = Object.freeze([
   ...COMPANY_RECORD_CALLS,
   { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
-  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
   { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/carried' },
   { method: 'POST', path: '/api/accounts/:record/vaults', sends: true },
@@ -192,6 +214,40 @@ const PRIVATE_DEPOSIT_CALLS: readonly CallRoute[] = Object.freeze([
   { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
   { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/deposit', sends: true },
+  ...UPKEEP_CALLS,
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/**
+ * What a one-off payment asks of the page: the company's records it reads to believe the vault, the policy, the
+ * proposals, the runs and the one-off's own record; the one-off's record and the manifest entries it files; the vault's
+ * records it reads and files for the payment; and the calls that send the raise, an approval, the charge to the
+ * vault's period and the payment. None of them carries the amount, payee or name in the clear, except a public
+ * payment's own transaction, which shows them as every public payment does.
+ */
+const ONE_OFF_PAYMENT_CALLS: readonly CallRoute[] = Object.freeze([
+  { method: 'GET', path: '/api/accounts/:record' },
+  { method: 'GET', path: '/api/accounts/:record/directory' },
+  { method: 'GET', path: '/api/accounts/:record/proposals' },
+  { method: 'GET', path: '/api/accounts/:record/runs' },
+  { method: 'POST', path: '/api/accounts/:record/manifest/entries' },
+  { method: 'POST', path: '/api/accounts/:record/manifest/newest' },
+  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs' },
+  { method: 'GET', path: '/api/accounts/:record/manifest/tree/pending', query: ['root'] },
+  { method: 'GET', path: '/api/accounts/:record/manifest/tree/headers', query: ['after', 'limit'] },
+  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id' },
+  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
+  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/:version' },
+  { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind/versions' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
+  { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/charge', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/payout', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/public-payout', sends: true },
   ...UPKEEP_CALLS,
 ].map((r) => Object.freeze(r)) as CallRoute[]);
 
@@ -240,6 +296,26 @@ export const ACT_INTENTS = Object.freeze({
     }),
     calls: PRIVATE_DEPOSIT_CALLS,
     outcome: Object.freeze({ vault: 'vault' as const, state: 'code' as const, created: 'vault' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /**
+   * Pay `amount` of the currency `token` out of `vault` to the address `payee`, once: the proposal raised, the
+   * one-off's record sealed to the signers and filed, and, when the chain shows the approvals it needs, the payment
+   * charged to the vault's period (if the vault has a spending policy) and paid, with the upkeep every seat action does.
+   * `payee`, `payeeName` and `reason` are the page's words, checked by the wallet. Or carry on a one-off already raised
+   * (`proposal`), named beside the same payment fields: the wallet opens its sealed record, refuses it unless it is that
+   * payment, offers this seat's approval, and charges and pays it as far as the company's account accepts.
+   * It tells the page where the payment got to, the approvals the chain shows and how many it needs, whether the upkeep
+   * was all done and how many records it anchored.
+   */
+  'one-off-payment': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const,
+      token: 'token' as const, amount: 'amount' as const, payee: 'words' as const, payeeName: 'words' as const, reason: 'words' as const,
+      proposal: 'record' as const,
+    }),
+    optional: Object.freeze(['vault', 'token', 'amount', 'payee', 'payeeName', 'reason', 'proposal']),
+    calls: ONE_OFF_PAYMENT_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, charge: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
 }) satisfies Readonly<Record<string, IntentShape>>;
 

@@ -253,8 +253,8 @@ describe('2. A SHORTFALL IS "DOES NOT FIT" BY ITS TYPE, WHATEVER ITS WORDS', () 
 const LEG = { asset: PAY, payments: [0, 1].map(() => ({ kind: 'shielded', token: PAY as string, amount: '100' })) };
 const RUN = { root: '88'.repeat(32), payees: '2', opensAt: '1', closesAt: '2', vault: VAULT as string };
 const HALF = { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32), changeAmount: '1', changeBatchDigest: '77'.repeat(32) };
-/* What a proposal written down for `payments` commits to paying, under RUN's vault and HALF's salt. */
-const paysFor = (payments: typeof LEG.payments): string => paysCommitmentOf({ vault: VAULT, asset: PAY, payments }, HALF.proposalSalt);
+/* What a proposal written down for `payments` commits to paying, under RUN's vault and HALF's salt and asset blinding. */
+const paysFor = (payments: typeof LEG.payments): string => paysCommitmentOf({ vault: VAULT, asset: PAY, payments }, HALF.proposalSalt, HALF.assetBlinding);
 const ORDER: RaiseOrderOnTheWire = {
   proposalId: 'prp_1', chainId: 'cc'.repeat(32),
   order: { circuit: 'propose', run: RUN, half: HALF, proposal: 'cc'.repeat(32) },
@@ -298,8 +298,10 @@ describe('3. THE DEVICE REFUSES A LEG WHOSE PAYMENTS ARE NOT WHAT THE SERVICE WI
     ['an amount changed', { ...ORDER, pays: paysFor([LEG.payments[0]!, { ...LEG.payments[1]!, amount: '101' }]) }],
     ['one payment fewer', { ...ORDER, pays: paysFor(LEG.payments.slice(1)) }],
     ['no commitment at all', { ...ORDER, pays: undefined as never }],
-    ['another salt', { ...ORDER, pays: paysCommitmentOf({ vault: VAULT, asset: PAY, payments: LEG.payments }, '67'.repeat(32)) }],
-    ['another vault', { ...ORDER, pays: paysCommitmentOf({ vault: '98'.repeat(32), asset: PAY, payments: LEG.payments }, HALF.proposalSalt) }],
+    ['another salt', { ...ORDER, pays: paysCommitmentOf({ vault: VAULT, asset: PAY, payments: LEG.payments }, '67'.repeat(32), HALF.assetBlinding) }],
+    ['another vault', { ...ORDER, pays: paysCommitmentOf({ vault: '98'.repeat(32), asset: PAY, payments: LEG.payments }, HALF.proposalSalt, HALF.assetBlinding) }],
+    /* RED WHEN: the commitment a sent raise is held to is not keyed with the company's asset blinding. */
+    ['another asset blinding', { ...ORDER, pays: paysCommitmentOf({ vault: VAULT, asset: PAY, payments: LEG.payments }, HALF.proposalSalt, '56'.repeat(32)) }],
   ] as const) {
     it(`refuses a raise before anything is built or sent: ${why}`, async () => {
       const s = aSender(order);
@@ -436,14 +438,28 @@ describe('8. THE BACKGROUND THREAD\'S "payments-fit" STEP AND THE DEVICE READER\
     });
   });
 
-  it('leaves public money to the service, on both questions', async () => {
-    const device = theDevice(one, one);
-    expect((await device.held(VAULT, 'unshielded', PAY)).of).toBe('unreadable');
-    /* RED WHEN: a run with a public payee is walked through the notes, which know nothing of public money. */
-    expect((await device.fits(VAULT, [{ payee: { kind: 'unshielded' }, token: PAY, amount: 1n }])).of).toBe('unreadable');
+  it('reads public money from the same read of the vault, on both questions, and never through the notes', async () => {
+    const noWalk = { paymentsFit: async () => { throw new Error('public money is not walked through the notes'); } };
+    const silent = theDevice(one, one, noWalk);
+    /* RED WHEN: a read of the vault that carries no list of public money is read as holding none. */
+    expect(await silent.held(VAULT, 'unshielded', PAY)).toEqual({ of: 'unreadable', why: 'the read of the chain did not say what this vault holds in public money' });
+    const device = theDevice(one, one, {
+      ...noWalk,
+      chain: async () => ({ onChain: true, notesFromThisBuild: true, notes: [], publicBalances: [{ token: PAY, amount: '5' }] }) as ChainNotesView,
+    });
+    /* RED WHEN: the vault's public money is not read off the read of the vault, so a public payment is checked by nobody. */
+    expect(await device.held(VAULT, 'unshielded', PAY)).toEqual({ of: 'held', amount: 5n });
+    expect(await device.fits(VAULT, [{ payee: { kind: 'unshielded' }, token: PAY, amount: 5n }])).toEqual({ of: 'fits' });
+    /* RED WHEN: public payments that add up to more than the vault holds publicly are said to fit. */
+    expect((await device.fits(VAULT, [
+      { payee: { kind: 'unshielded' }, token: PAY, amount: 3n }, { payee: { kind: 'unshielded' }, token: PAY, amount: 3n },
+    ])).of).toBe('does-not-fit');
     /* RED WHEN: a run that pays both ways has its public payment walked through the notes. */
     expect((await device.fits(VAULT, [
       { payee: { kind: 'shielded' }, token: PAY, amount: 1n }, { payee: { kind: 'unshielded' }, token: PAY, amount: 1n },
     ])).of).toBe('unreadable');
+    /* RED WHEN: a read that fails is read as no public money rather than as unreadable. */
+    const failing = theDevice(one, 'unreadable', noWalk);
+    expect((await failing.held(VAULT, 'unshielded', PAY)).of).toBe('unreadable');
   });
 });

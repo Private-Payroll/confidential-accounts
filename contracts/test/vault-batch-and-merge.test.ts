@@ -113,7 +113,7 @@ class World {
 
   /**
    * A run over these leaves at these amounts, naming `runVault` (this vault unless named), approved
-   * by both signers: what a batch step hands the account, and each leaf's path.
+   * by both signers (A by raising it): what a batch step hands the account, and each leaf's path.
    */
   async run(leaves: Array<{ leaf: Uint8Array; amount: bigint }>, seed: number, runVault = this.self) {
     const tree = sumTreeOfLeaves(leaves.map((l) => toHex(l.leaf) as Hex), leaves.map((l) => l.amount), toHex(TOKEN) as Hex);
@@ -121,7 +121,7 @@ class World {
     const payees = BigInt(leaves.length);
     await this.sim.as(this.sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees, from: OPENS, until: CLOSES, vault: runVault });
     const id = this.sim.proposalId(P.runPayload(fromHex(tree.root), payees, OPENS, CLOSES, 0n), c.salt, runVault);
-    for (const s of [A, B]) await this.sim.as(this.sim.applying(s, c)).approve(id);
+    for (const s of [B]) await this.sim.as(this.sim.applying(s, c)).approve(id);
     const base = { proposal: id, runVault, root: fromHex(tree.root), payees, opensAt: OPENS, closesAt: CLOSES, required: 0n, salt: c.salt };
     return { id, base, pathFor: tree.pathFor };
   }

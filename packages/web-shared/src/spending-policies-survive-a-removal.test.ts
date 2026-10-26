@@ -27,6 +27,7 @@ import {
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import type { OpenedRound } from './governed-call-builder.js';
 import * as onDevice from './governed-call-on-device.js';
+import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
 
 /* What each proposal opens as on this device: what this file says it raised. Opening real proposals is not this file's subject. */
 const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string) => Promise<OpenedRound> }));
@@ -104,6 +105,7 @@ const recordsOf = (w: World): CompanyRecordsHere => {
   } as never, ADA.filing.secret);
   const notHere = async () => { throw new Error('not read here'); };
   return {
+    oneOffs: noOneOffsHere(),
     directory: async () => {
       const dirOf = (seats: readonly SeatAs[], version: number) => ({ company: COMPANY, version, seats: seats.map(seatRow) });
       const believed = {

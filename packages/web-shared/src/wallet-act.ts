@@ -1,5 +1,5 @@
 import { ACT_CALLED_SCHEMA, ACT_KEPT_SCHEMA, ACT_RELAYED_SCHEMA, MOST_ACT_STEPS, PROGRESS_SCHEMA } from 'midnight-identity/profile/channel';
-import { intentShapeOf, readActCall, readActEnded, readActKeep, readActRelay, routeOf } from 'midnight-identity/profile/act-channel';
+import { intentShapeOf, readActCall, readActEnded, readActKeep, readActRelay, routeOf, sendsIn } from 'midnight-identity/profile/act-channel';
 import type { KeyringHandedIn, SealedKeyring } from 'midnight-identity/profile/unlock';
 import type { ServedHandedIn } from 'midnight-identity/profile/request';
 import type { ActEnded, ActStop, StepAt } from 'midnight-identity/profile/channel';
@@ -275,7 +275,8 @@ export async function actInTheWallet(
       expectedCall += 1;
       const route = shape === undefined ? null : routeOf(shape, calling.method, calling.path);
       if (route === null || asked.call === undefined) { log(`${called} is not on the action's list, refused`); acknowledgeCall(calling.n, null); return; }
-      if (route.sends === true) handedOver += 1;
+      const sends = sendsIn(route, calling.body);
+      if (sends) handedOver += 1;
       at = { step: calling.step, steps: calling.steps };
       log(`${under(calling)}: ${called}`);
       relaying = relaying.then(async () => {
@@ -288,7 +289,7 @@ export async function actInTheWallet(
           log(`${under(calling)}: ${called} failed: ${errorLine(e)}`);
           answer = null;
         }
-        if (answer !== null && route.sends === true && answer.status >= 200 && answer.status < 300) relayed += 1;
+        if (answer !== null && sends && answer.status >= 200 && answer.status < 300) relayed += 1;
         log(`${under(calling)}: ${called} ${answer === null ? 'refused' : `answered ${answer.status}`} (${counts()})`);
         acknowledgeCall(calling.n, answer);
       });

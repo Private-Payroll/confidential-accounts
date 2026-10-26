@@ -82,7 +82,7 @@ const live = async (devices = [A, B, C], threshold = 2n) => {
   return sim;
 };
 
-/** Sets `vault`'s policy for `asset` under a round raised by A and approved by `approvers`. */
+/** Sets `vault`'s policy for `asset` under a round raised by A (which counts as A's approval) and approved by `approvers`. */
 const setPolicyOn = async (
   sim: AccountSimulator, vault: Uint8Array, policy: PolicyOpening, seed: number,
   asset: Uint8Array = TEST_TOKEN_BYTES, approvers = [A, B],
@@ -92,7 +92,7 @@ const setPolicyOn = async (
   const payload = pureCircuits.setPolicyPayload(vault, assetKeyOf(asset), commitment);
   await sim.as(sim.applying(A, c)).propose(payload);
   const id = sim.proposalId(payload, c.salt);
-  for (const a of approvers) await sim.as(a).approve(id);
+  for (const a of approvers.filter((d) => d !== A)) await sim.as(a).approve(id);
   /* The device that carries it out holds the policy, which the chain opens for its highest band. */
   return { apply: () => sim.as({ ...sim.applying(A, c), policy }).setPolicy(vault, commitment, id), commitment, id };
 };
@@ -111,7 +111,7 @@ const freshOf = (seed: number) => bytes(seed + 300);
 const runChange = (seed: number, asset: Uint8Array = TEST_TOKEN_BYTES): Change =>
   ({ ...change(0n, seed, asset), salt: pureCircuits.retrySaltOf(NO_LEG(), freshOf(seed)) });
 
-/** Raises a run of `amounts` naming `vault`, and approves it by `approvers`. */
+/** Raises a run of `amounts` naming `vault` as A, which counts as A's approval, and approves it by the other `approvers`. */
 const raise = async (
   sim: AccountSimulator, vault: Uint8Array, amounts: bigint[], seed: number,
   opts: { required?: bigint; from?: bigint; until?: bigint; asset?: Uint8Array; approvers?: typeof A[]; payments?: PayoutLeafInput[] } = {},
@@ -125,7 +125,7 @@ const raise = async (
   });
   const id = sim.proposalId(
     pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, required), c.salt, vault);
-  for (const a of approvers) await sim.as(sim.applying(a, c)).approve(id);
+  for (const a of approvers.filter((d) => d !== A)) await sim.as(sim.applying(a, c)).approve(id);
   return { tree, id, c, payments, required, from, until, vault, fresh: freshOf(seed) };
 };
 
@@ -139,7 +139,7 @@ const raiseAgain = async (sim: AccountSimulator, run: Run, seed: number, approve
   const id = sim.proposalId(
     pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, run.from, run.until, run.required),
     c.salt, run.vault);
-  for (const a of approvers) await sim.as(sim.applying(a, c)).approve(id);
+  for (const a of approvers.filter((d) => d !== A)) await sim.as(sim.applying(a, c)).approve(id);
   return { ...run, id, c, fresh: freshOf(seed) };
 };
 
@@ -181,7 +181,7 @@ const raiseRetry = async (
   });
   const id = sim.proposalId(
     pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, leg.required), c.salt, leg.vault);
-  for (const a of [A, B]) await sim.as(sim.applying(a, c)).approve(id);
+  for (const a of [B]) await sim.as(sim.applying(a, c)).approve(id);
   return { tree, id, c, payments, required: leg.required, from, until, vault: leg.vault, fresh: freshOf(seed) };
 };
 
@@ -250,7 +250,7 @@ describe('the sum tree: a root binds what its run can pay in total', () => {
     const c = change(0n, 41);
     await sim.as(sim.applying(A, c)).proposeRun({ root, payees: 2n, from: OPENS, until: CLOSES, vault: PAYROLL });
     const id = sim.proposalId(pureCircuits.runPayload(root, 2n, OPENS, CLOSES, 0n), c.salt, PAYROLL);
-    for (const a of [A, B]) await sim.as(sim.applying(a, c)).approve(id);
+    for (const a of [B]) await sim.as(sim.applying(a, c)).approve(id);
     const claim = (i: number, path: SumStep[]) => sim.as(sim.applying(A, c)).recordPaymentFromVault({
       proposal: id, vault: PAYROLL, root, payees: 2n, from: OPENS, until: CLOSES, salt: c.salt,
       details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), amount: 200n, asset: TEST_TOKEN_BYTES, path,
@@ -322,7 +322,7 @@ describe("setPolicy: a vault's policy for one token, under governance and the po
     const bar = pureCircuits.setPolicyBarPayload(3n);
     await sim.as(sim.applying(A, tc)).propose(bar);
     const bid = sim.proposalId(bar, tc.salt);
-    for (const a of [A, B]) await sim.as(a).approve(bid);
+    for (const a of [B]) await sim.as(a).approve(bid);
     await sim.as(sim.applying(A, tc)).setPolicyBar(3n, bid);
 
     const set = await setPolicyOn(sim, PAYROLL, POLICY, 503);
@@ -366,7 +366,7 @@ describe("setPolicy: a vault's policy for one token, under governance and the po
     const payload = pureCircuits.setPolicyPayload(PAYROLL, assetKeyOf(TEST_TOKEN_BYTES), empty);
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    for (const a of [A, B]) await sim.as(a).approve(id);
+    for (const a of [B]) await sim.as(a).approve(id);
     /* RED WHEN setPolicy stops refusing a commitment of zero bytes. */
     await expect(sim.as(sim.applying(A, c)).setPolicy(PAYROLL, empty, id))
       .rejects.toThrow(/that policy is empty; set its bands, limit and periods/);
@@ -659,7 +659,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const tree = payoutTreeOf([{ details: toHex(bytes(61)), nonce: toHex(bytes(121)) }], [100n]);
     await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault: PAYROLL, required: 2n });
     const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 2n), c.salt, PAYROLL);
-    for (const a of [A, B]) await sim.as(sim.applying(a, c)).approve(id);
+    for (const a of [B]) await sim.as(sim.applying(a, c)).approve(id);
     const random: Run = { tree, id, c, payments: [], required: 2n, from: OPENS, until: CLOSES, vault: PAYROLL, fresh: freshOf(61) };
     await expect(clear(sim, random, { spent: 1_000n })).rejects.toThrow(/was not raised as a retry of that leg/);
     /* Charged as it was raised, the retry is free. RED WHEN clearRun charges a retry whose leg was charged. */
@@ -749,7 +749,7 @@ describe("the receipt step with a policy: only a cleared run of the vault's own,
     const company = pureCircuits.companyWide();
     await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: 1n, from: OPENS, until: CLOSES, vault: company });
     const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), 1n, OPENS, CLOSES, 0n), c.salt, company);
-    for (const a of [A, B]) await sim.as(sim.applying(a, c)).approve(id);
+    for (const a of [B]) await sim.as(sim.applying(a, c)).approve(id);
     const claim = (payer: Uint8Array) => sim.as(sim.applying(A, c)).recordPaymentFromVault({
       proposal: id, vault: company, payingVault: payer, root: fromHex(tree.root), payees: 1n,
       from: OPENS, until: CLOSES, salt: c.salt, details: inner, nonce: fromHex(payments[0]!.nonce), ...sumArgsOf(tree, 0),
@@ -797,12 +797,12 @@ describe("a policy's highest band is a bar for changing who is seated, and a cha
     terms: { ...POLICY.terms, bands: POLICY.terms.bands.map((b, i) => ({ ...b, approvals: i === at ? most : 1n })) },
     blinding: bytes(blinding),
   });
-  /** Raises a governance change from A over `payload`, approved by `approvers`. */
+  /** Raises a governance change from A over `payload` (which counts as A's approval), approved by `approvers`. */
   const raiseGov = async (payload: Uint8Array, seed: number, approvers = [A, B]) => {
     const c = change(0n, seed);
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    for (const a of approvers) await sim.as(a).approve(id);
+    for (const a of approvers.filter((d) => d !== A)) await sim.as(a).approve(id);
     return { id, c };
   };
 

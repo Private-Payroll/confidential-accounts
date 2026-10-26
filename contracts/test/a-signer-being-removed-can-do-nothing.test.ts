@@ -78,7 +78,7 @@ const removeAndSet = async (
   const c = govChange(seed);
   const payload = pureCircuits.removeAndSetThresholdPayload(sim.leafOf(who), to);
   const id = await raise(sim, by, c, payload);
-  for (const a of approvers) await sim.as(a).approve(id);
+  for (const a of approvers.filter((d) => d !== by)) await sim.as(a).approve(id);
   await sim.as(carrying(sim, by, c)).removeSignerAndSetThreshold(sim.leafOf(who), to, id);
   return id;
 };
@@ -113,7 +113,6 @@ describe('every proposal carries its hold from the moment it is raised', () => {
     /* RED WHEN: propose records a removal count other than the account's. */
     expect(hold.removals).toBe(0n);
 
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
     await sim.as(carrying(sim, A, c)).setThreshold(1n, id);
     /* RED WHEN: closeProposal stops removing the hold. */
@@ -124,7 +123,7 @@ describe('every proposal carries its hold from the moment it is raised', () => {
     const sim = await live([A, B, C], 2n);
     const vc = govChange(12);
     const vid = await raise(sim, A, vc, pureCircuits.setVaultThresholdPayload(VAULT, 3n));
-    for (const d of [A, B]) await sim.as(d).approve(vid);
+    for (const d of [B]) await sim.as(d).approve(vid);
     await sim.as(carrying(sim, A, vc)).setVaultThreshold(VAULT, 3n, vid);
 
     const run = await raiseRun(sim, A, govChange(13), 0x51);
@@ -138,15 +137,14 @@ describe('a proposal needs the higher of its bar when raised and the bar now', (
     const sim = await live([A, B, C], 3n);
     const up = govChange(21);
     const vid = await raise(sim, A, up, pureCircuits.setVaultThresholdPayload(VAULT, 3n));
-    for (const d of [A, B, C]) await sim.as(d).approve(vid);
+    for (const d of [B, C]) await sim.as(d).approve(vid);
     await sim.as(carrying(sim, A, up)).setVaultThreshold(VAULT, 3n, vid);
 
     const run = await raiseRun(sim, A, govChange(22), 0x52);
-    await sim.as(A).approve(run.id);
 
     const down = govChange(23);
     const lid = await raise(sim, A, down, pureCircuits.setVaultThresholdPayload(VAULT, 1n));
-    for (const d of [A, B, C]) await sim.as(d).approve(lid);
+    for (const d of [B, C]) await sim.as(d).approve(lid);
     await sim.as(carrying(sim, A, down)).setVaultThreshold(VAULT, 1n, lid);
     expect(sim.ledger.thresholds.lookup(VAULT)).toBe(1n);
 
@@ -157,11 +155,9 @@ describe('a proposal needs the higher of its bar when raised and the bar now', (
   it('R: a vault bar that rises applies to the run already waiting', async () => {
     const sim = await live([A, B], 1n);
     const run = await raiseRun(sim, A, govChange(24), 0x53);
-    await sim.as(A).approve(run.id);
 
     const up = govChange(25);
     const vid = await raise(sim, A, up, pureCircuits.setVaultThresholdPayload(VAULT, 2n));
-    await sim.as(A).approve(vid);
     await sim.as(carrying(sim, A, up)).setVaultThreshold(VAULT, 2n, vid);
 
     /* RED WHEN: requireApprovedForVault compares against the hold's bar alone, ignoring a rise. */
@@ -174,7 +170,6 @@ describe('a proposal needs the higher of its bar when raised and the bar now', (
     const sim = await live([A, B, C], 2n);
     const c = govChange(26);
     const seatD = await raise(sim, A, c, pureCircuits.signerAddPayload(sim.leafOf(D)));
-    await sim.as(A).approve(seatD);
     await sim.raiseThreshold(1n, [A, B], 27);
     expect(sim.ledger.threshold).toBe(1n);
     /* RED WHEN: requireApproved compares against the account's threshold now alone. */
@@ -209,7 +204,7 @@ describe('the bar a run is paid at is stated once, in the account, and a device 
     const run = await raiseRun(sim, A, govChange(62), 0x58);
     const up = govChange(61);
     const vid = await raise(sim, A, up, pureCircuits.setVaultThresholdPayload(VAULT, 3n));
-    for (const d of [A, B, C]) await sim.as(d).approve(vid);
+    for (const d of [B, C]) await sim.as(d).approve(vid);
     await sim.as(carrying(sim, A, up)).setVaultThreshold(VAULT, 3n, vid);
     /* D approves the run, then is removed: its approval may be among those given. */
     await sim.as(D).approve(run.id);
@@ -221,7 +216,7 @@ describe('the bar a run is paid at is stated once, in the account, and a device 
     const needed = pureCircuits.runApprovalsNeeded(hold.needed, vaultBar, sim.removals(), hold.removals);
     /* The vault's three, risen since the run was raised, and one for the signer removed since: only the vault's own row gives the three. */
     expect(needed).toBe(4n);
-    for (const d of [A, B]) await sim.as(d).approve(run.id);
+    for (const d of [B]) await sim.as(d).approve(run.id);
     expect(sim.approvalsFor(run.id)).toBe(needed - 1n);
     /* RED WHEN: requireApprovedForVault asks for fewer approvals than runApprovalsNeeded gives, or takes the account's threshold as the vault's bar. */
     await expect(run.pay()).rejects.toThrow(/not enough approvals yet/);
@@ -269,7 +264,6 @@ describe('a removal voids the governance proposals raised before it, and a run r
     const sim = await live([A, B, C], 2n);
     const c = govChange(41);
     const seatD = await raise(sim, A, c, pureCircuits.signerAddPayload(sim.leafOf(D)));
-    await sim.as(A).approve(seatD);
 
     await removeAndSet(sim, A, 2n, B, [B, C], 42);
     /* RED WHEN: a removal circuit stops calling countRemoval(). */
@@ -284,7 +278,6 @@ describe('a removal voids the governance proposals raised before it, and a run r
     /* The control: the same change raised after the removal passes with B and C. */
     const again = govChange(43);
     const fresh = await raise(sim, B, again, pureCircuits.signerAddPayload(sim.leafOf(D)));
-    await sim.as(B).approve(fresh);
     await sim.as(C).approve(fresh);
     await sim.as(carrying(sim, B, again)).addSigner(sim.leafOf(D), fresh);
     expect(sim.ledger.signerLeaves.member(sim.leafOf(D))).toBe(true);
@@ -293,7 +286,6 @@ describe('a removal voids the governance proposals raised before it, and a run r
   it('N1, runs: a run raised before a removal needs one approval more than its bar', async () => {
     const sim = await live([A, B, C], 2n);
     const run = await raiseRun(sim, A, govChange(44), 0x55);
-    await sim.as(A).approve(run.id);
     await sim.as(B).approve(run.id);
 
     await removeAndSet(sim, A, 2n, B, [B, C], 45);
@@ -307,7 +299,6 @@ describe('a removal voids the governance proposals raised before it, and a run r
   it('N1, two removals: a run raised before two removals needs two approvals more than its bar', async () => {
     const sim = await live([A, B, C, D], 2n);
     const run = await raiseRun(sim, A, govChange(49), 0x57);
-    await sim.as(A).approve(run.id);
     await sim.as(B).approve(run.id);
 
     await removeAndSet(sim, A, 2n, C, [C, D], 81);
@@ -328,7 +319,6 @@ describe('a removal voids the governance proposals raised before it, and a run r
     const sim = await live([A, B, C], 2n);
     const c = govChange(46);
     const id = await raise(sim, B, c, pureCircuits.removeSignerPayload(sim.leafOf(A)));
-    await sim.as(B).approve(id);
     await sim.as(C).approve(id);
     await sim.as(carrying(sim, B, c)).removeSigner(sim.leafOf(A), id);
     /* RED WHEN: amendSigner's removal branch stops calling countRemoval(). */
@@ -338,7 +328,6 @@ describe('a removal voids the governance proposals raised before it, and a run r
   it('X1c: at two of two, a run the leaving signer raised and approved alone is not paid after they leave', async () => {
     const sim = await live([A, B], 2n);
     const run = await raiseRun(sim, B, govChange(47), 0x56);
-    await sim.as(B).approve(run.id);
 
     await removeAndSet(sim, B, 1n, A, [A, B], 48);
     expect(sim.ledger.threshold).toBe(1n);
@@ -357,7 +346,6 @@ describe('removing a signer and setting the threshold is one proposal', () => {
     const c = govChange(51);
     const payload = pureCircuits.removeAndSetThresholdPayload(sim.leafOf(B), 1n);
     const id = await raise(sim, A, c, payload);
-    await sim.as(A).approve(id);
     /* RED WHEN: removeSignerAndSetThreshold skips requireApproved. */
     await expect(sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(sim.leafOf(B), 1n, id))
       .rejects.toThrow(/not enough approvals yet/);
@@ -377,7 +365,6 @@ describe('removing a signer and setting the threshold is one proposal', () => {
     const sim = await live([A, B, C], 2n);
     const c = govChange(53);
     const id = await raise(sim, A, c, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(C), 2n));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
     /* RED WHEN: the id is no longer rebuilt from removeAndSetThresholdPayload(removedLeaf, newThreshold). */
     await expect(sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(sim.leafOf(C), 1n, id))
@@ -394,7 +381,6 @@ describe('removing a signer and setting the threshold is one proposal', () => {
     ] as const) {
       const c = govChange(seed);
       const id = await raise(sim, A, c, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(C), to));
-      await sim.as(A).approve(id);
       await sim.as(B).approve(id);
       /* RED WHEN: the `newThreshold > 0` or the signers-left assert is removed from the combined circuit. */
       await expect(sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(sim.leafOf(C), to, id))
@@ -409,7 +395,6 @@ describe('removing a signer and setting the threshold is one proposal', () => {
     for (const leaf of [vacant, sim.leafOf(D)]) {
       const c1 = govChange(57);
       const combined = await raise(sim, A, c1, pureCircuits.removeAndSetThresholdPayload(leaf, 1n));
-      await sim.as(A).approve(combined);
       await sim.as(B).approve(combined);
       /* RED WHEN: removeSignerAndSetThreshold's `signerLeaves.member(removedLeaf)` assert is removed. */
       await expect(sim.as(carrying(sim, A, c1)).removeSignerAndSetThreshold(leaf, 1n, combined))
@@ -418,7 +403,6 @@ describe('removing a signer and setting the threshold is one proposal', () => {
 
       const c2 = govChange(58);
       const single = await raise(sim, A, c2, pureCircuits.removeSignerPayload(leaf));
-      await sim.as(A).approve(single);
       await sim.as(B).approve(single);
       /* RED WHEN: amendSigner's removal branch loses its `signerLeaves.member(removedLeaf)` assert. */
       await expect(sim.as(carrying(sim, A, c2)).removeSigner(leaf, single))
@@ -434,7 +418,6 @@ describe('the combined removal takes out exactly the leaf it names', () => {
     const sim = await live([A, B, C], 2n);
     const c = govChange(71);
     const id = await raise(sim, A, c, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(C), 2n));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
     return { sim, c, id };
   };
@@ -485,7 +468,6 @@ describe('the combined removal takes out exactly the leaf it names', () => {
 
     const seat = govChange(72);
     const seatD = await raise(sim, A, seat, pureCircuits.signerAddPayload(sim.leafOf(D)));
-    await sim.as(A).approve(seatD);
     await sim.as(B).approve(seatD);
     await sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), seatD, true);
     expect(sim.slotOf(D)).toBe(cSlot);
@@ -497,7 +479,6 @@ describe('the company-wide marker never takes a vault threshold', () => {
     const sim = await live([A, B], 2n);
     const c = govChange(61);
     const id = await raise(sim, A, c, pureCircuits.setVaultThresholdPayload(pureCircuits.companyWide(), 3n));
-    await sim.as(A).approve(id);
     await sim.as(B).approve(id);
     /* RED WHEN: setVaultThreshold's `vault != companyWide()` assert is removed. */
     await expect(sim.as(carrying(sim, A, c)).setVaultThreshold(pureCircuits.companyWide(), 3n, id))

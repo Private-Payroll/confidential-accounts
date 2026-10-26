@@ -19,8 +19,9 @@
  *     circuits and verifier keys;
  *   · every call - the raise, the approval, the anchors and the recovery - is
  *     built by the device's own builder, through the page's own worker client
- *     and the worker's own handler, and the device's own steps raise, approve
- *     and carry out the recovery.
+ *     and the worker's own handler, and the device's own steps raise (the raise is
+ *     the raiser's approval) and carry out the recovery; a second signer's
+ *     approval is a separate approve call.
  *
  * **WHAT THIS DOES NOT SHOW, SAID HERE SO NOTHING RELIES ON IT:** no proof is
  * made (the ledger is told not to check proofs), no fee is balanced, and nothing
@@ -50,7 +51,7 @@ import { EMPTY_HEAD } from '../../src/midnight/record-manifest.js';
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import type { GovernanceOnTheWire, SignerMaterial } from 'vaults-web-shared/governed-call-builder.js';
-import { proposalFileRead, proposalFileText, raiseFromTheChain, approveFromAFile } from 'vaults-web-shared/governance-from-the-chain.js';
+import { proposalFileRead, proposalFileText, raiseFromTheChain } from 'vaults-web-shared/governance-from-the-chain.js';
 import {
   approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, RecoveryNotCarriedOut, type RecoveryDoors,
 } from 'vaults-web-shared/records-recovered-here.js';
@@ -189,11 +190,10 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
     onChain, headers: treeKeptInMemory().headers,
     watch: { everyMs: 1000, withinMs: 3000, sleep: async () => {} },
   });
-  /** A recovery raised from the founding seat's device and approved by its one seat: the file, handed over as text. */
-  const raisedAndApproved = async (doors: RecoveryDoors) => {
+  /** A recovery raised from the founding seat's device, whose raise is that seat's approval (the chain counts 1 and the seat's own `approve` is refused): the file, handed over as text. */
+  const raised = async (doors: RecoveryDoors) => {
     const { file } = await raiseRecoveryHere(doors, { latest: new Date(Date.now() + 24 * 3600 * 1000) });
     const handed = proposalFileRead(proposalFileText(file));
-    await approveRecoveryHere(doors, handed);
     return handed;
   };
   const standing = async (chainId: string) => (await client.roundsOnChain({ account: company, indexer: INDEXER, chainIds: [chainId] }))[chainId]!;
@@ -224,7 +224,9 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
 
   it('A RECOVERY CARRIED OUT FROM THE DEVICE LANDS IN THE FALLIBLE SECTION, AND THE CHAIN MOVES THE HEAD ON AND CLOSES ITS PROPOSAL', async () => {
     const doors = doorsWith({ service: async (tx) => { sent(tx); } });
-    const file = await raisedAndApproved(doors);
+    const file = await raised(doors);
+    /* RED WHEN: the raise does not count its raiser, or the raiser's own approve is sent again (the account refuses it). */
+    expect(await standing(file.chainId)).toMatchObject({ held: 'open', approvals: 1 });
     const before = await headNow();
     const done = await carryOutRecoveryHere(doors, file);
     /* RED WHEN: a recovery is refused for landing in the fallible section - no recovery could ever be carried out. */
@@ -248,7 +250,7 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
       if (beatOnce && callsIn(read(tx)).includes('recoverAnchor')) { beatOnce = false; await anchorOnce('b3'.repeat(32)); }
       sent(tx);
     } });
-    const file = await raisedAndApproved(doors);
+    const file = await raised(doors);
     const said = await carryOutRecoveryHere(doors, file).then(() => null, (e: unknown) => e);
     /* RED WHEN: the chain refuses the beaten recovery whole - then it would not be in the fallible section, and its fee not paid. */
     expect(results.at(-1)).toMatchObject({ circuits: ['recoverAnchor'], type: 'partialSuccess' });
@@ -268,12 +270,11 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
     expect(await standing(file.chainId)).toMatchObject({ held: 'closed' });
   });
 
-  it('A RECOVERY SHORT OF THE APPROVALS THE ACCOUNT ASKS - ITS POLICY BAR ABOVE ITS THRESHOLD - IS REFUSED AS IT IS BUILT, IN THE ACCOUNT\'S OWN WORDS, AND NOTHING IS KEPT OR SENT', async () => {
+  it('A RECOVERY SHORT OF THE APPROVALS THE ACCOUNT ASKS - ITS POLICY BAR ABOVE ITS THRESHOLD - IS REFUSED AS IT IS BUILT, IN THE ACCOUNT\'S OWN WORDS, AND NOTHING IS KEPT OR SENT; A SECOND SIGNER\'S APPROVAL THEN MEETS THE BAR AND IT IS CARRIED OUT', async () => {
     const doors = doorsWith({ service: async (tx) => { sent(tx); } });
-    /** One governance change raised and approved from the founding seat's device, then carried out by `order`. */
+    /** One governance change raised from the founding seat's device (the raise is its approval), then carried out by `order`. */
     const governed = async (change: GovernanceOnTheWire, carry: (proposal: string, proposalSalt: string) => any) => {
       const { file: f } = await raiseFromTheChain(doors, { change, summary: 'a change' });
-      await approveFromAFile(doors, f, async () => {});
       const identity = await client.proposalIdentity(change, f.salt);
       const { tx } = await client.governedCall({
         account: company, material: material(founder), chain: callState(),
@@ -290,7 +291,7 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
     const leaf = hex(leafOfDevice(privateStateFor(2)));
     await governed({ kind: 'add-signer', leaf }, (proposal, proposalSalt) => ({ circuit: 'amendSigner', leaf, proposal, proposalSalt }));
     await governed({ kind: 'policy-bar', bar: '2' }, (proposal, proposalSalt) => ({ circuit: 'setPolicyBar', bar: '2', proposal, proposalSalt }));
-    const file = await raisedAndApproved(doors);
+    const file = await raised(doors);
     expect(await standing(file.chainId)).toMatchObject({ held: 'open', approvals: 1 });
     const kept = treeKeptInMemory();
     const sentBefore = results.length;
@@ -300,5 +301,13 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
     expect(await kept.headers.at(COMPANY_ID, 1)).toEqual([]);
     expect(results).toHaveLength(sentBefore);
     expect(await standing(file.chainId)).toMatchObject({ held: 'open' });
+
+    /* RED WHEN: a second signer's approval does not meet the bar, or the recovery is still refused at it. */
+    await approveRecoveryHere({ ...doors, material: material(privateStateFor(2)) }, file);
+    expect(await standing(file.chainId)).toMatchObject({ held: 'open', approvals: 2 });
+    const done = await carryOutRecoveryHere({ ...doors, headers: kept.headers }, file);
+    expect(results.at(-1)).toEqual({ circuits: ['recoverAnchor'], type: 'success', error: '' });
+    expect(await standing(file.chainId)).toMatchObject({ held: 'closed', closedBy: ['recoverAnchor'] });
+    expect(await headNow()).toBe(done.head);
   });
 });

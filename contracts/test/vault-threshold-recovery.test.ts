@@ -141,7 +141,8 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
   /**
    * A GOVERNED ROUND, DRIVEN THE WHOLE WAY.
    *
-   * Propose, then approve as each named signer, and answer the id the chain
+   * Propose as A, which counts as A's approval, then approve as each other
+   * named signer, and answer the id the chain
    * filed it under. Nothing here reaches into the ledger and writes a value:
    * step 3 of the recovery is only meaningful if the proposal is real, and a
    * helper that shortcut it would be testing a path no signer has.
@@ -151,7 +152,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
   ) => {
     await sim.as(carrying(sim, A, c)).propose(payloadHash, NO_VAULT);
     const id = sim.proposalId(payloadHash, c.salt, NO_VAULT);
-    for (const who of by) await sim.as(carrying(sim, who, c)).approve(id);
+    for (const who of by.filter((d) => d !== A)) await sim.as(carrying(sim, who, c)).approve(id);
     return id;
   };
 
@@ -184,7 +185,6 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultAddrBytes() });
     const id = sim.proposalId(payload, c.salt, vaultAddrBytes());
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
     return { tree, id };
   };
@@ -365,7 +365,7 @@ describe('the account\'s own threshold is always reachable, so no vault is stran
   ) => {
     await sim.as(carrying(sim, A, c)).propose(payloadHash, NO_VAULT);
     const id = sim.proposalId(payloadHash, c.salt, NO_VAULT);
-    for (const who of by) await sim.as(carrying(sim, who, c)).approve(id);
+    for (const who of by.filter((d) => d !== A)) await sim.as(carrying(sim, who, c)).approve(id);
     return id;
   };
 
@@ -466,7 +466,7 @@ describe("a vault's own threshold guards who is seated", () => {
   const round = async (sim: AccountSimulator, payloadHash: Uint8Array, c: Change, by: Who[]) => {
     await sim.as(carrying(sim, A, c)).propose(payloadHash, NO_VAULT);
     const id = sim.proposalId(payloadHash, c.salt, NO_VAULT);
-    for (const who of by) await sim.as(carrying(sim, who, c)).approve(id);
+    for (const who of by.filter((d) => d !== A)) await sim.as(carrying(sim, who, c)).approve(id);
     return id;
   };
   const setVault = async (sim: AccountSimulator, vault: Uint8Array, n: bigint, seed: number, by: Who[]) => {

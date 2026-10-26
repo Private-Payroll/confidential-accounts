@@ -14,6 +14,7 @@ import { liveCompanyChain } from '../chain/company-chain.js';
 import { walletVaultBuilder } from '../chain/vault-builder-client.js';
 import { vaultSecretsKeptFor } from './vault-secret-kept.js';
 import { privateDepositAction } from './private-deposit.js';
+import { oneOffPaymentAction } from './one-off-payment.js';
 import { liveBalanceDoors } from '../screens/approve-balance.js';
 
 /** Waits `ms`, or rejects at once when `signal` aborts first. */
@@ -65,6 +66,7 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
   'give-vault-keys': giveVaultKeysAction(VAULTS),
   'create-vault': createVaultAction(VAULTS),
   'private-deposit': privateDepositAction({ ...VAULTS, balance: liveBalanceDoors }),
+  'one-off-payment': oneOffPaymentAction(VAULTS),
 });
 
 /** The definition of the action with this name, or `null` when this wallet runs none by that name. */

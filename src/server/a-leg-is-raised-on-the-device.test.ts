@@ -72,7 +72,7 @@ import express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
-import { fromHex, newWrappingKeypair, randomBytes, toHex, type Hex } from '../core/crypto.js';
+import { canonical, commit, fromHex, newWrappingKeypair, randomBytes, toHex, type Hex } from '../core/crypto.js';
 import { NIGHT, TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import { signedFoundingState } from '../core/founding-state.js';
@@ -94,7 +94,7 @@ import { acceptAsPayeeHere, invitePayeeHere, openInvitationHere, type InvitingCo
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { openTheRoundHere, raiseRetryOnDevice, raiseRunOnDevice, SentAndNotYetSeen, sendRaiseFromDevice, sendRetryFromDevice } from 'vaults-web-shared/governed-call-on-device.js';
-import { WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../core/device-raise.js';
+import { paymentChecked, paymentsCheckedDigest, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../core/device-raise.js';
 import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
 import { LegNotRaisedHere, type LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import { believedProposalIdsOnChainHere, keptRunHere, runRebuiltHere, signedStateHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
@@ -119,6 +119,7 @@ import {
 } from './a-company-of-two-seats.test-support.js';
 import { anchoredOver, headsCheckedHere, heldServing, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { vouchedFreshOf } from '../midnight/record-tree.js';
+import { noOneOffsHere } from '../testing/no-one-offs.js';
 
 /* The chain, as the test keeps it: the proposals it holds open, the payment entries it counts, and the account's marks. */
 const open = new Map<string, number>();
@@ -131,11 +132,11 @@ const policyVersions: SealedCompanyRecord[] = [];
 const rolesAsked: string[][] = [];
 /* What the account writes under a vault's policy marker: any thirty-two bytes, for a marker is read as set or not. */
 const MARK = '01'.padEnd(64, '0');
-const publicAsks: string[] = [];
-let publicRefuses: string | null = null;
+/** Every set of payments the raising device asked its vault reader to fit: its vault and each payment's kind, token and amount. */
+const vaultAsks: string[] = [];
+/** While set, what the raising device reads its vault to hold publicly. */
+let heldPublicly: bigint | null = null;
 let dropTheSend = false;
-/** While set, the vault's public money is answered only once it settles: two raises can be checked at once. */
-let holdThePublicMoney: Promise<void> | null = null;
 const STATE_BLINDING = newStateBlinding();
 const COMMITMENT = payKeyCommitmentOf(STATE_BLINDING.payRecordKey as Hex);
 let records!: CompanyRecordsHereStore;
@@ -151,7 +152,8 @@ const ledger = {
     if (dropTheSend) throw new Error('the node dropped the connection');
     const o = JSON.parse(Buffer.from(bytes).toString('utf8')) as { circuit: string; proposal: string };
     if (o.circuit !== circuit) throw new NothingWasSent(`the door was told ${circuit} and handed ${o.circuit}. Nothing was sent.`);
-    if (circuit === 'propose') open.set(o.proposal, 0);
+    /* A raise counts its raiser, who here may approve on every vault, as the account's `propose` counts it. */
+    if (circuit === 'propose') open.set(o.proposal, 1);
     return { ref: `ref-${open.size}`, at: new Date(clockStands * 1000).toISOString() };
   },
 };
@@ -167,11 +169,6 @@ aCompanyOfTwoSeats((app, deps) => {
     signedIn: deps.signedIn, member: deps.member, ownsProposal, refuseSigningSecret: (_q, _r, next) => next(),
     store, ledger, directoryOf: deps.directoryOf, recordRefusal: () => undefined, wiring: () => 'simulated',
     proposalIdOf: (h, salt, vault) => MidnightCommitments.proposalId(h as Hex, salt as Hex, vault as Hex | undefined),
-    publicMoney: async (ask) => {
-      publicAsks.push(JSON.stringify(ask));
-      if (holdThePublicMoney !== null) await holdThePublicMoney;
-      if (publicRefuses !== null) throw new NothingWasSent(publicRefuses);
-    },
   }));
 /* Ada's founding device anchors Acme's first state with its first roster: the state every raise here is composed from. */
 }, { state: () => signedFoundingState(CO, sealState({ entries: [] }, STATE_BLINDING, KEY, 0), ADA.signingSecret as Hex) });
@@ -247,6 +244,7 @@ const theChain = async (ids: readonly string[]) => {
   return read;
 };
 const recordsOn = (s: Seat): CompanyRecordsHere & { proposals: () => Promise<ReturnType<typeof store.listProposals>> } => ({
+  oneOffs: noOneOffsHere(),
   directory: withThePolicies,
   people: () => readPeopleHere(peopleOn(s)),
   state: (id) => records.get(CO, 'state', id),
@@ -320,7 +318,13 @@ const raisingOn = (s: Seat, at?: number): LegRaiseDoors => ({
   material: { signingSecret: s.signingSecret as Hex, blinding: '00'.repeat(32) as Hex } as never,
   accountId: CO,
   records: recordsOn(s),
-  holdings: { held: async () => ({ of: 'held', amount: 10n ** 12n }), fits: async () => ({ of: 'fits' }) },
+  holdings: {
+    held: async (_vault, form) => ({ of: 'held', amount: form === 'unshielded' && heldPublicly !== null ? heldPublicly : 10n ** 12n }),
+    fits: async (vault, payments) => {
+      vaultAsks.push(JSON.stringify({ vault, payments: payments.map((p) => ({ kind: p.payee.kind, token: p.token, amount: String(p.amount) })) }));
+      return { of: 'fits' };
+    },
+  },
   filing: { seat: s.seat, keyEpoch: 0, salt: () => toHex(randomBytes(32)), newId: () => newProposalId() },
   company: { account: ADDRESS, label: LABEL },
   runs: {
@@ -362,9 +366,8 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   installClock();
-  open.clear(); movements.clear(); roles.clear(); policyVersions.length = 0; rolesAsked.length = 0; publicAsks.length = 0; publicRefuses = null; proved.length = 0; dropTheSend = false;
+  open.clear(); movements.clear(); roles.clear(); policyVersions.length = 0; rolesAsked.length = 0; vaultAsks.length = 0; heldPublicly = null; proved.length = 0; dropTheSend = false;
   servedLies = false; walletReads.length = 0; theChainTookOnly = null;
-  holdThePublicMoney = null;
   policy = { threshold: 1, limitsByRole: {} };
   period = nextPeriod();
   runId = (await drawRunHere(drawingOn(ADA), { period })).id;
@@ -389,9 +392,9 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     expect(proposal.filedBy?.publicKey).toBe(ADA.statement.signingKey);
     expect(open.has(proposal.chainId)).toBe(true);
     expect(round.raisedAt).toBeTruthy();
-    /* RED WHEN: the vault's public money is not asked, or is asked for other payments than the leg's two. */
-    expect(publicAsks).toHaveLength(1);
-    const asked = JSON.parse(publicAsks[0]!) as { vault: string; payments: Array<{ amount: string }> };
+    /* RED WHEN: the vault's money is not asked on the raising device, or is asked for other payments than the leg's two. */
+    expect(vaultAsks).toHaveLength(1);
+    const asked = JSON.parse(vaultAsks[0]!) as { vault: string; payments: Array<{ amount: string }> };
     expect(asked.vault).toBe(VAULT);
     expect(asked.payments.map((p) => p.amount).sort()).toEqual(['700061', '700062']);
     /* RED WHEN: the raise files the run without its seat's signature over the run as raised, which a reader refuses. */
@@ -425,6 +428,57 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     }, { chainId: proposal.chainId, digest: proposal.digest, salt, vouched: { ...vouched!, checkedHere: false }, made }, theChainNow())).toThrow(/has not checked itself/);
     /* RED WHEN: the viewing key crosses to the service on any request of the raise. */
     expect(wire.some((w) => w.includes(KEY))).toBe(false);
+  });
+
+  it('NO AMOUNT, PAYEE, NAME OR CURRENCY OF A PAYMENT REACHES THE SERVICE WHEN A LEG IS RAISED, AND WHAT THE SERVICE KEEPS OF IT IS A COMMITMENT IT CANNOT OPEN', async () => {
+    const from = wire.length;
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    const sent = wire.slice(from);
+    const raised = sent.filter((w) => w.startsWith(`POST /api/accounts/${CO}/proposals `));
+    expect(raised).toHaveLength(1);
+    const body = JSON.parse(raised[0]!.slice(`POST /api/accounts/${CO}/proposals `.length)) as Record<string, unknown>;
+    /* What the raise pays, as the raising device opens it from the company's sealed run. */
+    const { run } = await keptRunHere(recordsOn(ADA), CO, runId, KEY);
+    const leg = Object.values(run.payout!)[0]!;
+    const amounts = new Set(leg.facts!.map((f) => String(f.amount)));
+    const tokens = new Set(leg.facts!.map((f) => String(f.token).toLowerCase()));
+    const names = run.employees.map((e) => e.name);
+    const addresses = [addressOf(61), addressOf(62)];
+    expect(amounts.size).toBeGreaterThan(0);
+    expect(names).toEqual(expect.arrayContaining(['Payee 61', 'Payee 62']));
+    const leaves: string[] = [];
+    const walk = (v: unknown): void => {
+      if (v === null || v === undefined) return;
+      if (typeof v === 'object') { for (const x of Object.values(v as object)) walk(x); return; }
+      leaves.push(String(v).toLowerCase());
+    };
+    for (const w of sent) {
+      const at = w.indexOf(' ', w.indexOf(' ') + 1);
+      const text = at < 0 ? '' : w.slice(at + 1);
+      if (text === '') continue;
+      try { walk(JSON.parse(text)); } catch { leaves.push(text.toLowerCase()); }
+    }
+    /* RED WHEN: the raise sends what it pays beside the proposal, as the service once asked to check the vault's public money. */
+    expect(Object.keys(body)).not.toContain('pays');
+    /* RED WHEN: any request of the raise carries a payment's amount, its token or its currency's name in the clear. */
+    expect(leaves.filter((l) => amounts.has(l))).toEqual([]);
+    expect(leaves.filter((l) => tokens.has(l))).toEqual([]);
+    expect(leaves.filter((l) => l === String(TEST_SETTLEMENT_ASSET).toLowerCase())).toEqual([]);
+    /* RED WHEN: any request of the raise carries a payee's name or address in the clear. */
+    for (const n of [...names, ...addresses]) expect(sent.filter((w) => w.toLowerCase().includes(n.toLowerCase()))).toEqual([]);
+    /*
+     * The service is handed the salt with the filing. A commitment keyed by the salt alone it could open by trying
+     * amounts; RED WHEN the commitment the service keeps is the one it can make from the salt it was handed.
+     */
+    const stored = store.getProposal(round.id)!.pays!;
+    const payments = leg.facts!.map((f) => paymentChecked(f));
+    const fromTheSalt = commit(canonical({
+      domain: 'confidential-accounts/proposal-filing/v1/pays', vault: VAULT.toLowerCase(), asset: String(TEST_SETTLEMENT_ASSET).toLowerCase(),
+      payments: paymentsCheckedDigest(payments),
+    }), String(body.salt).toLowerCase() as Hex);
+    expect(stored).not.toBe(fromTheSalt);
+    /* RED WHEN: the commitment is not keyed with the company's asset blinding, which every signer's device holds. */
+    expect(stored).toBe(paysCommitmentOf({ vault: VAULT, asset: TEST_SETTLEMENT_ASSET, payments }, String(body.salt), STATE_BLINDING.assetBlinding));
   });
 
   it('THE RUN AS RAISED AND ITS PROPOSAL ARE ENTERED IN THE COMPANY\'S RECORDS BY ADA\'S SEAT, AND HER DEVICE ANCHORS ONCE FOR THE RUN', async () => {
@@ -561,8 +615,8 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     expect(filedNow()).toEqual(before);
   });
 
-  it('THE SERVICE FILES THE RUN ONLY WITH ITS PROPOSAL, SIGNED BY THE SAME SEAT, ADDING THAT ONE PROPOSAL, AND ONLY WHEN THE VAULT\'S PUBLIC MONEY CAN PAY', async () => {
-    let filed: { proposal: unknown; run?: unknown; pays?: unknown; tx: string } | undefined;
+  it('THE SERVICE FILES THE RUN ONLY WITH ITS PROPOSAL, SIGNED BY THE SAME SEAT, ADDING THAT ONE PROPOSAL, AND COMMITTING TO WHAT IT PAYS', async () => {
+    let filed: { proposal: SignedProposalFiling; run?: unknown; tx: string } | undefined;
     const capture = raisingOn(ADA);
     const caught: LegRaiseDoors = { ...capture, service: { ...capture.service, file: async (_a, body) => { filed = body as never; throw new Error('held'); } } };
     await expect(raiseRunOnDevice(caught, { runId, ...RAISE })).rejects.toThrow('held');
@@ -571,23 +625,19 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const before = filedNow();
     const bosRun = signRunFiling(CO, sealedRunOf(openSealedRun(body.run as never, KEY), KEY, 0), BO.signingSecret as Hex);
     const twoAdded = signRunFiling(CO, { ...sealedRunOf(openSealedRun(body.run as never, KEY), KEY, 0), proposalIds: [...(body.run as { proposalIds: string[] }).proposalIds, 'prp_another0000'] }, ADA.signingSecret as Hex);
+    const { filedBy: _signature, ...unsigned } = body.proposal;
+    const uncommitted = signProposalFiling(CO, { ...unsigned, pays: undefined }, ADA.signingSecret as Hex);
     for (const [b, says] of [
       [{ ...body, run: bosRun }, /signed by two different keys/],
       [{ ...body, run: twoAdded }, /does not add exactly this proposal/],
-      [{ ...body, pays: undefined }, /does not say what it pays/],
+      [{ ...body, proposal: uncommitted }, /does not commit to what it pays/],
     ] as const) {
-      /* RED WHEN: the service files a run raised with another seat's key, one naming proposals it did not raise, or one whose payments it cannot ask the vault for. */
+      /* RED WHEN: the service files a run raised with another seat's key, one naming proposals it did not raise, or one whose proposal commits to no payments a device could hold it to. */
       const r = await post(b);
       expect(r.status, JSON.stringify(r.body)).toBe(422);
       expect(String((r.body as { error: string }).error)).toMatch(says);
       expect(filedNow()).toEqual(before);
     }
-    publicRefuses = 'the vault holds 3 of TEST publicly and this raise pays 1400123. Nothing was raised.';
-    /* RED WHEN: the vault's public money is not asked before the raise is written down. */
-    const refused = await post(body);
-    expect(refused.status).toBe(422);
-    expect(filedNow()).toEqual(before);
-    publicRefuses = null;
     const r = await post(body);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(store.getRun(runId)!.status).toBe('proposed');
@@ -595,7 +645,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
   });
 
   /** Two raises of this test's run, each made and held on Ada's device before anything is filed. */
-  const twoRaisesHeld = async (): Promise<Array<{ proposal: SignedProposalFiling; run: unknown; pays: { vault: string; asset: string; payments: Array<{ kind: string; token: string; amount: string }> }; salt: string; tx: string; version: string }>> => {
+  const twoRaisesHeld = async (): Promise<Array<{ proposal: SignedProposalFiling; run: unknown; salt: string; tx: string; version: string }>> => {
     const bodies: never[] = [];
     for (let i = 0; i < 2; i++) {
       const capture = raisingOn(ADA);
@@ -604,54 +654,33 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     }
     return bodies;
   };
-  const filingOf = (b: { proposal: SignedProposalFiling }) => {
-    const { filedBy: _signature, ...rest } = b.proposal;
-    return rest;
-  };
-
-  it('THE VAULT\'S PUBLIC MONEY IS ASKED FOR WHAT THE PROPOSAL ITSELF COMMITS TO PAYING, FROM THE VAULT ITS IDENTITY NAMES', async () => {
+  it('A RAISE THAT NAMES WHAT IT PAYS IS NOT TAKEN: THE SERVICE IS NEVER HANDED A PAYMENT\'S AMOUNT, PAYEE OR CURRENCY', async () => {
     const [body] = await twoRaisesHeld();
     const post = (b: unknown) => sendAs('ada')(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify(b) });
     const before = filedNow();
-    const less = { ...body!.pays, payments: body!.pays.payments.map((p) => ({ ...p, amount: '1' })) };
-    /* RED WHEN: the service asks the vault for payments the page declares rather than the ones the proposal commits to. */
-    const fewer = await post({ ...body, pays: less });
-    expect(fewer.status).toBe(422);
-    expect(String((fewer.body as { error: string }).error)).toMatch(/not what its proposal commits to paying/u);
-    /* A vault other than the proposal's, with a filing re-signed by Ada to commit to it, so only the vault is wrong. */
-    const OTHER_VAULT = 'd6'.repeat(32);
-    const elsewhere = { ...body!.pays, vault: OTHER_VAULT };
-    const resigned = signProposalFiling(CO, { ...filingOf(body!), pays: paysCommitmentOf(elsewhere, body!.salt) }, ADA.signingSecret as Hex);
-    /* RED WHEN: the vault the public money is asked of is not compared with the vault the proposal's identity names. */
-    const other = await post({ ...body, proposal: resigned, pays: elsewhere });
-    expect(other.status).toBe(422);
-    expect(String((other.body as { error: string }).error)).toMatch(/not the vault its proposal is raised for/u);
-    /* RED WHEN: a proposal's filing that does not commit to what it pays is filed with a run. */
-    const unpaying = signProposalFiling(CO, { ...filingOf(body!), pays: undefined }, ADA.signingSecret as Hex);
-    expect(String(((await post({ ...body, proposal: unpaying })).body as { error: string }).error)).toMatch(/not what its proposal commits to paying/u);
-    expect(publicAsks).toEqual([]);
+    const named = { vault: VAULT, asset: TEST_SETTLEMENT_ASSET, payments: [{ kind: 'shielded', token: '11'.repeat(32), amount: '700061' }] };
+    /* RED WHEN: the service takes a raise beside a list of its payments, as it once did to check the vault's public money. */
+    const declaring = await post({ ...body, pays: named });
+    expect(declaring.status).toBe(400);
     expect(filedNow()).toEqual(before);
-    /* RED WHEN: what the vault is asked for is not what the proposal pays. */
     expect((await post(body)).status).toBe(200);
-    expect(JSON.parse(publicAsks[0]!)).toEqual({ vault: VAULT, asset: body!.pays.asset, payments: body!.pays.payments });
     await enteredAsTheDeviceEntersIt(body!);
   });
 
   it('TWO RAISES OF ONE RUN FILED AT ONCE: ONE IS WRITTEN DOWN, AND THE OTHER IS REFUSED BY NAME WITHOUT DROPPING IT', async () => {
     const [first, second] = await twoRaisesHeld();
     const post = (b: unknown) => sendAs('ada')(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify(b) });
-    let release!: () => void;
-    holdThePublicMoney = new Promise<void>((r) => { release = r; });
-    const both = [post(first), post(second)];
-    /* Both have read the run and wait on the vault's public money before either writes. */
-    while (publicAsks.length < 2) await new Promise((r) => setTimeout(r, 5));
-    release();
-    const [a, b] = await Promise.all(both);
+    const [a, b] = await Promise.all([post(first), post(second)]);
     const statuses = [a!.status, b!.status].sort();
-    /* RED WHEN: the run is written back with no condition, so the second raise is filed over the first and drops its proposal. */
+    /*
+     * RED WHEN: the run is written back with no condition, so the second raise is filed over the first and drops its proposal.
+     * The second is refused by whichever check reaches it first: the same change already held open, the run no longer the
+     * one it was raised over, or the store's conditional write.
+     */
     expect(statuses).toEqual([200, 422]);
     const loser = (a!.status === 422 ? a : b)!;
-    expect(String((loser.body as { error: string }).error)).toMatch(new RegExp(`another raise of run ${runId} was written down while this one was checked`));
+    expect(String((loser.body as { error: string }).error))
+      .toMatch(new RegExp(`another raise of run ${runId} was written down while this one was checked|this run does not add exactly this proposal|already holds proposal ${(a!.status === 200 ? first! : second!).proposal.id} open for the same change`));
     const winner = a!.status === 200 ? first! : second!;
     expect(store.getRun(runId)!.proposalIds).toEqual([winner.proposal.id]);
     /* RED WHEN: the refused raise's proposal is written down though its run was not. */
@@ -1045,8 +1074,8 @@ describe('A RETRY IS RAISED ON THE SIGNER\'S DEVICE, OVER A TREE OF ONLY THE PEO
     expect(() => refuseWhatThisDeviceDidNotMake({
       runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, retrySaltOf: pureCircuits.retrySaltOf,
     }, { chainId: proposal.chainId, digest: proposal.digest, salt, vouched, made }, theChainNow())).not.toThrow();
-    /* RED WHEN: the vault's public money is asked about the leg's people rather than the retry's one. */
-    expect((JSON.parse(publicAsks.at(-1)!) as { payments: Array<{ amount: string }> }).payments.map((p) => p.amount)).toEqual([String(leg.facts![1]!.amount)]);
+    /* RED WHEN: the vault's money is asked on the raising device about the leg's people rather than the retry's one. */
+    expect((JSON.parse(vaultAsks.at(-1)!) as { payments: Array<{ amount: string }> }).payments.map((p) => p.amount)).toEqual([String(leg.facts![1]!.amount)]);
     /* RED WHEN: an approver holds a retry's commitment to the leg's whole list of payments rather than the people it names. */
     await expect(atTime(AFTER, () => openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO)))).resolves.toMatchObject({ vault: VAULT });
   });
@@ -1308,33 +1337,24 @@ describe('ONE ADDRESS IS NOT PAID TWICE FOR A MONTH', () => {
 
 /* After the two above, who are made leavers first: a person paid publicly, in a token with a public form. */
 describe('A PUBLIC PAYEE IS RAISED FROM THE DEVICE AS PUBLIC', () => {
-  it('A LEG PAYING A PUBLIC ADDRESS IS RAISED FROM THE DEVICE, ITS PUBLIC MONEY ASKED AS PUBLIC, AND A RAISE NAMING THE PAYMENT PRIVATE IS NOT FILED', async () => {
+  it('A LEG PAYING A PUBLIC ADDRESS IS RAISED FROM THE DEVICE, ITS PUBLIC MONEY ASKED AS PUBLIC ON THE DEVICE, AND REFUSED THERE WHEN THE VAULT HOLDS TOO LITTLE PUBLICLY', async () => {
     for (const here of (await readPeopleHere(peopleOn(ADA))).people.filter((p) => ['Payee 63', 'Payee 64'].includes(p.person.name))) {
       await setStatusHere(peopleOn(ADA), here, 'leaver');
     }
     await aPayee(65, 65, { address: unshieldedPayeeFor('65'.repeat(32), NETWORK).bech32, asset: NIGHT });
     const drawn = (await drawRunHere(drawingOn(ADA), { period: nextPeriod() })).id;
-    let filed: { proposal: SignedProposalFiling; pays: { vault: string; asset: string; payments: Array<{ kind: string; token: string; amount: string }> } } | undefined;
-    const capture = raisingOn(ADA);
-    const caught: LegRaiseDoors = { ...capture, service: { ...capture.service, file: async (_a, b) => { filed = b as never; throw new Error('held'); } } };
-    await expect(raiseRunOnDevice(caught, { runId: drawn, ...RAISE, asset: NIGHT, form: 'unshielded' })).rejects.toThrow('held');
-    /* RED WHEN: a public payee's payment is named as anything but public, so the vault is asked for it as private money. */
-    expect(filed!.pays.payments.map((p) => [p.kind, p.amount])).toEqual([['unshielded', '700065']]);
-    const post = (b: unknown) => sendAs('ada')(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify(b) });
     const before = filedNow();
-    const asked = publicAsks.length;
-    const asPrivate = { ...filed, pays: { ...filed!.pays, payments: filed!.pays.payments.map((p) => ({ ...p, kind: 'shielded' })) } };
-    const refused = await post(asPrivate);
-    /* RED WHEN: a raise that names a public payment private is filed, or the vault's public money is asked for it. */
-    expect(refused.status).toBe(422);
-    expect(String((refused.body as { error: string }).error)).toMatch(/not what its proposal commits to paying/u);
+    heldPublicly = 3n;
+    /* RED WHEN: the vault's public money is not read on the raising device, so a run it cannot pay publicly is written down. */
+    await expect(raiseRunOnDevice(raisingOn(ADA), { runId: drawn, ...RAISE, asset: NIGHT, form: 'unshielded' }))
+      .rejects.toThrow(/the vault holds .* publicly and this proposal asks it to pay/u);
     expect(filedNow()).toEqual(before);
-    expect(publicAsks).toHaveLength(asked);
-    /* The raise as made is filed, and the vault's public money asked for the public payment. */
-    expect((await post(filed)).status).toBe(200);
-    expect(JSON.parse(publicAsks.at(-1)!)).toMatchObject({ asset: NIGHT, payments: [{ kind: 'unshielded', amount: '700065' }] });
-    /* Entered in the company's records as the raising device enters it, so the cases after this one read a company whose records name every run. */
-    await enteredAsTheDeviceEntersIt(filed!);
+    heldPublicly = null;
+    /* Raised and filed as made, its records entered as the raising device enters them, so the cases after this one read a company whose records name every run. */
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId: drawn, ...RAISE, asset: NIGHT, form: 'unshielded' });
+    /* RED WHEN: a public payee's payment is named as anything but public, so the vault is asked for it as private money. */
+    expect(JSON.parse(vaultAsks.at(-1)!)).toMatchObject({ vault: VAULT, payments: [{ kind: 'unshielded', amount: '700065' }] });
+    expect(store.getProposal(round.id)).not.toBeNull();
   });
 });
 

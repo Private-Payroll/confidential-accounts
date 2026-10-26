@@ -75,8 +75,9 @@ export interface RaiseOrderOnTheWire {
   readonly order: RaiseRunOrder;
   /**
    * What the proposal written down commits to paying, from its own record: the
-   * commitment its filing carries (`paysCommitmentOf`), made with the salt in
-   * `order.half`. The payments the vault is checked for are held to it.
+   * commitment its filing carries (`paysCommitmentOf`), keyed with the salt and
+   * the company's asset blinding in `order.half`. The payments the vault is
+   * checked for are held to it.
    */
   readonly pays: string;
 }
@@ -136,13 +137,16 @@ export interface GovernedCallService {
    */
   file?(accountId: string, body: {
     proposal: SignedProposalFiling; tx?: string; version?: typeof DEVICE_RAISE_VERSION;
-    /** The proposal's salt, so the service can hold its identity on the chain to the vault it names, or to none. */
+    /**
+     * The proposal's salt, so the service can hold a vault's or a governance proposal's identity on the chain to the
+     * vault it names, or to none. A run's commitment to what it pays is keyed with the company's asset blinding too, so
+     * the salt does not open it.
+     */
     salt: string;
     /** A new vault's first secret run, whose one leaf pays a zero amount of no asset: the vault its identity on the chain is made for. */
     vault?: string;
-    /** A payroll run's leg: the run re-filed as raised, and what the raise pays, a kind, a token and an amount each. */
+    /** A payroll run's leg: the run re-filed as raised. What the raise pays is never sent: it is sealed in the two records. */
     run?: SignedRunFiling;
-    pays?: { vault: string; asset: string; payments: ReadonlyArray<{ kind: 'shielded' | 'unshielded'; token: string; amount: string }> };
   }): Promise<RoundOnThePage>;
   /** An approved governance proposal carried out by the call this device proved. */
   carry?(proposalId: string, body: { tx: string; circuit: CarryCircuit; filer: string }): Promise<RoundOnThePage>;
@@ -295,9 +299,9 @@ const waitFor = async (
  * it. **What it is built from is made on this device from the company's
  * records**, never handed over by the service. **The vault is checked on this
  * device first, every time** - a first send and a send again alike - because a
- * proposal written down days ago is paid from the vault as it is now. The send
- * carries the digest of what was checked, and the service refuses it unless
- * that is the proposal it wrote down.
+ * proposal written down days ago is paid from the vault as it is now. What was
+ * checked is held to the commitment the proposal written down carries, and the
+ * send carries only the proven call: the service is told nothing of what it pays.
  */
 export async function sendRaiseFromDevice(
   doors: RaiseDoors,
@@ -361,13 +365,12 @@ const legAsked = (input: { asset?: string; form?: LedgerForm }): { asset?: strin
 });
 
 /**
- * **WHETHER THE VAULT CAN PAY THIS LEG'S PRIVATE PAYMENTS, ASKED HERE BEFORE THE
- * SERVICE IS ASKED TO WRITE ANYTHING DOWN.** The vault's notes are opened on
- * this device and nowhere else, so this is the one place the question can be
- * answered; the service asks the rest. A refusal writes nothing and spends
- * nothing. The only thing that goes to the service to ask it is what it already
- * had: the run, the leg and the viewing key. What comes back is the digest of
- * the payments checked, which is all the service is told about the check.
+ * **WHETHER THE VAULT CAN PAY THIS LEG'S PRIVATE PAYMENTS, ASKED HERE BEFORE
+ * ANYTHING IS SENT.** The vault's notes are opened on this device and nowhere
+ * else, so this is the one place the question can be answered. The leg's
+ * payments are made on this device from the company's records; nothing about
+ * them goes to the service. A refusal writes nothing and spends nothing. What
+ * comes back is the digest of the payments checked.
  */
 async function refuseALegTheVaultCannotPay(
   doors: RaiseDoors,
@@ -378,9 +381,9 @@ async function refuseALegTheVaultCannotPay(
 }
 
 /**
- * **THE CHECK ITSELF, OVER WHATEVER PAYMENTS THE SERVICE HANDED OVER** - a
- * leg's, or a retry's. The digest returned is over exactly what was handed
- * over, in its order.
+ * **THE CHECK ITSELF, OVER THE PAYMENTS MADE HERE FROM THE COMPANY'S RECORDS** -
+ * a leg's, or a retry's. The digest returned is over exactly those payments, in
+ * their order.
  *
  * **AND, WHEN A PROPOSAL IS WRITTEN DOWN, AGAINST THAT PROPOSAL.** Its digest
  * must be the digest of these payments, and its count of payees is the count
@@ -416,10 +419,11 @@ async function refusePaymentsTheVaultCannotPay(
      * the proposal's own record, signed by the seat that filed it. Two records,
      * so a run changed after its proposal was written down is refused here.
      */
-    const half = input.order.order.half as { proposalSalt?: unknown } | undefined;
+    const half = input.order.order.half as { proposalSalt?: unknown; assetBlinding?: unknown } | undefined;
     const salt = String(half?.proposalSalt ?? '');
-    if (!/^[0-9a-f]{64}$/u.test(salt)
-      || paysCommitmentOf({ vault: input.vault, asset: leg.asset, payments: leg.payments }, salt) !== String(input.order.pays).toLowerCase()) {
+    const assetBlinding = String(half?.assetBlinding ?? '');
+    if (!/^[0-9a-f]{64}$/u.test(salt) || !/^[0-9a-f]{64}$/iu.test(assetBlinding)
+      || paysCommitmentOf({ vault: input.vault, asset: leg.asset, payments: leg.payments }, salt, assetBlinding) !== String(input.order.pays).toLowerCase()) {
       throw new Error(WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED);
     }
     if (!DIGITS.test(String(input.order.order.run.payees))) {
@@ -660,8 +664,17 @@ export async function raiseRetryOnDevice(
 const ALREADY_APPROVED = 'you have already approved this proposal';
 
 /** Whether a refusal to build an approval is the chain's: this signer approved this proposal already. */
-const approvedAlready = (e: unknown): boolean =>
+export const approvedAlready = (e: unknown): boolean =>
   (e as { name?: unknown } | null)?.name === 'CallNotBuilt' && String((e as Error).message).includes(ALREADY_APPROVED);
+
+/** What the contract says when a proposal is carried out with fewer approvals than the account asks for it now. */
+const NOT_ENOUGH_APPROVALS = 'not enough approvals yet';
+
+/**
+ * Whether a refusal is the chain's: the proposal has fewer approvals than the account asks for it now. A vault's
+ * spending policy, or a signer removed since the proposal was raised, can ask more than the proposal named.
+ */
+export const notEnoughApprovalsYet = (e: unknown): boolean => String((e as Error | null)?.message ?? '').includes(NOT_ENOUGH_APPROVALS);
 
 /**
  * **ONE APPROVAL, FROM THIS DEVICE.** The approval is built and proved in the
@@ -746,6 +759,18 @@ async function approveHere(
 }
 
 /** A proposal withdrawn while this device's approval of it was on its way: sent, and closed, so nothing is left to do. */
+/**
+ * Hands this seat's signature over a removal's retirement to the service on its own, through the route that takes one,
+ * as a raise that counted this seat's approval leaves no approval to carry it.
+ */
+const retirementHanded = async (doors: GovernedCallDoors, round: RoundOnThePage, signature: RetirementSignature): Promise<void> => {
+  if (doors.service.retire === undefined) {
+    throw new Error('the removal is raised, and this page cannot send your signature over its retirement, which the removal needs before '
+      + 'it is carried out. Reload the page to get the current version, then make the removal again: it signs the retirement again.');
+  }
+  await doors.service.retire(round.id, { signature, filer: filerHere(doors) });
+};
+
 export class WithdrawnWhileSent extends Error {
   readonly nothingWasSent = false;
   constructor() {
@@ -1035,6 +1060,8 @@ async function governOnDevice(
     await proposalEntered(doors, proposalEntry(doors.accountId, found.filed));
   }
   let live: { round: RoundOnThePage; opened: OpenedRound } | null = found;
+  /* Whether this attempt sent the raise: a raise counts as its raiser's approval on the chain. */
+  let raisedHere = false;
   if (live === null) {
     if (!service.file) throw new Error('This page cannot write proposals down. Reload the page to get the current version. Nothing was sent.');
     await check();
@@ -1071,6 +1098,7 @@ async function governOnDevice(
     await proposalEntered(doors, proposalEntry(doors.accountId, filing));
     const round = sent.raisedAt ? sent : await waitFor(doors, 'this proposal', filing.id, (r) => Boolean(r.raisedAt), sent);
     live = { round, opened };
+    raisedHere = true;
   } else if (!live.round.raisedAt) {
     /* Opened again for a send: the half of its raise, the change it seals, is read only for one. */
     const { round } = live;
@@ -1085,17 +1113,32 @@ async function governOnDevice(
     doors.progress?.('sending');
     const sent = await onChainHere(doors, await service.send(round.id, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) }));
     live = { round: sent.raisedAt ? sent : await waitFor(doors, 'this proposal', round.id, (r) => Boolean(r.raisedAt), sent), opened };
+    raisedHere = true;
   }
   let { round } = live;
   const { opened } = live;
   const of = { governance: input.change, proposalSalt: opened.salt };
-  if (!(await meetsTheBar(doors, round, input.change, input.bar))) {
+  /*
+   * **A RAISE IS ITS RAISER'S APPROVAL, SO A REMOVAL'S RAISER SIGNS ITS RETIREMENT AT THE RAISE.** The chain counted this
+   * seat when the raise landed, so no approval of its own follows to carry the signature: it is handed on its own, the
+   * same signature through the route that takes one, before anybody carries the removal out.
+   */
+  if (raisedHere) {
+    /* Every check an approval of it would make here runs first, so this seat signs only what it would approve. */
+    await check(opened, round.id);
+    const retirement = await input.signs?.(opened, round);
+    if (retirement !== undefined) await retirementHanded(doors, round, retirement);
+  }
+  /* A seat that raised it here has nothing more to approve; one resuming, or another seat, approves. */
+  if (!raisedHere && !(await meetsTheBar(doors, round, input.change, input.bar))) {
     await check(opened, round.id);
     const retirement = await input.signs?.(opened, round);
     try {
       round = await approveHere(doors, { round, viewingKey: input.viewingKey, of, ...(retirement === undefined ? {} : { retirement }) }, true);
     } catch (e) {
       if (!approvedAlready(e)) throw e;
+      /* This seat's raise, sent on an earlier attempt, was its approval: its retirement signature goes on its own. */
+      if (retirement !== undefined) await retirementHanded(doors, round, retirement);
       round = await standingHere(doors, round.id);
     }
   }

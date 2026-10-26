@@ -14,6 +14,7 @@ vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => {
         calls: [
           { method: 'GET', path: '/api/accounts/:company' },
           { method: 'POST', path: '/api/accounts/:company/vaults', sends: true },
+          { method: 'POST', path: '/api/accounts/:company/proposals', sends: true, sendsWith: 'tx' },
         ],
         outcome: { vault: 'vault' },
       },
@@ -115,6 +116,20 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     expect(ended[0]).toMatchObject({ ended: 'done', relayed: 1 });
     /* RED WHEN: a transaction answered with a refusal is not counted as one that may be out, though the page may have sent it; or a read is. */
     expect(ended[0]).toMatchObject({ unconfirmed: 1 });
+  });
+
+  it('a proposal written down with no transaction is never counted with the relays or as unconfirmed, and one raised with its transaction is', async () => {
+    let status = 500;
+    const { channel, ended } = channelThat(async () => ({ of: 'answered', status, body: {} }));
+    await go(channel, [stepThat(async (c) => {
+      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab"}');
+      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab","tx":"AAAA"}');
+      status = 201;
+      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab"}');
+      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab","tx":"BBBB"}');
+    })]);
+    /* RED WHEN: a proposal written down with nothing for the chain counts as handed over, so the end says something may be out when nothing is. */
+    expect(ended[0]).toMatchObject({ ended: 'done', relayed: 1, unconfirmed: 1 });
   });
 
   it('calls and relays go one at a time, each after the page\'s answer to the one before', async () => {

@@ -14,7 +14,7 @@ import type { Hex } from '../../../src/core/crypto.js';
 import type { PayrollRun, RosterEmployee } from '../../../src/core/types.js';
 import { payeeFor } from '../../../src/testing/payees.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../../../src/testing/assets.js';
-import { RAISE_CHECKS, type FactsHere, type RoundToCheck } from './raise-checks-here.js';
+import { RAISE_CHECKS, refuseWhatThePolicyWouldNotCharge, type FactsHere, type RoundToCheck } from './raise-checks-here.js';
 import { refuseARetryOfALegNeverOnChain, refuseARetryWhileItsLegCanPay } from '../../../src/core/run-raising.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import type { PeopleHere } from './people-on-device.js';
@@ -261,3 +261,23 @@ describe('WHAT THE PERSON\'S OWN WALLET IS ASKED, FOR A COMPANY WITH A LONG HIST
     expect(once.wallet!.asked).toEqual([paidOnceOfNonce(nonce).toLowerCase()]);
   });
 });
+
+describe('A ONE-OFF PAYMENT THE POLICY WOULD NOT CHARGE IS REFUSED IN ITS OWN WORDS', () => {
+  it('speaks of the payment, never of a run, a window the person never chose, or raising', () => {
+    type Policy = Parameters<typeof refuseWhatThePolicyWouldNotCharge>[0];
+    const set = (over: object = {}): Policy => ({ state: 'set', version: 1, period: 0n, required: 2n, periodLimit: 1000n, ...over }) as Policy;
+    const said = (p: Policy, total = 10n, required = '2'): string => {
+      try { refuseWhatThePolicyWouldNotCharge(p, total, required, 'one-off'); return ''; } catch (e) { return (e as Error).message; }
+    };
+    const all = [said({ state: 'unread', why: 'x' } as Policy), said({ state: 'not-for-this-currency' } as Policy), said(set({ period: null })),
+      said(set({ required: null })), said(set(), 2000n), said(set(), 10n, '1')];
+    for (const words of all) {
+      /* RED WHEN: a one-off payment's refusal is in payroll's words of runs, windows and raising, or is not a refusal. */
+      expect(words, words).toMatch(/payment/u);
+      expect(words, words).not.toMatch(/\brun\b|window|[Rr]aise/u);
+    }
+    /* RED WHEN: payroll's own words change with the one-off's. */
+    expect(() => refuseWhatThePolicyWouldNotCharge(set({ required: null }), 10n, '2')).toThrow(/Pay less in one run/u);
+  });
+});
+

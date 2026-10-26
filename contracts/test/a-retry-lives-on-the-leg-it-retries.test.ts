@@ -178,7 +178,6 @@ describe('a retry lives on the leg it retries', () => {
         from: OPENS, until: CLOSES, vault: PAYROLL_VAULT,
       });
       const legId = fromHex(r.proposal.chainId);
-      await sim.as(legDevice).approve(legId);
 
       /* The leg pays person 0, from a rebuild of what the product wrote down. */
       const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
@@ -206,7 +205,6 @@ describe('a retry lives on the leg it retries', () => {
       const retryId = fromHex(raised.chainId);
       /* The chain opened the id the product wrote down for the retry. */
       expect(sim.isOpen(retryId)).toBe(true);
-      await sim.as(retryDevice).approve(retryId);
 
       const smaller = buildRetryRun(whole, [0, 2]);
       const present = (at: number) => {

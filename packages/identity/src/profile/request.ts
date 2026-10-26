@@ -10,7 +10,7 @@ import { ACT_INTENTS } from './act-intents.js';
 import { readKeyringHandedIn, type KeyringHandedIn } from './unlock.js';
 import type { ActIntentName, IntentFieldKind, IntentShape } from './act-intents.js';
 export type { ActIntentName, CallRoute, IntentFieldKind, IntentShape, OutcomeKind } from './act-intents.js';
-export { routeOf } from './act-intents.js';
+export { routeOf, sendsIn } from './act-intents.js';
 export { intentShapeOf } from './act-shape.js';
 
 /**

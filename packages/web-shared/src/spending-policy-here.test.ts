@@ -21,6 +21,7 @@ import {
 } from './spending-policy-here.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
+import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
 
 const COMPANY = 'acme';
 const VAULT = 'fa'.repeat(32);
@@ -63,6 +64,7 @@ const recordsWith = (chain: Map<string, string>, filed: SealedCompanyRecord[], s
   } as never, founder.secret);
   const notHere = async () => { throw new Error('not read here'); };
   return {
+    oneOffs: noOneOffsHere(),
     directory: async () => {
       const believed = {
         dir: { company: COMPANY, version: 1, seats },

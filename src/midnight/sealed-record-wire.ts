@@ -45,23 +45,25 @@ export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', '
  * A company's own records, as the signed company-record store files them.
  * `policy` is the company's own ceilings; `spending-policy` is one vault's
  * spending policy for one currency, sealed to the signers; `vault-info` is one
- * vault's name and description (`vault-info-record.ts`).
+ * vault's name and description (`vault-info-record.ts`); `transfer` is one
+ * one-off payment from a vault, sealed under the company's one-offs key
+ * (`one-off-record.ts`).
  */
-export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy', 'vault-info'] as const;
+export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy', 'vault-info', 'transfer'] as const;
 export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
 /**
  * **THE KINDS SEALED UNDER ONE OF THE COMPANY'S OWN KEYS**, and which one: a
  * person under the payroll purpose key, the company's signers under the
  * roster purpose key, a vault's name and description under the vaults purpose
- * key, and the company's state under the viewing key of the epoch the record
+ * key, a one-off payment under the one-offs purpose key, and the company's state under the viewing key of the epoch the record
  * names, exactly as the founding signer's device sealed it. Such a record is
  * opened by whoever holds that key, so it carries no per-reader wraps: a wrap
  * beside it would be a second, drifting answer to who may read it. Every other
  * kind is sealed under a fresh key wrapped to each reader.
  */
-export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'vaults' | 'viewing'>>> = Object.freeze({
-  person: 'payroll', roster: 'roster', 'vault-info': 'vaults', state: 'viewing',
+export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'vaults' | 'one-offs' | 'viewing'>>> = Object.freeze({
+  person: 'payroll', roster: 'roster', 'vault-info': 'vaults', transfer: 'one-offs', state: 'viewing',
 });
 
 /** Where a person on a company's payroll stands. */

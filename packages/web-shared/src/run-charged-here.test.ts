@@ -25,6 +25,9 @@ import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../../../src/testing/assets.js';
 import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
+import { seal } from '../../../src/core/crypto.js';
+import { sealRecord } from '../../../src/core/sealed-records.js';
+import { batchDigestOf, sealTransferProposal } from '../../../src/core/proposal-filing.js';
 
 const T = assetIdHex(TEST_TOKEN).toLowerCase();
 const VAULT = 'a1'.repeat(32);
@@ -62,6 +65,13 @@ vi.mock('./run-rebuilt-here.js', () => ({
   believedProposalIdsOnChainHere: async () => onChain,
   signedStateHere: async () => ({ seeds: [], payKey: '', assetBlinding: 'b1'.repeat(32) }),
 }));
+/* The company's one-off payments this device believes, read beside its runs and never among them. */
+let oneOffs: unknown[] = [];
+vi.mock('./one-off-here.js', async (real) => ({
+  ...(await real<typeof import('./one-off-here.js')>()), oneOffsHere: async () => ({ believed: oneOffs, unread: [] }),
+}));
+/* The company's proposals, as the service holds them: each sealed under the viewing key the device holds. */
+let proposalsNow: unknown[] = [];
 vi.mock('./vault-operation.js', async (real) => ({
   ...(await real<typeof import('./vault-operation.js')>()),
   chainAtOneBlockHere: async () => ({ account: 'cc'.repeat(32), accountState: 'STATE', parameters: 'PARAMS', vaultState: '', zswapState: '', blockHash: '' }),
@@ -120,7 +130,7 @@ let kept = sealedOnThisDevice<ChargeInFlight>(store, me, 'charge');
 const FILER = 'f1'.repeat(32);
 const doors = (withCharge = true, withKept = true) => ({
   filer: FILER as never,
-  records: {} as never, accountId: 'acc', viewingKey: '00'.repeat(32) as never, account: 'cc'.repeat(32) as never, indexer: async () => null,
+  records: { proposals: async () => proposalsNow } as never, accountId: 'acc', viewingKey: '00'.repeat(32) as never, account: 'cc'.repeat(32) as never, indexer: async () => null,
   builder: {
     clearRun: async (i: unknown) => { asked.push(i); if (answer instanceof Error) throw answer; return answer; },
     periodTotal: async (i: unknown) => { asked.push(i); return '1234'; },
@@ -141,7 +151,7 @@ const doors = (withCharge = true, withKept = true) => ({
 });
 
 beforeEach(() => {
-  standing = { state: 'set' }; runs = [theRun()]; onChain = new Map(); asked = []; sent.length = 0; answer = { tx: 'TX', spent: '700' };
+  standing = { state: 'set' }; runs = [theRun()]; onChain = new Map(); oneOffs = []; proposalsNow = [aPayrollProposal()]; asked = []; sent.length = 0; answer = { tx: 'TX', spent: '700' };
   lag = 0; chainHolds = new Map(); relayed = null; readsOfTheCharge = []; relayFails = null; now = 1_000_000;
   store = inFlightInMemory(); kept = sealedOnThisDevice<ChargeInFlight>(store, me, 'charge');
 });
@@ -399,5 +409,83 @@ describe('WHAT A PERIOD HAS BEEN CHARGED, ON ANY SIGNER\'S DEVICE', () => {
     } }]);
     standing = { state: 'none' };
     await expect(periodTotalHere(doors(), { vault: VAULT, asset: T, period: 1n })).rejects.toThrow(/no spending policy/u);
+  });
+});
+
+/** A one-off payment this device believes: from `vault` in currency T, in its window, with its one leaf and its fresh half. */
+const aOneOff = (n: number, o: { opens: bigint; closes: bigint; vault?: string; amount?: bigint; proposal?: string; chainId?: string }) => ({
+  id: `one_${String(n).padStart(32, '0')}`, version: 1, filedBy: FILER,
+  oneOff: {
+    vault: o.vault ?? VAULT, asset: TEST_TOKEN, amount: o.amount ?? 50n, run: { opensAt: at(o.opens), closesAt: at(o.closes), required: 0n },
+    proposal: { id: o.proposal ?? `prp_oneOff${n}AAAAA`, chainId: o.chainId ?? 'e0'.repeat(32) },
+  },
+  secrets: { nonce: '01'.repeat(32), blinding: '02'.repeat(32), fresh: `0${n}`.repeat(32) },
+  tree: { tree: { root: `one-${n}-root`, leaves: [leaf(40 + n)] } },
+});
+
+/** The proposal of the leg `theRun` raises, sealed as payroll's under the device's viewing key. */
+function aPayrollProposal() {
+  const key = '00'.repeat(32) as Hex;
+  return {
+    id: 'prp_theRunAAAAAA', accountId: 'acc', chainId: '0f'.repeat(32), keyEpoch: 0, status: 'open', filedBy: { publicKey: FILER, signature: '' },
+    sealed: sealRecord('proposals', 'acc', { vault: VAULT, kind: 'payroll', summary: 'Payroll', sealedPayload: seal('{}', key), proposedBy: 's', approvals: [] }, key),
+  };
+}
+/** A `transfer` proposal naming one-off `n`, sealed under the device's viewing key. */
+const aTransferProposal = (n: number, id: string, chainId: string) => ({
+  id, accountId: 'acc', chainId, keyEpoch: 0, status: 'open', filedBy: { publicKey: FILER, signature: '' },
+  sealed: sealTransferProposal({
+    accountId: 'acc', viewingKey: '00'.repeat(32) as Hex, vault: VAULT as Hex, summary: 'One-off payment from a vault',
+    oneOff: { id: `one_${String(n).padStart(32, '0')}`, version: 1 },
+    change: { asset: TEST_TOKEN, amount: 50n, batchDigest: batchDigestOf([]), salt: '5a'.repeat(32) as Hex }, proposedBy: 's',
+  }),
+});
+
+describe('A ONE-OFF PAYMENT IS CHARGED TO ITS VAULT\'S PERIOD, AND COUNTED IN THE PERIOD BESIDE THE RUNS', () => {
+  it('A PERIOD\'S TOTAL COUNTS EVERY ONE-OFF FROM THE VAULT IN THE CURRENCY WHOSE WINDOW LIES IN IT, BESIDE THE RUNS', async () => {
+    runs = [aRun('r9', { amounts: [100], opens: 111n, closes: 112n })];
+    oneOffs = [aOneOff(1, { opens: 113n, closes: 114n }), aOneOff(2, { opens: 103n, closes: 104n }), aOneOff(3, { opens: 113n, closes: 114n, vault: OTHER_VAULT })];
+    await periodTotalHere(doors(), { vault: VAULT, asset: T, period: 1n });
+    /* RED WHEN: a one-off charged to the period is left out of its total, so the next charge from the vault is refused by the chain. */
+    expect((asked[0] as { total: { runs: unknown[] } }).total.runs).toEqual([
+      { root: 'r9-root', leaves: [leaf(1)], amounts: ['100'] }, { root: 'one-1-root', leaves: [leaf(41)], amounts: ['50'] },
+    ]);
+  });
+
+  it('A RUN CHARGED AFTER A ONE-OFF IN ITS PERIOD IS CHARGED AGAINST BOTH', async () => {
+    oneOffs = [aOneOff(1, { opens: 101n, closes: 102n })];
+    await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 });
+    /* RED WHEN: payroll's charge sums its period over its runs alone, though a one-off from the vault was charged in it. */
+    expect((asked[0] as { runs: unknown[] }).runs).toEqual([
+      { root: 'r0-root', leaves: [leaf(1), leaf(2)], amounts: ['30', '40'] }, { root: 'one-1-root', leaves: [leaf(41)], amounts: ['50'] },
+    ]);
+  });
+
+  it('A ONE-OFF IS CHARGED AS A FIRST PAYMENT: ITS FRESH HALF FROM ITS RECORD\'S SEED, NO LEG, AND NO RUN OR SALT RECORD OF PAYROLL\'S NEEDED', async () => {
+    runs = [];
+    oneOffs = [aOneOff(4, { opens: 103n, closes: 104n, proposal: 'prp_oneOffChargA', chainId: '0f'.repeat(32) })];
+    proposalsNow = [aTransferProposal(4, 'prp_oneOffChargA', '0f'.repeat(32))];
+    const r = await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_oneOffChargA' });
+    expect(r).toEqual({ state: 'charged', spentBefore: 700n });
+    const run = (asked[0] as { run: Record<string, unknown> }).run;
+    /* RED WHEN: a one-off is charged with a fresh half not from its own record, or as a retry of a leg. */
+    expect(run.fresh).toBe('04'.repeat(32));
+    expect(run).not.toHaveProperty('retry');
+    expect(sent).toEqual([['prp_oneOffChargA', { tx: 'TX', filer: FILER }]]);
+    /* RED WHEN: a one-off is taken for another proposal's: the same name raised as another identity on the chain is not this one-off. */
+    asked = []; sent.length = 0; chainHolds = new Map(); relayed = null;
+    oneOffs = [aOneOff(4, { opens: 103n, closes: 104n, proposal: 'prp_oneOffChargA', chainId: '0e'.repeat(32) })];
+    await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_oneOffChargA' })).rejects.toThrow(/raised by another proposal/u);
+    expect(sent).toEqual([]);
+  });
+
+  it('A ONE-OFF RECORD NAMING A PAYROLL LEG\'S PROPOSAL NEVER TAKES OVER ITS CHARGE: THE LEG IS CHARGED AS PAYROLL', async () => {
+    /* A seat that may file one-offs files one naming the leg's proposal by its name and its identity on the chain. */
+    oneOffs = [aOneOff(6, { opens: 103n, closes: 104n, proposal: 'prp_theRunAAAAAA', chainId: '0f'.repeat(32) })];
+    const r = await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 });
+    expect(r).toEqual({ state: 'charged', spentBefore: 700n });
+    /* RED WHEN: a one-off record alone decides a proposal is a one-off, so a payroll leg is charged with another fresh half and the chain refuses it. */
+    expect((asked[0] as { run: { fresh: string } }).run.fresh).toBe(FRESH);
+    expect(sent).toEqual([['prp_theRunAAAAAA', { tx: 'TX', filer: FILER }]]);
   });
 });

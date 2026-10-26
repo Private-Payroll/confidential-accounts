@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createCircuitContext, createConstructorContext, sampleContractAddress } from '@midnight-ntwrk/compact-runtime';
-import { Contract as Vault } from '../../../../contracts/managed-vault/contract/index.js';
-import { AccountSimulator, privateStateFor } from '../../../../contracts/test/simulator.js';
+import * as ocrt from '@midnightntwrk/onchain-runtime-v4';
+import { Contract as Vault, pureCircuits as vaultPure } from '../../../../contracts/managed-vault/contract/index.js';
+import { pureCircuits as accountPure } from '../../../../contracts/managed/contract/index.js';
+import { AccountSimulator, change, payoutTreeOf, privateStateFor, vaultRunOf } from '../../../../contracts/test/simulator.js';
+import { noFurtherNote } from '../../../../src/midnight/vault-step-notes.js';
 import { startTheVault, TEST_VAULT_SECRET } from '../../../../contracts/test/start-a-vault.js';
 import { ACCOUNT_CIRCUITS_A_VAULT_CALLS } from '../../../../src/midnight/vault-contract.js';
-import { fromHex } from '../../../../src/core/crypto.js';
+import { fromHex, toHex } from '../../../../src/core/crypto.js';
 import {
   ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
   ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL, VAULT_CIRCUITS_THE_WALLET_PROVES,
@@ -27,7 +30,10 @@ const witnesses = {
   nonceSecret: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.secret],
 };
 
-/** Starts a vault and makes a deposit into it, as the wallet does, and says which account circuits each call reached. */
+/**
+ * Starts a vault, makes a deposit into it, and pays one payee of an approved run privately and one publicly, as the
+ * wallet does, and says which account circuits each call reached.
+ */
 const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]>> => {
   const sim = await AccountSimulator.liveAccount([A, B], 2n);
   sim.at(NOW);
@@ -36,7 +42,14 @@ const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]
   let state = (await vault.initialState(createConstructorContext({} as VaultPrivate, BLOCK), { bytes: fromHex(String(sim.address)) } as never)).currentContractState;
   const priv: VaultPrivate = { coin: { nonce: new Uint8Array(32), color: new Uint8Array(32), value: 0n, mt_index: 0n }, secret: TEST_VAULT_SECRET };
   const reached: Record<string, string[]> = {};
+  let publicMoney: bigint | null = null;
   const call = async (circuit: string, ...args: unknown[]): Promise<unknown> => {
+    if (publicMoney !== null) {
+      const held = new ocrt.ContractState();
+      (held as { data: unknown }).data = (state as { data?: unknown }).data ?? state;
+      held.balance = new Map([[{ tag: 'unshielded', raw: 'ab'.repeat(32) } as never, publicMoney]]);
+      state = held as never;
+    }
     const asked: string[] = [];
     const provider = {
       getContractState: async (_b: string, address: unknown) => {
@@ -55,7 +68,26 @@ const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]
     return out.result;
   };
   await startTheVault({ sim, vault: fromHex(addr), call, approvers: [A, B], now: NOW });
-  await call('deposit', { nonce: new Uint8Array(32).fill(0x77), color: new Uint8Array(32).fill(0x9b), value: 1_000n });
+  const note = { nonce: new Uint8Array(32).fill(0x77), color: new Uint8Array(32).fill(0x9b), value: 1_000n };
+  await call('deposit', note);
+  priv.coin = { ...note, mt_index: 0n };
+  const vaultBytes = fromHex(addr);
+  const payee = new Uint8Array(32).fill(0x0a);
+  const blinding = new Uint8Array(32).fill(0x40);
+  const [from, until] = [BigInt(NOW - 3_600), BigInt(NOW + 3_600)];
+  const approvedRun = async (token: Uint8Array, details: (to: Uint8Array, t: Uint8Array, a: bigint, b: Uint8Array) => Uint8Array, seed: number) => {
+    const c = change(0n, seed);
+    const tree = payoutTreeOf([{ details: toHex(details(payee, token, 250n, blinding)), nonce: toHex(new Uint8Array(32).fill(seed)) }], [250n], token);
+    await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from, until, vault: vaultBytes });
+    const id = sim.proposalId(accountPure.runPayload(fromHex(tree.root), tree.payees, from, until, 0n), c.salt, vaultBytes);
+    await sim.as(sim.applying(B, c)).approve(id);
+    return vaultRunOf({ proposal: id, vault: vaultBytes, tree, i: 0, opensAt: from, closesAt: until, salt: c.salt, nonce: new Uint8Array(32).fill(seed) });
+  };
+  await call('payout', await approvedRun(note.color, vaultPure.payoutDetails, 0xc1), payee, note.color, 250n, blinding, noFurtherNote());
+  const night = new Uint8Array(32).fill(0xab);
+  const run = await approvedRun(night, vaultPure.unshieldedPayoutDetails, 0xc2);
+  publicMoney = 500n;
+  await call('payoutUnshielded', run, payee, night, 250n, blinding);
   return reached;
 };
 
@@ -74,12 +106,12 @@ describe('the account circuits the wallet holds keys for', () => {
     expect(Object.keys(ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS).sort()).toEqual([...VAULT_CIRCUITS_THE_WALLET_PROVES].sort());
     // RED WHEN: an account circuit no vault circuit calls is served to the wallet's prover as if a vault had called it
     for (const c of ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL) expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS, c).toContain(c);
-    expect(ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL).toEqual(['approveVaultChange']);
+    expect([...ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL].sort()).toEqual(['approveVaultChange', 'recordPaymentFromVault']);
   });
 
   it('are the circuits the wallet proves itself and the ones its vault circuits call, each once', () => {
-    // RED WHEN: the keys copied into the wallet leave out the account call a vault's first secret makes
-    expect([...ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR].sort()).toEqual([...ACCOUNT_CIRCUITS_THE_WALLET_PROVES, 'approveVaultChange'].sort());
+    // RED WHEN: the keys copied into the wallet leave out the account call a vault's first secret makes, or the one a payment out of a vault makes
+    expect([...ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR].sort()).toEqual([...ACCOUNT_CIRCUITS_THE_WALLET_PROVES, 'approveVaultChange', 'recordPaymentFromVault'].sort());
     expect(new Set(ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR).size).toBe(ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR.length);
   });
 });

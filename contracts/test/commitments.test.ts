@@ -122,8 +122,8 @@ describe('commitment schemes agree with the contract', () => {
     );
     /*
      * SEATED THROUGH AN APPROVED ROUND, AND THE LEAF IS STILL THE CLIENT'S.
-     * The bootstrap window is shut, so this is `propose` → `approve` →
-     * `amendSigner` where it was one call. **What this test is about is
+     * The bootstrap window is shut, so this is `propose` (which counts Ada's
+     * approval) → `amendSigner` where it was one call. **What this test is about is
      * unchanged**: the leaf handed to the chain is the one
      * `MidnightCommitments.signerLeaf` computed, not one derived here, and the
      * assertion below is still that Blake can prove membership against it.
@@ -133,7 +133,6 @@ describe('commitment schemes agree with the contract', () => {
     const addPayload = pureCircuits.signerAddPayload(clientLeaf);
     await sim.as(sim.applying(ada, seating)).propose(addPayload);
     const seatId = sim.proposalId(addPayload, seating.salt);
-    await sim.as(ada).approve(seatId);
     await sim.as(sim.applying(ada, seating)).addSigner(clientLeaf, seatId);
 
     const c = change(0n, 77);
@@ -144,7 +143,8 @@ describe('commitment schemes agree with the contract', () => {
     // The real assertion: Blake, holding only his own secret and blinding,
     // proves membership against a leaf the CLIENT computed.
     await expect(sim.as(sim.applying(blake, c)).approve(id)).resolves.not.toThrow();
-    expect(sim.approvalsFor(id)).toBe(1n);
+    /* Ada's raise and Blake's approval. */
+    expect(sim.approvalsFor(id)).toBe(2n);
   });
 
   it('refuses an amount too wide for the contract, in both directions', () => {

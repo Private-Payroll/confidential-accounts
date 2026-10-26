@@ -26,8 +26,9 @@ import type { GovernanceOnTheWire, OpenedRound } from './governed-call-builder.j
 import type { GovernedCallService } from './governed-call-on-device.js';
 import { judgeIn, kindAsked, listedHere, refusedForItsKey } from './vault-page-doors.js';
 import { NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads } from './roster-here.js';
-import { runRebuiltHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { runRebuiltHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';
+import { oneOffMadeHere, OneOffRefused } from './one-off-here.js';
 
 /**
  * The company's records a proposal is read against: its directory and where its proposals stand on the chain always,
@@ -86,7 +87,7 @@ export async function believedFilerHere(
 }
 
 /** Kinds a device here acts on. Any other is refused before anything is read out of it. */
-const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'add-signer', 'remove-signer', 'set-threshold', 'set-vault-threshold', 'set-spending-policy', 'set-policy-bar']);
+const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'transfer', 'add-signer', 'remove-signer', 'set-threshold', 'set-vault-threshold', 'set-spending-policy', 'set-policy-bar']);
 
 /**
  * A removal's retirement terms as its proposal seals them, in their shape, or null: a record of the last versions
@@ -135,7 +136,8 @@ const retirementTermsOf = (x: unknown): RetirementTerms | null => {
  * addresses come from the people this device believes, its secrets from the
  * state the founding seat signed, and its leaves, root and payload are worked
  * out again where the approval is built. Who the run names and what it pays
- * each of them are still read from the run as the service stored it.
+ * each of them are read from the run's sealed record as the service stored it,
+ * opened here, never from anything the service says in the clear.
  */
 export async function openTheRoundHere(
   service: GovernedCallService, accountId: string, proposalId: string, viewingKey: KeysHeld, forARaise: boolean,
@@ -159,7 +161,7 @@ export async function openTheRoundHere(
   let envelope: { kind: string; summary: string; vault: string; sealedPayload: Sealed };
   let body: {
     signerId?: unknown; newThreshold?: unknown; vault?: unknown; assetKey?: unknown; commitment?: unknown; newPolicyBar?: unknown;
-    leaf?: unknown; retirement?: unknown;
+    leaf?: unknown; retirement?: unknown; oneOff?: unknown;
     __change?: StateChange;
   };
   let key: Hex;
@@ -172,9 +174,9 @@ export async function openTheRoundHere(
         + 'vault to finish setting it up.', { kind: envelope.kind });
     }
     if (!KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
-      throw new NotOpenedOnThisDevice('This page acts on payroll runs, access for new signers, removing a signer, changes to '
-        + 'the approvals required by the company or by one of its vaults, and vaults\' spending policies, and this proposal is none of '
-        + 'those, so it cannot be approved from this device yet. Leave it unapproved.', { kind: envelope.kind });
+      throw new NotOpenedOnThisDevice('This page acts on payroll runs, one-off payments from a vault, access for new signers, removing '
+        + 'a signer, changes to the approvals required by the company or by one of its vaults, and vaults\' spending policies, and this '
+        + 'proposal is none of those, so it cannot be approved from this device yet. Leave it unapproved.', { kind: envelope.kind });
     }
     body = parseCanonical(unseal(envelope.sealedPayload, key));
   } catch (e) {
@@ -327,8 +329,9 @@ export async function openTheRoundHere(
     filedBy = await believedFilerHere(records, accountId, rec);
   }
   /*
-   * **A PAYROLL RUN IS APPROVED ONLY AS THIS DEVICE READS IT FROM THE
-   * COMPANY'S RECORDS**, and made again from them where the approval is built.
+   * **A PAYROLL RUN, OR A ONE-OFF PAYMENT, IS APPROVED ONLY AS THIS DEVICE
+   * READS IT FROM THE COMPANY'S RECORDS**, and made again from them where the
+   * approval is built.
    */
   let made: OpenedRound['made'];
   if (envelope.kind === 'payroll') {
@@ -339,14 +342,15 @@ export async function openTheRoundHere(
     const rebuilt = await runRebuiltHere(records, accountId, rec.id, viewingKey);
     made = rebuilt.made;
     /*
-     * **WHAT THE FILING SAID IT PAYS IS WHAT THIS DEVICE WOULD PAY**: the vault
-     * the service checked is the proposal's, and the payments are the run's as
-     * built again here, so a raise cannot pass the vault's public money check on
-     * payments other than its own.
+     * **WHAT THE FILING SAID IT PAYS IS WHAT THIS DEVICE WOULD PAY**: the
+     * commitment its filer signed, keyed with the proposal's salt and the
+     * company's asset blinding, is to the vault the proposal names and to the
+     * payments of the run as built again here from the company's sealed records.
      */
     if (rec.filedBy !== undefined) {
       const paying = rebuilt.made.retry === undefined ? rebuilt.made.facts : rebuilt.made.retry.map((i) => rebuilt.made.facts[i]!);
-      const pays = paysCommitmentOf({ vault: envelope.vault, asset: String(change.asset), payments: paying.map(paymentChecked) }, change.salt);
+      const { assetBlinding } = await signedStateHere(records, accountId, viewingKey);
+      const pays = paysCommitmentOf({ vault: envelope.vault, asset: String(change.asset), payments: paying.map(paymentChecked) }, change.salt, assetBlinding);
       if (String(rec.pays ?? '').toLowerCase() !== pays) {
         throw new NotOpenedOnThisDevice('What the company\'s record of this proposal says it pays is not what this device '
           + 'builds the run to pay, from the vault it names. Do not act on it.');
@@ -367,6 +371,19 @@ export async function openTheRoundHere(
       if (!(e instanceof RoundRefusedHere)) throw e;
       throw new NotOpenedOnThisDevice(`${e.message}. Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who `
         + 'raised it.', { cause: e });
+    }
+  } else if (envelope.kind === 'transfer') {
+    /* A one-off payment: made again from the record it names, which must name this proposal, its vault, its currency and its filer. */
+    if (records === undefined || filedBy === null) {
+      throw new NotOpenedOnThisDevice('This page cannot check who raised this one-off payment against the company\'s records, so it '
+        + `cannot ${forARaise ? 'raise' : 'approve'} it. Reload the page to get the current version.`);
+    }
+    try {
+      made = await oneOffMadeHere(records as Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'payments'>, accountId,
+        { id: rec.id, chainId: rec.chainId, filedBy }, { vault: envelope.vault, named: body.oneOff, asset: String(change.asset) });
+    } catch (e) {
+      if (!(e instanceof OneOffRefused)) throw e;
+      throw new NotOpenedOnThisDevice(`${e.message} Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who raised it.`, { cause: e });
     }
   }
   /*

@@ -107,7 +107,6 @@ describe('an account keeps a register of its own vaults', () => {
     const payload = pureCircuits.adoptVaultPayload(v);
     await sim.as(carrying(sim, A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
     return id;
   };
@@ -117,7 +116,6 @@ describe('an account keeps a register of its own vaults', () => {
     const payload = pureCircuits.retireVaultPayload(v);
     await sim.as(carrying(sim, A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
     return id;
   };
@@ -177,7 +175,7 @@ describe('an account keeps a register of its own vaults', () => {
     const payload = pureCircuits.adoptVaultPayload(vaultBytes());
     await sim.as(carrying(sim, A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    await sim.as(carrying(sim, A, c)).approve(id);      // one of two
+    /* A's raise counted A: one approval of two. */
 
     await expect(sim.as(carrying(sim, A, c)).adopt(vaultBytes(), id))
       .rejects.toThrow(/not enough approvals yet/i);
@@ -280,7 +278,6 @@ describe('an account keeps a register of its own vaults', () => {
     const payload = pureCircuits.setVaultThresholdPayload(vaultBytes(), 2n);
     await sim.as(carrying(sim, A, c2)).propose(payload);
     const tid = sim.proposalId(payload, c2.salt);
-    await sim.as(carrying(sim, A, c2)).approve(tid);
     await sim.as(carrying(sim, B, c2)).approve(tid);
     await sim.as(carrying(sim, A, c2)).setVaultThreshold(vaultBytes(), 2n, tid);
     expect(sim.ledger.thresholds.member(vaultBytes())).toBe(true);
@@ -362,7 +359,7 @@ describe('an account keeps a register of its own vaults', () => {
     const payload = pureCircuits.retireVaultPayload(vaultBytes());
     await sim.as(carrying(sim, A, c2)).propose(payload);
     const id = sim.proposalId(payload, c2.salt);
-    await sim.as(carrying(sim, A, c2)).approve(id);     // one of two
+    /* A's raise counted A: one approval of two. */
 
     await expect(retire(id, c2)).rejects.toThrow(/not enough approvals yet/i);
     expect(sim.adopted(vaultBytes())).toBe(true);
@@ -404,7 +401,6 @@ describe('an account keeps a register of its own vaults', () => {
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes() });
     const id = sim.proposalId(payload, c3.salt, vaultBytes());
-    await sim.as(carrying(sim, A, c3)).approve(id);
     await sim.as(carrying(sim, B, c3)).approve(id);
 
     /* RED WHEN the account's payment step refuses a vault it has retired. */

@@ -78,7 +78,8 @@ const aChain = (c: ReturnType<typeof aTreeCompany>) => {
     const p = proposals.get(t.proposal);
     if (t.circuit === 'propose') {
       if (p !== undefined) throw new Error('that proposal is already open');
-      proposals.set(t.proposal, { held: 'open', approvals: 0, by: new Set(), failed: [] });
+      /* The raise counts as its raiser's approval, as the account's `propose` counts it. */
+      proposals.set(t.proposal, { held: 'open', approvals: 1, by: new Set([t.by]), failed: [] });
       return;
     }
     /* A recovery whose proposal another carrying out closed lands refused, as one in the fallible section does. */
@@ -241,7 +242,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await expect(carryOutRecoveryHere(a.doors, handed)).rejects.toThrow(/recovery of the company's records was not carried out: not enough approvals yet\. Nothing was built or sent/u);
     expect(await a.kept.headers.at(COMPANY, 1)).toEqual([]);
     await approveRecoveryHere(b.doors, handed);
-    await approveRecoveryHere(a.doors, handed);
     expect(chain.proposals.get(file.chainId)?.approvals).toBe(2);
 
     const done = await carryOutRecoveryHere(a.doors, handed);
@@ -250,7 +250,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     expect(done.filed).toBe(true);
     /* RED WHEN: the head the carrier works out is not the one the chain moved to. */
     expect(done.head).toBe(c.landed[c.landed.length - 1]!.head);
-    expect(chain.sent).toEqual(['propose', 'approve', 'approve', 'recoverAnchor']);
+    expect(chain.sent).toEqual(['propose', 'approve', 'recoverAnchor']);
     /* RED WHEN: the recovery's header is not kept on the carrier's device, to file again if the service loses it. */
     expect((await a.kept.headers.at(COMPANY, 1)).map((k) => k.header)).toEqual([done.header]);
 
@@ -285,7 +285,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     expect(sentBy).toBe('own-wallet');
     await expect(approveRecoveryHere(b.doors, file)).rejects.toThrow(/Choose to go on without the service/u);
     await approveRecoveryHere(b.doors, file, { withoutTheService: true });
-    await approveRecoveryHere(a.doors, file, { withoutTheService: true });
     const done = await carryOutRecoveryHere(a.doors, file, { withoutTheService: true });
     /* RED WHEN: a recovery cannot be carried out because the service cannot keep its header: it is kept on the device. */
     expect(done.filed).toBe(false);
@@ -293,9 +292,9 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     expect(c.landed[c.landed.length - 1]!.head).toBe(done.head);
     /* RED WHEN: any step reads or sends through the company's service. */
     expect([...askedA, ...askedB].every((x) => x === 'own wallet sent' || x === 'the person chose their own wallet')).toBe(true);
-    /* RED WHEN: a call goes from the person's own wallet without the person choosing it, each time. */
-    expect([...askedA, ...askedB].filter((x) => x === 'own wallet sent')).toHaveLength(4);
-    expect([...askedA, ...askedB].filter((x) => x === 'the person chose their own wallet')).toHaveLength(4);
+    /* RED WHEN: a call goes from the person's own wallet without the person choosing it, each time: the raise, B's approval and the carrying out. */
+    expect([...askedA, ...askedB].filter((x) => x === 'own wallet sent')).toHaveLength(3);
+    expect([...askedA, ...askedB].filter((x) => x === 'the person chose their own wallet')).toHaveLength(3);
     /* The service back: the carrier files the header it kept, and every device reads to the head. */
     await c.keep((await a0.kept.headers.at(COMPANY, 1))[0]!.header);
     expect((await readTo(aDevice(c, chain, B))).reached.head).toBe(done.head);
@@ -317,7 +316,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const a = aDevice(c, chain, A);
     expect((await readTo(a)).stop).toMatchObject({ stop: 'dishonest', seq: 1 });
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
-    await approveRecoveryHere(a.doors, file);
     /* A device that believes batch 1 - here, one kept from before batch 1 was read as false - refuses to give it up. */
     const own: OwnStanding = { reached: { ...c.checkedAt(0), seq: 1, head: 'ff'.repeat(32) }, stop: { stop: 'not-given', seq: 2, what: 'x' }, serviceUnreached: false };
     expect(recoveryRefusal(own, file.resumesFrom!)).toMatch(/checked batch 1, the one after the batch this recovery resumes from/u);
@@ -340,13 +338,12 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     /* RED WHEN: a device approves a recovery without its own read holding to the rule. */
     await expect(approveRecoveryHere(reachesTheHead(b), file)).rejects.toThrow(/nothing is stopped/u);
-    expect(chain.proposals.get(file.chainId)?.approvals).toBe(0);
+    expect(chain.proposals.get(file.chainId)?.approvals).toBe(1);
     await approveRecoveryHere(b.doors, file);
-    await approveRecoveryHere(a.doors, file);
-    expect(chain.sent).toEqual(['propose', 'approve', 'approve']);
+    expect(chain.sent).toEqual(['propose', 'approve']);
     /* RED WHEN: a device carries out an approved recovery without its own read holding to the rule. */
     await expect(carryOutRecoveryHere(reachesTheHead(b), file)).rejects.toThrow(/nothing is stopped/u);
-    expect(chain.sent).toEqual(['propose', 'approve', 'approve']);
+    expect(chain.sent).toEqual(['propose', 'approve']);
     expect(await b.kept.headers.at(COMPANY, 1)).toEqual([]);
   });
 
@@ -384,11 +381,10 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     /* RED WHEN: a device approves a recovery past its last time. */
     await expect(approveRecoveryHere(a.doors, file)).rejects.toThrow(/passed at 2026-10-12T00:00:00.000Z, so approving it now cannot carry it out/u);
     a.at(NOW);
-    await approveRecoveryHere(a.doors, file);
     a.at(LATEST);
     /* RED WHEN: a device carries out a recovery past its last time: its header would be kept and filed for a call the chain refuses. */
     await expect(carryOutRecoveryHere(a.doors, file)).rejects.toThrow(/so carrying it out now cannot carry it out.*raise it again, with a later time/su);
-    expect(chain.sent).toEqual(['propose', 'approve', 'approve']);
+    expect(chain.sent).toEqual(['propose', 'approve']);
     expect(await a.kept.headers.at(COMPANY, 1)).toEqual([]);
     /* A device whose clock is behind the chain's builds and sends it; the chain refuses it, and the head stays. */
     a.at(NOW);
@@ -475,7 +471,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     await approveRecoveryHere(b.doors, file);
-    await approveRecoveryHere(a.doors, file);
     const before = [...chain.sent];
     for (const f of [{ ...file, salt: '00'.repeat(32) }, { ...file, change: { ...file.change, latest: String(Number(LATEST_SECONDS) + 1) } }]) {
       /* RED WHEN: the carrying out does not make the file's identity again from its change and salt before building, so a file that names another proposal reaches the call builder. */
@@ -497,7 +492,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     await approveRecoveryHere(b.doors, file);
-    await approveRecoveryHere(a.doors, file);
     /* Between this device building the call and the chain taking it, another anchor moves the head on. */
     const beaten = {
       ...a.doors,
@@ -532,7 +526,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     await approveRecoveryHere(b.doors, file);
-    await approveRecoveryHere(a.doors, file);
     /* B's carrying out lands between A's device building its own and the chain taking it. */
     let bDone: Awaited<ReturnType<typeof carryOutRecoveryHere>> | undefined;
     let taken!: () => void;
@@ -559,7 +552,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     await approveRecoveryHere(b.doors, file);
-    await approveRecoveryHere(a.doors, file);
     /* The first read of where the proposal stands after the send is from before the call landed; the heads read next are after it. */
     let sent = false;
     let stale = true;
@@ -593,13 +585,12 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await expect(approveRecoveryHere(liar(bDeclines), file))
       .rejects.toThrow(/the company's service said it sent the call, but the chain, as your wallet's indexer shows it, did not show it within 3 seconds, and you chose not to send it from your own wallet/u);
     expect(bDeclines.asked).toEqual(['service said sent', 'the person chose their own wallet']);
-    expect(chain.proposals.get(file.chainId)?.approvals).toBe(0);
+    expect(chain.proposals.get(file.chainId)?.approvals).toBe(1);
     await approveRecoveryHere(liar(b), file);
-    await approveRecoveryHere(liar(a), file);
     /* RED WHEN: a carrying out the service says it sent, and the chain never shows, is believed carried out: the recovery would stop there. */
     const done = await carryOutRecoveryHere(liar(a), file);
     expect(done.sentBy).toBe('own-wallet');
-    expect(chain.sent).toEqual(['propose', 'approve', 'approve', 'recoverAnchor']);
+    expect(chain.sent).toEqual(['propose', 'approve', 'recoverAnchor']);
     expect(chain.proposals.get(file.chainId)?.held).toBe('closed');
   });
 
@@ -614,12 +605,11 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     await approveRecoveryHere(b.doors, file);
-    await approveRecoveryHere(a.doors, file);
     /* RED WHEN: the device judges the approvals by a rule of its own - the threshold - and keeps and files a header for a call the account refuses. */
     await expect(carryOutRecoveryHere(a.doors, file)).rejects.toThrow(/recovery of the company's records was not carried out: not enough approvals yet\. Nothing was built or sent/u);
     expect(await a.kept.headers.at(COMPANY, 1)).toEqual([]);
     expect(a.asked).not.toContain('service kept a header');
-    expect(chain.sent).toEqual(['propose', 'approve', 'approve']);
+    expect(chain.sent).toEqual(['propose', 'approve']);
   });
 
   it('A RECOVERY NAMES THE HEAD THE LATEST ONE CARRIED OUT WROTE, READ OFF THE ACCOUNT\'S STATE AT THE WALLET\'S INDEXER, AND IS CARRIED OUT FROM THERE', async () => {
@@ -631,7 +621,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file: first } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     await approveRecoveryHere(b.doors, first);
-    await approveRecoveryHere(a.doors, first);
     const done = await carryOutRecoveryHere(a.doors, first);
     expect(chain.latest.recovery).toBe(done.head);
     /* Then batch 2 lands with a header nobody kept: the anchor's head moves on past the one the recovery wrote. */
@@ -644,8 +633,8 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     /* RED WHEN: the latest recovery is read off anything but a state of the account that the indexer the person's own wallet names handed over. */
     expect(asked.length).toBeGreaterThan(0);
     expect(asked.every((x) => chain.handed.has(x))).toBe(true);
+    /* B's raise is B's approval. */
     await approveRecoveryHere(a.doors, file);
-    await approveRecoveryHere(b.doors, file);
     /* RED WHEN: a recovery naming the latest one carried out is not carried out with it - the account would refuse it. */
     const second = await carryOutRecoveryHere(b.doors, file);
     expect(c.landed[c.landed.length - 1]!.head).toBe(second.head);
@@ -663,10 +652,9 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(third);
     const { file: one } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     const { file: two } = await raiseRecoveryHere(b.doors, { latest: LATEST });
-    for (const f of [one, two]) {
-      await approveRecoveryHere(a.doors, f);
-      await approveRecoveryHere(b.doors, f);
-    }
+    /* Each raise is its raiser's approval: B approves A's, and A approves B's. */
+    await approveRecoveryHere(b.doors, one);
+    await approveRecoveryHere(a.doors, two);
     await carryOutRecoveryHere(a.doors, one);
     const sent = [...chain.sent];
     /* What the refusal says: the head the file names, the head this device read, and what resolves it. */
@@ -695,10 +683,9 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file: one } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     const { file: two } = await raiseRecoveryHere(b.doors, { latest: LATEST });
-    for (const f of [one, two]) {
-      await approveRecoveryHere(a.doors, f);
-      await approveRecoveryHere(b.doors, f);
-    }
+    /* Each raise is its raiser's approval: B approves A's, and A approves B's. */
+    await approveRecoveryHere(b.doors, one);
+    await approveRecoveryHere(a.doors, two);
     /* B's device carries out the first after A's device has checked its own read and while it makes its header. */
     let once = true;
     let built = 0;
@@ -730,7 +717,6 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     await readTo(b);
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     await approveRecoveryHere(b.doors, file);
-    await approveRecoveryHere(a.doors, file);
     /* Every read of the account's state is told apart by its turn, so two reads of an unchanged account are not taken for one. */
     let reads = 0;
     const read: string[] = [];

@@ -177,7 +177,6 @@ describe('a vault pays one payee of an approved run', () => {
       root: fromHex(tree.root), payees: tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
     return { tree, id, leaves };
   };
@@ -430,7 +429,6 @@ describe('a vault pays one payee of an approved run', () => {
       root: fromHex(byA.tree.root), payees: byA.tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
 
     const pay = async (run: typeof byA, i: number) => {
@@ -493,7 +491,6 @@ describe('a vault pays one payee of an approved run', () => {
       root: fromHex(byA.tree.root), payees: byA.tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
 
     const a0 = byA.payeeArgs(0);
@@ -516,7 +513,6 @@ describe('a vault pays one payee of an approved run', () => {
       root: fromHex(retry.tree.root), payees: retry.tree.payees,
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
     const retryId = sim.proposalId(retryPayload, c2.salt, vaultBytes);
-    await sim.as(carrying(sim, A, c2)).approve(retryId);
     await sim.as(carrying(sim, B, c2)).approve(retryId);
 
     await expect(vault.impureCircuits.payout(

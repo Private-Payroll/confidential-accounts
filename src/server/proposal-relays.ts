@@ -23,7 +23,8 @@
  * that the vault's own start step carried out, that the chain no longer holds
  * it open and lists the vault adopted. Whether that count meets
  * the bar of the vault the proposal names is worked out on a signer's device,
- * which opens the record; the vault is sealed and this server never knows it.
+ * which opens the record; the vault is sealed in it and this server does not
+ * read it. No raise hands this server a payment's amount, payee or currency.
  *
  * **EVERY ANSWER SAYS WHETHER ANYTHING WAS SENT.** `nothingWasSent: true` is a
  * refusal before the chain was handed anything, final and safe to say so, with
@@ -36,8 +37,7 @@ import { z } from 'zod';
 import type { Ledger, LedgerStatus } from '../core/ledger.js';
 import type { SealedAccount, SealedProposal, SealedRun } from '../core/types.js';
 import { runFilingRefusal, type SignedRunFiling } from '../core/run-filing.js';
-import type { PaymentChecked } from '../core/device-raise.js';
-import { paysCommitmentOf, proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
+import { proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION, reloadThePage } from '../core/device-raise.js';
@@ -64,17 +64,6 @@ export interface RelayStore {
   putRaisedRunAndProposal?(r: SealedRun, before: SealedRun, p: SealedProposal): boolean;
 }
 
-/**
- * **WHAT A RAISE OF A PAYROLL RUN ASKS OF THE VAULT'S PUBLIC MONEY.** A
- * device reads only a vault's private money; its public money is read here,
- * from the payments the device says the raise makes - a kind, a token and an
- * amount each, nothing about who is paid - and a raise the vault cannot pay is
- * refused before anything is written down.
- */
-export type PublicMoneyCheck = (ask: {
-  readonly vault: string; readonly asset: string; readonly payments: ReadonlyArray<PaymentChecked<string, string>>;
-}) => Promise<void>;
-
 /** What these routes need of the ledger: one read of the account, and the one door for a call a device proved. */
 export type RelayLedger = Pick<Ledger, 'status' | 'wiring'> & Partial<Pick<Ledger, 'submitProvenCall'>>;
 
@@ -91,8 +80,6 @@ export interface ProposalRelayDeps {
   readonly directoryOf: (accountId: string) => Promise<DirectoryNow>;
   readonly recordRefusal: (method: string, path: string, status: number, kind: string, reason: string) => void;
   readonly now?: () => string;
-  /** Present where a payroll run's raise is filed: the public money check above. */
-  readonly publicMoney?: PublicMoneyCheck;
   /** The wiring a run filed with a raise is kept under. */
   readonly wiring?: () => SealedRun['wiring'];
   /**
@@ -575,12 +562,12 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * proposal; it is the company's run kept here, for the same period,
    * still unpaid, and the raise adds exactly this
    * proposal to the ones the run names, letting go only of a withdrawn one, and
-   * it says what it pays.
+   * its proposal carries a commitment to what it pays. What it pays is not sent
+   * here: the vault's money, private and public, is checked on the raising
+   * device, and the chain refuses a payment the vault cannot make.
    */
   const runRaisedWith = (
     company: string, filing: SignedProposalFiling, given: unknown,
-    pays: { vault: string; asset: string; payments: Array<PaymentChecked<string, string>> } | undefined,
-    salt: string,
   ): { run: SignedRunFiling; kept: SealedRun } => {
     const why = runFilingRefusal(company, given);
     if (why !== null) throw new NothingWasSent(`this is not a run this company can keep: ${why}. Nothing was written down or sent.`);
@@ -588,7 +575,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     if (run.filedBy.publicKey.toLowerCase() !== filing.filedBy.publicKey.toLowerCase()) {
       throw new NothingWasSent('this run and its proposal are signed by two different keys. Nothing was written down or sent.');
     }
-    if (deps.store.getRun === undefined || deps.store.putRaisedRunAndProposal === undefined || deps.publicMoney === undefined) {
+    if (deps.store.getRun === undefined || deps.store.putRaisedRunAndProposal === undefined) {
       throw new NothingWasSent('this service does not keep payroll runs raised from a device. Nothing was written down or sent.');
     }
     const kept = deps.store.getRun(run.id);
@@ -611,18 +598,9 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
       || dropped.some((id) => deps.store.getProposal(id)?.status !== 'cancelled')) {
       throw new NothingWasSent('this run does not add exactly this proposal to the ones it names. Nothing was written down or sent.');
     }
-    if (pays === undefined) {
-      throw new NothingWasSent('this raise does not say what it pays, so the vault cannot be checked for it. Nothing was written '
-        + 'down or sent.');
-    }
-    /* What the vault is asked for is what the proposal itself commits to, from the vault its identity names. */
-    if (filing.pays === undefined || paysCommitmentOf(pays, salt) !== filing.pays.toLowerCase()) {
-      throw new NothingWasSent('what this raise says it pays is not what its proposal commits to paying, so the vault cannot be '
-        + 'checked for it. Reload the page and raise it again. Nothing was written down or sent.');
-    }
-    if (deps.proposalIdOf(filing.digest, salt, pays.vault).toLowerCase() !== filing.chainId.toLowerCase()) {
-      throw new NothingWasSent('the vault this raise says pays it is not the vault its proposal is raised for. Reload the page '
-        + 'and raise it again. Nothing was written down or sent.');
+    if (filing.pays === undefined) {
+      throw new NothingWasSent('this run\'s proposal does not commit to what it pays, so no signer\'s device could hold it to the '
+        + 'run. Reload the page and raise it again. Nothing was written down or sent.');
     }
     return { run, kept };
   };
@@ -630,15 +608,17 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
   router.post('/api/accounts/:id/proposals', deps.signedIn, deps.member, json, async (req, res) => {
     const b = parsed(res, z.object({
       proposal: z.unknown(), tx: TX.optional(), version: z.unknown().optional(),
-      /* The proposal's salt: the service holds its identity on the chain to the vault it names, or to none. */
+      /*
+       * The proposal's salt: the service holds a change's or a vault's first secret run's identity on the chain to the
+       * vault it names, or to none. A run's is not used here.
+       */
       salt: z.string().regex(HEX64),
-      /* A payroll run's raise: the run re-filed with the raise, and what the raise pays, for the public money check. */
+      /*
+       * A payroll run's raise: the run re-filed with the raise, and nothing it pays. A body naming its payments is
+       * refused as any body with a field this route does not take is.
+       */
       run: z.unknown().optional(),
       vault: z.string().regex(HEX64).optional(),
-      pays: z.object({
-        vault: z.string().regex(HEX64), asset: z.string().regex(HEX64),
-        payments: z.array(z.object({ kind: z.enum(['shielded', 'unshielded']), token: z.string().regex(HEX64), amount: z.string().regex(/^[0-9]+$/u) }).strict()).min(1),
-      }).strict().optional(),
     }).strict(), req.body, 'a proposal to write down');
     if (b === null) return;
     await answerASend(req, res, async () => {
@@ -665,28 +645,28 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         }
         /*
          * **A PROPOSAL FILED WITH NO RUN IS A CHANGE TO THE COMPANY**, raised for
-         * no vault, or a new vault's first secret run, raised for the vault
-         * `vault` names: a run of one payee whose one leaf pays a zero amount of
-         * no asset, so nothing is ever paid out under it, and which this route
-         * keeps no run record for. That vault is not signed: it is
-         * held only to the identity the filing signs, so it shows the filing is
-         * consistent, never that the vault is this company's, and the kind inside
-         * the sealed envelope is the devices' to judge. Any other proposal whose
-         * identity names a vault is a payroll proposal, filed only with the run it
-         * raises.
+         * no vault, or a run of one payee raised for the vault `vault` names: a
+         * new vault's first secret run, or a one-off payment from the vault,
+         * whose payment is sealed in a record of the company's this route never
+         * reads. This route keeps no run record for either. That vault is not
+         * signed: it is held only to the identity the filing signs, so it shows
+         * the filing is consistent, never that the vault is this company's, and
+         * the kind inside the sealed envelope is the devices' to judge. Such a
+         * proposal says nothing of what it pays; a payroll proposal, which does,
+         * is filed only with the run it raises.
          */
         if (b.run !== undefined && b.vault !== undefined) {
-          throw new NothingWasSent('a payroll proposal names its vault in what it pays, never beside it. Nothing was written down or sent.');
+          throw new NothingWasSent('a payroll proposal is written down with its run, and its vault is sealed in its records, never named beside it. Nothing was written down or sent.');
         }
-        if (b.run === undefined && (filing.pays !== undefined || b.pays !== undefined
+        if (b.run === undefined && (filing.pays !== undefined
           || deps.proposalIdOf(filing.digest, b.salt, b.vault).toLowerCase() !== filing.chainId.toLowerCase())) {
-          throw new NothingWasSent(b.vault === undefined
-            ? 'a payroll proposal is written down only with the run it raises, and this one comes with none. Raise it from the '
-              + 'run. Nothing was written down or sent.'
-            : 'the vault this proposal is written down for is not the vault its identity on the chain names, or it says it '
-              + 'pays someone. Reload the page and set the vault up again. Nothing was written down or sent.');
+          throw new NothingWasSent(filing.pays !== undefined
+            ? 'a proposal that says what it pays is a payroll proposal, written down only with the run it raises, and this one '
+              + 'comes with none. Raise it from the run. Nothing was written down or sent.'
+            : 'this proposal\'s identity on the chain is not the one its parts, its salt and the vault it is written down for '
+              + 'make. Reload the page and raise it again. Nothing was written down or sent.');
         }
-        const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run, b.pays, b.salt);
+        const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run);
         const proposal: SealedProposal = {
           id: filing.id, accountId: company, status: 'open', createdAt: filing.createdAt, digest: filing.digest,
           chainId: filing.chainId, approvalCount: 0, keyEpoch: filing.keyEpoch, sealed: filing.sealed,
@@ -698,13 +678,11 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
           deps.store.putProposal(proposal);
           return;
         }
-        await deps.publicMoney!({ vault: b.pays!.vault, asset: b.pays!.asset, payments: b.pays!.payments });
         /*
          * **THE RUN AND ITS PROPOSAL ARE WRITTEN IN ONE WRITE, OR NEITHER IS.**
          * Only while the run is as it was read - two raises of one run checked
          * at once, the second is refused - and while the proposal's name is
-         * still free, since another raise, of another run, may have taken it
-         * meanwhile.
+         * still free. The store's write holds both conditions itself.
          */
         if (deps.store.getProposal(filing.id) !== null) {
           throw new NothingWasSent('a proposal by this name was written down while this one was checked. Nothing was written down or sent.');

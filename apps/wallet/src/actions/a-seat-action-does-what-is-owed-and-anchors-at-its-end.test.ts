@@ -62,6 +62,7 @@ const { apiOver, sendOver } = await import('./company-reach.js');
 const { createVaultAction } = await import('./create-vault.js');
 const { giveVaultKeysAction } = await import('./give-vault-keys.js');
 const { privateDepositAction } = await import('./private-deposit.js');
+const { oneOffPaymentAction } = await import('./one-off-payment.js');
 
 const secret = newSecret();
 const identity = identityFromSecret(secret);
@@ -147,6 +148,10 @@ describe('every seat action starts with what the company is owed of its seat and
       .toEqual(['act.upkeep.step.first', 'act.create-vault.step.entry', 'act.create-vault.step.offer', 'act.create-vault.step.start', 'act.upkeep.step.last']);
     expect(titles(privateDepositAction({ ...vaults, balance: () => ({}) as never }).steps(intent('private-deposit'))))
       .toEqual(['act.private-deposit.step.seat', 'act.upkeep.step.first', 'act.private-deposit.step.deposit', 'act.upkeep.step.last']);
+    /* RED WHEN: a one-off payment is raised before the owed upkeep, or ends without what it filed being anchored. */
+    expect(titles(oneOffPaymentAction(vaults).steps(intent('one-off-payment'))))
+      .toEqual(['act.one-off-payment.step.seat', 'act.upkeep.step.first', 'act.one-off-payment.step.raise', 'act.one-off-payment.step.charge',
+        'act.one-off-payment.step.pay', 'act.upkeep.step.last']);
   });
 
   it('lists, before the passkey, everything the upkeep may do, as the action\'s own account of it', async () => {
@@ -372,6 +377,24 @@ describe('the upkeep says what it could not do, and stops only for what the page
     /* RED WHEN: an anchor that may have been sent is swallowed by the upkeep, so the page is told the action is done with nothing unconfirmed. */
     expect(e).toBeInstanceOf(StepRefused);
     expect((e as StepRefused).words.key).toBe('act.upkeep.why.not-confirmed');
+  });
+
+  it('counts a proposal call as unconfirmed only when it carried a transaction', async () => {
+    const tried = (body: string) => async (d: Record<string, any>) => {
+      try { await d['api']('/api/accounts/acc_1/proposals', { method: 'POST', body }); } catch { /* the shared step swallows it */ }
+      return null;
+    };
+    const refusing = { answer: (m: string, p: string) => (m === 'POST' && p.endsWith('/proposals') ? { status: 500, body: { error: 'down' } } : undefined) };
+    t.roster = tried('{"proposal":{},"salt":"ab"}');
+    const bare = ctxWith('create-vault', refusing);
+    /* RED WHEN: a proposal written down with nothing for the chain, refused by the service, stops the step as something that may have been sent. */
+    await expect(upkeepSteps(company().doors, {}).first.run(bare.ctx)).resolves.toBeUndefined();
+    expect(bare.calls).toContain('POST /api/accounts/acc_1/proposals');
+    t.roster = tried('{"proposal":{},"salt":"ab","tx":"AAAA"}');
+    const sent = ctxWith('create-vault', refusing);
+    const e = await upkeepSteps(company().doors, {}).first.run(sent.ctx).catch((x: unknown) => x);
+    /* RED WHEN: a raise that may have been sent with its transaction is swallowed by the upkeep. */
+    expect((e as StepRefused).words?.key).toBe('act.upkeep.why.not-confirmed');
   });
 
   it('never swallows a stop, even where the shared step it calls catches every error', async () => {

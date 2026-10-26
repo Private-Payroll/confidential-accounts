@@ -29,6 +29,7 @@ import { factsHere, RAISE_CHECKS } from './raise-checks-here.js';
 import { RecordWithheld } from './http-sealed-pool-store.js';
 import type { DirectoryHere } from './vault-page-doors.js';
 import type { PeopleHere } from './people-on-device.js';
+import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
 
 const CO = 'acc_1';
 const KEY = newSymmetricKey();
@@ -123,6 +124,7 @@ const records = (o: Founding & { state?: unknown; people?: PeopleHere; runs?: Se
   /* Sealed once: every read of the company's runs is served the same bytes, as the store serves what it keeps. */
   const runs = o.runs ?? [runOf()];
   return everyRunAndProposalEntered({
+    oneOffs: noOneOffsHere(),
     directory: async () => here(o),
     people: async () => o.people ?? peopleOf(),
     state: async (id) => (id === '0' ? ('state' in o ? o.state : STATE) as never : null),
@@ -432,3 +434,14 @@ describe('WHICH PROPOSAL ON CHAIN EACH OF THE COMPANY\'S PROPOSALS IS, AS THIS D
     expect([...await believedProposalIdsOnChainHere(records({ proposals: [{ ...ours, accountId: 'acc_2' }] }), CO)]).toEqual([]);
   });
 });
+
+describe('every way of reading a company\'s records says how it reads its one-off payments', () => {
+  it('a records door with no one-off payments door does not typecheck', () => {
+    const without = {} as Omit<CompanyRecordsHere, 'oneOffs'>;
+    /* RED WHEN (typecheck): a door can be built that leaves one-off payments out, so a paid one-off is not counted against the vault. */
+    // @ts-expect-error: `oneOffs` is required
+    const doors: CompanyRecordsHere = without;
+    expect(doors).toBe(without);
+  });
+});
+

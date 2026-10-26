@@ -2296,6 +2296,8 @@ export class AccountService {
     const current = this.requireProposal(proposalId, viewingKey);
     this.refuseApprovingIn(current);
     if (current.approvals.some(a => a.signerId === signerId)) throw new Error('already approved');
+    /* The chain's count as this record last read it, before this approval is sent: the wait below is for it to rise. */
+    const countedBefore = countIn(current.approvalRound);
     const release = this.holdTheSend(anApprovalOf(proposalId, signerId), 'this approval');
 
     /*
@@ -2354,7 +2356,7 @@ export class AccountService {
      */
     return device === null
       ? this.recordStanding(proposalId, account, viewingKey)
-      : this.standingOnceCounted(proposalId, account, viewingKey);
+      : this.standingOnceCounted(proposalId, account, viewingKey, countedBefore);
   }
 
   /**
@@ -2387,15 +2389,18 @@ export class AccountService {
    * **THE STANDING AFTER AN APPROVAL A DEVICE SENT, READ UNTIL THE CHAIN HAS
    * COUNTED IT.** The first read is the ordinary one and a failure of it reaches
    * the caller as before. Later reads are asked only while the proposal is open
-   * and the chain counts fewer approvals than this record holds signatures; a
-   * later read that fails ends the wait, because the approval is already
-   * recorded and the standing is the half anybody can read again.
+   * and the chain's count has not risen above `countedBefore`, the count read
+   * before the approval was sent. The chain's count is compared only with the
+   * chain's count: it can hold an approval this record holds no signature for,
+   * the raiser's own. A later read that fails ends the wait, because the
+   * approval is already recorded and the standing is the half anybody can read
+   * again.
    */
   private async standingOnceCounted(
-    proposalId: string, account: Account, viewingKey: Hex,
+    proposalId: string, account: Account, viewingKey: Hex, countedBefore: number,
   ): Promise<Proposal> {
     let now = await this.recordStanding(proposalId, account, viewingKey);
-    for (let asked = 1; asked < this.inclusion.attempts && this.notYetCounted(now); asked++) {
+    for (let asked = 1; asked < this.inclusion.attempts && this.notYetCounted(now, countedBefore); asked++) {
       await new Promise<void>(r => setTimeout(r, this.inclusion.everyMs));
       try {
         now = await this.recordStanding(proposalId, account, viewingKey);
@@ -2406,8 +2411,8 @@ export class AccountService {
     return now;
   }
 
-  private notYetCounted(p: Proposal): boolean {
-    return p.status === 'open' && countIn(p.approvalRound) < p.approvals.length;
+  private notYetCounted(p: Proposal, countedBefore: number): boolean {
+    return p.status === 'open' && countIn(p.approvalRound) <= countedBefore;
   }
 
   /**

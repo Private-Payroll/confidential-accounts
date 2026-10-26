@@ -219,8 +219,8 @@ describe('a raise that threw after the network had it', () => {
       .rejects.toThrow();
     const [written] = r.roundsOf(r.run.id);
     const round = r.accounts.requireProposal(written!.id, r.viewingKey);
-    const approved = await r.accounts.approve(round.id, r.by,
-      sign(approvalMessage(round), r.created.secrets[0]!.signingSecret), r.viewingKey);
+    /* The raise was its raiser's approval, which meets this company's bar: the chain's count is read, and nobody approves again. */
+    const approved = await r.accounts.refreshStanding(round.id, r.viewingKey);
     expect(approved.status).toBe('approved');
 
     /* RED WHEN only an OPEN round is treated as one that may be on chain. */

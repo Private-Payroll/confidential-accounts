@@ -232,41 +232,62 @@ const ceiling: RaiseCheck = {
  * policy for the currency, the run's whole window lies in one of its periods,
  * its total fits a band and is no more than the vault may pay in a period, and
  * it is raised needing at least the approvals its band needs - more is the
- * raiser's own choice. A vault with no policy is paid as it always was.
+ * raiser's own choice. A vault with no policy is paid as it always was. The one
+ * statement of it, for a payroll round (`spendingPolicy`) and a one-off payment,
+ * which is a run with one payee, alike.
  */
+/** The refusals of a payroll run, and of a one-off payment in its own words: it is one payment, in a time the wallet sets. */
+const POLICY_REFUSALS = {
+  run: {
+    unread: (why: string) => `this device could not read the spending policy of the vault this run is paid from (${why}), so it `
+      + 'cannot say the vault would pay it. Reload the page and try again. If it is still unread, a signer who may set spending '
+      + 'policies and can read it re-seals it from their own device, or changes its terms',
+    currency: 'the vault this run is paid from has a spending policy, but none for the currency this run pays in, so the '
+      + 'chain would charge it to no period and the vault would not pay it. Set a policy for this currency first, or raise '
+      + 'the run from another vault',
+    period: 'this run\'s window does not lie inside one period of the spending policy of the vault it is paid from, so '
+      + 'the chain would never charge it. Choose a window that opens and closes inside one period',
+    band: 'this run\'s total is above every band of the spending policy of the vault it is paid from, so no number '
+      + 'of approvals can pay it. Pay less in one run, or change the policy',
+    limit: 'this run alone is more than the vault it is paid from may pay in one period under its spending policy. '
+      + 'Pay less in one run, or raise the limit for the period',
+    needs: (asked: string, needs: bigint) => `this run is raised needing ${asked} approvals, and its band under the spending policy of `
+      + `the vault it is paid from needs ${needs}, so the chain would not charge it. Raise it again`,
+  },
+  'one-off': {
+    unread: (why: string) => `this device could not read the vault's spending policy (${why}), so it cannot say the vault would `
+      + 'pay this payment. Reload the page and try again. If it is still unread, ask a signer who may set spending policies to '
+      + 'seal it again from their own device',
+    currency: 'the vault has a spending policy, but none for the currency this payment is in, so the vault would not pay it. '
+      + 'Set a policy for this currency first, or pay from another vault',
+    period: 'the time this payment may be made in does not lie inside one period of the vault\'s spending policy, so it would '
+      + 'never be charged. Try again once the next period has begun',
+    band: 'this payment is above every band of the vault\'s spending policy, so no number of approvals can pay it. Pay less, '
+      + 'or change the policy',
+    limit: 'this payment alone is more than the vault may pay in one period under its spending policy. Pay less, or increase the '
+      + 'limit for the period',
+    needs: (asked: string, needs: bigint) => `this payment is proposed needing ${asked} approvals, and its band under the vault's `
+      + `spending policy needs ${needs}, so it would not be charged. Propose it again`,
+  },
+} as const;
+
+export const refuseWhatThePolicyWouldNotCharge = (
+  p: PolicyForARun, total: bigint, required: string, of: keyof typeof POLICY_REFUSALS = 'run',
+): void => {
+  const say = POLICY_REFUSALS[of];
+  if (p.state === 'none') return;
+  if (p.state === 'unread') throw new Error(say.unread(p.why));
+  if (p.state === 'not-for-this-currency') throw new Error(say.currency);
+  if (p.period === null) throw new Error(say.period);
+  if (p.required === null) throw new Error(say.band);
+  if (total > p.periodLimit) throw new Error(say.limit);
+  if (!/^[0-9]+$/u.test(required) || BigInt(required) < p.required) throw new Error(say.needs(required, p.required));
+};
+
 const spendingPolicy: RaiseCheck = {
   name: 'spending-policy',
-  check: ({ made }, facts) => {
-    const p = facts.spendingPolicy;
-    if (p.state === 'none') return;
-    if (p.state === 'unread') {
-      throw new Error(`this device could not read the spending policy of the vault this run is paid from (${p.why}), so it `
-        + 'cannot say the vault would pay it. Reload the page and try again. If it is still unread, a signer who may set spending '
-        + 'policies and can read it re-seals it from their own device, or changes its terms');
-    }
-    if (p.state === 'not-for-this-currency') {
-      throw new Error('the vault this run is paid from has a spending policy, but none for the currency this run pays in, so the '
-        + 'chain would charge it to no period and the vault would not pay it. Set a policy for this currency first, or raise '
-        + 'the run from another vault');
-    }
-    if (p.period === null) {
-      throw new Error('this run\'s window does not lie inside one period of the spending policy of the vault it is paid from, so '
-        + 'the chain would never charge it. Choose a window that opens and closes inside one period');
-    }
-    if (p.required === null) {
-      throw new Error('this run\'s total is above every band of the spending policy of the vault it is paid from, so no number '
-        + 'of approvals can pay it. Pay less in one run, or change the policy');
-    }
-    const total = positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n);
-    if (total > p.periodLimit) {
-      throw new Error('this run alone is more than the vault it is paid from may pay in one period under its spending policy. '
-        + 'Pay less in one run, or raise the limit for the period');
-    }
-    if (!/^[0-9]+$/u.test(String(made.required)) || BigInt(made.required) < p.required) {
-      throw new Error(`this run is raised needing ${String(made.required)} approvals, and its band under the spending policy of `
-        + `the vault it is paid from needs ${p.required}, so the chain would not charge it. Raise it again`);
-    }
-  },
+  check: ({ made }, facts) => refuseWhatThePolicyWouldNotCharge(
+    facts.spendingPolicy, positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n), String(made.required)),
 };
 
 /** **NO OTHER RUN FOR THE MONTH IS RAISED TO PAY THE SAME PEOPLE.** */

@@ -147,7 +147,7 @@ class World {
     return out.result;
   }
 
-  /** A run of `leaves` at `amounts`, naming this vault, approved by `approvers`. */
+  /** A run of `leaves` at `amounts`, naming this vault, approved by `approvers` (the first by raising it). */
   async approved(leaves: PayoutLeafInput[], amounts: bigint[], seed: number, approvers = [A, B], runVault?: Uint8Array) {
     const vault = runVault ?? this.self;
     const tree = payoutTreeOf(leaves, amounts, TOKEN_BYTES);
@@ -156,7 +156,7 @@ class World {
       root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault,
     });
     const id = this.sim.proposalId(P.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
-    for (const a of approvers) await this.sim.as(this.sim.applying(a, c)).approve(id);
+    for (const a of approvers.slice(1)) await this.sim.as(this.sim.applying(a, c)).approve(id);
     const runOf = (i: number) => ({
       proposal: id, runVault: vault, root: fromHex(tree.root), payees: tree.payees,
       opensAt: OPENS, closesAt: CLOSES, required: 0n, salt: c.salt,
@@ -1061,7 +1061,6 @@ describe('a finished secret run is closed, and the company-wide secret change is
     const bar = P.setVaultThresholdPayload(w2.self, 3n);
     await w1.sim.as(w1.sim.applying(A, tc)).propose(bar);
     const bid = w1.sim.proposalId(bar, tc.salt);
-    await w1.sim.as(A).approve(bid);
     await w1.sim.as(B).approve(bid);
     await w1.sim.as(w1.sim.applying(A, tc)).setVaultThreshold(w2.self, 3n, bid);
     const run = await companyWide([w1, w2], [SECRET, NEXT_SECRET], 843);
@@ -1130,7 +1129,6 @@ describe('a company-wide run and a stricter vault, through a payment and a split
     const bar = P.setVaultThresholdPayload(w.self, to);
     await w.sim.as(w.sim.applying(A, tc)).propose(bar);
     const bid = w.sim.proposalId(bar, tc.salt);
-    await w.sim.as(A).approve(bid);
     await w.sim.as(B).approve(bid);
     await w.sim.as(w.sim.applying(A, tc)).setVaultThreshold(w.self, to, bid);
   };

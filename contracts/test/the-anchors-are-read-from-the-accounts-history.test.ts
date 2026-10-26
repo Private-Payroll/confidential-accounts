@@ -93,7 +93,6 @@ describe('THE ACCOUNT\'S ANCHORS, READ FROM ITS HISTORY IN THE WORKER', () => {
     const payload = pureCircuits.removeSignerPayload(sim.leafOf(A));
     await sim.as(sim.applying(B, c as never)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    await sim.as(B).approve(id);
     await sim.as(C).approve(id);
     await sim.as(sim.applying(B, c as never)).removeSigner(sim.leafOf(A), id);
     /* RED WHEN who holds the account now is read off any step but the latest: here the deploy's still holds A. */

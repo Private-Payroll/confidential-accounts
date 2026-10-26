@@ -70,7 +70,6 @@ const approvedRun = async (sim: AccountSimulator, vault: Uint8Array, payments: P
   const payload = pureCircuits.runPayload(fromHex(root), BigInt(leaves.length), OPENS, CLOSES, 0n);
   await sim.as(carrying(sim, A, c)).proposeRun({ root: fromHex(root), payees: BigInt(leaves.length), from: OPENS, until: CLOSES, vault });
   const id = sim.proposalId(payload, c.salt, vault);
-  await sim.as(carrying(sim, A, c)).approve(id);
   await sim.as(carrying(sim, B, c)).approve(id);
   return { id, c, leaves, root };
 };
@@ -211,7 +210,7 @@ describe('the pay-record key, sealed to each signer on chain', () => {
     const payload = fromHex(payKeyPayloadOf(toHex(to)));
     await sim.as(carrying(sim, A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    for (const who of approvers) await sim.as(carrying(sim, who, c)).approve(id);
+    for (const who of approvers.filter((d) => d !== A)) await sim.as(carrying(sim, who, c)).approve(id);
     return { id, c };
   };
 
@@ -357,7 +356,7 @@ describe('what the client refuses before anybody signs, and what the approving d
     const keyPayload = fromHex(payKeyPayloadOf(payKeyCommitmentOf(payKey)));
     await sim.as(carrying(sim, A, committed)).propose(keyPayload);
     const keyRound = sim.proposalId(keyPayload, committed.salt);
-    for (const who of [A, B]) await sim.as(carrying(sim, who, committed)).approve(keyRound);
+    for (const who of [B]) await sim.as(carrying(sim, who, committed)).approve(keyRound);
     await sim.as(carrying(sim, A, committed)).sealPayKey(sealPayKeyTo(payKey, newWrappingKeypair().publicKey).map(fromHex), fromHex(payKeyCommitmentOf(payKey)), keyRound);
     await sim.adoptVault(PAYROLL, [A, B]);
 
@@ -399,7 +398,7 @@ describe('what the client refuses before anybody signs, and what the approving d
     const firstId = await raised(first);
     /* The control: the chain has paid nobody, so the first run is approved as made again. */
     expect(check(first, firstId)).not.toThrow();
-    for (const who of [A, B]) await sim.as(carrying(sim, who, first.c)).approve(firstId);
+    for (const who of [B]) await sim.as(carrying(sim, who, first.c)).approve(firstId);
     const second = runOf('run_sep_again:leg', 63);
     const secondId = await raised(second);
     /* Another run, made again with leaves of its own, for the same people and month: nobody is paid yet, so it is not refused. */

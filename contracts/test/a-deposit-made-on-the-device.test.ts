@@ -177,7 +177,6 @@ describe('a deposit whose record is made on the device', () => {
     const vaultBytes = fromHex(vaultAddr);
     await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
     return { tree, id };
   };
@@ -357,7 +356,6 @@ describe('a deposit whose record is made on the device', () => {
     const c = change(0n, seed);
     await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
     const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n), c.salt, vaultBytes);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
     const run = vaultRunOf({ proposal: id, vault: vaultBytes, tree, i: 0, opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed) });
     for (const [circuit, args] of [

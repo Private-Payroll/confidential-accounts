@@ -10,7 +10,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { rootOfLeaves } from './payout-tree.js';
+import { buildOneOffRun, payoutLeafOf, rootOfLeaves, rootOfPayments } from './payout-tree.js';
+import { oneOffSecretsOf } from './run-keys.js';
+import { payeeFor } from '../testing/payees.js';
+import { vaultDetails } from '../testing/vault-details.js';
+import { TEST_TOKEN } from '../testing/assets.js';
 
 const leaf = (n: number): string => n.toString(16).padStart(2, '0').repeat(32);
 const GBP = '474250'.padEnd(64, '0');
@@ -34,5 +38,21 @@ describe('the amounts a run can carry', () => {
     /* RED WHEN the sum check at each level goes. */
     expect(() => rootOfLeaves([leaf(1), leaf(2)], [MAX, 1n], GBP))
       .toThrow(/this run's total is larger than any run can carry; check the amounts and their units/);
+  });
+});
+
+describe('A ONE-OFF PAYMENT\'S TREE: ONE LEAF, AS THE ACCOUNT CHECKS IT', () => {
+  it('PUTS ITS ONE PAYMENT AT THE ONE LEAF, AND THE ROOT IS THE ONE THAT LEAF AND AMOUNT MAKE', () => {
+    const secrets = oneOffSecretsOf('5e'.repeat(32));
+    const facts = { payee: payeeFor('a1'.repeat(32), 'undeployed'), token: TEST_TOKEN, amount: 4_200n };
+    const run = buildOneOffRun(facts, secrets, vaultDetails, TEST_TOKEN);
+    expect(run.tree.payees).toBe(1n);
+    const args = run.payeeArgs(0);
+    /* RED WHEN: the leaf is not made from the one-off's own nonce and blinding, so another device rebuilds another leaf. */
+    expect(args.nonce).toBe(secrets.nonce);
+    expect(args.leaf).toBe(payoutLeafOf({ details: args.details, nonce: secrets.nonce }));
+    /* RED WHEN: the root is not the account's root of that one leaf at that amount and token. */
+    expect(run.tree.root).toBe(rootOfPayments([args.leaf], [facts], TEST_TOKEN));
+    expect(() => run.payeeArgs(1)).toThrow(/no payee 1/u);
   });
 });

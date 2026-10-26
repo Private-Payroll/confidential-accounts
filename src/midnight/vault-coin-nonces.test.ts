@@ -78,7 +78,7 @@ describe('naming the coins a vault made, with the secret each was made under', (
     const vaultBytes = fromHex(vaultAddr);
     await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: FROM, until: UNTIL, vault: vaultBytes });
     const id = sim.proposalId(P.runPayload(fromHex(tree.root), tree.payees, FROM, UNTIL, 0n), c.salt, vaultBytes);
-    await sim.as(sim.applying(A, c)).approve(id);
+    /* A's raise is A's approval. */
     await sim.as(sim.applying(B, c)).approve(id);
     return vaultRunOf({ proposal: id, vault: vaultBytes, tree, i: 0, opensAt: FROM, closesAt: UNTIL, salt: c.salt, nonce: bytes(seed) });
   };

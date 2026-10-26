@@ -22,7 +22,7 @@ import { copyFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { AccountService, approvalMessage } from './account.js';
+import { AccountService } from './account.js';
 import { PayrollService } from './payroll.js';
 import { SimulatedLedger, type Ledger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
@@ -31,7 +31,7 @@ import { payRecordNonceOf } from '../midnight/run-keys.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { FileStore } from './store-file.js';
-import { sign, toHex, type Hex } from './crypto.js';
+import { toHex, type Hex } from './crypto.js';
 import type { RosterEmployee } from './types.js';
 
 import { TEST_TOKEN } from '../testing/assets.js';
@@ -444,8 +444,7 @@ describe('what is not refused', () => {
     const c = await aCompany();
     const sep = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey);
     const round = await c.raise(c.payroll, sep.run.id);
-    const s = c.created.secrets[0]!;
-    await c.accounts.approve(round.id, s.signerId, sign(approvalMessage(round), s.signingSecret), c.viewingKey);
+    await c.accounts.refreshStanding(round.id, c.viewingKey);
     expect(c.accounts.listProposals(c.account, c.viewingKey)[0]!.status).toBe('approved');
     const oct = await c.payroll.createRunFromRoster(c.account, OCTOBER, c.viewingKey);
     /* RED WHEN a round this service raised stops counting as known once it is approved. */

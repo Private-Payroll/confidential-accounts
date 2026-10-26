@@ -61,6 +61,9 @@
  * A real second payment for the same person and month is a later OCCURRENCE:
  * 1, 2 and so on, raised with its reason and approved like any run.
  *
+ * A ONE-OFF PAYMENT from a vault is none of these: its secrets come from a seed
+ * its own record seals, under a label of their own (`oneOffSecretsOf`).
+ *
  * ------------------------------------------------------------------------
  * WHAT AN ATTACKER GETS FROM A PAID PAYEE
  *
@@ -76,6 +79,7 @@
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { toHex, fromHex, utf8, wrapKey, type Hex } from '../core/crypto.js';
+import { NO_LEG } from './spending-policy-record.js';
 
 /**
  * One generation of an account's payout seed.
@@ -209,6 +213,56 @@ export const payRecordNonceOf = (key: Hex, record: PayRecord): Hex => {
   const info = JSON.stringify([record.person, record.month, record.kind, record.occurrence]);
   return toHex(hkdf(sha256, fromHex(key), utf8('pay-record'), utf8(info), 32));
 };
+
+/** A one-off payment's secrets: its payee's, and the fresh half of its run's salt. */
+export interface OneOffSecrets extends PayeeSecrets {
+  /** The fresh half of the run's salt: the account takes `retrySaltOf(no leg, fresh)` as a first payment's salt. */
+  fresh: Hex;
+}
+
+const SEED = /^[0-9a-f]{64}$/u;
+const ONE_OFF = utf8('one-off');
+
+/**
+ * **A ONE-OFF PAYMENT'S SECRETS, FROM THE ONE SEED ITS RECORD SEALS.**
+ *
+ * A one-off is paid outside payroll, so nothing about it is a person, a month or
+ * a kind of pay. Its nonce, its payee's blinding and the fresh half of its
+ * salt are each derived from a random seed under the label `one-off` and a name
+ * of their own. Payroll's nonce is derived from the pay-record key under
+ * `pay-record` (`payRecordNonceOf`), so the two never share a derivation, and
+ * two one-offs never share a nonce, because each seals its own seed.
+ *
+ * **Derived, not kept, for the approving device's sake.** Any signer's device
+ * opens the record, derives these again from the seed and rebuilds the leaf,
+ * so a raiser cannot hand it a nonce of their choosing - a payroll month's
+ * included, whose once-mark a paid one-off would otherwise take.
+ */
+export const oneOffSecretsOf = (seed: Hex): OneOffSecrets => {
+  if (typeof seed !== 'string' || !SEED.test(seed)) {
+    throw new Error('a one-off payment\'s seed is 32 bytes written as 64 lower-case hex characters');
+  }
+  const of = (name: string): Hex => toHex(hkdf(sha256, fromHex(seed), ONE_OFF, utf8(name), 32));
+  return { nonce: of('nonce'), blinding: of('payee-blinding'), fresh: of('fresh') };
+};
+
+/**
+ * **A ONE-OFF PAYMENT'S SALT**: a first payment's, the account's own
+ * `retrySaltOf` over no leg and the one-off's fresh half, so the chain charges
+ * it as a run of its own, never as a retry of a leg. The one statement of the
+ * rule, for the raise, the approving device's check and the pay order alike.
+ */
+export const oneOffSaltOf = (
+  secrets: Pick<OneOffSecrets, 'fresh'>, retrySaltOf: (legRoot: Uint8Array, fresh: Uint8Array) => Uint8Array,
+): Hex => toHex(retrySaltOf(NO_LEG(), fromHex(secrets.fresh)));
+
+/**
+ * **THE ENTRY THE ACCOUNT RECORDS ONCE A ONE-OFF IS PAID**, its once-mark: the
+ * account's own `paidOnceOf` over the one-off's nonce, in lower-case hex. The
+ * one statement of it, for whoever asks the account whether a one-off is paid.
+ */
+export const oneOffEntryOf = (secrets: Pick<OneOffSecrets, 'nonce'>, paidOnceOf: (nonce: Uint8Array) => Uint8Array): string =>
+  toHex(paidOnceOf(fromHex(secrets.nonce))).toLowerCase();
 
 /**
  * Every payee's secrets for a run, in tree order.

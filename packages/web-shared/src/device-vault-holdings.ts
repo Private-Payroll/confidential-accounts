@@ -25,11 +25,12 @@
  * note on the chain. A pool that is missing while the chain holds notes is
  * not nothing: it is a record this device cannot find, and is unreadable.
  *
- * **IT READS PRIVATE MONEY FOR PAYMENTS.** Public money is a contract balance
- * read off the vault's state, and a payment's check asks the company's service
- * for it where the payment is filed. What this file does with public money is
- * only to show it: `readPublicHoldings` reads the list a read of the vault
- * carries, for the vault's screen, and says so when there is none to read.
+ * **IT READS PUBLIC MONEY TOO.** Public money is a contract balance read off
+ * the vault's state, and a read of the vault carries it as a list of tokens and
+ * amounts. A payment's check reads that list here, from the same read of the
+ * vault, so no payment's amount goes to the company's service to be checked
+ * there. `readPublicHoldings` reads the same list for the vault's screen, and
+ * says so when there is none to read.
  *
  * **NOTHING IT READS LEAVES THIS DEVICE.** The vault's address goes out to ask
  * the chain what it holds; the notes, their values and the sum stay here.
@@ -215,9 +216,13 @@ export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): DeviceVaultHold
   },
 
   held: async (vault: string, form: LedgerForm, token: string): Promise<HoldingAnswer> => {
-    if (form !== 'shielded') {
-      return { of: 'unreadable', why: 'this device reads a vault\'s private money; its public money is read by the company\'s service' };
+    if (form === 'unshielded') {
+      const read = await publicHoldingsOfTheVault(doors, vault);
+      if (read.of !== 'held') return read;
+      const wanted = token.toLowerCase();
+      return { of: 'held', amount: read.holdings.filter((h) => h.token.toLowerCase() === wanted).reduce((a, h) => a + h.amount, 0n) };
     }
+    if (form !== 'shielded') return { of: 'unreadable', why: `"${String(form)}" is not a form money takes on Midnight` };
     const r = await reconciled(doors, vault as Hex);
     if (r.of === 'nothing-yet') return { of: 'unreadable', why: NO_NOTES_YET };
     if (r.of !== 'notes') return r.of === 'unreadable' ? { of: 'unreadable', why: r.why } : { of: 'contradicted', why: r.why };
@@ -226,8 +231,9 @@ export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): DeviceVaultHold
   },
 
   fits: async (vault: string, payments: ReadonlyArray<PaymentAsked>): Promise<FitAnswer> => {
+    if (payments.length > 0 && payments.every((p) => p.payee.kind === 'unshielded')) return publicPaymentsFit(doors, vault, payments);
     if (payments.some((p) => p.payee.kind !== 'shielded')) {
-      return { of: 'unreadable', why: 'this device reads a vault\'s private money; its public money is read by the company\'s service' };
+      return { of: 'unreadable', why: 'these payments mix private and public money, and a vault pays one run in one form' };
     }
     const r = await reconciled(doors, vault as Hex);
     if (r.of === 'nothing-yet') return { of: 'unreadable', why: NO_NOTES_YET };
@@ -248,6 +254,33 @@ export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): DeviceVaultHold
 });
 
 /* ------------------------------------------------ what it holds publicly */
+
+/** The vault's public money from the same read of the vault the private reads ask, or why it could not be read. */
+async function publicHoldingsOfTheVault(doors: DeviceHoldingsDoors, vault: string): Promise<PublicHoldingsAnswer> {
+  try {
+    return publicHoldingsFromView(await doors.chain(vault as Hex));
+  } catch (e) {
+    return { of: 'unreadable', why: `the chain could not be asked what this vault holds publicly: ${why(e)}` };
+  }
+}
+
+/**
+ * **WHETHER THE VAULT'S PUBLIC MONEY COVERS EVERY PUBLIC PAYMENT ASKED.** A public
+ * payment is paid out of the contract's balance in the token it names, with no
+ * notes to fit, so it fits when the balance of each token covers what the
+ * payments in that token add up to.
+ */
+async function publicPaymentsFit(doors: DeviceHoldingsDoors, vault: string, payments: ReadonlyArray<PaymentAsked>): Promise<FitAnswer> {
+  const read = await publicHoldingsOfTheVault(doors, vault);
+  if (read.of !== 'held') return read;
+  const asked = new Map<string, bigint>();
+  for (const p of payments) asked.set(p.token.toLowerCase(), (asked.get(p.token.toLowerCase()) ?? 0n) + p.amount);
+  for (const [token, amount] of asked) {
+    const held = read.holdings.filter((h) => h.token.toLowerCase() === token).reduce((a, h) => a + h.amount, 0n);
+    if (held < amount) return { of: 'does-not-fit', why: `the vault holds ${held} of token ${token} publicly and the payments in it add up to ${amount}` };
+  }
+  return { of: 'fits' };
+}
 
 /** What the vault's screen shows about its public money: every token and amount, or why it could not be read. */
 export type PublicHoldingsAnswer =

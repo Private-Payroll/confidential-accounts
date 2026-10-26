@@ -16,7 +16,10 @@
  * company's runs, each filed by a seat this device believes: every leg and
  * retry of this vault and currency whose window lies in the period, whatever
  * its proposal's status now, since the chain counts every root it marked
- * charged. No total is kept anywhere: each charge works it out again.
+ * charged; and beside them, never among them, every one-off payment from the
+ * vault in that currency whose window lies in the period, rebuilt from its
+ * record (`oneOffsInThePeriod`). No total is kept anywhere: each charge works
+ * it out again.
  *
  * **A CHARGE IS SEEN TO LAND BEFORE THE RUN IS PAID.** After relaying a
  * charge the device asks the chain, at the indexer the person's own wallet
@@ -39,6 +42,7 @@ import type { VaultBuilderClient } from './vault-worker-client.js';
 import { believedProposalIdsOnChainHere, believedRunsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { spendingPolicyHere } from './spending-policy-here.js';
 import { refuseARunALeaverRaisedHere } from './governed-call-on-device.js';
+import { oneOffOfTheProposalHere, oneOffsHere, type OneOffBelieved } from './one-off-here.js';
 import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
 import {
   chainAtOneBlockHere, DEPOSIT_TIME_TO_LIVE_MS, until, type BuiltOnHereDoors, type Pacing,
@@ -197,6 +201,29 @@ export function runsInThePeriod(
   return found;
 }
 
+/**
+ * **THE COMPANY'S ONE-OFF PAYMENTS THAT MAY HAVE BEEN CHARGED TO ONE PERIOD OF
+ * A VAULT'S POLICY FOR ONE CURRENCY**: every one-off this device believes, from
+ * this vault, in this currency, whose window lies in the period, each with the
+ * root, leaf and amount of its one-leaf tree, read beside the runs
+ * (`runsInThePeriod`).
+ */
+function oneOffsInThePeriod(
+  oneOffs: readonly OneOffBelieved[], input: { readonly vault: string; readonly asset: string; readonly from: bigint; readonly until: bigint },
+): RunTreeOnTheWire[] {
+  const vault = input.vault.toLowerCase();
+  const asset = input.asset.toLowerCase();
+  return oneOffs
+    .filter((o) => o.oneOff.vault === vault && assetIdHex(o.oneOff.asset).toLowerCase() === asset
+      && o.oneOff.run.opensAt >= input.from && o.oneOff.run.closesAt <= input.until)
+    .map((o) => ({ root: o.tree.tree.root, leaves: [...o.tree.tree.leaves], amounts: [o.oneOff.amount.toString()] }));
+}
+
+/** Whether any of the company's runs this device believes names `proposalId` as a leg's or a retry's. */
+const aRunClaims = (runs: readonly PayrollRun[], proposalId: string): boolean =>
+  runs.some((r) => Object.values(r.proposalIds ?? {}).includes(proposalId)
+    || Object.values(r.payout ?? {}).some((p) => (p?.retries ?? []).some((x) => x.proposalId === proposalId)));
+
 /** The vault's policy for the currency, opened here, refused unless the vault has one for it. */
 async function policySetHere(doors: RecordsHereDoors, vault: string, asset: string) {
   const standing = await spendingPolicyHere(doors, { vault, asset: asset as AssetId });
@@ -222,17 +249,18 @@ export async function periodTotalHere(
   const standing = await policySetHere(doors, vault, asset);
   if (standing === null) throw new RunNotChargedHere('this vault has no spending policy, so nothing is charged to its periods');
   const window = periodWindowOf(standing.policy, input.period);
-  const [runs, state, chain] = await Promise.all([
+  const [runs, state, chain, oneOffs] = await Promise.all([
     believedRunsHere(doors.records, doors.accountId, doors.viewingKey),
     signedStateHere(doors.records, doors.accountId, doors.viewingKey),
     chainAtOneBlockHere(doors, vault),
+    oneOffsHere(doors.records, doors.accountId),
   ]);
   try {
     return BigInt(await doors.builder.periodTotal({
       accountState: chain.accountState,
       total: {
         vault, asset, assetBlinding: state.assetBlinding, policy: standing.opening, period: input.period.toString(),
-        runs: runsInThePeriod(runs, { vault, asset, ...window }),
+        runs: [...runsInThePeriod(runs, { vault, asset, ...window }), ...oneOffsInThePeriod(oneOffs.believed, { vault, asset, ...window })],
       },
     }));
   } catch (e) {
@@ -250,7 +278,8 @@ type RunCharged =
  * **AN APPROVED RUN CHARGED TO ITS VAULT'S PERIOD FROM THIS DEVICE**, before
  * it is paid: `order` is what the vault is handed for it, with the approvals
  * its proposal was raised needing, as this device opened them
- * (`legToPayHere`). A vault with no policy charges nothing; a run the chain
+ * (`legToPayHere`, or `oneOffToPayHere` for a one-off payment, which is
+ * charged as a first payment). A vault with no policy charges nothing; a run the chain
  * holds as charged is not charged again; otherwise the charge is built and
  * proved here against the period's total worked out again from one block's
  * state, and relayed. It answers `charged` only once the chain the person's
@@ -282,11 +311,27 @@ export async function chargeTheRunHere(
   await earlierChargeSettled(doors, kept, vault);
   const opensAt = BigInt(order.opensAt);
   const closesAt = BigInt(order.closesAt);
-  const [runs, state, chain] = await Promise.all([
+  const [runs, state, chain, oneOffs] = await Promise.all([
     believedRunsHere(doors.records, doors.accountId, doors.viewingKey),
     signedStateHere(doors.records, doors.accountId, doors.viewingKey),
     chainAtOneBlockHere(doors, vault),
+    oneOffsHere(doors.records, doors.accountId),
   ]);
+  /*
+   * A one-off payment, charged as a first payment with its fresh half from its record's seed: only when the proposal's own
+   * sealed body is a one-off's naming that record, tied both ways, so no record naming a payroll leg's proposal takes over
+   * its charge; and never one a payroll run also claims.
+   */
+  let oneOff: OneOffBelieved | null;
+  try {
+    oneOff = await oneOffOfTheProposalHere(doors.records, doors.accountId, doors.viewingKey, run.proposalId, oneOffs.believed);
+  } catch (e) {
+    throw new RunNotChargedHere(String((e as Error)?.message ?? e).replace(/\.$/u, ''), { cause: e });
+  }
+  if (oneOff !== null && (oneOff.oneOff.proposal.chainId !== String(order.proposal).toLowerCase() || aRunClaims(runs, run.proposalId))) {
+    throw new RunNotChargedHere('this proposal is raised as a one-off payment, and what this device was asked to charge, or a payroll run of the '
+      + 'company\'s, says it is something else, so it is not charged. Reload the page and try again');
+  }
   /*
    * **A RUN THE CHAIN ALREADY HOLDS AS CHARGED IS NOT CHARGED AGAIN**, and is
    * asked about first: nothing the charge alone needs - what its salt was made
@@ -295,15 +340,17 @@ export async function chargeTheRunHere(
   if (await doors.builder.runCharged({ accountState: chain.accountState, proposal: order.proposal }) === 'charged') {
     return { state: 'already-charged' };
   }
-  if (run.vouched === undefined || vouchedRefusal(run.vouched) !== null) {
+  if (oneOff === null && (run.vouched === undefined || vouchedRefusal(run.vouched) !== null)) {
     throw new RunNotChargedHere('the company\'s record of this run\'s proposal does not say how its salt was made, so the chain will '
       + 'not charge it and this device cannot. It was raised before this version: withdraw it and raise it again');
   }
   /* The runs that may share the run's period; a run in no single period is refused by the worker, with nothing summed. */
   const period = periodOf(standing.policy, { opensAt, closesAt });
   const window = period === null ? null : periodWindowOf(standing.policy, period);
-  /* What its proposal was raised as: a run of its own, or a retry of a leg. */
-  const raisedAs = raisedAsHere(runs, run.proposalId, { vault, asset, window, chainIds: await believedProposalIdsOnChainHere(doors.records, doors.accountId) });
+  /* What its proposal was raised as: a run of its own, a retry of a leg, or a one-off payment, which is never a retry. */
+  const raisedAs = oneOff !== null ? {}
+    : raisedAsHere(runs, run.proposalId, { vault, asset, window, chainIds: await believedProposalIdsOnChainHere(doors.records, doors.accountId) });
+  const fresh = oneOff !== null ? oneOff.secrets.fresh : vouchedFreshOf(run.vouched!.head, run.vouched!.r);
   let built: { tx: string | null; spent: string | null };
   try {
     built = await doors.builder.clearRun({
@@ -313,10 +360,10 @@ export async function chargeTheRunHere(
         opensAt: opensAt.toString(), closesAt: closesAt.toString(), asset, assetBlinding: state.assetBlinding,
         policy: standing.opening, root: order.root,
         leaves: order.payments.map((p) => p.leaf), amounts: order.payments.map((p) => p.amount),
-        /* The fresh half of its salt, made from what its raiser sealed beside it. */
-        fresh: vouchedFreshOf(run.vouched.head, run.vouched.r), ...raisedAs,
+        /* The fresh half of its salt: made from what a run's raiser sealed beside it, or from a one-off's seed. */
+        fresh, ...raisedAs,
       },
-      runs: window === null ? [] : runsInThePeriod(runs, { vault, asset, ...window }),
+      runs: window === null ? [] : [...runsInThePeriod(runs, { vault, asset, ...window }), ...oneOffsInThePeriod(oneOffs.believed, { vault, asset, ...window })],
       chain: { accountState: chain.accountState, parameters: chain.parameters },
     });
   } catch (e) {

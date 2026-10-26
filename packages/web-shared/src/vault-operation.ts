@@ -1062,7 +1062,7 @@ async function accountStep(
     ({ tx } = await doors.builder.governedCall({ account: chain.account, order, material: doors.material, chain: callChainOf(chain), opened }));
   } catch (e) {
     const why = (e as Error)?.message ?? String(e);
-    /* The account's own refusal of a second approval from this signer: this signer's approval is already counted. */
+    /* The account refuses a second approval from one signer. The raise counted as the raiser's approval, so this one is already in. */
     if (order.circuit === 'approve' && /you have already approved this proposal/u.test(why)) return 'already-approved';
     throw new VaultStartOwed(vault, `${what} could not be built on this device (${why}). Nothing was sent.`);
   }

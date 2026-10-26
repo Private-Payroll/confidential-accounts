@@ -64,14 +64,14 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
     events.length = 0;
     const remove = { viewingKey: KEY, leaf: CY.seat, name: 'cy' };
 
-    /* Ada's device raises the removal and approves it in one press. */
+    /* Ada's device raises the removal in one press: the raise is her approval, and her signature over the retirement goes with it. */
     const raised = await removeSignerOnDevice(deviceOf(ADA), remove).catch((e: unknown) => e);
     /*
      * RED WHEN: the raising device does not anchor the leaver's versions and the directory waiting before it raises, so
      * the removal is refused or its boundary drawn short of them; or the raise is not sealed into the company's records.
      */
     expect(raised).toMatchObject({ state: 'waiting-for-approvals' });
-    expect(events).toEqual(['anchored', 'chain propose', 'chain approve']);
+    expect(events).toEqual(['anchored', 'chain propose']);
     const raisedOver = await directoryOf(BO)(EVERY_POLICY);
     expect(raisedOver.records.directory.has(pending)).toBe(true);
     expect(raisedOver.records.notYetAnchored).toEqual([]);
@@ -92,7 +92,7 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
 
     /* RED WHEN: the chain is asked to take the leaf off before the retirement is filed and anchored, or the leaver's own policy before it. */
     expect(events).toEqual([
-      'anchored', 'chain propose', 'chain approve', 'chain approve', 'directory 7 retire', 'anchored', `chain amendSigner removing ${CY.seat}`,
+      'anchored', 'chain propose', 'chain approve', 'directory 7 retire', 'anchored', `chain amendSigner removing ${CY.seat}`,
     ]);
     /* RED WHEN: the chain call is not relayed, or the chain keeps the leaf. */
     expect(seatsOnTheChain()).toEqual([ADA.seat, BO.seat]);

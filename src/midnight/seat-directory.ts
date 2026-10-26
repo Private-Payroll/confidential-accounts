@@ -101,12 +101,13 @@ export type FiledKind = CompanyRecordKind | WireRecord;
  * **WHICH KINDS EACH SIGNER ROLE MAY FILE**, as a member's device judges every
  * filing it reads; the server judges no role. A seat with no role set yet is a
  * seated signer whose role the quorum has not named: it files what a full
- * signer files. A limited seat files nothing.
+ * signer files. A limited seat files nothing. A seat that raises runs also
+ * files a one-off payment's record (`transfer`), which a one-off is raised over.
  */
 export const MAY_FILE: Readonly<Record<Role | 'unset', readonly FiledKind[]>> = Object.freeze({
   admin: Object.freeze([...COMPANY_RECORD_KINDS, ...WIRE_RECORDS]),
   approver: Object.freeze(['proposal', ...WIRE_RECORDS] as FiledKind[]),
-  initiator: Object.freeze(['run', 'proposal', ...WIRE_RECORDS] as FiledKind[]),
+  initiator: Object.freeze(['run', 'transfer', 'proposal', ...WIRE_RECORDS] as FiledKind[]),
   viewer: Object.freeze([] as FiledKind[]),
   unset: Object.freeze([...COMPANY_RECORD_KINDS, ...WIRE_RECORDS]),
 });

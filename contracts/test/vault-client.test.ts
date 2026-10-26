@@ -208,7 +208,6 @@ describe('a vault driven by the client\'s own note pool', () => {
     const id = sim.proposalId(
       pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, FROM, UNTIL, 0n),
       c.salt, vaultBytes());
-    await sim.as(carrying(sim, A, c)).approve(id);
     await sim.as(carrying(sim, B, c)).approve(id);
     return { run, id };
   };

@@ -129,6 +129,8 @@ export interface StepContext {
 
 export interface ActionStep {
   readonly title: Words;
+  /** Given what the action has told so far, whether this step, once passed, did nothing because nothing was owed: listed as not needed, not done. */
+  readonly notNeeded?: (told: Readonly<Record<string, string | number>>) => boolean;
   run(context: StepContext): Promise<void>;
 }
 

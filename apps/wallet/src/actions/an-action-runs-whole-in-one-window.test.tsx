@@ -313,4 +313,40 @@ describe('the stopped window says truly what had left the wallet, and what press
     expect(document.querySelector('[data-act-continue]')?.textContent).toBe(words['act.over.continue']);
     expect(document.querySelector('[data-act-continue]')?.textContent).not.toMatch(/from step/);
   });
+  it('a stopped one-off payment says pressing again proposes a second payment', () => {
+    render(<ActOver end={stopped('one-off-payment', 'out-of-time', 1, 0)} framed={false} />);
+    /* RED WHEN: a stopped one-off invites pressing Pay again as if that carried this payment on, when it proposes another. */
+    expect(document.querySelector('[data-act-continue]')?.textContent).toBe(words['act.one-off-payment.over.continue']);
+  });
+
+  it('a one-off payment that ends awaiting approvals is not told as done with every step run', () => {
+    const ended = (outcome: Record<string, string | number>) => ({
+      ended: { schema: ACT_ENDED_SCHEMA, nonce: 'n', intent: 'one-off-payment', ended: 'done', step: 6, steps: 6, relayed: 2, unconfirmed: 0, outcome },
+      says: null, abandoned: false,
+    }) as never;
+    render(<ActOver end={ended({ state: 'awaiting-approvals', approvals: 1, needed: 2 })} framed={false} />);
+    /* RED WHEN: a payment still short of its approvals ends titled Done, saying all its steps ran. */
+    expect(document.querySelector('[data-ask-over]')?.textContent).toBe(words['act.one-off-payment.over.awaiting-title']);
+    expect(document.querySelector('[data-act-awaiting]')?.textContent).toBe('Proposed. Not paid yet: the payment needs 2 approvals and has 1. Once the others approve, a signer carries it out.');
+    expect(document.querySelector('[data-act-relayed]')).toBeNull();
+    cleanup();
+    render(<ActOver end={ended({ state: 'paid', approvals: 2, needed: 2 })} framed={false} />);
+    /* RED WHEN: a payment carried out is not told as done. */
+    expect(document.querySelector('[data-ask-over]')?.textContent).toBe(words['act.over.done-title']);
+  });
+});
+
+describe('the running window lists a passed step that had nothing to do as not needed', () => {
+  it('lists passed steps done, or not needed when the step says nothing was owed of it', async () => {
+    const { stepStateOf } = await import('./runner-screen.js');
+    const step = { title: { key: 'k' }, run: async () => {}, notNeeded: (told: Readonly<Record<string, string | number>>) => told['state'] === 'awaiting-approvals' };
+    const at = (n: number, told?: Record<string, string | number>) => ({ step: n, steps: 6, relayed: 0, unconfirmed: 0, ...(told ? { told } : {}) });
+    /* RED WHEN: a charge or payment the action never made, the payment awaiting approvals, is listed as done. */
+    expect(stepStateOf(step, 4, at(6, { state: 'awaiting-approvals' }))).toBe('not-needed');
+    /* RED WHEN: a step that ran is listed as not needed. */
+    expect(stepStateOf(step, 4, at(6, { state: 'paid' }))).toBe('done');
+    expect(stepStateOf({ title: { key: 'k' }, run: async () => {} }, 4, at(6))).toBe('done');
+    expect(stepStateOf(step, 6, at(6))).toBe('running');
+    expect(stepStateOf(step, 6, at(5))).toBe('waiting');
+  });
 });

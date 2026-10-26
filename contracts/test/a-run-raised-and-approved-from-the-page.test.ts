@@ -190,8 +190,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     const half = { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) };
     opened.set(r.proposal, { chainId: r.proposal, digest: r.payload, vault: s.noVault, salt: r.salt, summary: '', governance: payKey, half });
     for (const order of [
+      /* The founding signer's raise counts as their approval, which meets a threshold of one. */
       { circuit: 'propose', payKey, half: { ...half, assetBlinding: hex(new Uint8Array(randomBytes(32))), proposalSalt: r.salt }, proposal: r.proposal },
-      { circuit: 'approve', proposal: r.proposal, of: { governance: payKey, proposalSalt: r.salt } },
       { circuit: 'sealPayKey', wrap: s.wrap, commitment: r.commitment, proposal: r.proposal, proposalSalt: r.salt },
     ] as GovernedCallOrder[]) {
       const sent = send((await b.governedCall({ account: company, order, material: keyringOf(founder), chain: callState() })).tx);
@@ -303,20 +303,18 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     /* RED WHEN: the builder drops the salt or the vault from the call, or builds another branch - the id then differs. */
     expect(send(built.tx)).toEqual({ ok: true, error: '' });
     expect(ledgerNow().openProposals.member(Buffer.from(run.id, 'hex'))).toBe(true);
-    expect(approvalsOf(run.id)).toBe(0n);
+    /* RED WHEN: the raise stops counting a raiser who may approve on the run's vault. */
+    expect(approvalsOf(run.id)).toBe(1n);
   });
 
-  it('AND IS APPROVED FROM THE DEVICE: THE CHAIN COUNTS ONE APPROVAL, AND A SECOND ONE FROM THE SAME SIGNER IS REFUSED', async () => {
+  it('AND THE RAISE IS THE RAISER\'S APPROVAL: THE CHAIN COUNTS ONE, AND A SECOND ONE FROM THE SAME SIGNER IS REFUSED', async () => {
     const run = aRun(2);
     const b = builder();
     await commitThePayKey(b, aRun(0).payKey);
     expect(send((await b.governedCall({ account: company, order: run.order, material: keyringOf(founder), chain: callState() })).tx).ok).toBe(true);
     const approve: GovernedCallOrder = { circuit: 'approve', proposal: run.id };
-    /* RED WHEN: the approval is built from anything but this signer's own three, or names another round. */
-    expect(send((await b.governedCall({ account: company, order: approve, material: keyringOf(founder), chain: callState() })).tx))
-      .toEqual({ ok: true, error: '' });
     expect(approvalsOf(run.id)).toBe(1n);
-    /* The contract's own duplicate guard, reached from the device's own build: a nullifier this signer already spent. */
+    /* The contract's own duplicate guard, reached from the device's own build: the raise spent this signer's nullifier. */
     await expect(b.governedCall({ account: company, order: approve, material: keyringOf(founder), chain: callState() }))
       .rejects.toThrow(/already approved/u);
   });
@@ -336,22 +334,24 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
       /* RED WHEN: the worker proves an approval for a run it did not make again, or with a pay-record key the chain does not hold. */
       await expect(b.governedCall({ account: company, order: approve, material: keyringOf(founder), chain: callState() }), why).rejects.toThrow(says);
     }
-    expect(approvalsOf(run.id)).toBe(0n);
+    expect(approvalsOf(run.id)).toBe(1n);
     opened.set(run.id, honest);
-    /* RED WHEN: the run this device made, read against the real chain, is refused. */
-    expect(send((await b.governedCall({ account: company, order: approve, material: keyringOf(founder), chain: callState() })).tx).ok).toBe(true);
+    /* RED WHEN: the run this device made, read against the real chain, is refused by the device: it reaches the contract, which refuses only a second approval from the raiser. */
+    await expect(b.governedCall({ account: company, order: approve, material: keyringOf(founder), chain: callState() }))
+      .rejects.toThrow(/already approved/u);
     expect(approvalsOf(run.id)).toBe(1n);
   });
 
   it('FOUR GOVERNED CALLS IN A ROW THROUGH ONE CLIENT EACH LAND AS THEMSELVES: nothing one call staged is seen, or put back, by the next', async () => {
     const b = builder();
     await commitThePayKey(b, aRun(0).payKey);
-    /* The four counted below are the run's: the pay-record key's three calls came before. */
+    /* The four counted below are the four runs' raises: the pay-record key's two calls came before. */
     handed.length = 0;
     const first = aRun(3);
     const second = aRun(4);
-    for (const order of [first.order, { circuit: 'approve', proposal: first.id } as const,
-      second.order, { circuit: 'approve', proposal: second.id } as const]) {
+    const third = aRun(9);
+    const fourth = aRun(10);
+    for (const order of [first.order, second.order, third.order, fourth.order]) {
       const built = await b.governedCall({ account: company, order, material: keyringOf(founder), chain: callState() });
       expect(send(built.tx).ok).toBe(true);
     }
@@ -359,6 +359,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     expect(first.id).not.toBe(second.id);
     expect(approvalsOf(first.id)).toBe(1n);
     expect(approvalsOf(second.id)).toBe(1n);
+    expect(new Set([first.id, second.id, third.id, fourth.id]).size).toBe(4);
     /* Four calls, four records, none of them the same object. */
     expect(handed).toHaveLength(4);
     expect(new Set(handed).size).toBe(4);

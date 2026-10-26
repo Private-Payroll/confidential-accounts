@@ -420,8 +420,8 @@ describe('a record that says nothing goes on saying nothing', () => {
     w.store.putProposal({ ...w.store.getProposal(raised.id)!, wiring: null });
 
     await w.accounts.approve(
-      raised.id, present(secrets[0]).signerId,
-      sign(approvalMessage(raised), present(secrets[0]).signingSecret), viewingKey,
+      raised.id, present(secrets[1]).signerId,
+      sign(approvalMessage(raised), present(secrets[1]).signingSecret), viewingKey,
     );
 
     expect(w.store.getProposal(raised.id)!.approvalCount).toBe(1);
@@ -466,8 +466,8 @@ describe('a record that says nothing goes on saying nothing', () => {
      * defect removed at once, which is how it was found.
      */
     await w.accounts.approve(
-      raised.id, present(secrets[0]).signerId,
-      sign(approvalMessage(raised), present(secrets[0]).signingSecret), viewingKey,
+      raised.id, present(secrets[1]).signerId,
+      sign(approvalMessage(raised), present(secrets[1]).signingSecret), viewingKey,
     );
 
     const stored = w.store.getProposal(raised.id)!;

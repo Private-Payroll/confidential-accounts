@@ -41,10 +41,10 @@ export interface ProposalFiling {
   readonly sealed: Sealed;
   /**
    * **WHAT A PAYROLL PROPOSAL PAYS, COMMITTED TO**: `paysCommitmentOf` over the
-   * vault, the asset and every payment's kind, token and amount, made with the
-   * proposal's own salt. Present on a payroll proposal and only there. The
-   * service checks the vault's public money over the payments it commits to;
-   * every signer's device opens the salt and holds it to the run it builds again.
+   * vault, the asset and every payment's kind, token and amount, keyed with the
+   * proposal's salt and the company's asset blinding. Present on a payroll
+   * proposal and only there. The service keeps it and never sees what it commits
+   * to; every signer's device holds it to the run it builds again.
    */
   readonly pays?: Hex;
 }
@@ -101,14 +101,23 @@ export interface ProposalPays {
 }
 
 /**
- * **THE COMMITMENT A PAYROLL PROPOSAL'S FILING CARRIES TO WHAT IT PAYS**, made
- * with the proposal's salt, which only the company's signers open. The payments
- * are taken in order and as `paymentsCheckedDigest` takes them.
+ * **THE COMMITMENT A PAYROLL PROPOSAL'S FILING CARRIES TO WHAT IT PAYS**, keyed
+ * with the proposal's salt and the company's asset blinding. The service is
+ * handed the salt with every filing, so a commitment keyed by the salt alone
+ * could be opened there by trying amounts; the asset blinding is held only by
+ * the company's signers. The payments are taken in order and as
+ * `paymentsCheckedDigest` takes them.
  */
-export const paysCommitmentOf = (pays: ProposalPays, salt: string): Hex => commit(canonical({
-  domain: `${DOMAIN}/pays`, vault: pays.vault.toLowerCase(), asset: pays.asset.toLowerCase(),
-  payments: paymentsCheckedDigest(pays.payments),
-}), salt.toLowerCase() as Hex);
+export const paysCommitmentOf = (pays: ProposalPays, salt: string, assetBlinding: string): Hex => {
+  if (!HEX64.test(salt.toLowerCase()) || !HEX64.test(assetBlinding.toLowerCase())) {
+    throw new Error('what a proposal pays is committed to with its salt and the company\'s asset blinding, and one of them is missing.');
+  }
+  const key = commit(canonical({ domain: `${DOMAIN}/pays-key`, salt: salt.toLowerCase() }), assetBlinding.toLowerCase() as Hex);
+  return commit(canonical({
+    domain: `${DOMAIN}/pays`, vault: pays.vault.toLowerCase(), asset: pays.asset.toLowerCase(),
+    payments: paymentsCheckedDigest(pays.payments),
+  }), key);
+};
 
 /** What a governance proposal changes, as its sealed payload holds it. */
 export type GovernancePayloadBody =
@@ -341,4 +350,42 @@ export const sealVaultSecretProposal = (input: {
     __change: input.change,
   }), input.viewingKey),
   proposedBy: input.proposedBy, approvals: [],
+}, input.viewingKey);
+
+/** The one size every one-off proposal's payload is sealed at: its record's name, its change and room to spare. */
+export const TRANSFER_PAYLOAD_BYTES = 1024;
+
+const paddedTransferPayload = (text: string): string => {
+  const bytes = new TextEncoder().encode(text).length;
+  if (bytes > TRANSFER_PAYLOAD_BYTES) throw new Error('this one-off payment\'s proposal does not fit the size every one is sealed at');
+  return text + ' '.repeat(TRANSFER_PAYLOAD_BYTES - bytes);
+};
+
+/** The proposal kind a one-off payment from a vault is raised as. */
+export const TRANSFER = 'transfer' satisfies ProposalKind;
+
+/**
+ * **A ONE-OFF PAYMENT, SEALED AS A PROPOSAL OF THE COMPANY'S** on the device
+ * raising it: the vault and the one-off record it is raised over, by its id and
+ * version, with the salt and the amount in its change, as every proposal
+ * carries its change. To whom it pays and why are in that record
+ * (`one-off-record.ts`), sealed under the company's one-offs key, never here:
+ * any signer's device opens the record, rebuilds the run from it and checks it
+ * is the run the chain holds. Never one of payroll's proposals.
+ *
+ * **SEALED AT ONE SIZE**, as its record is: the payload is padded to
+ * `TRANSFER_PAYLOAD_BYTES`, so the length the service keeps says nothing of how
+ * many digits the amount in its change has.
+ */
+export const sealTransferProposal = (input: {
+  readonly accountId: string; readonly viewingKey: Hex; readonly vault: Hex; readonly summary: string;
+  readonly oneOff: { readonly id: string; readonly version: number };
+  readonly change: { readonly asset: string; readonly amount: bigint; readonly batchDigest: Hex; readonly salt: Hex };
+  readonly proposedBy: string; readonly proposerRole?: Role;
+}): Sealed => sealRecord('proposals', input.accountId, {
+  vault: input.vault, kind: TRANSFER, summary: input.summary,
+  sealedPayload: seal(paddedTransferPayload(canonical({ oneOff: { id: input.oneOff.id, version: input.oneOff.version }, __change: input.change })),
+    input.viewingKey),
+  proposedBy: input.proposedBy, ...(input.proposerRole === undefined ? {} : { proposerRole: input.proposerRole }),
+  approvals: [],
 }, input.viewingKey);

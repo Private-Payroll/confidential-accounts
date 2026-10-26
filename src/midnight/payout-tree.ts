@@ -492,19 +492,18 @@ export type DetailsOf = (
  */
 export type DetailsOfKind = Readonly<Record<PayeeKind, DetailsOf>>;
 
-const assemble = (
+/** What every tree this file builds carries, payroll's or a one-off's: the tree, its payments and how each is paid. */
+export type PaidTree = Omit<PayrollRun, 'identity' | 'records'>;
+
+const assembledTree = (
   tree: PayoutTree,
-  identity: RunIdentity,
   facts: PaymentFacts[],
-  records: PayRecord[],
   secrets: PayeeSecrets[],
   payments: PayoutLeafInput[],
   originalIndices: number[],
-): PayrollRun => ({
+): PaidTree => ({
   tree,
-  identity,
   facts,
-  records,
   secrets,
   payments,
   originalIndices,
@@ -526,6 +525,32 @@ const assemble = (
     };
   },
 });
+
+const assemble = (
+  tree: PayoutTree,
+  identity: RunIdentity,
+  facts: PaymentFacts[],
+  records: PayRecord[],
+  secrets: PayeeSecrets[],
+  payments: PayoutLeafInput[],
+  originalIndices: number[],
+): PayrollRun => ({ ...assembledTree(tree, facts, secrets, payments, originalIndices), identity, records });
+
+/*
+ * **THE DERIVATION AND THE RECIPIENT BYTES COME FROM THE SAME PAYEE, IN THE
+ * SAME EXPRESSION**, the move `payee-address.ts` makes for a payee's two
+ * keys, applied to the two key spaces a leaf commits. There is no line here at which a
+ * shielded payee's coin key could be committed under the unshielded
+ * derivation, because neither value is chosen: both are read off `f.payee`,
+ * whose kind came out of the decode that produced its bytes. The one place a
+ * payment becomes its leaf's details, for payroll's runs and a one-off's.
+ */
+const leafInputsOf = (facts: readonly PaymentFacts[], secrets: readonly PayeeSecrets[], detailsOf: DetailsOfKind): PayoutLeafInput[] =>
+  facts.map((f, i) => ({
+    details: toHex(detailsOf[f.payee.kind](
+      fromHex(recipientOf(f.payee)), fromHex(f.token), f.amount, fromHex(at(secrets, i, 'payee').blinding))),
+    nonce: at(secrets, i, 'payee').nonce,
+  }));
 
 /**
  * BUILDS A RUN THAT ANY ADMIN CAN REBUILD. V-63.
@@ -576,20 +601,7 @@ export const buildRun = (
       'every payment names the person, the month and the kind of pay it is');
   }
   const secrets = runSecrets(seeds, identity, pay);
-
-  /*
-   * **THE DERIVATION AND THE RECIPIENT BYTES COME FROM THE SAME PAYEE, IN THE
-   * SAME EXPRESSION** — the move `payee-address.ts` makes for `C7`'s two keys,
-   * applied to `C246`'s two key spaces. There is no line here at which a
-   * shielded payee's coin key could be committed under the unshielded
-   * derivation, because neither value is chosen: both are read off `f.payee`,
-   * whose kind came out of the decode that produced its bytes.
-   */
-  const payments: PayoutLeafInput[] = facts.map((f, i) => ({
-    details: toHex(detailsOf[f.payee.kind](
-      fromHex(recipientOf(f.payee)), fromHex(f.token), f.amount, fromHex(at(secrets, i, 'payee').blinding))),
-    nonce: at(secrets, i, 'payee').nonce,
-  }));
+  const payments = leafInputsOf(facts, secrets, detailsOf);
 
   return assemble(
     buildPayoutTree(payments, facts.map((f) => f.amount), runAssetOf(asset)),
@@ -648,4 +660,19 @@ export const buildRetryRun = (original: PayrollRun, indices: number[]): PayrollR
     payments,
     indices,
   );
+};
+
+/**
+ * **A ONE-OFF PAYMENT'S TREE: ONE LEAF.**
+ *
+ * A one-off payment from a vault is a run with one payee, so the account checks
+ * it as it checks any run: its leaf, at its amount and token, in the root its
+ * signers approved. Its secrets are the one-off's own (`oneOffSecretsOf`), not a
+ * payroll run's, and it names no person, month or kind of pay. Built from the
+ * same secrets on any signer's device, it is the same tree.
+ */
+export const buildOneOffRun = (facts: PaymentFacts, secrets: PayeeSecrets, detailsOf: DetailsOfKind, asset: AssetId): PaidTree => {
+  refuseAMixedRun([facts], asset);
+  const payments = leafInputsOf([facts], [secrets], detailsOf);
+  return assembledTree(buildPayoutTree(payments, [facts.amount], runAssetOf(asset)), [facts], [secrets], payments, [0]);
 };

@@ -15,7 +15,7 @@ import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
 import {
-  asAMember, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
+  asAMember, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, mayFile, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
   type AccountHeld, type DirectoryRefusalCode, type DirectoryReplayKept, type DirectoryReplayed, type QuorumChange, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
 } from '../../../src/midnight/seat-directory.js';
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
@@ -920,6 +920,58 @@ export const seatNotBelievedHere = (here: DirectoryHere, seat: DirectorySeat): s
   const off = notOnTheChainNow(seat, here.holders);
   return off === null ? null : FILING_REFUSAL[off].replace(/^it is signed by a seat /u, 'it is a seat ');
 };
+
+/**
+ * **THE SEAT THAT SIGNS WITH `signingKey`, IF IT MAY FILE A RECORD OF `kind`**:
+ * the seat the directory this device believes holds under that key, believed
+ * as a seat (`seatNotBelievedHere`), with a role that files the kind
+ * (`mayFile`). The one check a device makes of its own seat before it files a
+ * company record; the reason when it may not, `roleMayNot` when its role is why.
+ */
+export const seatThatMayFileHere = (here: DirectoryHere, signingKey: string, kind: FiledKind, roleMayNot: string): DirectorySeat | string => {
+  const key = signingKey.toLowerCase();
+  const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === key);
+  if (mine === undefined) return 'the company\'s directory, as this device reads it, holds no seat under your keys';
+  const off = seatNotBelievedHere(here, mine);
+  if (off !== null) return `your seat is not one this device believes: ${off}`;
+  if (!mayFile(mine).includes(kind)) return roleMayNot;
+  return mine;
+};
+
+/** The seats a record sealed to each reader is wrapped to, by seat, in lower case. */
+export const readersOf = (rec: SealedCompanyRecord): Set<string> => new Set(rec.wrapped.map((w) => String(w.signerId).toLowerCase()));
+
+/**
+ * Whether a version is sealed to a seat the directory had already retired
+ * before the batch that anchored the version - the directory as anchored
+ * through every earlier batch, without that batch's own changes - or, for one
+ * not yet anchored, that the directory has retired now. A version filed while
+ * the seat was seated and anchored together with its retirement stays
+ * believed, so the signers who stay still read what is in force. A version
+ * whose directory this read cannot replay is not believed: nothing is guessed.
+ * Read for a record sealed to each signer: a vault's spending policy
+ * (`spending-policy-here.ts`).
+ */
+export const sealedToARetiredSeat = (
+  here: DirectoryHere, held: { readonly batch: number; readonly dirVersion: number } | null, rec: SealedCompanyRecord,
+): boolean => {
+  let dir: Directory | null = here.dir;
+  if (held !== null) {
+    let before = 0;
+    for (let v = 1; v <= held.dirVersion; v += 1) {
+      const d = here.records.directory.get(v);
+      if (d === undefined) return true;
+      if (d.batch < held.batch) before = v;
+    }
+    /* Nothing anchored before its batch: no seat had been retired yet. */
+    if (before === 0) return false;
+    dir = here.at(before)?.dir ?? null;
+  }
+  if (dir === null) return true;
+  const readers = readersOf(rec);
+  return dir.seats.some((x) => x.retired !== null && readers.has(x.seat.toLowerCase()));
+};
+
 
 /**
  * **WHY A RECORD THE SERVICE DID NOT GIVE AT ALL IS NOT READ AS ABSENT**: a

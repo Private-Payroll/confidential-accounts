@@ -32,6 +32,7 @@ import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
+import { noOneOffsHere } from '../testing/no-one-offs.js';
 
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
@@ -229,6 +230,7 @@ const onTheDevice = async (c: { account: string; runId: string; viewingKey: stri
   const unread = async (): Promise<never> => { throw new Error('a leg\'s payments are made from the company\'s runs and proposals'); };
   const kept = () => new FileStore(process.env.DATA_PATH!);
   return legPaymentsHere(everyRunAndProposalEntered({
+    oneOffs: noOneOffsHere(),
     directory: async () => ({
       dir: { company: c.account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USER, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null, opening: {} as never }] },
       holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,

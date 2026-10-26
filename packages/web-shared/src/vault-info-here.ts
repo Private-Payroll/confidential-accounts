@@ -31,9 +31,8 @@ import {
   openVaultInfo, sealVaultInfo, VAULT_INFO_KIND, vaultInfoTidied, VaultInfoRefused, type VaultInfo,
 } from '../../../src/midnight/vault-info-record.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
-import { mayFile } from '../../../src/midnight/seat-directory.js';
 import { FilingNotBelieved, HttpCompanyRecordStore, pageWireSend, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
-import { seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
+import { seatThatMayFileHere, type DirectoryRead } from './vault-page-doors.js';
 import type { RecordsEntered } from './record-entered-here.js';
 
 export { VaultInfoRefused };
@@ -119,17 +118,13 @@ export async function vaultInfoHere(doors: Pick<VaultInfoDoors, 'companyKeys' | 
 /**
  * Why this device's own seat may not file a vault's name, or null when it may:
  * its seat is in the directory as this device believes it, and its role may
- * file the record (`MAY_FILE`: an admin, or the founding seat).
+ * file the record (`MAY_FILE`: an admin, or the founding seat), as
+ * `seatThatMayFileHere` judges every filing seat.
  */
 async function whyThisSeatMayNotNameAVault(doors: Pick<VaultInfoDoors, 'signingSecret' | 'directory'>): Promise<string | null> {
-  const here = await doors.directory();
-  const me = signingPublicKeyOf(doors.signingSecret).toLowerCase();
-  const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === me);
-  if (mine === undefined) return 'the company\'s directory, as this device reads it, holds no seat under your keys';
-  const off = seatNotBelievedHere(here, mine);
-  if (off !== null) return `your seat is not one this device believes: ${off}`;
-  if (!mayFile(mine).includes(VAULT_INFO_KIND)) return 'your seat\'s role on this company may not name or describe a vault; an admin does';
-  return null;
+  const seat = seatThatMayFileHere(await doors.directory(), signingPublicKeyOf(doors.signingSecret), VAULT_INFO_KIND,
+    'your seat\'s role on this company may not name or describe a vault; an admin does');
+  return typeof seat === 'string' ? seat : null;
 }
 
 /**

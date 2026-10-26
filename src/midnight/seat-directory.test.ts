@@ -549,6 +549,17 @@ describe('WHICH FILINGS A MEMBER\'S DEVICE BELIEVES: BY A SEAT IT BELIEVES, WHOS
     expect(MAY_FILE.approver).not.toContain('run');
   });
 
+  it('a one-off payment\'s record is filed by a seat that raises runs, and by no approver or limited seat', () => {
+    const ONE_OFF = 'transfer:one_' + 'ab'.repeat(16);
+    const as = (role: 'initiator' | 'approver' | 'viewer') => ({ ...dir, seats: dir.seats.map((s) => (s.seat === BO.seat ? { ...s, role } : s)) });
+    /* RED WHEN: a seat that may raise runs may not file the record a one-off payment is raised over. */
+    expect(filingRefusalOf(as('initiator'), seated, BO.signing.publicKey, 'transfer', ONE_OFF, 1)).toBeNull();
+    /* RED WHEN: an approver or a limited seat may file a one-off payment's record, so one could be raised over its words. */
+    expect(filingRefusalOf(as('approver'), seated, BO.signing.publicKey, 'transfer', ONE_OFF, 1)).toBe('role-may-not-file');
+    expect(filingRefusalOf(as('viewer'), seated, BO.signing.publicKey, 'transfer', ONE_OFF, 1)).toBe('role-may-not-file');
+    expect(MAY_FILE.admin).toContain('transfer');
+  });
+
   it('a retired seat is believed up to the last version its quorum-signed retirement names, and refused after it', () => {
     const retiredDir = { ...dir, seats: dir.seats.map((s) => (s.seat === BO.seat ? { ...s, retired: { [POOL]: 3 } } : s)) };
     const left = chainOf([ADA], 1, [BO]).seats;

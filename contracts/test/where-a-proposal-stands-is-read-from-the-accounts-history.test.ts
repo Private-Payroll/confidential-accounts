@@ -58,7 +58,7 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     const twice = aChange(sim, B, 6, 714);
     await sim.as(kept.by).propose(kept.payload);
     block(11, [['propose', '11'.repeat(32)]]);
-    await sim.as(A).approve(kept.id);
+    await sim.as(B).approve(kept.id);
     await sim.as(withdrawn.by).propose(withdrawn.payload);
     block(12, [['approve', '12'.repeat(32)], ['propose', '13'.repeat(32)]]);
     await sim.as(withdrawn.by).cancel(withdrawn.id);
@@ -69,7 +69,7 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     expect(answer.ok).toBe(true);
     const r = answer.rounds as Record<string, unknown>;
     /* RED WHEN: a proposal the account holds is read with a count other than the account's, or raised at another block or by another call. */
-    expect(r[hex(kept.id)]).toEqual({ held: 'open', approvals: 1, raisedAt: 1_800_000_000_011, txRef: '11'.repeat(32), needed: 2 });
+    expect(r[hex(kept.id)]).toEqual({ held: 'open', approvals: 2, raisedAt: 1_800_000_000_011, txRef: '11'.repeat(32), needed: 2 });
     /* RED WHEN: a proposal the account held and no longer holds reads as open, or as closed by anything but the calls of the block that closed it. */
     expect(r[hex(withdrawn.id)]).toEqual({
       held: 'closed', approvals: 0, raisedAt: 1_800_000_000_012, txRef: '13'.repeat(32), closedBy: ['cancel', 'propose'],
@@ -77,7 +77,7 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     /* RED WHEN: a proposal the account never held is given a time or a call it was raised by. */
     expect(r[hex(never.id)]).toEqual({ held: 'never', approvals: 0 });
     /* RED WHEN: one of two propose calls in a block is named as the call that raised it - a state is the whole block's. */
-    expect(r[hex(twice.id)]).toEqual({ held: 'open', approvals: 0, raisedAt: 1_800_000_000_013, needed: 2 });
+    expect(r[hex(twice.id)]).toEqual({ held: 'open', approvals: 1, raisedAt: 1_800_000_000_013, needed: 2 });
   });
 
   it('A CLOSE IS READ FROM THE CALLS THAT SUCCEEDED; AN IDENTITY HELD AGAIN IS READ FROM ITS LATEST TIME; ONE OPENED AND CLOSED IN A BLOCK IS NEVER SEEN', async () => {
@@ -99,10 +99,9 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     await sim.as(again.by).propose(again.payload);
     /* A propose that failed beside the one that raised `carried`: the one that succeeded raised it. */
     block(11, [['propose', '21'.repeat(32), false], ['propose', '22'.repeat(32)], ['propose', '23'.repeat(32), false]]);
-    await sim.as(A).approve(carried.id);
     await sim.as(B).approve(carried.id);
     await sim.as(again.by).cancel(again.id);
-    block(12, [['approve', '24'.repeat(32)], ['approve', '25'.repeat(32)], ['cancel', '26'.repeat(32)]]);
+    block(12, [['approve', '25'.repeat(32)], ['cancel', '26'.repeat(32)]]);
     /* `carried` is carried out in a block where somebody's withdrawal of another proposal failed. */
     await sim.as(carried.by).addSigner(leafOfDevice(privateStateFor(3)), carried.id);
     block(13, [['cancel', '27'.repeat(32), false], ['amendSigner', '28'.repeat(32)]]);
@@ -121,7 +120,8 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     /* RED WHEN: a propose whose transaction failed is counted beside the one that raised it, so the one that did is not named. */
     expect(r[hex(carried.id)].txRef).toBe('22'.repeat(32));
     /* RED WHEN: an identity held again after it closed is read from its first time held - closed, with that time's block and call. */
-    expect(r[hex(again.id)]).toEqual({ held: 'open', approvals: 0, raisedAt: 1_800_000_000_014, needed: 2 });
+    /* Raised again under the same salt, it counts its raiser once more although the raiser's approval was burned the first time. */
+    expect(r[hex(again.id)]).toEqual({ held: 'open', approvals: 1, raisedAt: 1_800_000_000_014, needed: 2 });
     /* What the chain cannot show: a proposal opened and closed within one block reads as never held. */
     expect(r[hex(quick.id)]).toEqual({ held: 'never', approvals: 0 });
   });

@@ -419,6 +419,23 @@ export class HttpCompanyRecordStore {
     return this.believed(fromCompanyWire(b!.filed, { company: this.company, kind, id }).sealed, judge, true);
   }
 
+  /**
+   * One version of a record, as the service holds it under that number, judged as that version and not as the newest:
+   * what is read of a record filed once (a one-off), whatever later version anyone put over it.
+   */
+  async at(kind: CompanyRecordKind, id: string, version: number): Promise<SealedCompanyRecord | null> {
+    const r = await this.send(companyWirePaths.one(this.company, kind, id, version), { method: 'GET' });
+    const b = r.body as { kind?: unknown; id?: unknown; version?: unknown; filed?: unknown } | null;
+    if (r.status !== 200 || b?.kind !== kind || b?.id !== id || b?.version !== version || !('filed' in (b ?? {}))) {
+      throw new Error(`version ${version} of this company's ${kind} record could not be read (the server answered ${r.status}: ${said(r.body)}). That is not a record holding nothing.`);
+    }
+    const judge = await this.judge({ records: [{ store: 'company', kind, id }] });
+    if (b!.filed === null) return this.absent(kind, id, judge);
+    const rec = fromCompanyWire(b!.filed, { company: this.company, kind, id }).sealed;
+    if (rec.version !== version) throw new Error(`the service gave version ${rec.version} of this company's ${kind} record where version ${version} was asked.`);
+    return this.believed(rec, judge, false);
+  }
+
   async versions(kind: CompanyRecordKind, id: string): Promise<readonly (SealedCompanyRecord | CompanyVersionPassedOver)[]> {
     const r = await this.send(companyWirePaths.versions(this.company, kind, id), { method: 'GET' });
     const b = r.body as { versions?: unknown } | null;

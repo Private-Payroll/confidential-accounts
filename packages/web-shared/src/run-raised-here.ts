@@ -4,10 +4,11 @@
  * The device reads the run from the company's records - filed by a seat it
  * believes - with the company state its founding seat signed and the people it
  * believes and would pay. It checks the leg may be raised, builds the leg's
- * payout tree itself, checks the vault's private money, writes the proposal
- * and the run as raised, signs both with this seat's filing key, and proves
- * the raise. The service files the two and relays the proven call; it is
- * given no key and builds nothing.
+ * payout tree itself, checks the vault's money (private and public), writes
+ * the proposal and the run as raised, signs both with this seat's filing key,
+ * and proves the raise. The service files the two and relays the proven call;
+ * it is given no key, builds nothing, and is told no payment's amount, payee or
+ * currency.
  */
 import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { assetIdBytes, assets as theAssets, sumChangeAmount, type AssetId, type LedgerForm } from '../../../src/core/assets.js';
@@ -128,8 +129,8 @@ const checkedHere = async (doors: LegRaiseDoors, key: KeysHeld, round: Omit<Roun
  * the raise checks refuse the proposal in their own words - on this same read of
  * the policy, which is returned with it.
  */
-const approvalsItsBandNeeds = async (
-  doors: LegRaiseDoors, key: KeysHeld, round: { vault: Hex; asset: AssetId; total: bigint; window: { opensAt: bigint; closesAt: bigint } },
+export const approvalsItsBandNeeds = async (
+  doors: { readonly records: CompanyRecordsHere; readonly accountId: string }, key: KeysHeld, round: { vault: Hex; asset: AssetId; total: bigint; window: { opensAt: bigint; closesAt: bigint } },
 ): Promise<{ readonly required: string; readonly policy: PolicyForARun }> => {
   const policy = await policyForARunHere({ records: doors.records, accountId: doors.accountId, viewingKey: key }, {
     vault: round.vault, asset: round.asset, total: round.total, ...round.window,
@@ -196,7 +197,7 @@ export async function raiseLegHere(
   const payments = facts.map(paymentChecked);
   await refuseWhatTheVaultCannotPay(doors.holdings, {
     vault, asset: registry.require(asset), total, payees, payments: payments.map((p) => ({ payee: { kind: p.kind }, token: p.token, amount: p.amount })),
-  }, ['shielded']);
+  }, ['shielded', 'unshielded']);
 
   return writtenProvedAndFiled(doors, key, {
     run, leg, entries: paid.map((e) => ({ e, at: now.toISOString() })), root, payees, window, vault, role, asset,
@@ -290,9 +291,10 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
   const chainId = hex(doors.runs.proposalIdOf(bytes(digest), bytes(r.vault), bytes(salt)));
   const proposalId = doors.filing.newId();
   const createdAt = (doors.now ?? (() => new Date()))().toISOString();
+  /* What the proposal pays, committed to under a key the service is not given: the salt and the company's asset blinding. */
   const pays = { vault: r.vault, asset: r.asset, payments: paymentsOnTheWire(r.payments as ReadonlyArray<PaymentChecked<'shielded' | 'unshielded'>>) };
   const proposal = signProposalFiling(accountId, {
-    id: proposalId, digest, chainId, keyEpoch: sealing.epoch, createdAt, pays: paysCommitmentOf(pays, salt),
+    id: proposalId, digest, chainId, keyEpoch: sealing.epoch, createdAt, pays: paysCommitmentOf(pays, salt, r.assetBlinding),
     sealed: sealPayrollProposal({
       accountId, viewingKey: sealing.key, vault: r.vault, summary: r.summary,
       payload: {
@@ -301,9 +303,9 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
         window: { root: r.root, payees: String(r.payees), opensAt: String(r.window.opensAt), closesAt: String(r.window.closesAt) },
       }, change,
       /*
-       * The approvals bound into its identity, sealed beside its change for the
-       * service's own reading of the run; a device reads them from the run's
-       * record, written below from the same value.
+       * The approvals bound into its identity, sealed beside its change; a
+       * device reads them from the run's record, written below from the same
+       * value.
        */
       required: BigInt(required),
       proposedBy: doors.filing.seat, ...(r.role === undefined ? {} : { proposerRole: r.role }),
@@ -336,7 +338,7 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
   const filed: readonly Filed[] = [{ store: 'run', run: runFiling }, proposalEntry(accountId, proposal)];
   let round: RoundOnThePage;
   try {
-    round = await service.file!(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling, pays });
+    round = await service.file!(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling });
   } catch (e) {
     /*
      * **WRITTEN DOWN AND NOT SENT IS STILL WRITTEN DOWN.** A send that failed
@@ -355,10 +357,11 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
 /**
  * **WHAT A RAISE ENDS WITH ONCE THE SERVICE HAS IT**: the run as raised and its
  * proposal entered in the company's records, and the records anchored from
- * here. Neither undoes the raise, which the chain already holds: a filing not
+ * here; a one-off payment's raise ends the same way (`raiseOneOffHere`).
+ * Neither undoes the raise, which the chain already holds: a filing not
  * entered or not anchored stays not yet anchored, and the raise says why.
  */
-async function enteredAndAnchored(doors: LegRaiseDoors, round: RoundOnThePage, filed: readonly Filed[]): Promise<RoundOnThePage> {
+export async function enteredAndAnchored(doors: Pick<LegRaiseDoors, 'recorded'>, round: RoundOnThePage, filed: readonly Filed[]): Promise<RoundOnThePage> {
   try {
     await doors.recorded.entered.enter(filed);
     await doors.recorded.anchor();
@@ -459,7 +462,7 @@ export async function raiseRetryHere(
   const payments = facts.map(paymentChecked);
   await refuseWhatTheVaultCannotPay(doors.holdings, {
     vault, asset: registry.require(asset), total, payees, payments: payments.map((p) => ({ payee: { kind: p.kind }, token: p.token, amount: p.amount })),
-  }, ['shielded']);
+  }, ['shielded', 'unshielded']);
 
   const at = now.toISOString();
   return writtenProvedAndFiled(doors, key, {

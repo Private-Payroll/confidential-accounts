@@ -26,6 +26,7 @@ import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../.
 import { runRebuiltHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { refuseWhatThisDeviceDidNotMake } from './what-this-device-made.js';
 import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
+import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
 
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
@@ -57,6 +58,7 @@ describe('A RUN THE SERVICE RAISED', () => {
     const founder = newSigningKeypair();
     const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
     const records: CompanyRecordsHere = everyRunAndProposalEntered({
+      oneOffs: noOneOffsHere(),
       directory: async () => ({
         dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null, opening: {} as never }] },
         holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,

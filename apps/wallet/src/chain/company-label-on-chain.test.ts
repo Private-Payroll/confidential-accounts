@@ -281,7 +281,7 @@ describe('THE VAULTS AN ACCOUNT LISTS, READ WITH WHO HOLDS IT', () => {
     const retire = pureCircuits.retireVaultPayload(gone);
     await sim.as(sim.applying(A, rc)).propose(retire);
     const rid = sim.proposalId(retire, rc.salt);
-    await sim.as(A).approve(rid);
+    /* A's raise is A's approval. */
     await sim.as(B).approve(rid);
     await sim.retireVault(rid, gone, rc.salt);
     const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
@@ -340,7 +340,7 @@ describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED
     const payload = pureCircuits.setVaultThresholdPayload(vault, 3n);
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    for (const who of [A, B, C]) await sim.as(sim.applying(who, c)).approve(id);
+    for (const who of [B, C]) await sim.as(sim.applying(who, c)).approve(id);
     await sim.as(sim.applying(A, c)).setVaultThreshold(vault, 3n, id);
     const read = governanceInAccountState(state(), barKey);
     /* RED WHEN: the map of thresholds is read from another field, or the policy bar's row is read as a vault's. */
@@ -374,12 +374,12 @@ describe('THE FOUNDING SEAT, READ FROM THE ACCOUNT\'S DEPLOY AND NEVER FROM WHO 
   /* The label the simulator's accounts are deployed with. */
   const LABEL = companyLabelOf(COMPANY_LABEL);
 
-  /** A proposal over `payload` raised by `by` under `seed`'s salt and approved by `approvers`; its id and salt. */
+  /** A proposal over `payload` raised by `by` under `seed`'s salt (which counts as its approval) and approved by `approvers`; its id and salt. */
   const approved = async (sim: AccountSimulator, by: typeof F, payload: Uint8Array, seed: number, approvers: Array<typeof F>) => {
     const c = change(0n, seed);
     await sim.as(sim.applying(by, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    for (const a of approvers) await sim.as(a).approve(id);
+    for (const a of approvers.filter((d) => d !== by)) await sim.as(a).approve(id);
     return { id, by: sim.applying(by, c) };
   };
 

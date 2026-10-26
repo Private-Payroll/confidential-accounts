@@ -40,22 +40,29 @@ import { directoryChangeMessage, type ChainHolders, type CommitteeKey } from '..
 import type { RecordsAsked } from '../midnight/records-held.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { assetIdHex } from '../core/assets.js';
-import { TEST_TOKEN } from '../testing/assets.js';
+import { assetIdHex, type AssetId } from '../core/assets.js';
+import { aVaultHolding, registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { signCompanyFiling } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { sealSpendingPolicy } from '../midnight/spending-policy-record.js';
 import { signedStateHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
+import { HttpCompanyRecordStore } from 'vaults-web-shared/http-sealed-pool-store.js';
+import type { OneOffsHere } from 'vaults-web-shared/one-off-here.js';
+import { openOneOff } from '../midnight/one-off-record.js';
+import { buildOneOffRun } from '../midnight/payout-tree.js';
+import type { OneOffRaiseDoors } from 'vaults-web-shared/one-off-raised-here.js';
+import { vaultDetails } from '../testing/vault-details.js';
 import { signerRoutes } from './signer-routes.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
+import { runRoutes } from './run-routes.js';
 import { anchorFunctions, anchorSentInATest, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { leavesOfTheContract } from '../testing/directory-seats.js';
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import {
   anchorServiceFor, anchorTheRecordsHere, directoryChangeFiledHere, recordsHeldHere, type AnchorDoors,
 } from 'vaults-web-shared/records-anchored-here.js';
-import { attestedIn, directoryHere, directoryWithItsRecordsHere, leaversStatementIn, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
+import { attestedIn, directoryHere, directoryWithItsRecordsHere, judgeIn, leaversStatementIn, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
 import { foldOffersHere, offerVaultKeysHere, rosterHere, seatsAdmittedHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { governedCallServiceFor, type RemovalDoors } from 'vaults-web-shared/governed-call-on-device.js';
@@ -78,7 +85,7 @@ export const ID: Record<string, string> = { ada: 'sgn_ada', bo: 'sgn_bo', cy: 's
 /* ── the chain's account, stood in ────────────────────────────────────────── */
 
 /** Every proposal the chain holds open, by its identity on chain: what it changes, and who approved it. */
-const open = new Map<string, { change: 'add' | 'remove' | 'other'; leaf: string | null; approvedBy: Set<string> }>();
+const open = new Map<string, { change: 'add' | 'remove' | 'run' | 'other'; leaf: string | null; approvedBy: Set<string> }>();
 /** The call that closed each proposal the chain no longer holds open. */
 const closedWith = new Map<string, string>();
 /**
@@ -87,6 +94,8 @@ const closedWith = new Map<string, string>();
  * removing <leaf>`).
  */
 export const events: string[] = [];
+/** Every run's proposal charged to its vault's period on the test's chain, by its identity there. */
+export const chargedOnChain = new Set<string>();
 
 /** What the anchor stand-in is handed for each anchor a device sends: the stand-in builder's output, not a proven transaction. The service never sees these in this test world, so a check of what a device sends reads them here. */
 export const sentToTheChain: string[] = [];
@@ -127,7 +136,11 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
   const proposal = 'proposal' in order ? String(order.proposal).toLowerCase() : '';
   if (order.circuit === 'propose' && 'governance' in order) {
     const g = order.governance as { kind: string; leaf?: string };
-    open.set(proposal, { change: g.kind === 'add-signer' ? 'add' : g.kind === 'remove-signer' ? 'remove' : 'other', leaf: g.leaf?.toLowerCase() ?? null, approvedBy: new Set() });
+    /* The raise counts as its raiser's approval, as the account's `propose` counts it. */
+    open.set(proposal, { change: g.kind === 'add-signer' ? 'add' : g.kind === 'remove-signer' ? 'remove' : 'other', leaf: g.leaf?.toLowerCase() ?? null, approvedBy: new Set([signer]) });
+  } else if (order.circuit === 'propose' && 'run' in order) {
+    /* A run, a one-off payment's included: raised as the account raises it, counting its raiser, who may approve here. */
+    open.set(proposal, { change: 'run', leaf: null, approvedBy: new Set([signer]) });
   } else if (order.circuit === 'approve') {
     const o = open.get(proposal);
     if (o === undefined) throw new Error('there is no open proposal with that id');
@@ -159,6 +172,10 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
     chains.set(CO, { ...h, approvals: Number(order.threshold), seatBar: Math.max(h.seatBar, Number(order.threshold)) });
     open.delete(proposal);
     closedWith.set(proposal, 'setThreshold');
+  } else if ((order.circuit as string) === 'clearRun') {
+    /* A run charged to its vault's period: this chain keeps only that it was charged, and checks no period total, no policy and no proof. */
+    if (!open.has(proposal)) throw new Error('there is no open proposal with that id');
+    chargedOnChain.add(proposal);
   } else if (order.circuit === 'cancel') {
     open.delete(proposal);
     closedWith.set(proposal, 'cancel');
@@ -282,6 +299,10 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
       governedCall: async ({ order, opened }) => {
         refuseWhatThisDeviceDidNotOpen({ accountPure: pureCircuits as never }, order, opened);
         refuseARaiseThatIsNotTheRecordedOne({ accountPure: pureCircuits as never }, order);
+        /* The account refuses a signer's second approval as the call is built, and a raise was the raiser's first. */
+        if (order.circuit === 'approve' && open.get(String(order.proposal).toLowerCase())?.approvedBy.has(s.seat)) {
+          throw Object.assign(new Error('you have already approved this proposal'), { name: 'CallNotBuilt' });
+        }
         return { tx: Buffer.from(JSON.stringify({ signer: s.seat, order })).toString('base64') };
       },
       proposalIdentity: async (change, salt) => identityOfAChange({ accountPure: pureCircuits as never }, change, salt),
@@ -340,6 +361,7 @@ export function aCompanyWhoseSignersChange(seatBar = 2): void {
       signedIn: deps.signedIn, member: deps.member, store, records: () => deps.records, directoryOf: deps.directoryOf,
       ledger: { status, holdsSigner: async (_a, seat) => seatsOnTheChain().includes(String(seat)) },
     }));
+    app.use(runRoutes({ signedIn: deps.signedIn, member: deps.member, store, directoryOf: deps.directoryOf, wiring: () => 'simulated' }));
     app.use(proposalRelayRoutes({
       signedIn: deps.signedIn, member: deps.member, ownsProposal, refuseSigningSecret,
       store, ledger: { wiring: 'simulated' as never, status, submitProvenCall: submitProvenCall as never }, directoryOf: deps.directoryOf,
@@ -391,9 +413,9 @@ const policyOnChain = new Map<string, string>();
 export const recordsSecretOf = (s: { n: number }): Hex => toHex(hkdf(sha256, new Uint8Array(32).fill(s.n + 100),
   new TextEncoder().encode('confidential-accounts/company-records-wrapping/v1'), new Uint8Array(0), 32)) as Hex;
 /** The contract's own keys for the vault's policy and the commitment `opening` makes, with the account's blinding from its signed state. */
-const policyKeys = async (records: CompanyRecordsHere, opening?: { terms: typeof TERMS; blinding: string }) => spendingPolicyKeysOf(
+const policyKeys = async (records: CompanyRecordsHere, opening?: { terms: typeof TERMS; blinding: string }, asset: AssetId = TEST_TOKEN) => spendingPolicyKeysOf(
   { accountPure: pureCircuits as never },
-  { vault: VAULT, asset: assetIdHex(TEST_TOKEN), assetBlinding: (await signedStateHere(records, CO, KEY)).assetBlinding, ...(opening === undefined ? {} : { policy: opening as never }) },
+  { vault: VAULT, asset: assetIdHex(asset), assetBlinding: (await signedStateHere(records, CO, KEY)).assetBlinding, ...(opening === undefined ? {} : { policy: opening as never }) },
 );
 /** `s`'s device's company records, with the vault's spending policies read as its own seat. */
 const policyRecordsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>): CompanyRecordsHere => ({
@@ -409,17 +431,19 @@ const policyRecordsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
 /**
  * **THE VAULT'S SPENDING POLICY, FILED BY `by`** sealed to the records key of each seat in `to` as the directory holds
  * it, signed by its seat, kept where the service keeps the company's records and entered from its device; the test's
- * chain then holds the vault's marker and the policy's commitment. Returns the version filed.
+ * chain then holds the vault's marker and the policy's commitment. Returns the version filed. `o` gives other terms, or
+ * another currency, than the test's small ones in its own token.
  */
-export const aPolicyFiledBy = async (by: Seat, to: readonly Seat[]): Promise<number> => {
+export const aPolicyFiledBy = async (by: Seat, to: readonly Seat[], o: { readonly terms?: typeof TERMS; readonly asset?: AssetId } = {}): Promise<number> => {
   const records = policyRecordsOf(by);
-  const opening = { terms: TERMS, blinding: newBlinding() };
-  const keys = await policyKeys(records, opening);
+  const asset = o.asset ?? TEST_TOKEN;
+  const opening = { terms: o.terms ?? TERMS, blinding: newBlinding() };
+  const keys = await policyKeys(records, opening, asset);
   const version = (await peopleRecords.versions(CO, 'spending-policy', keys.policyKey)).length + 1;
   const here = await directoryOf(by)();
   const rec = signCompanyFiling(sealSpendingPolicy({
     company: CO, id: keys.policyKey as Hex, version, keyEpoch: 0,
-    secrets: { vault: VAULT, asset: TEST_TOKEN, opening },
+    secrets: { vault: VAULT, asset, opening },
     signers: to.map((x) => ({ id: x.seat, wrappingPublicKey: here.dir.seats.find((d) => d.seat === x.seat)!.wrappingKey })) as never,
   }), by.signingSecret as Hex);
   await peopleRecords.put(rec);
@@ -435,3 +459,53 @@ export const policyReadBy = (
 
 /** The company as the service holds it now, opened with the viewing key. */
 export const companyNow = (): ReturnType<typeof openAccount> => openAccount(store.getAccount(CO) as SealedAccount, KEY, store.newestRoster(CO) as never);
+
+/* ── a one-off payment from the vault, its record sealed under the company's key ── */
+
+/** Every entry the test's account records as paid: each payment's once-mark and its leaf's movement. */
+export const paidOnChain = new Set<string>();
+const hexOfBytes = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+/** The account's ledger as one block holds it, for a device's own check of what a proposal pays. */
+export const ledgerViewNow = () => ({
+  openProposals: { member: (id: Uint8Array) => open.has(hexOfBytes(id)) },
+  movements: { member: (entry: Uint8Array) => paidOnChain.has(hexOfBytes(entry)) },
+});
+const judgeOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>) => async (asked?: RecordsAsked) => judgeIn(await directoryOf(s)(asked));
+const oneOffStoreOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>, signs: boolean) =>
+  new HttpCompanyRecordStore(CO, (path, init) => sendAs(s.person)(path, init as never), signs ? s.signingSecret as Hex : null, judgeOf(s));
+/**
+ * `s`'s device's company records, with its one-off payments read with the company's key, the vault's spending policies, and
+ * what its wallet reads of the account's record of payments from the test's chain.
+ */
+export const oneOffRecordsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>): CompanyRecordsHere & { readonly oneOffs: OneOffsHere } => {
+  const store = oneOffStoreOf(s, false);
+  return {
+    ...policyRecordsOf(s),
+    oneOffs: {
+      at: (k, id, v) => store.at(k, id, v), keys: KEY, detailsOf: vaultDetails, registry: registryWithTestPrivateForms(),
+      open: openOneOff, treeOf: buildOneOffRun,
+    },
+    payments: {
+      paidOnceOf: (nonce) => pureCircuits.paidOnceOf(nonce), paidMovementOf: (leaf) => pureCircuits.paidMovementOf(leaf),
+      read: async (entries) => ({
+        payKeyCommitment: null, held: entries.filter((e) => paidOnChain.has(e.toLowerCase())), openRounds: [...open.keys()].sort(), entries: paidOnChain.size,
+      }),
+    },
+  };
+};
+/** What `s`'s device raises a one-off payment from the vault with, against the test's chain and the service's routes. */
+export const oneOffRaiseDoorsOf = (s: Seat): OneOffRaiseDoors => {
+  const device = deviceOf(s);
+  const filing = oneOffStoreOf(s, true);
+  return {
+    service: device.service, builder: device.builder, material: device.material, accountId: CO,
+    records: oneOffRecordsOf(s), holdings: aVaultHolding(), assets: registryWithTestPrivateForms(),
+    oneOffFiling: { put: (rec) => filing.put(rec), served: async () => null },
+    filing: { seat: s.seat, keyEpoch: 0, newId: () => newProposalId() },
+    runs: {
+      runPayload: (...a) => pureCircuits.runPayload(...a), proposalIdOf: (...a) => pureCircuits.proposalIdOf(...a),
+      retrySaltOf: (...a) => pureCircuits.retrySaltOf(...a), noVault: () => pureCircuits.noVault(),
+    },
+    recorded: { entered: s.entered, anchor: () => anchorTheRecordsHere(anchorDoorsOf(s)) },
+  };
+};

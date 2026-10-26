@@ -63,6 +63,7 @@ import { directoryChangeMessage, directoryEntryMade } from '../midnight/seat-dir
 import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
 import type { DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import { sign } from '../core/crypto.js';
+import { noOneOffsHere } from '../testing/no-one-offs.js';
 
 const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
 const LABEL = companyLabelOf(COMPANY_LABEL);
@@ -123,12 +124,12 @@ const sealedRun = (): SealedRun => {
   } as never, signing.B.secret) as unknown as SealedRun;
 };
 
-/** A proposal over `payload` raised by `by` and approved by `approvers`, with the device that carries its salt. */
+/** A proposal over `payload` raised by `by` (which counts as its approval) and approved by `approvers`, with the device that carries its salt. */
 const approved = async (sim: AccountSimulator, by: typeof F, payload: Uint8Array, seed: number, approvers: Array<typeof F>) => {
   const c = change(0n, seed);
   await sim.as(sim.applying(by, c)).propose(payload);
   const id = sim.proposalId(payload, c.salt);
-  for (const a of approvers) await sim.as(a).approve(id);
+  for (const a of approvers.filter((d) => d !== by)) await sim.as(a).approve(id);
   return { id, by: sim.applying(by, c) };
 };
 
@@ -189,6 +190,7 @@ const recordsOver = (
   /* Sealed once: every read of the company's runs is served the same bytes, as the store serves what it keeps. */
   const runs = [sealedRun()];
   return everyRunAndProposalEntered({
+    oneOffs: noOneOffsHere(),
     directory: async () => here,
     people: async () => ({ people: PEOPLE.map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
     state: async (id) => (id === '0' ? state as never : null),
@@ -236,7 +238,8 @@ describe('THE FOUNDING SEAT IS THE ONE THE FIRST ANCHOR NAMES, WHOEVER HOLDS THE
     expect(() => refuseWhatThisDeviceDidNotMake(gateDeps, { chainId: id, digest: hex(payload), salt: hex(c.salt), made, vouched: { ...VOUCHED, checkedHere: true } }, sim.ledger as unknown as AccountLedgerView))
       .not.toThrow();
     await sim.as(D).approve(fromHex(id));
-    expect(sim.ledger.approvalCounts.lookup(fromHex(id))).toBe(1n);
+    /* B's raise and D's approval. */
+    expect(sim.ledger.approvalCounts.lookup(fromHex(id))).toBe(2n);
   });
 
   it('A STATE SIGNED BY THE SEAT IN THE FIRST SLOT NOW IS REFUSED', async () => {

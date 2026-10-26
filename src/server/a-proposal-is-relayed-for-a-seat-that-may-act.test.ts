@@ -17,7 +17,7 @@ import express from 'express';
 import { aCompanyOfTwoSeats, store, chains, CO, OTHER, ADA, BO, EVE, seatOf, sendAs } from './a-company-of-two-seats.test-support.js';
 import { signingPublicKeyOf } from '../core/crypto.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
-import { signProposalFiling, type ProposalFiling } from '../core/proposal-filing.js';
+import { batchDigestOf, sealTransferProposal, signProposalFiling, type ProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent } from '../core/jobs.js';
 import { FeeNotPaid } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION } from '../core/device-raise.js';
@@ -52,7 +52,8 @@ const ledger = {
     if (feeNotPaid) throw new FeeNotPaid('the fee for this call could not be paid just now. Nothing was sent.');
     if (o.circuit !== circuit) throw new NothingWasSent(`the door was told ${circuit} and handed ${o.circuit}. Nothing was sent.`);
     sent.push({ accountId, circuit, proposal: o.proposal });
-    if (circuit === 'propose') open.set(o.proposal, 0);
+    /* A raise counts its raiser, who here may approve on every vault, as the account's `propose` counts it. */
+    if (circuit === 'propose') open.set(o.proposal, 1);
     else if (circuit === 'approve') open.set(o.proposal, (open.get(o.proposal) ?? 0) + 1);
     /* A charge leaves the run's proposal open, to be paid; every other call closes the one it carries out. */
     else if (circuit !== 'clearRun') open.delete(o.proposal);
@@ -429,8 +430,8 @@ describe('A PROPOSAL A SEAT\'S DEVICE WROTE DOWN IS FILED ONLY AS THAT SEAT SIGN
     const r = await post('ada', `/api/accounts/${CO}/proposals`, { proposal: f, tx: tx('propose', f.chainId), version: DEVICE_RAISE_VERSION, salt: SALT });
     expect(r.status).toBe(200);
     expect(sent.map((x) => x.circuit)).toEqual(['propose']);
-    /* RED WHEN the filer's signature is not kept with the proposal, for every device to check. */
-    expect(store.getProposal('prp_filedByAdaAA')).toMatchObject({ accountId: CO, status: 'open', approvalCount: 0, filedBy: f.filedBy });
+    /* RED WHEN the filer's signature is not kept with the proposal, for every device to check. The count is the chain's: the raise counted Ada. */
+    expect(store.getProposal('prp_filedByAdaAA')).toMatchObject({ accountId: CO, status: 'open', approvalCount: 1, filedBy: f.filedBy });
   });
 
   it('REFUSED WHEN SIGNED BY ANOTHER SEAT\'S KEY, CHANGED AFTER SIGNING, OR BESIDE AN OPEN ONE FOR THE SAME CHANGE, AND FILED AT ANY KEY EPOCH', async () => {
@@ -456,24 +457,25 @@ describe('A PROPOSAL A SEAT\'S DEVICE WROTE DOWN IS FILED ONLY AS THAT SEAT SIGN
     expect(sent).toEqual([]);
   });
 
-  it('A PAYROLL PROPOSAL, ONE WHOSE IDENTITY NAMES A VAULT OR THAT SAYS WHAT IT PAYS, IS NOT FILED WITHOUT THE RUN IT RAISES', async () => {
+  it('A PROPOSAL THAT COMMITS TO WHAT IT PAYS IS NOT FILED WITHOUT THE RUN IT RAISES, ONE WHOSE IDENTITY ITS PARTS DO NOT MAKE IS NOT FILED, AND A BODY NAMING WHAT IT PAYS IS NOT TAKEN', async () => {
     const send = (p: unknown, more: Record<string, unknown> = {}) =>
       post('ada', `/api/accounts/${CO}/proposals`, { proposal: p, salt: SALT, tx: tx('propose', '44'.repeat(32)), version: DEVICE_RAISE_VERSION, ...more });
-    /* RED WHEN a proposal raised for a vault is written down and its raise sent with no run naming it. */
+    /* RED WHEN a proposal whose identity names a vault is written down with no vault beside it to hold that identity to. */
     const forAVault = await send(signProposalFiling(CO, filing('prp_forAVaultAAA', '77'.repeat(32), 0, VAULT), ADA.signingSecret as Hex));
     expect(forAVault.status).toBe(422);
-    expect(forAVault.body.error).toMatch(/only with the run it raises/u);
+    expect(forAVault.body.error).toMatch(/identity on the chain is not the one its parts, its salt and the vault it is written down for make/u);
     /* RED WHEN a filing committing to payments is written down with no run. */
     const paying = await send(signProposalFiling(CO, { ...filing('prp_payingAAAAAA', '78'.repeat(32)), pays: '99'.repeat(32) as Hex }, ADA.signingSecret as Hex));
     expect(paying.body.error).toMatch(/only with the run it raises/u);
     /* RED WHEN the salt the identity is held to is not the one it was made with. */
     const otherSalt = await send(signProposalFiling(CO, filing('prp_otherSaltAAA', '79'.repeat(32)), ADA.signingSecret as Hex), { salt: '0b'.repeat(32) });
-    expect(otherSalt.body.error).toMatch(/only with the run it raises/u);
-    /* RED WHEN: a body that says what it pays is filed with no run, its payments asked of nobody. */
+    expect(otherSalt.body.error).toMatch(/identity on the chain is not the one its parts, its salt/u);
+    /* RED WHEN: a body that names what it pays - an amount and a currency in the clear - is taken by the service at all. */
     const declaring = await send(signProposalFiling(CO, filing('prp_declaringAAA', '7a'.repeat(32)), ADA.signingSecret as Hex), {
       pays: { vault: VAULT, asset: '11'.repeat(32), payments: [{ kind: 'shielded', token: '11'.repeat(32), amount: '5' }] },
     });
-    expect(declaring.body.error).toMatch(/only with the run it raises/u);
+    expect(declaring.status).toBe(400);
+    expect(declaring.body.error).toMatch(/does not carry a proposal to write down/u);
     for (const id of ['prp_forAVaultAAA', 'prp_payingAAAAAA', 'prp_otherSaltAAA', 'prp_declaringAAA']) expect(store.getProposal(id)).toBeNull();
     expect(sent).toEqual([]);
   });
@@ -492,15 +494,35 @@ describe('A PROPOSAL A SEAT\'S DEVICE WROTE DOWN IS FILED ONLY AS THAT SEAT SIGN
     /* RED WHEN: the vault beside the filing is not held to the identity the filing signs. */
     const other = await send(raised('prp_otherVaultAA', '7c'.repeat(32)), { vault: 'c6'.repeat(32), tx: tx('propose', '44'.repeat(32)), version: DEVICE_RAISE_VERSION });
     expect(other.status).toBe(422);
-    expect(other.body.error).toMatch(/not the vault its identity on the chain names/u);
+    expect(other.body.error).toMatch(/identity on the chain is not the one its parts, its salt and the vault it is written down for make/u);
     /* RED WHEN: a vault named beside the filing lets one that says what it pays, or comes with a run, past the payroll rule. */
     const paying = await send(signProposalFiling(CO, { ...filing('prp_payingVaultA', '7d'.repeat(32), 0, VAULT), pays: '99'.repeat(32) as Hex }, ADA.signingSecret as Hex), { vault: VAULT });
     expect(paying.status).toBe(422);
     const withARun = await send(raised('prp_withARunAAAA', '7e'.repeat(32)), { vault: VAULT, run: {} });
     expect(withARun.status).toBe(422);
-    expect(withARun.body.error).toMatch(/names its vault in what it pays, never beside it/u);
+    expect(withARun.body.error).toMatch(/its vault is sealed in its records, never named beside it/u);
     for (const id of ['prp_otherVaultAA', 'prp_payingVaultA', 'prp_withARunAAAA']) expect(store.getProposal(id)).toBeNull();
     expect(sent).toEqual([]);
+  });
+
+  it('A ONE-OFF PAYMENT IS WRITTEN DOWN AND ITS RAISE SENT WITH ITS VAULT AND NO RUN, AND THE SERVICE KEEPS NOTHING OF WHAT IT PAYS', async () => {
+    const sealed = sealTransferProposal({
+      accountId: CO, viewingKey: '5c'.repeat(32) as Hex, vault: VAULT as Hex, summary: 'One-off payment from a vault',
+      oneOff: { id: `one_${'ab'.repeat(16)}`, version: 1 },
+      change: { asset: '11'.repeat(32), amount: 31_415_926n, batchDigest: batchDigestOf([]), salt: SALT as Hex }, proposedBy: ADA.seat,
+    });
+    const oneOff = signProposalFiling(CO, { ...filing('prp_oneOffAAAAAA', '7f'.repeat(32), 0, VAULT), sealed }, ADA.signingSecret as Hex);
+    const body = { proposal: oneOff, salt: SALT, vault: VAULT, tx: tx('propose', oneOff.chainId), version: DEVICE_RAISE_VERSION };
+    /* RED WHEN: a one-off payment, a run of one payee raised for its vault with no run record and no payments named, cannot be written down and raised. */
+    const ok = await post('ada', `/api/accounts/${CO}/proposals`, body);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(sent).toEqual([{ accountId: CO, circuit: 'propose', proposal: oneOff.chainId }]);
+    const kept = store.getProposal('prp_oneOffAAAAAA')!;
+    expect(kept).toMatchObject({ chainId: oneOff.chainId, status: 'open', filedBy: oneOff.filedBy });
+    /* RED WHEN: the service keeps, or is sent, anything about what the one-off pays in the clear. */
+    expect(kept.pays).toBeUndefined();
+    expect(JSON.stringify([body, kept]).includes('31415926')).toBe(false);
+    sent.length = 0;
   });
 });
 

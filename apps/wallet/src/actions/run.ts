@@ -1,6 +1,6 @@
 import { ACT_ENDED_SCHEMA, MOST_ACT_STEPS, readOutcome } from 'midnight-identity/profile/channel';
 import type { ActEnded, ActStop, ActingChannel, CalledOver, KeptOver, RelayLabel, StepAt } from 'midnight-identity/profile/channel';
-import { intentShapeOf, routeOf, type ActRequest } from 'midnight-identity/profile/request';
+import { intentShapeOf, routeOf, sendsIn, type ActRequest } from 'midnight-identity/profile/request';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { keyringMarksFor, openHeldKeyring, SavedKeysRefused, type HeldKeyring, type KeyringMarks } from '../keyring/held-keyring.js';
 import { readFor } from '../keyring/read-for-the-page.js';
@@ -65,6 +65,8 @@ export interface RunState {
   readonly relayed: number;
   /** Transactions handed to the page that it refused or did not answer: it holds them, and may still send them. */
   readonly unconfirmed: number;
+  /** What the action has told so far, so a passed step that had nothing to do is listed as such. */
+  readonly told?: Readonly<Record<string, string | number>>;
 }
 
 export interface RunOf {
@@ -203,7 +205,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     return ended;
   };
 
-  const watch = (): void => { run.watch?.({ step: current, steps: total, relayed, unconfirmed }); };
+  const watch = (): void => { run.watch?.({ step: current, steps: total, relayed, unconfirmed, told: { ...told } }); };
   /* A message refused for holding a secret stops the action where it is: nothing more is sent for it. */
   const sending = <T>(send: () => T): T => {
     try {
@@ -265,14 +267,14 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     });
     const outcome: CalledOver | 'late' = await Promise.race([answered, patience]).finally(() => clearTimeout(timer));
     if (typeof outcome === 'object') {
-      if (route.sends === true) {
+      if (sendsIn(route, body)) {
         if (outcome.status >= 200 && outcome.status < 300) relayed += 1; else unconfirmed += 1;
         watch();
       }
       return { status: outcome.status, body: outcome.body };
     }
     if (outcome === 'gone') throw new ActionStopped('stopped');
-    if (route.sends === true) unconfirmed += 1;
+    if (sendsIn(route, body)) unconfirmed += 1;
     latched = outcome === 'refused' ? 'call-refused' : 'no-call-answer';
     closed = true;
     watch();

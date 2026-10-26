@@ -233,7 +233,6 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes,
     });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
     return { tree, id, leaves, vaultBytes };
   };
@@ -445,7 +444,6 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
       from: WIN_FROM, until: WIN_UNTIL, vault: VAULT,
     });
     const id = sim.proposalId(payload, c.salt, VAULT);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
 
     /* Only the payment is recorded, so the fixture's own calls do not count. */
@@ -556,7 +554,6 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
       from: WIN_FROM, until: WIN_UNTIL, vault: LEAKED,
     });
     const id = sim.proposalId(payload, c.salt, LEAKED);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
 
     const tape = Transcript.watch(sim.contract).clear();
@@ -706,7 +703,6 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
       from: WIN_FROM, until: WIN_UNTIL, vault: TRAILING_ZERO,
     });
     const id = sim.proposalId(payload, c.salt, TRAILING_ZERO);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
 
     const tape = Transcript.watch(sim.contract).clear();
@@ -775,7 +771,6 @@ describe('§7 — the tape keeps the whole call tree, not the entry circuit', ()
       from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes,
     });
     const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
 
     /* THE POINT: watch the VAULT, make one call, and require two back. */
@@ -823,7 +818,6 @@ describe('§8 — what sealing the pay-record key publishes', () => {
     const payload = fromHex(payKeyPayloadOf(toHex(commitment)));
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
-    await sim.as(sim.applying(A, c)).approve(id);
     await sim.as(sim.applying(B, c)).approve(id);
     return { sim, c, id };
   };
