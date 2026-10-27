@@ -48,7 +48,7 @@ import {
 import { Contract as Vault, ledger as vaultLedger } from '../managed-vault/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits, ledger as accountLedger } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
+import { AccountSimulator, invitePayloadFor, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
@@ -200,8 +200,8 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
      */
     const C = privateStateFor(3);
     const seat = govChange(70);
-    const sid = await governedRound(pureCircuits.signerAddPayload(sim.leafOf(C)), seat);
-    await sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(C), sid);
+    const sid = await governedRound(invitePayloadFor(C), seat);
+    await sim.seatInvited(sid, sim.invited(C, seat));
     const raising = govChange(71);
     const rid = await governedRound(
       pureCircuits.setVaultThresholdPayload(vaultAddrBytes(), 3n), raising, [A, B, C]);
@@ -412,8 +412,8 @@ describe('the account\'s own threshold is always reachable, so no vault is stran
     sim.at(VAULT_NOW);
     for (const [who, seed] of [[C, 77], [D, 78]] as const) {
       const c = govChange(seed);
-      const id = await governedRound(sim, pureCircuits.signerAddPayload(sim.leafOf(who)), c);
-      await sim.as(carrying(sim, A, c)).addSigner(sim.leafOf(who), id);
+      const id = await governedRound(sim, invitePayloadFor(who), c);
+      await sim.seatInvited(id, sim.invited(who, c));
     }
     expect(sim.ledger.signerLeaves.size()).toBe(4n);
 
@@ -481,9 +481,9 @@ describe("a vault's own threshold guards who is seated", () => {
     const sim = await live(2n);
     await setVault(sim, VAULT, 3n, 101, [A, B, C]);
     const seat = govChange(102);
-    const sid = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(D)), seat, [A, B]);
+    const sid = await round(sim, invitePayloadFor(D), seat, [A, B]);
     /* RED WHEN a vault threshold above the bar does not raise it: two of three seat a fourth leaf they hold. */
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), sid))
+    await expect(sim.seatInvited(sid, sim.invited(D, seat)))
       .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
     const swap = govChange(103);
     const wid = await round(sim, pureCircuits.reseatPayload(sim.leafOf(C), sim.leafOf(D)), swap, [A, B]);
@@ -504,8 +504,8 @@ describe("a vault's own threshold guards who is seated", () => {
     const neededOf = (sim: AccountSimulator) => Number(seatBarOf(sim.ledger.threshold as bigint, bar(sim) ?? null));
     const seat = async (sim: AccountSimulator, who: Who, by: Who[], seed: number) => {
       const c = govChange(seed);
-      const id = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(who)), c, by);
-      return sim.as(carrying(sim, A, c)).addSigner(sim.leafOf(who), id);
+      const id = await round(sim, invitePayloadFor(who), c, by);
+      return sim.seatInvited(id, sim.invited(who, c));
     };
     const remove = async (sim: AccountSimulator, who: Who, by: Who[], seed: number) => {
       const c = govChange(seed);
@@ -637,10 +637,10 @@ describe("a vault's own threshold guards who is seated", () => {
     await sim.as(carrying(sim, A, lower)).setThreshold(2n, lid);
     await sim.adoptVault(LATER, [A, B], 394);
     const seat = govChange(153);
-    const sid = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(D)), seat, [A, B]);
+    const sid = await round(sim, invitePayloadFor(D), seat, [A, B]);
     /* RED WHEN a threshold set on bytes not yet adopted does not write the bar: two of three would seat a
      * fourth leaf they hold and reach the three that vault needs. */
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), sid))
+    await expect(sim.seatInvited(sid, sim.invited(D, seat)))
       .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
   });
@@ -654,8 +654,8 @@ describe("a vault's own threshold guards who is seated", () => {
     const lid = await round(sim, pureCircuits.setThresholdPayload(2n), lower, [A, B, C]);
     await sim.as(carrying(sim, A, lower)).setThreshold(2n, lid);
     const seat = govChange(133);
-    const sid = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(D)), seat, [A, B]);
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), sid))
+    const sid = await round(sim, invitePayloadFor(D), seat, [A, B]);
+    await expect(sim.seatInvited(sid, sim.invited(D, seat)))
       .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
   });
 });

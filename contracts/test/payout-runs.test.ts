@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, sumArgsOf,
+  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, sumArgsOf, invitePayloadFor,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { buildPayoutTree, payoutLeafOf, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
@@ -638,7 +638,7 @@ describe('a run cannot be raised through the governance branch', () => {
      * The assertion is on the LEDGER rather than on the call not throwing.
      */
     const c = govChange(142);
-    const payload = pureCircuits.signerAddPayload(sim.leafOf(privateStateFor(7)));
+    const payload = invitePayloadFor(privateStateFor(7));
     await sim.as(carrying(sim, A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
     expect(sim.isOpen(id)).toBe(true);
@@ -733,7 +733,7 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
      * rather than runs, and nothing else in this file would go red.
      */
     const c = govChange(153);
-    const payload = pureCircuits.signerAddPayload(sim.leafOf(privateStateFor(11)));
+    const payload = invitePayloadFor(privateStateFor(11));
     await sim.as(carrying(sim, A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
     expect(sim.isOpen(id)).toBe(true);

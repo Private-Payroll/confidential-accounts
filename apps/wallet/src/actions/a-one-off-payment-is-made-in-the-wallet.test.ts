@@ -24,6 +24,7 @@ const t = vi.hoisted(() => ({
   payPublicly: null as null | ((doors: any, input: any) => Promise<unknown>),
   approve: null as null | ((doors: any, input: any) => Promise<unknown>),
   found: null as null | ((...a: any[]) => Promise<unknown>),
+  vendorChecked: null as null | ((...a: any[]) => Promise<void>),
   policy: null as null | ((...a: any[]) => Promise<unknown>),
 }));
 vi.mock('../../../../packages/web-shared/src/one-off-raised-here.js', async (real) => ({
@@ -46,8 +47,9 @@ vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async 
 }));
 vi.mock('../../../../packages/web-shared/src/one-off-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/one-off-here.js')>()),
-  oneOffsHere: async () => ({ believed: [], unread: [] }),
-  oneOffOfTheProposalHere: (...a: any[]) => t.found!(...a),
+  oneOffsHere: async () => { t.calls.push('every-one-off'); return { believed: [], unread: [] }; },
+  oneOffRaisedByHere: (...a: any[]) => t.found!(...a),
+  refuseAOneOffToAnotherVendorHere: (...a: any[]) => { t.calls.push('vendor-checked'); return t.vendorChecked!(...a); },
 }));
 vi.mock('./upkeep.js', async (real) => {
   const actual = await real<typeof import('./upkeep.js')>();
@@ -65,6 +67,7 @@ vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (re
 }));
 
 const { oneOffPaymentAction, oneOffAskedOf, payDoorsFor, oneOffRecordsFor } = await import('./one-off-payment.js');
+const { OneOffRefused } = await import('../../../../src/midnight/one-off-kind.js');
 const op = await import('../../../../packages/web-shared/src/vault-operation.js');
 const { LegNotRaisedHere } = await import('../../../../packages/web-shared/src/run-raised-here.js');
 
@@ -167,6 +170,7 @@ beforeEach(() => {
   t.payPublicly = async () => ({ txRef: 'r2' });
   t.approve = async () => ({});
   t.found = async () => ({ oneOff: RECORD() });
+  t.vendorChecked = async () => undefined;
   t.policy = async () => ({ state: 'none' });
 });
 
@@ -323,7 +327,7 @@ describe('a proposal raised on another device is approved here, then charged and
     chainSays.now = [OPEN(1, 2), OPEN(1, 2), OPEN(2, 2)];
     const { told } = await run(action(), PROPOSAL_WITH_ITS_PAYMENT);
     /* RED WHEN: a proposal raised elsewhere is not approved from this seat, or is paid without the chain showing its approvals. */
-    expect(t.calls.filter((c) => !c.startsWith('api'))).toEqual(['approve', 'to-pay', 'charge', 'to-pay', 'pay-privately']);
+    expect(t.calls.filter((c) => !c.startsWith('api'))).toEqual(['vendor-checked', 'approve', 'to-pay', 'charge', 'to-pay', 'pay-privately']);
     expect(told).toEqual({ state: 'paid', approvals: 2, needed: 2, charge: 'none' });
   });
 
@@ -407,6 +411,80 @@ describe('the doors are the wallet\'s own reads and the action\'s listed calls',
     expect(await doors.indexer()).toEqual(r.chain.indexer);
     /* RED WHEN: the account's record of payments is read from anything but this wallet's chain read. */
     expect((await records.payments.read(['e1'])).entries).toBe(1);
+  });
+});
+
+describe('a payment to a vendor entry is asked by the entry, and approved only for the entry\'s own address', () => {
+  const VENDOR = 'ven_0123456789abcdef0123';
+  const TO_THE_VENDOR = intent({ proposal: 'prp_abcdefghijkl', vendor: VENDOR });
+  const VENDORS_RECORD = RECORD({ payee: { ref: VENDOR, name: 'Acme Printing', address: PRIVATE_TO, network: NET } });
+
+  it('takes the vendor entry beside the address, shown as the page\'s words, and refuses one that is not a vendor entry\'s id', async () => {
+    /* RED WHEN: the vendor entry the page names is dropped, so the payment is raised to the address alone. */
+    expect((oneOffAskedOf(intent({ vendor: VENDOR }), NET, registryWithTestPrivateForms()) as { payee: { ref: string } }).payee.ref).toBe(VENDOR);
+    expect((oneOffAskedOf(intent(), NET, registryWithTestPrivateForms()) as { payee: { ref: null } }).payee.ref).toBeNull();
+    /* RED WHEN: a vendor entry is named by anything but its id. */
+    expect((await action().check(intent({ vendor: 'ven_nothex' }), {} as never))?.key).toBe('act.one-off-payment.why.not-a-payment');
+    const keys = (await action().shown(TO_THE_VENDOR)).map((l) => [l.key, l.from]);
+    /* RED WHEN: the window does not show the vendor entry, or shows the page's words as the wallet's own reading. */
+    expect(keys).toContainEqual(['act.one-off-payment.shown.vendor', 'page']);
+    expect((await action().shown(PROPOSAL_WITH_ITS_PAYMENT)).map((l) => l.key)).not.toContain('act.one-off-payment.shown.vendor');
+  });
+
+  it('reads the one-off by the name its proposal gives, checks it against the vendor entry, and approves nothing it refuses', async () => {
+    t.found = async () => ({ oneOff: VENDORS_RECORD });
+    await run(action(), TO_THE_VENDOR);
+    /* RED WHEN: approving one one-off opens every one-off the company ever made. */
+    expect(t.calls).not.toContain('every-one-off');
+    /* RED WHEN: a one-off to a vendor entry is approved without checking it pays that entry. */
+    expect(t.calls.indexOf('vendor-checked')).toBeGreaterThan(-1);
+    expect(t.calls.indexOf('vendor-checked')).toBeLessThan(t.calls.indexOf('approve'));
+    t.calls = [];
+    t.vendorChecked = async () => { throw new OneOffRefused('This one-off payment is not made: it pays another address than the vendor entry it names.'); };
+    const steps = action().steps(TO_THE_VENDOR);
+    const { ctx } = ctxWith(TO_THE_VENDOR);
+    await steps[0]!.run(ctx);
+    /* RED WHEN: a one-off whose address is not the vendor entry's is approved. */
+    const refused = (await steps[2]!.run(ctx).catch((x: unknown) => x)) as StepRefused;
+    expect(refused.words.key).toBe('act.one-off-payment.why.not-as-shown');
+    expect(t.calls).not.toContain('approve');
+    /* RED WHEN: a record naming another vendor entry, or none, than the window showed is approved. */
+    for (const ref of [null, 'ven_ffffffffffffffffffff']) {
+      t.found = async () => ({ oneOff: RECORD({ payee: { ref, name: 'Acme Printing', address: PRIVATE_TO, network: NET } }) });
+      const again = action().steps(TO_THE_VENDOR);
+      const c = ctxWith(TO_THE_VENDOR).ctx;
+      await again[0]!.run(c);
+      expect(((await again[2]!.run(c).catch((x: unknown) => x)) as StepRefused).words.key).toBe('act.one-off-payment.why.not-as-shown');
+    }
+  });
+
+  it('tells a proposal that can never match as not as shown, and one the records do not hold yet as not found', async () => {
+    const refusedWith = async (read: 'found' | 'vendor', message: string) => {
+      t.found = async () => (read === 'found' ? Promise.reject(new OneOffRefused(message)) : { oneOff: VENDORS_RECORD });
+      t.vendorChecked = async () => { if (read === 'vendor') throw new OneOffRefused(message); };
+      t.calls = [];
+      const steps = action().steps(TO_THE_VENDOR);
+      const { ctx } = ctxWith(TO_THE_VENDOR);
+      await steps[0]!.run(ctx);
+      const refused = (await steps[2]!.run(ctx).catch((x: unknown) => x)) as StepRefused;
+      expect(t.calls).not.toContain('approve');
+      return refused.words.key;
+    };
+    /* RED WHEN: a proposal whose record is paid from another vault, in another currency, or filed by another seat is told as a wait. */
+    for (const m of ['The one-off payment this proposal names is paid from another vault.', 'The one-off payment this proposal names is paid in another currency.',
+      'The one-off payment this proposal names was filed by another seat than the one that raised it.']) {
+      expect(await refusedWith('found', m), m).toBe('act.one-off-payment.why.not-as-shown');
+    }
+    /* RED WHEN: a vendor entry that holds other keys than the payment pays is told as a wait. */
+    expect(await refusedWith('vendor', 'This one-off payment is not made: it pays other keys than the vendor entry it names.')).toBe('act.one-off-payment.why.not-as-shown');
+    /* RED WHEN: a record the company has not filed yet is told as a mismatch, so a signer is told not to approve what only needs time. */
+    expect(await refusedWith('found', 'The company\'s records hold no one-off payment by the name this proposal gives.')).toBe('act.one-off-payment.why.not-found');
+  });
+
+  it('reads the company\'s vendors through its own records, with the calls the action lists', async () => {
+    const records = oneOffRecordsFor(reachOf() as never, { assets: registryWithTestPrivateForms(), network: NET }, {} as never);
+    /* RED WHEN: the wallet has no way to read the vendor entry a payment names. */
+    expect(typeof records.vendors).toBe('function');
   });
 });
 
@@ -570,6 +648,21 @@ describe('a step that is not reached says so, and no stop after a send reads as 
     expect(((await again[3]!.run(fresh.ctx).catch((x: unknown) => x)) as StepRefused).words.key).toBe('act.one-off-payment.why.closed');
   });
 
+  it('tells the claim and seat stops what to do next, and the window as the code sets it', () => {
+    /* RED WHEN: the window is worded as opening now, though the code opens it five minutes before now. */
+    expect(WORDS['act.one-off-payment.shown.window']).toMatch(/five minutes before now/u);
+    /* RED WHEN: the sentence read before the passkey does not say what each of the two signatures covers. */
+    expect(WORDS['act.claim-by-address.shown.proof']).toMatch(/signs one claim with the key of the address you were added with.*also signs a code/u);
+    /* RED WHEN: a stop of the claim or the seat action ends at what did not happen, with nothing for the reader to do. */
+    for (const [k, way] of [['act.claim-by-address.why.not-a-company', /Open the invitation link again/u], ['act.claim-by-address.why.not-a-payee', /Ask the person who added you/u],
+      ['act.claim-by-address.why.no-payslip-key', /Reload the page/u], ['act.claim-by-address.why.another-company', /Open the link you were sent/u],
+      ['act.seat-invited.why.not-a-company', /Open the invitation link again/u], ['act.seat-invited.why.another-company', /Open the link you were sent/u],
+      ['act.seat-invited.why.no-free-seat', /Ask the signer who invited you/u], ['act.seat-invited.why.taken-by-another', /Ask the signer who invited you/u],
+      ['act.one-off-payment.why.payee', /Check the address/u], ['act.one-off-payment.why.not-a-payment', /enter the payment again/u]] as const) {
+      expect(WORDS[k], k).toMatch(way);
+    }
+  });
+
   it('says only true things, each with what to do next', () => {
     const w = (k: string) => WORDS[`act.one-off-payment.${k}`]!;
     /* RED WHEN: a closed proposal that may have been paid is told as never paid, with no way forward. */
@@ -590,9 +683,9 @@ describe('a step that is not reached says so, and no stop after a send reads as 
     /* RED WHEN: after two removals the wallet says one more approval is enough. */
     expect(w('why.outrun')).toMatch(/Each change needs one more approval/u);
     expect(w('why.outrun')).toMatch(/enough other signers/u);
-    /* RED WHEN: the window says it pays a payment, or claims the amount is hidden from whoever knows the vault's notes. */
+    /* RED WHEN: the window says it pays a payment, or claims the amount is hidden from whoever has seen the vault's earlier payments. */
     expect(w('headline')).toMatch(/^Make a one-off payment/u);
-    expect(w('shown.private')).toMatch(/notes/u);
+    expect(w('shown.private')).toMatch(/earlier payments/u);
     /* RED WHEN: the window ends a payment still awaiting approvals as done, or says pressing again carries this one on in raise mode. */
     expect(w('over.awaiting')).toMatch(/Not paid yet/u);
     expect(w('over.continue')).toMatch(/second payment/u);

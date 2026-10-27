@@ -6,7 +6,7 @@
  * with the proposal relays and the roster and vault-key routes mounted beside
  * them. Cy holds a third seat, invited by Ada, and Bo is an admin; Ada's, Bo's
  * and Cy's wallets' records-key statements are in the roster, folded from their
- * own offers.
+ * own offers. A test may seat more signers after Cy's the same way (`after`).
  *
  * Three pieces are stand-ins, and they are named here:
  *   - **the chain's account**: a map of the proposals it holds open, each with
@@ -68,7 +68,7 @@ import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { governedCallServiceFor, type RemovalDoors } from 'vaults-web-shared/governed-call-on-device.js';
 import type { GovernedCallOrder } from 'vaults-web-shared/governed-call-builder.js';
 import {
-  aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeReads, ACME_STATE, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, peopleRecords, seatOf, sendAs, store,
+  aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeReads, ACME_STATE, seatsTakenByInvitation, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, peopleRecords, seatOf, sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
@@ -81,17 +81,19 @@ export { ADA, BO, CO, KEY, LABEL, ADDRESS, acmeChain, apiAs, sendAs, store, chai
 export const CY = seatOf('cy', 3, LABEL, ADDRESS, CO, ADA);
 /** Each seated person's id in the roster. */
 export const ID: Record<string, string> = { ada: 'sgn_ada', bo: 'sgn_bo', cy: 'sgn_cy' };
+/** The seats a company of more than three signers seats after Cy's, as `aCompanyWhoseSignersChange` was asked. */
+let more: readonly Seat[] = [];
 
 /* ── the chain's account, stood in ────────────────────────────────────────── */
 
-/** Every proposal the chain holds open, by its identity on chain: what it changes, and who approved it. */
+/** Every proposal the chain holds open, by its identity on chain: what it changes, the leaf it takes off or the address it invites, and who approved it. */
 const open = new Map<string, { change: 'add' | 'remove' | 'run' | 'other'; leaf: string | null; approvedBy: Set<string> }>();
 /** The call that closed each proposal the chain no longer holds open. */
 const closedWith = new Map<string, string>();
 /**
  * What reached the service and the chain, in order: each directory version filed (`directory 5 retire`), each anchor
- * that landed (`anchored`), and each call the chain took, with the leaf it seats or takes off (`chain amendSigner
- * removing <leaf>`).
+ * that landed (`anchored`), and each call the chain took, with the leaf it takes off (`chain amendSigner removing
+ * <leaf>`) or the leaf an invited person seated (`chain seatInvited <leaf>`).
  */
 export const events: string[] = [];
 /** Every run's proposal charged to its vault's period on the test's chain, by its identity there. */
@@ -135,9 +137,12 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
   if (!h.seats.seats.includes(signer)) throw new Error('not a signer on this account');
   const proposal = 'proposal' in order ? String(order.proposal).toLowerCase() : '';
   if (order.circuit === 'propose' && 'governance' in order) {
-    const g = order.governance as { kind: string; leaf?: string };
+    const g = order.governance as { kind: string; leaf?: string; address?: string };
     /* The raise counts as its raiser's approval, as the account's `propose` counts it. */
-    open.set(proposal, { change: g.kind === 'add-signer' ? 'add' : g.kind === 'remove-signer' ? 'remove' : 'other', leaf: g.leaf?.toLowerCase() ?? null, approvedBy: new Set([signer]) });
+    open.set(proposal, {
+      change: g.kind === 'add-signer' ? 'add' : g.kind === 'remove-signer' ? 'remove' : 'other',
+      leaf: (g.kind === 'add-signer' ? g.address : g.leaf)?.toLowerCase() ?? null, approvedBy: new Set([signer]),
+    });
   } else if (order.circuit === 'propose' && 'run' in order) {
     /* A run, a one-off payment's included: raised as the account raises it, counting its raiser, who may approve here. */
     open.set(proposal, { change: 'run', leaf: null, approvedBy: new Set([signer]) });
@@ -151,18 +156,11 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
     if (o === undefined) throw new Error('there is no open proposal with that id');
     if (o.approvedBy.size < h.seatBar) throw new Error('not enough approvals');
     const leaf = order.leaf.toLowerCase();
-    if (order.removing === true) {
-      if (o.change !== 'remove' || o.leaf !== leaf) throw new Error('that proposal is not for this removal');
-      if (!h.seats.seats.includes(leaf)) throw new Error('that signer is not seated on this account');
-      if (h.seats.seats.length - 1 < h.seatBar) throw new Error('that would leave too few signers to approve anything');
-      const at = h.seats.seats.indexOf(leaf);
-      chains.set(CO, { ...h, seats: { ...h.seats, seats: h.seats.seats.filter((_, i) => i !== at), committee: h.seats.committee.filter((_, i) => i !== at) } });
-    } else {
-      if (o.change !== 'add' || o.leaf !== leaf) throw new Error('that proposal is not for this signer');
-      const key = committeeKeyOfLeaf.get(leaf);
-      if (key === undefined) throw new Error('the test gave no committee key for this leaf');
-      chains.set(CO, { ...h, seats: { ...h.seats, seats: [...h.seats.seats, leaf], committee: [...h.seats.committee, key] } });
-    }
+    if (o.change !== 'remove' || o.leaf !== leaf) throw new Error('that proposal is not for this removal');
+    if (!h.seats.seats.includes(leaf)) throw new Error('that signer is not seated on this account');
+    if (h.seats.seats.length - 1 < h.seatBar) throw new Error('that would leave too few signers to approve anything');
+    const at = h.seats.seats.indexOf(leaf);
+    chains.set(CO, { ...h, seats: { ...h.seats, seats: h.seats.seats.filter((_, i) => i !== at), committee: h.seats.committee.filter((_, i) => i !== at) } });
     open.delete(proposal);
     closedWith.set(proposal, 'amendSigner');
   } else if (order.circuit === 'setThreshold') {
@@ -182,11 +180,34 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
   } else {
     throw new Error(`this test's chain does not take ${order.circuit}`);
   }
-  events.push(order.circuit === 'amendSigner' ? `chain amendSigner ${order.removing === true ? 'removing' : 'adding'} ${order.leaf.toLowerCase()}` : `chain ${order.circuit}`);
+  events.push(order.circuit === 'amendSigner' ? `chain amendSigner removing ${order.leaf.toLowerCase()}` : `chain ${order.circuit}`);
   return { ref: `ref-${events.length}`, at: new Date().toISOString() };
 };
 
 /** Where each proposal stands on the test's chain, as each person's own wallet reads it. */
+/**
+ * The invited person's own wallet taking the seat a proposal to add them approved, as the account's `seatInvited`
+ * takes it: the proposal must invite `address`, and hold the approvals the seat bar asks. The seat goes on the end of
+ * the list. This chain checks no proof and no wallet key: the contract's own tests hold those.
+ */
+export const theInviteeTakesTheSeatHere = (proposal: string, address: string, leaf: string): void => {
+  const h = holdingNow();
+  const id = proposal.toLowerCase();
+  const o = open.get(id);
+  if (o === undefined) throw new Error('there is no open proposal with that id');
+  if (o.change !== 'add' || o.leaf !== address.toLowerCase()) throw new Error('that proposal does not invite this wallet with these rights');
+  if (o.approvedBy.size < h.seatBar) throw new Error('not enough approvals');
+  const seat = leaf.toLowerCase();
+  if (h.seats.seats.includes(seat)) throw new Error('that signer is already seated on this account');
+  const key = committeeKeyOfLeaf.get(seat);
+  if (key === undefined) throw new Error('the test gave no committee key for this leaf');
+  chains.set(CO, { ...h, seats: { ...h.seats, seats: [...h.seats.seats, seat], committee: [...h.seats.committee, key] } });
+  open.delete(id);
+  closedWith.set(id, 'seatInvited');
+  seatsTakenByInvitation.set(id, seat);
+  events.push(`chain seatInvited ${seat}`);
+};
+
 export const theChain = roundsOnATestChain(async () => [...open].map(([id, o]) => ({ id, approvals: o.approvedBy.size })),
   (id) => { const c = closedWith.get(id); return c === undefined ? [] : [c]; });
 
@@ -204,7 +225,7 @@ export const walletOf = (s: { n: number; seat: string }) => ({
 /** Acme's first roster, filed by Ada's founding seat with her vault keys. */
 const firstRoster = () => {
   const adas = walletOf(ADA).recordsKey;
-  const signers = [ADA, BO, CY].map(signerOf).map((x) => (x.id !== ID.ada ? x : {
+  const signers = [ADA, BO, CY, ...more].map(signerOf).map((x) => (x.id !== ID.ada ? x : {
     ...x, vaultKeys: signVaultKeys(CO, ID.ada!, {
       committeeKey: ADA.committeeKey as never, recordsKey: adas.recordsKey as Hex, recordsKeyStatement: adas.signature as Hex, recordsKeySeat: ADA.seat as Hex,
     }, ADA.signingSecret as Hex),
@@ -344,7 +365,9 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
  * vault keys and Ada's device folds them into the roster, Ada's seat makes Bo an admin, every version is anchored from
  * Ada's device while the account asks one approval, and the test's chain then holds the three seats at `seatBar`.
  */
-export function aCompanyWhoseSignersChange(seatBar = 2): void {
+export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] = []): void {
+  more = after;
+  for (const s of after) ID[s.person] = `sgn_${s.person}`;
   aCompanyOfTwoSeats((app: express.Express, deps) => {
     const ownsProposal: express.RequestHandler = (req, res, next) => {
       const p = store.getProposal(String(req.params.id));
@@ -372,29 +395,32 @@ export function aCompanyWhoseSignersChange(seatBar = 2): void {
 
   beforeAll(async () => {
     const account = {
-      id: CO, name: 'Acme', createdAt: 'now', signers: [ADA, BO, CY].map(signerOf), policy: { threshold: 1 }, wrappedKeys: [],
+      id: CO, name: 'Acme', createdAt: 'now', signers: [ADA, BO, CY, ...more].map(signerOf), policy: { threshold: 1 }, wrappedKeys: [],
       recovery: { signerIds: [], threshold: 1 }, contractAddress: ADDRESS, companyLabel: LABEL,
     } as unknown as Account;
     store.putAccount(sealAccount(account, KEY, [], 0));
-    chains.set(CO, holdingOf([ADA, BO, CY]));
-    const r = await sendAs('cy')(`/api/accounts/${CO}/directory/4`, { method: 'POST', body: JSON.stringify({ company: CO, version: 4, change: { kind: 'claim', entry: CY.entry } }) });
-    expect(r.status, JSON.stringify(r.body)).toBe(201);
-    for (const s of [BO, CY]) {
+    chains.set(CO, holdingOf([ADA, BO, CY, ...more]));
+    for (const [i, s] of [CY, ...more].entries()) {
+      const r = await sendAs(s.person)(`/api/accounts/${CO}/directory/${4 + i}`, { method: 'POST', body: JSON.stringify({ company: CO, version: 4 + i, change: { kind: 'claim', entry: s.entry } }) });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+    }
+    const roleAt = 5 + more.length;
+    for (const s of [BO, CY, ...more]) {
       await offerVaultKeysHere(api(s.person), CO, {
         signerId: ID[s.person]!, signingSecret: s.signingSecret as Hex, committeeKey: s.committeeKey as never,
         ...walletOf(s), entry: s.statement, viewingKey: KEY,
       });
     }
     await anchorTheRecordsHere(anchorDoorsOf(ADA));
-    expect(await foldOffersHere(rosterDoorsOf(ADA))).toEqual({ folded: [BO.seat, CY.seat], refused: [] });
+    expect(await foldOffersHere(rosterDoorsOf(ADA))).toEqual({ folded: [BO.seat, CY.seat, ...more.map((m) => m.seat)], refused: [] });
     /* Bo, an approver until now, is made an admin by Ada's seat while the account asks one approval of a change of who holds it. */
     const unsigned = { kind: 'role', seat: BO.seat, role: 'admin', threshold: 1, signatures: [] } as const;
-    const message = directoryChangeMessage(CO, 5, unsigned as never);
-    const role = await sendAs('ada')(`/api/accounts/${CO}/directory/5`, { method: 'POST', body: JSON.stringify({ company: CO, version: 5, change: {
+    const message = directoryChangeMessage(CO, roleAt, unsigned as never);
+    const role = await sendAs('ada')(`/api/accounts/${CO}/directory/${roleAt}`, { method: 'POST', body: JSON.stringify({ company: CO, version: roleAt, change: {
       ...unsigned, signatures: [{ publicKey: ADA.statement.signingKey as Hex, signature: sign(message, ADA.signingSecret) }] } }) });
     expect(role.status, JSON.stringify(role.body)).toBe(201);
     await anchorTheRecordsHere(anchorDoorsOf(ADA));
-    chains.set(CO, holdingOf([ADA, BO, CY], 1, seatBar));
+    chains.set(CO, holdingOf([ADA, BO, CY, ...more], 1, seatBar));
     events.length = 0;
   });
 }

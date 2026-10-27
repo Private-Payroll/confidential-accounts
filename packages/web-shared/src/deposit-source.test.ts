@@ -84,7 +84,7 @@ const setUp = async () => {
     deploy: refuse, handover: refuse, notesForPayment: refuse, paymentsFit: refuse, afterPayment: refuse, stepKept: refuse,
     confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, vouchedRunIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, mergeNotes: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
-    ownSeat: refuse, spendingPolicyKeys: refuse, policyBarKey: refuse, clearRun: refuse, periodTotal: refuse, runCharged: refuse, lastRecovery: refuse, anchorHeads: refuse, anchorTag: refuse, seatOpenings: refuse, anchorsOnChain: refuse, roundsOnChain: refuse, anchor: refuse, recoverAnchor: refuse, accountCallChain: refuse,
+    ownSeat: refuse, spendingPolicyKeys: refuse, policyBarKey: refuse, clearRun: refuse, periodTotal: refuse, runCharged: refuse, lastRecovery: refuse, anchorHeads: refuse, anchorTag: refuse, seatOpenings: refuse, anchorsOnChain: refuse, roundsOnChain: refuse, invitedSeats: refuse, seatInvited: refuse, anchor: refuse, recoverAnchor: refuse, accountCallChain: refuse,
     secretIsTheVaults: async () => true,
     deposit: async (i) => { lastBuilt = i.coin; log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`); return { tx: 'PROVEN' }; },
   } as VaultBuilderClient;

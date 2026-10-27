@@ -68,7 +68,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
-import { AccountSimulator, leafOfDevice, privateStateFor, change } from './simulator.js';
+import { AccountSimulator, leafOfDevice, privateStateFor, change, ZERO_32 } from './simulator.js';
 import { scopeOfRights } from '../src/witnesses.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
@@ -106,9 +106,8 @@ const asTheProductWrites = (
 describe('what a signer’s public identity is', () => {
   it('SEATS THE LEAF THE PRODUCT WRITES AND THEN ACTS WITH IT, in circuit', async () => {
     /* One seat at a threshold of one, which is the only shape a constructor
-     * makes. The invitee is seated below through an approved round — there is
-     * no bootstrap window left, so that is how a real account's signers arrive
-     * after the founder's. */
+     * makes. The invitee is seated below through an approved invitation, which
+     * is how a real account's signers arrive after the founder's. */
     const sim = await AccountSimulator.create(FOUNDER);
 
     /*
@@ -119,7 +118,10 @@ describe('what a signer’s public identity is', () => {
       MidnightCommitments,
       toHex(INVITEE.secretKey), toHex(INVITEE.blinding), toHex(INVITEE.scope));
 
-    await sim.seatLeaf(fromHex(leaf), [FOUNDER], 11);
+    /* The chain builds the leaf from the invitee's own key, blinding and rights; it must be the one the product wrote. */
+    await sim.seatWrittenLeaf(
+      { signingSecret: toHex(INVITEE.secretKey), blinding: toHex(INVITEE.blinding), scope: toHex(INVITEE.scope) },
+      fromHex(leaf), [FOUNDER], 11);
 
     /*
      * **AND NOW THAT DEVICE ACTS.** `propose` runs `requireSigner()` at its
@@ -153,13 +155,10 @@ describe('what a signer’s public identity is', () => {
       toHex(INVITEE.secretKey), toHex(INVITEE.blinding), toHex(INVITEE.scope));
     expect(oldWay).not.toBe(rightWay);
 
-    const sim = await AccountSimulator.create(FOUNDER);
-    /* The tree accepts any 32 bytes — seating publishes whatever it is given,
-     * which is the whole reason a wrong derivation is silent until a proof.
-     * **AN APPROVED ROUND SEATS IT AND THAT CHANGES NOTHING ABOUT THIS TEST**:
-     * `amendSigner` never looks at what a leaf means, and there is no path that
-     * seats one without a proposal behind it. */
-    await sim.seatLeaf(fromHex(oldWay), [FOUNDER], 12);
+    /* The founding seat is the one leaf the chain is handed rather than builds
+     * itself, and it accepts any 32 bytes — which is the whole reason a wrong
+     * derivation is silent until the device tries to act. */
+    const sim = await AccountSimulator.create(INVITEE, fromHex(oldWay));
 
     sim.as(sim.applying(INVITEE, change(0n, 12)));
     /* **THE MESSAGE IS READ, NOT THE FACT OF A THROW.** `rejects.toThrow()`
@@ -207,7 +206,7 @@ describe('what a signer’s public identity is', () => {
     };
 
     const sim = await AccountSimulator.create(privateStateFor(9));
-    await sim.seatLeaf(fromHex(founder.leafCommitment!), [privateStateFor(9)], 13);
+    await sim.seatWrittenLeaf(mine, fromHex(founder.leafCommitment!), [privateStateFor(9)], 13);
 
     sim.as(sim.applying(device, change(0n, 13)));
     await expect(sim.propose(payload(9))).resolves.toBeDefined();
@@ -336,16 +335,9 @@ describe('the deployer has no seat', () => {
      * it the test above passes on a contract that seats BOTH — which is
      * precisely what a half-done version of this change would produce.
      *
-     * `addSigner` is the one that mattered: `amendSigner` opens with
-     * `requireSigner()`, and the seat the deployer used to hold is what let it
-     * walk the bootstrap window seating whoever it liked.
-     *
-     * **THE WINDOW IS SHUT FOR EVERYBODY NOW, AND THAT DOES NOT MAKE
-     * THIS LINE REDUNDANT.** `requireSigner()` is still the first thing
-     * `amendSigner` does, so a deploying device that held a seat would still
-     * pass it and could still propose, approve and seat through the ordinary
-     * path — three transactions instead of one, and the same account. What
-     * changed is the cost to the attacker, not whether they are one.
+     * A deploying device that held a seat could propose, approve and invite
+     * through the ordinary path. Without one it can raise nothing, so no
+     * invitation exists for it to take a seat by.
      */
     const sim = await AccountSimulator.create(DEPLOYING, leafOfDevice(FOUNDING));
 
@@ -353,8 +345,8 @@ describe('the deployer has no seat', () => {
     await expect(sim.propose(payload(22)))
       .rejects.toThrow(/not a signer on this account/i);
 
-    await expect(sim.as(DEPLOYING).addSigner(leafOfDevice(privateStateFor(79))))
-      .rejects.toThrow(/not a signer on this account/i);
+    await expect(sim.seatInvited(ZERO_32, sim.invited(DEPLOYING, change(0n, 22))))
+      .rejects.toThrow(/does not invite this wallet/i);
   });
 
   it('refuses to found an account on a leaf that may never be seated', async () => {
@@ -369,8 +361,8 @@ describe('the deployer has no seat', () => {
      * signer's position read as free — the next seating takes slot 0 and the
      * founder is gone, with nobody having voted for it.
      *
-     * The same loop and the same reasoning as `signer-governance.test.ts`'s
-     * "refuses a leaf of all zeros", one circuit earlier.
+     * An invited seat cannot reach this: its leaf is a commitment the chain
+     * makes itself, never zero or the marker.
      */
     for (const bad of [new Uint8Array(32), pureCircuits.vacantSlot()]) {
       await expect(AccountSimulator.create(DEPLOYING, bad))
@@ -390,8 +382,8 @@ describe('the deployer has no seat', () => {
      * (`scripts/deploy-preview.ts`), and a mismatch between that writer's scope
      * defaulting (`signer-leaf.ts`: `material.scope ?? commitments.allVaults()`)
      * and the device's own `scope` would be invisible to every test in this
-     * block — while `:105-129` proves exactly that composition one circuit
-     * later, for `addSigner`.
+     * block — while the first test in this file proves exactly that
+     * composition for a seat taken by invitation.
      *
      * So: the WRITER makes the leaf, the CONSTRUCTOR seats it, and the device
      * it belongs to then ACTS through `requireSigner()`. Nothing here
@@ -547,8 +539,7 @@ describe('an account is founded at one, and one is a rule', () => {
      * the relationship holds at birth. **The pair below is what
      * `setThreshold`'s ceiling then preserves for the rest of the account's
      * life** — the two together are why `signerLeaves.size() < threshold` is
-     * unreachable, which is `docs/company-accounts.md` §10a and the reason
-     * `amendSigner`'s free branch is dead code.
+     * unreachable.
      */
     const sim = await AccountSimulator.create(DEPLOYING, leafOfDevice(FOUNDING));
     /* The relationship first, so it is the assertion that answers: RED WHEN the constructor

@@ -20,9 +20,12 @@
  * the clear on every path.
  *
  * **THE PAYEE IS AN ADDRESS.** A one-off is paid to an address typed straight
- * in, with an optional name as shown when it was paid. `ref` is the record's
- * place for a vendor entry, and is always null: no one-off names one. The
- * address decides whether it is paid privately or publicly.
+ * in, with an optional name as shown when it was paid. `ref` names the vendor
+ * entry it pays, when it pays one (`ven_` and twenty hex characters), with the
+ * address kept beside it: the address is still what is paid, and every device
+ * that raises, approves or pays the one-off refuses it unless the address is the
+ * vendor entry's. `ref` is null for an address typed straight in. The address
+ * decides whether it is paid privately or publicly.
  *
  * Filed once: a one-off raised again is a new record.
  */
@@ -35,6 +38,7 @@ import { isNetworkName, type NetworkName } from './network.js';
 import { payeeOf, type Payee } from './payee-address.js';
 import type { SealedCompanyRecord } from './sealed-record-wire.js';
 import { ONE_OFF_KIND, ONE_OFF_VERSION, OneOffRefused } from './one-off-kind.js';
+import { VENDOR_ID } from '../core/invitation.js';
 
 export { ONE_OFF_KIND, ONE_OFF_VERSION, OneOffRefused };
 
@@ -52,9 +56,9 @@ export const ONE_OFF_REASON_MOST = 500;
  */
 export const ONE_OFF_SEALED_BYTES = 4 * (ONE_OFF_NAME_MOST + ONE_OFF_REASON_MOST) + ONE_OFF_ADDRESS_MOST + 1024;
 
-/** Who a one-off is paid to: an address, its network, and the name it was paid under, if any. `ref` names a vendor entry once the vendor list exists. */
+/** Who a one-off is paid to: an address, its network, and the name it was paid under, if any; `ref` the vendor entry it pays, or null. */
 export interface OneOffPayee {
-  readonly ref: null;
+  readonly ref: string | null;
   readonly name: string | null;
   readonly address: string;
   readonly network: NetworkName;
@@ -124,9 +128,10 @@ export const oneOffTidied = (given: OneOffGiven, registry: AssetRegistry = theAs
   if (amount === 0n) throw new OneOffRefused('A one-off payment has to move a positive amount.');
   const p = g.payee as Partial<OneOffPayee> | undefined;
   if (p === undefined || p === null || typeof p !== 'object') throw new OneOffRefused('A one-off payment names who it is paid to.');
-  if (p.ref !== null) {
-    throw new OneOffRefused('A one-off payment is paid to an address for now: a vendor entry is named once the company has its vendor list.');
+  if (p.ref !== null && (typeof p.ref !== 'string' || !VENDOR_ID.test(p.ref))) {
+    throw new OneOffRefused('A one-off payment names a vendor by their vendor entry\'s id, or names none, and this is not one.');
   }
+  const ref = p.ref;
   let name: string | null = null;
   if (p.name !== null && p.name !== undefined) {
     if (typeof p.name !== 'string') throw new OneOffRefused('A payee\'s name is text.');
@@ -177,7 +182,7 @@ export const oneOffTidied = (given: OneOffGiven, registry: AssetRegistry = theAs
   const seed = g.seed;
   if (typeof seed !== 'string' || !HEX64.test(seed)) throw new OneOffRefused('A one-off payment\'s seed is 32 bytes of lower-case hex.');
   return {
-    vault, asset, amount, payee: { ref: null, name, address, network: p.network }, reason,
+    vault, asset, amount, payee: { ref, name, address, network: p.network }, reason,
     proposal: { id: proposal.id, chainId }, run: { opensAt, closesAt, required }, seed,
     form: says, paidTo, token: ledgerTokenOf(asset, paidTo.kind, registry).toLowerCase() as Hex,
   };
@@ -194,7 +199,7 @@ const LABEL = '$label';
 const bodyOf = (o: OneOffOpened, label: OneOffLabel): string => {
   const text = canonical({
     vault: o.vault, asset: o.asset, amount: o.amount.toString(),
-    payee: { ref: null, name: o.payee.name, address: o.payee.address, network: o.payee.network },
+    payee: { ref: o.payee.ref, name: o.payee.name, address: o.payee.address, network: o.payee.network },
     reason: o.reason, proposal: o.proposal,
     run: { opensAt: o.run.opensAt.toString(), closesAt: o.run.closesAt.toString(), required: o.run.required.toString() },
     seed: o.seed, [LABEL]: label,
@@ -254,7 +259,7 @@ export const openOneOff = (rec: SealedCompanyRecord, key: Hex, registry: AssetRe
   const run = body.run as Record<string, unknown> | undefined;
   const opened = oneOffTidied({
     vault: body.vault as Hex, asset: body.asset as AssetId, amount: digits(body.amount),
-    payee: { ref: p?.ref as null, name: p?.name as string | null, address: p?.address as string, network: p?.network as NetworkName },
+    payee: { ref: p?.ref as string | null, name: p?.name as string | null, address: p?.address as string, network: p?.network as NetworkName },
     reason: body.reason as string, proposal: body.proposal as OneOff['proposal'],
     run: { opensAt: digits(run?.opensAt), closesAt: digits(run?.closesAt), required: digits(run?.required) },
     seed: body.seed as Hex,

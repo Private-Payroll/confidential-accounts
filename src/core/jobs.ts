@@ -65,6 +65,9 @@ export const isTerminal = (s: JobState): boolean => TERMINAL.includes(s);
 /**
  * What the job is trying to do. Mirrors the circuits, so nothing is invented.
  *
+ * `addSigner` WAS HERE AND IS GONE: a signer is seated by the invitee's own
+ * wallet, never by a job, and nothing ever enqueued that kind.
+ *
  * `credit` WAS HERE AND IS GONE: the circuit was shed, and nothing ever
  * enqueued that kind.
  *
@@ -77,7 +80,7 @@ export const isTerminal = (s: JobState): boolean => TERMINAL.includes(s);
  * added here first, because a job kind with no circuit is what these two
  * removals were both cleaning up after.
  */
-export type JobKind = 'propose' | 'approve' | 'cancel' | 'addSigner';
+export type JobKind = 'propose' | 'approve' | 'cancel';
 
 /**
  * Who is working a job, and until when.

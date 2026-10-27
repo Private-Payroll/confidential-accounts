@@ -1,6 +1,6 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  openPayslip, answerPayslipProof, NOT_YOUR_PAYSLIP,
+  openPayslip, NOT_YOUR_PAYSLIP,
   type SealedPayslip, type OpenedPayslip,
 } from '../../../src/core/payslip-open.js';
 import type { WrappingKeypair } from '../../../src/core/crypto.js';
@@ -15,15 +15,16 @@ import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../
 /**
  * **A PAYEE'S OWN PAYSLIPS, FETCHED AS CIPHERTEXT AND OPENED ON THIS DEVICE.**
  *
- * The secret in `keys` is used twice, both times here: once to read back the
- * value the service sealed to its public half, which is how the service knows
- * to answer, and once per slip to open it. It is never part of a request.
+ * The page asks for every slip of one company's month, and tries each with the
+ * secret in `keys`. Neither the secret nor its public half is ever part of a
+ * request, and no slip the service holds says whose it is, so the service
+ * never learns which slip is this person's.
  *
  * The requests carry this page's sign-in, because the service answers a
  * signed-in person only, and they name this page so that a page older than the
  * service is told to reload rather than to sign in again. While it answers, the
- * service therefore sees which signed-in person asks about which company
- * address; it does not write that down.
+ * service therefore sees which signed-in person asks about which company and
+ * month; it does not write that down.
  */
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -37,8 +38,6 @@ const asThisPage = (init: RequestInit = {}): RequestInit => ({
     ...((init.headers as Record<string, string> | undefined) ?? {}),
   },
 });
-
-const signedIn = (body: unknown): RequestInit => asThisPage({ method: 'POST', body: JSON.stringify(body) });
 
 /** Thrown when the service says this page is older than it. Never caught as one address's failure. */
 class PageOutOfDate extends Error {
@@ -56,10 +55,7 @@ interface MyPayslips {
   opened: OpenedPayslip[];
   /** What the service sent, still sealed. */
   sealed: SealedPayslip[];
-  /**
-   * Slips the service sent that this key did not open. Always zero unless
-   * something is wrong, and counted rather than dropped so a page can say so.
-   */
+  /** Slips of the month that this key did not open: everybody else's. */
   unopened: number;
   /**
    * Slips that opened but name a company other than the one this key was
@@ -71,22 +67,20 @@ interface MyPayslips {
 }
 
 /**
- * @param from the label of the company `keys` was worked out from, or `null`
- *   for a key no company produced. Only slips that name exactly that are asked
- *   for, and only those are shown.
+ * @param from the label of the company `keys` was worked out from. That
+ *   company's slips are asked for, and only the ones that open with `keys` and
+ *   name exactly that label inside their seal are shown.
+ * @param period the month asked about, written YYYY-MM.
  */
 export async function fetchMyPayslips(
-  keys: WrappingKeypair, from: string | null, fetcher: Fetch = fetch,
+  keys: WrappingKeypair, from: string, period: string, fetcher: Fetch = fetch,
 ): Promise<MyPayslips> {
-  const address = from === null ? null : readCompanyLabel(from);
-  if (from !== null && address === null) throw new Error('that is not a company\'s label, so no payslips were asked for.');
-  const proof = await readJson(
-    await fetcher('/api/payslips/proof', signedIn({ publicKey: keys.publicKey })),
-    'asking for your payslips');
-  const answer: Hex = answerPayslipProof(proof.sealed, keys.secret);
+  const address = readCompanyLabel(from);
+  if (address === null) throw new Error('that is not a company\'s label, so no payslips were asked for.');
+  if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/u.test(period)) throw new Error('that is not a month written YYYY-MM, so no payslips were asked for.');
   const sealed: SealedPayslip[] = await readJson(
-    await fetcher('/api/payslips', signedIn({ publicKey: keys.publicKey, answer, from: address })),
-    'fetching your payslips');
+    await fetcher(`/api/payslips?company=${encodeURIComponent(address)}&period=${encodeURIComponent(period)}`, asThisPage()),
+    'fetching the company\'s payslips');
   const opened: OpenedPayslip[] = [];
   let unopened = 0;
   let refused = 0;
@@ -99,7 +93,7 @@ export async function fetchMyPayslips(
       unopened += 1;
       continue;
     }
-    if ((slip.issuedBy === null ? null : slip.issuedBy.toLowerCase()) !== address) { refused += 1; continue; }
+    if (slip.issuedBy !== address) { refused += 1; continue; }
     opened.push(slip);
   }
   return { opened, sealed, unopened, refused };
@@ -273,8 +267,7 @@ const confirmedSafely = (confirmed: (slip: OpenedPayslip) => boolean, s: OpenedP
 };
 
 /**
- * Every company label a company's payslips name, asked by any one of them, each
- * with the account the service says carries it. The account is the service's
+ * A company's label with the account the service says carries it now. The account is the service's
  * word, and the payee's wallet reads the label back off it before it gives
  * anything; one that does not carry the label is refused there.
  */
@@ -284,7 +277,7 @@ export async function payslipAddressesFor(
   const r = await fetcher(
     `/api/payslips/addresses?company=${encodeURIComponent(company)}`,
     asThisPage());
-  const body = await readJson(r, 'asking which companies a company\'s payslips name');
+  const body = await readJson(r, 'asking which account carries a company\'s label');
   const out: Array<{ label: CompanyLabel; account: AccountAddress | null }> = [];
   for (const c of Array.isArray(body.companies) ? body.companies : []) {
     const label = readCompanyLabel(c?.label);

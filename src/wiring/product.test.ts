@@ -215,7 +215,6 @@ describe('the set a process holds when it could not resolve one', () => {
       ['proposeRun', ledger.proposeRun('a', {} as never, {} as never, {} as never)],
       ['approve', ledger.approve('a', '00' as never, {} as never)],
       ['cancel', ledger.cancel('a', '00' as never, {} as never)],
-      ['addSigner', ledger.addSigner('a', '00' as never, null, {} as never)],
       ['removeSigner', ledger.removeSigner('a', '00' as never, '00' as never, {} as never)],
       ['setThreshold', ledger.setThreshold('a', 2, '00' as never, {} as never)],
       ['setVaultThreshold', ledger.setVaultThreshold('a', '00' as never, 2, '00' as never, {} as never)],
@@ -223,7 +222,7 @@ describe('the set a process holds when it could not resolve one', () => {
     for (const [name, call] of calls) {
       await expect(call, `${name} did not refuse`).rejects.toThrow(REFUSAL);
     }
-    expect(calls).toHaveLength(13);
+    expect(calls).toHaveLength(12);
   });
 
   /**
@@ -261,12 +260,11 @@ describe('the set a process holds when it could not resolve one', () => {
       ['proposeRun', () => ledger.proposeRun('a', {} as never, {} as never, {} as never)],
       ['approve', () => ledger.approve('a', '00' as never, {} as never)],
       ['cancel', () => ledger.cancel('a', '00' as never, {} as never)],
-      ['addSigner', () => ledger.addSigner('a', '00' as never, null, {} as never)],
       ['removeSigner', () => ledger.removeSigner('a', '00' as never, '00' as never, {} as never)],
       ['setThreshold', () => ledger.setThreshold('a', 2, '00' as never, {} as never)],
       ['setVaultThreshold', () => ledger.setVaultThreshold('a', '00' as never, 2, '00' as never, {} as never)],
     ];
-    expect(calls, 'a member was added to the boundary and not to this list').toHaveLength(13);
+    expect(calls, 'a member was added to the boundary and not to this list').toHaveLength(12);
 
     for (const [name, call] of calls) {
       let returned: Promise<unknown> | undefined;

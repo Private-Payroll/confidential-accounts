@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/prove-compare.ts     (or PROVE-TEST.command)
  *
- * `addSigner` blocks for 20+ minutes inside `unprovenTx.prove()` — a WASM
+ * A signer-tree circuit blocked for 20+ minutes inside `unprovenTx.prove()` — a WASM
  * method in @midnight-ntwrk/ledger — even though the proof server answers
  * `/check` in 7ms and `/prove` in 2.03s and is then never contacted again.
  *
@@ -12,10 +12,10 @@
  * could make their WASM spin. This test tells the two apart.
  *
  *   attestSolvency   2.2K zkir, 2.7M prover key, no Merkle path, no tree insert
- *   addSigner        9.5K zkir, 5.0M prover key, membership proof + insert
+ *   amendSigner      membership proof plus a tree write
  *
  * If the small one proves and the big one hangs, the problem is specific to
- * `addSigner` or to the transaction we build for it, and it is ours.
+ * `amendSigner` or to the transaction we build for it, and it is ours.
  * If both hang, it is environmental or in the SDK.
  *
  * NO WALLET, NO DUST, NO SUBMITTING. It builds and proves, nothing else, so it
@@ -236,7 +236,7 @@ async function main() {
     }
     good(`built the unproven transaction in ${((Date.now() - tBuild) / 1000).toFixed(1)}s`);
 
-    // The line that hangs for addSigner. Everything above it is known good.
+    // The line that hung for the signer-tree circuit. Everything above it is known good.
     Atomics.store(shared, STEP_START, BigInt(Date.now()));
     Atomics.store(shared, IN_FLIGHT, 1n);
     Atomics.add(shared, STEP, 1n);
@@ -286,22 +286,12 @@ async function main() {
   const leafB = pureCircuits.signerLeaf(
     pureCircuits.signerPublicKey(bBytes.secretKey), bBytes.blinding, pureCircuits.allVaults());
   /*
-   * Three arguments, and the last two are what M-128 and M-106 added.
-   *
-   *   proposal          which approved proposal authorises this. Ignored on the
-   *                     bootstrap path, which is the path this takes — an
-   *                     account below its own threshold is still being set up —
-   *                     so a 32-byte zero is the honest filler. It is a value
-   *                     `persistentCommit` can never produce, so it cannot
-   *                     collide with a real proposal id.
-   *   intoVacatedSlot   false: append into a fresh slot rather than reusing one
-   *                     a removal freed. Nothing has been removed here, and
-   *                     asking to reuse would fail the proof — which would
-   *                     answer a question this script is not asking.
+   * `amendSigner` only removes now: the leaf leaving and the proposal that
+   * approved it. A 32-byte zero names no proposal, so the call is refused in
+   * the proof; what this script asks is whether proving hangs, not whether the
+   * call would land.
    */
-  /* Since S11 the seating circuit is `amendSigner`: two more Booleans —
-   * `intoVacatedSlot` false as before, and `removing` false (this is a seat). */
-  const big = await tryCircuit('amendSigner', [leafB, new Uint8Array(32), false, false]);
+  const big = await tryCircuit('amendSigner', [leafB, new Uint8Array(32)]);
 
   console.log();
   console.log('\x1b[1m  Result\x1b[0m');
@@ -313,7 +303,7 @@ async function main() {
   console.log();
   if (small.prove !== null && big.prove === null) {
     console.log('  \x1b[1mThe small circuit proves and the big one does not.\x1b[0m');
-    console.log('  The problem is specific to addSigner or to the transaction we');
+    console.log('  The problem is specific to amendSigner or to the transaction we');
     console.log('  build for it. That is ours to find, not the Foundation\'s.');
   } else if (small.prove === null && big.prove === null) {
     console.log('  \x1b[1mNeither proves.\x1b[0m');

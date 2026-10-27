@@ -251,8 +251,7 @@ describe('the service layer meets the chain', () => {
     const mine = created.secrets[0]!;
 
     const sim = await AccountSimulator.create(privateStateFor(9));
-    await sim.seatLeaf(
-      fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 43);
+    await sim.seatWrittenLeaf(created.secrets[0]!, fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 43);
 
     /*
      * The device, with the SERVICE's material and the SERVICE's change.
@@ -507,7 +506,7 @@ describe('the service layer meets the chain', () => {
    * already 2"* and the case dies in its fixture. (3) The two-signer roster,
    * which is what gets past `account.ts:1192` — the SERVICE-side guard, read
    * off `SimulatedLedger`. (4) The founding device `privateStateFor(9)`, whose
-   * seat plus the one `seatLeaf` below is what gets past the CONTRACT's guard,
+   * seat plus the one `seatWrittenLeaf` below is what gets past the CONTRACT's guard,
    * `ConfidentialAccount.compact:2025` — two seats on two different ledgers
    * for two different reasons, and only one of them is the service's. (5) The
    * seed `44`.
@@ -559,8 +558,7 @@ describe('the service layer meets the chain', () => {
         .toBe(toHex(pureCircuits.setThresholdPayload(BigInt(NEW_THRESHOLD))));
 
       const sim = await AccountSimulator.create(privateStateFor(9));
-      await sim.seatLeaf(
-        fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 44);
+      await sim.seatWrittenLeaf(created.secrets[0]!, fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 44);
 
       /* The proposer's device, carrying the SERVICE's material and the
        * SERVICE's change. `proposalSalt` is the field `setThreshold` reads to

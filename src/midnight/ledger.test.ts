@@ -3723,7 +3723,6 @@ describe('a spending policy, set and charged through the client', () => {
     const OTHER_LEAF = 'b2'.repeat(32) as Hex;
     const steps = [
       { kind: 'reseatSigner' as const, oldLeaf: LEAF, newLeaf: OTHER_LEAF, proposalId: PROPOSAL_ID },
-      { kind: 'addSigner' as const, leaf: OTHER_LEAF, proposalId: PROPOSAL_ID },
       { kind: 'removeSigner' as const, removedLeaf: LEAF, proposalId: PROPOSAL_ID },
       { kind: 'setPolicyBar' as const, newBar: 2, proposalId: PROPOSAL_ID },
       { kind: 'setPolicy' as const, vault: VAULT, asset: TEST_TOKEN, policy: POLICY, proposalId: PROPOSAL_ID },
@@ -3735,27 +3734,25 @@ describe('a spending policy, set and charged through the client', () => {
         await expect(short.ledger.prepare('acct', step)).rejects.toThrow(/that proposal has 2 of 3 approvals\. It needs as many as a policy change needs \(3\)/);
         expect(short.calls).toHaveLength(0);
         const met = harness({ approvals: 3n, threshold: 2n, signerCount: 4n, vaultThresholds: [[policyBarKey(), 3n]] });
-        /* At the bar it passes the check. A seat then looks for a vacated slot in a signer tree this
-         * fake chain does not hold, which is past what this test is about. */
+        /* At the bar it passes the check. */
         const reached = await met.ledger.prepare('acct', step).then(() => 'built', (e: unknown) => String(e));
-        if (step.kind === 'addSigner') expect(reached).toMatch(/findPathForLeaf/);
-        else expect(reached).toBe('built');
+        expect(reached).toBe('built');
       });
     }
 
     it('removeSigner: refused when it would leave fewer signers than a policy change needs', async () => {
       const { ledger, calls } = harness({ approvals: 3n, threshold: 2n, signerCount: 3n, vaultThresholds: [[policyBarKey(), 3n]] });
       /* RED WHEN the device checks a removal against the threshold's floor alone, as the chain does not. */
-      await expect(ledger.prepare('acct', steps[2]!)).rejects.toThrow(/that would leave 2 signers when a policy change needs 3/);
+      await expect(ledger.prepare('acct', steps[1]!)).rejects.toThrow(/that would leave 2 signers when a policy change needs 3/);
       expect(calls).toHaveLength(0);
     });
 
     it('setPolicy: refused before the fee on a vault the company does not hold', async () => {
       const { ledger, calls } = harness({ heldVaults: [] });
       /* RED WHEN the device stops reading the vaults before a policy: the chain refuses it after the fee. */
-      await expect(ledger.prepare('acct', steps[4]!)).rejects.toThrow(/that is not a vault this company holds; adopt the vault first/);
+      await expect(ledger.prepare('acct', steps[3]!)).rejects.toThrow(/that is not a vault this company holds; adopt the vault first/);
       expect(calls).toHaveLength(0);
-      await expect(harness({ heldVaults: [VAULT] }).ledger.prepare('acct', steps[4]!)).resolves.toBeDefined();
+      await expect(harness({ heldVaults: [VAULT] }).ledger.prepare('acct', steps[3]!)).resolves.toBeDefined();
     });
 
     it("a governance step is refused at its bar when raised, and when a signer was removed since", async () => {

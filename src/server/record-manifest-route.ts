@@ -49,7 +49,7 @@ import {
 } from '../midnight/record-tree.js';
 import type { Hex } from '../core/crypto.js';
 import type { SealedProposal, SealedRun } from '../core/types.js';
-import type { CompanyRecordKind, CompanyRecordStore, WireRecord } from '../midnight/sealed-record-wire.js';
+import { COMPANY_RECORD_KINDS, WIRE_RECORDS, type CompanyRecordKind, type CompanyRecordStore, type WireRecord } from '../midnight/sealed-record-wire.js';
 import type { SealedPoolStore } from '../midnight/vault-pool.js';
 import { anchoringSeatThen, CHAIN_UNREAD, signerSeatNow, type DirectoryNow } from './seat-directory-route.js';
 
@@ -278,14 +278,16 @@ export const recordManifestRoutes = (deps: {
     res.json({ entries: pending });
   });
 
+  /* Every kind a company files, in each store, so a device can ask about all of them in one read. */
+  const KINDS_AT_ONCE = COMPANY_RECORD_KINDS.length + WIRE_RECORDS.length + 3;
   router.post(`${base}/tree/proofs`, deps.signedIn, deps.member, express.json({ limit: '128kb' }), (req, res) => {
     const company = String(req.params.id);
     const kind = z.object({ store: z.enum(MANIFEST_STORES), kind: z.string().max(64) }).strict();
     const b = z.object({
-      root: z.string().regex(/^[0-9a-f]{64}$/u), records: z.array(recordName).max(PROVEN_AT_ONCE), kinds: z.array(kind).max(16),
+      root: z.string().regex(/^[0-9a-f]{64}$/u), records: z.array(recordName).max(PROVEN_AT_ONCE), kinds: z.array(kind).max(KINDS_AT_ONCE),
     }).strict().safeParse(req.body ?? {});
     if (!b.success) {
-      res.status(400).json({ error: `name the root to prove against and at most ${PROVEN_AT_ONCE} records and 16 kinds. Nothing was read.` });
+      res.status(400).json({ error: `name the root to prove against and at most ${PROVEN_AT_ONCE} records and ${KINDS_AT_ONCE} kinds. Nothing was read.` });
       return;
     }
     const given = proofsOf(deps.store.keptTreeOf(company), b.data);

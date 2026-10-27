@@ -22,6 +22,7 @@ import { MemorySessionStore } from './sessions.js';
 import { MemoryChallengeStore } from './challenges.js';
 import { sign } from './crypto.js';
 import { redactHex } from '../testing/redact.js';
+import { anInvitee, theInviteeTakesTheSeat } from '../testing/an-invitee.js';
 import { privatePayee } from '../testing/payees.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { addressFingerprint } from 'midnight-identity/profile/fingerprint';
@@ -425,8 +426,9 @@ describe('onboarding', () => {
 
     // The invitee's device generates its own keys. Only public halves travel.
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-    const pending = h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, LEAF,
-      provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, LEAF));
+    const invitee = anInvitee(SimulatedCommitments, 1);
+    const pending = h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, invitee.leaf,
+      provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
     expect(pending.status).toBe('pending');
 
     // No wrapped key exists for them, so they cannot reach the viewing key.
@@ -434,12 +436,13 @@ describe('onboarding', () => {
       .toThrow(/no wrapped key/);
 
     /*
-     * Granting access to a LIVE account is an approval round, not a
-     * single call: the account already has as many signers as its threshold, so
-     * one existing signer adding another freely would make the threshold
-     * decorative. Propose the signer, reach the threshold, then grant.
+     * Seating on a LIVE account is an approval round, not a single call: one
+     * existing signer adding another freely would make the threshold
+     * decorative. Invite the signer at their address, reach the threshold, the
+     * invitee takes the seat, then grant.
      */
-    await h.accounts.proposeSigner(account.id, viewingKey, pending.id, present(secrets[0]).signerId);
+    const seat = await h.accounts.proposeSigner(account.id, viewingKey, pending.id, present(secrets[0]).signerId, invitee.invite);
+    await theInviteeTakesTheSeat(h.ledger, account.id, invitee, seat.chainId as Hex);
 
     await h.accounts.grantAccess(account.id, viewingKey, pending.id);
     expect(h.accounts.recoverViewingKey(account.id, pending.id, wk.secret)).toBe(viewingKey);
@@ -502,7 +505,7 @@ describe('onboarding', () => {
       wrappingPublicKey: wk.publicKey, address,
     }), signIn(h, sentTo));
     expect(handed.status).toBe('pending');
-    expect(handed.wrappingPublicKey).toBeNull();
+    expect(handed).not.toHaveProperty('wrappingPublicKey');
     expect(handed.inbox).not.toBeNull();
 
     /* And nothing readable about them leaked outside the envelope on the way. */
@@ -1915,14 +1918,16 @@ describe('multi-tenancy', () => {
 
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'blake@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-    const pending = h.accounts.acceptSignerInvite(invite.token, blake.id, sk.publicKey, wk.publicKey, LEAF,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, LEAF));
+    const invitee = anInvitee(SimulatedCommitments, 2);
+    const pending = h.accounts.acceptSignerInvite(invite.token, blake.id, sk.publicKey, wk.publicKey, invitee.leaf,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
 
     // On the account, but not yet a member: an invite is not a grant.
     expect(pending.status).toBe('pending');
     expect(h.accounts.membership(c.account.id, blake.id)).toBe(false);
 
-    await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId);
+    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId, invitee.invite);
+    await theInviteeTakesTheSeat(h.ledger, c.account.id, invitee, seat.chainId as Hex);
 
     await h.accounts.grantAccess(c.account.id, c.viewingKey, pending.id);
     expect(h.accounts.membership(c.account.id, blake.id)).toBe(true);
@@ -2279,22 +2284,23 @@ describe('granting access puts the signer in the on-chain set', () => {
 
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
+    const invitee = anInvitee(SimulatedCommitments, 3);
     const blake = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32),
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'be'.repeat(32)));
+      invite.token, null, sk.publicKey, wk.publicKey, invitee.leaf,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
 
-    await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId,
+    const seat = await h.accounts.proposeSigner(
+      c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId, invitee.invite,
     );
+    await theInviteeTakesTheSeat(h.ledger, c.account.id, invitee, seat.chainId as Hex);
     await h.accounts.grantAccess(c.account.id, c.viewingKey, blake.id);
 
-    // The proposal that seated them is consumed, exactly as an execute consumes
-    // one. `round` used to advance here as well; there is no round.
+    // The invitation that seated them is consumed, as every carried-out proposal is.
     const seated = (await h.accounts.ledgerStatus(c.account.id))!;
     expect(seated.openProposals).toEqual([]);
     expect(seated.signerCount).toBe(2);
 
-    // And now the thing that used to fail: Blake acts.
+    // And Blake acts.
     const p = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'supplier',
@@ -2314,156 +2320,126 @@ describe('granting access puts the signer in the on-chain set', () => {
     ]);
   });
 
-  it('refuses to seat a signer on a live account without an approved round', async () => {
-    // One existing signer adding signers freely makes the threshold
-    // decorative: a single stolen key could manufacture as many approvers as it
-    // liked, then approve anything M times alone.
+  it('refuses to grant access to a person whose seat the chain does not hold', async () => {
+    // Access goes to a seat the chain holds, never to a promise of one: an
+    // active signer the tree does not contain could read and approve nothing.
     const c = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
+    const invitee = anInvitee(SimulatedCommitments, 4);
     const blake = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'be'.repeat(32),
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'be'.repeat(32)));
+      invite.token, null, sk.publicKey, wk.publicKey, invitee.leaf,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
 
-    /*
-     * THE REFUSAL MOVED UP A LAYER.
-     *
-     * `Ledger.addSigner` takes a proposal id now, because an account holds
-     * several open proposals at once and the contract has to be told WHICH one
-     * authorises the addition. So `grantAccess` has to find that proposal
-     * before it can call the chain, and finds nothing — the ledger's own
-     * "adding a signer needs an approved proposal" is no longer reachable from
-     * here, and is pinned directly against the ledger below.
-     */
+    /* RED WHEN: access is granted before the chain holds the person's seat. */
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, blake.id))
-      .rejects.toThrow(/no open proposal on this account for that change/i);
+      .rejects.toThrow(/has not taken their seat on the chain yet/i);
+    expect(h.accounts.open(c.account.id, c.viewingKey).signers.find(s => s.id === blake.id)!.status).toBe('pending');
   });
 
-  it('the LEDGER refuses an addition with no proposal, and one approved for another leaf', async () => {
+  it('the LEDGER refuses a seat with no invitation, and one taken by a wallet the invitation does not name', async () => {
     /*
-     * The two guards `grantAccess` no longer reaches, asserted where they live.
-     * Our own `approvedFor` lookup is bookkeeping and is worth nothing against
-     * somebody who calls the contract directly — which is the entire threat
-     * model: one stolen key must not be able to manufacture approvers.
+     * Asserted where the guards live. Our own bookkeeping is worth nothing
+     * against somebody who calls the contract directly — which is the entire
+     * threat model: one stolen key must not be able to manufacture approvers.
      */
     const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    const account = h.accounts.open(c.account.id, c.viewingKey);
-    const by = { signerId: present(account.signers[0]).id, leaf: present(account.signers[0]).leafCommitment! };
-    const wanted = 'be'.repeat(32);
-    const other = 'ma'.repeat(32);
+    const blakeAt = anInvitee(SimulatedCommitments, 5);
+    const mallory = anInvitee(SimulatedCommitments, 6);
 
-    // Three signers against a threshold of two: past the bootstrap window, so
-    // the contract requires a round.
-    await expect(h.ledger.addSigner(c.account.id, wanted, null, by))
-      .rejects.toThrow(/needs an approved proposal/i);
+    await expect(theInviteeTakesTheSeat(h.ledger, c.account.id, blakeAt, '00'.repeat(32) as Hex))
+      .rejects.toThrow(/no open proposal with that id/i);
 
-    // A round approved for `wanted` does not authorise seating `other`. Without
-    // the per-leaf check any approved proposal would authorise adding anyone.
     const invite = h.accounts.inviteSigner(c.account.id, 'Blake', 'b@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-    const blake = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, wanted);
+    const blake = h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, blakeAt.leaf);
     const p = await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId);
+      c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId, blakeAt.invite);
     await h.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
 
-    await expect(h.ledger.addSigner(c.account.id, other, p.chainId, by))
-      .rejects.toThrow(/not for this signer/i);
-    // And the one it WAS approved for goes in.
-    await h.ledger.addSigner(c.account.id, wanted, p.chainId, by);
+    /* RED WHEN: an invitation approved for one address seats a wallet that does not hold it. */
+    await expect(theInviteeTakesTheSeat(h.ledger, c.account.id, mallory, p.chainId as Hex))
+      .rejects.toThrow(/does not invite this wallet/i);
+    // And the wallet it WAS approved for takes it.
+    await theInviteeTakesTheSeat(h.ledger, c.account.id, blakeAt, p.chainId as Hex);
     expect((await h.ledger.status(c.account.id))!.signerCount).toBe(4);
   });
 
-  it('refuses to seat a signer on a round that has not reached the threshold', async () => {
+  it('refuses a seat on an invitation that has not reached the threshold', async () => {
     /*
      * Proposing is not approving. Without this the proposal is theatre: anyone who
      * can open a proposal could seat a signer of their choosing immediately,
      * which is the same hole again with one extra step.
-     *
-     * Found by a mutation run — removing the guard broke nothing, because every
-     * other test happened to approve before granting.
      */
     const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(c.account.id, 'Dana', 'd@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
+    const danaAt = anInvitee(SimulatedCommitments, 7);
     const dana = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'da'.repeat(32),
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'da'.repeat(32)));
+      invite.token, null, sk.publicKey, wk.publicKey, danaAt.leaf,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, danaAt.leaf));
 
     const seat = await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, dana.id, present(c.secrets[0]).signerId,
+      c.account.id, c.viewingKey, dana.id, present(c.secrets[0]).signerId, danaAt.invite,
     );
 
-    // Zero approvals.
-    await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id))
+    // One of two: the raise is the raiser's approval.
+    await expect(theInviteeTakesTheSeat(h.ledger, c.account.id, danaAt, seat.chainId as Hex))
       .rejects.toThrow(/not enough approvals/i);
-
-    // One of two.
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id))
-      .rejects.toThrow(/not enough approvals/i);
+      .rejects.toThrow(/has not taken their seat on the chain yet/i);
 
     // Two of two.
     await h.accounts.approve(seat.id, present(c.secrets[1]).signerId, sign(approvalMessage(seat), present(c.secrets[1]).signingSecret), c.viewingKey);
+    await theInviteeTakesTheSeat(h.ledger, c.account.id, danaAt, seat.chainId as Hex);
     const account = await h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id);
     expect(account.signers.find(s => s.id === dana.id)!.status).toBe('active');
     expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(4);
   });
 
-  it('refuses to seat a signer against a round approved for someone else', async () => {
-    // Without domain separation and a per-leaf commitment, any approved
-    // proposal would authorise adding anyone — the same hole in a new place.
+  it('refuses access to a person on an invitation approved for someone else', async () => {
+    // Without domain separation and a per-address commitment, any approved
+    // proposal would seat anyone — the same hole in a new place.
     const c = await h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 1, undefined, drawCompanyLabel());
-    const mk = (name: string, leaf: string) => {
+    const mk = (name: string, at: ReturnType<typeof anInvitee>) => {
       const invite = h.accounts.inviteSigner(c.account.id, name, `${name}@acme.co`, 'approver');
       const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-      return h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, leaf,
-        provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, leaf));
+      return h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, at.leaf,
+        provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, at.leaf));
     };
-    const wanted = mk('Blake', 'be'.repeat(32));
-    const other = mk('Mallory', 'ma'.repeat(32));
+    const blakeAt = anInvitee(SimulatedCommitments, 8);
+    const malloryAt = anInvitee(SimulatedCommitments, 9);
+    mk('Blake', blakeAt);
+    const other = mk('Mallory', malloryAt);
 
-    await h.accounts.proposeSigner(
-      c.account.id, c.viewingKey, wanted.id, present(c.secrets[0]).signerId,
+    const seat = await h.accounts.proposeSigner(
+      c.account.id, c.viewingKey, other.id, present(c.secrets[0]).signerId, blakeAt.invite,
     );
 
-    /*
-     * The refusal comes from `approvedFor` rather than from the ledger now: an
-     * approved round is matched on its DIGEST, which is
-     * `signerAddPayload(leaf)`, so a round raised for Blake's leaf is simply not
-     * a round for Mallory's and there is nothing to hand the contract. The
-     * ledger's own version of this check is pinned directly above.
-     */
+    /* The invitation names Blake's address, so Mallory's wallet cannot take it, and Mallory is not granted access. */
+    await expect(theInviteeTakesTheSeat(h.ledger, c.account.id, malloryAt, seat.chainId as Hex))
+      .rejects.toThrow(/does not invite this wallet/i);
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, other.id))
-      .rejects.toThrow(/no open proposal on this account for that change/i);
+      .rejects.toThrow(/has not taken their seat on the chain yet/i);
   });
 
-  it('the contract\'s bootstrap window is unreachable from here, and that is fine', async () => {
+  it('an account never starts below its own threshold, so every later seat needs an invitation', async () => {
     /*
-     * The contract lets any existing signer add another while
-     * `signerCount < threshold`, because a 2-of-3 account starting with one
-     * signer cannot collect the two approvals its own threshold requires and
-     * would be wedged at creation.
-     *
-     * `AccountService.create` never produces that state: it refuses a threshold
-     * larger than the signer set, so an account always starts at or above its
-     * threshold and every later signer needs a round. The window exists for the
-     * deploy script, which seats the deployer alone and adds the rest.
-     *
-     * Pinned rather than assumed, because "the two layers disagree about
-     * whether a code path is reachable" is how a hole gets left open by
-     * everyone believing the other side covers it.
+     * `AccountService.create` refuses a threshold larger than the signer set,
+     * so an account always starts at or above its threshold and every later
+     * signer needs an approved invitation. Pinned rather than assumed.
      */
     await expect(h.accounts.create('Acme', [present(THREE_SIGNERS[0])], 2, undefined, drawCompanyLabel())).rejects.toThrow(/not valid/);
 
     const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const invite = h.accounts.inviteSigner(c.account.id, 'Dana', 'd@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
+    const danaAt = anInvitee(SimulatedCommitments, 10);
     const dana = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'da'.repeat(32),
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, 'da'.repeat(32)));
-    // Three signers, threshold two: past the window on the first extra signer.
+      invite.token, null, sk.publicKey, wk.publicKey, danaAt.leaf,
+      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, danaAt.leaf));
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id))
-      .rejects.toThrow(/no open proposal on this account for that change/i);
+      .rejects.toThrow(/has not taken their seat on the chain yet/i);
   });
 });
 
@@ -2582,12 +2558,13 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     const invite = h.accounts.inviteSigner(c.account.id, 'Devi Raman', 'devi@acme.co', 'approver');
     const sk = newSigningKeypair();
     const wk = newWrappingKeypair();
-    const pendingLeaf = 'ef'.repeat(32);
+    const devi = anInvitee(SimulatedCommitments, 11);
+    const pendingLeaf = devi.leaf;
     const pending = h.accounts.acceptSignerInvite(
       invite.token, blake.id, sk.publicKey, wk.publicKey, pendingLeaf,
       provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, pendingLeaf));
 
-    return { h, c, ada, blake, pending, pendingLeaf, sk, wk };
+    return { h, c, ada, blake, pending, pendingLeaf, sk, wk, devi };
   }
 
   it('holds no company name, no signer name, no role and no spending limit', async () => {
@@ -2746,10 +2723,11 @@ describe('what the ACCOUNTS table leaves in the store', () => {
   });
 
   it('granting access moves the signer into the sealed roster and leaves no second copy', async () => {
-    const { h, c, pending, blake } = await company();
+    const { h, c, pending, blake, devi } = await company();
 
-    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId);
+    const seat = await h.accounts.proposeSigner(c.account.id, c.viewingKey, pending.id, present(c.secrets[0]).signerId, devi.invite);
     await h.accounts.approve(seat.id, present(c.secrets[1]).signerId, sign(approvalMessage(seat), present(c.secrets[1]).signingSecret), c.viewingKey);
+    await theInviteeTakesTheSeat(h.ledger, c.account.id, devi, seat.chainId as Hex);
     await h.accounts.grantAccess(c.account.id, c.viewingKey, pending.id);
 
     const rec = h.accounts.require(c.account.id);
@@ -3177,11 +3155,8 @@ describe('removing a signer', () => {
 
   it('refuses a threshold above the number of signers, at the earliest point', async () => {
     /*
-     * The one-stolen-key-manufactures-approvers hole this feature opens.
-     * `addSigner` lets one signer seat another whenever `signerCount <
-     * threshold`, so a threshold above the seated count hands that power back —
-     * the same hole reopened by a feature that looks like it only makes the
-     * account stricter.
+     * A threshold above the seated count leaves an account that can never
+     * approve anything again.
      *
      * Refused when the proposal is PROPOSED, so nobody signs something that was
      * always going to be rejected. The chain refuses it too, which is the test

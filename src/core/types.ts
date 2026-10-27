@@ -1,3 +1,4 @@
+import type { AddressClaim } from 'midnight-identity/profile/address-claim';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { JoinCode } from 'midnight-identity/profile/join-code';
 import type { Hex, Sealed } from './crypto.js';
@@ -10,6 +11,7 @@ export type { PayoutSeed };
 import type { AssetId, LedgerForm } from './assets.js';
 import type { AddressSource } from './ledger.js';
 import type { WiringName } from './provenance.js';
+import type { InvitationKind } from './invitation.js';
 import type { SeatOpening } from './seat-opening.js';
 import type { SignedSeatInvitation } from './invitation.js';
 
@@ -908,12 +910,29 @@ export interface RosterEmployee {
    * exchange rates back in through the side door.
    */
   asset: AssetId;
-  /** Monthly gross, in `asset`'s smallest unit. £5,000.00 is `500000n`. */
+  /**
+   * The monthly gross they were hired at, in `asset`'s smallest unit (£5,000.00 is `500000n`). It never
+   * changes after the first version. What a run pays is read from the salary history (`payLinesOf`), whose
+   * first line is this amount from `startDate` on a record filed before the history was kept.
+   */
   baseAmount: bigint;
+  /** The calendar day they start, such as 2026-10-01, never converted between timezones. */
   startDate: string;
+  /** The calendar day a fixed term ends, when it was offered with one. */
+  endDate?: string | null;
+  /** The calendar day they leave, set or changed after they joined. */
+  leavingDate?: string | null;
+  /** The salary history, one line per change, appended to and never rewritten. Absent on a record filed before it was kept. */
+  pay?: PayLine[];
+  /** The classification history, the same way: their classification on a day is the line in force then. */
+  classifications?: ClassificationLine[];
+  /** The signing key of the seat that filed this version, which every reader checks is the version's filer. */
+  madeBy?: Hex;
+  /** When this version was made, as one UTC moment read off the filing device's clock and signed with it. */
+  madeAt?: string;
   /** Pending means they have not generated a key yet, so nothing can be sealed to them. */
   status: 'active' | 'pending' | 'leaver';
-  /** Null until the employee's own device generates one and sends the public half. */
+  /** Null until the employee's own device generates one and sends the public half. Kept inside the seal with the rest. */
   wrappingPublicKey: Hex | null;
   /**
    * **THE LABEL OF THE COMPANY THAT KEY WAS WORKED OUT FROM.** The payee's
@@ -968,7 +987,7 @@ export interface RosterEmployee {
    * on file is not the same as somebody who can reach what is sent to it, and a
    * payment settles irreversibly the moment it lands.
    *
-   * INSIDE the sealed envelope, unlike `wrappingPublicKey`. Both are public
+   * INSIDE the sealed envelope, as `wrappingPublicKey` is. Both are public
    * values, so neither is a secret on its own — but this one says which
    * on-chain identity a given company pays, which the chain itself does not
    * reveal, because the payments are shielded. Putting it outside would give
@@ -982,6 +1001,36 @@ export interface RosterEmployee {
    * `movement.ts`).
    */
   address: Payee | null;
+  /**
+   * The address typed when this person was added by address, exactly as typed, or absent when they were
+   * invited by link only. Every device pays them only at it, and only while it is the address version 1 of
+   * their record was filed with. An unshielded one is believed only with their wallet's signed claim of it
+   * (`addressClaim`); a shielded one carries no claim, and is admitted on the fingerprint they read out.
+   */
+  invitedAddress?: string | null;
+  /** The claim their wallet signed of an unshielded `invitedAddress` when they were admitted: what every device checks. */
+  addressClaim?: AddressClaim | null;
+}
+
+/**
+ * **ONE LINE OF A PAYEE'S SALARY HISTORY.** The amount applies from the calendar day `from` (a full date,
+ * never converted between timezones). `madeBy` is the signing key of the seat that added the line and
+ * `madeAt` the UTC moment it was made; both are null on the one line read from a record filed before the
+ * history was kept.
+ */
+export interface PayLine {
+  amount: bigint;
+  from: string;
+  madeBy: Hex | null;
+  madeAt: string | null;
+}
+
+/** One line of an employee's classification history, kept the way `PayLine` is. Contractors are vendors, never a classification. */
+export interface ClassificationLine {
+  classification: 'full-time' | 'part-time';
+  from: string;
+  madeBy: Hex | null;
+  madeAt: string | null;
 }
 
 /**
@@ -994,6 +1043,9 @@ export interface RosterEmployee {
  * The name, email, title and salary live inside `sealed` and nowhere else, so
  * there is no field on this type through which a salary could be written in the
  * clear. That is the point: the fix is a shape, not a habit.
+ *
+ * The payslip key is sealed with them, so nothing the service holds links a
+ * person to the slips sealed to them.
  *
  * Two fields stay readable and both are deliberate. `id` is how a record is
  * addressed. `accountId` is how it is found without opening every record in the
@@ -1015,16 +1067,6 @@ export interface SealedEmployee {
    * Null when there is nothing waiting.
    */
   inbox: (({ ephemeral: Hex } & Sealed) | null);
-  /**
-   * Outside the envelope on purpose, and it is a public key: alone it says
-   * nothing about who anyone is.
-   *
-   * It has to be outside because the EMPLOYEE writes it when they accept their
-   * invite, and the employee does not hold the company's viewing key — they
-   * must not. A design that required it would either hand the company's key to
-   * every employee or make the company complete the step on their behalf.
-   */
-  wrappingPublicKey: Hex | null;
   /** Operational, and needed to filter a run without opening every record. */
   status: 'active' | 'pending' | 'leaver';
   /** Which viewing key sealed this. Advances on rotation. */
@@ -1057,7 +1099,8 @@ export interface Invite {
    */
   token: string;
   accountId: string;
-  kind: 'signer' | 'employee';
+  /** Which of the four kinds of invitation it is; the only thing about the offer the service is told. */
+  kind: InvitationKind;
   /**
    * Signer invites still carry a name and email, because there is no sealed
    * record to point at until the person exists.
@@ -1189,8 +1232,17 @@ export type RunLeg = string;
 export interface Employee {
   id: string;
   name: string;
-  /** Employees hold their own key so their line item is readable only by them. */
-  wrappingPublicKey: Hex;
+  /**
+   * The key this person's payslip is sealed to, so their line is readable only by them. `null` for a vendor added
+   * by address who has not claimed their place yet: they are paid at the address typed, and get no payslip.
+   */
+  wrappingPublicKey: Hex | null;
+  /**
+   * Where this person's payslip sits in the run's `payslips`, or `null` when they get none. It lives here, inside the
+   * seal, because a payslip carries nothing beside its ciphertext that says whose it is; a signer's device finds a
+   * person's slip by it to seal their receipt to them. Absent on a run drawn before it was recorded.
+   */
+  slip?: number | null;
   /** What actually moves for this person on this run, and in what. */
   asset: AssetId;
   amount: bigint;
@@ -1213,26 +1265,15 @@ export interface PayrollRun {
   period: string;
   employees: Employee[];
   /**
-   * Per-employee payslips. Two layers: the slip is sealed under a fresh symmetric
-   * key, and that key is wrapped to the employee's x25519 public key. Nobody else
-   * holds it, including the account signers.
+   * The payslips, one per person who has a payslip key. Two layers: the slip is sealed under a fresh symmetric
+   * key, and that key is wrapped to the person's x25519 public key. Nobody else holds it, including the account
+   * signers. They sit outside the run's seal so the service can hand them to payees, and so they carry nothing
+   * but ciphertext: no person, no key and no company label. Who each one is for is the sealed `Employee.slip`; the
+   * company label the payee's key came from is inside the slip.
    */
   payslips: Array<{
-    employeeId: string;
     wrapped: { ephemeral: Hex } & Sealed;
     slip: Sealed;
-    /**
-     * The label of the company the payee's key was worked out from, so the
-     * payee's wallet can be asked for that company. Absent on a slip sealed
-     * before this was recorded, and `null` on one sealed to a key no company
-     * produced.
-     */
-    issuedBy?: string | null;
-    /**
-     * The public key the slip is wrapped to, lower-case. Absent on a slip
-     * sealed before it was recorded, where the roster record's key stands in.
-     */
-    sealedTo?: Hex;
     /**
      * **WHAT THIS PAYEE'S PAYMENT IS RECORDED AGAINST, SEALED TO THEM.** The
      * payee's own payout leaf, the value the account records when that leaf is
@@ -1313,7 +1354,7 @@ export interface PayrollRun {
 }
 
 /**
- * **ONE PERSON A RUN DID NOT PAY, AND WHICH OF THE TWO REASONS IT WAS.**
+ * **ONE PERSON A RUN DID NOT PAY, AND WHICH OF THE REASONS IT WAS.**
  *
  * The name is frozen here rather than looked up later, and that is the same
  * argument `RunPayout.leaves` is kept for: the roster moves. Somebody admitted
@@ -1325,7 +1366,7 @@ export interface RunSkip {
   employeeId: string;
   name: string;
   /**
-   * **TWO STATES, NAMED SEPARATELY AND NEVER MERGED.** "outstanding" that
+   * **EACH STATE NAMED SEPARATELY AND NEVER MERGED.** "outstanding" that
    * covers two different situations is how an operator stops looking.
    *
    *   `them`        they have handed nothing over — the invitation is with them
@@ -1336,8 +1377,11 @@ export interface RunSkip {
    * **The second is ours to fix and the first is not**, so collapsing them
    * turns a queue an admin can clear into a queue an admin waits on. The third
    * is a choice, and it is recorded with who made it and why like the others.
+   *
+   *   `outside their dates`  the period lies wholly before their start date or after their end or leaving
+   *                 date, so the draw sets them aside with that reason and nobody is asked to confirm it
    */
-  waiting: 'them' | 'us' | 'not chosen';
+  waiting: 'them' | 'us' | 'not chosen' | 'outside their dates';
 }
 
 /**
@@ -1753,7 +1797,15 @@ export interface RunRepeatRecord {
 export interface PayrollRun {
   /** Absent on every run that repeats nothing. */
   repeats?: RunRepeatRecord;
+  /**
+   * Which of the company's two lists this run pays, sealed with its people: the employees, by payroll, or the vendors
+   * paid monthly. A run pays one list only. Absent on a run drawn before runs named their list, read as the employees.
+   */
+  list?: RunList;
 }
+
+/** The two lists a company pays from: its employees, and its vendors (contractors among them). */
+export type RunList = 'employees' | 'vendors';
 
 /**
  * **A VAULT CREATED FROM THIS COMPANY'S PAGE.** A record that it was deployed

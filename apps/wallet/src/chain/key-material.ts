@@ -354,7 +354,8 @@ export function makePinnedKeyMaterialProvider(
         throw new KeyMaterialError(`REFUSING TO PROVE: "${located.circuitId}" is not a circuit of the company `
           + 'account or the vault this wallet proves, so no key is served for it and nothing was proved.');
       }
-      const material = await circuitFiles(`${ofTheVault ? VAULT_KEYS_FOLDER : ACCOUNT_KEYS_FOLDER}/${located.circuitId}`, keyLocation);
+      const folder = ofTheVault ? VAULT_KEYS_FOLDER : ACCOUNT_KEYS_FOLDER;
+      const material = await circuitFiles(`${folder}/${located.circuitId}`, keyLocation);
       await (ofTheVault ? thisBuildsVault : thisBuilds)(located.circuitId, material.verifierKey);
       const served = await sha256Hex(material.verifierKey);
       if (served !== located.verifierKeyHash) {

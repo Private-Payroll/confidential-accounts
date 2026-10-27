@@ -120,8 +120,6 @@ export const withTheRosterIn = (roster: RosterStore, others: CompanyRecordStore)
 /** What the service's main store still holds of people filed before they moved: every version, and letting each go. */
 export interface PeopleHeldElsewhere {
   peopleHeld(): Array<readonly SealedCompanyRecord[]>;
-  /** Names the person's payslip key on their slips sealed before slips named one, which were found through the person. */
-  nameTheKeyOnOlderSlipsOf(id: string): void;
   letGoOfPerson(id: string): void;
 }
 
@@ -144,7 +142,6 @@ export const movePeopleToTheirRecords = async (from: PeopleHeldElsewhere, to: Co
       }
     }
     if (versions[0] !== undefined) {
-      from.nameTheKeyOnOlderSlipsOf(versions[0].id);
       from.letGoOfPerson(versions[0].id);
       moved += 1;
     }

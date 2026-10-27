@@ -608,6 +608,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'apps/wallet/src/screens/approve-creation.test.tsx',
       'apps/wallet/src/actions/finish-company.test.ts',
       'apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts',
+      'apps/wallet/src/chain/a-signer-invited-by-address-is-seated-from-the-wallet.test.ts',
     ];
     expect(gated.filter((f) => !NAMED.includes(f)),
       'a test is gated on proving keys and this list does not name it').toEqual([]);
@@ -654,6 +655,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'apps/wallet/src/chain/the-wallet-proves-the-pay-key.test.ts',
       'apps/wallet/src/chain/the-wallet-builds-a-vault-with-its-own-keys.test.ts',
       'apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts',
+      'apps/wallet/src/chain/a-signer-invited-by-address-is-seated-from-the-wallet.test.ts',
     ];
     const walletAccountGated = gatedOnKeys([WALLET_ACCOUNT_KEYS]);
     expect(walletAccountGated.filter((f) => !WALLET_ACCOUNT_NAMED.includes(f)),
@@ -672,9 +674,11 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
      */
     const real = WORKFLOW();
     const gated = gatedOnKeys();
+    /* Each walk of the tree is made once here, not once for every edit below. */
+    const walked = [gatedOnKeys([VAULT_KEY_DIR]), gatedOnKeys([WALLET_ACCOUNT_KEYS])] as const;
     const refuses = (label: string, edited: string, matching: RegExp) => {
       expect(edited, `${label}: the edit changed nothing, so it proves nothing`).not.toBe(real);
-      expect(keysCoverageProblem(edited, gated), label).toMatch(matching);
+      expect(keysCoverageProblem(edited, gated, ...walked), label).toMatch(matching);
     };
 
     refuses('the build step is commented out',

@@ -28,6 +28,14 @@
       "types": "./lib/profile/disclosure.d.ts",
       "default": "./lib/profile/disclosure.js"
     },
+    "./profile/address-claim": {
+      "types": "./lib/profile/address-claim.d.ts",
+      "default": "./lib/profile/address-claim.js"
+    },
+    "./profile/address-claim-signed": {
+      "types": "./lib/profile/address-claim-signed.d.ts",
+      "default": "./lib/profile/address-claim-signed.js"
+    },
     "./profile/channel": {
       "types": "./lib/profile/channel.d.ts",
       "default": "./lib/profile/channel.js"

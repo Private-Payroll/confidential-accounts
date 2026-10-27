@@ -41,6 +41,7 @@ import type { CompanyKeys } from '../../../src/core/company-key.js';
 import { carryOrderHere } from './material-made-here.js';
 import type { PendingSignerPayload } from '../../../src/core/types.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
+import { anAddress } from '../../../src/testing/an-invitee.js';
 import { directoryHere } from './vault-page-doors.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
@@ -53,7 +54,8 @@ const accountPure = {
   runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint) => sha(root, payees, opensAt, closesAt),
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
   retrySaltOf: (leg: Uint8Array, fresh: Uint8Array) => sha(Buffer.from('retry-salt'), leg, fresh),
-  signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
+  signerInvitePayload: (address: Uint8Array, scope: Uint8Array) => sha(Buffer.from('invite'), address, scope),
+  removeSignerPayload: (leaf: Uint8Array) => sha(Buffer.from('remove'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
   /* Asked of the account's own function first, so a call with other arguments than the account takes is refused as the account refuses it. */
   recoverAnchorPayload: (...args: [Uint8Array, bigint, Uint8Array]) => {
@@ -72,9 +74,12 @@ const ACCOUNT = 'c0'.repeat(32);
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
 const chain = { accountState: new Uint8Array([1]), parameters: new Uint8Array([2]) };
 
-/* A run of its own's salt, over no leg and the run's fresh salt; the seat and the threshold change are raised with it too. */
+/* A run of its own's salt, over no leg and the run's fresh salt; the invitation, the removal and the threshold change are raised with it too. */
 const SALT = hex(accountPure.retrySaltOf(new Uint8Array(32), bytes(RUN_FRESH)));
 const LEAF = 'ab'.repeat(32);
+/* The address a person is invited at, and the rights their seat will carry. */
+const ADDRESS = 'ad'.repeat(32);
+const RIGHTS = '5c'.repeat(32);
 /* A real run of three, made the way the approving device makes it again (`a-run-made-here.test-support.ts`). */
 const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' }, (key) => accountPure.payKeyCommitmentOf(key));
 const run = { root: RUN_MADE.root, payees: '3', opensAt: '100', closesAt: '200', vault: '99'.repeat(32) };
@@ -84,11 +89,14 @@ const record = (digest: Uint8Array, vault: Uint8Array, salt = SALT) => ({
   chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt, summary: 'the proposal',
 });
 const payloadOf = (g: GovernanceOnTheWire) => (g.kind === 'add-signer'
-  ? accountPure.signerAddPayload(bytes(g.leaf)) : accountPure.setThresholdPayload(BigInt((g as { threshold: string }).threshold)));
+  ? accountPure.signerInvitePayload(bytes(g.address), bytes(g.scope))
+  : g.kind === 'remove-signer' ? accountPure.removeSignerPayload(bytes(g.leaf))
+    : accountPure.setThresholdPayload(BigInt((g as { threshold: string }).threshold)));
 
-const seat = { kind: 'add-signer', leaf: LEAF } as const;
+const seat = { kind: 'add-signer', address: ADDRESS, scope: RIGHTS } as const;
+const removal = { kind: 'remove-signer', leaf: LEAF } as const;
 const three = { kind: 'threshold', threshold: '3' } as const;
-/* What the device opened: the company's own records of a run, a seat and a threshold change. */
+/* What the device opened: the company's own records of a run, an invitation, a removal and a threshold change. */
 /* The run as the approving device made it again: here the honest case, the run the record names (`what-this-device-made.ts`). */
 const MADE = RUN_MADE.made;
 const RUN: OpenedRound = {
@@ -99,6 +107,7 @@ const RUN: OpenedRound = {
   made: { ...RUN_MADE.made, raising: { period: '2026-09', knownRounds: [], knownLeaves: [], knownNonces: [] } },
 };
 const SEAT: OpenedRound = { ...record(payloadOf(seat), accountPure.noVault()), governance: seat, half: { ...half, changeAmount: '0' } };
+const REMOVAL: OpenedRound = { ...record(payloadOf(removal), accountPure.noVault()), governance: removal, half: { ...half, changeAmount: '0' } };
 const recovery = { kind: 'recover-anchor', resumesFrom: LEAF, latest: '1800003600', lastRecovery: '00'.repeat(32) } as const;
 const RECOVERY: OpenedRound = {
   ...record(accountPure.recoverAnchorPayload(bytes(LEAF), 1800003600n, new Uint8Array(32)), accountPure.noVault()), governance: recovery, half: { ...half, changeAmount: '0' },
@@ -113,7 +122,7 @@ const raiseSeat: GovernedCallOrder = {
   circuit: 'propose', governance: seat, half: { ...half, assetBlinding: BLINDING, changeAmount: '0', proposalSalt: SALT }, proposal: SEAT.chainId,
 };
 const approveSeat: GovernedCallOrder = { circuit: 'approve', proposal: SEAT.chainId, of: { governance: seat, proposalSalt: SALT } };
-const seatIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: SEAT.chainId, proposalSalt: SALT };
+const removeIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: REMOVAL.chainId, proposalSalt: SALT, removing: true };
 const setIt: GovernedCallOrder = { circuit: 'setThreshold', threshold: '3', proposal: THREE.chainId, proposalSalt: SALT };
 
 const depsWith = (log: string[], raising = false): GovernedCallDeps => ({
@@ -143,16 +152,16 @@ const depsWith = (log: string[], raising = false): GovernedCallDeps => ({
 const OTHER = 'ee'.repeat(32);
 /* What each value is called in the sentence the person reads. */
 const SAYS: Record<string, string> = {
-  'proposal identity': 'proposal', salt: 'proposal', vault: 'proposal', leaf: 'person being given access',
+  'proposal identity': 'proposal', salt: 'proposal', vault: 'proposal', leaf: 'signer being removed', invitation: 'person being invited',
   threshold: 'number of approvals required', run: 'payroll run', 'run vault': 'account this run pays from',
   asset: 'token', amount: 'amount', 'payments digest': 'list of payments', recovery: 'recovery of the company\'s records',
 };
 const noHalf = (o: OpenedRound): OpenedRound => { const { half: _h, ...r } = o; return r; };
 
 describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
-  it('4. an honest service is built for every call a device makes: raise, approve, seat and threshold', async () => {
+  it('4. an honest service is built for every call a device makes: raise, approve, invitation, removal and threshold', async () => {
     for (const [order, opened] of [
-      [raiseRun, RUN], [approveRun, { ...noHalf(RUN), made: MADE }], [raiseSeat, SEAT], [approveSeat, noHalf(SEAT)], [seatIt, noHalf(SEAT)],
+      [raiseRun, RUN], [approveRun, { ...noHalf(RUN), made: MADE }], [raiseSeat, SEAT], [approveSeat, noHalf(SEAT)], [removeIt, noHalf(REMOVAL)],
       [setIt, noHalf(THREE)],
     ] as Array<[GovernedCallOrder, OpenedRound]>) {
       const log: string[] = [];
@@ -162,7 +171,7 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
     }
   });
 
-  it('AN APPROVAL OF A RUN IS NOT BUILT UNLESS THIS DEVICE MADE THE RUN AGAIN, AND ONE OF A SEAT NEEDS NOTHING MADE', async () => {
+  it('AN APPROVAL OF A RUN IS NOT BUILT UNLESS THIS DEVICE MADE THE RUN AGAIN, AND ONE OF AN INVITATION NEEDS NOTHING MADE', async () => {
     const log: string[] = [];
     /* RED WHEN: an approval of a run is built for a record this device only opened and did not make again. */
     const { made: _made, ...onlyOpened } = noHalf(RUN);
@@ -173,7 +182,7 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
       account: ACCOUNT, order: approveRun, material, chain, opened: { ...noHalf(RUN), made: { ...MADE, facts: MADE.facts.map((f, i) => (i === 0 ? { ...f, amount: f.amount + 1n } : f)) } },
     })).rejects.toThrow(/is not what this device rebuilt/u);
     expect(log.filter((l) => l.startsWith('built') || l === 'proved')).toEqual([]);
-    /* RED WHEN: an approval of a seat is asked for a run made again, which it has none of. */
+    /* RED WHEN: an approval of an invitation is asked for a run made again, which it has none of. */
     await buildGovernedCall(depsWith(log), { account: ACCOUNT, order: approveSeat, material, chain, opened: noHalf(SEAT) });
     expect(log.filter((l) => l.startsWith('built') || l === 'proved')).toEqual(['built approve', 'proved']);
   });
@@ -187,22 +196,30 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
 
   it.each([
     ['proposal identity', 'approve', { ...approveRun, proposal: OTHER }, noHalf(RUN)],
-    ['proposal identity', 'amendSigner', { ...seatIt, proposal: OTHER }, noHalf(SEAT)],
+    ['proposal identity', 'amendSigner', { ...removeIt, proposal: OTHER }, noHalf(REMOVAL)],
     ['salt', 'propose', { ...raiseRun, half: { ...raiseRun.half, proposalSalt: OTHER } }, RUN],
-    ['salt', 'amendSigner', { ...seatIt, proposalSalt: OTHER }, noHalf(SEAT)],
+    ['salt', 'amendSigner', { ...removeIt, proposalSalt: OTHER }, noHalf(REMOVAL)],
     ['salt', 'setThreshold', { ...setIt, proposalSalt: OTHER }, noHalf(THREE)],
     ['salt', 'approve', { ...approveSeat, of: { governance: seat, proposalSalt: OTHER } }, noHalf(SEAT)],
-    ['leaf', 'amendSigner', { ...seatIt, leaf: OTHER }, noHalf(SEAT)],
-    ['leaf', 'approve', { ...approveSeat, of: { governance: { kind: 'add-signer', leaf: OTHER }, proposalSalt: SALT } }, noHalf(SEAT)],
-    ['leaf', 'propose', { ...raiseSeat, governance: { kind: 'add-signer', leaf: OTHER } }, SEAT],
-    /* A seat record naming a leaf its own payload is not for, and a service agreeing with it. */
-    ['leaf', 'amendSigner', { ...seatIt, leaf: OTHER }, { ...noHalf(SEAT), governance: { kind: 'add-signer', leaf: OTHER } }],
-    /* A seat record whose identity is made with a vault, which no governance round names. */
-    ['vault', 'amendSigner', { ...seatIt, proposal: record(payloadOf(seat), bytes(OTHER)).chainId },
-      { ...record(payloadOf(seat), bytes(OTHER)), governance: seat }],
-    /* A payroll record handed over as a seat, to carry out and to approve. */
-    ['leaf', 'amendSigner', { ...seatIt, proposal: RUN.chainId }, noHalf(RUN)],
-    ['leaf', 'approve', { ...approveSeat, proposal: RUN.chainId }, noHalf(RUN)],
+    ['leaf', 'amendSigner', { ...removeIt, leaf: OTHER }, noHalf(REMOVAL)],
+    ['invitation', 'approve', { ...approveSeat, of: { governance: { ...seat, address: OTHER }, proposalSalt: SALT } }, noHalf(SEAT)],
+    ['invitation', 'approve', { ...approveSeat, of: { governance: { ...seat, scope: OTHER }, proposalSalt: SALT } }, noHalf(SEAT)],
+    ['invitation', 'propose', { ...raiseSeat, governance: { ...seat, address: OTHER } }, SEAT],
+    /* A removal record naming a leaf its own payload is not for, and a service agreeing with it. */
+    ['leaf', 'amendSigner', { ...removeIt, leaf: OTHER }, { ...noHalf(REMOVAL), governance: { kind: 'remove-signer', leaf: OTHER } }],
+    /* A removal record whose identity is made with a vault, which no governance round names. */
+    ['vault', 'amendSigner', { ...removeIt, proposal: record(payloadOf(removal), bytes(OTHER)).chainId },
+      { ...record(payloadOf(removal), bytes(OTHER)), governance: removal }],
+    /* A removal handed over as an invitation's record, to carry out. */
+    ['leaf', 'amendSigner', { ...removeIt, proposal: SEAT.chainId }, noHalf(SEAT)],
+    /*
+     * An invitation's record whose payload is not the one the address it was opened for makes, approved for that address:
+     * the payload is made again from the address, never read from the record.
+     */
+    ['invitation', 'approve', { ...approveSeat, of: { governance: { ...seat, address: OTHER }, proposalSalt: SALT } }, { ...noHalf(SEAT), governance: { ...seat, address: OTHER } }],
+    /* A payroll record handed over as a removal to carry out, and as an invitation to approve. */
+    ['leaf', 'amendSigner', { ...removeIt, proposal: RUN.chainId }, noHalf(RUN)],
+    ['invitation', 'approve', { ...approveSeat, proposal: RUN.chainId }, noHalf(RUN)],
     ['threshold', 'setThreshold', { ...setIt, threshold: '2' }, noHalf(THREE)],
     /* A recovery from another head, with another last time, or after another latest recovery, than the company's record of it: never called a leaf. */
     ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, resumesFrom: OTHER }, proposalSalt: SALT } }, noHalf(RECOVERY)],
@@ -228,7 +245,7 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
   it.each([
     [approveRun, noHalf(RUN), 'do not approve it'],
     [raiseRun, RUN, 'do not send it'],
-    [seatIt, noHalf(SEAT), 'do not grant this access'],
+    [removeIt, noHalf(REMOVAL), 'do not remove this signer'],
     [setIt, noHalf(THREE), 'do not make this change'],
   ] as Array<[GovernedCallOrder, OpenedRound, string]>)('a record whose own parts do not make its identity is refused as not adding up (%#)', async (order, opened, words) => {
     const log: string[] = [];
@@ -246,11 +263,11 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
     for (const [order, opened, words] of [
       [{ ...approveRun, proposal: OTHER }, noHalf(RUN), 'do not approve it'],
       [{ ...raiseRun, half: { ...raiseRun.half, proposalSalt: OTHER } }, RUN, 'do not send it'],
-      [{ ...seatIt, leaf: OTHER }, noHalf(SEAT), 'do not grant this access'],
+      [{ ...removeIt, leaf: OTHER }, noHalf(REMOVAL), 'do not remove this signer'],
       [{ ...setIt, threshold: '2' }, noHalf(THREE), 'do not make this change'],
     ] as Array<[GovernedCallOrder, OpenedRound, string]>) {
       const refused = await buildGovernedCall(depsWith([]), { account: ACCOUNT, order, material, chain, opened }).catch((e) => e);
-      /* RED WHEN: a person carrying out a seat is told not to approve something they are not approving. */
+      /* RED WHEN: a person carrying out a removal is told not to approve something they are not approving. */
       expect(refused.message, order.circuit).toMatch(new RegExp(`If it happens again, ${words}\\.$`, 'u'));
     }
   });
@@ -266,8 +283,8 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
   });
 
   it('THE CHECK ITSELF IS THE BUILDER\'S, SO A STAND-IN BUILDER CAN ASK IT', () => {
-    expect(() => refuseWhatThisDeviceDidNotOpen({ accountPure }, seatIt, SEAT)).not.toThrow();
-    expect(() => refuseWhatThisDeviceDidNotOpen({ accountPure }, { ...seatIt, proposalSalt: OTHER }, SEAT)).toThrow(NotWhatThisDeviceOpened);
+    expect(() => refuseWhatThisDeviceDidNotOpen({ accountPure }, removeIt, REMOVAL)).not.toThrow();
+    expect(() => refuseWhatThisDeviceDidNotOpen({ accountPure }, { ...removeIt, proposalSalt: OTHER }, REMOVAL)).toThrow(NotWhatThisDeviceOpened);
   });
 });
 
@@ -288,6 +305,8 @@ const lateLeaf = storedSignerLeaf({ signingSecret: late.secret, blinding: late.b
 const invite = accounts.inviteSigner(company, 'Late', 'late@opened.example', 'approver');
 /* Accepted as a person's own device accepts: with the proof its link let it make. */
 const lateKeys = { signingPublicKey: late.publicKey, wrappingPublicKey: late.wrapping.publicKey, leafCommitment: lateLeaf };
+/* Who Late's seat is for, as Ada's seat signed it when it invited her. */
+const LATES_TERMS = { company, invitation: invitationIdOf(newInvitationToken()), person: 'usr_late', name: 'Late', role: 'approver' } as const;
 const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publicKey, late.wrapping.publicKey, lateLeaf,
   proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys));
 /* Her request as her device seals it: with her leaf's opening, her sign-in, and the invitation Ada's seat signed for her. */
@@ -299,11 +318,18 @@ const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publ
       publicKey: MidnightCommitments.signerPublicKey(late.secret).toLowerCase(), scope: MidnightCommitments.allVaults().toLowerCase(),
       blinding: late.blinding, walletKey: lateWallet, salt: lateSalt,
     },
-    invited: signSeatInvitation({ company, invitation: invitationIdOf(newInvitationToken()), person: 'usr_late', name: 'Late', role: 'approver' }, ada.signingSecret as Hex),
+    invited: signSeatInvitation(LATES_TERMS, ada.signingSecret as Hex),
   };
   store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.map((x) => (x.id === lateSeat.id ? { ...x, sealed: sealToInbox(request, rec.inboxPublicKey) } : x)) });
 }
-const seatRound = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId);
+/* Late is invited at an address of her own wallet, with every right on every vault. */
+const lateAt = anAddress(MidnightCommitments, 7);
+const lateInvite = { address: lateAt.address, scope: MidnightCommitments.allVaults() };
+/** The invitation Ada's seat signs for Late's address, as Ada's device raises it: what every approving device makes the payload from. */
+const invitedAt = (invite: { address: string; salt: string; scope: string }, by: string = ada.signingSecret) =>
+  signSeatInvitation({ ...LATES_TERMS, leaf: lateLeaf as Hex, invite: invite as never }, by as Hex);
+const LATES_SIGNED = invitedAt({ ...lateInvite, salt: lateAt.addressSalt });
+const seatRound = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId, { ...lateInvite, invited: LATES_SIGNED });
 const thresholdChange = await accounts.proposeThresholdChange(company, viewingKey, 2, ada.signerId, { onDevice: true });
 /* A device reads the signers only from a roster record a seat filed: Ada's seat files the company's, as it stands. */
 const roster = (() => {
@@ -328,6 +354,8 @@ const honest = (extra: ReturnType<typeof sealedProposalFor>[] = []): GovernedCal
   sealedProposals: async (id: string) => [...store.listProposals(id), ...extra],
   sealedAccount: async (id: string) => ({ ...accounts.require(id), roster }),
 } as unknown as GovernedCallService);
+/* An invitation in its shape, so only who it is for is judged. */
+const AN_INVITE = { address: 'ad'.repeat(32), scope: '5c'.repeat(32) };
 const aRecord = (id: string, over: Partial<Parameters<typeof sealedProposalFor>[2]> = {}, forCompany = company) =>
   sealedProposalFor(forCompany, viewingKey, { id, chainId: 'cc'.repeat(32), salt: SALT, ...over });
 
@@ -339,7 +367,7 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     /* RED WHEN: any of these is not the company's own - the device then proves a value it did not read. */
     expect(opened.chainId).toBe(seatRound.chainId);
     expect(opened.salt).toBe(asked.proposalSalt);
-    expect(opened.governance).toEqual({ kind: 'add-signer', leaf: lateLeaf });
+    expect(opened.governance).toEqual({ kind: 'add-signer', ...lateInvite });
     expect(opened.vault).toBe(MidnightCommitments.noVault());
     expect(opened.summary).toBe(seatRound.summary);
     /* The whole account half but the blinding, as the service reads it for a raise, read here from the sealed change. */
@@ -350,6 +378,29 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     /* An approval reads no account half. */
     expect((await openTheRoundHere(honest(), company, seatRound.id, viewingKey, false, recordsHere, leaves)).half).toBeUndefined();
   });
+
+  it.each([
+    ['another address than the one the seat that invited signed', () => ({ ...lateInvite, address: anAddress(MidnightCommitments, 8).address, invited: LATES_SIGNED }),
+      /not the ones the seat that invited signed/u],
+    ['wider rights than the ones the seat that invited signed', () => ({ ...lateInvite, scope: 'ab'.repeat(32), invited: invitedAt({ ...lateInvite, scope: 'cd'.repeat(32), salt: lateAt.addressSalt }) }),
+      /not the ones the seat that invited signed/u],
+    ['an invitation signed by a key no seat holds', () => ({ ...lateInvite, address: anAddress(MidnightCommitments, 9).address,
+      invited: invitedAt({ ...lateInvite, address: anAddress(MidnightCommitments, 9).address, salt: lateAt.addressSalt }, '77'.repeat(32)) }),
+      /not one this device believes is seated/u],
+    ['no signed invitation at all', () => ({ ...lateInvite, address: anAddress(MidnightCommitments, 10).address }),
+      /does not carry an invitation signed by the seat that invited/u],
+    ['a signed invitation that names no address', () => ({ ...lateInvite, address: anAddress(MidnightCommitments, 11).address,
+      invited: signSeatInvitation({ ...LATES_TERMS, leaf: lateLeaf as Hex }, ada.signingSecret as Hex) }),
+      /does not name the address it invites/u],
+  ] as Array<[string, () => Parameters<typeof accounts.seatRound>[4], RegExp]>)(
+    'AN INVITATION BY ADDRESS IS APPROVED ONLY AS THE SEAT THAT INVITED SIGNED IT: one raised with %s is refused on another signer\'s device', async (_what, raised, says) => {
+      const round = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId, raised());
+      /* RED WHEN: an approving device approves the address and rights the raiser sealed, rather than the ones the seat that invited signed. */
+      const refused = await openTheRoundHere(honest(), company, round.id, viewingKey, false, recordsHere, leaves).catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(NotOpenedOnThisDevice);
+      expect(String((refused as Error).message)).toMatch(says);
+      expect(String((refused as Error).message)).toMatch(/raise the invitation again from the device of a seated signer who may invite/u);
+    });
 
   it('a threshold change is read with the threshold it sets', async () => {
     const opened = await openTheRoundHere(honest(), company, thresholdChange.id, viewingKey, false);
@@ -388,10 +439,15 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       /none of those, so it cannot be approved from this device yet\. Leave it unapproved\./u],
     ['a record with no salt sealed in it', 'prp_x', [aRecord('prp_x', { payload: { __change: undefined } })],
       /record is incomplete, so this device cannot check it\. Withdraw the proposal and raise it again\./u],
-    ['a seat for somebody not on the roster', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: 'sgn_nobody' } })],
+    /* RED WHEN: an invitation is raised or approved without an address and rights, in their shape, to make its payload from. */
+    ['an invitation naming an address one byte short', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: 'sgn_nobody', invite: { ...AN_INVITE, address: 'ad'.repeat(31) } } })],
+      /does not say which address it invites, or with which rights/u],
+    ['an invitation naming no rights', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: 'sgn_nobody', invite: { address: AN_INVITE.address } } })],
+      /does not say which address it invites, or with which rights/u],
+    ['a seat for somebody not on the roster', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: 'sgn_nobody', invite: AN_INVITE } })],
       /not waiting for a seat on the company's list of signers\. Withdraw this proposal, then grant access again\./u],
     /* RED WHEN: a seat is raised or approved at a leaf read from a roster entry, which any seat files whole, instead of a waiting person's proof. */
-    ['a seat for somebody already on the roster', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: created.secrets[1]!.signerId } })],
+    ['a seat for somebody already on the roster', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: created.secrets[1]!.signerId, invite: AN_INVITE } })],
       /not waiting for a seat on the company's list of signers\. Withdraw this proposal, then grant access again\./u],
     /* RED WHEN: a removal is raised or approved for a leaf, or with a retirement, its record does not hold in its shape. */
     ['a removal that names no leaf', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(31) } })],

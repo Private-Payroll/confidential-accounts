@@ -388,8 +388,8 @@ describe('THE FOUNDING SEAT, READ FROM THE ACCOUNT\'S DEPLOY AND NEVER FROM WHO 
     const sim = await AccountSimulator.liveAccount([F, B, C], 2n);
     const removal = await approved(sim, F, pureCircuits.removeSignerPayload(sim.leafOf(F)), 611, [F, B]);
     await sim.as(removal.by).removeSigner(sim.leafOf(F), removal.id);
-    const seating = await approved(sim, B, pureCircuits.signerAddPayload(sim.leafOf(D)), 612, [B, C]);
-    await sim.as(seating.by).addSigner(sim.leafOf(D), seating.id, true);
+    /* D, invited by B and approved by C, takes the first slot from its own wallet. */
+    await sim.seatSigner(D, [B, C], 612, true);
     return sim;
   };
 

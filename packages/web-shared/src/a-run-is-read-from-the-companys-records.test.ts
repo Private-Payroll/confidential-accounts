@@ -40,7 +40,7 @@ const LEG = runLegOf(TEST_TOKEN, 'shielded');
 const STATE = signedFoundingState(CO, sealState({ entries: [] }, newStateBlinding(), KEY, 0), founder.secret);
 
 const person = (id: string, n: string): RosterEmployee => ({
-  id, accountId: CO, name: `Person ${id}`, status: 'active', address: payeeFor(n.repeat(32), 'undeployed'),
+  id, accountId: CO, name: `Person ${id}`, status: 'active', startDate: '2026-01-01', baseAmount: BigInt(99 + Number(id.slice(1))), address: payeeFor(n.repeat(32), 'undeployed'),
 } as unknown as RosterEmployee);
 const ALI = person('p1', 'a1');
 const BEA = person('p2', 'a2');
@@ -346,7 +346,8 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
       ['a record no believed seat filed', peopleOf({ notBelieved: ['p2'] }), /Person p2 is on this run, and this device does not believe/],
       ['an address not their code\'s', peopleOf({ notPayable: [{ here: { person: BEA, version: 1, handedOver: true }, why: 'x' }] }), /Person p2 is on this run/],
       ['nobody on record', peopleOf({ people: [{ person: ALI, version: 1, handedOver: true }] }), /Person p2 is not on the roster/],
-      ['a leaver', peopleOf({ people: [ALI, { ...BEA, status: 'leaver' as const }].map((p) => ({ person: p, version: 1, handedOver: true })) }), /leaver, not active/],
+      ['a leaver', peopleOf({ people: [ALI, { ...BEA, status: 'leaver' as const }].map((p) => ({ person: p, version: 1, handedOver: true })) }), /made a leaver with no leaving date or end date/],
+      ['a leaver gone before the month', peopleOf({ people: [ALI, { ...BEA, status: 'leaver' as const, leavingDate: '2026-08-15' }].map((p) => ({ person: p, version: 1, handedOver: true })) }), /leaving date is 2026-08-15, before 2026-09/],
     ];
     for (const [why, people, says] of cases) {
       /* RED WHEN: a run paying that person passes the checks an approving device runs. */

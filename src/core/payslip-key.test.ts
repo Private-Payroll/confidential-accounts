@@ -629,12 +629,14 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      */
     const raw = JSON.stringify((h.store as unknown as { data: unknown }).data);
     /*
-     * **TWO POSITIVE CONTROLS BEFORE THE ABSENCE**, because an absence test
-     * over the wrong string passes perfectly. The store really was read, and it
-     * really does hold this person's key material — the PUBLIC half.
+     * **A POSITIVE CONTROL BEFORE THE ABSENCE**, because an absence test over
+     * the wrong string passes perfectly: the store really was read, and it
+     * holds this person. Not even the PUBLIC half of their key is in it in the
+     * clear: it is sealed in their record, and no slip names it.
      */
     expect(raw).toContain(employee.id);
-    expect(raw).toContain(derived.publicKey);
+    /* RED WHEN: the public half of a payslip key is stored where the service reads it. */
+    expect(raw).not.toContain(derived.publicKey);
     expect(raw).not.toContain(secret.wrappingSecret);
 
     /*

@@ -10,7 +10,7 @@ import { leafOfTheContract } from '../testing/directory-seats.js';
 import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
 import { companyKeyHere, rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { admitSignerHere } from 'vaults-web-shared/roster-here.js';
@@ -69,7 +69,7 @@ describe('A ONE-OFF SEALED BEFORE THE COMPANY\'S KEY CHANGES OPENS FOR A SIGNER 
     expect((await peopleRecords.versions(CO, ONE_OFF_KIND, before)).map((r) => r.keyEpoch)).toEqual([0]);
 
     /* Dee accepts a seat and the chain seats her leaf; Cy is removed, and Bo's device changes the key. */
-    const made = await inviteSignerHere(ACME, ADA, { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
     const kept: PendingSeat[] = [];
     const keys: NewSeatKeys[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {

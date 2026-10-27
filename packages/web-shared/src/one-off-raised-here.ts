@@ -35,7 +35,7 @@ import { oneOffSaltOf } from '../../../src/midnight/run-keys.js';
 import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
 import type { RaiseDoors, RoundOnThePage } from './governed-call-on-device.js';
 import {
-  oneOffBuiltHere, oneOffOfTheProposalHere, oneOffsHere, type OneOffBelieved, type OneOffReadDoors, type OneOffRecords, type OneOffsHere,
+  oneOffBuiltHere, oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere, type OneOffBelieved, type OneOffReadDoors, type OneOffRecords, type OneOffsHere,
 } from './one-off-here.js';
 import { FilingNotBelieved } from './http-sealed-pool-store.js';
 import { seatThatMayFileHere } from './vault-page-doors.js';
@@ -176,8 +176,10 @@ const SUMMARY = 'One-off payment from a vault';
 /**
  * **RAISES A ONE-OFF PAYMENT FROM THIS DEVICE**, as the module says, and answers
  * where it stands. Refused before anything is filed or sent when the one-off is
- * not one its record can hold, its window is past or names no vault, the vault's
- * policy would not charge it, or the vault cannot pay it.
+ * not one its record can hold, it names a vendor entry whose own address and
+ * keys it does not pay (`refuseAOneOffToAnotherVendorHere`), its window is past
+ * or names no vault, the vault's policy would not charge it, or the vault
+ * cannot pay it.
  */
 export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAsked & { readonly viewingKey: KeysHeld }): Promise<RoundOnThePage> {
   const { records, accountId, service } = doors;
@@ -194,6 +196,12 @@ export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAske
   let tidied: ReturnType<typeof oneOffTidied>;
   try {
     tidied = oneOffTidied(draft('00'.repeat(32) as Hex, 0n), registry);
+  } catch (e) {
+    if (e instanceof OneOffRefused) throw new LegNotRaisedHere(e.message);
+    throw e;
+  }
+  try {
+    await refuseAOneOffToAnotherVendorHere(records, tidied);
   } catch (e) {
     if (e instanceof OneOffRefused) throw new LegNotRaisedHere(e.message);
     throw e;
@@ -276,21 +284,22 @@ export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAske
  * from its record: its one payment over its one-leaf tree, under its proposal's
  * identity and salt, with the approvals it was raised needing; offered only for a
  * `transfer` proposal whose own sealed body names that record, tied both ways
- * (`oneOffOfTheProposalHere`), and when the tree made here names exactly that
+ * and read by that name alone (`oneOffRaisedByHere`), paying the vendor entry it
+ * names if it names one, and when the tree made here names exactly that
  * proposal. For the vault's own payment call (`payPrivatelyFromCompanyVault`,
  * `payPubliclyFromCompanyVault`), after the charge when its vault has a spending
  * policy (`chargeTheRunHere`).
  */
 export async function oneOffToPayHere(
-  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'proposals'>, accountId: string, viewingKey: KeysHeld, proposalId: string,
+  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'proposals' | 'vendors'>, accountId: string, viewingKey: KeysHeld, proposalId: string,
   deps: Pick<OneOffRunDeps, 'runPayload' | 'proposalIdOf' | 'retrySaltOf'> & {
     readonly paidAmong: (leaves: readonly Hex[]) => Promise<PaymentsAmong | null>;
   },
 ): Promise<{ readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string }> {
-  const { believed } = await oneOffsHere(records, accountId);
   let found: OneOffBelieved | null;
   try {
-    found = await oneOffOfTheProposalHere(records, accountId, viewingKey, proposalId, believed);
+    found = await oneOffRaisedByHere(records, accountId, viewingKey, proposalId);
+    if (found !== null) await refuseAOneOffToAnotherVendorHere(records, found.oneOff);
   } catch (e) {
     if (e instanceof OneOffRefused) throw new LegNotRaisedHere(e.message);
     throw e;

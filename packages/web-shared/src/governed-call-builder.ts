@@ -130,7 +130,12 @@ export interface RunOnTheWire {
  * threshold this person was shown, and never a digest handed over as bytes.
  */
 export type GovernanceOnTheWire =
-  | { readonly kind: 'add-signer'; readonly leaf: string }
+  /**
+   * An invitation to seat whoever holds an address: the hiding commitment to
+   * the address (`inviteAddressOf`) and the rights the seat will carry. The
+   * invitee takes the seat from their own wallet once it is approved.
+   */
+  | { readonly kind: 'add-signer'; readonly address: string; readonly scope: string }
   /** A seated signer's leaf, taken off the account. */
   | { readonly kind: 'remove-signer'; readonly leaf: string }
   | { readonly kind: 'threshold'; readonly threshold: string }
@@ -217,8 +222,8 @@ export type GovernedCallOrder =
      */
     readonly of?: { readonly governance: RoundChangeOnTheWire; readonly proposalSalt: string };
   }
-  /** Seating a signer, or, with `removing`, taking a seated signer's leaf off the account. */
-  | { readonly circuit: 'amendSigner'; readonly leaf: string; readonly proposal: string; readonly proposalSalt: string; readonly removing?: true }
+  /** Taking a seated signer's leaf off the account, on an approved removal. A seat is never carried out here: the invitee takes it. */
+  | { readonly circuit: 'amendSigner'; readonly leaf: string; readonly proposal: string; readonly proposalSalt: string; readonly removing: true }
   | { readonly circuit: 'setThreshold'; readonly threshold: string; readonly proposal: string; readonly proposalSalt: string }
   /** Carrying out an approved change of one vault's own approvals needed. */
   | {
@@ -278,8 +283,8 @@ export interface OpenedRound {
   /** What the person is shown for this proposal. */
   readonly summary: string;
   /**
-   * For a seat or a threshold change: the change the proposal names, the leaf
-   * read from the company's own roster. For a vault adopted: that vault. For
+   * For an invitation or a threshold change: the change the proposal names, read
+   * from the company's own record of it. For a vault adopted: that vault. For
    * the pay-record key: the commitment to the key this device holds.
    */
   readonly governance?: RoundChangeOnTheWire;
@@ -302,7 +307,7 @@ export interface OpenedRound {
 /** Each value, as the person reading a refusal would name it. */
 const SAID: Readonly<Record<string, string>> = {
   'proposal identity': 'proposal', salt: 'proposal', change: 'proposal', vault: 'proposal',
-  'run vault': 'account this run pays from', leaf: 'person being given access',
+  'run vault': 'account this run pays from', leaf: 'signer being removed', invitation: 'person being invited',
   threshold: 'number of approvals required', 'vault adopted': 'vault being adopted', 'pay-record key': 'company\'s pay-record key',
   run: 'payroll run', asset: 'token', amount: 'amount',
   'payments digest': 'list of payments', policy: 'spending policy',
@@ -311,7 +316,7 @@ const SAID: Readonly<Record<string, string>> = {
 };
 /** What not to do if the refusal comes back, for each call a device makes. */
 const IF_AGAIN: Readonly<Record<string, string>> = {
-  approve: 'do not approve it', propose: 'do not send it', amendSigner: 'do not grant this access',
+  approve: 'do not approve it', propose: 'do not send it', amendSigner: 'do not remove this signer',
   setThreshold: 'do not make this change', adopt: 'do not adopt this vault', sealPayKey: 'do not seal this key',
   setVaultThreshold: 'do not make this change', cancel: 'do not withdraw it',
   setPolicy: 'do not set this policy', setPolicyBar: 'do not make this change',
@@ -380,7 +385,7 @@ export interface GovernedCallDeps {
     proposalIdOf(payload: Uint8Array, vault: Uint8Array, salt: Uint8Array): Uint8Array;
     /** A run's salt, `retrySaltOf(leg, fresh)`: asked for where a payroll run is raised, approved or charged. */
     retrySaltOf?(legRoot: Uint8Array, fresh: Uint8Array): Uint8Array;
-    signerAddPayload(leaf: Uint8Array): Uint8Array;
+    signerInvitePayload(address: Uint8Array, scope: Uint8Array): Uint8Array;
     /** Present where a signer's removal is built; asked for only then. */
     removeSignerPayload?(leaf: Uint8Array): Uint8Array;
     setThresholdPayload(threshold: bigint): Uint8Array;
@@ -506,27 +511,53 @@ const digitsOf = (name: string, value: string): bigint => {
 const ACCOUNT_FIELDS = ['assetBlinding', 'assetId', 'proposalSalt', 'changeAmount', 'changeBatchDigest'] as const;
 
 /**
+ * **A WALLET'S COIN SECRET KEY NEVER REACHES A RECORD THIS PAGE BUILDS.** The
+ * invitation a person takes their seat by (`invite`) holds the secret key that
+ * spends every shielded coin they own, and only their own wallet proves the
+ * seat with it. Thrown, with nothing built or sent, when anything handed to the
+ * page's builder carries one.
+ */
+export class WalletKeyNotForAPage extends Error {
+  constructor() {
+    super('this page was handed the key a wallet takes an invited seat with, and that key spends every coin the wallet holds, so '
+      + 'nothing was built or sent. Take the seat from your own wallet, never from a page; if a page asked you for it, do not '
+      + 'use that page again.');
+    this.name = 'WalletKeyNotForAPage';
+  }
+}
+
+const refuseAWalletsCoinKey = (...given: unknown[]): void => {
+  if (given.some((x) => typeof x === 'object' && x !== null && 'invite' in x)) throw new WalletKeyNotForAPage();
+};
+
+/** The record, with the invitation a wallet takes a seat by a refusal rather than a value: no circuit this page builds reads it. */
+const withNoInvitation = <T extends object>(record: T): T => Object.defineProperty(record, 'invite', {
+  enumerable: false,
+  get: () => { throw new WalletKeyNotForAPage(); },
+});
+
+/**
  * **THE RECORD FOR ONE CALL, COMPOSED NOW AND USED ONCE.**
  *
  * The signer's three come first and are refused by name if any is missing or
  * the wrong width - the scope included. For a raise the account's half is the
  * one this device read from the proposal's own record, and the asset blinding
- * is the order's. Each carrying out this device builds - a seat, a removal, a
+ * is the order's. Each carrying out this device builds - a removal, a
  * threshold, a vault's threshold, an adoption, the pay-record key, a spending
  * policy and its bar - is handed the salt the approved round's identity was made
  * with (a spending policy also its currency and blinding), and it is the one
- * the record this device opened names. A seat's circuit reads it only when the
- * seat needs a proposal, and the pay-record key's only before a key is committed. Given no record read here - which `buildGovernedCall`
+ * the record this device opened names. The pay-record key's circuit reads it only before a key is committed. Given no record read here - which `buildGovernedCall`
  * never builds without - each is read off the order. Every other account field
  * is a refusal rather than a value. The two membership-path fields are set here and from
  * nowhere else, so nothing handed in can put a path into the record.
  */
 export function recordForOneCall(order: GovernedCallOrder, material: SignerMaterial, opened?: OpenedRound): AccountPrivateState {
+  refuseAWalletsCoinKey(material, opened);
   const signer = signerHalfOf(material);
   if (order.circuit === 'propose') {
     /* What this device opened, when it did; `buildGovernedCall` never builds without it. */
     const h = opened?.half ?? order.half;
-    return {
+    return withNoInvitation({
       ...signer,
       assetId: bytesOf('asset', h.assetId),
       assetBlinding: bytesOf('account\'s asset blinding', order.half.assetBlinding),
@@ -534,9 +565,9 @@ export function recordForOneCall(order: GovernedCallOrder, material: SignerMater
       changeAmount: digitsOf('change amount', h.changeAmount),
       changeBatchDigest: bytesOf('change digest', h.changeBatchDigest),
       pinnedPath: null,
-    };
+    });
   }
-  const record = { ...signer, pinnedPath: null } as AccountPrivateState;
+  const record = withNoInvitation({ ...signer, pinnedPath: null } as AccountPrivateState);
   const salt = order.circuit === 'amendSigner' || order.circuit === 'setThreshold' || order.circuit === 'adopt'
     || order.circuit === 'sealPayKey' || order.circuit === 'setVaultThreshold' || order.circuit === 'setPolicy'
     || order.circuit === 'setPolicyBar'
@@ -583,8 +614,8 @@ const policyBarOf = (value: string): bigint => {
 export function argumentsFor(order: GovernedCallOrder): unknown[] {
   if (order.circuit === 'approve' || order.circuit === 'cancel') return [bytesOf('proposal\'s identity', order.proposal)];
   if (order.circuit === 'amendSigner') {
-    /* Seating appends rather than reusing a vacated slot; a removal marks the leaf's own slot vacant. */
-    return [bytesOf('signer\'s leaf', order.leaf), bytesOf('proposal\'s identity', order.proposal), false, order.removing === true];
+    /* A removal marks the leaf's own slot vacant. */
+    return [bytesOf('signer\'s leaf', order.leaf), bytesOf('proposal\'s identity', order.proposal)];
   }
   if (order.circuit === 'setThreshold') {
     return [thresholdOf(order.threshold), bytesOf('proposal\'s identity', order.proposal)];
@@ -706,7 +737,9 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
   if ((g as { readonly kind: string }).kind === 'super-admins') {
     throw new Error('a change of the super admins is never raised, approved or counted on the company\'s account as a signers\' proposal, so nothing was built.');
   }
-  if (g.kind === 'add-signer') return deps.accountPure.signerAddPayload(bytesOf('signer\'s leaf', g.leaf));
+  if (g.kind === 'add-signer') {
+    return deps.accountPure.signerInvitePayload(bytesOf('invited address', g.address), bytesOf('seat\'s rights', g.scope));
+  }
   if (g.kind === 'remove-signer') return removalPayloadOf(deps, g.leaf);
   if (g.kind === 'threshold') return deps.accountPure.setThresholdPayload(thresholdOf(g.threshold));
   if (g.kind === 'vault-threshold') return vaultThresholdPayloadOf(deps, g.vault, g.threshold);
@@ -828,7 +861,7 @@ const argumentsBuilt = (deps: Pick<GovernedCallDeps, 'accountPure'>, order: Gove
  */
 /** What each call is called in a sentence a person reads. */
 const CALLED: Readonly<Record<string, string>> = {
-  approve: 'approval', propose: 'proposal', amendSigner: 'seat', setThreshold: 'threshold change',
+  approve: 'approval', propose: 'proposal', amendSigner: 'removal', setThreshold: 'threshold change',
   adopt: 'adoption of the vault', sealPayKey: 'sealing of the pay-record key',
   setVaultThreshold: 'change of a vault\'s approvals needed', cancel: 'withdrawal',
   setPolicy: 'spending policy', setPolicyBar: 'change of the approvals a policy change needs',
@@ -874,8 +907,7 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
   } else if (order.circuit === 'propose') {
     made = P.proposalIdOf(governancePayloadOf(deps, raisedChange(order)), P.noVault(), bytesOf('proposal\'s salt', order.half.proposalSalt));
   } else if (order.circuit === 'amendSigner') {
-    made = P.proposalIdOf(order.removing === true ? removalPayloadOf(deps, order.leaf) : P.signerAddPayload(bytesOf('signer\'s leaf', order.leaf)),
-      P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
+    made = P.proposalIdOf(removalPayloadOf(deps, order.leaf), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
   } else if (order.circuit === 'adopt') {
     made = P.proposalIdOf(adoptionPayloadOf(deps, order.vault), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
   } else if (order.circuit === 'sealPayKey') {
@@ -911,7 +943,7 @@ const same = (a: unknown, b: unknown): boolean => String(a).toLowerCase() === St
 const changeNamed = (g: RoundChangeOnTheWire | undefined): string =>
   (g?.kind === 'threshold' || g?.kind === 'vault-threshold' ? 'threshold' : g?.kind === 'adopt-vault' ? 'vault adopted'
     : g?.kind === 'pay-key' ? 'pay-record key' : g?.kind === 'spending-policy' ? 'policy' : g?.kind === 'policy-bar' ? 'policy bar'
-      : g?.kind === 'recover-anchor' ? 'recovery' : 'leaf');
+      : g?.kind === 'recover-anchor' ? 'recovery' : g?.kind === 'add-signer' ? 'invitation' : 'leaf');
 
 /**
  * **NOTHING IS PROVED WITH A VALUE THIS DEVICE DID NOT READ ITSELF, BUT TWO.**
@@ -962,7 +994,7 @@ export function refuseWhatThisDeviceDidNotOpen(
   /* A withdrawal names only the proposal, and the proposal is the one this device opened. */
   if (order.circuit === 'cancel') return;
   if (order.circuit === 'amendSigner') {
-    if (g?.kind !== (order.removing === true ? 'remove-signer' : 'add-signer') || !same(order.leaf, (g as { leaf: string }).leaf)) refuse('leaf');
+    if (g?.kind !== 'remove-signer' || order.removing !== true || !same(order.leaf, g.leaf)) refuse('leaf');
     return;
   }
   if (order.circuit === 'setThreshold') {
@@ -1114,6 +1146,63 @@ export async function buildGovernedCall(
 /* ── THE COMPANY'S RECORD ANCHOR, MOVED ON FROM THIS DEVICE ──────────────────── */
 
 /** Thrown, with nothing built or sent, when an anchor call - or a recovery, `recovery` - cannot be made as this device would send it. */
+/** What an invitee's wallet takes an invited seat with: its seat, the address's coin key and salt, and the proposal's salt. */
+export interface InvitedSeatInput {
+  readonly account: string;
+  /** The invitation's proposal, by its identity on chain. */
+  readonly proposal: string;
+  readonly material: SignerMaterial & { readonly scope: Hex };
+  /** The coin secret key of the address invited, and the salt its commitment was made under. Only a wallet holds these. */
+  readonly invite: { readonly coinSecretKey: Hex; readonly addressSalt: Hex };
+  readonly proposalSalt: Hex;
+  /** Whether the seat goes into a slot a removal left vacant. */
+  readonly intoVacatedSlot: boolean;
+  readonly chain: AccountCallChain;
+}
+
+/**
+ * **THE INVITEE'S OWN CALL THAT TAKES THE SEAT AN INVITATION BY ADDRESS OFFERED** (`seatInvited`), built and proved
+ * where it is called, which is only ever the invitee's own wallet: the coin secret key it proves the address with is
+ * a witness to the proof and is in nothing returned. The account refuses it unless the proposal invites the address
+ * this key makes, with the rights this seat carries, and the proposal is approved at the seat bar.
+ */
+export async function buildSeatInvitedCall(deps: GovernedCallDeps, input: InvitedSeatInput): Promise<{ proven: Uint8Array }> {
+  const account = String(input.account).toLowerCase();
+  if (!HEX64.test(account)) throw new Error('this seat is not taken on a company account this wallet can name, so nothing was built.');
+  const record = {
+    ...signerHalfOf(input.material),
+    invite: { coinSecretKey: bytesOf('address\'s coin key', input.invite.coinSecretKey), addressSalt: bytesOf('address\'s salt', input.invite.addressSalt) },
+    proposalSalt: bytesOf('proposal\'s salt', input.proposalSalt),
+    pinnedPath: null,
+  } as unknown as AccountPrivateState;
+  try {
+    const L = deps.ledger;
+    const seed = (deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))))(32);
+    const keys = L.ZswapSecretKeys.fromSeed(seed);
+    seed.fill(0);
+    try {
+      const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.accountZkConfig, {
+        compiledContract: deps.accountCompiled,
+        circuitId: 'seatInvited',
+        contractAddress: account,
+        coinPublicKey: keys.coinPublicKey,
+        initialContractState: deps.runtimeState.deserialize(input.chain.accountState),
+        initialZswapChainState: new L.ZswapChainState(),
+        ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+        initialPrivateState: record,
+        args: [bytesOf('proposal', String(input.proposal).toLowerCase()), input.intoVacatedSlot],
+      }, keys.encryptionPublicKey).catch((e: unknown) => { throw theWitnessSaid('seatInvited', e); });
+      const proven = await deps.prove(built.private.unprovenTx, 'seatInvited');
+      return { proven: proven.serialize() };
+    } finally {
+      try { keys.clear?.(); } catch { /* the throwaway keys hold nothing of the wallet's */ }
+    }
+  } finally {
+    wipe(record);
+    (record as unknown as { invite: { coinSecretKey: Uint8Array } }).invite.coinSecretKey.fill(0);
+  }
+}
+
 export class AnchorNotBuilt extends Error {
   constructor(why: string, options?: { cause?: unknown; recovery?: boolean }) {
     super(`${options?.recovery === true ? 'the recovery of the company\'s records was not carried out' : 'the company\'s records were not anchored'}: ${why}. `
@@ -1622,6 +1711,64 @@ export function roundsOnChainIn(
 }
 
 /** What a payroll run's identity on chain is made from, as its sealed proposal holds them, with the head its raiser checked: decimal and hexadecimal. */
+/**
+ * Every circuit of the account that closes a proposal (`closeProposal`, ConfidentialAccount.compact), named so a
+ * block that holds any of them beside a seating is never read as that seating's. Checked against the contract's
+ * source by every-circuit-that-closes-a-proposal-is-known.test.ts.
+ */
+export const PROPOSAL_CLOSING_CIRCUITS: readonly string[] = Object.freeze([
+  'adopt', 'amendSigner', 'approveVaultChange', 'cancel', 'closeExpiredRun', 'recoverAnchor', 'removeSignerAndSetThreshold',
+  'reseatSigner', 'retireVault', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold',
+]);
+
+/**
+ * The leaf each invitation's proposal seated, read from the account's own history: for each proposal asked
+ * about, the one leaf that entered the account's signers in the block where the account stopped holding the
+ * proposal, when that block's only successful call that closes a proposal is one `seatInvited`, and exactly
+ * one leaf entered. The steps carry no call's arguments, so a block where anything
+ * else closed a proposal (a `cancel` of this one beside a seating for another, say) cannot show which call closed
+ * which. Null for a proposal never closed, closed by anything else, or closed in such a block: a state is the
+ * whole block's, and no seat is bound to an invitation on a guess.
+ */
+export function seatsInvitedIn(
+  deps: Pick<GovernedCallDeps, 'accountLedger' | 'runtimeState'>,
+  steps: ReadonlyArray<{
+    readonly kind: string; readonly state: Uint8Array; readonly entryPoint?: string;
+    readonly block: { readonly height: number; readonly at: number }; readonly succeeded: boolean;
+  }>,
+  proposals: readonly string[],
+): ReadonlyMap<string, string | null> {
+  if (deps.accountLedger === undefined) {
+    throw new Error('this device was not given the account\'s reader, so which seat each invitation took was not read. Reload the page');
+  }
+  type View = {
+    openProposals: { member(id: Uint8Array): boolean };
+    signerLeaves: Iterable<Uint8Array>;
+  };
+  const viewOf = (state: Uint8Array) => deps.accountLedger!((deps.runtimeState.deserialize(state) as { data: unknown }).data) as View;
+  const blocks: Array<{ readonly steps: typeof steps[number][]; readonly view: View }> = [];
+  for (const step of steps) {
+    const last = blocks[blocks.length - 1];
+    if (last !== undefined && last.steps[0]!.block.height === step.block.height) last.steps.push(step);
+    else blocks.push({ steps: [step], view: viewOf(step.state) });
+  }
+  const leavesOf = (v: View): Set<string> => new Set([...v.signerLeaves].map((l) => hexOf(l)));
+  const out = new Map<string, string | null>();
+  for (const asked of proposals) {
+    const hex = String(asked).toLowerCase();
+    if (!HEX64.test(hex)) throw new Error('an invitation\'s proposal was asked about by an identity that is not thirty-two bytes');
+    const id = bytesOf('proposal', hex);
+    const gone = blocks.findIndex((b, i) => i > 0 && blocks[i - 1]!.view.openProposals.member(id) && !b.view.openProposals.member(id));
+    if (gone < 1) { out.set(hex, null); continue; }
+    const closers = blocks[gone]!.steps.filter((x) => x.kind === 'call' && x.succeeded && PROPOSAL_CLOSING_CIRCUITS.includes(x.entryPoint ?? ''));
+    const before = leavesOf(blocks[gone - 1]!.view);
+    const added = [...leavesOf(blocks[gone]!.view)].filter((l) => !before.has(l));
+    const onlyThisSeating = closers.length === 1 && closers[0]!.entryPoint === 'seatInvited';
+    out.set(hex, onlyThisSeating && added.length === 1 ? added[0]! : null);
+  }
+  return out;
+}
+
 export interface VouchedRunOnTheWire {
   readonly root: string; readonly payees: string; readonly opensAt: string; readonly closesAt: string; readonly required: string;
   readonly vault: string; readonly head: string; readonly r: string;

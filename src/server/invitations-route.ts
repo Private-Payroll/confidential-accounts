@@ -3,15 +3,19 @@
  * NONE OF IT OPENED HERE.**
  *
  * The inviting signer's device makes everything (`invitation.ts`): the token,
- * the offer sealed under a key only the link carries, and, for a payee, their
- * first person record. What this service keeps of an invitation is its lookup
+ * the offer sealed under a key only the link carries, and, for an employee,
+ * their first person record. What this service keeps of an invitation is its lookup
  * id, the hash of what accepts it, the sealed offer, who it is for and when it
  * stops being acceptable. It checks what it can without a key:
  *
- *   · **making one**: the invitation is signed by the signed-in person's own
- *     seat in the company's directory, held now (`filerSeatOf`); whether its
- *     role may invite is each member's device's to judge;
- *     a payee's first person record goes through the same filing as every
+ *   · **making one**, of an employee, a vendor or a signer, on one route: the
+ *     invitation is signed by the signed-in person's own seat in the company's
+ *     directory, held now (`filerSeatOf`); whether its role may invite is the
+ *     inviting device's and each member's device's to judge, since this service
+ *     holds no seat's role; the kind is all it learns of the offer. A super
+ *     admin's invitation is refused: super admins are invited under the
+ *     committee's own rules, not by a seat;
+ *     an employee's first person record goes through the same filing as every
  *     company record (`fileCompanyRecord`), signed by the same seat; which
  *     company key it was made under is the devices' to judge, never this
  *     service's;
@@ -42,8 +46,8 @@ import { nanoid } from 'nanoid';
 import type { Invite, SealedAccount } from '../core/types.js';
 import type { Hex } from '../core/crypto.js';
 import {
-  acceptsTheInvitation, alreadyOnTheCompany, INVITATION_LIFETIME_MS, INVITATION_REFUSAL, verifiedInvitationFiler, whyThisInvitationIsClosed,
-  whyThisIsNotAnInvitation, withdrawalRefusal, type InvitationFiling, type InvitationRefusal, type WaitingSignerWithdrawal,
+  acceptsTheInvitation, alreadyOnTheCompany, INVITATION_LIFETIME_MS, INVITATION_REFUSAL, SUPER_ADMIN_INVITED_BY_THE_COMMITTEE, verifiedInvitationFiler, whyThisInvitationIsClosed,
+  whyThisIsNotAnInvitation, withdrawalRefusal, type InvitationFiling, type InvitationKind, type InvitationRefusal, type WaitingSignerWithdrawal,
 } from '../core/invitation.js';
 import { FILING_REFUSAL, filerSeatOf } from '../midnight/seat-directory.js';
 import { CHAIN_UNREAD, filerSeatNow, signerSeatNow, type DirectoryNow } from './seat-directory-route.js';
@@ -60,6 +64,18 @@ export interface InvitationStore {
 }
 
 type Answer = { status: number; body: Record<string, unknown> };
+
+/*
+ * The company record filed together with each kind's invitation, or null for a kind filed alone: an employee's
+ * first person record, and a vendor's first vendor entry, so every device judges who filed it as it judges any record.
+ */
+const RECORD_FILED_WITH: { readonly [K in InvitationKind]: 'person' | 'vendor' | null } = {
+  employee: 'person', vendor: 'vendor', signer: null, 'super-admin': null,
+};
+
+const KIND_SAID: { readonly [K in InvitationKind]: string } = {
+  employee: 'an employee\'s', vendor: 'a vendor\'s', signer: 'a signer\'s', 'super-admin': 'a super admin\'s',
+};
 
 const SEALED = z.object({
   ephemeral: z.string().regex(/^[0-9a-f]{64}$/), iv: z.string().min(1), tag: z.string(), body: z.string().min(1),
@@ -129,9 +145,9 @@ export const invitationRoutes = (deps: {
   };
 
   /** The invitation a request names and what accepts it, or why it may not be used. */
-  const accepting = (req: express.Request, kind: 'employee' | 'signer', acceptance: string): Invite | Answer => {
+  const accepting = (req: express.Request, kinds: readonly InvitationKind[], acceptance: string): Invite | Answer => {
     const invite = deps.store.invitationById(String(req.params.id));
-    const closed = whyThisInvitationIsClosed(invite, kind, Date.now());
+    const closed = whyThisInvitationIsClosed(invite, kinds, Date.now());
     if (closed !== null) return closedAnswer(closed);
     if (!acceptsTheInvitation(acceptance, invite!.acceptanceHash)) return { status: 403, body: { refused: 'not-accepted', error: INVITATION_REFUSAL['not-accepted'] } };
     return invite!;
@@ -139,53 +155,50 @@ export const invitationRoutes = (deps: {
   const isAnswer = (x: Invite | Answer): x is Answer => 'status' in x && 'body' in x;
 
   /*
-   * **A PAYEE INVITED.** Their first person record and the invitation for it,
-   * both made on the inviting device and signed by the same seat; the record
-   * is filed first, through the one company-record filing, and the invitation
-   * only once it is.
+   * **AN INVITATION OF AN EMPLOYEE, A VENDOR OR A SIGNER IS FILED HERE.** Whatever
+   * the kind, the invitation is checked the same way and kept the same way; a
+   * super admin's is refused, since no seat invites a super admin. An
+   * employee's is filed together with their first person record, and a vendor's
+   * with their first vendor entry, made on the inviting device and signed by
+   * the same seat: the record is filed first, through the one company-record
+   * filing, and the invitation only once it is.
+   * The other kinds are filed alone. `RECORD_FILED_WITH` is the one place that
+   * says which record goes with which kind.
    */
-  router.post('/api/accounts/:id/people', logged, deps.signedIn, deps.member, json, async (req, res) => {
+  router.post('/api/accounts/:id/invites', logged, deps.signedIn, deps.member, json, async (req, res) => {
     const company = String(req.params.id);
     const person = (req as { userId?: unknown }).userId;
     const body = req.body as { person?: unknown; invitation?: unknown } | null;
     const invitation = body?.invitation as InvitationFiling | undefined;
     const why = whyThisIsNotAnInvitation(invitation, company);
-    if (why !== null || invitation!.kind !== 'employee' || typeof person !== 'string') {
-      res.status(400).json({ refused: 'not-an-invitation', error: `nothing was filed: ${why ?? 'a person is invited with a payee\'s invitation'}.` });
+    if (why !== null || typeof person !== 'string') {
+      res.status(400).json({ refused: 'not-an-invitation', error: `nothing was filed: ${why ?? 'an invitation is filed by somebody signed in'}.` });
+      return;
+    }
+    if (invitation!.kind === 'super-admin') {
+      res.status(400).json({ refused: 'super-admin-by-the-committee', error: `nothing was filed: ${SUPER_ADMIN_INVITED_BY_THE_COMMITTEE}.` });
+      return;
+    }
+    const recordKind = RECORD_FILED_WITH[invitation!.kind];
+    if (recordKind === null && body?.person !== undefined) {
+      res.status(400).json({ refused: 'not-an-invitation', error: `nothing was filed: ${KIND_SAID[invitation!.kind]} invitation is filed with no record beside it.` });
       return;
     }
     const no = await refused(company, person, invitation!);
     if (no !== null) { res.status(no.status).json(no.body); return; }
-    const record = body?.person as { id?: unknown; version?: unknown } | null;
-    if (record === null || typeof record !== 'object' || record.id !== invitation!.person || record.version !== 1) {
-      res.status(400).json({ refused: 'not-a-new-person', error: 'an invitation is filed with the first version of the person it is for, and this one is not. Nothing was filed.' });
-      return;
+    if (recordKind !== null) {
+      const record = body?.person as { id?: unknown; version?: unknown } | null;
+      if (record === null || typeof record !== 'object' || record.id !== invitation!.person || record.version !== 1) {
+        res.status(400).json({ refused: 'not-a-new-person', error: 'an invitation is filed with the first version of the person or vendor entry it is for, and this one is not. Nothing was filed.' });
+        return;
+      }
+      const filed = await fileCompanyRecord(
+        { records: deps.records(), accountOf: (a) => deps.store.getAccount(a), directoryOf: deps.directoryOf },
+        person, { company, kind: recordKind, id: String(invitation!.person) }, 1, body!.person);
+      if (filed.status !== 201) { res.status(filed.status).json(filed.body); return; }
     }
-    const filed = await fileCompanyRecord(
-      { records: deps.records(), accountOf: (a) => deps.store.getAccount(a), directoryOf: deps.directoryOf },
-      person, { company, kind: 'person', id: String(invitation!.person) }, 1, body!.person);
-    if (filed.status !== 201) { res.status(filed.status).json(filed.body); return; }
     keep(company, person, invitation!);
-    res.status(201).json({ filed: true, person: invitation!.person, invitation: invitation!.id });
-  });
-
-  /*
-   * **A SIGNER INVITED.** The same filing with no person: who the seat is for,
-   * its role and the secret its new keys are proved with are inside the offer.
-   */
-  router.post('/api/accounts/:id/invites/signer', logged, deps.signedIn, deps.member, json, async (req, res) => {
-    const company = String(req.params.id);
-    const person = (req as { userId?: unknown }).userId;
-    const invitation = (req.body as { invitation?: unknown } | null)?.invitation as InvitationFiling | undefined;
-    const why = whyThisIsNotAnInvitation(invitation, company);
-    if (why !== null || invitation!.kind !== 'signer' || typeof person !== 'string') {
-      res.status(400).json({ refused: 'not-an-invitation', error: `nothing was filed: ${why ?? 'a signer is invited with a signer\'s invitation'}.` });
-      return;
-    }
-    const no = await refused(company, person, invitation!);
-    if (no !== null) { res.status(no.status).json(no.body); return; }
-    keep(company, person, invitation!);
-    res.status(201).json({ filed: true, invitation: invitation!.id });
+    res.status(201).json({ filed: true, invitation: invitation!.id, ...(invitation!.person === undefined ? {} : { person: invitation!.person }) });
   });
 
   /*
@@ -199,7 +212,7 @@ export const invitationRoutes = (deps: {
   router.get('/api/invites/:id/offer', logged, async (req, res) => {
     if (!(await deps.meterOffer(req, res))) return;
     const invite = deps.store.invitationById(String(req.params.id));
-    const closed = invite === null ? 'not-found' : whyThisInvitationIsClosed(invite, invite.kind, Date.now());
+    const closed = invite === null ? 'not-found' : whyThisInvitationIsClosed(invite, [invite.kind], Date.now());
     if (closed !== null) { const a = closedAnswer(closed); res.status(a.status).json(a.body); return; }
     res.status(200).json({ kind: invite!.kind, offer: invite!.offer, expiresAt: invite!.expiresAt });
   });
@@ -218,7 +231,7 @@ export const invitationRoutes = (deps: {
       res.status(400).json({ refused: 'not-an-acceptance', error: 'this is asked with the proof the link gives, and nothing else.' });
       return;
     }
-    const invite = accepting(req, 'signer', b.data.acceptance);
+    const invite = accepting(req, ['signer'], b.data.acceptance);
     if (isAnswer(invite)) { res.status(invite.status).json(invite.body); return; }
     const rec = deps.store.getAccount(invite.accountId);
     res.status(200).json({
@@ -227,13 +240,13 @@ export const invitationRoutes = (deps: {
   });
 
   /*
-   * **A PAYEE ACCEPTS.** Signed in. What they hand over is sealed on their own
+   * **A PAYEE ACCEPTS: AN EMPLOYEE OR A VENDOR**, only as the kind the invitation was filed as. Signed in. What they hand over is sealed on their own
    * device to the company's inbox key; a field that would carry it in the clear
    * is refused by name rather than ignored, so a sender is never left believing
    * it was read. **Who accepted is not written here**: an admitting device reads
    * who the payee is from what they handed over, not from this sign-in.
    */
-  router.post('/api/invites/:id/accept-employee', logged, deps.signedIn, json, (req, res) => {
+  router.post('/api/invites/:id/accept-payee', logged, deps.signedIn, json, (req, res) => {
     for (const [field, what] of [['address', 'a receiving address'], ['wrappingPublicKey', 'a payslip key']] as const) {
       if (req.body && typeof req.body === 'object' && field in (req.body as object)) {
         res.status(400).json({
@@ -243,9 +256,10 @@ export const invitationRoutes = (deps: {
         return;
       }
     }
-    const b = z.object({ acceptance: z.string(), handover: SEALED }).strict().safeParse(req.body);
-    if (!b.success) { res.status(400).json({ refused: 'not-an-acceptance', error: 'an acceptance is the proof the link gives and what was sealed on this device, and nothing else. Nothing was sent.' }); return; }
-    const invite = accepting(req, 'employee', b.data.acceptance);
+    const b = z.object({ acceptance: z.string(), handover: SEALED, kind: z.enum(['employee', 'vendor']) }).strict().safeParse(req.body);
+    if (!b.success) { res.status(400).json({ refused: 'not-an-acceptance', error: 'an acceptance is the proof the link gives, what was sealed on this device and whether it accepts as an employee or a vendor, and nothing else. Nothing was sent.' }); return; }
+    /* Accepted only as the kind it was filed as, so a vendor's hand-over never waits on an employee's invitation, or the reverse. */
+    const invite = accepting(req, [b.data.kind], b.data.acceptance);
     if (isAnswer(invite)) { res.status(invite.status).json(invite.body); return; }
     deps.store.setHandover(invite.token, b.data.handover);
     deps.store.putInvite({ ...invite, acceptedAt: new Date().toISOString() });
@@ -263,7 +277,7 @@ export const invitationRoutes = (deps: {
   router.post('/api/invites/:id/accept-signer', logged, deps.signedIn, json, async (req, res) => {
     const b = z.object({ acceptance: z.string(), waiting: SEALED, for: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional() }).strict().safeParse(req.body);
     if (!b.success) { res.status(400).json({ refused: 'not-an-acceptance', error: 'an acceptance is the proof the link gives and what was sealed on this device, and nothing else. Nothing was sent.' }); return; }
-    const invite = accepting(req, 'signer', b.data.acceptance);
+    const invite = accepting(req, ['signer'], b.data.acceptance);
     if (isAnswer(invite)) { res.status(invite.status).json(invite.body); return; }
     const signedIn = (req as { userId?: unknown }).userId as string;
     /*

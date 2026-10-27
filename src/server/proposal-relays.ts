@@ -35,7 +35,7 @@
 import express from 'express';
 import { z } from 'zod';
 import type { Ledger, LedgerStatus } from '../core/ledger.js';
-import type { SealedAccount, SealedProposal, SealedRun } from '../core/types.js';
+import type { Invite, SealedAccount, SealedProposal, SealedRun } from '../core/types.js';
 import { runFilingRefusal, type SignedRunFiling } from '../core/run-filing.js';
 import { proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
@@ -48,6 +48,7 @@ import {
 import { ACTING_REFUSAL, actingSeatOf, type DirectorySeat } from '../midnight/seat-directory.js';
 import { CHAIN_UNREAD, type DirectoryNow } from './seat-directory-route.js';
 import type { Hex } from '../core/crypto.js';
+import { acceptsTheInvitation } from '../core/invitation.js';
 
 /** What these routes need of the service's store: the plain half of each proposal, and nothing sealed is read. */
 export interface RelayStore {
@@ -56,6 +57,8 @@ export interface RelayStore {
   listProposals(accountId: string): SealedProposal[];
   getAccount(accountId: string): Pick<SealedAccount, 'id'> | null;
   getRun?(id: string): SealedRun | null;
+  /** An invitation by its id: what the seat an invitation offered is taken under. */
+  invitationById?(id: string): Pick<Invite, 'kind' | 'accountId' | 'acceptanceHash' | 'revokedAt'> | null;
   /**
    * Writes a raised run and its proposal in one write, only while the store
    * still holds the run exactly as `before` and the proposal's name is free;
@@ -424,6 +427,34 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * is for exactly that change, and closes it; it is written down as carried out
    * once the chain no longer holds it open.
    */
+  /*
+   * THE INVITEE'S OWN CALL TAKING THE SEAT AN INVITATION BY ADDRESS OFFERED, relayed for whoever holds the invitation's
+   * acceptance. Not behind a seated signer: the invitee holds no seat until the chain carries this call, and is no member
+   * of the company. The chain is what decides: `seatInvited` is refused there unless the proposal invites the address
+   * the invitee's own coin key makes, with the seat's rights, approved at the seat bar. Only that circuit is relayed.
+   */
+  router.post('/api/invites/:id/seat', deps.signedIn, json, async (req, res) => {
+    const b = parsed(res, z.object({ acceptance: z.string().regex(HEX64), tx: TX }).strict(), req.body, 'a seat taken by invitation');
+    if (b === null) return;
+    await answerASend(req, res, async () => {
+      const id = String(req.params.id);
+      const { accountId, release } = await beforeSending(async () => {
+        const invite = deps.store.invitationById?.(id) ?? null;
+        if (invite === null || invite.kind !== 'signer' || !acceptsTheInvitation(b.acceptance, invite.acceptanceHash)) {
+          throw new NothingWasSent('no invitation to a seat answers to this acceptance, so no seat was taken. Nothing was sent.');
+        }
+        if (invite.revokedAt) throw new NothingWasSent('this invitation was taken back, so its seat was not taken. Nothing was sent.');
+        return { accountId: invite.accountId, release: held(`seat ${id}`, 'taking this seat') };
+      });
+      try {
+        const sent = await relay(accountId, b.tx, 'seatInvited', 'taking this seat');
+        return { sent: true, txRef: sent.ref };
+      } finally {
+        release();
+      }
+    }, deps.recordRefusal);
+  });
+
   router.post('/api/proposals/:id/carry', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
     const b = parsed(res, z.object({ tx: TX, circuit: z.enum(['amendSigner', 'setThreshold', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']), filer: FILER }).strict(),
       req.body, 'a change to carry out');

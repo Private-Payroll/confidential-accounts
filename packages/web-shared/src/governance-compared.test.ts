@@ -11,7 +11,7 @@ const A = 'aa'.repeat(32);
 const B = 'bb'.repeat(32);
 const C = 'cc'.repeat(32);
 const EVERY: RoundChangeOnTheWire[] = [
-  { kind: 'add-signer', leaf: A },
+  { kind: 'add-signer', address: A, scope: B },
   { kind: 'threshold', threshold: '2' },
   { kind: 'vault-threshold', vault: A, threshold: '2' },
   { kind: 'adopt-vault', vault: A },
@@ -35,7 +35,8 @@ describe('THE SAME GOVERNANCE CHANGE', () => {
 
   it('EACH THING A CHANGE IS OVER, AND EACH NUMBER IT SETS, MAKES IT ANOTHER CHANGE', () => {
     const other: Array<[RoundChangeOnTheWire, RoundChangeOnTheWire]> = [
-      [{ kind: 'add-signer', leaf: A }, { kind: 'add-signer', leaf: B }],
+      [{ kind: 'add-signer', address: A, scope: B }, { kind: 'add-signer', address: C, scope: B }],
+      [{ kind: 'add-signer', address: A, scope: B }, { kind: 'add-signer', address: A, scope: C }],
       [{ kind: 'threshold', threshold: '2' }, { kind: 'threshold', threshold: '3' }],
       [{ kind: 'vault-threshold', vault: A, threshold: '2' }, { kind: 'vault-threshold', vault: B, threshold: '2' }],
       [{ kind: 'vault-threshold', vault: A, threshold: '2' }, { kind: 'vault-threshold', vault: A, threshold: '3' }],

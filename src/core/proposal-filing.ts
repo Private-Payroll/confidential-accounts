@@ -122,10 +122,16 @@ export const paysCommitmentOf = (pays: ProposalPays, salt: string, assetBlinding
 /** What a governance proposal changes, as its sealed payload holds it. */
 export type GovernancePayloadBody =
   /**
-   * A seat: the person waiting for it, the invitation naming its leaf, carried to their own entry once seated, and
-   * the seat raising it as an inviter record (`inviter`), handed to the person's wallet on its first records-key ask.
+   * A seat by invitation: the person invited, the commitment to their address and the rights their seat will carry
+   * (`invite`, what the proposal's payload is made from), the signed invitation naming their leaf, carried to their
+   * own entry once seated, and the seat raising it as an inviter record (`inviter`), handed to the person's wallet on
+   * its first records-key ask. An invitation made by address waits for nobody, so it names no request
+   * (`signerId`); its invitation names the proposal instead.
    */
-  | { readonly signerId: string; readonly invited?: SignedSeatInvitation; readonly inviter?: Inviter }
+  | {
+    readonly signerId?: string; readonly invite: { readonly address: string; readonly scope: string };
+    readonly invited?: SignedSeatInvitation; readonly inviter?: Inviter;
+  }
   | { readonly newThreshold: number }
   | { readonly vault: Hex; readonly newThreshold: number }
   /** A vault's spending policy for one currency: the currency's blinded key, never the currency, and the policy's commitment. */
@@ -252,6 +258,16 @@ const addSignersOpened = (
     return [];
   }
 });
+
+/**
+ * Every invitation made by address the company's proposals to add a seat carry: the ones that name the proposal
+ * raised for the address and no leaf. Which seat each took is the account's history's to say, never this list's.
+ */
+export const invitationsByAddressIn = (
+  proposals: readonly ProposalOpened[], accountId: string, viewingKey: KeysHeld,
+): SignedSeatInvitation[] => addSignersOpened(proposals, accountId, viewingKey)
+  .map((x) => x.invited)
+  .filter((x): x is SignedSeatInvitation => x !== undefined && x.terms.leaf === undefined && x.terms.invite !== undefined && x.terms.proposal !== undefined);
 
 /**
  * The proposal adding `seat`: the one whose invitation names that leaf, read by

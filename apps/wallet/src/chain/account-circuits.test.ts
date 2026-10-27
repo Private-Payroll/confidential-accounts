@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createCircuitContext, createConstructorContext, sampleContractAddress } from '@midnight-ntwrk/compact-runtime';
 import * as ocrt from '@midnightntwrk/onchain-runtime-v4';
 import { Contract as Vault, pureCircuits as vaultPure } from '../../../../contracts/managed-vault/contract/index.js';
-import { pureCircuits as accountPure } from '../../../../contracts/managed/contract/index.js';
+import { Contract as Account, pureCircuits as accountPure } from '../../../../contracts/managed/contract/index.js';
+import { witnesses as accountWitnesses } from '../../../../contracts/src/witnesses.js';
 import { AccountSimulator, change, payoutTreeOf, privateStateFor, vaultRunOf } from '../../../../contracts/test/simulator.js';
 import { noFurtherNote } from '../../../../src/midnight/vault-step-notes.js';
 import { startTheVault, TEST_VAULT_SECRET } from '../../../../contracts/test/start-a-vault.js';
@@ -107,6 +108,12 @@ describe('the account circuits the wallet holds keys for', () => {
     // RED WHEN: an account circuit no vault circuit calls is served to the wallet's prover as if a vault had called it
     for (const c of ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL) expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS, c).toContain(c);
     expect([...ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL].sort()).toEqual(['approveVaultChange', 'recordPaymentFromVault']);
+  });
+
+  it('hold keys only for circuits the compiled account has', () => {
+    const compiled = Object.keys(new Account(accountWitnesses as never).impureCircuits);
+    /* RED WHEN: the wallet is given a key for, or asked to prove, a circuit the account no longer has under that name. */
+    for (const c of ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR) expect(compiled, c).toContain(c);
   });
 
   it('are the circuits the wallet proves itself and the ones its vault circuits call, each once', () => {

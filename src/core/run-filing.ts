@@ -42,9 +42,34 @@ export const signRunFiling = (company: string, r: RunToFile, signingSecret: Hex)
 export const RUN_ID = /^run_[A-Za-z0-9_-]{12}$/u;
 
 /**
+ * Every field a run is filed with beside its seal, and `provenance`, the word a list of runs is served with for
+ * which ledger wrote each. Anything else - a person, a key, a label - is refused, never kept.
+ */
+const RUN_FILING_FIELDS: ReadonlySet<string> = new Set(['id', 'accountId', 'period', 'status', 'proposalIds', 'settledAt', 'payslips', 'keyEpoch', 'sealed', 'filedBy', 'wiring', 'provenance']);
+const PROVENANCES: readonly unknown[] = ['chain', 'simulated', 'unknown'];
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const onlyFields = (v: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(v).every((k) => allowed.includes(k));
+
+/**
+ * Why `p` is not a payslip as a run is filed with one, or null: its sealed slip,
+ * the slip's key wrapped to the payee, and its sealed receipt, and nothing
+ * beside them that could say whose it is.
+ */
+const payslipRefusal = (p: unknown): string | null => {
+  if (!isObject(p) || !isObject(p.wrapped) || !isObject(p.slip)) return 'carries no sealed slip';
+  if (!onlyFields(p, ['wrapped', 'slip', 'receipt'])) return 'carries something beside its sealed slip and receipt';
+  if (p.receipt !== undefined && (!isObject(p.receipt) || !onlyFields(p.receipt, ['wrapped', 'sealed']))) {
+    return 'carries a receipt with something beside its ciphertext';
+  }
+  return null;
+};
+
+/**
  * Why `f` is not a run a seat of `company` filed whole, or null when it is:
  * a run of this company under a run's name, for a month written as a month, at
- * a key epoch, with sealed numbers and payslips, and signed over exactly that.
+ * a key epoch, with sealed numbers and payslips that are ciphertext alone,
+ * nothing beside the seal a run is not filed with, and signed over exactly that.
  */
 export const runFilingRefusal = (company: string, f: unknown): string | null => {
   if (typeof f !== 'object' || f === null) return 'it is not a run';
@@ -64,6 +89,13 @@ export const runFilingRefusal = (company: string, f: unknown): string | null => 
     return 'it carries no sealed numbers';
   }
   if (!Array.isArray(r.payslips)) return 'it carries no payslips';
+  const beside = Object.keys(r).filter((k) => !RUN_FILING_FIELDS.has(k));
+  if (beside.length > 0) return `it carries ${beside.sort().join(', ')} beside its seal, which a run is never filed with`;
+  if ('provenance' in r && !PROVENANCES.includes((r as { provenance?: unknown }).provenance)) return 'it says which ledger wrote it in no word a run is served with';
+  for (const p of r.payslips as unknown[]) {
+    const why = payslipRefusal(p);
+    if (why !== null) return `a payslip ${why}`;
+  }
   if (r.proposalIds !== undefined && (!Array.isArray(r.proposalIds) || r.proposalIds.some((p) => typeof p !== 'string'))) {
     return 'its proposals are not a list of names';
   }

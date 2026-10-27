@@ -8,16 +8,18 @@
  * the people, the runs the company already has, the rounds its proposals
  * record - is handed in.
  */
-import { canonical, newSymmetricKey, seal, wrapKey, type Hex } from './crypto.js';
+import { canonical, newSymmetricKey, seal, utf8, wrapKey, type Hex } from './crypto.js';
 import { ledgerFormOf, subtotals, type AssetId, type AssetRegistry, type LedgerForm } from './assets.js';
 import { NO_COMPANY, NO_LABEL, NO_LEAF, untilText } from './payslip-open.js';
 import { canonicalPeriod } from './run-legs.js';
 import { isLiveRound } from './retry-cover.js';
 import { payrollPayee } from './movement.js';
-import type { Employee, PayrollRun, RosterEmployee, RunRepeatRecord, RunSkip, RunSkips } from './types.js';
+import type { Employee, PayrollRun, RosterEmployee, RunList, RunRepeatRecord, RunSkip, RunSkips } from './types.js';
+import { VENDOR_ID } from './invitation.js';
 import type { PayrollRound } from './account.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { emptyRegister, decide } from '../midnight/run-skips.js';
+import { payLineFor } from './payable-days.js';
 
 
 export interface EmployeeSpec {
@@ -130,6 +132,21 @@ export const recordSkips = (
     });
   });
   return { people, decisions };
+};
+
+/**
+ * **THE SAME RECORD, WHEN EACH PERSON LEFT OUT HAS THEIR OWN REASON**: those named
+ * in an acknowledgement, and those the draw sets aside because the period lies
+ * outside their dates. Built through `decide` exactly as `recordSkips` is.
+ */
+export const recordSkipsEach = (
+  runId: string, left: readonly { readonly person: RunSkip; readonly by: string; readonly reason: string }[], at: string,
+): RunSkips => {
+  let decisions = emptyRegister(runId, left.length);
+  left.forEach((l, index) => {
+    decisions = decide(decisions, { index, skip: true, by: l.by, at, reason: l.reason });
+  });
+  return { people: left.map((l) => l.person), decisions };
 };
 
 /**
@@ -258,7 +275,7 @@ export const acknowledgedRepeats = (
  * is somebody else's.
  */
 export const paidToOf = (
-  spec: EmployeeSpec, existing?: RosterEmployee,
+  spec: EmployeeSpec, existing?: RunPayee,
 ): string | null => {
   if (!existing) return null;
   if (existing.name !== spec.name) {
@@ -303,18 +320,44 @@ export function sealReceipt(
 }
 
 /**
- * **WHO A RUN DRAWN FROM THE ROSTER PAYS, AND WHO IT LEAVES OUT ON THE
- * RECORD.** `all` is the company's people; `employeeIds` the subset chosen,
+ * **EVERY PAYSLIP IS SEALED AT THIS MANY BYTES**, its canonical text followed by
+ * spaces, as every receipt is one width. Any signed-in person can list a
+ * company's slips for a month, so a slip's length must say nothing about the
+ * name or the amount inside it.
+ */
+export const SLIP_BYTES = 1024;
+
+/** A slip's text padded to `SLIP_BYTES`; refuses one longer than that rather than seal a slip whose length stands out. */
+export const slipTextOf = (contents: Record<string, unknown>, name: string): string => {
+  const text = canonical(contents);
+  const bytes = utf8(text).length;
+  if (bytes > SLIP_BYTES) {
+    throw new Error(`${name}'s payslip would be ${bytes} bytes, more than the ${SLIP_BYTES} every payslip is sealed at, `
+      + 'so its length would set it apart. Nothing was drawn. Shorten the name on their record, then draw the run again.');
+  }
+  return text + ' '.repeat(SLIP_BYTES - bytes);
+};
+
+/**
+ * **SOMEBODY A RUN CAN PAY**: an employee's record or a vendor's entry, read for
+ * what a run needs of either - who they are, where they stand, where they are
+ * paid and the key their payslip is sealed to.
+ */
+export type RunPayee = Pick<RosterEmployee, 'id' | 'name' | 'status' | 'address' | 'wrappingPublicKey' | 'payslipKeyFrom'>;
+
+/**
+ * **WHO A RUN DRAWN FROM ONE LIST PAYS, AND WHO IT LEAVES OUT ON THE
+ * RECORD.** `all` is the list's people; `employeeIds` the subset chosen,
  * when one is; `skipPending` the confirmation, by name and with a reason, of
  * everybody it would leave out; `isWaitingOnUs` whether a pending person's
  * handover waits on an admin rather than on them. Refused, naming them, when
  * anybody would be left out who is not in the confirmation, when the
  * confirmation names anybody who is not, and when nobody is left to pay.
  */
-export function peopleDrawn(
-  all: readonly RosterEmployee[], employeeIds: readonly string[] | undefined,
-  skipPending: SkipAcknowledgement | undefined, isWaitingOnUs: (e: RosterEmployee) => boolean,
-): { readonly roster: RosterEmployee[]; readonly leftOut?: RunSkip[] } {
+export function peopleDrawn<P extends RunPayee>(
+  all: readonly P[], employeeIds: readonly string[] | undefined,
+  skipPending: SkipAcknowledgement | undefined, isWaitingOnUs: (e: P) => boolean,
+): { readonly roster: P[]; readonly leftOut?: RunSkip[] } {
   const asked = all.filter(e => !employeeIds || employeeIds.includes(e.id));
   /*
    * **AND WHOEVER THE SUBSET LEAVES OUT IS LEFT OUT ON THE RECORD.** Somebody
@@ -476,6 +519,15 @@ export function refuseAPeriodAlreadyRaised(period: string, runs: ReadonlyArray<{
 }
 
 /**
+ * The runs a round is live for: raised, and not withdrawn or blocked on the chain, whatever the run's own record still
+ * says. A raise can reach the chain and fail to file the run again as proposed, so the record alone is not the answer.
+ */
+export const runsWithALiveRound = <R extends { readonly id: string }>(runs: readonly R[], rounds: readonly PayrollRound[]): R[] => {
+  const live = rounds.filter(isLiveRound);
+  return runs.filter(r => live.some(x => x.runId === r.id));
+};
+
+/**
  * **A DRAFT RUN FOR THIS PERIOD THAT A RAISE HAS ALREADY BEEN ATTEMPTED FOR.**
  * Refused at the roster door, which draws up one run per period, because
  * drawing it up again opens a second round over people the first may pay.
@@ -484,8 +536,7 @@ export function refuseAPayrollThatMayBeOnChain(
   period: string, runs: ReadonlyArray<{ readonly id: string; readonly period: string }>, rounds: readonly PayrollRound[],
 ): void {
   const live = rounds.filter(isLiveRound);
-  const raised = runs
-    .filter(r => samePeriod(r.period, period) && live.some(x => x.runId === r.id));
+  const raised = runsWithALiveRound(runs, rounds).filter(r => samePeriod(r.period, period));
   if (raised.length === 0) return;
   const seen = raised.some(r => live.some(x => x.runId === r.id && x.raisedAt));
   throw new Error(
@@ -505,22 +556,31 @@ export function refuseAPayrollThatMayBeOnChain(
 /**
  * **WHAT ONE PERSON IS PAID ON A RUN DRAWN FOR `period`**, worked out here and
  * nowhere else: every run drawn on a device takes each person's amount from
- * this. Today it is the person's base amount for any month. Pay for part of a
- * month, or a bonus as a pay item of its own, is worked out here too, from the
- * person and the month, so nothing that draws a run changes when it is.
+ * this. It is the salary line in force on the period's last day (`payLineFor`),
+ * paid for the whole month. Pay for part of a month, or a bonus as a pay item of
+ * its own, is worked out here too, from the person and the month, so nothing that
+ * draws a run changes when it is. Throws for a period before any line takes effect.
  */
-export const amountOnTheRun = (person: Pick<RosterEmployee, 'baseAmount'>, _period: string): bigint => person.baseAmount;
+export const amountOnTheRun = (person: Pick<RosterEmployee, 'name' | 'baseAmount' | 'startDate' | 'pay'>, period: string): bigint => {
+  const line = payLineFor(person, period);
+  if (line === null) throw new Error(`${person.name} has no salary in force by the end of ${canonicalPeriod(period)}, so this run cannot say what to pay them`);
+  return line.amount;
+};
 
 /**
  * **EVERY PERSON ON A RUN, AND THEIR PAYSLIP, AS THE RUN IS DRAWN.** One entry
  * per spec, in order, each sealed to the payslip key the person's roster entry
- * carries. `roster[i]` is the roster entry beside `specs[i]`; a spec with none
+ * carries. A payslip carries nothing beside its ciphertext that says whose it
+ * is; the person's sealed entry names where theirs sits (`Employee.slip`). `roster[i]` is the roster entry beside `specs[i]`; a spec with none
  * is paid only through `mint`, which names them and makes a payslip key for
  * them, handing its secret back once; a run drawn without `mint` refuses one.
+ * A vendor added by address who has not claimed their place has no payslip key:
+ * they are paid at the address typed and get no payslip and no receipt. Anybody
+ * else with no key is refused, so no employee is paid without one.
  */
 export function peopleOnTheRun(input: {
   readonly runId: string; readonly period: string; readonly specs: readonly EmployeeSpec[];
-  readonly roster?: readonly RosterEmployee[]; readonly assets: AssetRegistry;
+  readonly roster?: readonly RunPayee[]; readonly assets: AssetRegistry;
   readonly company: { readonly account: string | null; readonly label: CompanyLabel | null };
   readonly mint?: () => { readonly id: string; readonly publicKey: Hex; readonly secret: Hex };
 }): { employees: Employee[]; payslips: PayrollRun['payslips']; secrets: Array<{ employeeId: string; name: string; wrappingSecret: Hex }> } {
@@ -550,10 +610,10 @@ export function peopleOnTheRun(input: {
     }
     const minted = existing ? null : mint!();
     const id = existing?.id ?? minted!.id;
-    let publicKey: string;
+    let publicKey: string | null;
     if (existing) {
-      if (!existing.wrappingPublicKey) throw new Error(`${existing.name} has no key yet`);
-      publicKey = existing.wrappingPublicKey;
+      if (!existing.wrappingPublicKey && !VENDOR_ID.test(existing.id)) throw new Error(`${existing.name} has no key yet`);
+      publicKey = existing.wrappingPublicKey || null;
     } else {
       /*
        * **THE ONE PLACE LEFT THAT MINTS A PAYSLIP KEY.**
@@ -590,7 +650,7 @@ export function peopleOnTheRun(input: {
     const form: LedgerForm = existing?.address?.kind
       ?? (ledgerFormOf(assets.require(spec.asset), 'shielded').of === 'token' ? 'shielded' : 'unshielded');
     employees.push({
-      id, name: spec.name, wrappingPublicKey: publicKey,
+      id, name: spec.name, wrappingPublicKey: publicKey as Hex | null, slip: publicKey === null ? null : payslips.length,
       asset: spec.asset, amount: spec.amount, form,
       ...(paidTo ? { paidTo } : {}),
     });
@@ -626,25 +686,24 @@ export function peopleOnTheRun(input: {
      * whatever account the company has. An ad hoc payee's key was minted
      * above and no company produces it, so there is none to name.
      *
-     * **IT IS SEALED INSIDE THE SLIP AS WELL AS WRITTEN BESIDE IT.** The copy
-     * beside it is what the slip is filed and found by; the sealed one is
-     * what the payee's page believes, so a copy changed in the store names
-     * an address the page then refuses rather than one it shows.
+     * **IT IS SEALED INSIDE THE SLIP AND WRITTEN NOWHERE ELSE**, as the
+     * person and the key are: beside the ciphertext they would tell the
+     * service whose each slip is. The payee's device tries every slip of the
+     * company's month with its own key and believes only the label sealed in.
      */
+    if (publicKey === null) return;
     const issuedBy = existing
       ? (existing.payslipKeyFrom ?? company.label)
       : null;
     const slipKey = newSymmetricKey();
-    const slip = seal(canonical({
+    const slip = seal(slipTextOf({
       employeeId: id, name: spec.name, asset: spec.asset, amount: spec.amount, period,
       paidTo,
       issuedBy: issuedBy === null ? null : issuedBy.toLowerCase(),
-    }), slipKey);
+    }, spec.name), slipKey);
     payslips.push({
-      employeeId: id, wrapped: wrapKey(slipKey, publicKey), slip, issuedBy,
-      /* The public key it is wrapped to, which is what its payee asks by. */
-      sealedTo: publicKey.toLowerCase(),
-      /* A stand-in until the payee's leg is raised; see `withReceipts`. */
+      wrapped: wrapKey(slipKey, publicKey), slip,
+      /* A stand-in until the payee's leg is raised; see `receiptsOf`. */
       receipt: sealReceipt(runId, publicKey, company.account, null,
         company.label),
     });
@@ -725,12 +784,13 @@ export function runsRepeatingIn(
 
 /**
  * **THE RUN AS DRAWN**: its people and payslips, a subtotal per asset, no leg
- * raised yet, and the record of who it leaves out and what it repeats.
+ * raised yet, the record of who it leaves out and what it repeats, and the list
+ * it pays.
  */
 export const assembledRun = (input: {
   readonly runId: string; readonly accountId: string; readonly period: string;
   readonly employees: Employee[]; readonly payslips: PayrollRun['payslips'];
-  readonly skips?: RunSkips; readonly repeats?: RunRepeatRecord;
+  readonly skips?: RunSkips; readonly repeats?: RunRepeatRecord; readonly list?: RunList;
 }): PayrollRun => ({
   id: input.runId,
   accountId: input.accountId,
@@ -750,4 +810,5 @@ export const assembledRun = (input: {
   status: 'draft',
   ...(input.skips ? { skips: input.skips } : {}),
   ...(input.repeats ? { repeats: input.repeats } : {}),
+  ...(input.list ? { list: input.list } : {}),
 });

@@ -190,6 +190,8 @@ const builder = (log: string[]): VaultBuilderClient => ({
   accountCallChain: async () => { throw new Error('a vault operation reads both contracts at one block, never the account alone'); },
   anchorsOnChain: async () => { throw new Error('a vault operation never reads the account\'s anchors'); },
   roundsOnChain: async () => { throw new Error('a vault operation never reads where the company\'s proposals stand'); },
+  invitedSeats: async () => { throw new Error('a vault operation never reads which seat an invitation took'); },
+  seatInvited: async () => { throw new Error('a vault operation never takes a seat'); },
   anchor: async () => { throw new Error('a vault operation never anchors the company\'s records'); },
   /* The old temporary-key deploy and hand-over: creating a vault never asks for either. */
   deploy: async () => { log.push('build deploy'); return { vault: VAULT, temporaryKey: { tag: 'schnorr', value: walletKey(0x77) }, tx: 'D' }; },

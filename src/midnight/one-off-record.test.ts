@@ -69,15 +69,22 @@ describe('A ONE-OFF PAYMENT FROM A VAULT, KEPT AS A RECORD OF THE COMPANY\'S OF 
     expect(ONE_OFF_SEALED_BYTES).toBeGreaterThan(4 * (128 + 500));
   });
 
-  it('IS PAID THE WAY ITS ADDRESS SAYS, IN A CURRENCY THAT HAS THAT FORM, TO A PAYEE NAMED BY THE ADDRESS ALONE FOR NOW', () => {
+  it('IS PAID THE WAY ITS ADDRESS SAYS, IN A CURRENCY THAT HAS THAT FORM, TO AN ADDRESS OR A VENDOR ENTRY WITH ITS ADDRESS BESIDE IT', () => {
     /* RED WHEN: a one-off set to private is sealed with a public address (the address decides the form). */
     expect(() => oneOffTidied(given({ form: 'private', payee: { ref: null, name: null, address: PUBLICLY, network: NET } }), REGISTRY))
       .toThrow(/set to private and the address is a public one/u);
     expect(() => oneOffTidied(given({ form: 'public' }), REGISTRY)).toThrow(/set to public and the address is a private one/u);
     expect(oneOffTidied(given({ form: 'public', payee: { ref: null, name: null, address: PUBLICLY, network: NET } }), REGISTRY).paidTo.kind).toBe('unshielded');
-    /* RED WHEN: a vendor entry is named before the vendor list exists to name it. */
-    expect(() => oneOffTidied(given({ payee: { ref: 'vnd_1' as never, name: null, address: PRIVATELY, network: NET } }), REGISTRY))
-      .toThrow(/vendor/u);
+    /* RED WHEN: a one-off names a vendor by anything but a vendor entry's id, which could carry a name. */
+    for (const ref of ['vnd_1', 'ven_00', 'emp_0123456789abcdef0123', 'ven_0123456789ABCDEF0123', 7]) {
+      expect(() => oneOffTidied(given({ payee: { ref: ref as never, name: null, address: PRIVATELY, network: NET } }), REGISTRY)).toThrow(/vendor entry/u);
+    }
+    /* RED WHEN: a one-off to a vendor entry is refused, or kept without the entry it names. */
+    const toVendor = given({ payee: { ref: 'ven_0123456789abcdef0123', name: null, address: PRIVATELY, network: NET } });
+    expect(oneOffTidied(toVendor, REGISTRY).payee.ref).toBe('ven_0123456789abcdef0123');
+    expect(openOneOff(sealed(toVendor), KEY, REGISTRY).payee).toEqual(toVendor.payee);
+    /* RED WHEN: naming a vendor entry changes the size a one-off is sealed at. */
+    expect(sealed(toVendor).sealed.body.length).toBe(sealed().sealed.body.length);
     /* RED WHEN: nothing, or less than nothing, is paid. */
     expect(() => oneOffTidied(given({ amount: 0n }), REGISTRY)).toThrow(/positive amount/u);
     /* RED WHEN: a one-off is kept with no reason to recognise it by. */

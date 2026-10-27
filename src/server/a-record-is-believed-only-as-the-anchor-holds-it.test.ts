@@ -28,7 +28,7 @@ import { anchoredOver, anchorFunctions, heldEntering, anchorSentInATest } from '
 import { enteredHere } from '../testing/records-entered.js';
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { anchorServiceFor, anchorTheRecordsHere, type AnchorDoors, type Anchored } from 'vaults-web-shared/records-anchored-here.js';
-import { invitePayeeHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import {
   believedProposalIdsOnChainHere, believedRunsHere, keptRunHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere,
@@ -40,6 +40,8 @@ import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeDirectory, acmeDirectoryDeps, ACME, ADA, ADDRESS, BO, apiAs, CO, fromAda, KEY, ORIGIN, peopleRecords, personVersions, sendAs,
   store, vaultRecords, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+/** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
+const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
 aCompanyOfTwoSeats();
 
@@ -78,14 +80,14 @@ const serving = (id: string, version: SealedCompanyRecord) => (body: unknown) =>
   ...(body as object),
   people: ((body as { people: Array<{ filed: { id: string } }> }).people).map((row) => (row.filed.id === id ? { ...row, filed: toCompanyWire(version) } : row)),
 });
-const pay = { name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_101n, startDate: '2026-10-01' };
+const pay = { name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_101n, classification: 'full-time' as const, startDate: '2026-10-01' };
 
 describe('THE COMPANY\'S PEOPLE, READ THROUGH THE ANCHOR', () => {
   let pat = '';
   it('A PERSON\'S EARLIER VERSION, SERVED AFTER A NEWER ONE IS ANCHORED, IS NOT BELIEVED, AND THE ANCHORED ONE IS', async () => {
-    pat = (await invitePayeeHere(ACME, ADA, pay, ORIGIN, fromAda)).person!;
+    pat = (await inviteHere(ACME, ADA, 'employee', pay, ORIGIN, fromAda)).person!;
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === pat)!;
-    await setStatusHere(peopleOn(ADA), here, 'leaver');
+    await setStatusHere(peopleOn(ADA), here, 'leaver', LEFT);
     await anchoredByAda();
     const [first, second] = await personVersions(pat);
     /* RED WHEN: a device believes a version older than the one the anchor holds - a leaver served as still invited. */
@@ -95,7 +97,7 @@ describe('THE COMPANY\'S PEOPLE, READ THROUGH THE ANCHOR', () => {
 
   it('THE NEWEST VERSION NOT YET ANCHORED IS BELIEVED AS SUCH, AND THE ANCHORED ONE SERVED IN ITS PLACE IS NOT THE NEWEST', async () => {
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === pat)!;
-    await setStatusHere(peopleOn(ADA), here, 'leaver');
+    await setStatusHere(peopleOn(ADA), here, 'leaver', LEFT);
     const versions = await personVersions(pat);
     /* RED WHEN: a version entered and not yet anchored is refused as forged - every filing would wait a day to be read. */
     expect((await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === pat)?.version).toBe(3);
@@ -138,7 +140,7 @@ describe('THE COMPANY\'S PEOPLE, READ THROUGH THE ANCHOR', () => {
     /* RED WHEN: a person nothing names is read as withheld - every list would be refused. */
     expect((await readPeopleHere(peopleOn(ADA))).notBelieved).not.toContain(pat);
     /* A person invited and entered, and not yet anchored, left out of the list. */
-    const sam = (await invitePayeeHere(ACME, ADA, { ...pay, name: 'Sam', email: 'sam@acme.co' }, ORIGIN, fromAda)).person!;
+    const sam = (await inviteHere(ACME, ADA, 'employee', { ...pay, name: 'Sam', email: 'sam@acme.co' }, ORIGIN, fromAda)).person!;
     const samLeftOut = (body: unknown) => ({
       ...(body as object), people: (body as { people: Array<{ filed: { id: string } }> }).people.filter((row) => row.filed.id !== sam),
     });
@@ -306,7 +308,7 @@ describe('A VAULT\'S RECORDS, READ THROUGH THE ANCHOR', () => {
 
 describe('A SEAT\'S ANCHORED RECORDS, READ AFTER ITS ROLE CHANGES', () => {
   it('A PERSON A SEAT FILED AND THE ANCHOR HOLDS IS STILL READ AFTER THAT SEAT MAY NO LONGER FILE ONE', async () => {
-    const q = (await invitePayeeHere(ACME, ADA, { ...pay, name: 'Quinn', email: 'quinn@acme.co', baseAmount: 500_102n }, ORIGIN, fromAda)).person!;
+    const q = (await inviteHere(ACME, ADA, 'employee', { ...pay, name: 'Quinn', email: 'quinn@acme.co', baseAmount: 500_102n }, ORIGIN, fromAda)).person!;
     await anchoredByAda();
     /* RED WHEN: a directory served older than the one anchored is believed - a seat's role or retirement could be hidden from a device. */
     const served = store.directoryFilingsOf(CO);

@@ -159,7 +159,7 @@ const seeded = await (async () => {
     for (let i = 0; i < 3; i++) {
       payroll.hireDirect(account, {
         name: `${name} payee ${i}`, email: `p${i}@${name.toLowerCase()}.example`, title: 'Eng', asset: TEST_TOKEN,
-        baseAmount: 100_00n,
+        baseAmount: 100_00n, startDate: '2026-01-01',
       }, viewingKey);
     }
     const { run } = await payroll.createRunFromRoster(account, '2026-08', viewingKey);

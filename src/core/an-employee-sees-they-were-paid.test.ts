@@ -11,7 +11,7 @@ import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { payslipKeypairForWallet } from './payslip-key.js';
 import { sealHandover, openHandover, HANDOVER_SCHEMA } from './invite-handover.js';
 import { sealToInbox } from './sealed-records.js';
-import { openPayslip, payslipPublicKeyOf, NOT_YOUR_PAYSLIP } from './payslip-open.js';
+import { openPayslip, NOT_YOUR_PAYSLIP, type SealedPayslip } from './payslip-open.js';
 import { assets as productAssets } from './assets.js';
 import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
@@ -28,7 +28,8 @@ function present<T>(value: T | undefined): T {
 
 /**
  * **A PAYEE OPENS THEIR OWN PAYSLIPS, AND ONLY THEIRS, WITH THE KEY THEIR
- * WALLET WORKS OUT - FROM THE COMPANY LABEL EACH SLIP NAMES.**
+ * WALLET WORKS OUT - FROM THE COMPANY LABEL EACH SLIP NAMES.** The service
+ * hands over every slip of a company's month; the payee's key opens theirs.
  *
  * Every key below comes from a wallet's own words through the real derivation,
  * named a company label, exactly as a payee's browser derives it.
@@ -46,6 +47,13 @@ const harness = (registry: AssetRegistry = registryWithTestPrivateForms()) => {
   return { store, accounts, payroll, invites };
 };
 type H = ReturnType<typeof harness>;
+
+/** What a payee's device does: asks for every slip of the company's months, in the order given, and keeps those its key opens. */
+const slipsOpenedBy = (h: H, label: string, periods: readonly string[], secret: string): SealedPayslip[] =>
+  periods.flatMap((period) => h.payroll.payslipsOf(label, period)).filter((s) => {
+    try { openPayslip(s, secret); return true; } catch (e) { if ((e as Error).message !== NOT_YOUR_PAYSLIP) throw e; return false; }
+  });
+const BOTH = ['2026-09', '2026-08'] as const;
 
 const signIn = (h: H, email: string): string => {
   const id = 'usr_' + email.replace(/[^a-z0-9]/gi, '_');
@@ -101,11 +109,10 @@ describe('an employee sees each payment made to them, and nobody else\'s', () =>
     await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
     await h.payroll.createRunFromRoster(c.accountId, '2026-09', c.viewingKey);
 
-    const danas = h.payroll.payslipsFor(dana.keys.publicKey);
-    /*
-     * RED WHEN the lookup returns the company's slips rather than this key's:
-     * four slips, and Eli's two do not open with Dana's key.
-     */
+    /* RED WHEN the company's month is not every slip of its runs for it: one for each person. */
+    expect(h.payroll.payslipsOf(c.label, '2026-08')).toHaveLength(2);
+    const danas = slipsOpenedBy(h, c.label, BOTH, dana.keys.secret);
+    /* RED WHEN Dana's key opens anything but her own two slips. */
     expect(danas.map(s => s.period)).toEqual(['2026-09', '2026-08']);
     for (const s of danas) {
       const opened = openPayslip(s, dana.keys.secret);
@@ -118,27 +125,45 @@ describe('an employee sees each payment made to them, and nobody else\'s', () =>
       expect(() => openPayslip(s, eli.keys.secret)).toThrow(NOT_YOUR_PAYSLIP);
     }
     /* Eli's are Eli's. */
-    expect(h.payroll.payslipsFor(eli.keys.publicKey).map(s => openPayslip(s, eli.keys.secret).payslip.name))
+    expect(slipsOpenedBy(h, c.label, BOTH, eli.keys.secret).map(s => openPayslip(s, eli.keys.secret).payslip.name))
       .toEqual(['Eli', 'Eli']);
-    /* A key nobody was hired with has nothing. */
-    expect(h.payroll.payslipsFor(payslipKeypairForWallet(newWords(), c.label, ORIGIN).publicKey))
-      .toEqual([]);
+    /* A key nobody was hired with opens nothing. */
+    expect(slipsOpenedBy(h, c.label, BOTH, payslipKeypairForWallet(newWords(), c.label, ORIGIN).secret)).toEqual([]);
   });
 
-  it('WHAT THE SERVICE HANDS OVER IS CIPHERTEXT: NO NAME, NO AMOUNT, NO SECRET', async () => {
+  it('WHAT THE SERVICE HANDS OVER IS CIPHERTEXT: NO NAME, NO AMOUNT, NO SECRET, AND NOTHING SAYING WHOSE', async () => {
     const c = await company(h);
     const dana = hire(h, c, 'Dana Whitfield', 6_200_00n, newWords(), c.label, 'a1');
     await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
-    const handed = h.payroll.payslipsFor(dana.keys.publicKey);
+    const handed = h.payroll.payslipsOf(c.label, '2026-08');
     /* RED WHEN the slip is handed over opened, or with anything beside the run's own facts. */
     expect(handed).toHaveLength(1);
     expect(Object.keys(present(handed[0])).sort()).toEqual(
-      ['issuedBy', 'period', 'receipt', 'runId', 'settledAt', 'slip', 'status', 'wiring', 'wrapped']);
+      ['period', 'receipt', 'runId', 'settledAt', 'slip', 'status', 'wiring', 'wrapped']);
     /* A draft has not been raised, so its receipt names no payment yet. */
     expect(openPayslip(present(handed[0]), dana.keys.secret).receipt).toBeNull();
     const text = JSON.stringify(handed);
     expect(text).not.toContain('Dana Whitfield');
     expect(text).not.toContain(dana.keys.secret);
+    /* RED WHEN a slip handed over names its person, the key it is sealed to or the label it names. */
+    for (const v of [dana.id, dana.keys.publicKey, c.label]) expect(text).not.toContain(v);
+  });
+
+  it('EVERY SLIP SEALS TO ONE SIZE, WHATEVER THE NAME AND THE AMOUNT, SO ITS SIZE SAYS NEITHER', async () => {
+    const c = await company(h);
+    hire(h, c, 'Al', 3_000_00n, newWords(), c.label, 'a1');
+    hire(h, c, 'Bartholomew Featherstonehaugh', 30_000_00n, newWords(), c.label, 'b2');
+    hire(h, c, 'Cy Ng-Oyelaran-Vasquez de la Torre', 300_000_00n, newWords(), c.label, 'c3');
+    await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
+    const handed = h.payroll.payslipsOf(c.label, '2026-08');
+    expect(handed).toHaveLength(3);
+    /* RED WHEN: a slip's sealed length follows the person's name or the digits of their pay. */
+    expect(new Set(handed.map((s) => s.slip.body.length)).size).toBe(1);
+    expect(new Set(handed.map((s) => JSON.stringify(s.wrapped).length)).size).toBe(1);
+    /* RED WHEN: a slip too long to hide its length among the others is sealed anyway. */
+    const d = await company(h);
+    hire(h, d, 'N'.repeat(1100), 1_00n, newWords(), d.label, 'd4');
+    await expect(h.payroll.createRunFromRoster(d.accountId, '2026-08', d.viewingKey)).rejects.toThrow(/more than the 1024 every payslip is sealed at/u);
   });
 
   it('THE HANDOVER CARRIES THE LABEL THE KEY CAME FROM, AND NOTHING ELSE NEW', async () => {
@@ -162,12 +187,13 @@ describe('an employee sees each payment made to them, and nobody else\'s', () =>
       { name: 'Kit', asset: TEST_TOKEN, amount: 1_00n },
     ], c.viewingKey);
     const [kit] = secrets;
-    const found = h.payroll.payslipsFor(payslipPublicKeyOf(present(kit).wrappingSecret));
-    /* RED WHEN the lookup reads the roster alone: a payee with no roster record finds nothing. */
+    const found = slipsOpenedBy(h, c.label, ['2026-08'], present(kit).wrappingSecret);
+    /* RED WHEN a payee with no roster record finds nothing. */
     expect(found.map(s => s.runId)).toEqual([run.id]);
-    expect(openPayslip(present(found[0]), present(kit).wrappingSecret).payslip.name).toBe('Kit');
+    const opened = openPayslip(present(found[0]), present(kit).wrappingSecret);
+    expect(opened.payslip.name).toBe('Kit');
     /* No company label produced that key, so the slip names none. */
-    expect(present(found[0]).issuedBy).toBeNull();
+    expect(opened.issuedBy).toBeNull();
   });
 });
 
@@ -200,10 +226,10 @@ describe('a payslip still opens after its company moves to a new address', () =>
      * label Dana's key was worked out from. RED WHEN a slip names anything the
      * move changed.
      */
-    const all = h.payroll.payslipsFor(dana.keys.publicKey);
-    expect(all.map(s => [s.period, s.issuedBy])).toEqual([['2026-09', c.label], ['2026-08', c.label]]);
+    const all = slipsOpenedBy(h, c.label, BOTH, dana.keys.secret);
+    expect(all.map(s => [s.period, openPayslip(s, dana.keys.secret).issuedBy])).toEqual([['2026-09', c.label], ['2026-08', c.label]]);
     for (const s of all) {
-      const fromTheWallet = payslipKeypairForWallet(words, readCompanyLabel(s.issuedBy)!, ORIGIN);
+      const fromTheWallet = payslipKeypairForWallet(words, readCompanyLabel(openPayslip(s, dana.keys.secret).issuedBy)!, ORIGIN);
       expect(openPayslip(s, fromTheWallet.secret).payslip.name).toBe('Dana');
       /* The key for another company's label is a different key, and opens neither. */
       expect(() => openPayslip(s, payslipKeypairForWallet(words, other.label, ORIGIN).secret))
@@ -238,9 +264,10 @@ describe('a payslip still opens after its company moves to a new address', () =>
     h.payroll.admit(eli.id, c.viewingKey, 'usr_ada');
     await h.payroll.createRunFromRoster(c.accountId, '2026-09', c.viewingKey);
     /* RED WHEN admission records anything but the label the payee's key was worked out from. */
-    const [slip] = h.payroll.payslipsFor(eli.keys.publicKey);
-    expect(present(slip).issuedBy).toBe(c.label);
-    expect(openPayslip(present(slip), payslipKeypairForWallet(words, readCompanyLabel(present(slip).issuedBy)!, ORIGIN).secret).payslip.name)
+    const [slip] = slipsOpenedBy(h, c.label, ['2026-09'], eli.keys.secret);
+    const issuedBy = openPayslip(present(slip), eli.keys.secret).issuedBy;
+    expect(issuedBy).toBe(c.label);
+    expect(openPayslip(present(slip), payslipKeypairForWallet(words, readCompanyLabel(issuedBy)!, ORIGIN).secret).payslip.name)
       .toBe('Eli');
   });
 
@@ -253,8 +280,8 @@ describe('a payslip still opens after its company moves to a new address', () =>
     (h.store as any).putAccount({ ...h.accounts.require(c.accountId), contractAddress: 'ef'.repeat(32) });
     await h.payroll.createRunFromRoster(c.accountId, '2026-09', c.viewingKey);
     /* RED WHEN the slip names the account's address rather than the label the key came from. */
-    const [slip] = h.payroll.payslipsFor(old.keys.publicKey);
-    expect(present(slip).issuedBy).toBe(c.label);
+    const [slip] = slipsOpenedBy(h, c.label, ['2026-09'], old.keys.secret);
+    expect(openPayslip(present(slip), old.keys.secret).issuedBy).toBe(c.label);
     expect(openPayslip(present(slip), old.keys.secret).payslip.name).toBe('Dana');
   });
 

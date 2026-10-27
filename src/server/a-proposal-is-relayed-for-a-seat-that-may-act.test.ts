@@ -25,6 +25,7 @@ import type { LedgerStatus } from '../core/ledger.js';
 import type { SealedProposal } from '../core/types.js';
 import type { Hex } from '../core/crypto.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
+import { acceptanceHashOf } from '../core/invitation.js';
 import { adoptionRoundOf, type AccountStartPure } from '../midnight/vault-start.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
@@ -589,6 +590,49 @@ describe('A RELAY IS PAID FOR THE SEAT WHOSE FILING KEY THE DEVICE SENDS, AMONG 
       expect(r.status, filer).toBe(422);
       expect(r.body.error, filer).toMatch(/you hold no seat on this company/u);
     }
+    expect(sent).toEqual([]);
+  });
+});
+
+describe('THE SEAT AN INVITATION BY ADDRESS OFFERED IS TAKEN THROUGH THE SAME RELAY, BY ITS INVITEE, WITH NO SEAT AND NO MEMBERSHIP', () => {
+  const ACCEPTANCE = '7a'.repeat(32);
+  const anInvitation = (id: string, over: Record<string, unknown> = {}) => {
+    store.putInvite({
+      token: id, accountId: CO, kind: 'signer', createdAt: '2026-10-27T00:00:00.000Z',
+      acceptanceHash: acceptanceHashOf(ACCEPTANCE as Hex), ...over,
+    } as never);
+    return id;
+  };
+
+  it('the invitee\'s own seatInvited is relayed for whoever holds the acceptance, signed in and seated nowhere', async () => {
+    const id = anInvitation('ab'.repeat(32));
+    const r = await post('zed', `/api/invites/${id}/seat`, { acceptance: ACCEPTANCE, tx: tx('seatInvited', CHAIN) });
+    /* RED WHEN: the invitee, who holds no seat and is no member, cannot take the seat their invitation offered. */
+    expect(r.status).toBe(200);
+    expect(sent).toEqual([{ accountId: CO, circuit: 'seatInvited', proposal: CHAIN }]);
+  });
+
+  it('RED WHEN: anything but seatInvited is relayed through it', async () => {
+    const id = anInvitation('ac'.repeat(32));
+    const r = await post('zed', `/api/invites/${id}/seat`, { acceptance: ACCEPTANCE, tx: tx('setThreshold', CHAIN) });
+    expect(r.status).toBe(422);
+    expect(sent).toEqual([]);
+  });
+
+  it('RED WHEN: it is relayed without the invitation\'s acceptance, for an invitation that offers no seat, or for one taken back', async () => {
+    const id = anInvitation('ad'.repeat(32));
+    expect((await post('zed', `/api/invites/${id}/seat`, { acceptance: '00'.repeat(32), tx: tx('seatInvited', CHAIN) })).status).toBe(422);
+    const pay = anInvitation('ae'.repeat(32), { kind: 'employee' });
+    expect((await post('zed', `/api/invites/${pay}/seat`, { acceptance: ACCEPTANCE, tx: tx('seatInvited', CHAIN) })).status).toBe(422);
+    const back = anInvitation('af'.repeat(32), { revokedAt: '2026-10-27T01:00:00.000Z' });
+    expect((await post('zed', `/api/invites/${back}/seat`, { acceptance: ACCEPTANCE, tx: tx('seatInvited', CHAIN) })).status).toBe(422);
+    expect(sent).toEqual([]);
+  });
+
+  it('RED WHEN: carrying out any other change no longer needs a seat that may act', async () => {
+    open.set(CHAIN, 2);
+    const r = await post('cy', `/api/proposals/${P}/carry`, { circuit: 'setThreshold', tx: tx('setThreshold', CHAIN) });
+    expect(r.status).not.toBe(200);
     expect(sent).toEqual([]);
   });
 });

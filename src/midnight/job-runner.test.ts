@@ -430,8 +430,8 @@ describe('recover', () => {
 
   it('REFUSES TO GUESS where there is no on-chain duplicate check', async () => {
     /*
-     * THE ONE THAT MATTERS. Bootstrap `addSigner` has no guard, so a blind redo
-     * inserts the same signer twice. The message has to say what to check,
+     * THE ONE THAT MATTERS. A step whose duplicate the chain would not refuse
+     * must not be redone blindly. The message has to say what to check,
      * because a person is about to do it.
      */
     const runner = new MidnightJobRunner(
@@ -440,11 +440,11 @@ describe('recover', () => {
           viewDigest: null,
           proposalId: null,
           duplicateRejectedOnChain: false,
-          duplicateHazard: 'A second attempt would add the signer twice.',
+          duplicateHazard: 'A second attempt would apply it twice.',
         }),
       }),
     );
-    await expect(runner.recover(job({ kind: 'addSigner' }))).rejects.toThrow(/add the signer twice/);
+    await expect(runner.recover(job({ kind: 'approve' }))).rejects.toThrow(/apply it twice/);
   });
 
   it('refuses rather than assuming, when the account has no state at all', async () => {
@@ -484,20 +484,6 @@ describe('expectationFor', () => {
       expect(expectationFor(job({ kind }), PROPOSAL, null).duplicateRejectedOnChain).toBe(true);
     },
   );
-
-  it('addSigner is NOT safe to redo, and says why', () => {
-    /*
-     * Read out of the circuit, not assumed. On the approved path `addSigner`
-     * closes the round so a replay fails; on the bootstrap path it just inserts
-     * and increments, with nothing stopping it twice. Which path applied
-     * depends on `signerCount` at execution time, which is exactly what cannot
-     * be observed afterwards — so both are treated as unsafe.
-     */
-    const e = expectationFor(job({ kind: 'addSigner' }), PROPOSAL, null);
-    expect(e.duplicateRejectedOnChain).toBe(false);
-    expect(e.duplicateHazard).toMatch(/twice/);
-    expect(e.duplicateHazard).toMatch(/threshold/);
-  });
 
   it('an unrecognised kind is unsafe, not safe', () => {
     // Being wrong in this direction costs a person a look at their account.

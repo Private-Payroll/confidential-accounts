@@ -14,9 +14,14 @@
  *     seat in the company's directory signed the version (`filerSeatOf`);
  *   · the plain fact the change is about says what the route is for: a person
  *     admitted, or one made payable from their own sign-in, stands active; a
- *     status change sets active or leaver;
+ *     status change sets active or leaver; a change of their details (dates,
+ *     salary, classification) leaves where they stand as it was;
  *   · a person is admitted only while something they handed over waits, and
  *     once they are, what waited is emptied and their offer is gone.
+ *
+ * A company's vendors are kept apart from its people and filed through the
+ * company-record routes; what a vendor handed over is read, and their admission
+ * filed, through the two vendor routes here, under the company's own address.
  *
  * The read hands back each person's newest record, sealed, with whether
  * something waits to be admitted for them - a yes or a no, never what it is.
@@ -24,6 +29,7 @@
  */
 import express from 'express';
 import type { Invite, SealedAccount } from '../core/types.js';
+import type { InvitationKind } from '../core/invitation.js';
 import {
   toCompanyWire, type CompanyRecordStore, type PeopleRecords, type PersonStanding, type SealedCompanyRecord,
 } from '../midnight/sealed-record-wire.js';
@@ -33,7 +39,7 @@ import { fileCompanyRecord, type FilingAnswer } from './company-records-route.js
 /** What these routes need of the service's store. */
 export interface PeopleRouteStore {
   getAccount(accountId: string): SealedAccount | null;
-  handoverFor(subjectId: string): Invite['handover'];
+  handoverFor(subjectId: string, kind: InvitationKind): Invite['handover'];
   listInvites(accountId: string): Invite[];
   putInvite(invite: Invite): void;
   setHandover(key: string, handover: Invite['handover']): boolean;
@@ -72,9 +78,12 @@ export const peopleRoutes = (deps: {
   const router = express.Router();
   const json = express.json({ limit: '1mb' });
 
-  /** The version a body carries, filed as the person `id` of `company` when it says `allowed`; or why not. */
+  /**
+   * The version a body carries, filed as the person `id` of `company` when it says `allowed`; or why not. With
+   * `keepsStanding`, the version must stand where the newest filed one does.
+   */
   const file = async (
-    req: express.Request, company: string, id: string, allowed: readonly PersonStanding[], what: string, first = false,
+    req: express.Request, company: string, id: string, allowed: readonly PersonStanding[], what: string, first = false, keepsStanding = false,
   ): Promise<FilingAnswer> => {
     const message = (req.body as { person?: unknown } | null)?.person as { version?: unknown; body?: unknown } | undefined;
     let facts: unknown;
@@ -82,6 +91,15 @@ export const peopleRoutes = (deps: {
     const status = (facts as { status?: unknown } | undefined)?.status;
     if (!allowed.includes(status as PersonStanding)) {
       return { status: 422, body: { refused: 'not-this-change', error: `${what}, and the version filed does not say so. Nothing was filed.` } };
+    }
+    if (keepsStanding) {
+      let newest: SealedCompanyRecord | null;
+      try { newest = await deps.records().get(company, 'person', id); } catch (e) {
+        return { status: 502, body: { error: `the person could not be read: ${(e as Error)?.message ?? String(e)}` } };
+      }
+      if (newest?.facts?.status !== status) {
+        return { status: 422, body: { refused: 'not-this-change', error: `${what}, and the version filed does. Change where a person stands through their status. Nothing was filed.` } };
+      }
     }
     if (first !== (message?.version === 1)) {
       return { status: 422, body: { refused: first ? 'not-a-new-person' : 'not-a-change', error: first
@@ -106,7 +124,7 @@ export const peopleRoutes = (deps: {
       return;
     }
     res.status(200).json({
-      people: people.map((r) => ({ filed: toCompanyWire(r), handedOver: deps.store.handoverFor(r.id) !== null })),
+      people: people.map((r) => ({ filed: toCompanyWire(r), handedOver: deps.store.handoverFor(r.id, 'employee') !== null })),
     });
   });
 
@@ -122,6 +140,19 @@ export const peopleRoutes = (deps: {
   });
 
   /*
+   * **A CHANGE OF A PERSON'S DETAILS**: a salary or classification line, an end
+   * date or a leaving date, sealed and signed on a seat's device, which refused
+   * any that would change a month already raised. Where the person stands is
+   * not this route's to change.
+   */
+  router.post('/api/people/:id/details', deps.signedIn, deps.ownsPerson, json, async (req, res) => {
+    const id = String(req.params.id);
+    const company = await companyOf(id);
+    const answer = await file(req, company, id, ['active', 'pending', 'leaver'], 'a change of details leaves where a person stands as it was', false, true);
+    res.status(answer.status).json(answer.body);
+  });
+
+  /*
    * **A PERSON ADMITTED, AS THE ADMITTING DEVICE DECIDED IT.** That device
    * opened what they handed over and made every check on it; this files the
    * version it signed, only while something waits to be admitted, then empties
@@ -130,7 +161,7 @@ export const peopleRoutes = (deps: {
   router.post('/api/employees/:id/admit', deps.signedIn, deps.ownsPerson, json, async (req, res) => {
     const id = String(req.params.id);
     const company = await companyOf(id);
-    if (deps.store.handoverFor(id) === null) {
+    if (deps.store.handoverFor(id, 'employee') === null) {
       res.status(409).json({ refused: 'nothing-handed-over', error: 'nothing waits to be admitted for this person, so there is nothing to admit. Nothing was filed.' });
       return;
     }
@@ -155,6 +186,49 @@ export const peopleRoutes = (deps: {
     const message = (req.body as { person?: unknown } | null)?.person as { id?: unknown } | undefined;
     if (typeof message?.id !== 'string') { res.status(400).json({ refused: 'not-a-person', error: 'nothing here is a person to file. Nothing was filed.' }); return; }
     const answer = await file(req, company, message.id, ['active'], 'a person made payable from their own sign-in stands active', true);
+    res.status(answer.status).json(answer.body);
+  });
+
+  /** The newest of the company's invitations of the vendor `vid` that something waits on, or undefined. */
+  const vendorWaiting = (company: string, vid: string): Invite | undefined =>
+    deps.store.listInvites(company).find((i) => i.subjectId === vid && i.kind === 'vendor' && i.handover);
+
+  /*
+   * **WHAT A VENDOR HANDED OVER, SEALED**, for the company's member whose device
+   * admits them: only an invitation of this company's names it, so another
+   * company's vendor is never read here.
+   */
+  router.get('/api/accounts/:id/vendors/:vid/handover', deps.signedIn, deps.member, (req, res) => {
+    res.status(200).json({ inbox: vendorWaiting(String(req.params.id), String(req.params.vid))?.handover ?? null });
+  });
+
+  /*
+   * **A VENDOR ADMITTED**: the next version of their vendor entry, sealed and
+   * signed on a seat's device that checked what they handed over. Filed only
+   * while something they handed over waits; once it is, what waited is emptied
+   * and their offer is gone.
+   */
+  router.post('/api/accounts/:id/vendors/:vid/admit', deps.signedIn, deps.member, json, async (req, res) => {
+    const company = String(req.params.id);
+    const vid = String(req.params.vid);
+    if (vendorWaiting(company, vid) === undefined) {
+      res.status(409).json({ refused: 'nothing-handed-over', error: 'nothing waits to be admitted for this vendor, so there is nothing to admit. Nothing was filed.' });
+      return;
+    }
+    const message = (req.body as { vendor?: unknown } | null)?.vendor as { version?: unknown } | undefined;
+    if (message?.version === 1) {
+      res.status(422).json({ refused: 'not-a-change', error: 'admitting a vendor files the next version of their entry, not a first one. Nothing was filed.' });
+      return;
+    }
+    const answer = await fileCompanyRecord(
+      { records: deps.records(), accountOf: (a) => deps.store.getAccount(a), directoryOf: deps.directoryOf },
+      (req as { userId?: unknown }).userId, { company, kind: 'vendor', id: vid }, message?.version, message);
+    if (answer.status === 201) {
+      for (const invite of deps.store.listInvites(company).filter((i) => i.subjectId === vid && i.kind === 'vendor')) {
+        deps.store.setHandover(invite.token, null);
+        if (invite.offer) deps.store.putInvite({ ...invite, offer: null });
+      }
+    }
     res.status(answer.status).json(answer.body);
   });
 

@@ -44,7 +44,8 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
-import { privateStateFor, leafOfDevice, change, COMPANY_LABEL } from './simulator.js';
+import { privateStateFor, leafOfDevice, change, COMPANY_LABEL, invitedAddressFor, invitedAddressCommitmentOf } from './simulator.js';
+import { inviteeSeatCall } from './an-invitee-takes-the-seat.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
@@ -314,10 +315,14 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     const seeded = chain.apply(L.Transaction.fromParts(NET, undefined, undefined, L.Intent.new(new Date(Date.now() + 600_000)).addDeploy(deploy)));
     if (!seeded.ok) throw new Error(`the company account was not deployed: ${seeded.error}`);
     company = String(deploy.address).toLowerCase();
-    /* A second signer, seated at a threshold of one, and the vault the policy is for, adopted. */
-    const leaf = hex(leafOfDevice(blake));
-    await raisedAndCarried(founder, { kind: 'add-signer', leaf }, circuits.signerAddPayload(leafOfDevice(blake)), 11,
-      (id, salt) => ({ circuit: 'amendSigner', leaf, proposal: id, proposalSalt: salt }));
+    /* A second signer, invited at a threshold of one and seated by their own wallet, and the vault the policy is for, adopted. */
+    const address = hex(invitedAddressCommitmentOf(invitedAddressFor(blake)));
+    const invited = await raisedAndCarried(founder, { kind: 'add-signer', address, scope: hex(blake.scope) },
+      circuits.signerInvitePayload(Buffer.from(address, 'hex'), blake.scope), 11, null);
+    send(await inviteeSeatCall({
+      accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who: blake,
+      proposal: invited.id, salt: invited.salt,
+    }));
     await raisedAndCarried(founder, { kind: 'adopt-vault', vault: VAULT }, circuits.adoptVaultPayload(Buffer.from(VAULT, 'hex')), 12,
       (id, salt) => ({ circuit: 'adopt', vault: VAULT, proposal: id, proposalSalt: salt }));
   });

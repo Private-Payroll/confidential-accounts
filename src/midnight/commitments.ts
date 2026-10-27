@@ -255,13 +255,14 @@ export const MidnightCommitments: CommitmentScheme = {
    * genuinely produce these values and neither implementation is invented.
    * `src/core/ledger.ts`'s `CommitmentScheme` carries the long form.
    *
-   * **THE NAMES: THREE OF THE FOUR DIFFER FROM THE CIRCUITS'.**
+   * **THE NAMES: THREE DIFFER FROM THE CIRCUITS'.**
    * `signerRemovePayload` → `removeSignerPayload`, `signerThresholdPayload` →
    * `setThresholdPayload`, `vaultThresholdPayload` →
-   * `setVaultThresholdPayload`; only `signerAddPayload` matches. A swap here is
-   * silent — every one of them returns 32 bytes for the arguments it is given —
-   * so `contracts/test/one-definition.test.ts` mirrors each of the four
-   * against its circuit, which is what makes a swap fail rather than settle.
+   * `setVaultThresholdPayload`; `signerInvitePayload`, `inviteAddressOf` and
+   * `coinPublicKeyOf` match. A swap here is silent — every one of them returns
+   * 32 bytes for the arguments it is given — so
+   * `contracts/test/one-definition.test.ts` mirrors each against its circuit,
+   * which is what makes a swap fail rather than settle.
    *
    * **AND WHAT THIS MAKES LOAD-BEARING, SAID BEFORE SOMEBODY MEETS IT.** A
    * governance proposal's stored `digest` is now scheme-dependent, so a round
@@ -284,8 +285,19 @@ export const MidnightCommitments: CommitmentScheme = {
    * table. **The day either round is built it needs exactly this treatment**,
    * and `one-definition.test.ts` still says so beside each of them.
    */
-  signerAddPayload(leaf: Hex): Hex {
-    return toHex(pureCircuits.signerAddPayload(fromHex(leaf)));
+  /** What signers approve to seat whoever holds the invited address, with exactly `scope` as their rights. */
+  signerInvitePayload(address: Hex, scope: Hex): Hex {
+    return toHex(pureCircuits.signerInvitePayload(fromHex(address), fromHex(scope)));
+  },
+
+  /** The hiding commitment to an invited address's coin public key, under `salt`. */
+  inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex {
+    return toHex(pureCircuits.inviteAddressOf(fromHex(coinPublicKey), fromHex(salt)));
+  },
+
+  /** The coin public key a wallet's coin secret key makes, as the ledger makes it inside a shielded address. */
+  coinPublicKeyOf(coinSecretKey: Hex): Hex {
+    return toHex(pureCircuits.coinPublicKeyOf(fromHex(coinSecretKey)));
   },
 
   signerRemovePayload(removedLeaf: Hex): Hex {

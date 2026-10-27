@@ -2,8 +2,8 @@ import { privateAmount, publicAmount, type TokenAmount } from 'vaults-ui';
 import { reviveBigints } from '../../../../src/core/crypto.js';
 import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openRecord } from '../../../../src/core/sealed-records.js';
-import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
-import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
+import { onlyPayableWhenActive, openPerson, payLineOn, payLinesOf, peopleOnTheWire } from '../../../../src/core/person-record.js';
+import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, RosterEmployee, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
 import type { RefusedEntry, RosterEntryRefusal } from '../../../../src/core/roster-record.js';
 import { api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
 import { companyKeysFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
@@ -321,17 +321,17 @@ function proposalRow(
 
 interface RosterRow {
   id: string; name: string; title: string; asset: string; baseAmount: bigint; startDate: string;
-  status: string; address: { kind: string } | null; handedOver?: boolean;
+  pay?: RosterEmployee['pay']; status: string; address: { kind: string } | null; handedOver?: boolean;
 }
 
-/** A person on the payroll for a screen. */
-export function personRow(p: RosterRow, registry: AssetRegistry = assets): PersonRow {
+/** A person on the payroll for a screen. Their pay is the salary line in force on `today`, or, before they start, their first. */
+export function personRow(p: RosterRow, registry: AssetRegistry = assets, today: string = new Date().toISOString().slice(0, 10)): PersonRow {
   const paid = p.address === null ? PAID.notSetUp : p.address.kind === SERVICE.shielded ? PAID.privately : PAID.publicly;
   const standing = p.status === SERVICE.active ? STANDING.active
     : p.status === SERVICE.leaver ? STANDING.leaver
       : p.handedOver === true ? STANDING.waitingForCheck : STANDING.invited;
   /* A person with no address yet is paid however they set up: their pay is marked public until then, never private. */
-  return { id: p.id, name: p.name, title: p.title, standing, pay: amountOf(p.baseAmount, p.asset, paid === PAID.privately ? PAID.privately : PAID.publicly, registry), paid, startedAt: p.startDate };
+  return { id: p.id, name: p.name, title: p.title, standing, pay: amountOf((payLineOn(p, today) ?? payLinesOf(p)[0]!).amount, p.asset, paid === PAID.privately ? PAID.privately : PAID.publicly, registry), paid, startedAt: p.startDate };
 }
 
 interface InviteRow { kind: string; name?: string; createdAt: string; expiresAt?: string; revokedAt?: string; acceptedAt?: string }

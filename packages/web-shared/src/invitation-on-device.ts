@@ -2,36 +2,53 @@
  * **INVITING SOMEBODY, AND ACCEPTING AN INVITATION, ON THE PERSON'S OWN
  * DEVICE.** Each step is one function a screen can call.
  *
- *   · **inviting** (`invitePayeeHere`, `inviteSignerHere`): this device draws
- *     the token, seals the offer under the key only the link carries, signs it
- *     with this seat's filing key and the directory entry its wallet signed,
- *     and files what the service keeps: the lookup id, the hash of what
- *     accepts it, the sealed offer, and the epoch of the company key it was
- *     made under. The offer names the company's inbox as this device works it
- *     out from the key in force, and an expiry, both signed; nothing is made
- *     while the company's key is being changed. A payee's first person record
- *     is sealed here and filed with it. The service is sent no token, no offer
- *     key and nothing it can open.
+ *   · **inviting** (`inviteHere`, one entry for the four kinds: an employee,
+ *     a vendor, a signer or a super admin): this device draws the token, seals
+ *     the offer under the key only the link carries, signs it with this seat's
+ *     filing key and the directory entry its wallet signed, and files what the
+ *     service keeps: the kind, the lookup id, the hash of what accepts it, the
+ *     sealed offer, and the epoch of the company key it was made under. The
+ *     offer names the company's inbox as this device works it out from the key
+ *     in force, when it was made and its expiry, all signed; nothing is made
+ *     while the company's key is being changed. An employee's first person
+ *     record, with the first line of their salary and classification histories,
+ *     and a vendor's first vendor entry, with their payment terms, are sealed
+ *     here and filed with it, naming this seat as their maker. A vendor added by
+ *     address is active at once, paid at the typed address. The service is sent no token,
+ *     no offer key and nothing it can open: no name, date, address or
+ *     classification. A seat offered by an address the inviter typed is raised
+ *     on the chain before the offer is filed (`fileSignerByAddress`), and the
+ *     invitee's own wallet takes it; an employee added by address is held to
+ *     that address in their record (`invitedAddress`).
  *   · **opening** (`openInvitationHere`): the invitee's device asks for the
  *     invitation by its lookup id, opens the offer with the key in the link's
  *     fragment, and believes it only when the seat that invited signed it and
  *     its signed expiry has not passed on this device's clock.
- *   · **accepting** (`acceptAsPayeeHere`, `acceptAsSignerHere`): what the
+ *   · **accepting** (`acceptAsPayeeHere` for an employee or a vendor,
+ *     `acceptAsSignerHere`): what the
  *     invitee hands over is sealed here to the company's inbox key the offer
- *     names, and sent with the proof only the token gives. A signer accepts
+ *     names, and sent with the proof only the token gives. A super admin's
+ *     invitation is opened but never accepted here. A signer accepts
  *     through the one seat path every way of joining uses
  *     (`acceptSeatOnThisDevice`), so the request that ends in a seat is the
- *     same whichever way they came.
+ *     same whichever way they came. A person or vendor added by address
+ *     claims from the wallet that holds the address (`claimIntentOf`), with no
+ *     fingerprint read out.
  */
 import { openedWithAnyKey, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
-import { canonical, randomBytes, toHex, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { canonical, randomBytes, signingPublicKeyOf, toHex, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { inboxPublicKey as inboxOf, openFromInbox, sealToInbox } from '../../../src/core/sealed-records.js';
 import { sealPerson } from '../../../src/core/person-record.js';
+import { sealVendor, vendorTermsRefusal, type VendorRecord, type VendorTerms } from '../../../src/core/vendor-record.js';
+import { assets as defaultAssets, whyTheMoneyCannotReach } from '../../../src/core/assets.js';
 import { newSeatInvitation, proveSeatKeys, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
 import {
   acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, newInvitationToken, offerExpiredRefusal, openOffer,
-  replacedBy, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, signWithdrawal, tokenOfLink,
-  type EmployeeOffer, type InvitationFiling, type InvitationOffer, type Inviter, type SignedOffer, type SignedSeatInvitation,
+  replacedBy, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, signWithdrawal, SUPER_ADMIN_INVITED_BY_THE_COMMITTEE,
+  SUPER_ADMIN_JOINS_BY_THE_COMMITTEE, tokenOfLink,
+  utcMomentOf, whyThisOfferCannotBeMade,
+  type EmployeeClassification, type EmployeeOffer, type InvitationFiling, type InvitationKind, type InvitationOffer, type Inviter, type SignedOffer,
+  type SignedSeatInvitation, type VendorOffer,
 } from '../../../src/core/invitation.js';
 import type { PendingSignerPayload, Role, RosterEmployee, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import { seatInvitationIn, seatStillProposedFor } from '../../../src/core/proposal-filing.js';
@@ -47,10 +64,14 @@ import { readJoinCode, writeJoinCode, JOIN_CODE_REFUSAL, type JoinCode, type Pay
 import { payeeCodeFingerprint, seatKeyFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { acceptSeatOnThisDevice, type AcceptedSeat, type SeatDoors } from './accept-seat.js';
 import { walletKeyProvedBy, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
+import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
+import { typedAddressIsShielded } from 'midnight-identity/profile/address-claim';
+import type { NetworkName } from '../../../src/midnight/network.js';
+import type { VendorsHere } from './vendors-on-device.js';
 
 /** How this device reaches the service: a path and a JSON body, an answer with its status. */
 export type InvitationSend = (
-  path: string, init: { readonly method: 'GET' | 'POST'; readonly body?: string },
+  path: string, init: { readonly method: 'GET' | 'POST' | 'PUT'; readonly body?: string },
 ) => Promise<{ readonly status: number; readonly body: unknown }>;
 
 /** The company an invitation is made for, as this device opened it. */
@@ -83,7 +104,7 @@ export interface InvitingSeat extends Inviter {
 interface MadeInvitation {
   readonly link: string;
   readonly id: Hex;
-  /** A payee's: the person record filed for them. */
+  /** An employee's or a vendor's: the id of the record it is for. */
   readonly person?: string;
 }
 
@@ -128,76 +149,247 @@ type Sealing = { readonly key: Hex; readonly epoch: number };
 
 /**
  * The offer an invitation carries. Its inbox is worked out here from the key in force, never copied from the service,
- * and it says when it stops being answered, signed with the rest of the offer.
+ * and it says when it was made and when it stops being answered, signed with the rest of the offer.
  */
 const offered = (company: InvitingCompany, seat: InvitingSeat, forWhom: InvitationOffer['for'], sealing: Sealing): InvitationOffer => ({
   company: company.id, companyName: company.name, label: company.label, account: company.account,
-  inboxPublicKey: inboxOf(sealing.key, company.id), expiresAt: Date.now() + INVITATION_LIFETIME_MS, for: forWhom,
+  inboxPublicKey: inboxOf(sealing.key, company.id), expiresAt: Date.now() + INVITATION_LIFETIME_MS, madeAt: utcMomentOf(Date.now()), for: forWhom,
   /* The inviter's own seat's opening, so the invitee's wallet can tell the seat was made for its key; nothing of any other seat. */
   inviter: { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening },
 });
 
-const filed = (
-  company: InvitingCompany, seat: InvitingSeat, kind: 'employee' | 'signer', token: Hex, signed: SignedOffer, keyEpoch: number, person?: string,
-): InvitationFiling =>
-  signInvitationFiling({
-    company: company.id, kind, id: invitationIdOf(token), acceptanceHash: acceptanceHashOf(acceptanceProofOf(token)),
-    offer: sealOffer(signed, token), keyEpoch, ...(person === undefined ? {} : { person }),
-  }, seat.signingSecret);
+/** Thrown before anything is signed or sent, when what was entered is not an invitation this device may make; its words say what to change. */
+export class InvitationNotMade extends Error {
+  constructor(why: string) {
+    super(`this invitation was not made: ${why}. Nothing was signed or sent.`);
+    this.name = 'InvitationNotMade';
+  }
+}
 
-/** Who a payee is and what they are paid, as the person inviting them enters it. */
-interface PayeeSpec {
+/**
+ * The offer for one invitation, checked as the invitee's device will check it and as a new offer must be, signed
+ * with this seat's filing key, sealed under the token's key and filed to the one invitation route. `record` is the
+ * first company record filed with it, for the kinds that file one.
+ */
+async function filed(
+  company: InvitingCompany, seat: InvitingSeat, kind: InvitationKind, forWhom: InvitationOffer['for'], sealing: Sealing,
+  token: Hex, send: InvitationSend, person?: string, record?: ReturnType<typeof toCompanyWire>, signed?: SignedOffer,
+): Promise<InvitationFiling> {
+  const offer = signed?.offer ?? offered(company, seat, forWhom, sealing);
+  const why = whyThisOfferCannotBeMade(offer);
+  if (why !== null) throw new InvitationNotMade(why);
+  const invitation = signInvitationFiling({
+    company: company.id, kind, id: invitationIdOf(token), acceptanceHash: acceptanceHashOf(acceptanceProofOf(token)),
+    offer: sealOffer(signed ?? signOffer(offer, seat.signingSecret), token), keyEpoch: sealing.epoch, ...(person === undefined ? {} : { person }),
+  }, seat.signingSecret);
+  answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/invites`, {
+    method: 'POST', body: JSON.stringify(record === undefined ? { invitation } : { person: record, invitation }),
+  }), 201);
+  return invitation;
+}
+
+/** Who an employee is, what they are paid and when they work, as the person inviting them enters it. */
+interface EmployeeSpec {
   readonly name: string;
   readonly email: string | null;
   readonly title: string;
   readonly asset: AssetId;
   readonly baseAmount: bigint;
+  /** A calendar date (2026-07-01). */
   readonly startDate: string;
-}
-
-/** A payee's invitation and first record, made here and filed; the token stays on this device. */
-async function filePayeeInvitation(
-  company: InvitingCompany, seat: InvitingSeat, spec: PayeeSpec, send: InvitationSend,
-): Promise<{ token: Hex; id: Hex; person: string; sealing: Sealing }> {
-  if (typeof spec.baseAmount !== 'bigint' || spec.baseAmount <= 0n) throw new Error('a payee is invited with a pay above nothing, in the token\'s smallest unit.');
-  const person: RosterEmployee = {
-    id: `emp_${toHex(randomBytes(10))}`, accountId: company.id, name: spec.name, email: spec.email, title: spec.title,
-    asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate, status: 'pending', wrappingPublicKey: null,
-    handedOverBy: null, admittedBy: null, admittedAt: null, selfRaised: false, address: null,
-  };
-  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
-  const record = sealPerson(person, 1, sealing.epoch, sealing.key);
-  const offer: EmployeeOffer = {
-    kind: 'employee', person: person.id, name: spec.name, title: spec.title, email: spec.email,
-    asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate,
-  };
-  const token = newInvitationToken();
-  const invitation = filed(company, seat, 'employee', token, signOffer(offered(company, seat, offer, sealing), seat.signingSecret), sealing.epoch, person.id);
-  const signed = signCompanyFiling(record, seat.signingSecret);
-  answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/people`, {
-    method: 'POST', body: JSON.stringify({ person: toCompanyWire(signed), invitation }),
-  }), 201);
-  await seat.entered.enter([companyRecordEntry(signed)]);
-  return { token, id: invitation.id, person: person.id, sealing };
+  /** For a fixed-term employee, the calendar date they end. */
+  readonly endDate?: string;
+  readonly classification: EmployeeClassification;
+  /** The address the inviter typed, when adding the person by their address. */
+  readonly address?: string;
 }
 
 /**
- * **A PAYEE INVITED FROM THIS DEVICE**: their first person record, sealed
- * here, and the invitation for it, filed together. Returns the link to send.
+ * Who a vendor is and from when, and for monthly payments that stop, until when; how they are paid, and on which
+ * network their address is. No salary and no classification.
  */
-export async function invitePayeeHere(
-  company: InvitingCompany, seat: InvitingSeat, spec: PayeeSpec, origin: string, send: InvitationSend,
-): Promise<MadeInvitation> {
-  const made = await filePayeeInvitation(company, seat, spec, send);
-  return { link: invitationLink(origin, made.token), id: made.id, person: made.person };
+interface VendorSpec {
+  readonly name: string;
+  readonly email: string | null;
+  readonly startDate: string;
+  readonly endDate?: string;
+  readonly address?: string;
+  readonly terms: VendorTerms;
+  readonly network: NetworkName;
 }
 
 /** Who a signer's invitation is for: the name and role they are offered, and the sign-in of the person invited. */
 interface SignerSpec {
   readonly name: string;
   readonly role: Role;
+  /** The sign-in of the person invited, for an invitation answered by link; one made by address names nobody's yet. */
   readonly person: string;
+  /** The shielded address typed, for a seat offered by address: the proposal is raised for it before anybody accepts. */
+  readonly address?: string;
+  /** The rights the seat carries, for a seat offered by address: every vault unless given. */
+  readonly scope?: Hex;
 }
+
+/**
+ * A seat offered by address, as the inviting device keeps it before anything is raised: the token, the link it
+ * makes, and the offer this seat signed, which carries the address, the salts, the rights and the signed
+ * invitation the invitee's wallet takes the seat with. Kept so that nothing the seating needs exists only at the
+ * service.
+ */
+export interface KeptSeatInvitation {
+  readonly company: string;
+  readonly id: string;
+  readonly token: Hex;
+  readonly link: string;
+  readonly offer: SignedOffer;
+}
+
+/**
+ * What raising a seat offered by address needs from the inviting device: the network the address is on, the
+ * account's commitments, the proposal's identity as the raise will make it, where this device keeps the
+ * invitation (`keep`, before the raise), and the raise itself (`raiseSeatInvitationOnDevice`).
+ */
+export interface SignerByAddressDoors {
+  readonly keep: (kept: KeptSeatInvitation) => Promise<void>;
+  readonly network: NetworkName;
+  readonly commitments: { inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex; allVaults(): Hex };
+  readonly identity: (change: { readonly kind: 'add-signer'; readonly address: string; readonly scope: string }, salt: string) => Promise<{ readonly chainId: string }>;
+  readonly raise: (input: { readonly invited: SignedSeatInvitation; readonly proposalSalt: string; readonly name: string; readonly inviter: Inviter }) => Promise<unknown>;
+}
+
+/**
+ * What adding a vendor by address needs of this device: the company's vendors as it believes them (`readVendorsHere`),
+ * so an address an active vendor entry already holds is not given a second entry, which would be paid as well.
+ */
+export interface VendorByAddressDoors {
+  readonly vendors: () => Promise<Pick<VendorsHere, 'vendors' | 'notPayable'>>;
+}
+
+/** A seat offered by address whose proposal was raised and whose offer could not be filed: the link still reaches the person. */
+export class InvitationRaisedNotFiled extends Error {
+  constructor(readonly link: string, why: string) {
+    super(`the proposal to seat this address was raised, and the invitation was not filed: ${why}. Give the person this link yourself: it is the only copy.`);
+    this.name = 'InvitationRaisedNotFiled';
+  }
+}
+
+/** Who a super admin's invitation is for: defined with the other kinds, though no seat makes one. */
+interface SuperAdminSpec {
+  readonly name: string;
+  readonly address?: string;
+}
+
+/** What each kind of invitation is made from: `InviteSpecs['vendor']` is what a vendor's is made from. */
+export interface InviteSpecs {
+  readonly employee: EmployeeSpec;
+  readonly vendor: VendorSpec;
+  readonly signer: SignerSpec;
+  readonly 'super-admin': SuperAdminSpec;
+}
+
+/** An employee's invitation and first person record, made here and filed together; the token stays on this device. */
+async function filePayeeInvitation(
+  company: InvitingCompany, seat: InvitingSeat, spec: EmployeeSpec, send: InvitationSend,
+): Promise<{ token: Hex; id: Hex; person: string; sealing: Sealing }> {
+  refuseASeatThatMayNotInvite(seat);
+  if (typeof spec.baseAmount !== 'bigint' || spec.baseAmount <= 0n) throw new InvitationNotMade('an employee is invited with a pay above nothing, in the token\'s smallest unit');
+  const made = { madeBy: signingPublicKeyOf(seat.signingSecret), madeAt: utcMomentOf(Date.now()) };
+  const person: RosterEmployee = {
+    id: `emp_${toHex(randomBytes(10))}`, accountId: company.id, name: spec.name, email: spec.email, title: spec.title,
+    asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate, status: 'pending', wrappingPublicKey: null,
+    handedOverBy: null, admittedBy: null, admittedAt: null, selfRaised: false, address: null,
+    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }),
+    pay: [{ amount: spec.baseAmount, from: spec.startDate, ...made }],
+    classifications: [{ classification: spec.classification, from: spec.startDate, ...made }],
+    ...(spec.address === undefined ? {} : { invitedAddress: spec.address }),
+    ...made,
+  };
+  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
+  const offer: EmployeeOffer = {
+    kind: 'employee', person: person.id, name: spec.name, title: spec.title, email: spec.email,
+    asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate, classification: spec.classification,
+    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }), ...(spec.address === undefined ? {} : { address: spec.address }),
+  };
+  const token = newInvitationToken();
+  const signed = signCompanyFiling(sealPerson(person, 1, sealing.epoch, sealing.key), seat.signingSecret);
+  const invitation = await filed(company, seat, 'employee', offer, sealing, token, send, person.id, toCompanyWire(signed));
+  await seat.entered.enter([companyRecordEntry(signed)]);
+  return { token, id: invitation.id, person: person.id, sealing };
+}
+
+/*
+ * A vendor's invitation and first vendor entry, made here and filed together: the vendor entry's id is drawn here
+ * like an employee's, and the vendor's name, dates and address travel only inside the sealed offer and the sealed
+ * entry. Their payment terms are in the entry and never in the offer. Added by address, they are active at once and
+ * paid at the typed address, which must be one money can reach on this network in the token their terms name, and
+ * one no active vendor entry of the company is already paid at (`doors.vendors`).
+ */
+async function fileVendorInvitation(
+  company: InvitingCompany, seat: InvitingSeat, spec: VendorSpec, send: InvitationSend, doors?: VendorByAddressDoors,
+): Promise<{ token: Hex; id: Hex; person: string }> {
+  refuseASeatThatMayNotInvite(seat);
+  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
+  const { terms: _terms, network: _network, ...forTheOffer } = spec;
+  const offer: VendorOffer = {
+    kind: 'vendor', person: `ven_${toHex(randomBytes(10))}`, name: spec.name, email: spec.email, startDate: spec.startDate,
+    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }), ...(spec.address === undefined ? {} : { address: spec.address }),
+  };
+  /* What the screen passed is the offer's, field for field, so a salary or a classification it carried is refused, not dropped. */
+  const asOffered = { ...(forTheOffer as object), ...offer } as VendorOffer;
+  const vendor = vendorAddedHere(company, spec, offer.person, { madeBy: signingPublicKeyOf(seat.signingSecret), madeAt: utcMomentOf(Date.now()) });
+  if (vendor.address !== null) await refuseAnAddressAVendorHolds(vendor.address.bech32, doors);
+  const token = newInvitationToken();
+  const signed = signCompanyFiling(sealVendor(vendor, 1, sealing.epoch, sealing.key), seat.signingSecret);
+  const invitation = await filed(company, seat, 'vendor', asOffered, sealing, token, send, offer.person, toCompanyWire(signed));
+  await seat.entered.enter([companyRecordEntry(signed)]);
+  return { token, id: invitation.id, person: offer.person };
+}
+
+/** The one reading of an address into where a payee is paid, for people and vendors alike. */
+export { payeeAt } from '../../../src/core/payee-keys.js';
+import { payeeAt } from '../../../src/core/payee-keys.js';
+
+/** Refuses `address` when an active vendor entry this device believes is already paid there: one vendor gets one entry. */
+const refuseAnAddressAVendorHolds = async (address: string, doors: VendorByAddressDoors | undefined): Promise<void> => {
+  if (doors === undefined) {
+    throw new InvitationNotMade('this page cannot read the company\'s vendors, so it cannot say no vendor is already paid at this address, and adds nobody by address: reload the page');
+  }
+  const read = await doors.vendors();
+  const holder = [...read.vendors.map((v) => v.vendor), ...read.notPayable.map((n) => n.here.vendor)]
+    .find((v) => v.status === 'active' && v.address !== null && v.address.bech32.toLowerCase() === address.toLowerCase());
+  if (holder !== undefined) {
+    throw new InvitationNotMade(`${holder.name} is already a vendor of this company paid at this address, and one vendor gets one entry, or they `
+      + 'are paid twice. Change their entry, or mark it a leaver first');
+  }
+};
+
+/** A vendor's first entry, or a refusal saying what to put right. Added by address, it pays the typed address at once. */
+const vendorAddedHere = (company: InvitingCompany, spec: VendorSpec, id: string, made: { readonly madeBy: Hex; readonly madeAt: string }): VendorRecord => {
+  let address: VendorRecord['address'] = null;
+  if (spec.address !== undefined) {
+    try {
+      address = payeeAt(spec.address, spec.network);
+    } catch (e) {
+      throw new InvitationNotMade(`the address typed is not one money can be sent to on this network (${(e as Error).message})`);
+    }
+    if (spec.terms?.kind === 'monthly') {
+      let unreachable: string | null;
+      try { unreachable = whyTheMoneyCannotReach(defaultAssets.require(spec.terms.asset), address.kind); } catch (e) { unreachable = (e as Error).message; }
+      if (unreachable !== null) throw new InvitationNotMade(`their monthly payments could not reach the address typed: ${unreachable}`);
+    }
+  }
+  const vendor: VendorRecord = {
+    id, accountId: company.id, name: spec.name, email: spec.email, network: spec.network, startDate: spec.startDate,
+    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }), terms: spec.terms,
+    status: address === null ? 'pending' : 'active', address, wrappingPublicKey: null,
+    handedOverBy: null, admittedBy: null, admittedAt: null,
+    ...(spec.address === undefined ? {} : { invitedAddress: spec.address }),
+    ...made,
+  };
+  const why = vendorTermsRefusal(spec.terms);
+  if (why !== null) throw new InvitationNotMade(`a vendor is added with how they are paid, and ${why}`);
+  return vendor;
+};
 
 /**
  * A signer's invitation, made here and filed: the token and the seat's secret
@@ -216,31 +408,113 @@ async function fileSignerInvitation(
     company: company.id, invitation: invitationIdOf(token), person: signer.person, name: signer.name, role: signer.role,
     ...(leaf === undefined ? {} : { leaf }),
   }, seat.signingSecret);
-  const invitation = filed(company, seat, 'signer', token, signOffer(offered(company, seat, {
+  const invitation = await filed(company, seat, 'signer', {
     kind: 'signer', name: signer.name, role: signer.role, seat: { nonce: proved.nonce, secret: proved.secret }, invited,
-  }, sealing), seat.signingSecret), sealing.epoch);
-  answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/invites/signer`, {
-    method: 'POST', body: JSON.stringify({ invitation }),
-  }), 201);
+  }, sealing, token, send);
   return { token, id: invitation.id, proved, invited, sealing };
 }
 
 /**
- * **A SIGNER INVITED FROM THIS DEVICE**, for the person whose sign-in it names,
- * with the secret their new keys will be proved by inside the offer.
+ * **ANYBODY INVITED FROM THIS DEVICE, ON THE ONE ENTRY FOR EVERY KIND**: an
+ * employee (their first person record is sealed here and filed with the
+ * invitation), a vendor, or a signer (with the secret their new keys will be
+ * proved by inside the offer). Returns the link to send, the invitation's id
+ * and, for an employee or a vendor, the id of the record it is for. Refuses,
+ * before anything is signed or sent: a seat whose role may not invite
+ * (`SeatMayNotInvite`); a super admin, who is invited under the committee's
+ * own rules and never by a seat; and, with `InvitationNotMade`, what the
+ * invitee's device would refuse to open: a vendor with a salary or a
+ * classification, a contractor as an employee, an end date before the start
+ * date, a date that is not a calendar date.
  */
-export async function inviteSignerHere(
-  company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec, origin: string, send: InvitationSend,
+/**
+ * **A SEAT OFFERED BY THE ADDRESS THE INVITER TYPED, RAISED BEFORE ANYBODY ACCEPTS.** The address's coin key is
+ * committed to under a fresh salt; the proposal's identity is worked out first, under a salt chosen here, so the
+ * signed invitation names the commitment, the seat's rights and the proposal; the proposal is raised with this seat's
+ * approval; and only then is the offer filed, carrying the address, the proposal's salt and the signed invitation, so
+ * the invitee's wallet can take the seat itself. Before the raise, this device keeps the token and the offer it
+ * signed (`doors.keep`); nothing is raised when it cannot. If the filing fails after the raise, the link is handed
+ * back in the error: this device holds it, and nothing the seat needs exists only at the service.
+ */
+async function fileSignerByAddress(
+  company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec & { readonly address: string }, origin: string, send: InvitationSend,
+  doors: SignerByAddressDoors,
 ): Promise<MadeInvitation> {
-  const made = await fileSignerInvitation(company, seat, signer, send);
-  return { link: invitationLink(origin, made.token), id: made.id };
+  refuseASeatThatMayNotInvite(seat);
+  let coinPublicKey: Hex;
+  try {
+    coinPublicKey = String(checkShieldedAddress(signer.address, doors.network as never).coinPublicKey).toLowerCase() as Hex;
+  } catch (e) {
+    throw new InvitationNotMade(`the address is not a private address on this network (${(e as Error).message})`);
+  }
+  const addressSalt = toHex(randomBytes(32));
+  const scope = (signer.scope ?? doors.commitments.allVaults()).toLowerCase() as Hex;
+  const invite = { address: doors.commitments.inviteAddressOf(coinPublicKey, addressSalt).toLowerCase() as Hex, salt: addressSalt, scope };
+  const proposalSalt = toHex(randomBytes(32));
+  const { chainId } = await doors.identity({ kind: 'add-signer', address: invite.address, scope }, proposalSalt);
+  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
+  const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role);
+  const token = newInvitationToken();
+  const invited = signSeatInvitation({
+    company: company.id, invitation: invitationIdOf(token), person: `adr_${toHex(randomBytes(10))}`, name: signer.name, role: signer.role,
+    invite, proposal: chainId.toLowerCase() as Hex,
+  }, seat.signingSecret);
+  const inviter: Inviter = { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening };
+  const forWhom: InvitationOffer['for'] = {
+    kind: 'signer', name: signer.name, role: signer.role, seat: { nonce: proved.nonce, secret: proved.secret }, invited,
+    byAddress: { address: signer.address, proposalSalt },
+  };
+  const unsigned = offered(company, seat, forWhom, sealing);
+  const why = whyThisOfferCannotBeMade(unsigned);
+  if (why !== null) throw new InvitationNotMade(why);
+  const offer = signOffer(unsigned, seat.signingSecret);
+  const link = invitationLink(origin, token);
+  await doors.keep({ company: company.id, id: invitationIdOf(token), token, link, offer });
+  await doors.raise({ invited, proposalSalt, name: signer.name, inviter });
+  try {
+    const invitation = await filed(company, seat, 'signer', forWhom, sealing, token, send, undefined, undefined, offer);
+    return { link, id: invitation.id };
+  } catch (e) {
+    throw new InvitationRaisedNotFiled(link, (e as Error).message);
+  }
 }
 
-/** An invitation this device opened: the token its link carried, and the offer its inviter signed. */
+export async function inviteHere<K extends InvitationKind>(
+  company: InvitingCompany, seat: InvitingSeat, kind: K, spec: InviteSpecs[K], origin: string, send: InvitationSend,
+  byAddress?: K extends 'vendor' ? VendorByAddressDoors : SignerByAddressDoors,
+): Promise<MadeInvitation> {
+  switch (kind) {
+    case 'employee': {
+      const made = await filePayeeInvitation(company, seat, spec as EmployeeSpec, send);
+      return { link: invitationLink(origin, made.token), id: made.id, person: made.person };
+    }
+    case 'vendor': {
+      const made = await fileVendorInvitation(company, seat, spec as VendorSpec, send, byAddress as VendorByAddressDoors | undefined);
+      return { link: invitationLink(origin, made.token), id: made.id, person: made.person };
+    }
+    case 'signer': {
+      const signer = spec as SignerSpec;
+      if (signer.address !== undefined) {
+        if (byAddress === undefined) throw new InvitationNotMade('this page cannot raise a seat offered by address: reload the page');
+        return fileSignerByAddress(company, seat, signer as SignerSpec & { address: string }, origin, send, byAddress as SignerByAddressDoors);
+      }
+      const made = await fileSignerInvitation(company, seat, signer, send);
+      return { link: invitationLink(origin, made.token), id: made.id };
+    }
+    case 'super-admin':
+      throw new InvitationNotMade(SUPER_ADMIN_INVITED_BY_THE_COMMITTEE);
+    default:
+      throw new InvitationNotMade('it is none of the four kinds of invitation (an employee, a vendor, a signer or a super admin): choose one');
+  }
+}
+
+/** An invitation this device opened: the token its link carried, the offer its inviter signed, and which kind it is. */
 interface OpenedInvitation {
   readonly token: Hex;
   readonly signed: SignedOffer;
   readonly expiresAt: string;
+  /** The kind the offer's own signed content says it is; a re-issued seat invitation is a signer's. */
+  readonly kind: InvitationKind;
 }
 
 /** Refuses an offer past the expiry its inviter signed, on this device's clock, whatever the service says. */
@@ -267,30 +541,66 @@ export async function openInvitationHere(link: string, send: InvitationSend): Pr
   /* A re-issue is kept by the service as a signer's invitation: it opens nothing on its own and names a seat already held. */
   const kind = signed.offer.for.kind === 'reissue' ? 'signer' : signed.offer.for.kind;
   if (kind !== b.kind) throw new InvitationNotOpened('it is not the kind of invitation the service says it is');
-  return { token, signed, expiresAt: b.expiresAt };
+  return { token, signed, expiresAt: b.expiresAt, kind };
 }
 
 /**
- * **A PAYEE ACCEPTS, HANDING OVER THEIR CODE.** `code` is the one their own
- * wallet signed for this company (`askWalletForAJoinCode`), the same package a
- * pasted code hands over; it is sealed here to the inbox key the signed offer
- * names and sent with the proof only the token gives. Returns the fingerprint
- * of the address they are paid at, for them to read to whoever admits them.
+ * **A PAYEE ACCEPTS, AN EMPLOYEE OR A VENDOR, HANDING OVER THEIR CODE.**
+ * `code` is the one their own wallet signed for this company
+ * (`askWalletForAJoinCode`), the same package a pasted code hands over; it is
+ * sealed here to the inbox key the signed offer names and sent with the proof
+ * only the token gives. Returns the fingerprint of the address they are paid
+ * at, for them to read to whoever admits them. An employee added by a shielded
+ * address accepts this way too, with a code for exactly that address; one added
+ * by an unshielded address claims from their wallet instead (`claimIntentOf`).
+ * Refuses a seat's offer, and a super admin's, which joins under the committee's
+ * own rules.
  */
 export async function acceptAsPayeeHere(opened: OpenedInvitation, code: JoinCode, send: InvitationSend): Promise<{ readonly fingerprint: string }> {
   const o = opened.signed.offer;
-  if (o.for.kind !== 'employee') throw new Error('that invitation offers a seat, not pay, so it is not accepted as a payee.');
+  if (o.for.kind === 'super-admin') throw new Error(SUPER_ADMIN_JOINS_BY_THE_COMMITTEE);
+  if (o.for.kind !== 'employee' && o.for.kind !== 'vendor') throw new Error('that invitation offers a seat, not pay, so it is not accepted as a payee.');
   refuseAnExpiredOffer(o);
   if (code.parts.kind !== 'payee' || code.company !== o.label) {
     throw new Error('that code is not a payee\'s code for the company this invitation is from, so nothing was sent.');
   }
-  answered(await send(`/api/invites/${invitationIdOf(opened.token)}/accept-employee`, {
-    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(opened.token), handover: payeeHandoverOf(code, o.inboxPublicKey) }),
+  const typed = o.for.kind === 'employee' ? (o.for as { address?: unknown }).address : undefined;
+  if (typeof typed === 'string' && !typedAddressIsShielded(typed)) {
+    throw new Error('this invitation was made by the public address you gave, so it is claimed from the wallet that holds that address, with no code to read out. Nothing was sent.');
+  }
+  if (typeof typed === 'string' && (code.parts as PayeeParts).address !== typed) {
+    throw new Error('this invitation was made by the private address you gave, and the code names another address, so nothing was sent. Hand over a code for the address you gave.');
+  }
+  answered(await send(`/api/invites/${invitationIdOf(opened.token)}/accept-payee`, {
+    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(opened.token), handover: payeeHandoverOf(code, o.inboxPublicKey), kind: o.for.kind }),
   }), 201);
   return { fingerprint: payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }) };
 }
 
 /** The company a signer's invitation was filed to, as the service holds it; null when it holds none. */
+ /**
+ * What a person or vendor added by an unshielded address asks their wallet to do (`claim-by-address`): the company,
+ * its record, the invitation's token and the address that was typed. The wallet opens the inviter-signed offer itself
+ * with the token and takes the inbox key, the record and the address from it; nothing here is trusted beyond naming
+ * what to claim. Throws for an invitation not made by address, and for one made by a shielded address, which is
+ * accepted with the wallet's code and the fingerprint read out (`acceptAsPayeeHere`).
+ */
+export function claimIntentOf(opened: OpenedInvitation): { readonly name: 'claim-by-address' } & Readonly<Record<string, string>> {
+  const o = opened.signed.offer;
+  refuseAnExpiredOffer(o);
+  if (o.for.kind !== 'employee' && o.for.kind !== 'vendor') throw new Error('that invitation offers a seat, not pay, so it is not claimed as a payee.');
+  const address = (o.for as { address?: unknown }).address;
+  if (typeof address !== 'string') {
+    throw new Error('this invitation was not made by an address, so it is accepted with your wallet\'s code and the fingerprint read out.');
+  }
+  if (typedAddressIsShielded(address)) {
+    throw new Error('this invitation was made by a private address, so it is accepted with your wallet\'s code for that address and the fingerprint read out.');
+  }
+  return Object.freeze({
+    name: 'claim-by-address' as const, company: o.label, account: String(o.account), record: o.company, token: opened.token, address,
+  });
+}
+
 type FiledTo = { readonly id: string; readonly label: string | null; readonly account: string | null } | null;
 
 /**
@@ -329,7 +639,8 @@ const filedToOf = async (opened: OpenedInvitation, send: InvitationSend): Promis
  * inviting seat signed it are sealed here to the company's inbox key and filed
  * as the seat request.
  * Returns, with the seat, the fingerprint of the keys for the person to read
- * to whoever seats them.
+ * to whoever seats them. Refuses an offer of pay, and a super admin's, which
+ * joins under the committee's own rules.
  */
 export async function acceptAsSignerHere(
   opened: OpenedInvitation, commitments: LeafScheme, doors: Omit<SeatDoors, 'publish'>, send: InvitationSend,
@@ -339,6 +650,7 @@ export async function acceptAsSignerHere(
   walletKey: (company: { readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress }) => Promise<WalletKey>,
 ): Promise<AcceptedSeat & { readonly fingerprint: string }> {
   const o = opened.signed.offer;
+  if (o.for.kind === 'super-admin') throw new Error(SUPER_ADMIN_JOINS_BY_THE_COMMITTEE);
   if (o.for.kind !== 'signer') throw new Error('that invitation offers pay, not a seat, so it is not accepted as a signer.');
   refuseAnExpiredOffer(o);
   /* A seat goes to the person invited: a link opened under another sign-in makes no seat and sends nothing. */
@@ -477,18 +789,18 @@ export async function addSignerFromCodeHere(
 }
 
 /**
- * **A PAYEE ADDED FROM A CODE THEY GAVE.** Their first person record and a real
+ * **AN EMPLOYEE ADDED FROM A CODE THEY GAVE.** Their first person record and a real
  * invitation are made and filed as for a link, and the invitation is accepted
  * here with their code as what they hand over. Admitting them is a separate
  * act. Returns the person and the fingerprint of the address they are paid at.
  */
 export async function addPayeeFromCodeHere(
-  company: InvitingCompany, seat: InvitingSeat, text: string, spec: PayeeSpec, send: InvitationSend,
+  company: InvitingCompany, seat: InvitingSeat, text: string, spec: EmployeeSpec, send: InvitationSend,
 ): Promise<{ readonly person: string; readonly fingerprint: string }> {
   const code = codeFor(text, company, 'payee');
   const made = await filePayeeInvitation(company, seat, spec, send);
-  answered(await send(`/api/invites/${made.id}/accept-employee`, {
-    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), handover: payeeHandoverOf(code, inboxOf(made.sealing.key, company.id)) }),
+  answered(await send(`/api/invites/${made.id}/accept-payee`, {
+    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), handover: payeeHandoverOf(code, inboxOf(made.sealing.key, company.id)), kind: 'employee' }),
   }), 201);
   return { person: made.person, fingerprint: payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }) };
 }
@@ -570,7 +882,7 @@ export async function reissueInvitationHere(
   const original = replacedFor(reissued.proposals, company.id, company.viewingKey, reissued.leaf);
   const t = original?.terms;
   if (original === null || t === undefined || seatInvitationRefusal(original) !== null || t.company !== company.id || t.leaf?.toLowerCase() !== reissued.leaf.toLowerCase()) {
-    throw new SeatMayNotInvite('No one invitation a seat of this company signed for that seat is carried by the proposal that seated it, so nothing is re-issued.');
+    throw new SeatMayNotInvite('The proposal that seated this person does not carry an invitation a signer made for them, so it cannot be sent again. Invite them again.');
   }
   const leaf = t.leaf;
   if (!reissued.onTheChain.some((x) => x.toLowerCase() === leaf.toLowerCase())) {
@@ -584,10 +896,7 @@ export async function reissueInvitationHere(
     company: company.id, invitation: invitationIdOf(token), person: t.person, name: t.name, role: t.role, leaf,
     replaces: { invitation: t.invitation, signedBy: original.signedBy, signature: original.signature },
   }, seat.signingSecret);
-  const invitation = filed(company, seat, 'signer', token, signOffer(offered(company, seat, { kind: 'reissue', name: t.name, role: t.role, invited }, sealing), seat.signingSecret), sealing.epoch);
-  answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/invites/signer`, {
-    method: 'POST', body: JSON.stringify({ invitation }),
-  }), 201);
+  const invitation = await filed(company, seat, 'signer', { kind: 'reissue', name: t.name, role: t.role, invited }, sealing, token, send);
   return { link: invitationLink(origin, token), id: invitation.id };
 }
 

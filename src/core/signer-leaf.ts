@@ -6,12 +6,12 @@
  * handed over by an invitee's device — and the blinding
  * that made it never arrives (decision 0003; `AccountService.acceptSignerInvite`
  * has no parameter for one and `PendingSignerPayload` has the matching hole).
- * Seating publishes the STORED value: `grantAccess` passes
- * `signer.leafCommitment` to `Ledger.addSigner` (`account.ts:988`), and on
- * Midnight that becomes `amendSigner`'s first argument
- * (`src/midnight/ledger.ts:1077`). The circuits that gate acting then recompute
- * the leaf IN-CIRCUIT from the caller's own witnesses and assert a path to it —
- * `requireSigner()`, `contracts/src/ConfidentialAccount.compact:1026-1042`,
+ * The founding seat publishes the STORED value as the account's constructor
+ * argument; a seat taken by invitation is built in-circuit by `seatInvited` from
+ * the invitee's own key, blinding and rights, and `grantAccess` admits the
+ * person only once the chain holds their stored leaf. The circuits that gate
+ * acting then recompute the leaf IN-CIRCUIT from the caller's own witnesses and
+ * assert a path to it — `requireSigner()`,
  * called by `amendSigner`, `setThreshold`, `propose`, `approve`, `cancel`,
  * `setVaultThreshold` and `adopt`. **Not by every circuit**: `recordPayment`,
  * `closeExpiredRun` and `retireVault` deliberately do not, and each says why in

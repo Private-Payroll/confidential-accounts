@@ -19,10 +19,10 @@ import { accountBuilderDeps, answerAccountAsk, startAccountBuilder, type Account
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
 describe('the account circuits the wallet proves', () => {
-  it('are every circuit a signer governs the account with, the two that anchor its records, and the charge of a payment to its period', () => {
-    // RED WHEN: a circuit a seat action needs is left out of what the wallet proves, so that action can only be proved on the page; or a vault under a spending policy cannot be paid from the wallet
+  it('are every circuit a signer governs the account with, the two that anchor its records, the charge of a payment to its period, and the seat an invited person takes', () => {
+    // RED WHEN: a circuit a seat action needs is left out of what the wallet proves, so that action can only be proved on the page; or a vault under a spending policy cannot be paid from the wallet; or a person invited cannot take their seat from their own wallet
     expect([...ACCOUNT_CIRCUITS_THE_WALLET_PROVES].sort()).toEqual([
-      'adopt', 'amendSigner', 'anchor', 'approve', 'cancel', 'clearRun', 'propose', 'recoverAnchor', 'sealPayKey', 'setPolicy',
+      'adopt', 'amendSigner', 'anchor', 'approve', 'cancel', 'clearRun', 'propose', 'recoverAnchor', 'sealPayKey', 'seatInvited', 'setPolicy',
       'setPolicyBar', 'setThreshold', 'setVaultThreshold',
     ]);
   });

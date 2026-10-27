@@ -1,24 +1,26 @@
 /**
- * **A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, AND A SIGNER BEYOND ITS
- * THRESHOLD IS SEATED THE SAME WAY.**
+ * **A COMPANY INVITES ITS SIGNERS FROM THEIR OWN DEVICES, EACH INVITEE TAKES
+ * THEIR OWN SEAT, AND A SIGNER BEYOND ITS THRESHOLD IS SEATED THE SAME WAY.**
  *
  * What is real here:
  *   · the chain is the ledger's own state machine, applying each transaction as
  *     its own block;
  *   · the company account is the compiled account, deployed with the state its
  *     own constructor writes: one founding signer, a threshold of one;
- *   · every raise, approval, seat and threshold change is built by the device's
+ *   · every raise, approval and threshold change is built by the device's
  *     own builder, reached through the page's own worker client and the
  *     worker's own handler, from key material shaped exactly as the keyring
  *     holds it;
+ *   · each invitee takes their seat with `seatInvited`, built here from the
+ *     invitee's own key material and the address they were invited at, the
+ *     way their wallet builds it;
  *   · what the device sends is read by the service's own reader and passed by
  *     the service's own check before the chain applies it.
  *
  * **THE SHAPE IT PROVES.** A company is founded one of one. Every seat after the
- * first is an approved round, because the account's signers never fall below its
- * threshold - so the second signer is already a signer beyond the threshold, and
- * after the threshold is raised to two, the third needs two approvals from two
- * devices before anybody can seat them.
+ * first is an approved invitation the invitee takes - so the second signer is
+ * already a signer beyond the threshold, and after the threshold is raised to
+ * two, the third needs two approvals from two devices before they can take it.
  *
  * **WHAT THIS DOES NOT SHOW, SAID HERE SO NOTHING RELIES ON IT:**
  *   · **no proof is made.** The call reaches the chain unproven and the ledger
@@ -37,7 +39,11 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
-import { privateStateFor, leafOfDevice, change, COMPANY_LABEL } from './simulator.js';
+import {
+  privateStateFor, leafOfDevice, change, COMPANY_LABEL, invitedAddressFor, invitedAddressCommitmentOf,
+} from './simulator.js';
+import type { InvitedAddress } from '../src/witnesses.js';
+import { inviteeSeatCall } from './an-invitee-takes-the-seat.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
@@ -151,7 +157,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
   const aRound = (governance: GovernedCallOrder & { circuit: 'propose' } extends never ? never : any, seed: number) => {
     const c = change(0n, seed);
     const payload = governance.kind === 'add-signer'
-      ? circuits.signerAddPayload(Buffer.from(governance.leaf, 'hex'))
+      ? circuits.signerInvitePayload(Buffer.from(governance.address, 'hex'), Buffer.from(governance.scope, 'hex'))
       : circuits.setThresholdPayload(BigInt(governance.threshold));
     const id = hex(circuits.proposalIdOf(payload, circuits.noVault(), c.salt));
     const raise: GovernedCallOrder = {
@@ -172,13 +178,22 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
   const onDevice = async (who: AccountPrivateState, order: GovernedCallOrder) =>
     send((await builder().governedCall({ account: company, order, material: keyringOf(who), chain: callState(), opened: openedFor(order) })).tx);
 
-  /** A seat raised by the first device named (which counts as its approval), approved by the rest, and carried out by the first. */
+  /** The invitation of `who`: the commitment to the address they were invited at, and their seat's rights. */
+  const invitationOf = (who: AccountPrivateState, invite: InvitedAddress = invitedAddressFor(who)) =>
+    ({ kind: 'add-signer', address: hex(invitedAddressCommitmentOf(invite)), scope: hex(who.scope) }) as const;
+
+  /** The invitee takes the seat, as their own wallet builds the call, and the chain applies what it sent. */
+  const inviteeTakes = async (who: AccountPrivateState, id: string, salt: string, invite: InvitedAddress = invitedAddressFor(who)) =>
+    send(await inviteeSeatCall({
+      accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who, proposal: id, salt, invite,
+    }));
+
+  /** An invitation raised by the first device named (which counts as its approval), approved by the rest, and taken by the invitee. */
   const seat = async (who: AccountPrivateState, approvers: AccountPrivateState[], seed: number) => {
-    const leaf = hex(leafOfDevice(who));
-    const r = aRound({ kind: 'add-signer', leaf }, seed);
+    const r = aRound(invitationOf(who), seed);
     expect(await onDevice(approvers[0]!, r.raise)).toEqual({ ok: true, error: '' });
     for (const a of approvers.slice(1)) expect(await onDevice(a, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
-    return onDevice(approvers[0]!, { circuit: 'amendSigner', leaf, proposal: r.id, proposalSalt: r.salt });
+    return inviteeTakes(who, r.id, r.salt);
   };
 
   beforeEach(async () => {
@@ -204,7 +219,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     const blake = privateStateFor(2);
     expect(ledgerNow().threshold).toBe(1n);
     expect(ledgerNow().signerLeaves.size()).toBe(1n);
-    /* RED WHEN: a device cannot raise, approve or carry out a seat - the company then stays one of one for ever. */
+    /* RED WHEN: a device cannot raise or approve an invitation, or the invitee cannot take it - the company then stays one of one for ever. */
     expect(await seat(blake, [founder], 11)).toEqual({ ok: true, error: '' });
     expect(seated(leafOfDevice(blake))).toBe(true);
     expect(ledgerNow().signerLeaves.size()).toBe(2n);
@@ -229,40 +244,40 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
       .toEqual({ ok: true, error: '' });
     expect(ledgerNow().threshold).toBe(2n);
 
-    const leaf = hex(leafOfDevice(cleo));
-    const r = aRound({ kind: 'add-signer', leaf }, 23);
+    const r = aRound(invitationOf(cleo), 23);
     expect(await onDevice(founder, r.raise)).toEqual({ ok: true, error: '' });
-    const carry = { circuit: 'amendSigner', leaf, proposal: r.id, proposalSalt: r.salt } as const;
-    /* One approval of two: the contract refuses the seat, from the device, before anything is sent. */
-    await expect(onDevice(founder, carry)).rejects.toThrow(/not enough approvals/u);
+    /* One approval of two: the contract refuses the seat while the call is built, before anything is sent. */
+    await expect(inviteeTakes(cleo, r.id, r.salt)).rejects.toThrow(/not enough approvals/u);
     expect(seated(leafOfDevice(cleo))).toBe(false);
-    /* RED WHEN: the second signer's device cannot approve a seat - a company larger than its threshold is then never finished. */
+    /* RED WHEN: the second signer's device cannot approve an invitation - a company larger than its threshold is then never finished. */
     expect(await onDevice(blake, { circuit: 'approve', proposal: r.id })).toEqual({ ok: true, error: '' });
-    expect(await onDevice(blake, carry)).toEqual({ ok: true, error: '' });
+    expect(await inviteeTakes(cleo, r.id, r.salt)).toEqual({ ok: true, error: '' });
     expect(seated(leafOfDevice(cleo))).toBe(true);
     expect(ledgerNow().signerLeaves.size()).toBe(3n);
   });
 
-  it('A DEVICE ASKED TO SEAT A LEAF THE APPROVED ROUND WAS NOT RAISED FOR BUILDS NOTHING', async () => {
+  it('ANOTHER WALLET HOLDING THE INVITATION CANNOT TAKE THE SEAT IT NAMES', async () => {
     const blake = privateStateFor(2);
     const other = privateStateFor(4);
-    const leaf = hex(leafOfDevice(blake));
-    const r = aRound({ kind: 'add-signer', leaf }, 31);
+    const r = aRound(invitationOf(blake), 31);
     expect(await onDevice(founder, r.raise)).toEqual({ ok: true, error: '' });
-    /* RED WHEN: a round approved for one person can seat another. */
-    await expect(onDevice(founder, {
-      circuit: 'amendSigner', leaf: hex(leafOfDevice(other)), proposal: r.id, proposalSalt: r.salt,
-    })).rejects.toThrow(/^the person being given access the service sent to this device does not match the company's own record/u);
+    /* RED WHEN: an invitation approved for one address can be taken by another wallet. */
+    await expect(inviteeTakes(other, r.id, r.salt, { ...invitedAddressFor(blake), coinSecretKey: invitedAddressFor(other).coinSecretKey }))
+      .rejects.toThrow(/that proposal does not invite this wallet with these rights/u);
     expect(seated(leafOfDevice(other))).toBe(false);
   });
 
-  it('SOMEBODY WHO IS NOT A SIGNER CANNOT SEAT ANYBODY, EVEN ON AN APPROVED ROUND', async () => {
+  it('SOMEBODY WHO IS NOT A SIGNER CANNOT INVITE ANYBODY, AND NO SIGNER\'S DEVICE CARRIES AN INVITATION OUT', async () => {
     const outsider = privateStateFor(9);
-    const leaf = hex(leafOfDevice(outsider));
-    const r = aRound({ kind: 'add-signer', leaf }, 41);
-    expect(await onDevice(founder, r.raise)).toEqual({ ok: true, error: '' });
-    await expect(onDevice(outsider, { circuit: 'amendSigner', leaf, proposal: r.id, proposalSalt: r.salt }))
-      .rejects.toThrow(/not a signer/u);
-    expect(seated(leafOfDevice(outsider))).toBe(false);
+    const blake = privateStateFor(2);
+    const r = aRound(invitationOf(outsider), 41);
+    await expect(onDevice(outsider, r.raise)).rejects.toThrow(/not a signer/u);
+    const invited = aRound(invitationOf(blake), 42);
+    expect(await onDevice(founder, invited.raise)).toEqual({ ok: true, error: '' });
+    /* RED WHEN: a signer's device builds a seat for an invitation instead of leaving it to the invitee's wallet. */
+    await expect(onDevice(founder, {
+      circuit: 'amendSigner', leaf: hex(leafOfDevice(blake)), proposal: invited.id, proposalSalt: invited.salt, removing: true,
+    })).rejects.toThrow(/does not match the company's own record/u);
+    expect(seated(leafOfDevice(blake))).toBe(false);
   });
 });

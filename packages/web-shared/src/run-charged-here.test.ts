@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PayrollRun } from '../../../src/core/types.js';
 import { assetIdHex } from '../../../src/core/assets.js';
 import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../../../src/testing/assets.js';
+import { payeeFor } from '../../../src/testing/payees.js';
 import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
@@ -412,11 +413,15 @@ describe('WHAT A PERIOD HAS BEEN CHARGED, ON ANY SIGNER\'S DEVICE', () => {
   });
 });
 
+/** The address a one-off pays, and another one. */
+const PAID_TO = payeeFor('c1'.repeat(32), 'undeployed');
+const ELSEWHERE = payeeFor('c2'.repeat(32), 'undeployed');
 /** A one-off payment this device believes: from `vault` in currency T, in its window, with its one leaf and its fresh half. */
-const aOneOff = (n: number, o: { opens: bigint; closes: bigint; vault?: string; amount?: bigint; proposal?: string; chainId?: string }) => ({
+const aOneOff = (n: number, o: { opens: bigint; closes: bigint; vault?: string; amount?: bigint; proposal?: string; chainId?: string; vendor?: string }) => ({
   id: `one_${String(n).padStart(32, '0')}`, version: 1, filedBy: FILER,
   oneOff: {
     vault: o.vault ?? VAULT, asset: TEST_TOKEN, amount: o.amount ?? 50n, run: { opensAt: at(o.opens), closesAt: at(o.closes), required: 0n },
+    payee: { ref: o.vendor ?? null, name: null, address: PAID_TO.bech32, network: 'undeployed' }, paidTo: PAID_TO,
     proposal: { id: o.proposal ?? `prp_oneOff${n}AAAAA`, chainId: o.chainId ?? 'e0'.repeat(32) },
   },
   secrets: { nonce: '01'.repeat(32), blinding: '02'.repeat(32), fresh: `0${n}`.repeat(32) },
@@ -477,6 +482,26 @@ describe('A ONE-OFF PAYMENT IS CHARGED TO ITS VAULT\'S PERIOD, AND COUNTED IN TH
     oneOffs = [aOneOff(4, { opens: 103n, closes: 104n, proposal: 'prp_oneOffChargA', chainId: '0e'.repeat(32) })];
     await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_oneOffChargA' })).rejects.toThrow(/raised by another proposal/u);
     expect(sent).toEqual([]);
+  });
+
+  it('RED WHEN: a one-off naming a vendor entry is charged though it does not pay that entry\'s address, or by a page that cannot read the vendors', async () => {
+    runs = [];
+    oneOffs = [aOneOff(5, { opens: 103n, closes: 104n, proposal: 'prp_oneOffChargB', chainId: '0f'.repeat(32), vendor: 'ven_0123456789abcdef0123' })];
+    proposalsNow = [aTransferProposal(5, 'prp_oneOffChargB', '0f'.repeat(32))];
+    const vendorAt = (address: typeof PAID_TO) => async () => ({
+      vendors: [{ vendor: { id: 'ven_0123456789abcdef0123', address, network: 'undeployed' }, version: 1 }], notBelieved: [], notPayable: [],
+    });
+    const charging = (vendors?: () => Promise<unknown>) => {
+      const d = doors();
+      return { ...d, records: { ...(d.records as object), ...(vendors === undefined ? {} : { vendors }) } } as never;
+    };
+    await expect(chargeTheRunHere(charging(), { order: anOrder(103n, 104n), proposalId: 'prp_oneOffChargB' })).rejects.toThrow(/cannot read the company's vendors/u);
+    await expect(chargeTheRunHere(charging(vendorAt(ELSEWHERE)), { order: anOrder(103n, 104n), proposalId: 'prp_oneOffChargB' }))
+      .rejects.toThrow(/pays another address than the vendor entry it names/u);
+    expect(asked).toEqual([]);
+    expect(sent).toEqual([]);
+    const r = await chargeTheRunHere(charging(vendorAt(PAID_TO)), { order: anOrder(103n, 104n), proposalId: 'prp_oneOffChargB' });
+    expect(r).toEqual({ state: 'charged', spentBefore: 700n });
   });
 
   it('A ONE-OFF RECORD NAMING A PAYROLL LEG\'S PROPOSAL NEVER TAKES OVER ITS CHARGE: THE LEG IS CHARGED AS PAYROLL', async () => {

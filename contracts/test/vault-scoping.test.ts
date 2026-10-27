@@ -265,7 +265,9 @@ describe('the reserved signer scope', () => {
   });
 
   /**
-   * **THE SCOPE IS READ ONCE, FEEDS THE LEAF, AND DECIDES RIGHTS FOR RUNS ONLY.**
+   * **THE SCOPE FEEDS THE LEAF, AND DECIDES RIGHTS FOR RUNS ONLY.** It is read
+   * where a seat is opened and where an invitee takes the seat an invitation
+   * fixed its rights for.
    *
    * A seat's scope is `allVaults()`, every right on every vault, or the hash of
    * a rights record. It is compared with anything only inside `grants`, and
@@ -276,7 +278,7 @@ describe('the reserved signer scope', () => {
    * the compiled circuits in `rights-live-in-each-signers-leaf.test.ts`; this
    * reads the source, so a new reader of the scope is noticed where it appears.
    */
-  it('the scope is read once, into the leaf, and compared only where a run asks for a right', () => {
+  it('the scope is read where a seat is opened and where an invitee takes one, into the leaf, and compared only where a run asks for a right', () => {
     const source = readFileSync(
       new URL('../src/ConfidentialAccount.compact', import.meta.url), 'utf8');
     /* Comments stripped first, so prose explaining the rule is not read as code. */
@@ -284,8 +286,11 @@ describe('the reserved signer scope', () => {
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/\/\/[^\n]*/g, ' ');
 
-    /* RED WHEN a second reader of the witness appears: the declaration and the seat's one read. */
-    expect(code.match(/signerScope/g) ?? []).toHaveLength(2);
+    /* RED WHEN another reader of the witness appears: the declaration, the seat's one read, and the
+       invitee's, which binds the scope it reads into both the invitation it takes and the leaf it seats. */
+    expect(code.match(/signerScope/g) ?? []).toHaveLength(3);
+    expect(code).toContain('signerInvitePayload(address, scope), noVault(), proposalSalt())');
+    expect(code).toContain('const newSignerLeaf = signerLeaf(signerPublicKey(localSecretKey()), signerBlinding(), scope);');
     expect(code).toMatch(/witness signerScope\(\)\s*:\s*Bytes<32>;/);
     expect(code).toContain('const scope = signerScope();');
     /* RED WHEN the seat proves membership of a leaf built from anything but the scope it read. */

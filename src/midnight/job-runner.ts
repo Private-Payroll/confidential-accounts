@@ -418,29 +418,6 @@ export const expectationFor = (
         duplicateRejectedOnChain: true,
       };
 
-    case 'addSigner':
-      /*
-       * The one exception in the contract, and it is not theoretical.
-       *
-       * On the approved path `addSigner` closes the round, so a replay fails.
-       * On the BOOTSTRAP path — `signerCount < threshold` — it just inserts the
-       * leaf and increments the count, with nothing stopping it happening
-       * twice.
-       *
-       * Treated as unsafe on both paths here, because which path applied
-       * depends on `signerCount` at the moment the transaction was executed,
-       * which is precisely what we cannot observe after the fact.
-       */
-      return {
-        proposalId,
-        viewDigest: null,
-        duplicateRejectedOnChain: false,
-        duplicateHazard:
-          'Adding a signer during bootstrap has no on-chain duplicate check, so a second attempt ' +
-          'would insert the same signer twice and inflate the signer count — which can leave the ' +
-          'account permanently unable to reach its threshold.',
-      };
-
     default:
       /*
        * An unknown kind is unsafe by default rather than safe. The cost of

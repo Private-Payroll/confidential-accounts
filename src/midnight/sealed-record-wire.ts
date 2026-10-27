@@ -47,23 +47,25 @@ export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', '
  * spending policy for one currency, sealed to the signers; `vault-info` is one
  * vault's name and description (`vault-info-record.ts`); `transfer` is one
  * one-off payment from a vault, sealed under the company's one-offs key
- * (`one-off-record.ts`).
+ * (`one-off-record.ts`); `vendor` is one entry on the company's vendor list,
+ * sealed under the company's vendors key (`vendor-record.ts`), and never on
+ * the same list as a `person`.
  */
-export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy', 'vault-info', 'transfer'] as const;
+export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy', 'vault-info', 'transfer', 'vendor'] as const;
 export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
 /**
  * **THE KINDS SEALED UNDER ONE OF THE COMPANY'S OWN KEYS**, and which one: a
  * person under the payroll purpose key, the company's signers under the
  * roster purpose key, a vault's name and description under the vaults purpose
- * key, a one-off payment under the one-offs purpose key, and the company's state under the viewing key of the epoch the record
+ * key, a one-off payment under the one-offs purpose key, a vendor entry under the vendors purpose key, and the company's state under the viewing key of the epoch the record
  * names, exactly as the founding signer's device sealed it. Such a record is
  * opened by whoever holds that key, so it carries no per-reader wraps: a wrap
  * beside it would be a second, drifting answer to who may read it. Every other
  * kind is sealed under a fresh key wrapped to each reader.
  */
-export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'vaults' | 'one-offs' | 'viewing'>>> = Object.freeze({
-  person: 'payroll', roster: 'roster', 'vault-info': 'vaults', transfer: 'one-offs', state: 'viewing',
+export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'vaults' | 'one-offs' | 'vendors' | 'viewing'>>> = Object.freeze({
+  person: 'payroll', roster: 'roster', 'vault-info': 'vaults', transfer: 'one-offs', vendor: 'vendors', state: 'viewing',
 });
 
 /** Where a person on a company's payroll stands. */
@@ -72,14 +74,12 @@ export type PersonStanding = (typeof PERSON_STANDINGS)[number];
 
 /**
  * **WHAT A PERSON RECORD SAYS IN PLAIN TEXT, BESIDE ITS SEAL**: where the
- * person stands, and the public key their payslips are sealed to. Both were
- * plain on the employee row before the record replaced it, and the filer's
- * signature covers them as it covers the seal. Nothing else about a person is
- * readable outside the seal.
+ * person stands, and nothing else. The filer's signature covers it as it covers
+ * the seal. The key their payslips are sealed to is inside the seal: beside it,
+ * the service could tell which slips are whose.
  */
 export interface PersonFacts {
   readonly status: PersonStanding;
-  readonly wrappingPublicKey: Hex | null;
 }
 
 /** One filed version, as it crosses the wire. */
@@ -299,10 +299,9 @@ export const whyThisIsNotACompanyRecord = (
   if (r.sealed === null || typeof r.sealed !== 'object') return 'it carries no sealed payload';
   if (expect.kind === 'person') {
     const f = r.facts as Record<string, unknown> | null | undefined;
-    if (f === null || typeof f !== 'object' || Object.keys(f).sort().join(',') !== 'status,wrappingPublicKey'
-      || !(PERSON_STANDINGS as readonly unknown[]).includes(f.status)
-      || !(f.wrappingPublicKey === null || (typeof f.wrappingPublicKey === 'string' && /^[0-9a-f]{64}$/u.test(f.wrappingPublicKey)))) {
-      return 'a person record says where the person stands and their payslip key, and this one does not say both in the one form';
+    if (f === null || typeof f !== 'object' || Object.keys(f).join(',') !== 'status'
+      || !(PERSON_STANDINGS as readonly unknown[]).includes(f.status)) {
+      return 'a person record says where the person stands and nothing else beside its seal, and this one does not say exactly that';
     }
   } else if (r.facts !== undefined) return `a ${expect.kind} record carries no plain facts`;
   if (r.filedBy !== undefined) {

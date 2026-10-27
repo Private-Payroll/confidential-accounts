@@ -152,6 +152,10 @@ export const metered: string[] = [];
 export const refusals: string[] = [];
 /** Every request any device sent: its method, its path and its body. */
 export const wire: string[] = [];
+/** Who signed in for each request the service was sent, in order: `null` for one sent signed out. */
+export const askedBy: Array<string | null> = [];
+/** The people whose devices a test says never open the app: a request sent as one of them throws before it is sent. */
+export const offline = new Set<string>();
 let base = '';
 let chain: ChainHolders | null = null;
 /** The chain as the server reads it, each company's account on its own once both are set up; `chain` while they are. */
@@ -166,7 +170,9 @@ const chainRead: DirectoryChainRead = async (id) => {
 export function sendAs(person: string | null): InvitationSend {
   return async (path, init) => {
     const method = path.includes('/directory/') ? 'PUT' : init.method;
+    if (person !== null && offline.has(person)) throw new Error(`${person}'s device was asked to send ${method} ${path}, and ${person} never opened the app.`);
     wire.push(`${method} ${path} ${init.body ?? ''}`);
+    askedBy.push(person);
     const r = await fetch(base + path, {
       method, ...(init.body === undefined ? {} : { body: init.body }),
       headers: { 'content-type': 'application/json', ...(person ? { 'x-test-person': person } : {}) },
@@ -212,7 +218,16 @@ const acmeAnchored: DirectoryHereDeps['anchored'] = (directory, asked) => anchor
  * sets it, read in place of the person's own wallet. Ada's seat is the one the
  * account was deployed with.
  */
+/**
+ * The seat each invitation by address took on the test's chain, by its proposal: what a device's vault worker reads
+ * from the account's history (`seatsInvitedIn`). Written by the test chain's `seatInvited` stand-in.
+ */
+export const seatsTakenByInvitation = new Map<string, string>();
+
 export const acmeReads = {
+  /* The seat each invitation by address took, as the account's history shows it. */
+  invitedSeats: async (proposals: readonly string[]) =>
+    Object.fromEntries(proposals.map((p) => [p.toLowerCase(), seatsTakenByInvitation.get(p.toLowerCase()) ?? null])),
   /** Acme's records as the head the test's chain holds them, over the tree routes mounted below. */
   get anchored() { return acmeAnchored; },
   /* Acme's viewing key, which every member's device here holds and opens each entry's proof with. */
@@ -266,7 +281,7 @@ export const DANAS_ADDRESS = `mn_shield-addr_test1${'q'.repeat(60)}`;
 /** Dana's payee code, as her own wallet signs it for a company. */
 export const danasCode = (label: CompanyLabel = LABEL, person = 'dana', address = DANAS_ADDRESS): JoinCode =>
   signJoinCode(identityFromSecret(new Uint8Array(32).fill(77)), label, person, { kind: 'payee', address, payslipKey: 'ab'.repeat(32) });
-export const DANA = { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: 'TEST', baseAmount: 620000n, startDate: '2026-10-01' };
+export const DANA = { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: 'TEST', baseAmount: 620000n, classification: 'full-time' as const, startDate: '2026-10-01' };
 
 /** What a file mounting routes of its own beside these is handed: the same gates, records and directory. */
 export interface MountedBeside {
@@ -359,7 +374,7 @@ export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: Mounted
       signedIn, member, ownsPerson, store, records: () => records, people: () => peopleRecords, directoryOf: (id) => directoryOf(store, chainRead, id),
     }));
     /* The handover and the invitation list, as the whole server serves them, for an admitting device. */
-    app.get('/api/employees/:id/handover', signedIn, ownsPerson, (req, res) => { res.json({ inbox: store.handoverFor(String(req.params.id)) }); });
+    app.get('/api/employees/:id/handover', signedIn, ownsPerson, (req, res) => { res.json({ inbox: store.handoverFor(String(req.params.id), 'employee') }); });
     app.get('/api/accounts/:id/invites', signedIn, member, (req, res) => {
       res.json(store.listInvites(String(req.params.id)).map(({ token: _t, acceptanceHash: _a, offer: _o, handover: _h, ...rest }) => rest));
     });

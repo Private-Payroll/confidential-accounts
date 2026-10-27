@@ -17,7 +17,7 @@ import type { RotateChange } from '../midnight/seat-directory.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
 import { rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { admitSignerHere, rosterHere } from 'vaults-web-shared/roster-here.js';
@@ -36,7 +36,7 @@ const DEES_KEY = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(4)),
 
 describe('A PERSON SEATED ON THE CHAIN BEFORE A SIGNER LEAVES IS ADMITTED AFTER THE KEY CHANGES', () => {
   it('the change of key does not wait for Dee, names her request, and Ada admits her with the new key, which Dee then reads', async () => {
-    const made = await inviteSignerHere(ACME, ADA, { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
     const kept: PendingSeat[] = [];
     const made_: NewSeatKeys[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {

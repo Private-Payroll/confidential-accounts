@@ -268,12 +268,13 @@ describe('the unauthenticated surface, counted rather than described', () => {
     /* RED WHEN the route that answered for a run and a person with no sign-in comes back. */
     expect(routes.some(r => r.line.includes("'/api/runs/:runId/employee/:employeeId'"))).toBe(false);
     /* RED WHEN a payslip door answers without a sign-in again. */
-    for (const path of ["'/api/payslips/proof'", "'/api/payslips'", "'/api/payslips/addresses'"]) {
+    for (const path of ["'/api/payslips'", "'/api/payslips/addresses'"]) {
       expect(open.some(r => r.line.includes(path)), path).toBe(false);
       expect(routes.some(r => r.line.includes(path) && signInRequired(r.line)), path).toBe(true);
     }
-    /* RED WHEN the route that relayed a company's completed payments comes back. */
+    /* RED WHEN the route that relayed a company's completed payments, or the one that took a payslip key to prove, comes back. */
     expect(routes.some(r => r.line.includes("'/api/payslips/paid'"))).toBe(false);
+    expect(routes.some(r => r.line.includes("'/api/payslips/proof'"))).toBe(false);
   });
 
   it('a route whose `authed` is only in a comment is counted as needing no sign-in', () => {
@@ -296,9 +297,9 @@ describe('the unauthenticated surface, counted rather than described', () => {
     const metering = server.split('\n').filter(l => /limiter\.record\(/.test(l));
     expect(metering).toHaveLength(2);
     expect(metering.some(l => l.includes("'invite-offer'"))).toBe(true);
-    /* The payslip meter is one helper, and each of the three payslip doors calls it. */
+    /* The payslip meter is one helper, and each of the two payslip doors calls it. */
     expect(metering.some(l => l.includes("'payslips'"))).toBe(true);
-    expect(server.split('\n').filter(l => /await payslipsMetered\(req, res\)/.test(l))).toHaveLength(3);
+    expect(server.split('\n').filter(l => /await payslipsMetered\(req, res\)/.test(l))).toHaveLength(2);
   });
 
   it('and the sentence in `rate-limit.ts` says METERED, not merely unauthenticated', () => {

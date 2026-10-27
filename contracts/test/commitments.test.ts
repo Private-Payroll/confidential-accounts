@@ -121,19 +121,15 @@ describe('commitment schemes agree with the contract', () => {
       toHex(sim.publicKeyOf(blake)), toHex(blake.blinding),
     );
     /*
-     * SEATED THROUGH AN APPROVED ROUND, AND THE LEAF IS STILL THE CLIENT'S.
-     * The bootstrap window is shut, so this is `propose` (which counts Ada's
-     * approval) → `amendSigner` where it was one call. **What this test is about is
-     * unchanged**: the leaf handed to the chain is the one
-     * `MidnightCommitments.signerLeaf` computed, not one derived here, and the
-     * assertion below is still that Blake can prove membership against it.
+     * Blake takes his seat through an approved invitation, and the chain builds
+     * his leaf from his own key, blinding and rights. The leaf it seats must be
+     * the one `MidnightCommitments.signerLeaf` computed on the client, and Blake
+     * proves membership against it below.
      */
-    const seating = change(0n, 76);
     const clientLeaf = Uint8Array.from(Buffer.from(leaf, 'hex'));
-    const addPayload = pureCircuits.signerAddPayload(clientLeaf);
-    await sim.as(sim.applying(ada, seating)).propose(addPayload);
-    const seatId = sim.proposalId(addPayload, seating.salt);
-    await sim.as(sim.applying(ada, seating)).addSigner(clientLeaf, seatId);
+    await sim.seatSigner(blake, [ada], 76);
+    /* RED WHEN: the client's leaf is not the leaf the chain seats for the same key and blinding. */
+    expect(sim.ledger.signerLeaves.member(clientLeaf)).toBe(true);
 
     const c = change(0n, 77);
     const payload = new Uint8Array(32);

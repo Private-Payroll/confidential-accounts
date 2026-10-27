@@ -13,7 +13,7 @@
 export const PAYSLIP_PAGE_HEADER = 'x-payslip-page';
 
 /** Raised whenever what the payslip routes require of a page changes. */
-export const PAYSLIP_PAGE_VERSION = '1';
+export const PAYSLIP_PAGE_VERSION = '2';
 
 /** Shown, word for word, by a page older than this service. */
 export const PAGE_OUT_OF_DATE = 'This page is out of date. Reload it and open your payslips again.';

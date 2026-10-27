@@ -17,7 +17,7 @@ import { theNetwork } from '../midnight/network.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { signCompanyFiling, toCompanyWire, verifiedCompanyFiler } from '../midnight/sealed-record-wire.js';
 import {
-  addPayeeFromCodeHere, acceptAsPayeeHere, invitePayeeHere, openInvitationHere, type InvitingCompany,
+  addPayeeFromCodeHere, acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany,
 } from 'vaults-web-shared/invitation-on-device.js';
 import {
   admitHere, makeMyselfPayableHere, PersonNotChanged, readPeopleHere, setStatusHere, type PeopleDevice, type PeopleHere, type PersonHere,
@@ -27,6 +27,8 @@ import {
   peopleRecords, sendAs, store,
 } from './a-company-of-two-seats.test-support.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
+/** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
+const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
 aCompanyOfTwoSeats();
 
@@ -35,7 +37,7 @@ const adasDevice = (over: Partial<PeopleDevice> = {}): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda,
   directory: acmeDirectory, network: NETWORK, entered: ADA.entered, ...over,
 });
-const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n, startDate: '2026-10-01' });
+const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n, classification: 'full-time' as const, startDate: '2026-10-01' });
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 /** A payee's own wallet, numbered, signing their code for Acme. */
 const codeOf = (wallet: number, address: string, label = LABEL): JoinCode =>
@@ -43,7 +45,7 @@ const codeOf = (wallet: number, address: string, label = LABEL): JoinCode =>
 const hereOf = async (id: string): Promise<PersonHere> => (await readPeopleHere(adasDevice())).people.find((p) => p.person.id === id)!;
 /** A payee invited by link and accepted with their code, waiting to be admitted. */
 const waiting = async (n: number, code: JoinCode, spec: Omit<ReturnType<typeof pay>, 'email'> & { email: string | null } = pay(n)) => {
-  const made = await invitePayeeHere(ACME, ADA, spec, ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'employee', spec, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   return { id: made.person!, fingerprint: accepted.fingerprint, invitation: made.id, link: made.link };
 };
@@ -89,8 +91,10 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     expect(admitted.address!.bech32).toBe(address);
     /* The company's records hold the same person, payable, as the one record, and nothing waits for them. */
     const rec = (await newestPerson(w.id))!;
-    expect(rec.facts).toEqual({ status: 'active', wrappingPublicKey: 'cd'.repeat(32) });
-    expect(store.handoverFor(w.id)).toBeNull();
+    /* RED WHEN: the payslip key is kept beside the seal, where the service reads it, rather than sealed with the person. */
+    expect(rec.facts).toEqual({ status: 'active' });
+    expect(openPerson(rec, KEY).wrappingPublicKey).toBe('cd'.repeat(32));
+    expect(store.handoverFor(w.id, 'employee')).toBeNull();
     expect(openPerson(rec, KEY).address!.bech32).toBe(address);
     /* RED WHEN: the version admitted is not the one Ada's seat signed. */
     expect(verifiedCompanyFiler(rec)).toBe(ADA.statement.signingKey);
@@ -140,14 +144,14 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     /* RED WHEN: a person whose invitation was taken back is admitted. */
     await expect(admitHere(adasDevice(), await hereOf(withdrawn.id), withdrawn.fingerprint)).rejects.toThrow(/taken back/);
     /* A code for another company, handed over by a page that did not check it. */
-    const made = await invitePayeeHere(ACME, ADA, pay(8), ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', pay(8), ORIGIN, fromAda);
     const other = codeOf(48, addressOf(48), OTHER_LABEL);
     const opened = await openInvitationHere(made.link, sendAs(null));
     const { payeeHandoverOf } = await import('vaults-web-shared/invitation-on-device.js');
     const { acceptanceProofOf, tokenOfLink } = await import('../core/invitation.js');
-    await sendAs('usr_48')(`/api/invites/${made.id}/accept-employee`, { method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(tokenOfLink(made.link)!), handover: payeeHandoverOf(other, opened.signed.offer.inboxPublicKey) }) });
+    await sendAs('usr_48')(`/api/invites/${made.id}/accept-payee`, { method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(tokenOfLink(made.link)!), handover: payeeHandoverOf(other, opened.signed.offer.inboxPublicKey), kind: 'employee' }) });
     /* A code changed after the payee's wallet signed it. */
-    const tamperedFor = await invitePayeeHere(ACME, ADA, pay(13), ORIGIN, fromAda);
+    const tamperedFor = await inviteHere(ACME, ADA, 'employee', pay(13), ORIGIN, fromAda);
     const signedCode = codeOf(53, addressOf(53));
     const tampered = { ...signedCode, parts: { ...signedCode.parts, payslipKey: '0f'.repeat(32) } } as JoinCode;
     await acceptAsPayeeHere(await openInvitationHere(tamperedFor.link, sendAs(null)), tampered, sendAs('usr_53'));
@@ -169,13 +173,13 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     const { inboxPublicKey } = await import('../core/sealed-records.js');
     const { newSymmetricKey } = await import('../core/crypto.js');
     /* RED WHEN: a person who handed nothing over is admitted. */
-    const nothing = await invitePayeeHere(ACME, ADA, pay(20), ORIGIN, fromAda);
+    const nothing = await inviteHere(ACME, ADA, 'employee', pay(20), ORIGIN, fromAda);
     await expect(admitHere(adasDevice(), await hereOf(nothing.person!), payeeCodeFingerprint(codeOf(60, addressOf(60)) as never))).rejects.toThrow(/has not handed anything over yet/);
     /* RED WHEN: a hand-over sealed to another company's inbox is opened as this one's. */
-    const elsewhere = await invitePayeeHere(ACME, ADA, pay(21), ORIGIN, fromAda);
+    const elsewhere = await inviteHere(ACME, ADA, 'employee', pay(21), ORIGIN, fromAda);
     const code = codeOf(61, addressOf(61));
-    await sendAs('usr_61')(`/api/invites/${elsewhere.id}/accept-employee`, { method: 'POST', body: JSON.stringify({
-      acceptance: acceptanceProofOf(tokenOfLink(elsewhere.link)!), handover: payeeHandoverOf(code, inboxPublicKey(newSymmetricKey(), CO)),
+    await sendAs('usr_61')(`/api/invites/${elsewhere.id}/accept-payee`, { method: 'POST', body: JSON.stringify({
+      acceptance: acceptanceProofOf(tokenOfLink(elsewhere.link)!), handover: payeeHandoverOf(code, inboxPublicKey(newSymmetricKey(), CO)), kind: 'employee',
     }) });
     await expect(admitHere(adasDevice(), await hereOf(elsewhere.person!), payeeCodeFingerprint(code as never))).rejects.toThrow(/sealed for somebody else/);
     /* RED WHEN: a person already admitted is admitted again. */
@@ -185,12 +189,12 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     /* RED WHEN: a refusal is thrown as anything a screen cannot tell from a fault: every refusal here is the one kind that says nothing was filed. */
     await expect(admitHere(adasDevice(), await hereOf(done.id), done.fingerprint)).rejects.toBeInstanceOf(PersonNotChanged);
     /* RED WHEN: the accept route takes a payslip key in the clear, or a body carrying more than an acceptance and a hand-over. */
-    const clear = await invitePayeeHere(ACME, ADA, pay(23), ORIGIN, fromAda);
+    const clear = await inviteHere(ACME, ADA, 'employee', pay(23), ORIGIN, fromAda);
     const proof = acceptanceProofOf(tokenOfLink(clear.link)!);
     const sealedFor = payeeHandoverOf(codeOf(63, addressOf(63)), ACME_INBOX);
-    const post = (body: unknown) => sendAs('usr_63')(`/api/invites/${clear.id}/accept-employee`, { method: 'POST', body: JSON.stringify(body) });
-    expect((await post({ acceptance: proof, handover: sealedFor, wrappingPublicKey: 'cd'.repeat(32) })).body).toMatchObject({ refused: 'handover-in-the-clear' });
-    expect((await post({ acceptance: proof, handover: sealedFor, note: 'hi' })).body).toMatchObject({ refused: 'not-an-acceptance' });
+    const post = (body: unknown) => sendAs('usr_63')(`/api/invites/${clear.id}/accept-payee`, { method: 'POST', body: JSON.stringify(body) });
+    expect((await post({ acceptance: proof, handover: sealedFor, kind: 'employee', wrappingPublicKey: 'cd'.repeat(32) })).body).toMatchObject({ refused: 'handover-in-the-clear' });
+    expect((await post({ acceptance: proof, handover: sealedFor, kind: 'employee', note: 'hi' })).body).toMatchObject({ refused: 'not-an-acceptance' });
     expect((await newestPerson(clear.person!))!.facts!.status).toBe('pending');
   });
 
@@ -227,7 +231,7 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     const next = await waiting(31, codeOf(31, addressOf(31)));
     await expect(admitHere(adasDevice(), await hereOf(next.id), next.fingerprint)).rejects.toThrow(/1 active record\(s\) whose address or payslip key is not what their own wallet signed/);
     /* The way out: a leaver, from a seat's device. */
-    await setStatusHere(adasDevice(), refused.here, 'leaver');
+    await setStatusHere(adasDevice(), refused.here, 'leaver', LEFT);
     expect((await readPeopleHere(adasDevice())).notPayable).toEqual([]);
   });
 
@@ -236,7 +240,7 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     await admitHere(adasDevice(), await hereOf(w.id), w.fingerprint);
     const here = await hereOf(w.id);
     /* RED WHEN: a status change drops the payee's code, so they stop being payable at the address they gave. */
-    await setStatusHere(adasDevice(), here, 'leaver');
+    await setStatusHere(adasDevice(), here, 'leaver', LEFT);
     const left = (await readPeopleHere(adasDevice())).people.find((p) => p.person.id === w.id)!;
     expect(left.person.payeeCode).toEqual(here.person.payeeCode);
     const back = await setStatusHere(adasDevice(), left, 'active');
@@ -269,7 +273,7 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
       await sendAs('ada')(`/api/people/${w.id}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(asItWas) }) });
       await ADA.entered.enter([companyRecordEntry(asItWas)]);
     }
-    await setStatusHere(adasDevice(), (await hereOf(w.id)), 'leaver');
+    await setStatusHere(adasDevice(), (await hereOf(w.id)), 'leaver', LEFT);
   });
 });
 
@@ -278,7 +282,7 @@ describe('A RECORD WITH NO EMAIL IS RAISED AND REDEEMED BY ONE WALLET', () => {
     const noEmail = { ...pay(14), email: null };
     const theirs = await waiting(14, codeOf(54, addressOf(54)), noEmail);
     /* RED WHEN: a record nothing addresses is redeemed by a wallet other than the one that raised it. */
-    await expect(admitHere(adasDevice(), await hereOf(theirs.id), theirs.fingerprint)).rejects.toThrow(/one wallet raised it and redeemed it/);
+    await expect(admitHere(adasDevice(), await hereOf(theirs.id), theirs.fingerprint)).rejects.toThrow(/two different wallets opened and accepted its invitation/);
     const adasOwn = signJoinCode(identityFromSecret(new Uint8Array(32).fill(ADA.n)), LABEL, 'ada', { kind: 'payee', address: addressOf(55), payslipKey: 'cd'.repeat(32) });
     const mine = await waiting(15, adasOwn, { ...pay(15), email: null });
     /*
@@ -286,18 +290,18 @@ describe('A RECORD WITH NO EMAIL IS RAISED AND REDEEMED BY ONE WALLET', () => {
      * this device does not believe as a seat - here, one whose records key her
      * wallet has not attested - rather than by the one rule for a seat.
      */
-    await expect(admitHere(adasDevice({ directory: acmeDirectoryAttestedBy([BO]) }), await hereOf(mine.id), mine.fingerprint)).rejects.toThrow(/one wallet raised it and redeemed it/);
+    await expect(admitHere(adasDevice({ directory: acmeDirectoryAttestedBy([BO]) }), await hereOf(mine.id), mine.fingerprint)).rejects.toThrow(/two different wallets opened and accepted its invitation/);
     const admitted = await admitHere(adasDevice(), await hereOf(mine.id), mine.fingerprint);
     /* RED WHEN: a record raised and redeemed by one wallet is not marked as raised by the person it pays. */
     expect(admitted.selfRaised).toBe(true);
     /* Ada leaves this record, so her wallet is not payable when she makes herself payable below. */
-    await setStatusHere(adasDevice(), await hereOf(mine.id), 'leaver');
+    await setStatusHere(adasDevice(), await hereOf(mine.id), 'leaver', LEFT);
   });
 });
 
 describe('A STATUS, CHANGED ON A SEAT\'S DEVICE', () => {
   it('NOBODY WITH NO ADDRESS IS MADE ACTIVE; ANYBODY CAN BE MADE A LEAVER', async () => {
-    const made = await invitePayeeHere(ACME, ADA, pay(11), ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', pay(11), ORIGIN, fromAda);
     const here = await hereOf(made.person!);
     /* RED WHEN: a person with nowhere to be paid is made active from the roster. */
     await expect(setStatusHere(adasDevice(), here, 'active')).rejects.toThrow(/no address on file/);
@@ -322,7 +326,8 @@ describe('A SIGNER MAKES THEMSELVES PAYABLE FROM THEIR OWN DEVICE', () => {
     /* RED WHEN: a signer is made payable at an address another wallet signed. */
     await expect(makeMyselfPayableHere(adasDevice(), codeOf(62, addressOf(62)), self)).rejects.toThrow(/not signed by the wallet your seat/);
     const payable = await makeMyselfPayableHere(adasDevice(), mine, self);
-    expect((await newestPerson(payable.id))!.facts).toEqual({ status: 'active', wrappingPublicKey: 'ef'.repeat(32) });
+    expect((await newestPerson(payable.id))!.facts).toEqual({ status: 'active' });
+    expect(openPerson((await newestPerson(payable.id))!, KEY).wrappingPublicKey).toBe('ef'.repeat(32));
     expect(payable).toMatchObject({ selfRaised: true, handedOverBy: ADA.committeeKey.value });
     /* RED WHEN: the same signer is made payable twice. */
     await expect(makeMyselfPayableHere(adasDevice(), mine, self)).rejects.toThrow(/is already payable on this company\. One person gets one payable record/);
@@ -350,7 +355,7 @@ describe('A PAYEE WHO HANDED OVER BEFORE THE COMPANY\'S KEY CHANGED', () => {
       answered: new Map([[0, new Set(named.map((x) => answerDigestOf(x as never)))]]),
     });
     const w = await waiting(70, codeOf(70, addressOf(70)));
-    const handedOver = store.handoverFor(w.id)!;
+    const handedOver = store.handoverFor(w.id, 'employee')!;
     const after = (named: readonly unknown[]) => adasDevice({ company: { ...ACME, viewingKey: keysNaming(named) as never } });
     /* RED WHEN: a hand-over sealed to the inbox before the change, which no change named, is admitted. */
     await expect(admitHere(after([]), await hereOf(w.id), w.fingerprint)).rejects.toThrow(/from before it changed/u);

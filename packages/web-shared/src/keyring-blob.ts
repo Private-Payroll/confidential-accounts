@@ -425,7 +425,7 @@ const SCHNORR: Shape = { tag: V, value: V };
 const COMPANY_RECORD: Shape = {
   company: V, kind: V, id: V, version: V, keyEpoch: V, sealed: SEALED,
   wrapped: [{ signerId: V, wrapped: WRAPPED }],
-  facts: { status: V, wrappingPublicKey: V },
+  facts: { status: V },
   filedBy: { publicKey: V, signature: V },
 };
 const CREATION: Shape = {

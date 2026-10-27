@@ -22,7 +22,7 @@ import { toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-reco
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { newestAnchored } from '../midnight/records-held.js';
 import { anchorServiceFor, anchorTheRecordsHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
-import { invitePayeeHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { directoryHere } from 'vaults-web-shared/vault-page-doors.js';
 import { anchoredOver, anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
@@ -34,6 +34,8 @@ import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeDirectoryWithItsFold, ACME, ADA, ADDRESS, aRecordFiledBy, apiAs, BO, CO,
   fromAda, ORIGIN, personVersions, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+/** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
+const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
 aCompanyOfTwoSeats();
 
@@ -87,15 +89,15 @@ const serving = (id: string, version: SealedCompanyRecord) => (body: unknown) =>
 const leavingOut = (id: string) => (body: unknown) => ({
   ...(body as object), people: (body as { people: Array<{ filed: { id: string } }> }).people.filter((row) => row.filed.id !== id),
 });
-const pay = { name: 'Pat', email: 'pat-e2e@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_202n, startDate: '2026-10-01' };
+const pay = { name: 'Pat', email: 'pat-e2e@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_202n, classification: 'full-time' as const, startDate: '2026-10-01' };
 
 describe('WHAT A SECOND DEVICE BELIEVES OF THE COMPANY\'S RECORDS IS WHAT THE ANCHOR HOLDS', () => {
   it('STALE, WITHHELD AND REORDERED ARE REFUSED ON BO\'S DEVICE, NEWER IS HELD AS NOT YET ANCHORED, AND A DROPPED ANCHOR FINISHES', async () => {
     /* Ada's device invites Pat, anchors, marks Pat a leaver, and anchors again. */
-    const pat = (await invitePayeeHere(ACME, ADA, pay, ORIGIN, fromAda)).person!;
+    const pat = (await inviteHere(ACME, ADA, 'employee', pay, ORIGIN, fromAda)).person!;
     await anchorTheRecordsHere(anchoringOn(ADA));
     const atFirst = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === pat)!;
-    await setStatusHere(peopleOn(ADA), atFirst, 'leaver');
+    await setStatusHere(peopleOn(ADA), atFirst, 'leaver', LEFT);
     await anchorTheRecordsHere(anchoringOn(ADA));
     const [first, second] = await personVersions(pat);
     /* Bo's device believes the anchored newest version. */
@@ -117,7 +119,7 @@ describe('WHAT A SECOND DEVICE BELIEVES OF THE COMPANY\'S RECORDS IS WHAT THE AN
     await expect(readPeopleHere(peopleOn(BO, (b) => b, reordered))).rejects.toThrow(/cannot be read past a batch this device cannot open/u);
     /* Ada's device changes Pat again and enters it; nothing anchors it yet. */
     const now = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === pat)!;
-    await setStatusHere(peopleOn(ADA), now, 'leaver');
+    await setStatusHere(peopleOn(ADA), now, 'leaver', LEFT);
     /* RED WHEN: a version entered and not yet anchored is refused as forged on Bo's device - every filing would wait for the next anchor. */
     expect((await readPeopleHere(peopleOn(BO))).people.find((p) => p.person.id === pat)?.version).toBe(3);
     /* RED WHEN: the anchored version served in place of the newer one entered is read as the newest on Bo's device. */

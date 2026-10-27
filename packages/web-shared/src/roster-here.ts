@@ -39,7 +39,7 @@ import {
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
 import { seatInvitationRefusal, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { answerOpenedWith } from '../../../src/core/answer-opened.js';
-import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
+import { invitationsByAddressIn, seatInvitationIn } from '../../../src/core/proposal-filing.js';
 import { seatOpeningRefusal, walletKeyProvedBy } from '../../../src/core/seat-opening.js';
 import {
   openVaultKeysOffer, rosterWithVaultKeys, sealVaultKeysOffer, signVaultKeys, vaultKeyIndexOf, vaultKeysOfferRefusal,
@@ -88,7 +88,7 @@ export interface RosterDoors {
  * believed against. Nothing a device believed before is kept or read: an
  * older version, or other bytes under a version, is refused by the anchor.
  */
-export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored' | 'leaves'>;
+export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored' | 'leaves'> & Partial<Pick<DirectoryHereDeps, 'invitedSeats'>>;
 
 /**
  * The company as this device believes it, with every seat the chain holds that
@@ -193,6 +193,17 @@ const seatsWaitedFor = async (
     const invited = seatInvitationIn(served, sealed.id, viewingKey, leaf);
     if (invited !== null && invited.terms.company === sealed.id && signedByASeatHeld(invited, seating.seats, true)) seats.add(leaf);
   }
+  /* A seat taken by address is waited for when the account's history shows it is the one an invitation's own proposal took. */
+  const byAddress = Array.isArray(served) && unanswered.some((leaf) => !seats.has(leaf)) && seating.invitedSeats !== undefined
+    ? invitationsByAddressIn(served, sealed.id, viewingKey).filter((x) => x.terms.company === sealed.id && signedByASeatHeld(x, seating.seats, true)) : [];
+  if (byAddress.length > 0) {
+    let took: Readonly<Record<string, string | null>> = {};
+    try { took = await seating.invitedSeats!(byAddress.map((x) => x.terms.proposal!.toLowerCase())); } catch { took = {}; }
+    for (const x of byAddress) {
+      const leaf = took[x.terms.proposal!.toLowerCase()]?.toLowerCase();
+      if (leaf !== undefined && unanswered.includes(leaf)) seats.add(leaf);
+    }
+  }
   return seats;
 };
 
@@ -289,7 +300,10 @@ export async function rosterBelievedHere(
   const why = roster.version === 1 ? firstRosterRefusal(here, roster, d.accountId, d.own ?? null)
     : judgeIn(here)(verifiedCompanyFiler(roster), 'roster', companyRecordKey('roster', ROSTER_ID), companyRecordEntry(roster), true, roster.keyEpoch);
   /* Every seat the chain holds is in the roster, or waited for by someone the company invited to it. */
-  const waited = await seatsWaitedFor(sealed, viewingKey, { seats: witnesses.directory, onTheChain: read.holders.seats, leaves: d.reads.leaves },
+  const waited = await seatsWaitedFor(sealed, viewingKey, {
+    seats: witnesses.directory, onTheChain: read.holders.seats, leaves: d.reads.leaves,
+    ...(d.reads.invitedSeats === undefined ? {} : { invitedSeats: d.reads.invitedSeats }),
+  },
     read.dir.seats, d.proposals);
   const held: RosterReadHeld = { here, roster, refusedForItsFiler: false, opened, witnesses, waited };
   if (why !== null) {
@@ -628,7 +642,13 @@ export interface SeatingReads {
   readonly onTheChain: readonly string[];
   /** The leaf each opening makes, worked out in this device's vault worker. Never the service's word. */
   readonly leaves: RosterReads['leaves'];
+  /** The seat each invitation by address took, from the account's own history (`seatsInvitedIn`). Absent, nobody invited by address is seated here. */
+  readonly invitedSeats?: RosterReads['invitedSeats'];
 }
+
+/** Whether an invitation was made by address: it names the proposal raised for the address, and no leaf. */
+const madeByAddress = (invited: SignedSeatInvitation | undefined): boolean =>
+  invited !== undefined && invited.terms.leaf === undefined && invited.terms.invite !== undefined && invited.terms.proposal !== undefined;
 
 /**
  * Whether `invited` is signed by the filing key of a seat this device believes,
@@ -640,6 +660,51 @@ export interface SeatingReads {
  */
 const signedByASeatHeld = (invited: SignedSeatInvitation, seats: readonly DirectoryWitness[], leafOnTheChain = false): boolean =>
   seats.some((x) => (leafOnTheChain || !x.retired) && mayInvite(x) && x.signingKey.toLowerCase() === invited.signedBy.toLowerCase());
+
+/** The way out every refusal of an invitation by address names. */
+const RAISE_IT_AGAIN = 'Withdraw this proposal, and raise the invitation again from the device of a seated signer who may invite.';
+
+/**
+ * **WHAT A SIGNER APPROVES WHEN THEY APPROVE AN INVITATION IS WHAT THE SEAT
+ * THAT INVITED SIGNED.** Why the address and the rights a proposal invites
+ * (`invite`, as the raiser sealed them beside it) are not bound to the
+ * invitation it carries (`invited`), in the sentence a device shows, or null:
+ * the invitation must be a seat invitation (`seatInvitationRefusal`) for this
+ * company that names an address, signed by the filing key of a seat this
+ * device believes, has not seen retired and whose role may invite; and the
+ * address and the rights the proposal invites must be the ones it signed. The
+ * payload a device then approves is made from the signed invitation alone, so
+ * a raiser who names another address or wider rights is refused here and, if
+ * the record says otherwise, by the payload made again before any call is
+ * built. Run on the raising device before it raises, and on every approving
+ * device before it approves.
+ */
+export const invitationByAddressRefusal = (
+  company: string, invited: unknown, invite: { readonly address?: unknown; readonly scope?: unknown }, seats: readonly DirectoryWitness[],
+): string | null => {
+  if (seatInvitationRefusal(invited) !== null) {
+    return `This proposal does not carry an invitation signed by the seat that invited, so this device does not act on it. ${RAISE_IT_AGAIN}`;
+  }
+  const signed = invited as SignedSeatInvitation;
+  const t = signed.terms;
+  if (t.invite === undefined) {
+    return `The invitation this proposal carries does not name the address it invites, so this device does not act on it. ${RAISE_IT_AGAIN}`;
+  }
+  if (t.company !== company) {
+    return `The invitation this proposal carries is for another company, so this device does not act on it. ${RAISE_IT_AGAIN}`;
+  }
+  if (!signedByASeatHeld(signed, seats)) {
+    const inviter = seats.find((x) => x.signingKey.toLowerCase() === signed.signedBy.toLowerCase());
+    return inviter !== undefined && !inviter.retired && !mayInvite(inviter)
+      ? `The seat that signed this invitation has a role that may not file a proposal, so it invites nobody. ${RAISE_IT_AGAIN}`
+      : `The seat that signed this invitation is not one this device believes is seated, so this device does not act on it. ${RAISE_IT_AGAIN}`;
+  }
+  if (String(invite.address).toLowerCase() !== t.invite.address.toLowerCase() || String(invite.scope).toLowerCase() !== t.invite.scope.toLowerCase()) {
+    return 'The address or the rights this proposal invites are not the ones the seat that invited signed, so this device does not '
+      + `approve it. Do not approve it. ${RAISE_IT_AGAIN}`;
+  }
+  return null;
+};
 
 /** Whether `leaf` is one of the seats the company's account holds now, as this device's own wallet read it. */
 const onTheChain = (leaf: string, reads: Pick<SeatingReads, 'onTheChain'>): boolean =>
@@ -723,11 +788,20 @@ const invitationRefusalHere = async (
       ? 'The seat that signed this invitation has a role that may not file a proposal, so it invites nobody, and nobody is seated from it.'
       : 'The seat that signed this invitation is not one this device believes is seated, so nobody is seated from it.';
   }
-  if (payload.person !== t.person || box.userId !== t.person) {
-    return 'This seat request is not for the person the invitation names, so nobody is seated from it.';
-  }
-  if (t.leaf !== undefined && t.leaf.toLowerCase() !== payload.leafCommitment.toLowerCase()) {
-    return 'The keys in this seat request are not the ones the code its invitation was made for carried, so nobody is seated from it.';
+  if (madeByAddress(invited)) {
+    /* Made by address: nobody's sign-in was known, and the seat is the one the chain shows the invitation's own proposal took. */
+    const proposal = t.proposal!.toLowerCase();
+    const took = reads.invitedSeats === undefined ? null : (await reads.invitedSeats([proposal]).catch(() => ({} as Record<string, string | null>)))[proposal] ?? null;
+    if (took === null || took.toLowerCase() !== payload.leafCommitment.toLowerCase()) {
+      return 'The seat in this request is not the one the network shows this invitation\'s proposal took, so nobody is seated from it.';
+    }
+  } else {
+    if (payload.person !== t.person || box.userId !== t.person) {
+      return 'This seat request is not for the person the invitation names, so nobody is seated from it.';
+    }
+    if (t.leaf !== undefined && t.leaf.toLowerCase() !== payload.leafCommitment.toLowerCase()) {
+      return 'The keys in this seat request are not the ones the code its invitation was made for carried, so nobody is seated from it.';
+    }
   }
   if (seatOpeningRefusal(payload.opening) !== null) {
     return 'This seat request does not show which wallet its keys were made for, so nobody is seated from it.';
@@ -769,7 +843,8 @@ export async function waitingHere(
     throw new SeatKeyNotFromTheInvitee('These keys already belong to another signer on this company, so they cannot be '
       + 'seated under this name. Nothing was sent. Do not give this person access: they need a new invitation.');
   }
-  refuseASeatWhoseFingerprintIsNotTheJoiners(payload, readOut);
+  /* A seat taken by address was proved on the chain by the address's own key: nothing is read out for it. */
+  if (!madeByAddress(payload.invited)) refuseASeatWhoseFingerprintIsNotTheJoiners(payload, readOut);
   if (typeof payload.person !== 'string' || payload.person !== box.userId) {
     throw new SeatKeyNotFromTheInvitee('This seat request was not sealed for the sign-in it would make a member of the '
       + 'company, so nobody is seated from it. Nothing was sent. Ask the person to accept their invitation again.');
@@ -779,8 +854,11 @@ export async function waitingHere(
 }
 
 /** What `waitingHere` holds a request to, from one read of the roster: the directory that read believed, and this device's vault worker. */
-export const seatingOf = (read: { readonly witnesses: RosterWitnesses }, reads: Pick<RosterReads, 'leaves'>): SeatingReads =>
-  ({ seats: read.witnesses.directory, onTheChain: read.witnesses.seatsOnTheChain, leaves: reads.leaves });
+export const seatingOf = (read: { readonly witnesses: RosterWitnesses }, reads: Pick<RosterReads, 'leaves' | 'invitedSeats'>): SeatingReads =>
+  ({
+    seats: read.witnesses.directory, onTheChain: read.witnesses.seatsOnTheChain, leaves: reads.leaves,
+    ...(reads.invitedSeats === undefined ? {} : { invitedSeats: reads.invitedSeats }),
+  });
 
 /**
  * **A PERSON SEATED ON THE CHAIN, ADMITTED.** Their request is checked again

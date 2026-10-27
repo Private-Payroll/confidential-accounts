@@ -90,7 +90,7 @@ import { theNetwork } from '../midnight/network.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { checkedHeadsInMemory } from 'vaults-web-shared/tree-kept-here.js';
-import { acceptAsPayeeHere, invitePayeeHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { openTheRoundHere, raiseRetryOnDevice, raiseRunOnDevice, SentAndNotYetSeen, sendRaiseFromDevice, sendRetryFromDevice } from 'vaults-web-shared/governed-call-on-device.js';
@@ -120,6 +120,8 @@ import {
 import { anchoredOver, headsCheckedHere, heldServing, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { vouchedFreshOf } from '../midnight/record-tree.js';
 import { noOneOffsHere } from '../testing/no-one-offs.js';
+/** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
+const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
 /* The chain, as the test keeps it: the proposals it holds open, the payment entries it counts, and the account's marks. */
 const open = new Map<string, number>();
@@ -203,14 +205,14 @@ const installClock = (): void => {
 };
 const WINDOW = { opensAt: String(NOW + 3600), closesAt: String(NOW + 7200) };
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
-const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), startDate: '2026-10-01' });
+const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
   entered: s.entered,
 });
 const aPayee = async (n: number, paidAt = n, paid: { address: string; asset: string } = { address: addressOf(paidAt), asset: TEST_SETTLEMENT_ASSET }) => {
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: paid.address, payslipKey: newWrappingKeypair().publicKey });
-  const made = await invitePayeeHere(ACME, ADA, { ...pay(n), asset: paid.asset as never }, ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'employee', { ...pay(n), asset: paid.asset as never }, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
   await admitHere(peopleOn(ADA), here, accepted.fingerprint);
@@ -446,11 +448,18 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const addresses = [addressOf(61), addressOf(62)];
     expect(amounts.size).toBeGreaterThan(0);
     expect(names).toEqual(expect.arrayContaining(['Payee 61', 'Payee 62']));
+    const people = run.employees.map((e) => e.id);
+    const payslipKeys = run.employees.map((e) => e.wrappingPublicKey).filter((k): k is Hex => k !== null);
+    expect(people.length).toBeGreaterThan(0);
+    expect(payslipKeys.length).toBe(people.length);
     const leaves: string[] = [];
+    /** Every value a request carries, reading again any text that is itself JSON. */
     const walk = (v: unknown): void => {
       if (v === null || v === undefined) return;
       if (typeof v === 'object') { for (const x of Object.values(v as object)) walk(x); return; }
-      leaves.push(String(v).toLowerCase());
+      const text = String(v);
+      if (/^\s*[[{]/u.test(text)) { try { walk(JSON.parse(text)); return; } catch { /* not JSON: kept as it is */ } }
+      leaves.push(text.toLowerCase());
     };
     for (const w of sent) {
       const at = w.indexOf(' ', w.indexOf(' ') + 1);
@@ -458,10 +467,28 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
       if (text === '') continue;
       try { walk(JSON.parse(text)); } catch { leaves.push(text.toLowerCase()); }
     }
+    /** An amount as text: in decimal, or in hex with or without 0x, or as 32 bytes of hex, never as part of a longer number. */
+    const writtenIn = (leaf: string, amount: string): boolean => {
+      const n = BigInt(amount);
+      const alone = (form: string) => new RegExp(`(?<![0-9a-fx])${form}(?![0-9a-f])`, 'u').test(leaf);
+      return alone(n.toString(10)) || alone(`0x${n.toString(16)}`) || alone(n.toString(16).padStart(64, '0')) || leaf === n.toString(16);
+    };
     /* RED WHEN: the raise sends what it pays beside the proposal, as the service once asked to check the vault's public money. */
     expect(Object.keys(body)).not.toContain('pays');
-    /* RED WHEN: any request of the raise carries a payment's amount, its token or its currency's name in the clear. */
-    expect(leaves.filter((l) => amounts.has(l))).toEqual([]);
+    /*
+     * RED WHEN: anything the raise files names a person, or any request of it names the payslip key a slip is sealed to,
+     * in the clear. A person's own record is read by its id, as every record of the company is.
+     */
+    const filed = sent.filter((w) => !w.startsWith('GET '));
+    for (const v of people) expect(filed.filter((w) => w.toLowerCase().includes(v.toLowerCase()))).toEqual([]);
+    for (const v of payslipKeys) expect(sent.filter((w) => w.toLowerCase().includes(v.toLowerCase()))).toEqual([]);
+    /* RED WHEN: the raise's run filing carries a payslip with anything beside its ciphertext, or anything it files names the company's label. */
+    const filedRun = body.run as { payslips: Array<Record<string, unknown>> };
+    expect(filedRun.payslips.length).toBeGreaterThan(0);
+    for (const p of filedRun.payslips) expect(Object.keys(p).sort()).toEqual(['receipt', 'slip', 'wrapped']);
+    expect(filed.filter((w) => w.toLowerCase().includes(LABEL.toLowerCase()))).toEqual([]);
+    /* RED WHEN: any request of the raise carries a payment's amount in any written form, its token or its currency's name in the clear. */
+    expect(leaves.filter((l) => [...amounts].some((a) => writtenIn(l, a)))).toEqual([]);
     expect(leaves.filter((l) => tokens.has(l))).toEqual([]);
     expect(leaves.filter((l) => l === String(TEST_SETTLEMENT_ASSET).toLowerCase())).toEqual([]);
     /* RED WHEN: any request of the raise carries a payee's name or address in the clear. */
@@ -752,6 +779,9 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
       ['a run kept for another company', { ...body, run: asFiled({ id: 'run_heldbyothers' }) }, 'ada', /keeps no payroll run by that name/u],
       ['another month', { ...body, run: asFiled({ period: '2026-12' }) }, 'ada', /not the run this company keeps under that name, for the period it keeps it for/u],
       ['a run not raised', { ...body, run: asFiled({ status: 'draft' }) }, 'ada', /a run is raised while it is unpaid, and is kept as raised/u],
+      /* RED WHEN: a raise's run whose payslips name a person, a key or a label beside the seal, or that carries its people beside it, is filed. */
+      ['payslips naming a person, a key and a label', { ...body, run: asFiled({ payslips: sealedRunOf(raisedRun, KEY, 0).payslips.map((p) => ({ ...p, employeeId: 'emp_aaaaaaaaaaaaaaaaaaaa', sealedTo: 'ab'.repeat(32), issuedBy: `co_${'ab'.repeat(32)}` })) }) }, 'ada', /not a run this company can keep: a payslip/u],
+      ['the people beside the seal', { ...body, run: asFiled({ employees: raisedRun.employees.map((e) => ({ id: e.id })) }) }, 'ada', /not a run this company can keep: it carries employees/u],
     ] as const) {
       const r = await post(b, as);
       /* RED WHEN: the filing route files a raise that refusal names, or refuses it for any other reason. */
@@ -1268,7 +1298,7 @@ describe('EVERY APPROVER OF A ROUND RUNS THE CHECKS ITS RAISER RAN ON THE LEG\'S
     /* The chain holds the first round after all - its withdrawal did not take - while the service's record still says withdrawn. */
     open.set(store.getProposal(first.id)!.chainId.toLowerCase(), 0);
     /* RED WHEN: an approver of a leg does not ask whether another round of the leg may still be on the chain, or asks the service. */
-    await expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`is written down as ${first.id}, which may be on the chain`, 'u'));
+    await expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`is written down as proposal ${first.id}, which may be on the network`, 'u'));
     standing(first.id, 'cancelled');
     /* RED WHEN: an approver counts the proposal it is approving as another round of the leg. */
     await expect(approvingOn(recordsOn(BO), again.id)).resolves.toMatchObject({ vault: VAULT });
@@ -1285,7 +1315,7 @@ describe('EVERY APPROVER OF A ROUND RUNS THE CHECKS ITS RAISER RAN ON THE LEG\'S
     /* RED WHEN: the earlier round's window is read from the run's record of the leg, which no longer names it - it would stay live for good, and no approver would approve the leg's next round. */
     await atTime(AFTER + 200, () => expect(approvingOn(recordsOn(BO), again.id)).resolves.toMatchObject({ vault: VAULT }));
     /* RED WHEN: the earlier round is taken as past its window before that window closes - its proof could still be sent. */
-    await atTime(NOW + 7_000, () => expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`is written down as ${first.id}, which may be on the chain`, 'u')));
+    await atTime(NOW + 7_000, () => expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`is written down as proposal ${first.id}, which may be on the network`, 'u')));
   });
 
   it('A RETRY IS REFUSED BY AN APPROVER WHILE ITS LEG\'S OWN ROUND CAN STILL PAY, OR WAS NEVER SEEN ON THE CHAIN', async () => {
@@ -1339,7 +1369,7 @@ describe('ONE ADDRESS IS NOT PAID TWICE FOR A MONTH', () => {
 describe('A PUBLIC PAYEE IS RAISED FROM THE DEVICE AS PUBLIC', () => {
   it('A LEG PAYING A PUBLIC ADDRESS IS RAISED FROM THE DEVICE, ITS PUBLIC MONEY ASKED AS PUBLIC ON THE DEVICE, AND REFUSED THERE WHEN THE VAULT HOLDS TOO LITTLE PUBLICLY', async () => {
     for (const here of (await readPeopleHere(peopleOn(ADA))).people.filter((p) => ['Payee 63', 'Payee 64'].includes(p.person.name))) {
-      await setStatusHere(peopleOn(ADA), here, 'leaver');
+      await setStatusHere(peopleOn(ADA), here, 'leaver', LEFT);
     }
     await aPayee(65, 65, { address: unshieldedPayeeFor('65'.repeat(32), NETWORK).bech32, asset: NIGHT });
     const drawn = (await drawRunHere(drawingOn(ADA), { period: nextPeriod() })).id;
@@ -1402,11 +1432,11 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
     await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET, viewingKey: paused })).rejects.toThrow(CompanyKeyBeingChanged);
     expect(filedNow()).toEqual(before);
     /* RED WHEN: a person invited while sealing is paused is sealed under the key the signer who left holds. */
-    await expect(invitePayeeHere({ ...ACME, viewingKey: paused } as InvitingCompany, ADA, pay(78), ORIGIN, fromAda)).rejects.toThrow(CompanyKeyBeingChanged);
+    await expect(inviteHere({ ...ACME, viewingKey: paused } as InvitingCompany, ADA, 'employee', pay(78), ORIGIN, fromAda)).rejects.toThrow(CompanyKeyBeingChanged);
     /* RED WHEN: a person's record changed while sealing is paused is sealed under that key. */
     const here = (await readPeopleHere({ ...peopleOn(ADA), company: { ...ACME, viewingKey: paused } as never })).people[0]!;
     const kept = (await records.get(CO, 'person', here.person.id))!.version;
-    await expect(setStatusHere({ ...peopleOn(ADA), company: { ...ACME, viewingKey: paused } as never }, here, 'leaver')).rejects.toThrow(CompanyKeyBeingChanged);
+    await expect(setStatusHere({ ...peopleOn(ADA), company: { ...ACME, viewingKey: paused } as never }, here, 'leaver', LEFT)).rejects.toThrow(CompanyKeyBeingChanged);
     expect((await records.get(CO, 'person', here.person.id))!.version).toBe(kept);
   });
 
@@ -1491,7 +1521,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
     const drawn = await drawRunHere({ ...drawingOn(ADA), viewingKey: AFTER_THE_CHANGE, records: readsAfter }, { period: nextPeriod() });
     expect(store.getRun(drawn.id)!.keyEpoch).toBe(2);
     /* A person invited after the change. Last in this file: a device holding only the founding key now reads no run. */
-    const invited = await invitePayeeHere({ ...ACME, viewingKey: AFTER_THE_CHANGE } as InvitingCompany, ADA, pay(77), ORIGIN, fromAda);
+    const invited = await inviteHere({ ...ACME, viewingKey: AFTER_THE_CHANGE } as InvitingCompany, ADA, 'employee', pay(77), ORIGIN, fromAda);
     /* RED WHEN: a person's record made after the change is sealed at the epoch of a key the signer who left still holds. */
     expect((await records.get(CO, 'person', invited.person!))!.keyEpoch).toBe(2);
     /* RED WHEN: a staying device opens a person sealed after the change under the founding key. */

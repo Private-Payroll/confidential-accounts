@@ -64,9 +64,12 @@ describe('the private half hands back the state it was given', () => {
     blinding: new Uint8Array(32).fill(7),
   };
 
+  /** The address an invitee was invited at, so the two witnesses that read one have one to hand back. */
+  const invite = { coinSecretKey: new Uint8Array(32).fill(8), addressSalt: new Uint8Array(32).fill(9) };
+
   /** A device replaying a path it captured. `signerPath` short-circuits. */
   const pinned = (): AccountPrivateState =>
-    ({ ...privateStateFor(1), pinnedPath: PINNED_PATH, pinAnyLeaf: true, policy, periodSpent: 5n });
+    ({ ...privateStateFor(1), pinnedPath: PINNED_PATH, pinAnyLeaf: true, policy, periodSpent: 5n, invite });
 
   /**
    * A device with no pin, which is every real one. `signerPath` goes to the
@@ -74,7 +77,7 @@ describe('the private half hands back the state it was given', () => {
    * pinned would never execute.
    */
   const unpinned = (): AccountPrivateState =>
-    ({ ...privateStateFor(1), pinnedPath: null, pinAnyLeaf: false, policy, periodSpent: 5n });
+    ({ ...privateStateFor(1), pinnedPath: null, pinAnyLeaf: false, policy, periodSpent: 5n, invite });
 
   const real = witnesses as unknown as Record<string, WitnessFn>;
 
@@ -125,9 +128,10 @@ describe('the private half hands back the state it was given', () => {
       'a witness has been added or removed and the check was not told how to call it, so it '
       + 'has been walking past it',
     ).toEqual(declared);
-    /* Sixteen: the signer's rights record and what a run's id opens to joined the thirteen, and
-       what a leg's retries have taken joined them. */
-    expect(declared).toHaveLength(16);
+    /* Eighteen: the signer's rights record and what a run's id opens to joined the thirteen,
+       what a leg's retries have taken joined them, and the invited address's coin secret key and
+       its salt joined those. */
+    expect(declared).toHaveLength(18);
   });
 
   /**

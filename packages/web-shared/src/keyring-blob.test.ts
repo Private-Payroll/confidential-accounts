@@ -134,7 +134,7 @@ describe('the parts of saved keys that open nothing', () => {
     const record = (kind: string) => ({
       company: 'acc_A', kind, id: `${kind}_1`, version: 1, keyEpoch: 0, sealed,
       wrapped: [{ signerId: 'sig_1', wrapped: { ...sealed, ephemeral: HEX('03') } }],
-      facts: { status: 'active', wrappingPublicKey: HEX('04') }, filedBy: { publicKey: HEX('05'), signature: HEX('06') },
+      facts: { status: 'active' }, filedBy: { publicKey: HEX('05'), signature: HEX('06') },
     });
     const creation = {
       ...aCreation('acc_A'),

@@ -42,6 +42,17 @@ import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-poli
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 
+/** An invitee's call taking an invited seat, as a wallet asks its worker for it: the chain's state as base64. */
+export interface InvitedSeatOnTheWire {
+  readonly account: string;
+  readonly proposal: string;
+  readonly material: { readonly signingSecret: string; readonly blinding: string; readonly scope: string };
+  readonly invite: { readonly coinSecretKey: string; readonly addressSalt: string };
+  readonly proposalSalt: string;
+  readonly intoVacatedSlot: boolean;
+  readonly chain: { readonly accountState: string; readonly parameters: string };
+}
+
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
 export interface CoinOnTheWire { readonly nonce: string; readonly token: string; readonly value: string }
 /** One block's view of what a payment out is built on, every value base64 of its bytes. */
@@ -199,6 +210,8 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'anchors-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   /* Where each proposal asked about stands, read in the worker from the account's history at the indexer the wallet names. */
   | { id: number; network: string; ask: 'rounds-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[] }
+  | { id: number; network: string; ask: 'seat-invited' } & Omit<InvitedSeatOnTheWire, never>
+  | { id: number; network: string; ask: 'invited-seats'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; proposals: readonly string[] }
   | {
     id: number; network: string; ask: 'anchor'; account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire;
     previous: string; batch: string; held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
@@ -261,6 +274,8 @@ export type VaultAnswer =
   | Answered<'seat-openings', SeatOpeningsAnswer>
   | Answered<'anchors-on-chain', AnchorsOnChain>
   | Answered<'rounds-on-chain', { rounds: Record<string, RoundOnChain> }>
+  | Answered<'invited-seats', { seats: Record<string, string | null> }>
+  | Answered<'seat-invited', { tx: string }>
   | Answered<'anchor', { tx: string }>
   | Answered<'recover-anchor', { tx: string; placement: AnchorPlacement }>
   | Answered<'account-call-chain', { chain: AccountCallChainOnTheWire | null }>
@@ -594,6 +609,19 @@ export interface VaultBuilderClient {
     account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[];
   }): Promise<Record<string, RoundOnChain>>;
   /**
+   * **THE SEAT EACH INVITATION'S PROPOSAL TOOK**, by the proposal's identity on chain: the one leaf the account's
+   * history shows entering with the one `seatInvited` call that closed it, or null (`seatsInvitedIn`). Read in this
+   * worker from the history at the indexer the person's own wallet names, and from nowhere else.
+   */
+  invitedSeats(input: {
+    account: string; indexer: { indexerUri: string; indexerWsUri: string }; proposals: readonly string[];
+  }): Promise<Record<string, string | null>>;
+  /**
+   * The invitee's own call taking the seat an invitation by address offered (`buildSeatInvitedCall`), built and proved
+   * in this worker. Asked only by the invitee's wallet: the address's coin key it carries never comes from a page.
+   */
+  seatInvited(input: InvitedSeatOnTheWire): Promise<string>;
+  /**
    * One batch folded into the head this device read, built and proved with this signer's own material, naming who held
    * the account as the batch was judged; the account refuses it unless they still do.
    */
@@ -727,7 +755,7 @@ const START_MS = 30_000;
  */
 export const CHAIN_READS: ReadonlySet<string> = new Set([
   'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'public-deposit-landed', 'anchors-on-chain', 'rounds-on-chain',
-  'account-call-chain', 'account-presence',
+  'invited-seats', 'account-call-chain', 'account-presence',
 ]);
 
 /** What the worker says when its code is loaded and it starts on an ask: a read's time limit starts here. */
@@ -1040,6 +1068,8 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
       return { landed: a.landed, now: a.now, seatsNow: a.seatsNow, deployed: a.deployed, vouching: a.vouching };
     },
     roundsOnChain: async (input) => (await ask({ ask: 'rounds-on-chain', ...input })).rounds,
+    invitedSeats: async (input) => (await ask({ ask: 'invited-seats', ...input })).seats,
+    seatInvited: async (input) => (await ask({ ask: 'seat-invited', ...input })).tx,
     anchor: async (input) => ({ tx: (await ask({ ask: 'anchor', ...input })).tx }),
     recoverAnchor: async (input) => {
       const a = await ask({ ask: 'recover-anchor', ...input });

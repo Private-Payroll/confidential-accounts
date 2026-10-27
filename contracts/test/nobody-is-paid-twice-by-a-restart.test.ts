@@ -332,8 +332,7 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     const legChange = changeOf(leg.sealedPayload, r.viewingKey);
 
     const sim = await AccountSimulator.create(privateStateFor(9));
-    await sim.seatLeaf(
-      fromHex(r.created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 61);
+    await sim.seatWrittenLeaf(r.created.secrets[0]!, fromHex(r.created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 61);
     sim.at(NOW);
     await sim.adoptVault(PAYROLL_VAULT, [privateStateFor(9)]);
     const legDevice = deviceCarrying(r.created.secrets[0]!, legChange);

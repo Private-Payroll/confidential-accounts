@@ -11,7 +11,7 @@
  */
 import type { Hex } from '../../../../src/core/crypto.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
-import { peopleOnTheWire } from '../../../../src/core/person-record.js';
+import { peopleServed } from '../../../../src/core/person-record.js';
 import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors, type SealedAnswer } from '../../../../packages/web-shared/src/company-key-here.js';
 import { governedCallServiceFor, seatsLeavingHere } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import {
@@ -149,7 +149,8 @@ export async function rotationDoorsIn(r: CompanyReach, api: Api): Promise<Rotati
     askTheWallet: async () => r.companyKey,
     waiting: async () => {
       const now = await api(accountPath(r.accountId)) as SealedAccount;
-      const people = peopleOnTheWire(await api(`${accountPath(r.accountId)}/people`), r.accountId);
+      /* A person whose record does not read as one is passed over alone: what waits for them is not folded, and everybody else's is. */
+      const people = peopleServed(await api(`${accountPath(r.accountId)}/people`), r.accountId).people;
       const handovers: SealedAnswer[] = [];
       for (const { rec: person, handedOver } of people) {
         if (!handedOver) continue;

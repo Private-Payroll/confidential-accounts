@@ -65,6 +65,12 @@ import CompactStandardLibrary;
  * re-seating a signer need the higher of the account threshold and the approvals a policy
  * change needs, and setting a policy raises those to its highest band.
  *
+ * A signer is seated only by invitation. The proposal names a hiding commitment to the
+ * invitee's wallet address and the rights their seat will carry, and the invitee carries it
+ * out themselves with `seatInvited`, proving inside the call that they hold that address's
+ * coin secret key. So only the address the signers approved can take the seat, only with the
+ * rights they approved, and the chain learns neither the address nor who the signer is.
+ *
  * Why each piece is shaped this way: docs/design/the-account-contract.md
  */
 
@@ -151,6 +157,13 @@ witness signerBlinding(): Bytes<32>;
 // What this signer may do: `allVaults()` for everything on every vault, or the hash of their
 // rights record. Part of the leaf.
 witness signerScope(): Bytes<32>;
+
+// The coin secret key of the wallet address a signer was invited at. Only `seatInvited` reads
+// it, on the invitee's own device, to prove they hold that address. Never disclosed.
+witness inviteeCoinSecretKey(): Bytes<32>;
+
+// The salt that hides the invited address inside the seating proposal. Never disclosed.
+witness inviteAddressSalt(): Bytes<32>;
 
 // The asset a proposal concerns. Only ever used inside a blinded commitment.
 witness assetId(): Bytes<32>;
@@ -290,10 +303,38 @@ circuit releaseNullifier(sk: Bytes<32>, proposal: Bytes<32>, removals: Uint<64>)
   ]);
 }
 
-// What signers approve to seat a leaf.
-export circuit signerAddPayload(newSignerLeaf: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([
-    pad(32, "midnight-accounts:add-signer:"), newSignerLeaf
+// The coin secret key's preimage for its public key, laid out as the ledger hashes it: the
+// 21-byte tag, then the 32-byte key, with no padding between them.
+struct InviteeCoinSecretKey {
+  bytes: Bytes<32>;
+}
+
+struct InviteeCoinKeyPreimage {
+  sep: Bytes<21>;
+  secretKey: InviteeCoinSecretKey;
+}
+
+// A wallet's coin public key from its coin secret key: the same hash the ledger uses to make
+// the coin public key inside a shielded address, so a call can prove it holds that address.
+export circuit coinPublicKeyOf(coinSecretKey: Bytes<32>): Bytes<32> {
+  return persistentHash<InviteeCoinKeyPreimage>(InviteeCoinKeyPreimage {
+    sep: pad(21, "midnight:zswap-pk[v1]"),
+    secretKey: InviteeCoinSecretKey { bytes: coinSecretKey }
+  });
+}
+
+// A hiding commitment to the coin public key of the address a signer is invited at. Without
+// the salt, nobody can tell which address it names.
+export circuit inviteAddressOf(coinPublicKey: Bytes<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<2, Bytes<32>>>(
+    [pad(32, "midnight-accounts:invite-addr:"), coinPublicKey], salt);
+}
+
+// What signers approve to seat whoever holds the invited address, with exactly `scope` as
+// their rights.
+export circuit signerInvitePayload(address: Bytes<32>, scope: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:invite-signer:"), address, scope
   ]);
 }
 
@@ -1006,17 +1047,9 @@ constructor(foundingLeaf: Bytes<32>, companyLabel: Bytes<32>) {
   });
 }
 
-// Seats a signer, or unseats one when `removing` is true. Needs a signer as caller.
-export circuit amendSigner(
-  leaf: Bytes<32>,
-  proposal: Bytes<32>,
-  intoVacatedSlot: Boolean,
-  removing: Boolean,
-): [] {
+// Unseats a signer under an approved removal. Needs a signer as caller.
+export circuit amendSigner(removedLeaf: Bytes<32>, proposal: Bytes<32>): [] {
   requireSigner();
-
-  if (disclose(removing)) {
-  const removedLeaf = leaf;
 
   const id = disclose(proposal);
   requireApproved(id);
@@ -1048,8 +1081,24 @@ export circuit amendSigner(
 
   countRemoval();
   closeProposal(id);
-  } else {
-  const newSignerLeaf = leaf;
+}
+
+// Seats an invited signer, carried out by the invitee, who need not be a signer yet. The
+// invitee's device proves it holds the coin secret key of the address the proposal commits to,
+// and the new leaf is rebuilt here from the invitee's seat key and blinding with the rights the
+// proposal fixed, so nobody else can take the seat and the invitee cannot widen their rights.
+// It discloses only the new leaf, as every seat does; never the address, its salt or the key.
+export circuit seatInvited(proposal: Bytes<32>, intoVacatedSlot: Boolean): [] {
+  const scope = signerScope();
+  const address = inviteAddressOf(coinPublicKeyOf(inviteeCoinSecretKey()), inviteAddressSalt());
+
+  const id = disclose(proposal);
+  assert(
+    disclose(proposalIdOf(signerInvitePayload(address, scope), noVault(), proposalSalt()) == proposal),
+    "that proposal does not invite this wallet with these rights"
+  );
+
+  const newSignerLeaf = signerLeaf(signerPublicKey(localSecretKey()), signerBlinding(), scope);
 
   // Neither zero nor the vacancy marker may be seated.
   assert(newSignerLeaf != default<Bytes<32>>, "that is not a usable signer leaf");
@@ -1058,18 +1107,9 @@ export circuit amendSigner(
   // One leaf, one seat.
   assert(!signerLeaves.member(disclose(newSignerLeaf)), "that signer is already on this account");
 
-  // Always true: signers never fall below the threshold, so every later seat needs a proposal.
-  if (!(signerLeaves.size() < threshold)) {
-    const id = disclose(proposal);
-    requireApproved(id);
-    requireSeatBar(id);
-    assert(
-      disclose(proposalIdOf(signerAddPayload(newSignerLeaf), noVault(), proposalSalt()) == proposal),
-      "that proposal is not for this signer"
-    );
-
-    closeProposal(id);
-  }
+  requireApproved(id);
+  requireSeatBar(id);
+  closeProposal(id);
 
   // Into a vacated slot, or appended.
   if (disclose(intoVacatedSlot)) {
@@ -1078,7 +1118,6 @@ export circuit amendSigner(
     signers.insert(disclose(newSignerLeaf));
   }
   signerLeaves.insert(disclose(newSignerLeaf));
-  }
 }
 
 // Changes the threshold under an approved proposal. Refuses zero, or more than the signers.

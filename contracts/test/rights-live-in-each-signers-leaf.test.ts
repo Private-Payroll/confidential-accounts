@@ -27,7 +27,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf,
+  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf, invitePayloadFor,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import {
@@ -530,12 +530,12 @@ describe('a change of who is seated needs the policy bar, not the threshold alon
     for (const d of approvers.filter((a) => a !== A)) await sim.as(d).approve(id);
     await sim.as(sim.applying(A, c)).setPolicyBar(bar, id);
   };
-  /** Seats `leaf`, raised by A (which counts as A's approval) and approved by `approvers`. */
-  const seatTo = async (sim: AccountSimulator, leaf: Uint8Array, approvers: Device[], seed: number) => {
+  /** Invites `who`, raised by A (which counts as A's approval) and approved by `approvers`; `apply` is `who` taking the seat. */
+  const seatTo = async (sim: AccountSimulator, who: Device, approvers: Device[], seed: number) => {
     const c = change(0n, seed);
-    const id = await raiseGov(sim, A, c, pureCircuits.signerAddPayload(leaf));
+    const id = await raiseGov(sim, A, c, invitePayloadFor(who));
     for (const d of approvers.filter((a) => a !== A)) await sim.as(d).approve(id);
-    return { id, apply: () => sim.as(sim.applying(A, c)).addSigner(leaf, id) };
+    return { id, apply: () => sim.seatInvited(id, sim.invited(who, c)) };
   };
   const SEAT_BAR = /needs as many approvals as a policy change needs, and at least the threshold/;
   const E = privateStateFor(9);
@@ -557,8 +557,8 @@ describe('a change of who is seated needs the policy bar, not the threshold alon
   it('SIGNERS AT THE ACCOUNT THRESHOLD CANNOT SEAT A NEW LEAF BELOW THE POLICY BAR', async () => {
     const sim = await live([A, B, C], 2n);
     await setBar(sim, 3n, [A, B], 603);
-    const seat = await seatTo(sim, sim.leafOf(D), [A, B], 604);
-    /* RED WHEN `amendSigner`'s seat branch stops calling `requireSeatBar`. */
+    const seat = await seatTo(sim, D, [A, B], 604);
+    /* RED WHEN `seatInvited` stops calling `requireSeatBar`. */
     await expect(seat.apply()).rejects.toThrow(SEAT_BAR);
     expect(sim.ledger.signerLeaves.member(sim.leafOf(D))).toBe(false);
     await sim.as(C).approve(seat.id);
