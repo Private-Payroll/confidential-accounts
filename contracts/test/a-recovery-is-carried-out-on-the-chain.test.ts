@@ -43,7 +43,8 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
-import { privateStateFor, leafOfDevice, COMPANY_LABEL } from './simulator.js';
+import { privateStateFor, leafOfDevice, COMPANY_LABEL, invitedAddressFor, invitedAddressCommitmentOf } from './simulator.js';
+import { inviteeSeatCall } from './an-invitee-takes-the-seat.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { assetIdBytes, NO_ASSET } from '../../src/core/assets.js';
 import { commit, type Hex } from '../../src/core/crypto.js';
@@ -287,9 +288,16 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
       sent(tx);
       expect(results.at(-1)).toMatchObject({ type: 'success' });
     };
-    /* A second signer seated, then the company's policy bar raised to two, above its threshold of one. */
-    const leaf = hex(leafOfDevice(privateStateFor(2)));
-    await governed({ kind: 'add-signer', leaf }, (proposal, proposalSalt) => ({ circuit: 'amendSigner', leaf, proposal, proposalSalt }));
+    /* A second signer invited and seated by their own wallet, then the company's policy bar raised to two, above its threshold of one. */
+    const blake = privateStateFor(2);
+    const invitation = { kind: 'add-signer', address: hex(invitedAddressCommitmentOf(invitedAddressFor(blake))), scope: hex(blake.scope) } as const;
+    const { file: invited } = await raiseFromTheChain(doors, { change: invitation, summary: 'an invitation' });
+    const invitedAs = await client.proposalIdentity(invitation, invited.salt);
+    sent(await inviteeSeatCall({
+      accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who: blake,
+      proposal: invitedAs.chainId, salt: invited.salt,
+    }));
+    expect(results.at(-1)).toMatchObject({ type: 'success' });
     await governed({ kind: 'policy-bar', bar: '2' }, (proposal, proposalSalt) => ({ circuit: 'setPolicyBar', bar: '2', proposal, proposalSalt }));
     const file = await raised(doors);
     expect(await standing(file.chainId)).toMatchObject({ held: 'open', approvals: 1 });

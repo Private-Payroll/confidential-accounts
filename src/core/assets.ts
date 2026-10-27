@@ -118,7 +118,7 @@ const NIGHT_ON_THE_LEDGER: LedgerIdentity = Object.freeze({
  * The asset a governance round moves, which is none: the bytes of `NONE`,
  * zero padded, which is no ledger token.
  *
- * `addSigner`, `removeSigner` and `setThreshold` are approval rounds that move
+ * Invitations, removals and threshold changes are approval rounds that move
  * no money — but they still go through `propose`, and `propose` commits to
  * `changeCommitmentOf(assetKey, amount, batch, salt)`, which needs an asset.
  * Passing a real one would be a lie in the ledger a client could read as "this

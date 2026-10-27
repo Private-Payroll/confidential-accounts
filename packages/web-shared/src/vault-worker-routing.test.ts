@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { accountCircuitsBeside, networkCircuitsBeside } from './vault-worker-entry.js';
 import type { ArtefactSource } from './key-material.js';
 import {
-  ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,
+  ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ACCOUNT_CIRCUITS_AN_INVITEE_PROVES, ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,
 } from '../../../src/midnight/vault-contract.js';
 
 /*
@@ -63,7 +63,9 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
     expect(ACCOUNT_CIRCUITS_A_DEVICE_CHARGES).toEqual(['clearRun']);
     /* The company's record anchor and its recovery are proved on a signer's device. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS).toEqual(['anchor', 'recoverAnchor']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
+    /* The seat a person invited takes is proved on their own device, by their own wallet. */
+    expect(ACCOUNT_CIRCUITS_AN_INVITEE_PROVES).toEqual(['seatInvited']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 

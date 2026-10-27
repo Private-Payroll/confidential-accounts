@@ -253,17 +253,39 @@ const SCHEMES: Entry[] = [
      * simulated one on both wirings and named its governance rounds with a
      * hash the contract has never computed. `propose` takes the payload hash
      * as an opaque argument, so the proposal was raised, approved and paid for,
-     * and `amendSigner` refused at the end.
+     * and the carrying circuit refused at the end.
      *
-     * So this entry now carries BOTH halves, and they are separate assertions:
-     * the Midnight adapter EQUALS the circuit (here), and the simulated scheme
-     * does NOT (the test at the bottom of this file, which is unchanged in
-     * kind and now covers all four).
+     * So each governance payload carries BOTH halves, and they are separate
+     * assertions: the Midnight adapter EQUALS the circuit (here), and the
+     * simulated scheme does NOT (the test at the bottom of this file).
+     *
+     * The invitation's payload binds the invited address's commitment AND the
+     * seat's rights, so both arguments are carried through, never one.
      */
-    circuit: 'signerAddPayload',
+    circuit: 'signerInvitePayload',
     mirrored: () => ({
-      fromContract: hex(pureCircuits.signerAddPayload(LEAF)),
-      fromClient: MidnightCommitments.signerAddPayload(hex(LEAF)),
+      fromContract: hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD)),
+      fromClient: MidnightCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD)),
+    }),
+  },
+  {
+    /* The commitment an inviter makes to the invited address's coin public key: the payload above names it. */
+    circuit: 'inviteAddressOf',
+    mirrored: () => ({
+      fromContract: hex(pureCircuits.inviteAddressOf(PK, SALT)),
+      fromClient: MidnightCommitments.inviteAddressOf(hex(PK), hex(SALT)),
+    }),
+  },
+  {
+    /*
+     * The coin public key a wallet's coin secret key makes, as the ledger makes
+     * it inside a shielded address. The invitee's seat is refused unless the
+     * key worked out in the circuit is the one the inviter committed to.
+     */
+    circuit: 'coinPublicKeyOf',
+    mirrored: () => ({
+      fromContract: hex(pureCircuits.coinPublicKeyOf(SIGNING_SECRET)),
+      fromClient: MidnightCommitments.coinPublicKeyOf(hex(SIGNING_SECRET)),
     }),
   },
   {
@@ -875,7 +897,9 @@ describe('one definition: the contract and the client agree', () => {
     { method: 'runPayload', circuit: 'runPayload', kind: 'mirrored' },
     { method: 'proposalId', circuit: 'proposalIdOf', kind: 'mirrored' },
     { method: 'changeCommitment', circuit: 'changeCommitmentOf', kind: 'mirrored' },
-    { method: 'signerAddPayload', circuit: 'signerAddPayload', kind: 'mirrored' },
+    { method: 'signerInvitePayload', circuit: 'signerInvitePayload', kind: 'mirrored' },
+    { method: 'inviteAddressOf', circuit: 'inviteAddressOf', kind: 'mirrored' },
+    { method: 'coinPublicKeyOf', circuit: 'coinPublicKeyOf', kind: 'mirrored' },
     /* The client's name and the circuit's differ for these three. That is
      * exactly the drift a name-matching grep cannot see, and the reason this
      * table is a declared map rather than a comparison of two name sets. */
@@ -1058,8 +1082,6 @@ describe('one definition: the contract and the client agree', () => {
   });
 
   it('the SIMULATED governance payloads are the values they have always been', () => {
-    expect(SimulatedCommitments.signerAddPayload(hex(LEAF)))
-      .toBe('759b19316051d9d39153b92c0099189367f6ff8ad2db377e67db1a46891bc16d');
     expect(SimulatedCommitments.signerRemovePayload(hex(LEAF)))
       .toBe('2d46fcd7808701be6eba93811b7a829e61111f96e999347d375a6f19433121c4');
     expect(SimulatedCommitments.signerThresholdPayload(3))
@@ -1081,6 +1103,20 @@ describe('one definition: the contract and the client agree', () => {
    * spending against a different vault's bar, or against a threshold nobody
    * approved.
    */
+  it('the invitation adapters carry every argument through, not one of them', () => {
+    for (const scheme of [MidnightCommitments, SimulatedCommitments]) {
+      const base = scheme.signerInvitePayload(hex(LEAF), hex(PAYLOAD));
+      /* RED WHEN: an invitation's payload drops the address, so one approval seats any wallet. */
+      expect(scheme.signerInvitePayload(hex(VAULT), hex(PAYLOAD))).not.toBe(base);
+      /* RED WHEN: an invitation's payload drops the rights, so the invitee chooses their own. */
+      expect(scheme.signerInvitePayload(hex(LEAF), hex(ROOT))).not.toBe(base);
+      const address = scheme.inviteAddressOf(hex(PK), hex(SALT));
+      expect(scheme.inviteAddressOf(hex(VAULT), hex(SALT))).not.toBe(address);
+      expect(scheme.inviteAddressOf(hex(PK), hex(BATCH))).not.toBe(address);
+      expect(scheme.coinPublicKeyOf(hex(SIGNING_SECRET))).not.toBe(scheme.coinPublicKeyOf(hex(BLINDING)));
+    }
+  });
+
   it('the threshold adapters carry BOTH arguments through, not one of them', () => {
     const v = hex(VAULT);
     const other = hex(LEAF);
@@ -1113,8 +1149,12 @@ describe('one definition: the contract and the client agree', () => {
      * described honestly because a test that claims more than it checks is
      * worse than no test.
      */
-    expect(SimulatedCommitments.signerAddPayload(hex(LEAF)))
-      .not.toBe(hex(pureCircuits.signerAddPayload(LEAF)));
+    expect(SimulatedCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD)))
+      .not.toBe(hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD)));
+    expect(SimulatedCommitments.inviteAddressOf(hex(PK), hex(SALT)))
+      .not.toBe(hex(pureCircuits.inviteAddressOf(PK, SALT)));
+    expect(SimulatedCommitments.coinPublicKeyOf(hex(SIGNING_SECRET)))
+      .not.toBe(hex(pureCircuits.coinPublicKeyOf(SIGNING_SECRET)));
     expect(SimulatedCommitments.signerRemovePayload(hex(LEAF)))
       .not.toBe(hex(pureCircuits.removeSignerPayload(LEAF)));
     /*

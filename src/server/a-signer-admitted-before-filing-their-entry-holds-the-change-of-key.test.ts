@@ -12,7 +12,7 @@ import { identityFromSecret } from 'midnight-identity';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
 import { admitSignerHere } from 'vaults-web-shared/roster-here.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
@@ -27,7 +27,7 @@ const DEES_KEY = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(5)),
 
 describe('A SIGNER ADMITTED BEFORE A SIGNER LEAVES, WITH NO ENTRY YET', () => {
   it('holds up the change of the company\'s key until they file their entry', async () => {
-    const made = await inviteSignerHere(ACME, ADA, { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},

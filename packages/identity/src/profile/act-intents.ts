@@ -304,6 +304,8 @@ export const ACT_INTENTS = Object.freeze({
    * `payee`, `payeeName` and `reason` are the page's words, checked by the wallet. Or carry on a one-off already raised
    * (`proposal`), named beside the same payment fields: the wallet opens its sealed record, refuses it unless it is that
    * payment, offers this seat's approval, and charges and pays it as far as the company's account accepts.
+   * `vendor` names the vendor entry the payment is for, when it is for one: the wallet reads that entry itself and
+   * raises, approves and pays nothing unless `payee` is the address it pays.
    * It tells the page where the payment got to, the approvals the chain shows and how many it needs, whether the upkeep
    * was all done and how many records it anchored.
    */
@@ -311,11 +313,40 @@ export const ACT_INTENTS = Object.freeze({
     fields: Object.freeze({
       record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const,
       token: 'token' as const, amount: 'amount' as const, payee: 'words' as const, payeeName: 'words' as const, reason: 'words' as const,
-      proposal: 'record' as const,
+      proposal: 'record' as const, vendor: 'record' as const,
     }),
-    optional: Object.freeze(['vault', 'token', 'amount', 'payee', 'payeeName', 'reason', 'proposal']),
+    optional: Object.freeze(['vault', 'token', 'amount', 'payee', 'payeeName', 'reason', 'proposal', 'vendor']),
     calls: ONE_OFF_PAYMENT_CALLS,
     outcome: Object.freeze({ state: 'code' as const, charge: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * A person or vendor added by the unshielded address the inviter typed claims their record: the wallet opens the
+   * inviter-signed offer itself with the link's `token`, takes the company's inbox key, the record and the address
+   * from it (the page's `address` only names it, and must be the offer's), checks the address is its own, signs a
+   * claim of it with that address's key and its payee's code, seals both to the company's inbox key and hands them to
+   * the invitation. One added by a shielded address accepts with their code and the fingerprint read out instead.
+   */
+  'claim-by-address': Object.freeze({
+    fields: Object.freeze({
+      company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const, address: 'words' as const,
+    }),
+    calls: Object.freeze([
+      Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
+      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-payee' }),
+    ]),
+  }),
+  /*
+   * A signer invited by address takes the seat from their own wallet: the wallet opens the offer with the link's
+   * `token`, checks the address is its own, derives its seat for the company, proves `seatInvited` with the address's
+   * coin key, hands the transaction to the invitation's relay and asks to be admitted with its seat's public halves.
+   */
+  'seat-invited': Object.freeze({
+    fields: Object.freeze({ company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const }),
+    calls: Object.freeze([
+      Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
+      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/seat', sends: true }),
+      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-signer' }),
+    ]),
   }),
 }) satisfies Readonly<Record<string, IntentShape>>;
 

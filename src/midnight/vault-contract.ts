@@ -165,7 +165,7 @@ export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze([
 /**
  * **THE ACCOUNT'S CIRCUITS A SIGNER'S OWN DEVICE BUILDS AND PROVES**: raising a
  * round, approving one, withdrawing one, and carrying out an approved round
- * that seats a signer, changes the company's or one vault's threshold, adopts
+ * that removes a signer, changes the company's or one vault's threshold, adopts
  * a new vault, or sets a vault's spending policy or the approvals a policy
  * change needs, and sealing the company's pay-record key to a signer. Each opens with the signer check, so each runs
  * against the signer's own secret, which exists only on that device. No vault
@@ -195,10 +195,20 @@ export const ACCOUNT_CIRCUITS_A_DEVICE_CHARGES: readonly string[] = Object.freez
  */
 export const ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS: readonly string[] = Object.freeze(['anchor', 'recoverAnchor']);
 
+/**
+ * **THE ACCOUNT'S CIRCUIT AN INVITED SIGNER'S OWN WALLET PROVES** to take the
+ * seat an approved invitation names. It opens with no signer check: the invitee
+ * is not a signer yet, and proves instead that it holds the coin secret key of
+ * the address it was invited at, which exists only in that wallet. It carries
+ * out a proposal but is kept apart from the governed list, because no seated
+ * signer's device ever builds it.
+ */
+export const ACCOUNT_CIRCUITS_AN_INVITEE_PROVES: readonly string[] = Object.freeze(['seatInvited']);
+
 /** Every one of the account's circuits whose proving material is served to a device, for any reason above. */
 export const ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE: readonly string[] = Object.freeze([
   ...ACCOUNT_CIRCUITS_A_VAULT_CALLS, ...ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ...ACCOUNT_CIRCUITS_A_DEVICE_CHARGES,
-  ...ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS,
+  ...ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ...ACCOUNT_CIRCUITS_AN_INVITEE_PROVES,
 ]);
 
 /**

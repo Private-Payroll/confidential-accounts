@@ -24,7 +24,7 @@ const sameNumber = (a: unknown, b: unknown): boolean => {
 export const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire): boolean => {
   if (a.kind !== b.kind) return false;
   switch (a.kind) {
-    case 'add-signer': return same(a.leaf, (b as typeof a).leaf);
+    case 'add-signer': return same(a.address, (b as typeof a).address) && same(a.scope, (b as typeof a).scope);
     case 'remove-signer': return same(a.leaf, (b as typeof a).leaf);
     case 'vault-threshold': return same(a.vault, (b as typeof a).vault) && sameNumber(a.threshold, (b as typeof a).threshold);
     case 'adopt-vault': return same(a.vault, (b as typeof a).vault);

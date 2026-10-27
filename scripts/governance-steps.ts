@@ -55,9 +55,9 @@ import {
 import { NO_ASSET } from '../src/core/assets.js';
 
 /*
- * S11: the merged `propose` and `amendSigner` have fixed arity, so the branch
- * a call does not take still needs filler arguments. A 32-byte zero is the
- * honest filler — `persistentCommit` can never produce it.
+ * The merged `propose` has fixed arity, so the branch a call does not take
+ * still needs filler arguments. A 32-byte zero is the honest filler —
+ * `persistentCommit` can never produce it.
  */
 const ZERO_32 = new Uint8Array(32);
 
@@ -130,6 +130,18 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
 
   const leafOf = (s: AccountPrivateState) =>
     pureCircuits.signerLeaf(pureCircuits.signerPublicKey(s.secretKey), s.blinding, s.scope);
+
+  /*
+   * A seat after the first is an invitation: the signers approve a commitment
+   * to the invitee's wallet address and the rights the seat carries, and the
+   * invitee takes it with `seatInvited`, proving it holds that address's coin
+   * secret key. Here each invitee's address is a throwaway coin key made from a
+   * seed, with a salt beside it.
+   */
+  const invitedAt = (seed: number) => ({ coinSecretKey: seededBytes(seed), addressSalt: seededBytes(seed + 1) });
+  const invitationOf = (s: AccountPrivateState, invite: { coinSecretKey: Uint8Array; addressSalt: Uint8Array }) =>
+    pureCircuits.signerInvitePayload(
+      pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt), s.scope);
 
   /**
    * Which slot a signer sits in, read off the LEDGER rather than remembered.
@@ -411,15 +423,15 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
    * ------------------------------------------------------------------ */
 
   const leafD = leafOf(D);
-  const addDId = await approvedRound('add D', pureCircuits.signerAddPayload(leafD),
-    freshSalt(), approversFrom([['A', A], ['B', B], ['C', C]], start.threshold, 'add D'));
-  await becomeSigner(A, 'A');
-  // Three arguments. `addDId` names WHICH approved proposal authorises this —
-  // the contract recomputes it from the caller's `proposalSalt` and refuses a
-  // proposal that commits to a different leaf. `false` asks for a fresh
-  // slot: nothing has been vacated yet, and asking to reuse one that does not
-  // exist is refused rather than quietly corrected.
-  await callCircuit('amendSigner D (seat)', () => found.callTx.amendSigner(leafD, addDId, false, false),
+  const inviteD = invitedAt(901);
+  const addDId = await approvedRound('invite D', invitationOf(D, inviteD),
+    freshSalt(), approversFrom([['A', A], ['B', B], ['C', C]], start.threshold, 'invite D'));
+  await becomeSigner({ ...D, invite: inviteD }, 'D (invited)');
+  // `addDId` names WHICH approved invitation D takes — the contract recomputes
+  // it from D's address, the salt and D's rights, and refuses any other.
+  // `false` asks for a fresh slot: nothing has been vacated yet, and asking to
+  // reuse one that does not exist is refused rather than quietly corrected.
+  await callCircuit('seatInvited D', () => found.callTx.seatInvited(addDId, false),
     async () => !!(await readState()).signers.findPathForLeaf(leafD));
   await wasConsumed('add D', addDId);
 
@@ -437,7 +449,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
     freshSalt(), approversFrom([['A', A], ['C', C], ['D', D]], start.threshold, 'remove B'));
 
   await becomeSigner(A, 'A');
-  await callCircuit('amendSigner B (unseat)', () => found.callTx.amendSigner(leafB, removeBId, false, true),
+  await callCircuit('amendSigner B (unseat)', () => found.callTx.amendSigner(leafB, removeBId),
     async () => !(await readState()).signers.findPathForLeaf(leafB));
   await wasConsumed('remove B', removeBId);
 
@@ -515,15 +527,15 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
    * ------------------------------------------------------------------ */
 
   const leafE = leafOf(E);
-  const addEId = await approvedRound('add E into the vacated slot',
-    pureCircuits.signerAddPayload(leafE), freshSalt(),
-    approversFrom([['A', A], ['C', C], ['D', D]], start.threshold, 'add E'));
-  await becomeSigner(A, 'A');
+  const inviteE = invitedAt(903);
+  const addEId = await approvedRound('invite E into the vacated slot',
+    invitationOf(E, inviteE), freshSalt(),
+    approversFrom([['A', A], ['C', C], ['D', D]], start.threshold, 'invite E'));
+  await becomeSigner({ ...E, invite: inviteE }, 'E (invited)');
   // `true` — take the slot B left. The witness finds it by looking for the
-  // vacancy marker the removal wrote; a blanked slot would be unfindable,
-  // which is what the first version of this design got wrong.
-  await callCircuit('addSigner E (reusing B\'s slot)',
-    () => found.callTx.amendSigner(leafE, addEId, true, false),
+  // vacancy marker the removal wrote; a blanked slot would be unfindable.
+  await callCircuit('seatInvited E (reusing B\'s slot)',
+    () => found.callTx.seatInvited(addEId, true),
     async () => !!(await readState()).signers.findPathForLeaf(leafE));
   await wasConsumed('add E', addEId);
 
@@ -542,7 +554,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   if (raised > live.signerLeaves.size()) {
     throw new Error(
       `cannot raise the threshold to ${raised} with ${live.signerLeaves.size()} signers — the contract ` +
-      'refuses it, and rightly: above the signer count the bootstrap window reopens (M-37)',
+      'refuses it, and rightly: above the signer count the account could never approve again',
     );
   }
 

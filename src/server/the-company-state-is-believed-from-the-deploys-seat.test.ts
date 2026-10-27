@@ -146,8 +146,7 @@ const founderReplaced = async (): Promise<AccountSimulator> => {
   await sim.adoptVault(VAULT, [F, B], 602);
   const removal = await approved(sim, F, pureCircuits.removeSignerPayload(sim.leafOf(F)), 611, [F, B]);
   await sim.as(removal.by).removeSigner(sim.leafOf(F), removal.id);
-  const seating = await approved(sim, B, pureCircuits.signerAddPayload(sim.leafOf(D)), 612, [B, C]);
-  await sim.as(seating.by).addSigner(sim.leafOf(D), seating.id, true);
+  await sim.seatSigner(D, [B, C], 612, true);
   return sim;
 };
 

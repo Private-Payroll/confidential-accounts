@@ -68,10 +68,10 @@ const aCompany = async (o: { writtenDown: boolean; alsoAnotherToken?: true }) =>
   /* The company's asset blinding, which every signer opens from its state and keys a run's commitment to what it pays with. */
   const assetBlinding = openStateRecord({ sealed: (await ledger.fetch(account, 0))!.sealedState }, viewingKey).blinding.assetBlinding;
   const hired = [0, 1, 2].map((i) => payroll.hireDirect(account, {
-    name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: BigInt(100_00 + i),
+    name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: BigInt(100_00 + i), startDate: '2026-01-01',
   }, viewingKey).employee);
   if (o.alsoAnotherToken) {
-    hired.push(payroll.hireDirect(account, { name: 'Payee X', email: 'x@a.co', title: 'Eng', asset: OTHER_TEST_TOKEN, baseAmount: 7_00n }, viewingKey).employee);
+    hired.push(payroll.hireDirect(account, { name: 'Payee X', email: 'x@a.co', title: 'Eng', asset: OTHER_TEST_TOKEN, baseAmount: 7_00n, startDate: '2026-01-01' }, viewingKey).employee);
   }
   const { run } = await payroll.createRunFromRoster(account, '2026-9', viewingKey);
   let proposalId: string | undefined;
@@ -288,15 +288,16 @@ describe('WHAT A RETRY IS BUILT FROM, MADE HERE FROM THE LEG IT RETRIES', () => 
   });
 });
 
-describe('WHAT CARRIES OUT A SEAT OR A THRESHOLD CHANGE', () => {
+describe('WHAT CARRIES OUT A THRESHOLD CHANGE', () => {
   it('IS MADE FROM THE PROPOSAL AS THIS DEVICE OPENED IT, AND NOTHING ELSE IS CARRIED OUT FROM HERE', () => {
     const opened = { chainId: 'c1'.repeat(32), digest: '', vault: '', salt: 'a1'.repeat(32), summary: '' };
-    /* RED WHEN: the leaf, the threshold, the identity or the salt carried out is not the opened proposal's. */
-    expect(carryOrderHere({ ...opened, governance: { kind: 'add-signer', leaf: 'ab'.repeat(32) } }))
-      .toEqual({ circuit: 'amendSigner', leaf: 'ab'.repeat(32), proposal: opened.chainId, proposalSalt: opened.salt });
+    /* RED WHEN: the threshold, the identity or the salt carried out is not the opened proposal's. */
     expect(carryOrderHere({ ...opened, governance: { kind: 'threshold', threshold: '2' } }))
       .toEqual({ circuit: 'setThreshold', threshold: '2', proposal: opened.chainId, proposalSalt: opened.salt });
-    /* RED WHEN: a run or a vault adoption is carried out as if it were a seat. */
+    /* RED WHEN: an invitation is carried out by a signer's device, and not left for the person invited to take the seat. */
+    expect(() => carryOrderHere({ ...opened, governance: { kind: 'add-signer', address: 'ad'.repeat(32), scope: '5c'.repeat(32) } }))
+      .toThrow(/takes their seat from their own wallet/u);
+    /* RED WHEN: a run or a vault adoption is carried out as if it were a threshold change. */
     expect(() => carryOrderHere(opened)).toThrow(NotMadeHere);
     expect(() => carryOrderHere({ ...opened, governance: { kind: 'adopt-vault', vault: 'cd'.repeat(32) } })).toThrow(NotMadeHere);
   });

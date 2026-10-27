@@ -161,7 +161,7 @@ describe('the record anchor', () => {
     expect(hex(sim.anchorHead())).not.toBe(hex(fold([A, batch(1)], [A, batch(2)])));
   });
 
-  it('a seat\'s tag is its own in one account, another seat\'s differs, and in another account it is unlinked', async () => {
+  it("a seat's tag is its own in one account, another seat's differs, and in another account it is unlinked", async () => {
     /* RED WHEN anchorTagOf stops hashing the seat's key or blinding: two seats could then anchor under one tag. */
     expect(hex(sim.anchorTagOf(A))).not.toBe(hex(sim.anchorTagOf(B)));
     expect(hex(sim.anchorTagOf(A))).not.toBe(hex(sim.anchorTagOf({ ...A, blinding: B.blinding })));
@@ -325,7 +325,7 @@ describe('a recovery of the record anchor', () => {
     expect(hex(sim.lastRecovery())).toBe(hex(sim.anchorHead()!));
   });
 
-  it('before any recovery is carried out, an approval naming a recovery\'s head is refused', async () => {
+  it("before any recovery is carried out, an approval naming a recovery's head is refused", async () => {
     const { resumes, now } = await twoAnchors();
     const named = await sim.approvedRecovery(resumes, [A, B], 504, undefined, now);
     /* RED WHEN the account reads an absent latest recovery as anything but 32 zero bytes: an approval naming a head no recovery wrote would pass. */

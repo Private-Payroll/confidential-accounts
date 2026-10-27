@@ -9,13 +9,14 @@
  */
 import type { AssetId, AssetRegistry, LedgerForm } from './assets.js';
 import { assets as defaultAssets, ledgerTokenOf, symbolOf } from './assets.js';
-import type { Employee, PayrollRun, RosterEmployee, RunLeg, RunPayout, SealedRun } from './types.js';
+import type { Employee, PayrollRun, RosterEmployee, RunLeg, RunList, RunPayout, SealedRun } from './types.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
 import { payrollPayee } from './movement.js';
 import type { PayRecord } from '../midnight/run-keys.js';
 import type { Hex } from './crypto.js';
 import { openRecord, sealRecord } from './sealed-records.js';
 import { kindOfRun } from './already-paid.js';
+import { payeeKeysRefusal } from './payee-keys.js';
 
 /**
  * **ONE LEG OF A RUN IS ONE TOKEN IN ONE FORM.**
@@ -183,45 +184,8 @@ export const legOf = (run: PayrollRun, which: RunLegChoice | undefined, registry
   return leg;
 };
 
-/**
- * **A PAY PERIOD HAS ONE SPELLING, AND ANYTHING ELSE IS REFUSED HERE RATHER
- * THAN COMPARED LATER.**
- *
- * Every guard in this file against paying somebody twice asks whether two runs
- * are for the same period, and every one of them asked it by comparing the text
- * a person typed. So `2026-08 ` with a trailing space, or `2026-8` without the
- * zero, was a DIFFERENT period to all of them: a second payroll was drawn for
- * it beside the first, raised beside it, and everybody on both was paid twice,
- * each time under their own payment secrets so that nothing on chain connected
- * the two. The chain now records the month each payment is for, and it is
- * spelled one way for that too. Neither spelling is an attack. Both are a retype, and the restart a
- * person reaches for is exactly the moment they retype it.
- *
- * **SO A PERIOD STOPS BEING FREE TEXT AT THE POINT IT ENTERS.** A run is drawn
- * for a month, written `YYYY-MM`, and a month is what this returns: anything
- * that names August 2026 comes back as `2026-08` however it was typed, and a
- * string that names no month is refused, with the form that is wanted. The
- * guards then compare a value rather than a typing, and there is no longer such
- * a thing as a spelling they have not seen.
- *
- * **IT IS IN THE SERVICE AND NOT ONLY ON THE WAY IN.** The routes in front of
- * this are the doors the product happens to have today; a third one, a script,
- * or a call path added later would each reach those guards with whatever it was
- * handed. A refusal a caller cannot go around is the only kind that bounds
- * anything.
- */
-export const canonicalPeriod = (period: string): string => {
-  const written = period.trim();
-  const named = /^(\d{4})-(\d{1,2})$/.exec(written);
-  const month = named ? Number(named[2]) : 0;
-  if (!named || month < 1 || month > 12) {
-    throw new Error(
-      `"${period}" does not name a pay period. A run is drawn for one month, written as the `
-      + 'year, a hyphen and the month: 2026-08 is August 2026. Write the month that way and '
-      + 'draw the run again.');
-  }
-  return `${named[1]}-${String(month).padStart(2, '0')}`;
-};
+export { canonicalPeriod } from './calendar-days.js';
+import { canonicalPeriod } from './calendar-days.js';
 
 /** Every proposal a run's legs record for their retries. */
 export const retryProposalIdsOf = (payout: Record<RunLeg, RunPayout> | undefined): string[] =>
@@ -236,7 +200,7 @@ export const retryProposalIdsOf = (payout: Record<RunLeg, RunPayout> | undefined
  * service's own writes.
  */
 export const sealedRunOf = (run: PayrollRun, viewingKey: Hex, keyEpoch: number): Omit<SealedRun, 'wiring' | 'filedBy'> => {
-  const { employees, totals, proposalIds, payout, skips, repeats, wiring: _wiring, ...operational } = run as PayrollRun & { wiring?: unknown };
+  const { employees, totals, proposalIds, payout, skips, repeats, list, wiring: _wiring, ...operational } = run as PayrollRun & { wiring?: unknown };
   return {
     ...operational,
     // Outside the envelope so a run can be found by its proposals; the map
@@ -245,12 +209,22 @@ export const sealedRunOf = (run: PayrollRun, viewingKey: Hex, keyEpoch: number):
     // what is inside and nothing else, and a run whose list is not is not opened.
     proposalIds: proposalListOf({ proposalIds, payout }),
     keyEpoch,
-    sealed: sealRecord('payroll', run.accountId, { employees, totals, proposalIds, payout, skips, repeats } satisfies RunSecrets, viewingKey),
+    sealed: sealRecord('payroll', run.accountId, { employees, totals, proposalIds, payout, skips, repeats, list } satisfies RunSecrets, viewingKey),
   };
 };
 
-/** The numbers on a run, sealed. Everything else about it is operational. */
-export type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout' | 'skips' | 'repeats'>;
+/** The numbers on a run and the list it pays, sealed. Everything else about it is operational. */
+export type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout' | 'skips' | 'repeats' | 'list'>;
+
+/**
+ * **THE LIST A RUN PAYS**, as sealed in it: a run that names none was drawn before runs named their list, and paid the
+ * employees. Every check that asks which runs a month already has asks it of the run's own list only.
+ */
+export const listOfRun = (run: Pick<PayrollRun, 'list'>): RunList => run.list ?? 'employees';
+
+/** The runs of `runs` that pay `list`. */
+export const runsOfList = <R extends Pick<PayrollRun, 'list'>>(runs: readonly R[], list: RunList): R[] =>
+  runs.filter((r) => listOfRun(r) === list);
 
 /**
  * **THE PROPOSALS A RUN WAS RAISED AS, AS THE LIST OUTSIDE ITS SEAL HOLDS THEM**:
@@ -260,6 +234,13 @@ export type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'
  */
 export const proposalListOf = (secrets: Pick<RunSecrets, 'proposalIds' | 'payout'>): string[] =>
   [...Object.values(secrets.proposalIds ?? {}), ...retryProposalIdsOf(secrets.payout)].sort();
+
+/** The lists a run may pay. */
+export const RUN_LISTS: readonly RunList[] = ['employees', 'vendors'];
+
+/** Why a run is not opened: it names a list the company does not keep. */
+export const NOT_A_LIST = 'this run\'s record names a list of payees that is neither the employees nor the vendors, so which '
+  + 'runs its month already has cannot be said. Do not act on it';
 
 /** Why a run is not opened: the proposals outside its seal are not the ones inside it. */
 export const PROPOSALS_OUTSIDE_ARE_NOT_INSIDE = 'this run\'s record lists other proposals outside its sealed numbers than '
@@ -271,14 +252,17 @@ export const PROPOSALS_OUTSIDE_ARE_NOT_INSIDE = 'this run\'s record lists other 
  * is there to find a run by its proposals, and is what the service checks a
  * raise against; a run whose list outside is not exactly the one made from
  * inside (`proposalListOf`) is refused here, so what the service checked is
- * always what every device reads.
+ * always what every device reads. The list a run pays is read from inside the
+ * seal only, and a run naming a list that is neither is refused: it would
+ * escape every check of which runs its month already has.
  */
 export const openSealedRun = (r: SealedRun, viewingKey: Hex): PayrollRun => {
-  const { sealed, keyEpoch: _epoch, proposalIds: outside, filedBy: _filedBy, ...operational } = r;
+  const { sealed, keyEpoch: _epoch, proposalIds: outside, filedBy: _filedBy, list: _listOutside, ...operational } = r as SealedRun & { list?: unknown };
   const secrets = openRecord<RunSecrets>('payroll', r.accountId, sealed, viewingKey);
   const inside = proposalListOf(secrets);
   const listed = [...(outside ?? [])].sort();
   if (listed.length !== inside.length || listed.some((id, i) => id !== inside[i])) throw new Error(PROPOSALS_OUTSIDE_ARE_NOT_INSIDE);
+  if (secrets.list !== undefined && !RUN_LISTS.includes(secrets.list)) throw new Error(NOT_A_LIST);
   return { ...operational, ...secrets };
 };
 
@@ -287,11 +271,12 @@ export const openSealedRun = (r: SealedRun, viewingKey: Hex): PayrollRun => {
  * TOKEN IN THEIR ADDRESS'S FORM, AND THE AMOUNT THE RUN NAMES.** Refused, by
  * name, for anybody who is not on the roster, is not active, has no address,
  * has an address other than the one the run was drawn against, or whose address
- * is now of the other form. `personOf` is how the caller reads a roster record:
- * the service from its store, a device from the records it opened and believed.
+ * is now of the other form. `personOf` is how the caller reads a roster record or
+ * a vendor entry: the service from its store, a device from the records it
+ * opened and believed.
  */
 export const factsOfThePaid = (
-  people: readonly Employee[], personOf: (id: string) => RosterEmployee | null | undefined,
+  people: readonly Employee[], personOf: (id: string) => Pick<RosterEmployee, 'name' | 'status' | 'address'> | null | undefined,
   registry: AssetRegistry = defaultAssets,
 ): PaymentFacts[] =>
   people.map((e) => {
@@ -328,6 +313,8 @@ export const factsOfThePaid = (
      * drawn before its people's addresses were kept beside them has nothing
      * to compare, and is paid as it always was.
      */
+    const keys = payeeKeysRefusal(person.address);
+    if (keys !== null) throw new Error(`${person.name} is not paid: ${keys}. Nothing was raised and no fee was spent.`);
     if (e.paidTo !== undefined && e.paidTo.toLowerCase() !== person.address.bech32.toLowerCase()) {
       throw new Error(
         `${person.name}'s address on the roster has changed since this run was drawn, so it would `

@@ -197,8 +197,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
         .toBe(toHex(pureCircuits.proposalIdOf(payload, PAYROLL_VAULT, fromHex(r.change.salt))));
 
       const sim = await AccountSimulator.create(privateStateFor(9));
-      await sim.seatLeaf(
-        fromHex(r.created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 47);
+      await sim.seatWrittenLeaf(r.created.secrets[0]!, fromHex(r.created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 47);
       sim.at(NOW);
       await sim.adoptVault(PAYROLL_VAULT, [privateStateFor(9)]);
 
@@ -309,8 +308,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     expect(proposal.chainId).not.toBe(asARun);
 
     const sim = await AccountSimulator.create(privateStateFor(9));
-    await sim.seatLeaf(
-      fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 48);
+    await sim.seatWrittenLeaf(created.secrets[0]!, fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 48);
     sim.at(NOW);
     const device = deviceCarrying(created.secrets[0]!, change);
 
@@ -342,7 +340,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, null))
       .rejects.toThrow(/cannot be proposed without its payout material/);
-    /* RED WHEN the refusal says what a run without its material costs with a dash, or stops saying it would be approved and paid for and could never be paid (ruled copy fix, 1 Oct). */
+    /* RED WHEN the refusal says what a run without its material costs with a dash, or stops saying it would be approved and paid for and could never be paid */
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, null))
       .rejects.toThrow(/one no vault can ever match\. It would be approved and paid for, and could never be paid\. Build the material/);
@@ -370,7 +368,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, material))
       .rejects.toThrow(/pays 1 people in the private tPAY leg and the run material names 3/);
-    /* RED WHEN the refusal joins its two ideas with a dash rather than saying them as two sentences (ruled copy fix, 1 Oct). */
+    /* RED WHEN the refusal joins its two ideas with a dash rather than saying them as two sentences. */
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, material))
       .rejects.toThrow(/made never to finish\. A count that disagrees with the roster would do one of the two\.$/);

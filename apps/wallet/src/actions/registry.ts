@@ -16,6 +16,8 @@ import { vaultSecretsKeptFor } from './vault-secret-kept.js';
 import { privateDepositAction } from './private-deposit.js';
 import { oneOffPaymentAction } from './one-off-payment.js';
 import { liveBalanceDoors } from '../screens/approve-balance.js';
+import { claimByAddressAction } from './claim-by-address.js';
+import { seatInvitedAction } from './seat-invited.js';
 
 /** Waits `ms`, or rejects at once when `signal` aborts first. */
 export const pause = (ms: number, signal: AbortSignal): Promise<void> => new Promise<void>((resolve, reject) => {
@@ -67,6 +69,11 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
   'create-vault': createVaultAction(VAULTS),
   'private-deposit': privateDepositAction({ ...VAULTS, balance: liveBalanceDoors }),
   'one-off-payment': oneOffPaymentAction(VAULTS),
+  'claim-by-address': claimByAddressAction({ network: NETWORK }),
+  'seat-invited': seatInvitedAction({
+    chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK,
+    commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
+  }),
 });
 
 /** The definition of the action with this name, or `null` when this wallet runs none by that name. */

@@ -445,7 +445,12 @@ describe('the real sources', () => {
     // and is public as the count; and the raiser's approval nullifier, as
     // `approve` publishes it. The vault the rights are read on was already a
     // site through `grants`.
-    expect(sites(account)).toBe(188);
+    // 188 -> 187. A person invited takes their seat by a step of their own
+    // (-1): a removal no longer discloses which of two branches it takes. The
+    // seat by invitation discloses the proposal it carries out and whether the
+    // invitation it makes again is that proposal's, as seating a leaf did, and
+    // the leaf it seats; never the address, its salt or the wallet's key.
+    expect(sites(account)).toBe(187);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the

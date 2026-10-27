@@ -39,11 +39,12 @@ import { seatRequestFingerprint } from './invitation-on-device.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import {
-  approveOnDevice, openTheRoundHere, seatSignerOnDevice, type GovernedCallDoors, type GovernedCallService,
+  approveOnDevice, InvitationNotBound, openTheRoundHere, seatSignerOnDevice, type GovernedCallDoors, type GovernedCallService,
 } from './governed-call-on-device.js';
 import { refuseASeatNotForTheInvited, rosterBelievedHere, seatingOf, waitingHere, type RosterDoors, type RosterReads } from './roster-here.js';
 import type { DirectoryWitness } from '../../../src/core/roster-record.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
+import { anAddress, theInviteeTakesTheSeat } from '../../../src/testing/an-invitee.js';
 
 const scope = MidnightCommitments.allVaults();
 /** A joiner's keys, their leaf made for a wallet key of their own under a fresh salt, and the opening that shows it. */
@@ -88,7 +89,14 @@ const danasRequest = (): PendingSignerPayload => ({
   const rec = store.getAccount(company)!;
   store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.map((p) => (p.id === waiting.id ? { ...p, sealed: sealToInbox(danasRequest(), rec.inboxPublicKey) } : p)) });
 }
-const seatRound = await accounts.seatRound(company, viewingKey, waiting.id, ada.signerId);
+/* The address Dana is invited at, its salt, and the rights her seat will carry. */
+const DANAS_AT = anAddress(MidnightCommitments, 21);
+const DANAS_ADDRESS = { address: DANAS_AT.address, salt: DANAS_AT.addressSalt, scope };
+/* Raised with the invitation Ada's seat signed for that address, as Ada's device raises it. */
+const seatRound = await accounts.seatRound(company, viewingKey, waiting.id, ada.signerId, {
+  ...DANAS_ADDRESS,
+  invited: signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment as Hex, invite: DANAS_ADDRESS as never }, ada.signingSecret as Hex),
+});
 /* Ada's and Bo's devices read the signers from a roster record Ada's seat filed, believed by entries their wallets signed. */
 const filed = aRosterASeatFiled(store, company, viewingKey as Hex, [
   { signerId: ada.signerId, person: 'ada', signingSecret: ada.signingSecret, n: 1 },
@@ -149,14 +157,14 @@ const everyReading = async (_signerId: string) => {
 };
 
 describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => {
-  it('the honest entry is read by every device, and its leaf is the one Dana sent', async () => {
+  it('the honest entry is read by every device, and the invitation is the one raised for Dana', async () => {
     putBack();
     for (const signer of [ada, bo]) {
       const { outcomes, built } = await everyReading(signer.signerId);
       /* RED WHEN: the check refuses an honest invitation - nobody could then be seated at all. */
       expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'fulfilled', 'rejected']);
       expect((outcomes[0] as PromiseFulfilledResult<OpenedRound>).value.governance)
-        .toEqual({ kind: 'add-signer', leaf: dana.leafCommitment });
+        .toEqual({ kind: 'add-signer', address: DANAS_ADDRESS.address, scope });
       /* The plain approval reads the honest entry and then leaves the seat to be approved where it is made. */
       expect(String((outcomes[2] as PromiseRejectedResult).reason?.message)).toMatch(/approved where it is made/u);
       expect(built).toEqual([]);
@@ -214,7 +222,7 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
       const out = seatSignerOnDevice({
         ...doors, roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_swappedseat1', entered: enteredHere() },
         approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
-      }, { viewingKey, signerId: waiting.id, readOut: 'read out by Dana' });
+      }, { viewingKey, signerId: waiting.id, readOut: 'read out by Dana', invite: DANAS_ADDRESS });
       /* RED WHEN: the device raises, approves, carries out or admits a seat before it has checked the key in the inbox. */
       await expect(out).rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
       expect(built).toEqual([]);
@@ -242,7 +250,7 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
       await expect(seatSignerOnDevice({
         ...aDevice(built), roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_copiedseat01', entered: enteredHere() },
         approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
-      }, { viewingKey, signerId: 'sgn_copy', readOut: 'read out by Dana' })).rejects.toThrow(/already belong to another signer/u);
+      }, { viewingKey, signerId: 'sgn_copy', readOut: 'read out by Dana', invite: DANAS_ADDRESS })).rejects.toThrow(/already belong to another signer/u);
       expect(built).toEqual([]);
     } finally {
       putBack();
@@ -274,10 +282,11 @@ const seatingDevice = (request: PendingSignerPayload) => {
     throw new Error(`this device asked the service for ${path}`);
   });
   const out = seatSignerOnDevice({
-    ...aDevice(built), records: { directory: async () => { throw new Error('every check passed'); } } as unknown as CompanyRecordsHere,
+    /* Ada's seat raises it, and signs the invitation for the address. */
+    ...aDevice(built), material: { ...aDevice(built).material, signingSecret: ada.signingSecret }, records: { directory: async () => { throw new Error('every check passed'); } } as unknown as CompanyRecordsHere,
     roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_invitedseat1', entered: enteredHere() },
     approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
-  }, { viewingKey, signerId: waiting.id, readOut: seatRequestFingerprint(request) });
+  }, { viewingKey, signerId: waiting.id, readOut: seatRequestFingerprint(request), invite: DANAS_ADDRESS });
   return { out, built };
 };
 
@@ -296,6 +305,29 @@ const refusedOnEveryReading = async (request: PendingSignerPayload, says: RegExp
 };
 
 describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MADE FOR', () => {
+  it('the device raising an invitation signs it with its own seat, and one whose seat this device does not believe raises nothing', async () => {
+    const request = danasRequest();
+    inTheInbox(request);
+    try {
+      const built: Array<{ order: GovernedCallOrder; opened: OpenedRound }> = [];
+      const roster = adasRoster(async (path: string) => {
+        if (path === `/api/accounts/${company}`) return { ...store.getAccount(company), roster: filed.roster };
+        throw new Error(`this device asked the service for ${path}`);
+      });
+      /* A device whose filing key is no seat's: the invitation it would sign binds nothing an approving device believes. */
+      const out = seatSignerOnDevice({
+        ...aDevice(built), roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_notaseat0001', entered: enteredHere() },
+        approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
+      }, { viewingKey, signerId: waiting.id, readOut: seatRequestFingerprint(request), invite: DANAS_ADDRESS });
+      /* RED WHEN: the raising device raises an invitation before holding it to the rule every approving device holds it to. */
+      await expect(out).rejects.toBeInstanceOf(InvitationNotBound);
+      await expect(out).rejects.toThrow(/not one this device believes is seated[^]*raise the invitation again from the device of a seated signer who may invite/u);
+      expect(built).toEqual([]);
+    } finally {
+      putBack();
+    }
+  });
+
   it('the honest request, and one whose invitation names its own leaf, pass every check a device makes before it approves the leaf', async () => {
     try {
       for (const request of [danasRequest(), { ...danasRequest(), invited: signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment }, ada.signingSecret as Hex) }]) {
@@ -432,14 +464,19 @@ const recorded = async () => {
   const accept = (name: string) => {
     const s = newSigningKeypair();
     const w = newWrappingKeypair();
+    const blinding = newBlinding() as Hex;
     const keys = {
       signingPublicKey: s.publicKey, wrappingPublicKey: w.publicKey,
-      leafCommitment: storedSignerLeaf({ signingSecret: s.secret, blinding: newBlinding(), scope }, MidnightCommitments),
+      leafCommitment: storedSignerLeaf({ signingSecret: s.secret, blinding, scope }, MidnightCommitments),
     };
     const inv = accounts.inviteSigner(at, name, `${name}@recorded.example`, 'approver');
     const seat = accounts.acceptSignerInvite(inv.token, `usr_${name}`, keys.signingPublicKey, keys.wrappingPublicKey,
       keys.leafCommitment, proveSeatKeys(newSeatInvitation(made.viewingKey, at, name, 'approver'), keys));
-    return { ...keys, wrappingSecret: w.secret, id: seat.id };
+    /* What the person's own wallet takes the seat with: the address they were invited at, and their seat's key and blinding. */
+    const invitee = {
+      ...anAddress(MidnightCommitments, name.length + 30), signerPublicKey: MidnightCommitments.signerPublicKey(s.secret), blinding, scope,
+    };
+    return { ...keys, wrappingSecret: w.secret, id: seat.id, invitee, invite: { address: invitee.address, scope } };
   };
   const dana = accept('Dana');
   const eve = accept('Eve');
@@ -467,7 +504,9 @@ const swapsKeepingDanasLeaf = (dana: { leafCommitment: Hex }) => [
 describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () => {
   it('a grant on an approved round refuses a key swapped in after the approvals, and wraps the viewing key to nobody', async () => {
     const r = await recorded();
-    await accounts.proposeSigner(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId);
+    const p = await accounts.proposeSigner(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId, r.dana.invite);
+    /* Dana's own wallet takes the seat the approved invitation names. */
+    await theInviteeTakesTheSeat(ledger, r.at, r.dana.invitee, p.chainId as Hex);
     const before = r.wrapped();
     for (const [what, payload] of swapsKeepingDanasLeaf(r.dana)) {
       r.swap(payload === 'keep-proof'
@@ -487,11 +526,11 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
     expect(unwrapKey(hers, r.dana.wrappingSecret)).toBe(r.made.viewingKey);
   });
 
-  /** Dana's seat raised on the record and approved on the simulated chain, as devices would have left it. */
+  /** Dana's invitation raised on the record and approved on the simulated chain, as devices would have left it. */
   const approvedOnTheChain = async (r: Awaited<ReturnType<typeof recorded>>) => {
-    const p = await accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId);
-    const salt = accounts.seatOrderOf(r.at, r.made.viewingKey, r.dana.id).proposalSalt;
-    await ledger.propose(r.at, MidnightCommitments.signerAddPayload(r.dana.leafCommitment),
+    const p = await accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId, r.dana.invite);
+    const salt = accounts.governanceAsked(p.id, r.made.viewingKey).proposalSalt;
+    await ledger.propose(r.at, MidnightCommitments.signerInvitePayload(r.dana.invite.address, r.dana.invite.scope),
       { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt }, r.adaRef, MidnightCommitments.noVault());
     return p;
   };
@@ -499,17 +538,17 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
   it('a seat the chain already holds is written down only for the keys proved for it', async () => {
     const r = await recorded();
     const p = await approvedOnTheChain(r);
-    /* The chain seats Dana's leaf; the record has not been written yet. */
-    await ledger.addSigner(r.at, r.dana.leafCommitment, p.chainId as Hex, r.adaRef);
+    /* Dana's own wallet takes the seat; the record has not been written yet. */
+    await theInviteeTakesTheSeat(ledger, r.at, r.dana.invitee, p.chainId as Hex);
     const before = r.wrapped();
     r.swap({ ...keysOf(), leafCommitment: r.dana.leafCommitment });
     /* RED WHEN: a seat the chain holds is written down for keys nobody proved. */
-    await expect(accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId))
+    await expect(accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId, r.dana.invite))
       .rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
     expect(r.wrapped()).toBe(before);
     r.restore();
     /* The proposal was closed when the chain was seen to carry it, so this answers that the seat is now written down. */
-    await expect(accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId))
+    await expect(accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId, r.dana.invite))
       .rejects.toThrow(/now written on the company's record/u);
     const hers = store.getAccount(r.at)!.wrappedKeys.find((k) => k.signerId === r.dana.id)!;
     /* RED WHEN: the honest seat the chain holds is not written down. */
@@ -519,7 +558,7 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
   it('a copy of a proved entry beside it, under another id, is not written down as a second seat', async () => {
     const r = await recorded();
     const p = await approvedOnTheChain(r);
-    await ledger.addSigner(r.at, r.dana.leafCommitment, p.chainId as Hex, r.adaRef);
+    await theInviteeTakesTheSeat(ledger, r.at, r.dana.invitee, p.chainId as Hex);
     /* Dana's own entry, copied beside itself under an id and a sign-in the writer chose. */
     const rec = structuredClone(store.getAccount(r.at)!);
     const hersBox = rec.pendingSigners.find((x) => x.id === r.dana.id)!;
@@ -527,30 +566,23 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
     store.putAccount(rec);
     const before = r.wrapped();
     /* RED WHEN: the service writes down the copy, and one person's keys hold two seats on the record. */
-    await expect(accounts.seatRound(r.at, r.made.viewingKey, 'sgn_copy', r.adaHere.signerId))
+    await expect(accounts.seatRound(r.at, r.made.viewingKey, 'sgn_copy', r.adaHere.signerId, r.dana.invite))
       .rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
     expect(r.wrapped()).toBe(before);
     expect(store.getAccount(r.at)!.memberUserIds).not.toContain('usr_copy');
   });
 
-  it('another person\'s proved keys, swapped in while the seat is on its way, are not written down against Dana\'s leaf', async () => {
+  it('another person\'s proved keys, swapped in once Dana has taken her seat, are not written down against Dana\'s leaf', async () => {
     const r = await recorded();
     const p = await approvedOnTheChain(r);
-    /* The device's call reaches the chain, which seats Dana's leaf; while it is on its way the inbox is swapped. */
-    Object.assign(ledger, {
-      submitProvenCall: async (accountId: string, bytes: Uint8Array) => {
-        const call = JSON.parse(Buffer.from(bytes).toString('utf8')) as { leaf: Hex; proposal: Hex };
-        await ledger.addSigner(accountId, call.leaf, call.proposal, r.adaRef);
-        r.swap('eve');
-        return { ref: 'tx', at: new Date().toISOString() };
-      },
-    });
+    /* Dana's own wallet takes the seat; before the record is written the inbox is swapped for Eve's proved entry. */
+    await theInviteeTakesTheSeat(ledger, r.at, r.dana.invitee, p.chainId as Hex);
+    r.swap('eve');
     const before = r.wrapped();
-    const tx = new Uint8Array(Buffer.from(JSON.stringify({ leaf: r.dana.leafCommitment, proposal: p.chainId })));
-    /* RED WHEN: the record writes down whoever is in the box once the chain answers, rather than the person it seated. */
-    await expect(accounts.seatFromDevice(r.at, r.made.viewingKey, r.dana.id, tx, r.adaHere.signerId))
-      .rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
+    /* RED WHEN: the record writes down whoever is in the box once the chain holds the seat, rather than the person seated. */
+    await accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId, r.dana.invite).catch((e: unknown) => e);
     expect(r.wrapped()).toBe(before);
+    expect(store.getAccount(r.at)!.memberUserIds).not.toContain('usr_eve');
   });
 });
 
@@ -677,7 +709,10 @@ describe('A PERSON WAITING FOR A SEAT, ACROSS A CHANGE OF THE COMPANY\'S KEY', (
     accountId: company, keyEpoch: 0,
     sealed: sealGovernanceProposal({
       accountId: company, viewingKey: viewingKey as Hex, kind: 'add-signer', summary: 'Add Dana', noVault: '00'.repeat(32) as Hex,
-      body: { signerId: waiting.id, invited: signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment as Hex }, ada.signingSecret as Hex) },
+      body: {
+        signerId: waiting.id, invite: { address: DANAS_ADDRESS.address, scope },
+        invited: signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment as Hex }, ada.signingSecret as Hex),
+      },
       change: { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: newBlinding() as Hex }, proposedBy: ada.signerId,
     }),
   });
@@ -724,7 +759,7 @@ describe('A PERSON WAITING FOR A SEAT, ACROSS A CHANGE OF THE COMPANY\'S KEY', (
     putBack();
     const named = await openTheRoundHere(service(), company, seatRound.id, keysAfter([danasBox()]), true, recordsHere, leaves);
     /* RED WHEN: an approving device cannot open a seat whose request was sealed before the change and named by it. */
-    expect(named.governance).toEqual({ kind: 'add-signer', leaf: dana.leafCommitment });
+    expect(named.governance).toEqual({ kind: 'add-signer', address: DANAS_ADDRESS.address, scope });
     /* RED WHEN: an approving device, and the company's own reading of who waits, both believe a request sealed to an old inbox that no change named. */
     await expect(openTheRoundHere(service(), company, seatRound.id, keysAfter(), true, recordsHere, leaves)).rejects.toThrow();
   });

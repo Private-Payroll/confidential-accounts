@@ -10,8 +10,10 @@ import type { User } from '../core/types.js';
 
 import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 /**
- * **A PAYEE'S PAYSLIPS OVER THE WIRE: TO A SIGNED-IN HOLDER OF THE KEY, AS
- * CIPHERTEXT, AND NO ROUTE TAKES THE KEY.**
+ * **A COMPANY'S PAYSLIPS FOR A MONTH OVER THE WIRE: EVERY SLIP, AS CIPHERTEXT,
+ * TO ANYBODY SIGNED IN, AND NO ROUTE TAKES OR NAMES A PAYSLIP KEY.** The payee's
+ * device tries each slip with its own key; the service never learns which one
+ * opened, or whose key any slip is sealed to.
  *
  * The store is written first by the product's own services, the way a company
  * would have filled it, and then the server is started on it and asked only
@@ -34,8 +36,7 @@ const { AccountService } = await import('../core/account.js');
 const { PayrollService, RecordingInviteDelivery } = await import('../core/payroll.js');
 const { payslipKeypairForWallet } = await import('../core/payslip-key.js');
 const { sealHandover } = await import('../core/invite-handover.js');
-const { openPayslip, answerPayslipProof, NOT_YOUR_PAYSLIP } = await import('../core/payslip-open.js');
-const { unwrapKey } = await import('../core/crypto.js');
+const { openPayslip, NOT_YOUR_PAYSLIP } = await import('../core/payslip-open.js');
 const { payeeFor } = await import('../testing/payees.js');
 const { aVaultHolding } = await import('../testing/assets.js');
 const { signInWithAWallet } = await import('../testing/wallet-session.js');
@@ -91,7 +92,7 @@ const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
-/* A signed-in person. The payslip routes answer nobody else; the key is the second lock. */
+/* A signed-in person. The payslip routes answer nobody else. */
 let token = '';
 beforeAll(async () => {
   server = await new Promise<Server>(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
@@ -127,82 +128,68 @@ const post = async (path: string, body: unknown, how: Parameters<typeof asked>[0
 };
 const get = (path: string, how: Parameters<typeof asked>[0] = {}) => fetch(base + path, { headers: asked(how) });
 
-const proveAndFetch = async (
-  keys: { secret: string; publicKey: string }, from: string | null = seeded.label,
-) => {
-  const proof = await post('/api/payslips/proof', { publicKey: keys.publicKey });
-  expect(proof.status).toBe(200);
-  const answer = answerPayslipProof(proof.body.sealed, keys.secret);
-  return post('/api/payslips', { publicKey: keys.publicKey, answer, from });
-};
+const MONTH = '2026-08';
+const listed = (company: string, period: string, how: Parameters<typeof asked>[0] = {}) =>
+  get(`/api/payslips?company=${encodeURIComponent(company)}&period=${encodeURIComponent(period)}`, how);
 
-describe('a payee\'s own payslips, over the wire', () => {
-  it('THE HOLDER OF THE KEY GETS THEIR OWN SLIPS, SEALED, AND OPENS THEM', async () => {
-    const got = await proveAndFetch(seeded.dana);
-    expect(got.status).toBe(200);
-    /* RED WHEN the route hands over the company's slips rather than this key's. */
-    expect(got.body).toHaveLength(1);
-    const opened = openPayslip(got.body[0], seeded.dana.secret);
-    expect(opened.payslip.name).toBe('Dana');
-    expect(opened.payslip.amount).toBe(5_000_000_000n);
-    expect(opened.payslip.asset).toBe(TEST_SETTLEMENT_ASSET);
-    expect(opened.runId).toBe(seeded.runId);
-    expect(opened.issuedBy).toBe(seeded.label);
+describe('a company\'s payslips for a month, over the wire', () => {
+  it('EVERY SLIP OF THE MONTH IS SENT SEALED, AND EACH PAYEE OPENS ONLY THEIR OWN', async () => {
+    const r = await listed(seeded.label, MONTH);
+    expect(r.status).toBe(200);
+    const got = await r.json();
+    /* RED WHEN the route hands over anything but every slip of the company's runs for the month. */
+    expect(got).toHaveLength(2);
+    /* RED WHEN a slip comes back naming a person, the key it is sealed to or the label it names, beside the seal. */
+    for (const slip of got) {
+      expect(Object.keys(slip).sort()).toEqual(['period', 'receipt', 'runId', 'settledAt', 'slip', 'status', 'wiring', 'wrapped']);
+    }
+    const wire = JSON.stringify(got).toLowerCase();
+    for (const value of ['Dana', 'Eli', '5000000000', seeded.dana.employeeId, seeded.eli.employeeId, seeded.dana.publicKey, seeded.eli.publicKey, seeded.label]) {
+      expect(wire).not.toContain(value.toLowerCase());
+    }
+    const tried = (secret: string) => got.flatMap((g: Parameters<typeof openPayslip>[0]) => {
+      try { return [openPayslip(g, secret)]; } catch (e) { if ((e as Error).message !== NOT_YOUR_PAYSLIP) throw e; return []; }
+    });
+    const [dana] = tried(seeded.dana.secret);
+    expect(tried(seeded.dana.secret)).toHaveLength(1);
+    expect(tried(seeded.eli.secret).map((s: { payslip: { name: string } }) => s.payslip.name)).toEqual(['Eli']);
+    expect(tried(payslipKeypairForWallet(newWords(), seeded.label, ORIGIN).secret)).toEqual([]);
+    expect(dana.payslip.name).toBe('Dana');
+    expect(dana.payslip.amount).toBe(5_000_000_000n);
+    expect(dana.payslip.asset).toBe(TEST_SETTLEMENT_ASSET);
+    expect(dana.runId).toBe(seeded.runId);
+    /* RED WHEN the label a slip names is taken from anywhere but inside its seal. */
+    expect(dana.issuedBy).toBe(seeded.label);
     /*
      * The run's own facts come back as the store holds them. RED WHEN the
      * route reports a run as settled, or as written by a chain, that is not.
      */
     const stored = JSON.parse(readFileSync(DATA_PATH, 'utf8')).runs[seeded.runId];
-    expect(opened.status).toBe(stored.status);
-    expect(opened.status).toBe('draft');
-    expect(opened.settledAt).toBe(stored.settledAt ?? null);
-    expect(opened.wiring).toBe(stored.wiring ?? null);
-    expect(() => openPayslip(got.body[0], seeded.eli.secret)).toThrow(NOT_YOUR_PAYSLIP);
-    /* Sealed on the wire: no name, no amount. */
-    const wire = JSON.stringify(got.body);
-    expect(wire).not.toContain('Dana');
-    expect(wire).not.toContain('5000000000');
+    expect(dana.status).toBe(stored.status);
+    expect(dana.status).toBe('draft');
+    expect(dana.settledAt).toBe(stored.settledAt ?? null);
+    expect(dana.wiring).toBe(stored.wiring ?? null);
   });
 
-  it('SOMEBODY WHO ONLY KNOWS A PUBLIC KEY GETS NOTHING', async () => {
-    const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
-    /* Eli cannot read what was sealed to Dana's key. */
-    expect(() => unwrapKey(proof.body.sealed, seeded.eli.secret)).toThrow();
-    /* RED WHEN the list route skips the proof. */
-    const guessed = await post('/api/payslips', {
-      publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.label,
-    });
-    expect(guessed.status).toBe(403);
-    expect(guessed.body).not.toBeInstanceOf(Array);
-    /* And a proof for one key does not answer for another. */
-    const mine = await post('/api/payslips/proof', { publicKey: seeded.eli.publicKey });
-    const answer = answerPayslipProof(mine.body.sealed, seeded.eli.secret);
-    const crossed = await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from: seeded.label });
-    expect(crossed.status).toBe(403);
+  it('A MONTH WITH NO RUN OR A LABEL NO COMPANY CARRIES LISTS NOTHING, AND A LABEL OR MONTH NOT WRITTEN AS ONE IS REFUSED', async () => {
+    /* RED WHEN slips of another month are sent. */
+    expect(await (await listed(seeded.label, '2026-09')).json()).toEqual([]);
+    /* RED WHEN slips are sent for a label this company does not carry. */
+    expect(await (await listed('co_' + 'ef'.repeat(32), MONTH)).json()).toEqual([]);
+    /* RED WHEN an account's address is taken where the label belongs, or a month is taken that is not written as one. */
+    expect((await listed(seeded.address, MONTH)).status).toBe(400);
+    expect((await listed(seeded.label, 'August')).status).toBe(400);
+    expect((await listed(seeded.label, '2026-8')).status).toBe(400);
+    expect((await get(`/api/payslips?company=${seeded.label}`)).status).toBe(400);
   });
 
-  it('A PROOF IS SPENT ONCE', async () => {
-    const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
-    const answer = answerPayslipProof(proof.body.sealed, seeded.dana.secret);
-    const from = seeded.label;
-    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from })).status).toBe(200);
-    /* RED WHEN the value is not consumed. */
-    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from })).status).toBe(403);
-  });
-
-  it('ASKING ABOUT A KEY NOBODY HOLDS ANSWERS THE SAME WAY, AND LISTS NOTHING', async () => {
-    const stranger = payslipKeypairForWallet(newWords(), seeded.label, ORIGIN);
-    const proof = await post('/api/payslips/proof', { publicKey: stranger.publicKey });
-    const known = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
-    expect(proof.status).toBe(200);
-    expect(known.status).toBe(200);
-    /* RED WHEN the answer for a key with slips differs in any field from one without. */
-    expect(Object.keys(proof.body).sort()).toEqual(['expiresAt', 'sealed']);
-    expect(Object.keys(known.body).sort()).toEqual(Object.keys(proof.body).sort());
-    expect(Object.keys(known.body.sealed).sort()).toEqual(Object.keys(proof.body.sealed).sort());
-    const got = await proveAndFetch(stranger);
-    expect(got.status).toBe(200);
-    expect(got.body).toEqual([]);
+  it('THE ROUTES THAT TOOK A PAYSLIP KEY ARE GONE, FOR ANY KEY', async () => {
+    for (const path of ['/api/payslips/proof', '/api/payslips']) {
+      const r = await post(path, { publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.label });
+      /* RED WHEN a route that takes a payslip key in the clear is back. */
+      expect(r.status).toBe(404);
+      expect(JSON.stringify(r.body ?? '')).not.toContain('sealed');
+    }
   });
 
   it('THE ROUTE THAT TOOK A SECRET IN ITS ADDRESS IS GONE: IT SAYS NOTHING ABOUT A RUN OR A PERSON, TO ANYBODY', async () => {
@@ -221,36 +208,17 @@ describe('a payee\'s own payslips, over the wire', () => {
     const r = await get(`/api/payslips/addresses?company=${seeded.label}`);
     expect(r.status).toBe(200);
     expect((await r.json()).companies).toEqual([{ label: seeded.label, account: seeded.address }]);
+    expect((await (await get(`/api/payslips/addresses?company=co_${'ef'.repeat(32)}`)).json()).companies).toEqual([]);
     expect((await get('/api/payslips/addresses?company=nope')).status).toBe(400);
     /* RED WHEN an account's address is taken for a company's label. */
     expect((await get(`/api/payslips/addresses?company=${seeded.address}`)).status).toBe(400);
   });
 
-  it('ONLY SLIPS NAMING THE LABEL THE KEY CAME FROM ARE SENT, AND THE LABEL MUST BE SAID', async () => {
-    /* RED WHEN the list is sent whatever company label the asker names. */
-    expect((await proveAndFetch(seeded.dana, 'co_' + 'ef'.repeat(32))).body).toEqual([]);
-    /* RED WHEN an account's address is taken where the label belongs. */
-    expect((await proveAndFetch(seeded.dana, seeded.address)).status).toBe(400);
-    /* A key no label produced is sent only slips that name none; Dana's name one. */
-    expect((await proveAndFetch(seeded.dana, null)).body).toEqual([]);
-    /* RED WHEN the route answers a request that does not say which label the key came from. */
-    const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
-    const answer = answerPayslipProof(proof.body.sealed, seeded.dana.secret);
-    expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer })).status).toBe(400);
-  });
-
   it('NO PAYSLIP ROUTE ANSWERS WITHOUT A SIGN-IN', async () => {
-    /* RED WHEN `authed` is taken off the proof route: it would answer 200 with a sealed value. */
-    const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey }, { signedIn: false });
-    expect(proof.status).toBe(401);
-    expect(proof.body).not.toHaveProperty('sealed');
-    /* RED WHEN `authed` is taken off the list route: a proof made signed in would be spent signed out. */
-    const made = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
-    const answer = answerPayslipProof(made.body.sealed, seeded.dana.secret);
-    const list = await post('/api/payslips',
-      { publicKey: seeded.dana.publicKey, answer, from: seeded.label }, { signedIn: false });
+    /* RED WHEN `authed` is taken off the list route. */
+    const list = await listed(seeded.label, MONTH, { signedIn: false });
     expect(list.status).toBe(401);
-    expect(list.body).not.toBeInstanceOf(Array);
+    expect(await list.json()).not.toBeInstanceOf(Array);
     /* RED WHEN `authed` is taken off the addresses route. */
     const addresses = await get(`/api/payslips/addresses?company=${seeded.label}`, { signedIn: false });
     expect(addresses.status).toBe(401);
@@ -258,17 +226,14 @@ describe('a payee\'s own payslips, over the wire', () => {
   });
 
   it('A PAGE OLDER THAN THESE ROUTES IS TOLD, WORD FOR WORD, TO RELOAD', async () => {
-    /* The page from before sent no sign-in and no page header. */
-    for (const how of [{ signedIn: false, page: null }, { signedIn: true, page: null }, { page: '0' }] as const) {
-      const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey }, how);
+    /* The pages from before sent no sign-in, no page header, or the version that asked by a payslip key. */
+    for (const how of [{ signedIn: false, page: null }, { signedIn: true, page: null }, { page: '0' }, { page: '1' }] as const) {
+      const list = await listed(seeded.label, MONTH, how);
       /* RED WHEN the check is dropped (401 or 200 instead) or the sentence changes. */
-      expect(proof.status).toBe(409);
-      expect(proof.body).toEqual({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE });
+      expect(list.status).toBe(409);
+      expect(await list.json()).toEqual({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE });
     }
     expect(PAGE_OUT_OF_DATE).toBe('This page is out of date. Reload it and open your payslips again.');
-    const list = await post('/api/payslips',
-      { publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.label }, { signedIn: false, page: null });
-    expect(list.body.error).toBe(PAGE_OUT_OF_DATE);
     const addresses = await get(`/api/payslips/addresses?company=${seeded.label}`, { page: null });
     expect((await addresses.json()).error).toBe(PAGE_OUT_OF_DATE);
   });
@@ -298,7 +263,7 @@ describe('a payee\'s own payslips, over the wire', () => {
       /* RED WHEN the routes are not metered: two hundred answers and no refusal. */
       expect(status).toBe(429);
       expect(calls).toBeLessThanOrEqual(61);
-      expect((await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey })).status).toBe(429);
+      expect((await listed(seeded.label, MONTH)).status).toBe(429);
     } finally {
       vi.useRealTimers();
     }

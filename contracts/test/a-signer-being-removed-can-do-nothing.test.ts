@@ -22,7 +22,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, COMPANY_LABEL, type Change, payoutTreeOf, sumArgsOf,
+  AccountSimulator, invitePayloadFor, privateStateFor, change, COMPANY_LABEL, type Change, payoutTreeOf, sumArgsOf,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
@@ -169,17 +169,17 @@ describe('a proposal needs the higher of its bar when raised and the bar now', (
   it('a governance proposal raised at two is not carried out at one after the threshold falls', async () => {
     const sim = await live([A, B, C], 2n);
     const c = govChange(26);
-    const seatD = await raise(sim, A, c, pureCircuits.signerAddPayload(sim.leafOf(D)));
+    const seatD = await raise(sim, A, c, invitePayloadFor(D));
     await sim.raiseThreshold(1n, [A, B], 27);
     expect(sim.ledger.threshold).toBe(1n);
     /* RED WHEN: requireApproved compares against the account's threshold now alone. */
-    await expect(sim.as(carrying(sim, A, c)).addSigner(sim.leafOf(D), seatD))
+    await expect(sim.seatInvited(seatD, sim.invited(D, c)))
       .rejects.toThrow(/not enough approvals yet/);
   });
 });
 
 describe('the bar a run is paid at is stated once, in the account, and a device reads it from the same circuits', () => {
-  it('a vault with no threshold of its own takes the account\'s, and one with its own takes that', () => {
+  it("a vault with no threshold of its own takes the account's, and one with its own takes that", () => {
     /* RED WHEN: vaultBarOf reads a vault the account holds no threshold for as zero, or as the row it was not given. */
     expect(pureCircuits.vaultBarOf(false, 0n, 2n)).toBe(2n);
     expect(pureCircuits.vaultBarOf(false, 5n, 2n)).toBe(2n);
@@ -188,7 +188,7 @@ describe('the bar a run is paid at is stated once, in the account, and a device 
     expect(pureCircuits.vaultBarOf(true, 3n, 2n)).toBe(3n);
   });
 
-  it('a run needs the higher of its bar when raised and its vault\'s now, plus one for every signer removed since it was raised', () => {
+  it("a run needs the higher of its bar when raised and its vault's now, plus one for every signer removed since it was raised", () => {
     /* RED WHEN: runApprovalsNeeded drops the run's bar when raised: a vault bar that falls would release it. */
     expect(pureCircuits.runApprovalsNeeded(3n, 2n, 0n, 0n)).toBe(3n);
     /* RED WHEN: runApprovalsNeeded drops the vault's bar now: a vault bar that rises would not apply to a waiting run. */
@@ -263,7 +263,7 @@ describe('a removal voids the governance proposals raised before it, and a run r
   it('N1: a removed signer\'s governance proposal cannot be completed by one remaining approval', async () => {
     const sim = await live([A, B, C], 2n);
     const c = govChange(41);
-    const seatD = await raise(sim, A, c, pureCircuits.signerAddPayload(sim.leafOf(D)));
+    const seatD = await raise(sim, A, c, invitePayloadFor(D));
 
     await removeAndSet(sim, A, 2n, B, [B, C], 42);
     /* RED WHEN: a removal circuit stops calling countRemoval(). */
@@ -272,14 +272,14 @@ describe('a removal voids the governance proposals raised before it, and a run r
     await sim.as(C).approve(seatD);
     expect(sim.approvalsFor(seatD)).toBe(2n);
     /* RED WHEN: requireApproved stops comparing the hold's removal count with the account's. */
-    await expect(sim.as(carrying(sim, B, c)).addSigner(sim.leafOf(D), seatD))
+    await expect(sim.seatInvited(seatD, sim.invited(D, c)))
       .rejects.toThrow(/a signer has been removed or replaced since this was raised; raise it again/);
 
     /* The control: the same change raised after the removal passes with B and C. */
     const again = govChange(43);
-    const fresh = await raise(sim, B, again, pureCircuits.signerAddPayload(sim.leafOf(D)));
+    const fresh = await raise(sim, B, again, invitePayloadFor(D));
     await sim.as(C).approve(fresh);
-    await sim.as(carrying(sim, B, again)).addSigner(sim.leafOf(D), fresh);
+    await sim.seatInvited(fresh, sim.invited(D, again));
     expect(sim.ledger.signerLeaves.member(sim.leafOf(D))).toBe(true);
   });
 
@@ -467,9 +467,9 @@ describe('the combined removal takes out exactly the leaf it names', () => {
     expect(sim.vacatedSlots()).toEqual([cSlot]);
 
     const seat = govChange(72);
-    const seatD = await raise(sim, A, seat, pureCircuits.signerAddPayload(sim.leafOf(D)));
+    const seatD = await raise(sim, A, seat, invitePayloadFor(D));
     await sim.as(B).approve(seatD);
-    await sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), seatD, true);
+    await sim.seatInvited(seatD, sim.invited(D, seat), true);
     expect(sim.slotOf(D)).toBe(cSlot);
   });
 });

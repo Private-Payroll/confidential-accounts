@@ -102,7 +102,7 @@ import {
 import { witnessesOver, type Note } from '../src/midnight/vault-notes.js';
 import { witnesses, type AccountPrivateState, NO_VAULT } from '../contracts/src/witnesses.js';
 import {
-  AccountSimulator, privateStateFor, change, TEST_TOKEN_BYTES, ZERO_32,
+  AccountSimulator, privateStateFor, change, TEST_TOKEN_BYTES, ZERO_32, invitePayloadFor,
 } from '../contracts/test/simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../src/midnight/payout-tree.js';
 import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
@@ -338,28 +338,19 @@ async function main() {
   line();
   line(`  ${bold('Seating a signer')}`);
   /*
-   * **MEASURED ON THE APPROVED PATH, BECAUSE SINCE `S35d` THERE IS NO OTHER
-   * ONE — AND THE NUMBER THIS PRODUCES IS NOT THE OLD NUMBER.**
-   *
-   * This used to measure the BOOTSTRAP path: `create(ada, 2n)` gave one seat
-   * against a bar of two, so `amendSigner` could be called with `ZERO_32` as
-   * its proposal and the gate skipped `requireApproved` entirely. The
-   * constructor no longer takes a threshold, so every account is founded at one
-   * seat and one approval and that branch is unreachable. **The circuit is the
-   * same circuit; the path through it is not, and this measurement now includes
-   * `requireApproved` and `closeProposal`.** A reader comparing this row
-   * against an older report is comparing two different paths, which is why it
-   * is said here rather than left to the diff.
+   * A seat is taken by the invitee on an approved invitation: `seatInvited`
+   * proves the invitee holds the invited address's coin secret key, rebuilds
+   * the leaf with the rights the invitation fixed, and appends it. Measured on
+   * the approved path with the proposal open, so it includes `requireApproved`,
+   * `requireSeatBar` and `closeProposal`.
    */
   const seating = change(0n, 40);
-  const seatPayload = pureCircuits.signerAddPayload(sim.leafOf(blake));
+  const seatPayload = invitePayloadFor(blake);
   await sim.as(sim.applying(ada, seating)).propose(seatPayload);
   const seatId = sim.proposalId(seatPayload, seating.salt);
-  await sim.as(sim.applying(ada, seating)).approve(seatId);
-  await measure('amendSigner (seat)', 'seats a signer: membership proof plus a tree insert',
-    accountOpts('amendSigner', [sim.leafOf(blake), seatId, false, false],
-      sim.applying(ada, seating)), accountZk);
-  await sim.as(sim.applying(ada, seating)).addSigner(sim.leafOf(blake), seatId);
+  await measure('seatInvited', 'seats an invited signer: the coin-key check, the leaf rebuilt, and a tree insert',
+    accountOpts('seatInvited', [seatId, false], sim.invited(blake, seating)), accountZk);
+  await sim.seatInvited(seatId, sim.invited(blake, seating));
 
   /*
    * `credit` AND `execute` ARE BOTH GONE FROM THE CONTRACT. S23 shed `credit`;
@@ -447,13 +438,13 @@ async function main() {
   /* removeSigner — clears one slot, through an approved round. */
   {
     const cleo = privateStateFor(3);
-    const seat = await approvedRound(pureCircuits.signerAddPayload(sim.leafOf(cleo)), change(0n, 56));
-    await sim.as(sim.applying(ada, seat.c)).addSigner(sim.leafOf(cleo), seat.id);
+    const seat = await approvedRound(invitePayloadFor(cleo), change(0n, 56));
+    await sim.seatInvited(seat.id, sim.invited(cleo, seat.c));
     const { id, c } = await approvedRound(
       pureCircuits.removeSignerPayload(sim.leafOf(cleo)), change(0n, 57));
     await measure('amendSigner (unseat)', 'clears one signer\'s slot, through an approved round',
       accountOpts('amendSigner',
-        [sim.leafOf(cleo), id, false, true], sim.applying(ada, c)), accountZk);
+        [sim.leafOf(cleo), id], sim.applying(ada, c)), accountZk);
   }
 
   /*

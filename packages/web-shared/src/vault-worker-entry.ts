@@ -26,8 +26,8 @@ import {
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
 import {
-  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, identityOfAChange, roundsOnChainIn, vouchingRunsIn, vouchedRunIdentityOf,
-  spendingPolicyKeysOf, type AnchorsOnChain, type GovernedCallDeps, type RoundOnChain,
+  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, buildSeatInvitedCall, identityOfAChange, roundsOnChainIn, seatsInvitedIn, vouchingRunsIn, vouchedRunIdentityOf,
+  spendingPolicyKeysOf, type AnchorsOnChain, type GovernedCallDeps, type InvitedSeatInput, type RoundOnChain,
 } from './governed-call-builder.js';
 import { buildClearRun, periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
 import { detailsOfKind } from '../../../src/midnight/vault-details.js';
@@ -251,6 +251,15 @@ async function roundsOnChainHere(
   return Object.fromEntries(roundsOnChainIn(d, steps, ask.chainIds));
 }
 /** What this copy of the app was compiled with, read from its own files and never from the service. */
+/** The seat each invitation's proposal took, read from the account's own history in this worker (`seatsInvitedIn`). */
+async function invitedSeatsHere(
+  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly proposals: readonly string[] },
+): Promise<Record<string, string | null>> {
+  const { steps } = await historyHere(d, ask, 'which seat each invitation took on the chain was');
+  return Object.fromEntries(seatsInvitedIn(d, steps, ask.proposals));
+}
+
 export interface ThisBuild {
   readonly vault: { readonly expectedVk: Readonly<Record<string, string>>; readonly manifest: CompiledManifest };
   readonly account: { readonly expectedVk: Readonly<Record<string, string>>; readonly manifest: CompiledManifest };
@@ -981,6 +990,16 @@ export const answerVaultAsk = async (
       return { id: ask.id, ok: true, ask: 'anchors-on-chain', ...(await anchorsOnChainHere(d, ask)) };
     case 'rounds-on-chain':
       return { id: ask.id, ok: true, ask: 'rounds-on-chain', rounds: await roundsOnChainHere(d, ask) };
+    case 'invited-seats':
+      return { id: ask.id, ok: true, ask: 'invited-seats', seats: await invitedSeatsHere(d, ask) };
+    case 'seat-invited': {
+      const built = await buildSeatInvitedCall(d, {
+        account: ask.account, proposal: ask.proposal, material: ask.material as InvitedSeatInput['material'], invite: ask.invite as InvitedSeatInput['invite'],
+        proposalSalt: ask.proposalSalt as InvitedSeatInput['proposalSalt'], intoVacatedSlot: ask.intoVacatedSlot,
+        chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
+      });
+      return { id: ask.id, ok: true, ask: 'seat-invited', tx: toBase64(built.proven) };
+    }
     case 'anchor': {
       const built = await buildAnchorCall(d, {
         account: ask.account, material: ask.material, previous: ask.previous, batch: ask.batch, held: ask.held,

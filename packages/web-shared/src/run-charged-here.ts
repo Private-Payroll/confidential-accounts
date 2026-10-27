@@ -42,7 +42,7 @@ import type { VaultBuilderClient } from './vault-worker-client.js';
 import { believedProposalIdsOnChainHere, believedRunsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { spendingPolicyHere } from './spending-policy-here.js';
 import { refuseARunALeaverRaisedHere } from './governed-call-on-device.js';
-import { oneOffOfTheProposalHere, oneOffsHere, type OneOffBelieved } from './one-off-here.js';
+import { oneOffOfTheProposalHere, oneOffsHere, OneOffRefused, refuseAOneOffToAnotherVendorHere, type OneOffBelieved } from './one-off-here.js';
 import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
 import {
   chainAtOneBlockHere, DEPOSIT_TIME_TO_LIVE_MS, until, type BuiltOnHereDoors, type Pacing,
@@ -287,7 +287,9 @@ type RunCharged =
  * earlier from the same vault and has not seen land is waited for first, and
  * while it does not show nothing is built or sent. A run its seat raised after
  * its own removal was raised, or one whose raiser this device cannot say, is
- * refused before anything is read or built (`refuseARunALeaverRaisedHere`).
+ * refused before anything is read or built (`refuseARunALeaverRaisedHere`). A
+ * one-off naming a vendor entry is charged only when it pays that entry's own
+ * address and keys (`refuseAOneOffToAnotherVendorHere`), as it is paid.
  */
 export async function chargeTheRunHere(
   doors: RecordsHereDoors & ChargeDoors,
@@ -331,6 +333,14 @@ export async function chargeTheRunHere(
   if (oneOff !== null && (oneOff.oneOff.proposal.chainId !== String(order.proposal).toLowerCase() || aRunClaims(runs, run.proposalId))) {
     throw new RunNotChargedHere('this proposal is raised as a one-off payment, and what this device was asked to charge, or a payroll run of the '
       + 'company\'s, says it is something else, so it is not charged. Reload the page and try again');
+  }
+  if (oneOff !== null) {
+    try {
+      await refuseAOneOffToAnotherVendorHere(doors.records, oneOff.oneOff);
+    } catch (e) {
+      if (e instanceof OneOffRefused) throw new RunNotChargedHere(e.message.replace(/\.$/u, ''), { cause: e });
+      throw e;
+    }
   }
   /*
    * **A RUN THE CHAIN ALREADY HOLDS AS CHARGED IS NOT CHARGED AGAIN**, and is

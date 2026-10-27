@@ -304,7 +304,7 @@ export interface EmployeeSecret {
  *
  * Each payslip is sealed to that employee's own key. The account viewing key
  * does not open it, and no other employee's key opens it. An employee who
- * queries this API with their own secret can decrypt exactly one payslip.
+ * tries a month's slips with their own secret opens exactly their own.
  *
  * Settlement is a single aggregate transfer, so an outside observer sees the
  * total leaving the account and never the split.
@@ -1241,7 +1241,6 @@ export class PayrollService {
 
       /*
        * **THE POSITIVE, AND THE ONE THAT USED TO BE HERE IS DELETED.**
-       * `docs/how-money-can-be-lost.md` `C21`.
        *
        * Everything above proves a NEGATIVE, or proves who was involved: an
        * invitation exists, it was not taken back, we know who raised it and who
@@ -1301,7 +1300,6 @@ export class PayrollService {
        */
       /*
        * **WHAT THE CAP KEYS ON, AND WHY IT CANNOT BE TWO PEOPLE.**
-       * `docs/NEXT.md` X8 §3.
        *
        * It keyed on the email alone, which cannot serve somebody who has none —
        * and a test pins that the obvious repair, a blank, INVERTS it: two
@@ -1489,18 +1487,16 @@ export class PayrollService {
      * sealed to this person will name it, and their page asks their wallet for
      * it, so a label that is not this company's would send them, and every
      * colleague whose page lists this company, to ask their wallet about
-     * somebody else's company. It is taken when it is the company's label or
-     * one this company's payslips already name; otherwise refused and the
-     * invitation put back, and accepting again works the key out from the
-     * company's label.
+     * somebody else's company. It is taken when it is the company's label;
+     * otherwise refused and the invitation put back, and accepting again works
+     * the key out from the company's label.
      */
     const companyNow = companyLabelOfRecord(this.store, rec.accountId);
-    if (handover.keyFrom && handover.keyFrom !== companyNow
-      && !this.payslipAddressesNamedBy(rec.accountId).has(handover.keyFrom)) {
+    if (handover.keyFrom && handover.keyFrom !== companyNow) {
       putBack();
       throw new Error(
         `the key this person handed over was worked out from company label ${handover.keyFrom}, `
-        + 'which is not this company\'s label and is named by none of its payslips. Every payslip '
+        + 'which is not this company\'s label. Every payslip '
         + 'sealed to them would send them to that company to open it. It has been refused and the '
         + 'invitation put back; ask them to accept again from their invitation link.');
     }
@@ -1774,9 +1770,9 @@ export class PayrollService {
      */
     inbox?: SealedEmployee['inbox'],
   ): void {
-    const { id, accountId, wrappingPublicKey, status, ...secrets } = e;
+    const { id, accountId, status, ...secrets } = e;
     this.store.putEmployee({
-      id, accountId, wrappingPublicKey, status, keyEpoch: this.accounts.keyEpochOf(accountId),
+      id, accountId, status, keyEpoch: this.accounts.keyEpochOf(accountId),
       inbox: inbox === undefined ? (this.store.getEmployee(id)?.inbox ?? null) : inbox,
       sealed: sealRecord('payroll', accountId, secrets satisfies EmployeeSecrets, viewingKey),
     });
@@ -1853,8 +1849,7 @@ export class PayrollService {
 
   /**
    * **THE SEALED DROP BOX ITSELF, FOR THE ONE MACHINE THAT CAN OPEN IT.**
-   * `docs/scope-invitations.md` §5,
-   * `docs/how-money-can-be-lost.md` `C21`.
+   * `docs/scope-invitations.md` §5.
    *
    * §5: the admin's confirmation code is **computed on the ADMIN'S machine, not
    * ours** — *"if we computed it we would need the address, and the leak
@@ -1882,7 +1877,6 @@ export class PayrollService {
 
   /**
    * **AND `active` IS NOT A STATUS SOMEBODY CAN JUST BE GIVEN.**
-   * `docs/how-money-can-be-lost.md` `C156`, `docs/NEXT.md` `X11` §4.
    *
    * A roster entry becomes payable at `admit`, which checks five things and
    * folds in a handover the payee sealed. **This method assigned the status
@@ -3131,63 +3125,40 @@ export class PayrollService {
    */
 
   /**
-   * **EVERY PAYSLIP SEALED TO ONE PUBLIC KEY, AS CIPHERTEXT.**
+   * **EVERY PAYSLIP OF A COMPANY'S RUNS FOR ONE MONTH, AS CIPHERTEXT, NAMING
+   * NOBODY.** The company is named by its label, which is what a payee's
+   * payslip key was worked out from. What comes back cannot be read without a
+   * payee's secret: each slip is sealed under its own key and that key is
+   * wrapped to one payee's public key, so the service handing it over reads
+   * nothing, and since no slip says whose it is, it cannot tell who asked for
+   * which. The payee's device tries each one with its own key. The run's own
+   * facts travel beside each slip - its period, whether it has settled, and
+   * which ledger wrote it - because those are what a payee needs to know a
+   * payment happened.
    *
-   * The caller has already shown it holds the secret for this key; that is the
-   * route's job and not this one's. What comes back cannot be read without that
-   * secret: each slip is sealed under its own key and that key is wrapped to
-   * this public key, so the service handing it over reads nothing. The run's
-   * own facts travel beside it - its period, whether it has settled, and which
-   * ledger wrote it - because those are what a payee needs to know a payment
-   * happened, and they are about the payee's own run.
-   *
-   * No viewing key is taken and none is needed. The key is matched against the
-   * public half each roster record carries outside its seal, which is the half
-   * every payslip for that person was wrapped to.
+   * No viewing key and no payslip key are taken.
    */
-  payslipsFor(
-    wrappingPublicKey: Hex,
-    /**
-     * **THE LABEL OF THE COMPANY THE ASKER'S KEY WAS WORKED OUT FROM.** A
-     * payee's key is derived from one company's label, and that is the only
-     * company they handed it to; a slip naming any other was put there by a
-     * company the payee never accepted, and it is not sent. `null` for a key
-     * no company produced, which is sent only slips that name none.
-     * Omitted, nothing is filtered: that is for a caller inside the service.
-     */
-    from?: string | null,
-  ): SealedPayslip[] {
-    const key = wrappingPublicKey.toLowerCase();
-    const asked = from === undefined || from === null ? from : from.toLowerCase();
-    /* For a slip sealed before it named its key: the roster record's key now. */
-    const mine = new Set(this.store.employeeIdsWithKey(key));
+  payslipsOf(label: string, period: string): SealedPayslip[] {
     const out: SealedPayslip[] = [];
-    for (const run of this.store.runsWithPayslipsSealedTo(key)) {
-      for (const p of run.payslips) {
-        const toThisKey = p.sealedTo !== undefined
-          ? p.sealedTo.toLowerCase() === key
-          : mine.has(p.employeeId);
-        if (!toThisKey) continue;
-        if (asked !== undefined && (p.issuedBy ? p.issuedBy.toLowerCase() : null) !== asked) continue;
+    for (const run of this.store.runsOfLabelFor(label, period).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+      for (const p of run.payslips ?? []) {
         out.push({
           runId: run.id, period: run.period, status: run.status,
           settledAt: run.settledAt ?? null, wiring: run.wiring ?? null,
-          issuedBy: p.issuedBy ?? null,
           wrapped: p.wrapped, slip: p.slip,
           receipt: p.receipt ?? null,
         });
       }
     }
-    return out.sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
+    return out;
   }
 
   /**
-   * **EVERY COMPANY LABEL A COMPANY'S PAYSLIPS NAME, FROM ANY ONE OF THEM, EACH
-   * WITH THE ACCOUNT THAT CARRIES IT NOW.** A company keeps its label, so this
-   * is ordinarily the one label; a slip naming another that this company's own
-   * payslips name is included so it still opens. The account is what the
-   * payee's wallet reads the label back from before it gives the key, and is
-   * null for a company no chain has given an account.
+   * **THE ACCOUNT EACH COMPANY CARRYING THIS LABEL HAS NOW.** The account is
+   * what the payee's wallet reads the label back from before it gives the key,
+   * and is null for a company no chain has given an account. A company keeps
+   * its label, so this is ordinarily one entry, and none for a label no
+   * company carries.
    *
    * Labels are public on the companies' accounts and accounts' addresses on the
    * chain; nothing here says who was paid, how much, or how many.
@@ -3195,19 +3166,11 @@ export class PayrollService {
   payslipAddressesOf(label: string): Array<{ label: string; account: string | null }> {
     const asked = label.toLowerCase();
     const found = new Map<string, string | null>();
-    for (const accountId of this.store.accountsAtPayslipAddress(asked)) {
+    for (const accountId of this.store.accountsCarrying(asked)) {
       const now = companyForOffer(this.store, accountId);
-      const named = this.payslipAddressesNamedBy(accountId);
-      if (now?.label !== asked && !named.has(asked)) continue;
-      if (now) found.set(now.label, now.account);
-      for (const a of named) if (!found.has(a)) found.set(a, now?.account ?? null);
+      if (now?.label === asked) found.set(now.label, now.account);
     }
-    return [...found.entries()].map(([l, account]) => ({ label: l, account })).sort((x, y) => (x.label < y.label ? -1 : 1));
-  }
-
-  /** Every company label one company's payslips name. */
-  private payslipAddressesNamedBy(accountId: string): Set<string> {
-    return new Set(this.store.payslipAddressesNamedBy(accountId));
+    return [...found.entries()].map(([l, account]) => ({ label: l, account }));
   }
 
   /** What one employee can see. Requires their own secret and returns only their line. */
@@ -3219,18 +3182,24 @@ export class PayrollService {
      */
     const run = this.store.getRun(runId);
     if (!run) throw new Error('run not found');
-    const slip = run.payslips.find(p => p.employeeId === employeeId);
-    if (!slip) throw new Error('no payslip for that employee in this run');
-
+    /*
+     * No slip says whose it is, so each is tried with the key; the line is the
+     * one that opens and names this employee inside its seal.
+     */
     let decoded: unknown;
-    try {
-      const slipKey = unwrapKey(slip.wrapped, wrappingSecret);
-      // `parseCanonical`, matching the `canonical` the slip was sealed with:
-      // the amount inside is a bigint and a plain parse hands back an object.
-      decoded = parseCanonical(unseal(slip.slip, slipKey));
-    } catch {
-      throw new Error('that key cannot open this payslip');
+    for (const slip of run.payslips) {
+      let opened: unknown;
+      try {
+        const slipKey = unwrapKey(slip.wrapped, wrappingSecret);
+        // `parseCanonical`, matching the `canonical` the slip was sealed with:
+        // the amount inside is a bigint and a plain parse hands back an object.
+        opened = parseCanonical(unseal(slip.slip, slipKey));
+      } catch {
+        continue;
+      }
+      if ((opened as { employeeId?: unknown } | null)?.employeeId === employeeId) { decoded = opened; break; }
     }
+    if (decoded === undefined) throw new Error('that key cannot open this payslip');
     return {
       runId: run.id,
       period: run.period,

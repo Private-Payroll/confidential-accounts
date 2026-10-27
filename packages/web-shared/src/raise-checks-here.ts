@@ -2,8 +2,9 @@
  * **THE CHECKS EVERY ROUND OF A PAYROLL RUN MUST PASS, ON THE DEVICE THAT
  * RAISES IT AND ON EVERY DEVICE THAT APPROVES IT.**
  *
- * One list, run by both, on facts each device read itself: the people from
- * the company's records it believes, its directory, the company's own
+ * One list, run by both, on facts each device read itself: the people of the
+ * run's own list (its employees or its vendors) from the company's records it
+ * believes, its directory, the company's own
  * ceilings, the company's other runs, and what the person's own wallet read
  * off the chain. None of it is an answer the company's service made. A
  * device that approves a round therefore refuses exactly what the device that
@@ -28,15 +29,14 @@ import {
   unaccountedRefusalHere, type ProposalStandingRead,
 } from '../../../src/core/run-raising.js';
 import { registerFor, skippedIndices } from '../../../src/midnight/run-skips.js';
-import { assetOfLeg, legEmployees, legName, openSealedRun } from '../../../src/core/run-legs.js';
+import { assetOfLeg, legEmployees, legName, listOfRun, openSealedRun } from '../../../src/core/run-legs.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import type { Account, PayrollRun, Role, RunLeg, SealedProposal } from '../../../src/core/types.js';
-import type { PeopleHere } from './people-on-device.js';
 import type { DirectoryHere } from './vault-page-doors.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import { knownEntriesOf } from './payment-entries.js';
 import {
-  payableFactsOf, payrollRoundsHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere,
+  payableFactsOf, payeesHere, payrollRoundsHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere, type PayeesHere,
 } from './run-rebuilt-here.js';
 import { policyForARunHere, type PolicyForARun } from './spending-policy-here.js';
 
@@ -75,10 +75,11 @@ export interface ReadForTheRound {
 
 /** Everything the checks read, read on this device for one round. */
 export interface FactsHere {
-  readonly people: PeopleHere;
+  /** The list the run pays, as this device believes it: its employees, or its vendors. */
+  readonly people: PayeesHere;
   readonly directory: DirectoryHere;
   readonly policy: Account['policy'];
-  /** The company's other runs a live round was raised from, opened here, and the runs whose rounds are live. */
+  /** The company's other runs on the same list a live round was raised from, opened here, and the runs whose rounds are live. */
   readonly others: readonly PayrollRun[];
   readonly live: ReadonlySet<string>;
   readonly circuits: CompanyRecordsHere['payments'];
@@ -113,7 +114,7 @@ const positionsOf = (made: RunMadeHere): readonly number[] => made.retry ?? made
 const samePayment = (a: PaymentFacts, b: PaymentFacts): boolean => a.payee.kind === b.payee.kind && a.payee.bech32 === b.payee.bech32
   && a.token.toLowerCase() === b.token.toLowerCase() && a.amount === b.amount;
 
-const addressOfIn = (people: PeopleHere) => (e: { id: string }): string | null =>
+const addressOfIn = (people: PayeesHere) => (e: { id: string }): string | null =>
   people.people.find((p) => p.person.id === e.id)?.person.address?.bech32 ?? null;
 
 /**
@@ -138,9 +139,9 @@ const noOtherRoundOfTheLeg: RaiseCheck = {
     if (made.retry !== undefined) return;
     const other = earlierRoundOfLeg(run, leg, facts.rounds, facts.registry, proposal);
     if (other === undefined) return;
-    throw new Error(`the ${legName(leg, facts.registry)} leg of run ${run.id} is written down as ${other}, which may be on `
-      + 'the chain, and a leg is paid by one round. Send that one, or withdraw it - withdrawing asks the chain - and raise '
-      + 'the leg again after');
+    throw new Error(`the ${legName(leg, facts.registry)} leg of the run for ${run.period} is written down as proposal ${other}, which may be on `
+      + 'the network, and a leg is paid by one round. Send that one, or withdraw it and raise '
+      + 'the leg again after. Withdrawing asks the network.');
   },
 };
 
@@ -173,10 +174,12 @@ const notOnAnotherRetry: RaiseCheck = {
 };
 
 /**
- * **EVERYBODY THE PROPOSAL PAYS IS SOMEBODY THIS DEVICE BELIEVES AND WOULD PAY,
- * AT EXACTLY WHAT THE PROPOSAL PAYS THEM.** Only the people it pays: a retry is
- * judged on the people it names, so somebody who left after the leg was raised
- * does not stop a retry of the others.
+ * **EVERYBODY THE PROPOSAL PAYS IS SOMEBODY THIS DEVICE BELIEVES AND WOULD PAY
+ * FOR THE RUN'S MONTH, AT EXACTLY WHAT THE PROPOSAL PAYS THEM.** Only the people
+ * it pays: a retry is judged on the people it names, so somebody who left after
+ * the leg was raised does not stop a retry of the others. Somebody whose dates
+ * leave out every day of the month is refused by name, and so is a vendor paid
+ * other than their monthly terms, in their terms' token.
  */
 const payable: RaiseCheck = {
   name: 'payable',
@@ -189,7 +192,7 @@ const payable: RaiseCheck = {
         + `and records ${made.facts.length} payments, so who each payment is for cannot be said`);
     }
     const now = payableFactsOf(facts.people, paid as NonNullable<(typeof paid)[number]>[], 'Leave them unpaid until their '
-      + 'record is put right.', 'This device will not raise or approve a round it would not pay.', facts.registry);
+      + 'record is put right.', 'This device will not raise or approve a round it would not pay.', facts.registry, run.period);
     positions.forEach((i, at) => {
       if (!samePayment(now[at]!, made.facts[i]!)) {
         throw new Error(`this run pays ${paid[at]!.name} at another address, in another form or another amount than this device `
@@ -290,7 +293,10 @@ const spendingPolicy: RaiseCheck = {
     facts.spendingPolicy, positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n), String(made.required)),
 };
 
-/** **NO OTHER RUN FOR THE MONTH IS RAISED TO PAY THE SAME PEOPLE.** */
+/**
+ * **NO OTHER RUN FOR THE MONTH ON THE SAME LIST IS RAISED TO PAY THE SAME PEOPLE.** A vendor run and the payroll for
+ * one month pay different lists, each person under their own id, so neither stops the other.
+ */
 const overAnotherRun: RaiseCheck = {
   name: 'over-another-run',
   check: ({ run }, facts) => refuseRaisingOverAnotherRun(run, facts.others, facts.live, addressOfIn(facts.people)),
@@ -374,13 +380,14 @@ export async function factsHere(
       + 'the current version');
   }
   const [people, directory, policy, proposals, runs, spendingPolicy] = await Promise.all([
-    records.people(), records.directory(), records.policy(), proposalsListedHere({ ...records, proposals: readProposals }, read.proposals),
+    payeesHere(records, listOfRun(run)), records.directory(), records.policy(), proposalsListedHere({ ...records, proposals: readProposals }, read.proposals),
     runsListedHere(records),
     read.spendingPolicy ?? policyOfTheRound(records, accountId, viewingKey, round)]);
   const nowInSeconds = BigInt(Math.floor(now.getTime() / 1000));
   const rounds = payrollRoundsHere(proposals, accountId, viewingKey, { identity: records.roundIdentity, nowInSeconds });
   const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
-  const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, keyOf(viewingKey, r.keyEpoch)));
+  const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, keyOf(viewingKey, r.keyEpoch)))
+    .filter((r) => listOfRun(r) === listOfRun(run));
   return {
     people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets, rounds,
     standingOf: (id) => proposals.find((p) => p.id === id && p.accountId === accountId),

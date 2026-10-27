@@ -92,7 +92,6 @@ const WRITES: ReadonlyArray<[string, (l: ChainLedger) => Promise<unknown>]> = [
   ['proposeRun',        l => (l as any).proposeRun('a', {} as never, {} as never)],
   ['approve',           l => l.approve('a', '0x1' as never, {} as never)],
   ['cancel',            l => l.cancel('a', '0x1' as never, {} as never)],
-  ['addSigner',         l => l.addSigner('a', '0x1' as never, null, {} as never)],
   ['removeSigner',      l => l.removeSigner('a', '0x1' as never, '0x2' as never, {} as never)],
   ['setThreshold',      l => (l as any).setThreshold('a', 2, '0x1', {})],
   ['setVaultThreshold', l => (l as any).setVaultThreshold('a', '0x1', 2, '0x2', {})],
@@ -321,11 +320,8 @@ describe('and a deployment that can write is not stopped here', () => {
     await ledger.approve('acc_1', '0xprop' as never, by);
     expect(seen[0]).toEqual(['acc_1', '0xprop', by]);
 
-    await ledger.addSigner('acc_2', '0xnew' as never, '0xprop2' as never, by);
-    expect(seen[1]).toEqual(['acc_2', '0xnew', '0xprop2', by]);
-
     await ledger.removeSigner('acc_3', '0xold' as never, '0xprop3' as never, by);
-    expect(seen[2]).toEqual(['acc_3', '0xold', '0xprop3', by]);
+    expect(seen[1]).toEqual(['acc_3', '0xold', '0xprop3', by]);
 
     /*
      * **`cancel` IS HERE BECAUSE IT IS THE ONE THAT CAN BE TRANSPOSED IN
@@ -337,6 +333,6 @@ describe('and a deployment that can write is not stopped here', () => {
      * account that cannot un-wedge itself.
      */
     await ledger.cancel('acc_4', '0xprop4' as never, by);
-    expect(seen[3]).toEqual(['acc_4', '0xprop4', by]);
+    expect(seen[2]).toEqual(['acc_4', '0xprop4', by]);
   });
 });

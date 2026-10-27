@@ -7,11 +7,12 @@ import { FileStore } from './store-file.js';
 import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import type { Ledger, LedgerStatus } from './ledger.js';
 import { AccountService, openAccount, sealAccount, approvalMessage } from './account.js';
-import { sign, newSigningKeypair, newWrappingKeypair } from './crypto.js';
+import { sign, newSigningKeypair, newWrappingKeypair, type Hex } from './crypto.js';
 import type { Account } from './types.js';
 import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
 
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
+import { anInvitee, theInviteeTakesTheSeat } from '../testing/an-invitee.js';
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
@@ -764,27 +765,16 @@ describe('the record is written before the chain call, so a lost round is never 
       .toEqual([{ vault: VAULT, threshold: 2 }]);
   });
 
-  it('and `grantAccess` reaches the APPROVED round too, not the phantom', async () => {
+  it('and a person invited is seated on the APPROVED invitation and granted access, whatever phantom sits beside it', async () => {
     /*
-     * **THE CALLER WITH TWO PRODUCT ROUTES, AND IT WAS THE ONE NOTHING DROVE.**
-     * The case above drives `setVaultThreshold`; the description above
-     * it named `setThreshold` and `removeSigner`. `grantAccess` is reachable
-     * from `POST /api/accounts/:id/access` and from the standalone client, and
-     * it takes `approvedFor(...).chainId` exactly as the other three do
-     * (`src/core/account.ts`, `grantAccess`).
-     *
-     * **AND THE INJURY IS THE SHARPEST OF THE FOUR, WHICH IS WHY IT IS WORTH
-     * ITS OWN CASE RATHER THAN A SENTENCE:** handed the phantom's id,
-     * `addSigner` is asked to seat a person against a round the chain never
-     * held, so the seat is refused and the person cannot be let in — while the
-     * genuinely approved round sits in the same list, unusable, because nothing
-     * on any screen distinguishes the two rows.
-     *
-     * The same phantom-collision harness as the case above, and the same
-     * mutation makes it red: reduce the sort to `createdAt` alone.
+     * The same phantom-collision harness as the case above: an invitation
+     * raised again into a chain that did not take it leaves a newer record with
+     * the same digest and no seat behind it. The invitee takes the seat the
+     * approved invitation names, the phantom names nothing the chain holds, and
+     * access is granted once the chain holds the seat.
      */
     const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-t332-grant-')), 'db.json'));
-    const inner: Ledger = new SimulatedLedger(SimulatedCommitments);
+    const inner = new SimulatedLedger(SimulatedCommitments);
     let refuse = false;
     const ledger: Ledger = new Proxy(inner, {
       get(target, key, recv) {
@@ -802,25 +792,26 @@ describe('the record is written before the chain call, so a lost round is never 
     const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
 
     /* A fourth seat, invited and accepted but not yet granted: the subject. */
+    const dara = anInvitee(SimulatedCommitments, 21);
     const invite = accounts.inviteSigner(account.id, 'Dara', 'dara@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const pending = accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, 'ab'.repeat(32),
-      provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, 'ab'.repeat(32)));
+      invite.token, null, sk.publicKey, wk.publicKey, dara.leaf,
+      provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, dara.leaf));
     expect(pending.status).toBe('pending');
 
     const real = await accounts.proposeSigner(
-      account.id, viewingKey, pending.id, present(secrets[0]).signerId);
+      account.id, viewingKey, pending.id, present(secrets[0]).signerId, dara.invite);
     await accounts.approve(
       real.id, present(secrets[1]).signerId,
       sign(approvalMessage(real), present(secrets[1]).signingSecret), viewingKey);
     expect(accounts.listProposals(account.id, viewingKey)
       .find(p => p.id === real.id)!.status).toBe('approved');
 
-    /* The same addition again, into a chain that will not take it. */
+    /* The same invitation again, into a chain that will not take it. */
     refuse = true;
     await expect(accounts.proposeSigner(
-      account.id, viewingKey, pending.id, present(secrets[0]).signerId,
+      account.id, viewingKey, pending.id, present(secrets[0]).signerId, dara.invite,
     )).rejects.toThrow(/did not answer/);
     refuse = false;
 
@@ -829,9 +820,10 @@ describe('the record is written before the chain call, so a lost round is never 
     expect(both).toHaveLength(2);
     const phantom = both.find(p => p.id !== real.id)!;
     expect(phantom.raisedAt).toBeUndefined();
-    expect(phantom.createdAt >= real.createdAt).toBe(true);
 
-    /* THE POINT: the seat is granted, which it cannot be against the phantom. */
+    /* THE POINT: the phantom seats nobody, the approved invitation does, and access follows the seat. */
+    await expect(theInviteeTakesTheSeat(inner, account.id, dara, phantom.chainId as Hex)).rejects.toThrow(/no open proposal/);
+    await theInviteeTakesTheSeat(inner, account.id, dara, real.chainId as Hex);
     const after = await accounts.grantAccess(account.id, viewingKey, pending.id);
     expect(after.signers.find(sg => sg.id === pending.id)!.status).toBe('active');
   });

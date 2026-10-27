@@ -229,7 +229,6 @@ export function unconfiguredLedger(refusal: string, _name: Wiring['name']): Ledg
     proposeRun: () => no('raising a payroll round'),
     approve: () => no('approving a round'),
     cancel: () => no('cancelling a round'),
-    addSigner: () => no('adding a signer'),
     removeSigner: () => no('removing a signer'),
     setThreshold: () => no('changing the approval threshold'),
     setVaultThreshold: () => no('changing a vault\'s approval threshold'),

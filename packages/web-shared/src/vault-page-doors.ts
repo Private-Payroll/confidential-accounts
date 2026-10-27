@@ -178,6 +178,12 @@ export interface DirectoryHereDeps {
    */
   readonly leaves: (openings: readonly SeatOpening[]) => Promise<readonly (string | null)[]>;
   /**
+   * The seat each invitation made by address took, by its proposal's identity on chain, read in this device's vault
+   * worker from the account's own history (`seatsInvitedIn`): null where the history shows none, or cannot tell which.
+   * Absent on a device that cannot read the history, where no seat is believed from an invitation made by address.
+   */
+  readonly invitedSeats?: (proposals: readonly string[]) => Promise<Readonly<Record<string, string | null>>>;
+  /**
    * **THE COMPANY'S RECORDS AS THE HEAD ON CHAIN HOLDS THEM, FOR WHAT THIS READ
    * ASKED** (`recordsHeldHere`), read with the directory just believed: every
    * header since the last head this device checked, checked, up to the head the
@@ -376,14 +382,17 @@ const leafKeyOf = (o: Pick<SeatOpening, 'publicKey' | 'blinding' | 'scope'>): st
  * entry's proof opened to, and undefined for a filing with none.
  */
 const memberHere = async (
-  deps: Pick<DirectoryHereDeps, 'leaves' | 'accountId' | 'viewingKey'>, filings: readonly DirectoryFiling[],
+  deps: Pick<DirectoryHereDeps, 'leaves' | 'accountId' | 'viewingKey' | 'invitedSeats'>, filings: readonly DirectoryFiling[],
   /** The seat the account's deploy seated, as the person's own wallet read it: the one entry believed without an invitation. */
   founding: string | null,
 ): Promise<{ judge: EntryJudge; leafOf: LeafOf; leafAt: (index: number) => string | null | undefined }> => {
   const proofOf = proofsOpenedWith(deps.accountId, keysHeld(deps.viewingKey));
   const openings = new Map<string, SeatOpening>();
   const openedAt: (string | undefined)[] = [];
+  const proposals = new Set<string>();
   for (const f of filings) {
+    const terms = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.invited?.terms : undefined;
+    if (terms?.leaf === undefined && terms?.invite !== undefined && typeof terms.proposal === 'string') proposals.add(terms.proposal.toLowerCase());
     const o = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.opening : undefined;
     openedAt.push(o === undefined ? undefined : leafKeyOf(o));
     if (o !== undefined) openings.set(leafKeyOf(o), o);
@@ -396,7 +405,14 @@ const memberHere = async (
   const made = new Map(asked.map((o, i) => [leafKeyOf(o), typeof leaves[i] === 'string' ? leaves[i]!.toLowerCase() : null]));
   const leafOf: LeafOf = (o) => made.get(leafKeyOf(o)) ?? null;
   const leafAt = (i: number) => (openedAt[i] === undefined ? undefined : made.get(openedAt[i]!) ?? null);
-  return { judge: asAMember(proofOf, leafOf, founding), leafOf, leafAt };
+  /* A history that cannot be read leaves those seats unbelieved on this read, and every other seat as it is. */
+  const seated = proposals.size === 0 || deps.invitedSeats === undefined ? {}
+    : await deps.invitedSeats([...proposals]).catch((): Readonly<Record<string, string | null>> => ({}));
+  const invitedLeafOf = (proposal: string): string | null => {
+    const leaf = Object.hasOwn(seated, proposal) ? seated[proposal] : null;
+    return typeof leaf === 'string' ? leaf.toLowerCase() : null;
+  };
+  return { judge: asAMember(proofOf, leafOf, founding, invitedLeafOf), leafOf, leafAt };
 };
 
 /** The replays of each company's directory this page keeps, for a read given no `kept` of its own. */
@@ -1323,9 +1339,14 @@ export const fileTheOwedDirectoryEntry = async (
       if (held === null) {
         return { notYet: 'this device cannot open the company\'s key yet, so its entry cannot be sealed for the company\'s members. It is filed once you are admitted' };
       }
-      /* An invitation kept from a link names no leaf; the one an entry carries names it, and is read from the proposal that seated it. */
+      /*
+       * An invitation kept from a link names no leaf; the one an entry carries names it, and is read from the proposal that
+       * seated it. An invitation made by address names the proposal instead, and is carried as it was kept: every device
+       * binds the seat to it by what the account's history shows that proposal took.
+       */
       const seat = now.signed.entry.seat.toLowerCase();
-      let invited = now.invited?.terms.leaf?.toLowerCase() === seat ? now.invited : null;
+      const byAddress = now.invited?.terms.leaf === undefined && now.invited?.terms.proposal !== undefined;
+      let invited = byAddress || now.invited?.terms.leaf?.toLowerCase() === seat ? now.invited ?? null : null;
       if (invited === null) {
         /* A list the service will not give is a wait, never a reason to file the entry without its invitation. */
         let listed: unknown = [];

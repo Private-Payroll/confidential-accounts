@@ -24,7 +24,7 @@ const CO = 'acc_1';
 const LEG = runLegOf(TEST_TOKEN, 'shielded');
 const REGISTRY = registryWithTestPrivateForms();
 const person = (id: string, at: string): RosterEmployee => ({
-  id, accountId: CO, name: `Person ${id}`, status: 'active', address: payeeFor(at.repeat(32), 'undeployed'),
+  id, accountId: CO, name: `Person ${id}`, status: 'active', startDate: '2026-01-01', baseAmount: BigInt(99 + Number(id.slice(1))), address: payeeFor(at.repeat(32), 'undeployed'),
 } as unknown as RosterEmployee);
 const ALI = person('p1', 'a1');
 const BEA = person('p2', 'a2');
@@ -153,7 +153,10 @@ describe('THE ONE LIST OF RAISE CHECKS', () => {
     expect(() => check('payable')(roundOf(run, [ALI, moved, CAL], [2]), factsOf([ALI, BEA, CAL]))).not.toThrow();
     const leaver = { ...ALI, status: 'leaver' } as RosterEmployee;
     expect(() => check('payable')(roundOf(run, [ALI, BEA, CAL], [1, 2]), factsOf([leaver, BEA, CAL]))).not.toThrow();
-    expect(() => check('payable')(roundOf(run, [ALI, BEA, CAL], [0]), factsOf([leaver, BEA, CAL]))).toThrow(/leaver, not active/u);
+    /* RED WHEN: a leaver with no leaving date, or one whose leaving date is before the month, is paid for it. */
+    expect(() => check('payable')(roundOf(run, [ALI, BEA, CAL], [0]), factsOf([leaver, BEA, CAL]))).toThrow(/made a leaver with no leaving date or end date/u);
+    const gone = { ...leaver, leavingDate: '2026-08-15' } as RosterEmployee;
+    expect(() => check('payable')(roundOf(run, [ALI, BEA, CAL], [0]), factsOf([gone, BEA, CAL]))).toThrow(/leaving date is 2026-08-15, before 2026-09/u);
     /* RED WHEN: a round naming somebody not on the leg is taken as paying nobody in particular. */
     expect(() => check('payable')(roundOf(run, [ALI, BEA, CAL], [3]), factsOf([ALI, BEA, CAL]))).toThrow(/names people who are not on the leg/u);
   });

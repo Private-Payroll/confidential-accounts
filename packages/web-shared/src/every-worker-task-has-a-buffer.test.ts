@@ -81,6 +81,11 @@ const BARE: Record<string, Record<string, unknown>> = {
   'anchor-tag': { account: 'cd'.repeat(32), material: { signingSecret: 'ef'.repeat(32), blinding: '01'.repeat(32) } },
   'anchors-on-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' } },
   'rounds-on-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, chainIds: [] },
+  'invited-seats': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, proposals: [] },
+  'seat-invited': {
+    account: 'cd'.repeat(32), proposal: '2b'.repeat(32), proposalSalt: '3c'.repeat(32), intoVacatedSlot: false,
+    material: { signingSecret: 'ef'.repeat(32), blinding: '01'.repeat(32), scope: '02'.repeat(32) }, invite: { coinSecretKey: '03'.repeat(32), addressSalt: '04'.repeat(32) }, chain: {},
+  },
   anchor: { account: 'cd'.repeat(32), material: {}, chain: {}, previous: '00'.repeat(32), batch: 'ab'.repeat(32) },
   'recover-anchor': {
     account: 'cd'.repeat(32), material: {}, chain: {}, previous: '00'.repeat(32), batch: 'ab'.repeat(32),

@@ -363,6 +363,10 @@ export interface LegBeingRaised {
  * RAISED, AND UNTIL WHEN THEY MAY BE PAID.** Worked out from the company's
  * payout seeds and pay-record key, for the legs the run has raised and the one
  * being raised now; a person on no raised leg gets a receipt naming no payment.
+ * A person's slip is the one their sealed entry names (`Employee.slip`), and
+ * their receipt is sealed to the key in that entry, never to anything written
+ * beside the slips. Refuses a run whose entries and slips do not pair one to
+ * one, rather than seal one person's nonce and blinding beside another's slip.
  */
 export function receiptsOf(
   run: PayrollRun, seeds: readonly PayoutSeed[], payKey: Hex, raising: LegBeingRaised | undefined,
@@ -395,19 +399,29 @@ export function receiptsOf(
       paidAt.set(e.id, { nonce: at.nonce, blinding: at.blinding, company, until });
     });
   }
-  return run.payslips.map((p) => {
-    const publicKey = p.sealedTo ?? run.employees.find((e) => e.id === p.employeeId)?.wrappingPublicKey;
-    if (!publicKey) return p;
-    const paid = paidAt.get(p.employeeId);
-    return {
+  const out = [...run.payslips];
+  const taken = new Set<number>();
+  for (const e of run.employees) {
+    if (e.slip === undefined || e.slip === null) continue;
+    const p = run.payslips[e.slip];
+    if (!Number.isInteger(e.slip) || p === undefined || taken.has(e.slip) || !e.wrappingPublicKey) throw new Error(SLIPS_ARE_NOT_ITS_PEOPLE);
+    taken.add(e.slip);
+    const paid = paidAt.get(e.id);
+    out[e.slip] = {
       ...p,
       receipt: paid === undefined
-        ? sealReceipt(run.id, publicKey, now.company, null, now.label)
-        : sealReceipt(run.id, publicKey, paid.company,
+        ? sealReceipt(run.id, e.wrappingPublicKey, now.company, null, now.label)
+        : sealReceipt(run.id, e.wrappingPublicKey, paid.company,
           { nonce: paid.nonce, blinding: paid.blinding, until: paid.until }, now.label),
     };
-  });
+  }
+  if (taken.size !== run.payslips.length) throw new Error(SLIPS_ARE_NOT_ITS_PEOPLE);
+  return out;
 }
+
+/** Why a run whose sealed people and payslips do not pair one to one gets no receipts. */
+export const SLIPS_ARE_NOT_ITS_PEOPLE = 'this run\'s payslips are not one to each person its sealed record says has one, so no '
+  + 'receipt can be sealed to the right person. Nothing was raised. Draw the run again';
 
 /* ── A RETRY OF SOME OF A LEG'S PEOPLE ─────────────────────────────────────── */
 

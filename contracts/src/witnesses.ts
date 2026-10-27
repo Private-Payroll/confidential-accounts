@@ -10,6 +10,14 @@
 import type { WitnessContext } from '@midnight-ntwrk/compact-runtime';
 import { pureCircuits, type Ledger } from '../managed/contract/index.js';
 
+/** What an invitee's device proves it holds when it takes its seat. */
+export interface InvitedAddress {
+  /** The 32-byte coin secret key of the address the signer was invited at. */
+  coinSecretKey: Uint8Array;
+  /** The salt the seating proposal's commitment to that address was made with. */
+  addressSalt: Uint8Array;
+}
+
 /** A Merkle path as the generated contract expects it. */
 export interface SignerPath {
   leaf: Uint8Array;
@@ -73,6 +81,13 @@ export interface AccountPrivateState {
    * leaf and nothing else.
    */
   rights?: SignerRights | null;
+  /**
+   * The wallet address this device was invited at, read only when the invitee
+   * takes their seat (`seatInvited`): the coin secret key of that address and
+   * the salt that hides it in the seating proposal. Absent on every other call.
+   * The coin secret key is the wallet's own and never leaves the proof.
+   */
+  invite?: InvitedAddress | null;
   /**
    * What the runs this device acts on open to, keyed by the run's id in hex:
    * the payload, the vault and the salt. A seat with rights proves with it that
@@ -311,6 +326,15 @@ const withdrawSecretFor = (
   proposal: Uint8Array,
 ): Uint8Array => pureCircuits.withdrawSecretOf(privateState.secretKey, accountBytes(contractAddress), proposal);
 
+const invitedAddressOf = (state: AccountPrivateState): InvitedAddress => {
+  if (!state.invite) {
+    throw new Error(
+      'this device holds no invitation to take a seat, so it cannot be seated. Open the invitation on the ' +
+        'wallet it was sent to.');
+  }
+  return state.invite;
+};
+
 export const witnesses = {
   localSecretKey: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, Uint8Array] => [same(privateState), privateState.secretKey],
@@ -320,6 +344,13 @@ export const witnesses = {
 
   signerScope: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, Uint8Array] => [same(privateState), privateState.scope],
+
+  /** Refused on a device that was not invited, before anything is proved. */
+  inviteeCoinSecretKey: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
+    [AccountPrivateState, Uint8Array] => [same(privateState), invitedAddressOf(privateState).coinSecretKey],
+
+  inviteAddressSalt: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
+    [AccountPrivateState, Uint8Array] => [same(privateState), invitedAddressOf(privateState).addressSalt],
 
   /**
    * This signer's rights record. Asked of every seat when it raises, approves

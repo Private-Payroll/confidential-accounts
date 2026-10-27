@@ -19,9 +19,8 @@ import {
 } from '../core/wallet-identity.js';
 import { NoCompanyAddress, companyForSession } from '../core/company-address.js';
 import { MemoryChallengeStore } from '../core/challenges.js';
-/* `X8` — the server half of taking a receiving address from a wallet. It
- * reaches the wallet SDK, which is why no browser application (`apps/web`, or
- * the shared code in `packages/web-shared`) may. */
+/* The server half of taking a receiving address from a wallet. It reaches the
+ * wallet SDK, which is why no browser application may. */
 import {
   MemorySessionStore, PostgresSessionStore, type SessionStore,
 } from '../core/sessions.js';
@@ -33,8 +32,7 @@ import {
   type ListVerdict, type Marked,
 } from '../core/provenance.js';
 import { assets as assetRegistry } from '../core/assets.js';
-import { bigintJsonReplacer, wrapKey } from '../core/crypto.js';
-import { payslipProofSubject } from '../core/payslip-open.js';
+import { bigintJsonReplacer } from '../core/crypto.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, isCurrentPayslipPage } from '../core/payslip-page.js';
 import {
   answerCarriesToken, clearedSessionCookie, cookieScopeFor, credentialOf, sessionCookie,
@@ -46,7 +44,7 @@ import { saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
-/* `C157` — every refusal this service makes, kept. See `wrap` below. */
+/* Every refusal this service makes is kept, so a person who hits one can be told why. See `wrap` below. */
 import { appendRefusal, refusalLogPath } from './refusal-log.js';
 import {
   mountVaultRecords, openedOnFirstUse, vaultAccountFromTheIndexer, whyVaultRecordsCannotBeKept,
@@ -80,14 +78,9 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven-submission.js';
 
 /**
- * **`.env` IS READ HERE, AND UNTIL X2 IT WAS NOT READ AT ALL.**
- *
- * `npm run dev` starts this file, `DATABASE_URL` lives in `.env`, and nothing
- * in this process ever opened that file — so the server refused to start with
- * *DATABASE_URL is not set* on a machine where it was set, and the payroll app
- * could not be started by anybody. `scripts/migrate.ts` has always called this
- * before it connects; the server, which is the thing a person actually runs, was
- * the one entry point that did not.
+ * **`.env` IS READ HERE**, because `npm run dev` starts this file and
+ * `DATABASE_URL` lives in `.env`: without it the server would refuse to start
+ * with *DATABASE_URL is not set* on a machine where it is set.
  *
  * **THE ENVIRONMENT STILL WINS.** `loadEnvFile` only fills a name that is
  * `undefined`, so `ALLOW_SIMULATED_COMPANY_ADDRESS=1` and
@@ -95,7 +88,7 @@ import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven
  * line, and which are the whole of this deployment's development posture —
  * cannot be turned off by a stale line in a file. `connect.test.ts` holds that
  * for the parser and `server-starts.test.ts` holds it for a real boot, because
- * a posture set in one place and read in another is how `X1` went wrong.
+ * a posture set in one place and read in another can disagree with itself.
  *
  * **IT IS CALLED HERE AND NOT INSIDE AN IMPORT**, because every environment
  * variable this deployment reads is read in the body of this file, below this
@@ -105,7 +98,7 @@ import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven
 loadEnvFile();
 
 /**
- * Which network this deployment's money is on. A-2, and `C151`.
+ * Which network this deployment's money is on.
  *
  * Every payee address is parsed against it, so an address for another network
  * is refused at onboarding — free — rather than at payment time, where a coin
@@ -132,10 +125,8 @@ const store = new FileStore(DATA);
  * default the third, so changing the two would have left the simulated scheme
  * computing leaves a real contract cannot read.
  *
- * The commitment scheme is passed explicitly for that reason. The default at
- * `src/core/account.ts:253` is still there and still the same value, so nothing
- * behaves differently today — removing it, so that a mismatch is a compile error
- * instead of an unprovable leaf, is R3.
+ * The commitment scheme is passed explicitly for that reason, so the three
+ * always come from the same selection here.
  */
 /*
  * **THE RUNNING SET, ASSEMBLED FROM THIS DEPLOYMENT'S OWN FACTS.**
@@ -283,10 +274,9 @@ const proofs = chosen.createProofSystem();
  * The in-memory versions are correct for one process nothing else shares -
  * development and the tests, which say so out loud - and wrong for a server,
  * in the same way and for the same reason: they are per-process. Two
- * instances double the login allowance, and a restart both clears the count
- * and — before S-3 — silently signed everybody out. Falling
- * back quietly would reproduce exactly the failure S-2 and S-4 describe, with
- * the code to fix it sitting right here looking like it was doing something.
+ * instances double the login allowance, and a restart clears the count and
+ * signs everybody out. Falling back quietly would bring that back without
+ * anybody noticing.
  *
  * So: `DATABASE_URL` or an explicit `ALLOW_MEMORY_SESSIONS=1`. An accident
  * cannot produce either.
@@ -298,13 +288,12 @@ let limiter: RateLimiter;
 let recordsSql: import('../db/vault-records.js').RecordsSql | null = null;
 
 /*
- * **BOTH ANSWERS AT ONCE IS NOT AN ANSWER.** `X2`, and it is the guard that
- * makes reading `.env` above safe rather than dangerous.
+ * **BOTH ANSWERS AT ONCE IS NOT AN ANSWER.** This is the guard that makes
+ * reading `.env` above safe rather than dangerous.
  *
- * Until this round the server never opened `.env`, so a process that said
- * `ALLOW_MEMORY_SESSIONS=1` was CERTAIN of getting memory — nothing else could
- * supply a connection string. Now the file is read, and a working machine's
- * `.env` holds the live one. The branch below prefers a connection string when
+ * Because the file is read, a process that says `ALLOW_MEMORY_SESSIONS=1` is
+ * not certain of getting memory: a working machine's `.env` holds the live
+ * connection string. The branch below prefers a connection string when
  * it has one, so that same process would quietly open the real database and
  * write sessions into it: nothing printed, nothing failed, and the suite
  * TRUNCATES.
@@ -349,7 +338,7 @@ if (DATABASE_URL) {
     '\n  DATABASE_URL is not set.\n\n' +
     '  Sessions and attempt rate limiting need a database — in memory they are\n' +
     '  per-process, so a restart signs everybody out and resets the limiter,\n' +
-    '  which is the hole S-2 and S-4 exist to close.\n\n' +
+    '  which a server must not allow.\n\n' +
     '  Put DATABASE_URL in .env, or set ALLOW_MEMORY_SESSIONS=1 to accept that\n' +
     '  for local development.\n',
   );
@@ -435,8 +424,6 @@ const invites = new RecordingInviteDelivery();
 const payroll = new PayrollService(store, accounts, undefined, NETWORK, invites);
 
 const challenges = new MemoryChallengeStore();
-/* Its own store, so a value sealed for a payslip proof can never be spent as a sign-in. */
-const payslipProofs = new MemoryChallengeStore();
 /*
  * `challenges` IS STILL PASSED TO THE WALLET SIGN-IN BELOW AND NOT TO THIS.
  * Recovery is gone, and `WalletIdentityService` uses the same store
@@ -513,7 +500,7 @@ const app = express();
  *
  * The replacer is imported rather than written here, so the tag has one
  * definition shared with `canonical` and `reviveBigints` — the client already
- * revives this shape, and two places deciding what it looks like is M-104.
+ * revives this shape, and two places deciding what it looks like could drift.
  */
 app.set('json replacer', bigintJsonReplacer);
 app.use(cors());
@@ -782,8 +769,8 @@ if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY);
  * from a policy check are three different mornings that `400` cannot tell
  * apart.
  *
- * **REDACTED AT THE BOUNDARY IT CROSSES AND NOT HERE**, which is the shape
- * `X4` chose for the sink and the reason its two layers each have a mutation.
+ * **REDACTED AT THE BOUNDARY IT CROSSES AND NOT HERE**, so each of the sink's
+ * two layers is tested on its own.
  * `renderRefusal` redacts on the way to the disk; the page redacts on the way
  * to the wire. Redacting a third time here would mask both, so a mutation that
  * removed either would survive and prove the opposite of what it looked like it
@@ -831,10 +818,10 @@ const answerList = <T extends Marked>(res: express.Response, rows: readonly T[])
 declare global { namespace Express { interface Request { userId?: string } } }
 
 /**
- * What the limiter and the session list need to know about the caller.
+ * What the limiter and the list of sign-ins need to know about the caller.
  *
- * The IP is used for counting and is never stored; the user agent is stored on
- * the session row so a person can tell their laptop from their phone. Neither
+ * The IP is used for counting and is never stored; the user agent is stored
+ * with each sign-in so a person can tell their laptop from their phone. Neither
  * is written anywhere sealed — see the note at the top of the migration.
  */
 const context = (req: express.Request) => ({
@@ -856,8 +843,7 @@ const bearer = (req: express.Request) => credentialOf(req.headers).token;
  * sent by the browser on its own, so its presence says nothing about who asked.
  */
 /*
- * **AN INVITATION'S OFFER IS METERED, AND KEYED ON WHO IS ASKING.** `X11` §6,
- * `docs/scope-invitations.md` §8.
+ * **AN INVITATION'S OFFER IS METERED, AND KEYED ON WHO IS ASKING.**
  *
  * It is the one door that answers somebody with no sign-in with something worth
  * having. **The limiter is the one sign-in already uses** - the same class, the
@@ -1073,14 +1059,14 @@ app.post('/api/auth/wallet', wrap(async (req, res) => {
  * `/api/auth/recover/password` were here. **No client ever called any of
  * them**, and they could not serve a wallet account: keyed by an email a wallet
  * account does not have, and gated on an `identityPublicKey` it is created
- * without. `docs/reports/PI4a-proof-of-death.md` has the greps.
+ * without.
  */
 
 /*
  * **`POST /api/auth/login` IS DELETED WITH THE PASSWORD.**
  *
  * It compared a client-stretched `authKey` against `authHash` and handed back
- * the session, the sealed bundle and its version. **It was also the only caller
+ * a sign-in, the sealed bundle and its version. **It was also the only caller
  * of the limiter's `email` bucket and of `clear`**, which is why both went with
  * it — see `src/core/rate-limit.ts`. The limiter itself is untouched and still
  * counts every wallet challenge, every wallet sign-in and every invite offer.
@@ -1096,7 +1082,7 @@ app.get('/api/me/sessions', authed, wrap(async (req, res) => {
   res.json({ sessions: await identity.listSessions(req.userId!, bearer(req)) });
 }));
 
-/** Sign out. The token is dead when this returns, which is the whole of S-3. */
+/** Sign out. The token is dead when this returns, on this process and every other one. */
 app.post('/api/auth/logout', authed, wrap(async (req, res) => {
   await identity.signOut(bearer(req));
   /* The row is what makes the token dead; the cookie is cleared so the browser
@@ -1124,8 +1110,8 @@ app.post('/api/me/sessions/:id/revoke', authed, wrap(async (req, res) => {
 }));
 
 /*
- * Since M-96 an account leaves here SEALED, and there is no version of this
- * endpoint that could add the company name back.
+ * An account leaves here SEALED, and there is no version of this endpoint that
+ * could add the company name back.
  *
  * The name, the signer list, every role and every spending limit are inside the
  * envelope, and this process does not hold the key. What goes out is what we
@@ -1174,7 +1160,7 @@ app.get('/api/me/keys', authed, wrap(async (req, res) => {
    */
   res.json({
     keyBundle: u.keyBundle,
-    /* `C40`: a client cannot write safely without knowing what it read. */
+    /* A client cannot write safely without knowing which version it read. */
     version: u.keyBundleVersion ?? 0,
   });
 }));
@@ -1266,7 +1252,7 @@ app.get('/api/health', (_req, res) => {
  *
  * It answers 204 whatever happened. The page must not learn anything from this
  * and must not be able to fail because of it: a sink that can make the app
- * behave differently is the thing `X4` was told not to build.
+ * behave differently is exactly what a log must never be.
  */
 if (WEB_CONSOLE_SINK) {
   const webConsolePost = z.object({
@@ -1338,19 +1324,12 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
     return;
   }
   /*
-   * **NOTHING IS REFUSED HERE FOR BEING A SECOND COMPANY.** `C155`, `C131`,
-   * `docs/scope-v1-data-model.md` D4: *"A person may create and belong to many
-   * companies. Already true."* — settled 15 Aug, and for a wallet sign-in it
-   * had never been true. This line read
-   * `refuseReusedSubwallet(store, req.userId!, null)`, which threw for any
-   * wallet user already on any account at all, so a founder's second company
-   * was impossible and the 400 said nothing they could act on.
-   *
-   * `C131` closed on 22 Aug by REMOVAL — reuse is a person's choice, a
-   * contractor paid by five companies may want one address, and the warning
+   * **NOTHING IS REFUSED HERE FOR BEING A SECOND COMPANY.** A person may
+   * create and belong to many companies, so a founder's second company is
+   * made like the first. Reusing an address is a person's choice - a vendor
+   * paid by five companies may want one address - and any warning about it
    * belongs in the wallet, which knows which of its own slots it has used and
-   * with which sites. **The server-side refusal survived that removal**, and
-   * this is the rest of it.
+   * with which sites.
    *
    * The creator takes the first seat below. Without that the account would
    * exist with no members and even its author could not open it.
@@ -1417,8 +1396,8 @@ app.get('/api/accounts/:id', authed, member, wrap(async (req, res) => {
  * removed rather than left answering with a refusal: a route that exists is a
  * route somebody integrates against.
  *
- * Money reaches a VAULT, through the vault's own deposit path, which this round
- * does not touch and which no HTTP route here has ever exposed.
+ * Money reaches a VAULT, through the vault's own deposit path, which no HTTP
+ * route here exposes.
  */
 
 app.get('/api/accounts/:id/proposals', authed, member, wrap(async (req, res) => {
@@ -1500,7 +1479,7 @@ app.get('/api/accounts/:id/ledger', authed, member, wrap(async (req, res) => {
  */
 
 /**
- * **WHICH COMPANY THIS SESSION MAY ASK A WALLET TO OPEN.**
+ * **WHICH COMPANY THIS SIGN-IN MAY ASK A WALLET TO OPEN.**
  *
  * The page needs the company's label to put in an unlock, because that is what
  * the wallet derives the key from, and the account that carries it, because
@@ -1582,25 +1561,22 @@ app.get('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
  */
 
 /*
- * **A PAYEE'S OWN PAYSLIPS, TO A SIGNED-IN PERSON WHO HOLDS THEIR KEY.**
+ * **A COMPANY'S PAYSLIPS FOR A MONTH, EVERY ONE, TO ANYBODY SIGNED IN.**
  *
- * Two locks, and both are required. The first is the sign-in: every route here
- * answers only a live session, as every company route does. The second is the
- * key: the first step seals a one-use value to the public key asked about, only
- * the holder of the matching secret can read it back, and the second step hands
- * over the slips only for that value. What is handed over is ciphertext that
- * the same secret opens in the payee's browser; this service never holds that
- * secret and cannot read what it hands over.
+ * No route here takes or names a payslip key. A slip is ciphertext wrapped to
+ * one payee's key with nothing beside it that says whose it is, so the
+ * service hands every slip of the company's month to any signed-in person and
+ * the payee's own device tries each with its key. The service learns which
+ * signed-in person asked about which company and month, and never which slip
+ * opened, or for whom. Anyone signed in can see how many slips a company's
+ * runs carry; that count is the number of people the run pays, which the
+ * proposal shows on the chain.
  *
- * **WHAT THE SIGN-IN COSTS, SAID RATHER THAN LEFT TO BE FOUND.** While it
- * answers, this service sees which signed-in person asked for slips naming which
- * company address. Nothing here writes that down: no route stores it, and the
- * refusal log records a request's method and address and no session. Which
- * companies pay a person is kept in that person's own saved keys, sealed under
- * the key their wallet releases, and this service cannot read it there.
- *
- * The first step answers the same way whether or not any slip is sealed to that
- * key, so asking does not reveal whether somebody is on a payroll here.
+ * **WHAT THE SIGN-IN COSTS, SAID RATHER THAN LEFT TO BE FOUND.** Nothing here
+ * writes down who asked: no route stores it, and the refusal log records a
+ * request's method and address and no session. Which companies pay a person
+ * is kept in that person's own saved keys, sealed under the key their wallet
+ * releases, and this service cannot read it there.
  */
 /*
  * Metered by where the request comes from, on top of the sign-in. A caller with
@@ -1630,38 +1606,20 @@ const currentPayslipPage: express.RequestHandler = (req, res, next) => {
   res.status(409).json({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE });
 };
 
-const payslipKey = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a payslip key is 32 bytes of hex')
-  .transform(k => k.toLowerCase());
+const companyLabel = z.string().regex(/^co_[0-9a-f]{64}$/u, 'a company is named by its label: co_ and 64 lower-case hex');
 
-app.post('/api/payslips/proof', currentPayslipPage, authed, wrap(async (req, res) => {
-  if (!await payslipsMetered(req, res)) return;
-  const b = z.object({ publicKey: payslipKey }).parse(req.body);
-  const { challenge, expiresAt } = await payslipProofs.issue(payslipProofSubject(b.publicKey));
-  res.json({ sealed: wrapKey(challenge, b.publicKey), expiresAt });
-}));
+/*
+ * `POST /api/payslips/proof` AND `POST /api/payslips` STOOD HERE AND ARE GONE.
+ * They took a payee's payslip key in the clear, proved it, and sent the slips
+ * sealed to it, so the service learned whose slips were whose.
+ */
 
-app.post('/api/payslips', currentPayslipPage, authed, wrap(async (req, res) => {
+app.get('/api/payslips', currentPayslipPage, authed, wrap(async (req, res) => {
   if (!await payslipsMetered(req, res)) return;
-  const b = z.object({
-    publicKey: payslipKey,
-    answer: z.string().regex(/^[0-9a-fA-F]{64}$/u, 'the answer is the value that was sealed to you'),
-    /* The label of the company this key was worked out from, or null for a key no
-     * company produced. Only slips naming exactly that are sent. */
-    from: z.union([
-      z.string().regex(/^co_[0-9a-f]{64}$/u, 'That is not a company label. It is co_ and 64 characters of 0-9 and a-f'),
-      z.null(),
-    ]),
-  }).parse(req.body);
-  const proven = await payslipProofs.consume(payslipProofSubject(b.publicKey), b.answer.toLowerCase());
-  if (!proven) {
-    res.status(403).json({
-      code: 'payslip-proof-refused',
-      error: 'this key has not been shown to be yours, so no payslips are sent for it. '
-        + 'Ask again from the start: the value sealed to you can be used once, for two minutes.',
-    });
-    return;
-  }
-  res.json(payroll.payslipsFor(b.publicKey, b.from));
+  const company = companyLabel.parse(String(req.query.company ?? ''));
+  const period = z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/u, 'a month is written YYYY-MM')
+    .parse(String(req.query.period ?? ''));
+  res.json(payroll.payslipsOf(company, period));
 }));
 
 /*
@@ -1671,16 +1629,14 @@ app.post('/api/payslips', currentPayslipPage, authed, wrap(async (req, res) => {
  */
 
 /*
- * **EVERY COMPANY LABEL A COMPANY'S PAYSLIPS NAME, FROM ANY ONE OF THEM, EACH
- * WITH THE ACCOUNT THAT CARRIES IT.** A payee who knows a company by its label
- * reaches every slip sealed for it, and their wallet is told which account to
- * read the label back from. Labels and account addresses are public on the
- * chain, and this answers with nothing else, to a signed-in person only.
+ * **A COMPANY'S LABEL, WITH THE ACCOUNT THAT CARRIES IT NOW.** A payee's wallet
+ * is told which account to read the label back from before it gives the key
+ * their slips open with. Labels and account addresses are public on the chain,
+ * and this answers with nothing else, to a signed-in person only.
  */
 app.get('/api/payslips/addresses', currentPayslipPage, authed, wrap(async (req, res) => {
   if (!await payslipsMetered(req, res)) return;
-  const company = z.string().regex(/^co_[0-9a-f]{64}$/u, 'a company is named by its label: co_ and 64 lower-case hex')
-    .parse(String(req.query.company ?? ''));
+  const company = companyLabel.parse(String(req.query.company ?? ''));
   res.json({ companies: payroll.payslipAddressesOf(company) });
 }));
 
@@ -1690,16 +1646,14 @@ app.get('/api/payslips/addresses', currentPayslipPage, authed, wrap(async (req, 
  */
 
 /**
- * **AN ADMIN TAKES AN INVITATION BACK.** `X12` §3,
- * `docs/scope-invitations.md` §8.
+ * **AN ADMIN TAKES AN INVITATION BACK.**
  *
  * **ADDRESSED BY THE PERSON, NOT BY THE TOKEN**, and that is not a convenience.
  * The admin does not hold the token — `invite()` hands it back once, to the
- * browser that raised it, and no route gives it out again (`X11` §1,
- * `invitations.test.ts`'s first test). A revoke route keyed on the token would
- * be a route that requires the one value this product spent a round making
- * unreachable, and the obvious repair — letting a member look one up — is the
- * deleted *open it as them* button with a new name.
+ * browser that raised it, and no route gives it out again. A revoke route keyed
+ * on the token would require the one value this product keeps unreachable, and
+ * letting a member look one up would let them open the invitation as the person
+ * it is for.
  *
  * `ownsPerson`, not `member`: the same gate `admit` and `status` stand behind.
  */
@@ -1709,12 +1663,11 @@ app.post('/api/employees/:id/invite/revoke', authed, ownsPerson, wrap(async (req
 }));
 
 /**
- * **THE SEALED DROP BOX, FOR THE ADMIN'S OWN MACHINE TO OPEN.** `X12` §2,
- * `docs/scope-invitations.md` §5, `docs/how-money-can-be-lost.md` `C21`.
+ * **THE SEALED DROP BOX, FOR THE ADMIN'S OWN MACHINE TO OPEN.**
  *
- * §5 puts the confirmation code on the ADMIN'S machine — *"if we computed it we
- * would need the address, and the leak returns through the door this section
- * builds"* — so the browser needs the ciphertext and this hands it over.
+ * The confirmation code is worked out on the ADMIN'S machine, because working it
+ * out here would need the payee's address in the clear - so the browser needs
+ * the ciphertext and this hands it over.
  *
  * **THIS ROUTE CANNOT READ WHAT IT SERVES.** The blob is sealed to the account's
  * inbox public key; the secret is derived from the account's viewing key, which
@@ -1727,7 +1680,7 @@ app.post('/api/employees/:id/invite/revoke', authed, ownsPerson, wrap(async (req
  * nobody else can read it, including this deployment.
  */
 app.get('/api/employees/:id/handover', authed, ownsPerson, wrap(async (req, res) => {
-  res.json({ inbox: store.handoverFor(String(req.params.id)) });
+  res.json({ inbox: store.handoverFor(String(req.params.id), 'employee') });
 }));
 
 
@@ -1776,7 +1729,7 @@ app.get('/api/accounts/:id/invites', authed, member, wrap(async (req, res) => {
  */
 
 /**
- * M-98: THE APP IS EXPORTED, AND IT DOES NOT LISTEN ON IMPORT.
+ * THE APP IS EXPORTED, AND IT DOES NOT LISTEN ON IMPORT.
  *
  * Every test in this project used to stop at the service layer, and the two
  * leaks that actually shipped were both in a route — a public route, since

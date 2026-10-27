@@ -135,9 +135,9 @@ describe('a write that has run past its deadline', () => {
     void ledger.open('acc_first', {} as never);
     await sleep(OVERDUE_MS + 30);
 
-    const refusal = await ledger.addSigner('acc_second', '00' as never, null, {} as never).then(
+    const refusal = await ledger.removeSigner('acc_second', '00' as never, '00' as never, {} as never).then(
       () => '', (e: Error) => e.message);
-    expect(refusal).toMatch(/^adding a signer was not started, and nothing was spent on it/);
+    expect(refusal).toMatch(/^removing a signer was not started, and nothing was spent on it/);
     expect(refusal).toMatch(/busy with an earlier write \(opening an account, running since /);
     const since = /running since (\S+), /.exec(refusal)?.[1] ?? '';
     expect(Date.parse(since), 'the start time is not the running write\'s').toBeGreaterThanOrEqual(before - 5);

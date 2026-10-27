@@ -152,7 +152,6 @@ export type PreparedStep =
    * `setPolicyBarPayload(newBar)` at the bar that stands today.
    */
   | { kind: 'setPolicyBar'; newBar: number; proposalId: Hex }
-  | { kind: 'addSigner'; leaf: Hex; proposalId: Hex | null }
   | { kind: 'removeSigner'; removedLeaf: Hex; proposalId: Hex }
   | { kind: 'setThreshold'; newThreshold: number; proposalId: Hex }
   /**
@@ -408,12 +407,12 @@ export const privateStateKey = (base: string, accountId: string): string =>
  * ------------------------------------------------------------------ */
 
 /**
- * A 32-byte zero, for the one argument a circuit takes and does not read.
+ * A 32-byte zero, for an argument a circuit takes and does not read.
  *
- * `addSigner` on the bootstrap path has no proposal to name, and a circuit's
- * arity is fixed — so something has to be passed. Zero is the honest filler: it
- * is a value `persistentCommit` can never produce, so it cannot collide with a
- * real proposal id, and the branch that would read it is not taken.
+ * A circuit's arity is fixed, so something has to be passed. Zero is the honest
+ * filler: it is a value `persistentCommit` can never produce, so it cannot
+ * collide with a real proposal id, and the branch that would read it is not
+ * taken.
  */
 const ZERO_32: Hex = '00'.repeat(32);
 
@@ -471,8 +470,7 @@ import { CIRCUITS_THAT_READ_NO_WITNESS } from './governed-call.js';
  *
  * Two steps can name the same circuit and two circuits can be named by one
  * step's neighbours, which is why this is a table and not a convention: a
- * governance round and a payroll run are both `propose`, and adding a signer
- * and removing one are both `amendSigner`.
+ * governance round and a payroll run are both `propose`.
  *
  * **A `Record` OVER THE STEP'S OWN UNION, SO A NEW STEP DOES NOT COMPILE UNTIL
  * IT HAS AN ANSWER HERE.** A step added without one would otherwise reach the
@@ -496,7 +494,6 @@ export const CIRCUIT_FOR_STEP: Record<PreparedStep['kind'], string> = {
   approve: 'approve',
   cancel: 'cancel',
   /* Seating and unseating are one circuit, and have been since the rename. */
-  addSigner: 'amendSigner',
   removeSigner: 'amendSigner',
   setThreshold: 'setThreshold',
   setVaultThreshold: 'setVaultThreshold',
@@ -635,9 +632,9 @@ export class MidnightLedger implements Ledger {
      * founding signers' leaves and this is the first of them, so there is ONE
      * place the answer comes from and no second field to keep in step.
      *
-     * IT IS REFUSED BECAUSE THE CONTRACT CANNOT REFUSE IT LATER. `amendSigner`
-     * opens with `requireSigner()`, so an account deployed with no seat can
-     * never have one added — it is dead on arrival, permanently, along with
+     * IT IS REFUSED BECAUSE THE CONTRACT CANNOT REFUSE IT LATER. A seat after
+     * the first is taken only on an invitation a seated signer raised, so an
+     * account deployed with no seat can never have one added — it is dead on arrival, permanently, along with
      * every vault that names it as its authority and the money in them. The
      * constructor's own two guards catch a leaf that is zero or the vacancy
      * marker; nothing on chain can catch an argument that was never supplied,
@@ -653,8 +650,8 @@ export class MidnightLedger implements Ledger {
       throw new Error(
         `cannot open "${accountId}": the opening names no founding signer. The account's ` +
           'first seat is the leaf handed to the constructor, and an account deployed ' +
-          'without one can never have a signer added — `amendSigner` requires an existing ' +
-          'signer, so there would be nobody able to seat the first.',
+          'without one can never have a signer added — every later seat is taken on an invitation ' +
+          'an existing signer raised, so there would be nobody able to invite the first.',
       );
     }
     /*
@@ -697,10 +694,9 @@ export class MidnightLedger implements Ledger {
       throw new Error(
         `cannot open "${accountId}": the opening names ${opening.signerLeaves.length} founding ` +
           'signers and this path can seat exactly one. The constructor creates the founding ' +
-          'signer\'s seat; every seat after it is `amendSigner`, which requires an existing signer to ' +
-          'call it AND, since the constructor stopped taking a threshold, an approved proposal ' +
-          'behind it — so the rest are proposed, approved and seated by the founding signer from their ' +
-          'own device, and there is no screen for that yet. Open with the founding signer alone.',
+          'signer\'s seat; every seat after it is an invitation the signers raise and approve and the ' +
+          'invitee takes from their own wallet (`seatInvited`), and there is no screen for that yet. ' +
+          'Open with the founding signer alone.',
       );
     }
     /*
@@ -982,10 +978,9 @@ export class MidnightLedger implements Ledger {
      * deployer's seat back under another name.
      *
      * **SO `open` SEATS EXACTLY ONE SIGNER — THE FOUNDER — AND FOUNDERS 2..N
-     * ARE SEATED BY THE FOUNDER FROM THEIR OWN DEVICE**, through the same
-     * bootstrap window, which is unchanged and is still what stops a 2-of-3
-     * account being wedged at creation. That is the seating screen, `C335`,
-     * board `4b`. It is named here rather than left to be discovered.
+     * ARE INVITED BY THE SIGNERS AND TAKE THEIR SEATS FROM THEIR OWN WALLETS**
+     * (`seatInvited`). That is the seating screen. It is named here rather than
+     * left to be discovered.
      *
      * **NOTHING THAT RUNS TODAY LOSES A CAPABILITY, AND THAT IS MEASURED
      * RATHER THAN ASSUMED:** the only caller that ever reached this code is
@@ -1405,27 +1400,12 @@ export class MidnightLedger implements Ledger {
    * an operation, and that is where this rule is next spent.
    */
 
-  /**
-   * Puts a signer's leaf in the on-chain tree.
-   *
-   * The circuit decides which of its two paths applies — bootstrap or approved
-   * round — from `signerCount < threshold`, and this does not second-guess it.
-   * It does check the obvious refusals first, because each one otherwise costs a
-   * block time and a fee to discover.
-   *
-   * The proposal salt is staged for the same reason `propose` stages it: on the
-   * approved path the circuit recomputes the proposal's id from it, and the
-   * adding device has to be using the proposer's. `execute` was the other
-   * circuit that read it and is gone; `amendSigner`, `setThreshold`,
-   * `setVaultThreshold`, `adopt`, `retireVault` and `recordPayment` are the
-   * readers that are left.
+  /*
+   * NO METHOD SEATS A SIGNER HERE. A seat after the founding one is taken by the
+   * invitee's own wallet (`seatInvited`), which proves it holds the invited
+   * address's coin secret key; this process never holds that key, so it cannot
+   * make the call.
    */
-  async addSigner(
-    accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef,
-  ): Promise<TxRef> {
-    const call = await this.prepare(accountId, { kind: 'addSigner', leaf, proposalId });
-    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
-  }
 
   /*
    * `REMOVE_SIGNER_SLOTS` USED TO BE HERE, and M-106 deleted the cap it named.
@@ -1670,8 +1650,7 @@ export class MidnightLedger implements Ledger {
         await this.stageChange(accountId, step.change);
         /*
          * The MERGED `propose`: the opaque path. `isRun` false, the run
-         * parts zero — the branch that would read them is not taken, exactly
-         * as `addSigner`'s unused `proposal` is zeroes on the bootstrap path.
+         * parts zero — the branch that would read them is not taken.
          */
         return {
           address, privateStateId, circuit,
@@ -1821,56 +1800,6 @@ export class MidnightLedger implements Ledger {
         };
       }
 
-      case 'addSigner': {
-        const before = await this.readContractState(address);
-        if (!before) throw new Error('the contract has no state on chain');
-        const bootstrapping = before.signerCount < before.threshold;
-        /*
-         * The bootstrap window needs no proposal and the contract does not look
-         * for one, so a null id is correct there and an error anywhere else.
-         * Zeroes are passed rather than nothing because the circuit's arity is
-         * fixed; the branch that would read them is not taken.
-         */
-        if (!bootstrapping) {
-          if (!step.proposalId) {
-            throw new Error(
-              'adding a signer to a live account needs an approved proposal. ' +
-                'Propose the signer, reach the threshold, then add them. M-37.',
-            );
-          }
-          await this.requireSeatBar(address, step.proposalId, 'add a signer');
-        }
-        /*
-         * THREE ARGUMENTS, and the third was missing until M-128's port was
-         * checked against the compiled ABI rather than against memory.
-         *
-         * `intoVacatedSlot` asks the contract to take a slot a removal freed
-         * instead of appending a fresh one. It cannot be inferred here and it
-         * cannot be omitted: a circuit's arity is fixed, so a two-argument call
-         * is rejected before it is proven — every `addSigner` on this path
-         * would have failed. This is the M-107 shape exactly (a call site
-         * drifting out of arity), caught this time because nothing casts it away.
-         *
-         * FALSE unless a slot has actually been vacated. Getting it wrong is
-         * harmless in both directions: ask to reuse when nothing was vacated and
-         * the proof fails; append when a slot was free and one slot is wasted.
-         * So it is derived from the chain rather than guessed.
-         */
-        /* `T-200`: `ConfidentialAccount.compact:1859-1860` refuses an unusable
-         * leaf here too, and this path had no mirror for it either. */
-        await this.refuseUnusableLeaf(step.leaf, 'the signer leaf being seated');
-        /* The MERGED `amendSigner`, seating direction: `removing` false. */
-        return {
-          address, privateStateId, circuit,
-          args: [
-            fromHex(step.leaf),
-            fromHex(step.proposalId ?? ZERO_32),
-            await this.hasVacatedSlot(address),
-            false,
-          ],
-        };
-      }
-
       case 'setThreshold': {
         const before = await this.readContractState(address);
         if (!before) throw new Error('the contract has no state on chain');
@@ -1889,9 +1818,8 @@ export class MidnightLedger implements Ledger {
           throw new Error('the threshold must be at least one, and a whole number');
         }
         /*
-         * The M-37 guard. `addSigner` opens its bootstrap window whenever
-         * `signerCount < threshold`, so raising the threshold above the number
-         * of seated signers would let one signer seat their own.
+         * A threshold above the seated signers would leave an account that can
+         * never approve anything again.
          */
         if (BigInt(step.newThreshold) > before.signerCount) {
           throw new Error(
@@ -2071,13 +1999,10 @@ export class MidnightLedger implements Ledger {
               'seat another signer first, or lower the approvals policy changes need.',
           );
         }
-        /*
-         * The MERGED `amendSigner`, unseating direction: `removing`
-         * true; `intoVacatedSlot` is ignored on this path and passed false.
-         */
+        /* `amendSigner` only removes: the leaf leaving and the approved removal. */
         return {
           address, privateStateId, circuit,
-          args: [fromHex(step.removedLeaf), fromHex(step.proposalId), false, true],
+          args: [fromHex(step.removedLeaf), fromHex(step.proposalId)],
         };
       }
     }
@@ -2097,8 +2022,8 @@ export class MidnightLedger implements Ledger {
    * counterpart at all.
    *
    * The contract's `constructor` refuses a founding leaf that is
-   * `default<Bytes<32>>` or `vacantSlot()`, and `amendSigner` refuses the same
-   * two for a leaf being seated — both with the same message, *"that is not a
+   * `default<Bytes<32>>` or `vacantSlot()`, and `reseatSigner` and `seatInvited`
+   * refuse the same two for a leaf being seated — all with the same message, *"that is not a
    * usable signer leaf"*. **NAMED RATHER THAN CITED, AND THE CITATIONS THAT
    * STOOD HERE WERE BOTH WRONG:** `:1508-1509` is `requireApproved`'s
    * approval-count assert and `:1859-1860` is `const removedLeaf = leaf;`. The
@@ -2107,8 +2032,8 @@ export class MidnightLedger implements Ledger {
    * `:611` and `:1271` passed `fromHex(...)` straight through and the refusal
    * arrived from the chain — for the founding leaf, after a deploy and a fee,
    * and `src/midnight/ledger.ts:400-406` already reasons that an unusable
-   * founding seat is PERMANENTLY fatal: `amendSigner` requires an existing
-   * signer, so nobody can ever seat the first.
+   * founding seat is PERMANENTLY fatal: every later seat needs an invitation an
+   * existing signer raised, so nobody can ever seat the first.
    *
    * **THE CONVENTION IS THE FILE'S OWN**, not one invented here: `proposeRun`'s
    * two mirrored asserts (`:1162`, `:1165`) match `ConfidentialAccount.compact`
@@ -2128,7 +2053,7 @@ export class MidnightLedger implements Ledger {
    * want the same one, and writing it twice is how they drift.
    *
    * **THE VACANCY MARKER IS READ FROM THE COMPILED ARTIFACT, NEVER RESTATED.**
-   * `pureCircuits.vacantSlot()` is the same call `hasVacatedSlot` below makes.
+   * `pureCircuits.vacantSlot()` is the contract's own definition of it.
    * A TypeScript constant for it would be a second definition of a value the
    * chain compares against, which is `decision 0004` and `C306`.
    */
@@ -2138,7 +2063,7 @@ export class MidnightLedger implements Ledger {
         `${what} is thirty-two zero bytes. Supply a signer leaf that is neither thirty-two `
         + 'zero bytes nor the vacancy marker. The contract refuses this value — it answers '
         + '"that is not a usable signer leaf", in its constructor for a founding leaf and in '
-        + '`amendSigner` or `reseatSigner` for a leaf being seated — because thirty-two zero bytes is what an '
+        + '`reseatSigner` for a leaf being seated — because thirty-two zero bytes is what an '
         + 'empty slot reads as, so a seat holding it is a seat nothing can ever prove.');
     }
     const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
@@ -2147,19 +2072,10 @@ export class MidnightLedger implements Ledger {
         `${what} is the vacancy marker itself. Supply a signer leaf that is neither `
         + 'thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it '
         + 'answers "that is not a usable signer leaf", in its constructor for a founding leaf '
-        + 'and in `amendSigner` or `reseatSigner` for a leaf being seated — because the tree uses the marker to '
+        + 'and in `reseatSigner` for a leaf being seated — because the tree uses the marker to '
         + 'mean THIS SLOT IS EMPTY, so seating it makes a slot that is simultaneously taken '
         + 'and free.');
     }
-  }
-
-  private async hasVacatedSlot(address: string): Promise<boolean> {
-    const { ledger: readLedger, pureCircuits } = await import(
-      '../../contracts/managed/contract/index.js');
-    const providers = await this.providers();
-    const state = await providers.publicDataProvider.queryContractState(address as any);
-    if (!state) return false;
-    return readLedger(state.data).signers.findPathForLeaf(pureCircuits.vacantSlot()) !== undefined;
   }
 
   /**
@@ -2833,8 +2749,7 @@ export class MidnightLedger implements Ledger {
        * is `C188` exactly. Found by S35c's test-coverage pass and its
        * money-safety pass, independently. What it costs unguarded is not a
        * crash: `?? 0n` is the repair anybody reaches for, and a seat count of
-       * zero makes this client believe the M-37 bootstrap window is open, refuse
-       * every threshold change and refuse every removal — the contract still
+       * zero makes this client refuse every threshold change and every removal — the contract still
        * refuses correctly, and OUR refusals stop refusing.
        */
       signerCount: setSize(parsed, 'signerLeaves'),
@@ -3002,9 +2917,8 @@ const mapField = <T>(parsed: any, field: string): Iterable<T> => {
  * can have an empty set — never, for `signerLeaves`, since the constructor
  * seats one, which is why this returns the count rather than tolerating zero —
  * but a collection we FAILED TO READ answering `0` is the shape that matters:
- * `signerCount: 0` makes every caller downstream believe the M-37 bootstrap
- * window is open on a live account, refuse every threshold change and refuse
- * every removal. `?? 0n` is the defect, exactly as `?? []` is for a map.
+ * `signerCount: 0` makes every caller downstream refuse every threshold
+ * change and every removal on a live account. `?? 0n` is the defect, exactly as `?? []` is for a map.
  *
  * `typeof size === 'function'` rather than `Symbol.iterator`, because `size` is
  * the thing being called and a guard that proves a different member is present

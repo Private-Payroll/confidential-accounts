@@ -30,7 +30,7 @@ import { inFlightInMemory, sealedOnThisDevice } from 'vaults-web-shared/in-fligh
 import { checkedHeadsInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { directoryHere, judgeIn } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
-import { acceptAsPayeeHere, invitePayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { ACME, acmeDirectory, acmeDirectoryDeps, fromAda, ORIGIN } from './a-company-of-two-seats.test-support.js';
 import {
@@ -85,8 +85,8 @@ const peopleOn = (s: Seat): PeopleDevice => ({
 const aPayee = async (n: number): Promise<void> => {
   const address = payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address, payslipKey: newWrappingKeypair().publicKey });
-  const made = await invitePayeeHere(ACME, ADA, {
-    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), startDate: '2026-10-01',
+  const made = await inviteHere(ACME, ADA, 'employee', {
+    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01',
   }, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;

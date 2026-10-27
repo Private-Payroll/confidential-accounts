@@ -14,8 +14,8 @@
  *
  * WHAT IT DOES, and why in this order:
  *
- *   1. addSigner(B)   the constructor enrolled only the deployer, and the
- *                     threshold is 2, so one signer can never reach it alone
+ *   1. seat B         an invitation A raises and approves and B takes with
+ *                     `seatInvited`; the constructor seats only the founder
  *   2. propose        opens a proposal; only a commitment reaches the chain,
  *                     and the proposal's id is computed here, before it is
  *                     submitted, so an approval can be prepared without a
@@ -429,6 +429,17 @@ const signerE = device('E');
 const leafOf = (s: AccountPrivateState) =>
   pureCircuits.signerLeaf(pureCircuits.signerPublicKey(s.secretKey), s.blinding, s.scope);
 
+/*
+ * A signer after the first is seated by invitation: the signers approve a
+ * commitment to the invitee's wallet address and the rights the seat carries,
+ * and the invitee takes it with `seatInvited`. Each preview invitee's address
+ * is a throwaway coin key made from a seed, with a salt beside it.
+ */
+const invitedAt = (seed: number) => ({ coinSecretKey: seededBytes(seed), addressSalt: seededBytes(seed + 1) });
+const invitationOf = (s: AccountPrivateState, invite: { coinSecretKey: Uint8Array; addressSalt: Uint8Array }) =>
+  pureCircuits.signerInvitePayload(
+    pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt), s.scope);
+
 /* ------------------------------------------------------------------ */
 
 /**
@@ -520,8 +531,8 @@ async function main() {
    * and retries never.
    *
    * `landed()` is what makes retrying safe. A timeout waiting for confirmation
-   * does not mean the transaction failed, and re-running `addSigner` blindly
-   * would insert the same signer's leaf a second time. So on timeout we ask
+   * does not mean the transaction failed, and re-running a call blindly
+   * could apply it a second time. So on timeout we ask
    * the chain what actually happened before deciding.
    */
   /**
@@ -1778,44 +1789,24 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
   if (!seatedAlready.length) {
     /*
-     * SEATING B, THROUGH THE ONLY PATH THERE IS.
-     *
-     * This was ONE call — `amendSigner(leaf, ZERO_32, false, false)` — straight
-     * through the bootstrap window, and it would now be refused on a real chain
-     * after a real fee and real proving time, with `there is no open proposal
-     * with that id`. It is propose → approve → amendSigner instead, the same
-     * three steps C takes below.
-     *
-     * The window is shut by CONSTRUCTION, not by this account having grown:
-     * `S35d` deleted the constructor's threshold argument (`C340` + `C343`), so
-     * every account is founded with one signer and `threshold = 1` and
-     * `signerLeaves.size() < threshold` is false from birth and cannot become
-     * true. The proof is written out in the contract beside `threshold = 1`;
-     * what it costs — three transactions where there was one, for ever — is
-     * `docs/company-accounts.md` section 10a, ruled by the founder on 2 Sep.
-     *
-     * **ONE APPROVAL, AND THE NUMBER IS READ OFF THE CHAIN RATHER THAN
-     * ASSUMED.** `requireApproved` asserts `!(approvalCounts.lookup(id) <
-     * threshold)`; the constructor sets `threshold = 1` and `setThreshold` is
-     * the only thing that moves it, so a fresh account needs exactly one. One
-     * is also all that is available: this branch is the one where none of B, C,
-     * D or E is seated, so A is the only signer who can approve, and `approve`
-     * burns a nullifier per signer per proposal — A cannot approve twice. The
-     * check above has already refused a threshold higher than one; the assert
-     * below refuses it again against what the chain actually counted, rather
-     * than against this paragraph.
+     * SEATING B, THROUGH THE ONLY PATH THERE IS: an invitation A raises and
+     * approves, which B takes with `seatInvited`, proving it holds the invited
+     * address's coin secret key. A fresh account needs exactly one approval,
+     * and A is the only signer who can give it.
      */
     const approvalsNeeded = Number(before.threshold);
     note('signer B is not in the tree yet, and there is no bootstrap window to seat them through');
-    note(`this account's threshold is ${approvalsNeeded}, so B is seated by propose → approve → amendSigner, and signer A's is the one approval it needs`);
+    note(`this account's threshold is ${approvalsNeeded}, so B is seated by an invitation A raises and approves, then B's own seatInvited`);
 
     /*
-     * The proposal must commit to THIS leaf, via the add-signer domain
-     * separator, exactly as C's does below: an approved payroll proposal must
-     * not authorise an addition. `amendSigner` recomputes the same id from the
-     * caller's `proposalSalt` witness and refuses if it does not match.
+     * The proposal commits to B's invited address and rights, through the
+     * invitation's own domain separator, exactly as C's does below: an approved
+     * payroll proposal must not authorise a seat. `seatInvited` recomputes the
+     * same id from B's address, the salt and B's rights, and refuses if it does
+     * not match.
      */
-    const addBPayload = pureCircuits.signerAddPayload(leafOf(signerB));
+    const inviteB = invitedAt(611);
+    const addBPayload = invitationOf(signerB, inviteB);
 
     /*
      * A governance round moves no money, so it carries the reserved "no asset"
@@ -1830,10 +1821,10 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
      * The proposal's id, computed BEFORE it is submitted.
      *
      * `commit(payloadHash, salt)`, from the contract's own circuit. The approve
-     * binds its nullifier to it and the `amendSigner` below names it.
+     * binds its nullifier to it and the `seatInvited` below names it.
      */
     const addBId = proposalIdFor(addBPayload, ADD_B_SALT);
-    note(`the add-signer proposal for B is ${hex(addBId).slice(0, 24)}…`);
+    note(`the invitation for B is ${hex(addBId).slice(0, 24)}…`);
 
     await becomeSigner(signerA, 'A');
     await callCircuit('propose (add signer B)',
@@ -1863,24 +1854,10 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
       );
     }
 
-    await becomeSigner(signerA, 'A');
-    // The landed-check still matters, and WHAT IT PROTECTS AGAINST CHANGED with
-    // `S35d`. A retry of this seat is refused on chain now whichever way it is
-    // read — the duplicate assert fires, and the approved proposal the first
-    // attempt consumed is gone — where the free path it used to take would have
-    // put signer B in the tree at two indices. What the check saves today is
-    // the fee and the proving time that refusal would cost.
-    
-    // DECOMPOSED, deliberately. `callTx` is one opaque call and three separate
-    // hypotheses about where its six minutes go have now been wrong: the
-    // `settled` tree depth, the Merkle path shape, and the Zswap chain state's
-    // postBlockUpdate. Each was ruled out by measurement, and each cost a run.
-    
-    // `createUnprovenCallTx` reproduces with every real input — contract
-    // state, Zswap state, ledger parameters — in 161ms elsewhere. So the stall
-    // is somewhere else in `callTx`, and the only honest way to find out is to
-    // run the steps separately and time each one.
-    await callCircuit('amendSigner (seat B, approved)', async () => {
+    await becomeSigner({ ...signerB, invite: inviteB }, 'B (invited)');
+    // DECOMPOSED, deliberately: building and proving are timed separately, so
+    // a stall can be told apart from a slow proof.
+    await callCircuit('seatInvited (B takes the approved seat)', async () => {
       const { createUnprovenCallTx, submitTx } = await import('@midnight-ntwrk/midnight-js-contracts');
 
       /*
@@ -1891,51 +1868,24 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
        * exactly the shape that let a dropped answer through everywhere else.
        */
       refuseACallWithoutItsPrivateState(
-        'amendSigner', PRIVATE_STATE_KEY, CIRCUITS_THAT_READ_NO_WITNESS);
+        'seatInvited', PRIVATE_STATE_KEY, CIRCUITS_THAT_READ_NO_WITNESS);
 
       setAmbient(PH.build);
       const t1 = Date.now();
       const unproven: any = await createUnprovenCallTx(providers, {
         compiledContract: compiled,
-        circuitId: 'amendSigner',
+        circuitId: 'seatInvited',
         contractAddress,
         /*
-         * FOUR arguments, and the second one is the whole of this round's
-         * change.
-         *
-         *   leaf              who is being seated
-         *   proposal          WHICH approved proposal authorises it. **A REAL
-         *                     ID, WHERE THIS PASSED `ZERO_32` UNTIL `S35d`.**
-         *                     The zero was the bootstrap window's filler: with
-         *                     fewer signers than the threshold the contract did
-         *                     not look for a proposal, and the branch that
-         *                     reads this was not taken. That state is now
-         *                     unreachable on every account from birth — the
-         *                     constructor seats one signer and sets
-         *                     `threshold = 1`, and the proof is written out
-         *                     beside that line, with `docs/company-accounts.md`
-         *                     section 10a for what it costs. So the branch IS
-         *                     taken, and a zero here buys `there is no open
-         *                     proposal with that id` after a real fee and real
-         *                     proving time.
-         *   intoVacatedSlot   `false` means append into a fresh slot rather
-         *                     than reuse one a removal freed. This account has
-         *                     never lost anybody, so there is nothing vacated
-         *                     to take — and asking for a vacated slot when none
-         *                     exists is refused, not silently corrected.
-         *   removing          `false`: a seat, not a removal. S11 merged the
-         *                     two circuits and this is the discriminator.
-         *
-         * This call site is `as any` all the way down, so the typechecker
-         * cannot see the arity. That is M-107 exactly: the compiler caught the
-         * three TYPED call sites when the signature changed and said nothing
-         * about the two hidden behind a cast. Which is why the argument list
-         * here was checked against contracts/managed/contract/index.d.ts by
-         * hand rather than against memory — **and why the ZERO above survived a
-         * signature change: no typechecker anywhere can see that this argument
-         * is now read.**
+         * TWO arguments: WHICH approved invitation B takes, and `false` to
+         * append into a fresh slot rather than reuse one a removal freed. This
+         * account has never lost anybody, so there is nothing vacated to take.
+         * Everything else the call reads is B's own: the coin secret key, the
+         * address salt, the seat key, the blinding and the rights. This call
+         * site is `as any`, so the arity was checked against
+         * contracts/managed/contract/index.d.ts by hand.
          */
-        args: [leafOf(signerB), addBId, false, false],
+        args: [addBId, false],
         privateStateId: PRIVATE_STATE_KEY,
       } as any);
       good(`  step 1 — build the unproven transaction: ${((Date.now() - t1) / 1000).toFixed(1)}s`);
@@ -1947,7 +1897,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
       // this SDK is what M-16 lost six rounds to.
       const result: any = await submitTx(providers, {
         unprovenTx: unproven.private.unprovenTx,
-        circuitId: 'amendSigner',
+        circuitId: 'seatInvited',
       } as any);
       good(`  step 2 — prove and submit: ${((Date.now() - t2) / 1000).toFixed(1)}s`);
       setAmbient(PH.build);
@@ -1957,8 +1907,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     const afterB = await readState();
     if (!afterB.signers.findPathForLeaf(leafOf(signerB))) throw new Error('signer B was not added');
     // Consumed means REMOVED from the map, not a flag cleared beside it. C's
-    // block below makes the same check for the same reason, and it is the one
-    // that tells an approved seat from the free one this call used to take.
+    // block below makes the same check for the same reason.
     if (isOpen(afterB, addBId)) throw new Error('the proposal to seat B was not consumed');
     good(
       `signer B added by approval — ${afterB.signerLeaves.size()} signers, and that proposal is ` +
@@ -1972,37 +1921,22 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   }
 
   /*
-   * M-37, the half the simulator cannot prove: seating a signer through the
-   * approved path, on a real chain, with a second signer voting.
+   * Seating a signer through an invitation on a real chain, with a second
+   * signer voting: C's invitation is raised and approved by A and by whoever
+   * is seated second, and only then taken by C — a seat carrying more than one
+   * person's approval, which the simulator can only assert and this can prove.
    *
-   * **THIS PARAGRAPH SAID SIGNER B WAS SEATED DURING THE BOOTSTRAP WINDOW, AND
-   * THERE IS NO SUCH WINDOW ANY MORE.** `S35d`, `C340` + `C343`: the
-   * constructor takes no threshold, seats one signer and sets `threshold = 1`,
-   * so `signerLeaves.size() < threshold` is false from birth and no writer of
-   * either quantity can make it true. The proof is written out in the contract
-   * beside `threshold = 1`; what it costs is `docs/company-accounts.md`
-   * section 10a. B is seated by an approved proposal above, exactly as C is
-   * here.
-   *
-   * **SO WHAT THIS BLOCK ADDS OVER B'S IS THE SECOND APPROVER, NOT THE PATH.**
-   * B's round had one signer on the account to approve it and A supplied it.
-   * C's is proposed, approved by A and by whoever is seated second, and only
-   * then applied — an addition carrying more than one person's approval, which
-   * is the shape the simulator can only assert and this can prove. Eight
-   * simulator tests cover the logic; this is the one that costs real proofs and
-   * a real ledger.
-   *
-   * Self-disabling: once C is in the tree, later runs skip it. Otherwise this
-   * adds four circuit calls, about ninety seconds, to every run forever.
+   * Self-disabling: once C is in the tree, later runs skip it.
    */
   const stateForC = await readState();
   if (!stateForC.signers.findPathForLeaf(leafOf(signerC))) {
     note(`signer C is not in the tree (${stateForC.signerLeaves.size()} signers, threshold ${stateForC.threshold})`);
-    note('a seat is an approved proposal on every account since S35d, so adding C goes through propose → approve → approve');
+    note('a seat is an approved invitation, so adding C goes through propose → approve → approve → seatInvited');
 
-    // The proposal must commit to THIS leaf, via the add-signer domain
-    // separator. An approved payroll proposal must not authorise an addition.
-    const addPayload = pureCircuits.signerAddPayload(leafOf(signerC));
+    // The proposal commits to C's invited address and rights. An approved
+    // payroll proposal must not authorise a seat.
+    const inviteC = invitedAt(613);
+    const addPayload = invitationOf(signerC, inviteC);
 
     /*
      * A governance round moves no money, so it carries the reserved "no asset".
@@ -2025,12 +1959,11 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
      * The proposal's id, computed BEFORE it is submitted.
      *
      * `commit(payloadHash, salt)`, from the contract's own circuit. Every call
-     * below names it: `approve` binds its nullifier to it, and `addSigner`
-     * recomputes it from the caller's `proposalSalt` witness to check that the
-     * proposal it was handed really is the one committing to this leaf.
+     * below names it: `approve` binds its nullifier to it, and `seatInvited`
+     * recomputes it from C's address, the salt and C's rights.
      */
     const addId = proposalIdFor(addPayload, addSalt);
-    note(`the add-signer proposal is ${hex(addId).slice(0, 24)}…`);
+    note(`the invitation is ${hex(addId).slice(0, 24)}…`);
 
     await becomeSigner(signerA, 'A');
     await callCircuit('propose (add signer C)', () => found.callTx.propose(addPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
@@ -2048,23 +1981,18 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     await callCircuit(`approve add (${secondName})`, () => found.callTx.approve(addId),
       async () => approvalsFor(await readState(), addId) > beforeApproveB);
 
-    // Back to A: addSigner reads proposalSalt() from the caller's private
-    // state, and the id on chain was made with A's salt. Any signer can apply
-    // it, but only one holding the same salt can reproduce the id. That was
-    // once the same constraint the settlement circuit had with its next-state
-    // witnesses; those went with the balance ledger and the
-    // constraint on the salt is unchanged by it.
-    await becomeSigner(signerA, 'A');
-    // `addId` names which approved proposal authorises this, and `false` takes
-    // a fresh slot. See the note on the addSigner above.
-    await callCircuit('addSigner C (approved)',
-      () => found.callTx.amendSigner(leafOf(signerC), addId, false, false),
+    // C takes the seat: `seatInvited` reads proposalSalt() from C's private
+    // state, and the id on chain was made with A's salt, which travels to C
+    // with the invitation. `false` takes a fresh slot.
+    await becomeSigner({ ...signerC, invite: inviteC }, 'C (invited)');
+    await callCircuit('seatInvited C (approved)',
+      () => found.callTx.seatInvited(addId, false),
       async () => !!(await readState()).signers.findPathForLeaf(leafOf(signerC)));
 
     const afterAdd = await readState();
     if (!afterAdd.signers.findPathForLeaf(leafOf(signerC))) throw new Error('signer C was not added');
     // Consumed means REMOVED from the map, not a flag cleared beside it.
-    if (isOpen(afterAdd, addId)) throw new Error('the add-signer proposal was not consumed');
+    if (isOpen(afterAdd, addId)) throw new Error('the invitation was not consumed');
     good(
       `signer C added by approval — ${afterAdd.signerLeaves.size()} signers, and that proposal is ` +
         `gone from the chain (${afterAdd.openProposals.size()} still open)`,
@@ -2547,31 +2475,6 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   const redo = await runner.recover(inFlight('00'.repeat(32)));
   if (redo !== null) throw new Error('recover should have allowed a redo of a guarded circuit');
   good('recover: sees nothing landed, and allows a redo the circuit would reject twice');
-
-  // 3. The runner records NO on-chain duplicate check for `addSigner`, so it
-  //    refuses rather than guessing, and this branch proves it still refuses.
-  
-  //    THE REASON IT RECORDS IS STALE, AND SAYING SO HERE IS CHEAPER THAN
-  //    RE-DERIVING IT. `src/midnight/job-runner.ts:333` names M-83's bootstrap
-  //    path — insert the leaf, close no round, nothing stopping it twice — and
-  //    `S35d` made that path unreachable on every account from birth: the
-  //    constructor seats one signer and sets `threshold = 1`, so
-  //    `signerLeaves.size() < threshold` is false from birth and cannot become
-  //    true (the paragraph beside `threshold = 1` in the contract, and
-  //    `docs/company-accounts.md` section 10a). Every seat closes an approved
-  //    proposal now, so a replay is refused on chain like any other.
-  
-  //    The refusal below is therefore CONSERVATIVE rather than required. That
-  //    is the safe direction and it is another file's line to change, so this
-  //    round names it and leaves it.
-  let refused = false;
-  try {
-    await runner.recover(inFlight(null, 'addSigner'));
-  } catch (e: any) {
-    refused = /cannot be checked automatically/.test(String(e?.message));
-  }
-  if (!refused) throw new Error('recover should refuse to guess where a duplicate is not rejected on chain');
-  good('recover: refuses to guess where a retry could apply twice');
 
   // Leave the account as this stage found it. Cancelling names which proposal
   // it withdraws, and touches no other — including any this run never raised.

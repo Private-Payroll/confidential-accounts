@@ -163,7 +163,7 @@ export async function legPaymentsHere(
   if (raisedFromItsRecord(run, leg, await proposalsOf(records), accountId, viewingKey, records.roundIdentity)) {
     facts = run.payout![leg]!.facts;
   } else {
-    facts = await payableFactsHere(records, legEmployees(run, leg), 'Put their record right before this run is raised.',
+    facts = await payableFactsHere(records, run, legEmployees(run, leg), 'Put their record right before this run is raised.',
       'This device will not raise a run it would not pay.');
   }
   return { ...legFieldsOf(leg), payments: paymentsOnTheWire(facts.map(paymentChecked)) };
@@ -293,19 +293,19 @@ export async function retryOrderHere(
 }
 
 /**
- * **WHAT CARRIES OUT AN APPROVED SEAT OR THRESHOLD CHANGE**, from the proposal
- * as this device opened it: the leaf or the threshold it names, its identity
- * and its salt.
+ * **WHAT CARRIES OUT AN APPROVED THRESHOLD CHANGE**, from the proposal as this
+ * device opened it: the threshold it names, its identity and its salt. An
+ * invitation is never carried out here: the invitee takes the seat from their
+ * own wallet.
  */
 export function carryOrderHere(opened: OpenedRound): GovernedCallOrder {
   const g = opened.governance;
-  if (g?.kind === 'add-signer') return { circuit: 'amendSigner', leaf: g.leaf, proposal: opened.chainId, proposalSalt: opened.salt };
   if (g?.kind === 'threshold') return { circuit: 'setThreshold', threshold: g.threshold, proposal: opened.chainId, proposalSalt: opened.salt };
   if (g?.kind === 'vault-threshold') {
     return { circuit: 'setVaultThreshold', vault: g.vault, threshold: g.threshold, proposal: opened.chainId, proposalSalt: opened.salt };
   }
   if (g?.kind === 'policy-bar') return { circuit: 'setPolicyBar', bar: g.bar, proposal: opened.chainId, proposalSalt: opened.salt };
   /* A spending policy is carried out with the policy's opening, which only the company's record of it holds (`spending-policy-here.ts`). */
-  throw new NotMadeHere('This proposal neither seats a signer nor changes the approvals required, so there is nothing to carry '
-    + 'out from here.');
+  throw new NotMadeHere('This proposal does not change the approvals required, so there is nothing to carry out from here. '
+    + 'A person invited as a signer takes their seat from their own wallet.');
 }

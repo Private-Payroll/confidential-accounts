@@ -29,7 +29,7 @@ import { NO_ASSET } from '../core/assets.js';
 import type { PendingSignerPayload, SealedProposal } from '../core/types.js';
 import { whyTheInvitationDoesNotNameIt } from 'midnight-identity/profile/records-key';
 import {
-  acceptAsSignerHere, inviteSignerHere, openInvitationHere, reissueInvitationHere, SeatMayNotInvite, takeTheReissueHere,
+  acceptAsSignerHere, inviteHere, openInvitationHere, reissueInvitationHere, SeatMayNotInvite, takeTheReissueHere,
   withdrawWaitingSignerHere, type InvitationSend,
 } from 'vaults-web-shared/invitation-on-device.js';
 import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
@@ -49,7 +49,7 @@ const asInviter = (s: Seat): Inviter => ({ committeeKey: s.committeeKey, stateme
 
 /** `person` invited from Ada's device, accepting on their own: their seat request, and the invitation it answered. */
 const waitingFor = async (person: string) => {
-  const made = await inviteSignerHere(ACME, ADA, { name: person, role: 'approver', person }, ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'signer', { name: person, role: 'approver', person }, ORIGIN, fromAda);
   const opened = await openInvitationHere(made.link, sendAs(null));
   const seat = await acceptAsSignerHere(opened, SimulatedCommitments, {
     newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
@@ -61,13 +61,13 @@ const isWaiting = (signerId: string): boolean => store.getAccount(CO)!.pendingSi
 const leafOf = (signerId: string): Hex => openFromInbox<PendingSignerPayload>(
   store.getAccount(CO)!.pendingSigners.find((p) => p.id === signerId)!.sealed, CO, KEY).leafCommitment.toLowerCase() as Hex;
 /**
- * A proposal to add a seat, as a seat's device seals and files it: `body` its sealed change, signed over its id on
- * the chain by `filer` (none: a record nobody signed).
+ * A proposal to add a seat, as a seat's device seals and files it: `body` its sealed change, with an invitation to a
+ * placeholder address, signed over its id on the chain by `filer` (none: a record nobody signed).
  */
 const anAddSigner = (body: { signerId: string; invited?: SignedSeatInvitation }, chainId: Hex, filer: Hex | null = ADA.signingSecret): SealedProposal => {
   const sealed = sealGovernanceProposal({
     accountId: CO, viewingKey: KEY, kind: 'add-signer', summary: 'Add a signer', noVault: '00'.repeat(32) as Hex,
-    body, change: { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: '01'.repeat(32) as Hex }, proposedBy: ADA.seat,
+    body: { ...body, invite: { address: '0a'.repeat(32), scope: '0b'.repeat(32) } }, change: { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: '01'.repeat(32) as Hex }, proposedBy: ADA.seat,
   });
   const filing = { id: `prp_${chainId.slice(0, 12)}`, digest: '02'.repeat(32) as Hex, chainId, keyEpoch: 0, createdAt: new Date(0).toISOString(), sealed };
   return { accountId: CO, status: 'open', approvalCount: 0, ...(filer === null ? filing : signProposalFiling(CO, filing, filer)) } as unknown as SealedProposal;
@@ -82,7 +82,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
   it('the same person accepts a new invitation once their waiting request is withdrawn, and their old link reads as withdrawn', async () => {
     const kit = await waitingFor('kit');
     /* While Kit waits, a new invitation is not Kit's to accept. */
-    const again = await inviteSignerHere(ACME, ADA, { name: 'kit', role: 'approver', person: 'kit' }, ORIGIN, fromAda);
+    const again = await inviteHere(ACME, ADA, 'signer', { name: 'kit', role: 'approver', person: 'kit' }, ORIGIN, fromAda);
     const reopened = await openInvitationHere(again.link, sendAs(null));
     const acceptAgain = () => acceptAsSignerHere(reopened, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {}, promote: async () => {} },
       sendAs('kit'), 'kit', async () => WALLET_KEY);
@@ -191,11 +191,11 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
   it('a seat whose role may not file a proposal invites nobody', async () => {
     const sent = wire.length;
     /* RED WHEN: a viewer's device signs an invitation, which every member's device would refuse anyway. */
-    await expect(inviteSignerHere(ACME, { ...ADA, held: { role: 'viewer', retired: false } }, { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda))
+    await expect(inviteHere(ACME, { ...ADA, held: { role: 'viewer', retired: false } }, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda))
       .rejects.toThrow(SeatMayNotInvite);
     /* RED WHEN: a device that has not read its own seat's role from the directory invites somebody all the same. */
     const { held: _unread, ...unread } = ADA;
-    await expect(inviteSignerHere(ACME, unread, { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda)).rejects.toThrow(SeatMayNotInvite);
+    await expect(inviteHere(ACME, unread, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda)).rejects.toThrow(SeatMayNotInvite);
     expect(wire.length).toBe(sent);
   });
 
@@ -265,7 +265,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
      * a record anybody holding the company's key seals could then name the role.
      */
     const asAdmin = signSeatInvitation({ ...original.terms, role: 'admin' }, BO.signingSecret);
-    await expect(reissue(ADA, asAdmin, leesChain, [anAddSigner({ signerId: 'sgn_lee', invited: original }, '0d'.repeat(32) as Hex)])).rejects.toThrow(/No one invitation/u);
+    await expect(reissue(ADA, asAdmin, leesChain, [anAddSigner({ signerId: 'sgn_lee', invited: original }, '0d'.repeat(32) as Hex)])).rejects.toThrow(/does not carry an invitation a signer made for them/u);
     expect(wire.length).toBe(sent);
   });
 
@@ -291,7 +291,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     expect(openOffer(offerOf(signSeatInvitation({ ...original.terms, invitation: invitationIdOf(token) }, ADA.signingSecret)), token).offer.for.kind).toBe('reissue');
     /* RED WHEN: Lee's device keeps a re-issue that gives his seat another role, or replaces no invitation, than the one his seat was proposed under. */
     const openedAs = (terms: Parameters<typeof signSeatInvitation>[0]) =>
-      ({ token, signed: openOffer(offerOf(signSeatInvitation({ ...terms, invitation: invitationIdOf(token) }, ADA.signingSecret)), token), expiresAt: '' });
+      ({ token, signed: openOffer(offerOf(signSeatInvitation({ ...terms, invitation: invitationIdOf(token) }, ADA.signingSecret)), token), expiresAt: '', kind: 'signer' as const });
     await expect(leeTakes(openedAs({ ...original.terms, role: 'admin', replaces: replacing }), kept)).rejects.toThrow(/not the one your seat was proposed under/u);
     await expect(leeTakes(openedAs({ ...original.terms }), kept)).rejects.toThrow(/not the one your seat was proposed under/u);
     /* RED WHEN: Lee's device holds a re-issue to whichever invitation the service lists first, where two name his seat. */

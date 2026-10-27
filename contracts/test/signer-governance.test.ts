@@ -20,7 +20,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, ZERO_32, type Change,
+  AccountSimulator, privateStateFor, change, ZERO_32, invitePayloadFor, invitedAddressFor, type Change,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 
@@ -59,123 +59,73 @@ const proposeGov = async (
 };
 
 /**
- * A deployed account whose signer set is already at the threshold.
- *
- * **IT USED TO BOOTSTRAP AND IT CANNOT ANY MORE.** The constructor took
- * a threshold, so `create(A, 2n)` gave one seat against a bar of two and A
- * could seat B alone through `addSigner(leaf, ZERO_32)`. The constructor now
- * takes no threshold and founds every account at one seat and one approval, so
- * `signerLeaves.size() < threshold` is false from birth and that call is
- * refused. `AccountSimulator.liveAccount` reaches the same state the way the
- * chain now requires — propose, approve, `amendSigner`, then `setThreshold` —
- * and every step runs the compiled circuit.
+ * A deployed account whose signer set is already at the threshold, reached the
+ * way the chain requires — an invitation raised, approved and taken by each
+ * invitee with `seatInvited`, then `setThreshold` — every step through the
+ * compiled circuit.
  */
 const liveAccount = async (threshold = 2n) =>
   AccountSimulator.liveAccount([A, B], threshold);
 
-describe('adding a signer needs the threshold once the account is live', () => {
-  it('bootstrap is bounded — there is no unapproved seating, from the first seat onward', async () => {
+describe('a signer is seated only by an approved invitation the invitee takes', () => {
+  it('there is no unapproved seating, from the first seat onward', async () => {
     /*
-     * **THIS TEST USED TO PROVE THE BOOTSTRAP WINDOW HAD AN EDGE. IT NOW PROVES
-     * THERE IS NO WINDOW.**
-     *
-     * What it was: `create(A, 2n)` gave one seat against a bar of two, so A
-     * could seat B alone — allowed, because an account that cannot reach its own
-     * threshold would deadlock at creation — and could then NOT seat C, because
-     * bootstrapping was over. The edge was the whole assertion.
-     *
-     * What is true now: the constructor takes no threshold and founds every
-     * account at one seat and ONE approval. `amendSigner`'s free branch is
-     * entered when `signerLeaves.size() < threshold`, and the four writers of
-     * those two quantities keep `size >= threshold` from birth, so that branch
-     * is dead code and every seat after the first needs an approved proposal —
-     * INCLUDING THE SECOND. The proof is written out in the constructor beside
-     * `threshold = 1` and in `docs/company-accounts.md` section 10a.
-     *
-     * **THE NAME IS KEPT AND IT IS STILL EXACT.** The gate mutation is scored
-     * against this test: swapped to `threshold < size`, the gate is FALSE at
-     * one seat and one approval, the free branch is entered, and the bare
-     * `addSigner` below SUCCEEDS. So this still discriminates the gate's
-     * spelling from every other line, which is the only thing that was ever in
-     * danger.
-     *
-     * The refusal READS the way several open proposals made it read:
-     * `addSigner` looks the named id up in `openProposals` rather than testing
-     * a `proposalOpen` flag, so "no approved proposal behind this" sounds like
-     * "there is no open proposal with that id". `ZERO_32` is in no account's
-     * map.
+     * The account is founded at one seat and one approval, and no seat is ever
+     * taken without an approved invitation behind it: naming no proposal is
+     * refused, at one seat and one seat later.
      */
     const sim = await AccountSimulator.create(A);
     expect(sim.ledger.signerLeaves.size()).toBe(1n);
     expect(sim.ledger.threshold).toBe(1n);
 
-    await expect(sim.as(A).addSigner(sim.leafOf(B), ZERO_32)).rejects.toThrow(
-      /no open proposal with that id/i,
+    await expect(sim.seatInvited(ZERO_32, sim.invited(B, govChange(40)))).rejects.toThrow(
+      /does not invite this wallet/i,
     );
     expect(sim.ledger.signerLeaves.size()).toBe(1n);
 
-    /*
-     * AND THE SAME REFUSAL ONE SEAT LATER, so this is not an artefact of the
-     * account being brand new. B is seated by a round; A still cannot seat C
-     * alone, which is the attack the original test named: one signer of two
-     * seating a third and then holding two of three keys.
-     */
     await sim.seatSigner(B, [A], 201);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
-    await expect(sim.as(A).addSigner(sim.leafOf(C), ZERO_32)).rejects.toThrow(
-      /no open proposal with that id/i,
+    await expect(sim.seatInvited(ZERO_32, sim.invited(C, govChange(40)))).rejects.toThrow(
+      /does not invite this wallet/i,
     );
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
 
-  it('an approved proposal naming that signer does add them', async () => {
+  it('an approved invitation is taken by the invitee, and only once', async () => {
     const sim = await liveAccount();
 
-    // A proposes the addition and both signers approve it. The proposal commits
-    // to signerAddPayload(leaf), which is what binds the approvals to this
-    // specific signer rather than to "some addition".
-    const leafC = sim.leafOf(C);
+    // A raises the invitation and B approves it. The proposal commits to the
+    // invitee's address and rights, which binds the approvals to this seat.
     const seat = govChange(41);
-    const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
+    const id = await proposeGov(sim, A, seat, invitePayloadFor(C));
     await sim.as(B).approve(id);
     expect(sim.approvalsFor(id)).toBe(2n);
 
-    await sim.as(carrying(sim, A, seat)).addSigner(leafC, id);
+    await sim.seatInvited(id, sim.invited(C, seat));
 
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
-    expect(sim.ledger.signers.findPathForLeaf(leafC)).toBeTruthy();
-    /*
-     * Consumed exactly as execute() consumes one, so a single approved addition
-     * cannot be replayed to seat a second signer.
-     *
-     * The round counter that used to record the consumption is gone; it only
-     * ever meant "something closed the account's one proposal", and with
-     * several open at once a global counter could not say which. A proposal is
-     * consumed by BOTH of its map entries going away, and the replay it
-     * existed to prevent is asserted directly on the line after.
-     */
+    expect(sim.ledger.signers.findPathForLeaf(sim.leafOf(C))).toBeTruthy();
+    // Consumed, so one approved invitation cannot seat a second leaf.
     expect(sim.isOpen(id)).toBe(false);
     expect(sim.approvalsFor(id)).toBe(-1n);
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(privateStateFor(98)), id))
-      .rejects.toThrow(/no open proposal with that id/i);
+    const another = { ...privateStateFor(98), invite: invitedAddressFor(C), proposalSalt: seat.salt };
+    await expect(sim.seatInvited(id, another)).rejects.toThrow(/no open proposal with that id/i);
   });
 
   it('one approval short is refused', async () => {
     const sim = await liveAccount();
-    const leafC = sim.leafOf(C);
     const seat = govChange(42);
 
-    const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
+    const id = await proposeGov(sim, A, seat, invitePayloadFor(C));
 
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(leafC, id))
+    await expect(sim.seatInvited(id, sim.invited(C, seat)))
       .rejects.toThrow(/not enough approvals/);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
 
-  it('a fully approved PAYROLL proposal does not authorise adding a signer', async () => {
-    // The subtle version of the same hole. Without the signerAddPayload domain
-    // separator, any proposal the signers approved would be a valid
-    // authorisation to add anyone — approve a salary run, get a new signer.
+  it('a fully approved PAYROLL proposal does not authorise seating anyone', async () => {
+    // Without the invitation's own domain, any proposal the signers approved
+    // would seat whoever named it — approve a salary run, get a new signer.
     const sim = await liveAccount();
     const spend = govChange(43);
 
@@ -183,23 +133,22 @@ describe('adding a signer needs the threshold once the account is live', () => {
     await sim.as(B).approve(id);
     expect(sim.approvalsFor(id)).toBe(2n);
 
-    await expect(sim.as(carrying(sim, A, spend)).addSigner(sim.leafOf(C), id)).rejects.toThrow(
-      /not for this signer/,
+    await expect(sim.seatInvited(id, sim.invited(C, spend))).rejects.toThrow(
+      /does not invite this wallet/,
     );
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
 
-  it('an approved addition of C cannot be swapped for a different signer', async () => {
+  it('an approved invitation of C cannot be taken by a different wallet', async () => {
     const sim = await liveAccount();
-    const leafC = sim.leafOf(C);
     const impostor = privateStateFor(99);
     const seat = govChange(44);
 
-    const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
+    const id = await proposeGov(sim, A, seat, invitePayloadFor(C));
     await sim.as(B).approve(id);
 
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(impostor), id))
-      .rejects.toThrow(/not for this signer/);
+    await expect(sim.seatInvited(id, sim.invited(impostor, seat)))
+      .rejects.toThrow(/does not invite this wallet/);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
 });
@@ -301,34 +250,10 @@ describe('the same signer approving the same proposal on two accounts', () => {
 
 describe('the same signer cannot be added twice', () => {
   /*
-   * Found 13 Aug while working out what an interrupted `addSigner` may safely
-   * retry, and it turned out not to be a job problem at all.
-   *
-   * The approved path already closes the proposal, so a replay there fails. The
-   * BOOTSTRAP path was three lines with nothing in front of them: insert the
-   * leaf, increment the count. A `MerkleTree` holds duplicates happily.
-   *
-   * Written against the failure rather than the fix: each test states what one
-   * button pressed twice would have done.
-   *
-   * ── AND THE BRANCH THAT HAD NOTHING IN FRONT OF IT IS GONE. ────────────────
-   *
-   * `'refuses a duplicate during bootstrap'` STOOD HERE and is deleted rather
-   * than rewritten, which is a loss of coverage and is stated rather than
-   * quietly taken. It seated B unilaterally and then tried to seat B again on
-   * the same path. Since the constructor stopped taking a threshold there is no
-   * such path: `signerLeaves.size() < threshold` is false from birth, so every
-   * seating goes through `requireApproved`, and a rewrite of that test would
-   * be `'refuses a duplicate on the approved path too'` below with different
-   * words — two tests asserting one thing, which is the duplicate-rule failure
-   * arriving in a test file.
-   *
-   * **WHAT IS NOT LOST: THE GUARD IS STILL HOISTED AND STILL LOAD-BEARING.**
-   * `closeProposal` stops one approved proposal being replayed; it does not
-   * stop TWO different approved proposals both naming B. That is what the
-   * hoisted `assert(!signerLeaves.member(...))` refuses and what the two tests
-   * below cover. The hoisting itself is now a decision about a branch that
-   * cannot be reached, and that is written where the guard is.
+   * Carrying out a proposal closes it, so one approved invitation cannot be
+   * replayed; it does not stop TWO different approved invitations seating the
+   * same leaf. The leaf-new guard in `seatInvited` refuses that, and the tests
+   * below state what one button pressed twice would have done.
    */
 
   it('THE ACCOUNT-KILLER: two people cannot fill a signer set', async () => {
@@ -378,22 +303,18 @@ describe('the same signer cannot be added twice', () => {
      * — that is operation (c)'s doing and it is stated rather than hidden.
      */
     /*
-     * ── AND THE SEATINGS ARE APPROVED ROUNDS NOW, NOT BOOTSTRAP CALLS.
-     *
-     * The account is founded at one seat and one approval and there is no
-     * unilateral path left, so B and C arrive through `propose` → `approve` →
-     * `amendSigner`. **The duplicate attempt is the interesting one and it is
-     * spelled out rather than folded into a helper**: a SECOND, independently
-     * approved round naming B reaches the hoisted guard with `closeProposal`
-     * having no say, which is exactly the case the hoisting exists for.
+     * B and C arrive through an invitation each. The duplicate attempt is
+     * spelled out rather than folded into a helper: a SECOND, independently
+     * approved invitation of B reaches the leaf-new guard with `closeProposal`
+     * having no say, which is exactly the case the guard exists for.
      */
     const sim = await AccountSimulator.create(A);
     await sim.seatSigner(B, [A], 210);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
 
     const dup = govChange(211);
-    const dupId = await proposeGov(sim, A, dup, pureCircuits.signerAddPayload(sim.leafOf(B)));
-    await expect(sim.as(carrying(sim, A, dup)).addSigner(sim.leafOf(B), dupId)).rejects.toThrow();
+    const dupId = await proposeGov(sim, A, dup, invitePayloadFor(B));
+    await expect(sim.seatInvited(dupId, sim.invited(B, dup))).rejects.toThrow();
 
     // The account is unharmed and still rescuable by adding a third PERSON.
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
@@ -410,17 +331,15 @@ describe('the same signer cannot be added twice', () => {
     expect(sim.vacatedSlots()).toEqual([]);
   });
 
-  it('refuses a duplicate on the approved path too', async () => {
-    // Belt and braces: the proposal-closing guard already covered this, but the
-    // check now sits before the branch so neither path can regress alone.
+  it('refuses a second invitation that would seat a leaf already seated', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
 
-    const leafB = sim.leafOf(B);
     const seat = govChange(61);
-    const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafB));
+    const id = await proposeGov(sim, A, seat, invitePayloadFor(B));
     await sim.as(B).approve(id);
 
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(leafB, id))
+    /* RED WHEN: seatInvited stops refusing a leaf that is already seated. */
+    await expect(sim.seatInvited(id, sim.invited(B, seat)))
       .rejects.toThrow(/already on this account/);
   });
 
@@ -428,12 +347,11 @@ describe('the same signer cannot be added twice', () => {
     // The fix must not break the thing it guards.
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
 
-    const leafC = sim.leafOf(C);
     const seat = govChange(62);
-    const id = await proposeGov(sim, A, seat, pureCircuits.signerAddPayload(leafC));
+    const id = await proposeGov(sim, A, seat, invitePayloadFor(C));
     await sim.as(B).approve(id);
 
-    await expect(sim.as(carrying(sim, A, seat)).addSigner(leafC, id)).resolves.not.toThrow();
+    await expect(sim.seatInvited(id, sim.invited(C, seat))).resolves.not.toThrow();
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
   });
 });
@@ -479,7 +397,7 @@ describe('what the contract does when a signer is removed off chain', () => {
   it('a removed signer can still approve, and their approval still counts', async () => {
     const sim = await removedSignerAccount();
     const id = await proposeGov(
-      sim, FA, govChange(71), pureCircuits.signerAddPayload(sim.leafOf(C)),
+      sim, FA, govChange(71), invitePayloadFor(C),
     );
     expect(sim.approvalsFor(id)).toBe(1n);
 
@@ -564,8 +482,7 @@ describe('what the contract does when a signer is removed off chain', () => {
      * so the two facts stay attached: the behaviour above is what the contract
      * does when a signer is dropped off chain only, and the circuit below is
      * the thing that makes dropping them mean something. The circuit is
-     * `amendSigner` with `removing` true — the removal lives there, merged
-     * with seating, not gone.
+     * `amendSigner`, which only removes.
      */
     const sim = await removedSignerAccount();
     expect(Object.keys(sim.contract.impureCircuits)).toContain('amendSigner');
@@ -650,11 +567,10 @@ describe('removing a signer by clearing one slot', () => {
   /** A live 2-of-3, which is the smallest account that can lose somebody. */
   const threeSigners = async () => {
     const sim = await AccountSimulator.liveAccount([FA, FB], 2n);
-    const leafC = sim.leafOf(FC);
     const seat = govChange(81);
-    const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafC));
+    const id = await proposeGov(sim, FA, seat, invitePayloadFor(FC));
     await sim.as(FB).approve(id);
-    await sim.as(carrying(sim, FA, seat)).addSigner(leafC, id);
+    await sim.seatInvited(id, sim.invited(FC, seat));
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
     return sim;
   };
@@ -729,11 +645,10 @@ describe('removing a signer by clearing one slot', () => {
      */
     const sim = await AccountSimulator.liveAccount([FA, FB], 2n);
     for (const [i, d] of [FC, FD].entries()) {
-      const leaf = sim.leafOf(d);
       const seat = govChange(86 + i);
-      const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leaf));
+      const id = await proposeGov(sim, FA, seat, invitePayloadFor(d));
       await sim.as(FB).approve(id);
-      await sim.as(carrying(sim, FA, seat)).addSigner(leaf, id);
+      await sim.seatInvited(id, sim.invited(d, seat));
     }
     expect(sim.ledger.signerLeaves.size()).toBe(4n);
     expect([sim.slotOf(FA), sim.slotOf(FB), sim.slotOf(FC), sim.slotOf(FD)])
@@ -774,12 +689,10 @@ describe('removing a signer by clearing one slot', () => {
       // and the sparse tree has no path to those.
       expect(sim.vacatedSlots()).toEqual([vacated]);
 
-      const leafD = sim.leafOf(FD);
       const seat = govChange(89);
-      const seatId = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafD));
+      const seatId = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
       await sim.as(FB).approve(seatId);
-      // The proposal id is the SECOND argument; reuse is the third.
-      await sim.as(carrying(sim, FA, seat)).addSigner(leafD, seatId, true);
+      await sim.seatInvited(seatId, sim.invited(FD, seat), true);
 
       // The new signer took the slot the old one left, rather than a fresh one.
       expect(sim.slotOf(FD)).toBe(vacated);
@@ -844,36 +757,21 @@ describe('removing a signer by clearing one slot', () => {
       .rejects.toThrow(/fewer signers than the threshold/);
   });
 
-  it('AND THEREFORE a removal can never reopen the bootstrap window', async () => {
+  it('AND THEREFORE a removal never leaves the account below its threshold or seating without approvals', async () => {
     /*
-     * The trap the previous design warned about under "do not decrement the
-     * seat count naively", stated as the damage rather than as the rule.
-     *
-     * `addSigner` lets one signer seat another unilaterally exactly while
-     * `signerLeaves.size() < threshold`. A removal that dropped the count below the
-     * threshold would hand that power back — one remaining signer could then
-     * seat as many of their own as they liked and approve anything alone. The
-     * refusal above is the precise complement of that condition, so the window
-     * cannot reopen; this asserts the consequence, in case the two conditions
-     * ever drift apart.
-     *
-     * **AND THE WINDOW HAS NEVER BEEN OPEN SINCE THE CONSTRUCTOR STOPPED
-     * TAKING A THRESHOLD, WHICH MAKES THIS TEST WEAKER AND WORTH KEEPING
-     * ANYWAY.** The constructor founds at one seat and one approval, so `size
-     * < threshold` is false from birth and no removal could reopen a window
-     * that never existed. What this still discriminates is the REMOVAL FLOOR's
-     * spelling: invert it and the removal below succeeds, and the count
-     * assertion after it fails. That is the mutation scored against `'refuses
-     * to strand the account below its own threshold'`, and this test states
-     * the property in words for either half — which is why it is not the
-     * expectation for either row.
+     * A removal that dropped the seats below the threshold would leave an
+     * account that can never approve again. The refusal above is that floor;
+     * this asserts the consequence at three of three, and that nobody can be
+     * seated without an approved invitation either side of the attempt. Invert
+     * the removal floor and the removal below succeeds and the count after it
+     * fails.
      */
     const sim = await AccountSimulator.liveAccount([FA, FB, FC], 3n);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
 
-    // No unapproved seating, at any seat count: A cannot seat D alone.
-    await expect(sim.as(FA).addSigner(sim.leafOf(FD), ZERO_32))
-      .rejects.toThrow(/no open proposal with that id/i);
+    // No unapproved seating, at any seat count: D cannot take a seat nobody approved.
+    await expect(sim.seatInvited(ZERO_32, sim.invited(FD, govChange(92))))
+      .rejects.toThrow(/does not invite this wallet/i);
 
     // A and B approve removing C. At 3 of 3 they cannot reach the threshold, so
     // this is refused for want of approvals — and even with C's own approval it
@@ -886,30 +784,8 @@ describe('removing a signer by clearing one slot', () => {
       .rejects.toThrow(/fewer signers than the threshold/);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
 
-    // And A still cannot seat anybody alone.
-    await expect(sim.as(FA).addSigner(sim.leafOf(FD), ZERO_32)).rejects.toThrow();
-  });
-
-  it('refuses a leaf of all zeros, which would fake an empty slot', async () => {
-    /*
-     * Zeros are the empty-slot marker. A signer seated with that leaf would
-     * make their own position look free, and the next addition would take it —
-     * silently removing them. It cannot arise honestly, since a commitment is
-     * not going to be zero, so this is against a caller who supplies it on
-     * purpose.
-     */
-    const sim = await threeSigners();
-    for (const [i, bad] of [new Uint8Array(32), sim.vacant].entries()) {
-      const seat = govChange(94 + i);
-      const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(bad));
-      await sim.as(FB).approve(id);
-      await expect(sim.as(carrying(sim, FA, seat)).addSigner(bad, id))
-        .rejects.toThrow(/not a usable signer leaf/);
-      // Withdrawn for tidiness rather than necessity. Cancelling used to be what
-      // freed the account for the next attempt, because it could hold one
-      // proposal; an abandoned proposal blocks nothing.
-      await sim.as(FA).cancel(id);
-    }
+    // And still nobody is seated without an approved invitation.
+    await expect(sim.seatInvited(ZERO_32, sim.invited(FD, govChange(92)))).rejects.toThrow();
   });
 
   it('refuses to reuse a slot when nothing has been vacated', async () => {
@@ -920,11 +796,10 @@ describe('removing a signer by clearing one slot', () => {
      * silently corrected.
      */
     const sim = await threeSigners();
-    const leafD = sim.leafOf(FD);
     const seat = govChange(96);
-    const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafD));
+    const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
     await sim.as(FB).approve(id);
-    await expect(sim.as(carrying(sim, FA, seat)).addSigner(leafD, id, true)).rejects.toThrow();
+    await expect(sim.seatInvited(id, sim.invited(FD, seat), true)).rejects.toThrow();
   });
 
   it('THE ONE THAT WOULD REMOVE THE WRONG PERSON: a path must be for the leaf it claims',
@@ -971,9 +846,9 @@ describe('removing a signer by clearing one slot', () => {
   it('THE ONE THAT WOULD SEAT SOMEBODY ON TOP OF A LIVE SIGNER: a reused slot must be vacant',
     async () => {
       /*
-       * The same shape on the other side. `addSigner`'s reuse path takes the
+       * The same shape on the other side. `seatInvited`'s reuse path takes the
        * slot the supplied path leads to. If nothing checked that the slot holds
-       * the vacancy marker, a caller could hand over a LIVE signer's path and
+       * the vacancy marker, an invitee could hand over a LIVE signer's path and
        * overwrite them — a removal with no proposal, no approvals and no record.
        *
        * Note it is the leaf check that catches this and not `checkRoot`: the
@@ -981,13 +856,12 @@ describe('removing a signer by clearing one slot', () => {
        * check is a separate line.
        */
       const sim = await threeSigners();
-      const leafD = sim.leafOf(FD);
       const seat = govChange(97);
-      const id = await proposeGov(sim, FA, seat, pureCircuits.signerAddPayload(leafD));
+      const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
       await sim.as(FB).approve(id);
 
-      const liar = sim.dishonest(carrying(sim, FB, seat), sim.pathFor(FB));
-      await expect(sim.as(liar).addSigner(leafD, id, true))
+      const liar = sim.dishonest(sim.invited(FD, seat), sim.pathFor(FB));
+      await expect(sim.seatInvited(id, liar, true))
         .rejects.toThrow(/has not been vacated/);
 
       // B is still seated, in the same slot, with the same leaf.
@@ -1040,11 +914,10 @@ describe('changing the threshold, against the compiled circuits', () => {
   /** A live 2-of-3. */
   const threeSigners = async () => {
     const sim = await AccountSimulator.liveAccount([TA, TB], 2n);
-    const leafC = sim.leafOf(TC);
     const seat = govChange(101);
-    const id = await proposeGov(sim, TA, seat, pureCircuits.signerAddPayload(leafC));
+    const id = await proposeGov(sim, TA, seat, invitePayloadFor(TC));
     await sim.as(TB).approve(id);
-    await sim.as(carrying(sim, TA, seat)).addSigner(leafC, id);
+    await sim.seatInvited(id, sim.invited(TC, seat));
     expect(sim.ledger.threshold).toBe(2n);
     return sim;
   };
@@ -1096,24 +969,9 @@ describe('changing the threshold, against the compiled circuits', () => {
 
   it('THE HOLE THIS FEATURE OPENS: the threshold may not exceed the signers', async () => {
     /*
-     * The one that is not obvious, and the reason this circuit needed designing
-     * rather than writing.
-     *
-     * `addSigner` treats `signerLeaves.size() < threshold` as "this account is still
-     * being set up" and lets ONE signer seat another unilaterally. So raising
-     * the threshold above the number of seated signers hands that power back —
-     * the seating hole reopened months after it was closed, through a feature
-     * that looks like it only ever makes the account stricter.
-     *
-     * **AND THIS ASSERT IS NOW THE ONLY WAY THE HOLE COULD BE OPENED AT ALL,
-     * WHICH MAKES IT MORE LOAD-BEARING RATHER THAN LESS.** The constructor
-     * founds every account at one seat and one approval, and the only other
-     * writers of the two quantities `addSigner`'s gate compares are that
-     * gate's own branches, each of which asserts the floor. So
-     * `signerLeaves.size() < threshold` is unreachable — UNLESS this line
-     * goes, at which point one approved round to a big number reopens the free
-     * branch on any account. It stopped being one guard of two and became the
-     * guard.
+     * A threshold above the seats would leave an account that can never
+     * approve anything again, so an approved change to more than the seats is
+     * refused and the threshold stays where it was.
      */
     const sim = await threeSigners();
     const { id, c } = await changeApproved(sim, 4n, [TA, TB]);
@@ -1122,17 +980,15 @@ describe('changing the threshold, against the compiled circuits', () => {
     expect(sim.ledger.threshold).toBe(2n);
 
     /*
-     * And the window really is still shut. Two ways at it, because several
-     * open proposals give the attacker a second one: the threshold proposal is
-     * still open and fully approved, so A can NAME it — and the domain
-     * separator refuses it. Then it is cancelled and A has nothing to name at
-     * all.
+     * And the approved threshold proposal, still open, seats nobody: its
+     * payload is not an invitation. Then it is cancelled and there is nothing
+     * to name at all.
      */
-    await expect(sim.as(carrying(sim, TA, c)).addSigner(sim.leafOf(TD), id))
-      .rejects.toThrow(/not for this signer/);
+    await expect(sim.seatInvited(id, sim.invited(TD, c)))
+      .rejects.toThrow(/does not invite this wallet/);
     await sim.as(TA).cancel(id);
-    await expect(sim.as(TA).addSigner(sim.leafOf(TD), ZERO_32))
-      .rejects.toThrow(/no open proposal with that id/i);
+    await expect(sim.seatInvited(ZERO_32, sim.invited(TD, c)))
+      .rejects.toThrow(/does not invite this wallet/i);
   });
 
   it('refuses a threshold of zero, which would be an account with no rule', async () => {

@@ -29,11 +29,13 @@ import { keyOf, rotationSeedsOf, type KeysHeld } from '../../../src/core/company
 import { fromHex, parseCanonical, toHex, unseal } from '../../../src/core/crypto.js';
 import { payrollRoundOf } from '../../../src/core/retry-cover.js';
 import type { PayrollRound } from '../../../src/core/account.js';
-import type { Account, Employee, PayrollRun, RosterEmployee, RunLeg, SealedProposal, SealedRun, StateBlinding } from '../../../src/core/types.js';
+import type { Account, Employee, PayrollRun, RosterEmployee, RunLeg, RunList, SealedProposal, SealedRun, StateBlinding } from '../../../src/core/types.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import {
-  assetOfLeg, factsOfThePaid, legEmployees, legsOfRun, openSealedRun, payRecordsOf, runIdForLeg,
+  assetOfLeg, factsOfThePaid, legEmployees, legsOfRun, listOfRun, openSealedRun, payRecordsOf, runIdForLeg,
 } from '../../../src/core/run-legs.js';
+import { vendorAmountOnTheRun, type VendorRecord } from '../../../src/core/vendor-record.js';
+import type { VendorsHere } from './vendors-on-device.js';
 import {
   CREATED_BEFORE_SIGNED_STATE, FOUNDING_KEY_EPOCH, foundingStateRefusal, openStateRecord, stateRecordId,
 } from '../../../src/core/founding-state.js';
@@ -47,6 +49,8 @@ import { runFilingRefusal } from '../../../src/core/run-filing.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { proposalEntry, runEntry } from '../../../src/midnight/record-manifest.js';
 import { proposalFilingRefusal } from '../../../src/core/proposal-filing.js';
+import { earliestStopOf, outsideTheirDates, periodsPastDraft } from '../../../src/core/payable-days.js';
+import { amountOnTheRun, runsWithALiveRound } from '../../../src/core/run-drawing.js';
 import { payRecordNonceOf } from '../../../src/midnight/run-keys.js';
 import { oneOffsHere, type OneOffsHere } from './one-off-here.js';
 import type { RaisingHere } from './what-this-device-made.js';
@@ -66,6 +70,11 @@ export interface CompanyRecordsHere {
   readonly directory: DirectoryRead;
   /** The company's people, opened and judged on this device (`readPeopleHere`). */
   readonly people: () => Promise<PeopleHere>;
+  /**
+   * The company's vendors, opened and judged on this device (`readVendorsHere`), for a run that pays them. A page
+   * without it checks no vendor run.
+   */
+  readonly vendors?: () => Promise<VendorsHere>;
   /** The company's state record at one key epoch, as filed, or null when none is. */
   readonly state: (id: string) => Promise<SealedCompanyRecord | null>;
   /** The company's runs, sealed as they are stored. */
@@ -299,7 +308,7 @@ const openedHere = (sealed: SealedRun, viewingKey: KeysHeld, what: string): Payr
  * A run nobody signed, a seat signed and the service then changed, or one the
  * service serves from before a newer version was filed, is not read.
  */
-async function refuseARunNoSeatFiled(records: CompanyRecordsHere, accountId: string, sealed: SealedRun): Promise<void> {
+async function refuseARunNoSeatFiled(records: Pick<CompanyRecordsHere, 'directory'>, accountId: string, sealed: SealedRun): Promise<void> {
   const read = { store: 'run' as const, kind: 'run', id: sealed.id, digest: runEntry(accountId, sealed, 1).digest };
   const why = runFilingRefusal(accountId, sealed)
     ?? judgeIn(await records.directory({ records: [read] }))(sealed.filedBy!.publicKey.toLowerCase() as Hex, 'run', companyRecordKey('run', sealed.id), read, true, sealed.keyEpoch);
@@ -371,32 +380,154 @@ export async function believedRunsHere(records: CompanyRecordsHere, accountId: s
   return believed;
 }
 
+/** Somebody a run pays, as this device read them: an employee's record or a vendor's entry. */
+export type ListPayee = RosterEmployee | VendorRecord;
+
+/** Whether `p` is a vendor's entry: only a vendor entry carries payment terms, and a person record never does (`openPerson`). */
+const isVendor = (p: ListPayee): p is VendorRecord => 'terms' in p;
+
 /**
- * **WHAT EACH OF `paid` IS PAID, FROM THE PEOPLE THIS DEVICE BELIEVES AND WOULD
- * PAY**: each person's address and form from their own believed record. A
- * person this device does not believe, or would not pay at the address it
- * holds, is refused by name with `whatToDo`; a run paying anybody not on the
- * roster, or not active, is refused with `whyNot`.
+ * **ONE OF THE COMPANY'S LISTS, AS THIS DEVICE BELIEVES IT**: the people it would pay, those whose record it does not
+ * believe, and those it believes and would not pay, with why. The employees' list is `PeopleHere` as read.
  */
-export async function payableFactsHere(
-  records: CompanyRecordsHere, paid: readonly Employee[], whatToDo: string, whyNot: string,
-): Promise<PaymentFacts[]> {
-  return payableFactsOf(await records.people(), paid, whatToDo, whyNot, records.registry);
+export interface PayeesHere {
+  readonly list?: RunList;
+  readonly people: readonly { readonly person: ListPayee; readonly handedOver?: boolean }[];
+  readonly notBelieved: readonly string[];
+  readonly notPayable: readonly { readonly here: { readonly person: ListPayee; readonly handedOver?: boolean }; readonly why: string }[];
 }
 
-/** `payableFactsHere`, over the people this device has already read. */
+/**
+ * **THE LIST `list` AS THIS DEVICE READS IT**: the employees from `records.people`, the vendors from `records.vendors`.
+ * Refused when the page cannot read the company's vendors, so a vendor run is never checked against the employees.
+ */
+export async function payeesHere(records: Pick<CompanyRecordsHere, 'people' | 'vendors'>, list: RunList): Promise<PayeesHere> {
+  if (list === 'employees') return { list, ...(await records.people()) };
+  if (records.vendors === undefined) {
+    throw new RunNotReadHere('This page cannot read the company\'s vendors, so it cannot check a run that pays them. Reload the page to '
+      + 'get the current version.');
+  }
+  const read = await records.vendors();
+  return {
+    list,
+    people: read.vendors.map((v) => ({ person: v.vendor, handedOver: false })),
+    notBelieved: read.notBelieved,
+    notPayable: read.notPayable.map((n) => ({ here: { person: n.here.vendor, handedOver: false }, why: n.why })),
+  };
+}
+
+/**
+ * **WHAT EACH OF `paid` IS PAID ON `run`, FROM THE LIST IT PAYS, AS THIS DEVICE
+ * BELIEVES AND WOULD PAY IT**: each payee's address and form from their own
+ * believed record, read from the run's own list (`listOfRun`). A payee this
+ * device does not believe, would not pay at the address it holds, whose dates
+ * leave out every day of the run's period (`outsideTheirDates`), or whom the run
+ * pays another amount than their record holds for the period - an employee's
+ * salary line (`amountOnTheRun`), a vendor's monthly terms, in the terms' token -
+ * is refused by name with `whatToDo`, and so are a leaver with no leaving or end
+ * date and two vendor entries paid at one address; a leaver within their dates is
+ * paid as anybody active is; a run paying anybody not on its list, or pending,
+ * is refused with `whyNot`.
+ */
+export async function payableFactsHere(
+  records: CompanyRecordsHere, run: Pick<PayrollRun, 'period' | 'list'>, paid: readonly Employee[], whatToDo: string, whyNot: string,
+): Promise<PaymentFacts[]> {
+  return payableFactsOf(await payeesHere(records, listOfRun(run)), paid, whatToDo, whyNot, records.registry, run.period);
+}
+
+/**
+ * **THE MONTHS THAT HAVE A RUN PAST DRAFT ON `list`**, raised or paid, read from the company's runs as this device
+ * believes them, and counting a run whose round is live on the chain while its record still says draft, as the draw
+ * does (`runsWithALiveRound`): a run the company's records name that the service withholds refuses the read, and a run
+ * no seat this device believes filed names no month. Each run is opened here to read the list it pays; one this device
+ * cannot open is counted on both lists, so a change is refused rather than let through. A change that would alter what
+ * one of these months pays is refused (`personChanged` for the employees, `changeVendorHere` for the vendors).
+ */
+export async function periodsPastDraftHere(
+  records: Pick<CompanyRecordsHere, 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'> & { readonly proposals: () => Promise<readonly SealedProposal[]> },
+  accountId: string, viewingKey: KeysHeld, now: Date = new Date(), list: RunList = 'employees',
+): Promise<string[]> {
+  const believed: SealedRun[] = [];
+  for (const sealed of await runsListedHere(records)) {
+    if (sealed.accountId !== accountId) continue;
+    try {
+      await refuseARunNoSeatFiled(records, accountId, sealed);
+    } catch (e) {
+      if (!(e instanceof RunNotReadHere)) throw e;
+      continue;
+    }
+    let paysIt = true;
+    try { paysIt = listOfRun(openSealedRun(sealed, keyOf(viewingKey, sealed.keyEpoch))) === list; } catch { /* unread: counted */ }
+    if (paysIt) believed.push(sealed);
+  }
+  const rounds = payrollRoundsHere(await proposalsListedHere(records), accountId, viewingKey, {
+    identity: records.roundIdentity, nowInSeconds: BigInt(Math.floor(now.getTime() / 1000)),
+  });
+  return periodsPastDraft([...believed, ...runsWithALiveRound(believed, rounds).map((r) => ({ ...r, status: 'proposed' as const }))]);
+}
+
+/**
+ * Why two of `vendors` are one payee, or null: two vendor entries paid at one address are one vendor entered twice,
+ * and a run over both would pay that address twice. Names both.
+ */
+export const twoEntriesAtOneAddress = (vendors: readonly Pick<VendorRecord, 'id' | 'name' | 'address'>[]): string | null => {
+  const seen = new Map<string, Pick<VendorRecord, 'name'>>();
+  for (const v of vendors) {
+    if (v.address === null) continue;
+    const at = v.address.bech32.toLowerCase();
+    const first = seen.get(at);
+    if (first !== undefined) return `${first.name} and ${v.name} are two vendor entries paid at one address, so a run over both pays it twice`;
+    seen.set(at, v);
+  }
+  return null;
+};
+
+/** `payableFactsHere`, over the list this device has already read. */
 export function payableFactsOf(
-  people: PeopleHere, paid: readonly Employee[], whatToDo: string, whyNot: string, registry?: AssetRegistry,
+  people: PayeesHere, paid: readonly Employee[], whatToDo: string, whyNot: string, registry: AssetRegistry | undefined, period: string,
 ): PaymentFacts[] {
-  const payable = new Map<string, RosterEmployee>(people.people.map((p) => [p.person.id, p.person]));
+  const payable = new Map<string, ListPayee>(people.people.map((p) => [p.person.id, p.person]));
   const refusedHere = new Set([...people.notBelieved, ...people.notPayable.map((n) => n.here.person.id)]);
   const notHere = paid.find((e) => refusedHere.has(e.id));
   if (notHere !== undefined) {
     throw new RunNotReadHere(`${notHere.name} is on this run, and this device does not believe their record or would not `
       + `pay them at the address it holds. ${whatToDo}`);
   }
+  for (const e of paid) {
+    const person = payable.get(e.id);
+    if (person !== undefined && person.status === 'leaver' && earliestStopOf(person) === null) {
+      throw new RunNotReadHere(`${e.name} is on this run for ${period}, and was made a leaver with no leaving date or end date, so the days they worked are not known. ${whatToDo}`);
+    }
+    const outside = person === undefined ? null : outsideTheirDates(person, period);
+    if (outside !== null) throw new RunNotReadHere(`${e.name} is on this run for ${period}, and is not payable for any day of it: ${outside}. ${whatToDo}`);
+    if (person === undefined) continue;
+    if (isVendor(person)) {
+      let amount: bigint;
+      try { amount = vendorAmountOnTheRun(person, period); } catch (err) {
+        throw new RunNotReadHere(`${e.name} is on this run for ${period}, and ${(err as Error).message}. ${whatToDo}`, { cause: err });
+      }
+      const terms = person.terms as Extract<VendorRecord['terms'], { kind: 'monthly' }>;
+      if (e.asset.toLowerCase() !== terms.asset.toLowerCase()) {
+        throw new RunNotReadHere(`${e.name} is on this run for ${period} in another token than their terms name. ${whatToDo}`);
+      }
+      if (e.amount !== amount) {
+        throw new RunNotReadHere(`${e.name} is on this run for ${period} at ${e.amount}, and their terms are ${amount} a month. ${whatToDo}`);
+      }
+      continue;
+    }
+    let line: bigint;
+    try { line = amountOnTheRun(person, period); } catch (err) {
+      throw new RunNotReadHere(`${e.name} is on this run for ${period}, and ${(err as Error).message}. ${whatToDo}`, { cause: err });
+    }
+    if (e.amount !== line) {
+      throw new RunNotReadHere(`${e.name} is on this run for ${period} at ${e.amount}, and the salary their record holds for it is ${line}. ${whatToDo}`);
+    }
+  }
+  const twice = twoEntriesAtOneAddress(paid.map((e) => payable.get(e.id)).filter((p): p is VendorRecord => p !== undefined && isVendor(p)));
+  if (twice !== null) throw new RunNotReadHere(`${twice}. Mark one of them a leaver, and draw the run again. ${whatToDo}`);
   try {
-    return factsOfThePaid(paid, (id) => payable.get(id), registry);
+    /* A leaver within their dates is paid for the days before they left, as anybody active is: the dates were checked above. */
+    return factsOfThePaid(paid, (id) => { const p = payable.get(id); return p?.status === 'leaver' ? { ...p, status: 'active' as const } : p; }, registry);
   } catch (e) {
     throw new RunNotReadHere(`${(e as Error).message.replace(/\.?\s*$/u, '.')} ${whyNot}`, { cause: e });
   }

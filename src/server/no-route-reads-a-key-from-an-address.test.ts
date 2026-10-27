@@ -48,6 +48,9 @@ describe('no route reads a viewing key from an address', () => {
       'index.ts: reported req.originalUrl',
       'index.ts: reported req.originalUrl',
       'index.ts: reported req.originalUrl',
+      /* `GET /api/payslips?company=co_…&period=YYYY-MM`: a public label and a month. */
+      'index.ts: company',
+      'index.ts: period',
       /* `GET /api/payslips/addresses?company=co_…`: a public label. */
       'index.ts: company',
       'invitations-route.ts: reported req.originalUrl',

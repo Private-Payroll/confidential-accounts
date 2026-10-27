@@ -22,9 +22,9 @@ import { batchDigestOf, newProposalId, sealPayrollProposal } from '../core/propo
 import type { SealedProposal } from '../core/types.js';
 import type { RoundOnChain } from 'vaults-web-shared/governed-call-builder.js';
 import { theNetwork } from '../midnight/network.js';
-import { signCompanyFiling } from '../midnight/sealed-record-wire.js';
+import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { payeeFor } from '../testing/payees.js';
-import { acceptAsPayeeHere, invitePayeeHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { drawRunHere, RunNotDrawnHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { runRoutes } from './run-routes.js';
@@ -47,7 +47,7 @@ aCompanyOfTwoSeats((app, deps) => {
 const NETWORK = theNetwork();
 const MONTH = '2026-11';
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
-const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n + BigInt(n), startDate: '2026-10-01' });
+const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
   entered: s.entered,
@@ -56,7 +56,7 @@ const peopleOn = (s: Seat): PeopleDevice => ({
 const aPayee = async (n: number, admit = true) => {
   const slip = newWrappingKeypair();
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: addressOf(n), payslipKey: slip.publicKey });
-  const made = await invitePayeeHere(ACME, ADA, pay(n), ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'employee', pay(n), ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   if (admit) {
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
@@ -103,11 +103,14 @@ describe('A RUN IS DRAWN ON A SIGNER\'S DEVICE', () => {
     const opened = openSealedRun(kept, KEY);
     expect(opened.period).toBe(MONTH);
     expect(opened.employees.map((e) => [e.id, e.amount]).sort()).toEqual([[one.id, 500051n], [two.id, 500052n]].sort());
+    /* RED WHEN: what the service keeps of the run names a person, the payslip key a slip is sealed to, or the company label a slip names, in the clear. */
+    for (const value of [one.id, two.id, one.slip.publicKey, two.slip.publicKey, LABEL]) expect(canonical(kept).toLowerCase()).not.toContain(value.toLowerCase());
+    expect(kept.payslips.map((p) => Object.keys(p).sort())).toEqual([['receipt', 'slip', 'wrapped'], ['receipt', 'slip', 'wrapped']]);
     /* RED WHEN: a payslip is sealed to any key but the one the payee's own wallet signed, or names another address. */
-    const slip = kept.payslips.find((p) => p.employeeId === one.id)!;
-    const body = parseCanonical<{ paidTo: string; period: string }>(unseal(slip.slip, unwrapKey(slip.wrapped, one.slip.secret)));
-    expect([body.paidTo, body.period]).toEqual([one.address, MONTH]);
-    expect(slip.sealedTo).toBe(one.slip.publicKey.toLowerCase());
+    const at = opened.employees.find((e) => e.id === one.id)!.slip!;
+    const slip = kept.payslips[at]!;
+    const body = parseCanonical<{ paidTo: string; period: string; employeeId: string }>(unseal(slip.slip, unwrapKey(slip.wrapped, one.slip.secret)));
+    expect([body.paidTo, body.period, body.employeeId]).toEqual([one.address, MONTH, one.id]);
     /* RED WHEN: what the service keeps carries anybody's address or salary in the clear. */
     expect(canonical(kept)).not.toContain(one.address);
     expect(canonical(kept)).not.toContain('500051');
@@ -170,7 +173,12 @@ describe('A RUN IS DRAWN ON A SIGNER\'S DEVICE', () => {
     const run = await drawRunHere(drawingOn(ADA), {
       period: '2027-01', employeeIds: [...active, four.id, waiting.id], skipPending: { employeeIds: [waiting.id], reason: 'not admitted yet' },
     });
-    expect(run.skips?.people).toEqual([{ employeeId: waiting.id, name: 'Payee 54', waiting: 'us' }]);
+    /* The only other person left out is Payee 53, a leaver this file made with no leaving date, set aside as outside their dates.
+     * RED WHEN: the run leaves out anybody besides the person named and the leaver, or either is set aside under another reason. */
+    expect([...run.skips!.people].sort((x, y) => x.name.localeCompare(y.name))).toEqual([
+      { employeeId: expect.stringMatching(/^emp_/u), name: 'Payee 53', waiting: 'outside their dates' },
+      { employeeId: waiting.id, name: 'Payee 54', waiting: 'us' },
+    ]);
     /* They are admitted, so the runs after this one leave nobody out. */
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === waiting.id)!;
     await admitHere(peopleOn(ADA), here, waiting.fingerprint);
@@ -223,7 +231,7 @@ describe('A RUN IS NOT DRAWN OVER ONE THAT MAY BE ON THE CHAIN, AND A REPEAT OR 
     await expect(drawRunHere(drawingOn(ADA), { period: '2027-04' })).rejects.toThrow(/The chain has been seen to hold that round/u);
     /* RED WHEN: a repeat that leaves out a draft whose round is live is taken as confirmed. */
     await expect(drawRunHere(drawingOn(ADA), { period: '2027-04', repeats: { runIds: [], reason: 'back pay' } }))
-      .rejects.toThrow(new RegExp(`this confirmation leaves out ${draft.id}`, 'u'));
+      .rejects.toThrow(/this confirmation leaves out the draft run for 2027-04 \(\d+ (person|people)\)/u);
     expect(runsKept()).toBe(before);
     /* Withdrawn on the chain, the proposal leaves the draft as only a draft, and the month is drawn again. */
     onChain.set(round.chainId.toLowerCase(), { held: 'closed', approvals: 0, raisedAt: 1_791_417_601_000, closedBy: ['cancel'] });
@@ -268,6 +276,40 @@ describe('A RUN IS NOT DRAWN OVER ONE THAT MAY BE ON THE CHAIN, AND A REPEAT OR 
   });
 });
 
+describe('A PERSON FILED WITH THEIR PAYSLIP KEY BESIDE THE SEAL IS REFUSED ALONE, NEVER THE WHOLE PAYROLL', () => {
+  it('EVERYBODY ELSE IS READ AND A RUN IS DRAWN OVER THEM, AND THAT PERSON IS NAMED AS NOT BELIEVED, WITH WHY', async () => {
+    const one = await aPayee(81);
+    const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === one.id)!;
+    /* A version filed the way it was before the key moved inside the seal, signed by Ada's seat. */
+    const old = signCompanyFiling({
+      ...sealPerson({ ...here.person, id: `emp_${'ab'.repeat(10)}` }, 1, 0, KEY), facts: { status: 'active', wrappingPublicKey: one.slip.publicKey },
+    } as never, ADA.signingSecret);
+    const servedWithOld = (s: Seat): PeopleDevice => ({
+      ...peopleOn(s),
+      send: async (path, init) => {
+        const r = await sendAs(s.person)(path, init);
+        if (init?.method !== 'GET' || !path.endsWith('/people')) return r;
+        const body = r.body as { people: unknown[] };
+        return { ...r, body: { ...body, people: [...body.people, { filed: toCompanyWire(old), handedOver: false }] } };
+      },
+    });
+    const read = await readPeopleHere(servedWithOld(ADA));
+    /* RED WHEN: one person filed the old way stops the reading of everybody, so nobody is paid. */
+    expect(read.people.map((p) => p.person.id)).toContain(one.id);
+    /* RED WHEN: that person is believed, or left out unseen, or named without why. */
+    expect(read.people.map((p) => p.person.id)).not.toContain(old.id);
+    expect(read.notBelieved).toContain(old.id);
+    expect(read.refused).toEqual([{ id: old.id, why: expect.stringMatching(/where the person stands and nothing else beside its seal/u) }]);
+    const doors = drawingOn(ADA);
+    const withTheOld = { ...doors, records: { ...doors.records, people: () => readPeopleHere(servedWithOld(ADA)) } };
+    /* A person not read is never left off a run unseen: the draw names them until it is drawn over the others by choice. */
+    await expect(drawRunHere(withTheOld, { period: '2028-02' })).rejects.toThrow(RunNotDrawnHere);
+    const run = await drawRunHere(withTheOld, { period: '2028-02', employeeIds: read.people.filter((p) => p.person.status === 'active').map((p) => p.person.id) });
+    expect(run.employees.map((e) => e.id)).toContain(one.id);
+    expect(run.employees.map((e) => e.id)).not.toContain(old.id);
+  });
+});
+
 describe('THE SERVICE KEEPS A RUN ONLY AS THE SIGNED-IN PERSON\'S OWN SEAT SIGNED IT, WHOLE', () => {
   const aDrawnRun = async () => {
     /* Drawn and sealed here, kept nowhere: so nothing of it is entered either. */
@@ -286,6 +328,12 @@ describe('THE SERVICE KEEPS A RUN ONLY AS THE SIGNED-IN PERSON\'S OWN SEAT SIGNE
       ['unsigned', 'ada', { run: sealed }, 422, 'not-a-run'],
       /* RED WHEN: a payslip changed after the run was signed is kept. */
       ['a payslip changed after signing', 'ada', { run: { ...signRunFiling(CO, sealed, ADA.signingSecret as Hex), payslips: [] } }, 422, 'not-a-run'],
+      /* RED WHEN: a signed run whose payslips name a person, the key they are sealed to or a label beside the seal is kept, as a page from before the change files them. */
+      ['payslips naming a person, a key and a label', 'ada', { run: signRunFiling(CO, { ...sealed, payslips: sealed.payslips.map((p) => ({ ...p, employeeId: 'emp_aaaaaaaaaaaaaaaaaaaa', sealedTo: 'ab'.repeat(32), issuedBy: LABEL })) } as never, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
+      ['a payslip with any field beside its ciphertext', 'ada', { run: signRunFiling(CO, { ...sealed, payslips: sealed.payslips.map((p) => ({ ...p, note: 'x' })) } as never, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
+      ['a receipt with any field beside its ciphertext', 'ada', { run: signRunFiling(CO, { ...sealed, payslips: sealed.payslips.map((p) => ({ ...p, receipt: { ...p.receipt!, sealedTo: 'ab'.repeat(32) } })) } as never, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
+      /* RED WHEN: a signed run carrying its people, or any field a run is not filed with, beside the seal is kept. */
+      ['the people beside the seal', 'ada', { run: signRunFiling(CO, { ...sealed, employees: [{ id: 'emp_aaaaaaaaaaaaaaaaaaaa', amount: '500051' }] } as never, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
       /* RED WHEN: a run signed for one company is kept as another's. */
       ['signed for another company', 'ada', { run: signRunFiling(OTHER, { ...sealed, accountId: OTHER }, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
       /* RED WHEN: a run that names another company is kept here because it was signed for this one. */

@@ -185,6 +185,11 @@ export function companyJudges(d: CompanyJudgeDoors) {
     holders: () => d.holders(company, account),
     anchored: anchoredHere(companyId, company, account),
     leaves: leavesFor(account),
+    invitedSeats: async (proposals) => {
+      const indexer = await d.indexer(company, account);
+      /* No indexer named by the person's own wallet: no seat taken by an invitation by address is believed on this read. */
+      return indexer === null ? {} : (await d.builder()).invitedSeats({ account, indexer, proposals });
+    },
   });
 
   /**

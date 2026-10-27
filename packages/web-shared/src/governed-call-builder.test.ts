@@ -6,7 +6,7 @@ import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { createHash } from 'node:crypto';
 import {
-  argumentsFor, buildGovernedCall, CallNotBuilt, identityOfAChange, NotReadByAnApproval, recordForOneCall, RecordChangedByTheCall,
+  argumentsFor, buildGovernedCall, CallNotBuilt, WalletKeyNotForAPage, identityOfAChange, NotReadByAnApproval, recordForOneCall, RecordChangedByTheCall,
   refuseARaiseThatIsNotTheRecordedOne,
   type GovernedCallDeps, type GovernedCallOrder, type OpenedRound, type RoundChangeOnTheWire,
 } from './governed-call-builder.js';
@@ -36,7 +36,7 @@ const accountPure = {
   runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint) => sha(root, payees, opensAt, closesAt),
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
   retrySaltOf: (leg: Uint8Array, fresh: Uint8Array) => sha(Buffer.from('retry-salt'), leg, fresh),
-  signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
+  signerInvitePayload: (address: Uint8Array, scope: Uint8Array) => sha(Buffer.from('invite'), address, scope),
   removeSignerPayload: (leaf: Uint8Array) => sha(Buffer.from('remove'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
   setVaultThresholdPayload: (vault: Uint8Array, t: bigint) => sha(Buffer.from('vault-threshold'), vault, t),
@@ -64,7 +64,7 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
  * every other decision the builder makes can be watched on its own.
  */
 const payloadOf = (g: RoundChangeOnTheWire) => (g.kind === 'add-signer'
-  ? accountPure.signerAddPayload(bytes(g.leaf))
+  ? accountPure.signerInvitePayload(bytes(g.address), bytes(g.scope))
   : g.kind === 'remove-signer' ? accountPure.removeSignerPayload(bytes(g.leaf))
   : g.kind === 'adopt-vault' ? accountPure.adoptVaultPayload(bytes(g.vault))
     : g.kind === 'pay-key' ? accountPure.payKeyPayload(bytes(g.commitment))
@@ -95,7 +95,7 @@ const openedFor = (order: GovernedCallOrder): OpenedRound => {
     return { ...recordOf(payloadOf(g), accountPure.noVault(), o.half.proposalSalt), governance: g, half: halfOf(o.half) };
   }
   if (o.circuit === 'amendSigner') {
-    const g = { kind: o.removing === true ? 'remove-signer' : 'add-signer', leaf: o.leaf } as const;
+    const g = { kind: 'remove-signer', leaf: o.leaf } as const;
     return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
   }
   if (o.circuit === 'setThreshold') {
@@ -169,6 +169,19 @@ const depsWith = (log: string[], handed: Handed[], over: {
 });
 
 describe('THE RECORD FOR ONE CALL', () => {
+  it('A WALLET\'S COIN SECRET KEY IS NEVER PART OF A RECORD THIS PAGE BUILDS: material or a record carrying an invitation is refused, and no record reads one', () => {
+    const invite = { coinSecretKey: '9c'.repeat(32), addressSalt: '9d'.repeat(32) };
+    for (const order of [raise, approve, { circuit: 'setThreshold', threshold: '2', proposal: 'ab'.repeat(32), proposalSalt: 'cd'.repeat(32) } as GovernedCallOrder]) {
+      /* RED WHEN: a page's builder composes a record from material that carries the key a wallet takes an invited seat with. */
+      expect(() => recordForOneCall(order, { ...material, invite } as never), order.circuit).toThrow(WalletKeyNotForAPage);
+      expect(() => recordForOneCall(order, material, { ...openedFor(order), invite } as never), order.circuit).toThrow(WalletKeyNotForAPage);
+      /* RED WHEN: a record this page built answers a witness that asks it for an invitation, rather than refusing. */
+      const r = recordForOneCall(order, material);
+      expect(() => (r as { invite?: unknown }).invite, order.circuit).toThrow(WalletKeyNotForAPage);
+      expect(Object.keys(r)).not.toContain('invite');
+    }
+  });
+
   it('a raise carries the signer\'s three and the whole account half, as bytes, and no membership path', () => {
     const r = recordForOneCall(raise, material);
     /* RED WHEN: any field is dropped or taken from the wrong source. */
@@ -404,48 +417,42 @@ describe('ONE GOVERNED CALL', () => {
 const LEAF = 'ab'.repeat(32);
 const SALT = 'cd'.repeat(32);
 const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
-const seatRoundId = (leaf: string, salt: string) => hexOf(accountPure.proposalIdOf(
-  accountPure.signerAddPayload(bytes(leaf)), accountPure.noVault(), bytes(salt)));
+/* The address a person is invited at, and the rights their seat will carry. */
+const ADDRESS = 'ad'.repeat(32);
+const RIGHTS = '5c'.repeat(32);
+const seatRoundId = (address: string, salt: string) => hexOf(accountPure.proposalIdOf(
+  accountPure.signerInvitePayload(bytes(address), bytes(RIGHTS)), accountPure.noVault(), bytes(salt)));
 const thresholdRoundId = (t: bigint, salt: string) => hexOf(accountPure.proposalIdOf(
   accountPure.setThresholdPayload(t), accountPure.noVault(), bytes(salt)));
 const seatRaise: GovernedCallOrder = {
-  circuit: 'propose', governance: { kind: 'add-signer', leaf: LEAF },
-  half: { ...half, proposalSalt: SALT, changeAmount: '0' }, proposal: seatRoundId(LEAF, SALT),
+  circuit: 'propose', governance: { kind: 'add-signer', address: ADDRESS, scope: RIGHTS },
+  half: { ...half, proposalSalt: SALT, changeAmount: '0' }, proposal: seatRoundId(ADDRESS, SALT),
 };
-const seatIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: seatRoundId(LEAF, SALT), proposalSalt: SALT };
+const removalId = hexOf(accountPure.proposalIdOf(accountPure.removeSignerPayload(bytes(LEAF)), accountPure.noVault(), bytes(SALT)));
+const removeIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: removalId, proposalSalt: SALT, removing: true };
 const setIt: GovernedCallOrder = { circuit: 'setThreshold', threshold: '2', proposal: thresholdRoundId(2n, SALT), proposalSalt: SALT };
 
 describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
-  it('a governance raise is the merged circuit on its governance branch, with the contract\'s own payload for the leaf named and its own no-vault', async () => {
+  it('a governance raise is the merged circuit on its governance branch, with the contract\'s own payload for the address invited and its own no-vault', async () => {
     const handed: Handed[] = [];
     await build(depsWith([], handed), { account: ACCOUNT, order: seatRaise, material, chain });
-    /* RED WHEN: the branch flag, the payload or the vault is not the governance round the leaf makes. */
+    /* RED WHEN: the branch flag, the payload or the vault is not the governance round the invitation makes. */
     expect(handed[0]!.options.args).toEqual([
-      accountPure.signerAddPayload(bytes(LEAF)), new Uint8Array(32), 0n, 0n, 0n, 0n, false, accountPure.noVault(),
+      accountPure.signerInvitePayload(bytes(ADDRESS), bytes(RIGHTS)), new Uint8Array(32), 0n, 0n, 0n, 0n, false, accountPure.noVault(),
     ]);
     expect(handed[0]!.options.circuitId).toBe('propose');
   });
 
-  it('seating is amendSigner on its seating branch, appended, for the leaf named and the proposal named', async () => {
-    const handed: Handed[] = [];
-    await build(depsWith([], handed), { account: ACCOUNT, order: seatIt, material, chain });
-    /* RED WHEN: a seat is built as a removal, into a vacated slot, or for another leaf or round. */
-    expect(handed[0]!.options.args).toEqual([bytes(LEAF), bytes(seatRoundId(LEAF, SALT)), false, false]);
-    expect(handed[0]!.options.circuitId).toBe('amendSigner');
-  });
-
-  it('a removal is amendSigner on its removing branch, for the leaf named and the proposal its removal payload makes', async () => {
-    const removalId = hexOf(accountPure.proposalIdOf(accountPure.removeSignerPayload(bytes(LEAF)), accountPure.noVault(), bytes(SALT)));
-    const removeIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: removalId, proposalSalt: SALT, removing: true };
+  it('a removal is amendSigner, for the leaf named and the proposal its removal payload makes', async () => {
     const handed: Handed[] = [];
     await build(depsWith([], handed), { account: ACCOUNT, order: removeIt, material, chain });
-    /* RED WHEN: a removal is built as a seating, or into a vacated slot. */
-    expect(handed[0]!.options.args).toEqual([bytes(LEAF), bytes(removalId), false, true]);
-    /* RED WHEN: a removal is built for a proposal that seats the leaf, or a seating for a removal's proposal. */
-    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, { ...removeIt, proposal: seatRoundId(LEAF, SALT) })).toThrow(/not the one the company wrote down|not for this change/u);
-    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, { ...seatIt, proposal: removalId })).toThrow(/not the one the company wrote down|not for this change/u);
-    /* RED WHEN: a removal is carried out from a proposal this device opened as a seating. */
-    await expect(build(depsWith([], []), { account: ACCOUNT, order: removeIt, material, chain, opened: openedFor(seatIt) }))
+    /* RED WHEN: a removal is built for another leaf or round. */
+    expect(handed[0]!.options.args).toEqual([bytes(LEAF), bytes(removalId)]);
+    expect(handed[0]!.options.circuitId).toBe('amendSigner');
+    /* RED WHEN: a removal is built for a proposal that invites somebody. */
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, { ...removeIt, proposal: seatRoundId(ADDRESS, SALT) })).toThrow(/not the one the company wrote down|not for this change/u);
+    /* RED WHEN: a removal is carried out from a proposal this device opened as an invitation. */
+    await expect(build(depsWith([], []), { account: ACCOUNT, order: removeIt, material, chain, opened: openedFor(seatRaise) }))
       .rejects.toThrow(/does not match the company's own record of this proposal/u);
   });
 
@@ -458,8 +465,8 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
     })).rejects.toThrow(/at least one/u);
   });
 
-  it('A SEAT OR A THRESHOLD CHANGE READS THE PROPOSAL\'S SALT AND NO OTHER ACCOUNT FIELD', () => {
-    for (const order of [seatIt, setIt]) {
+  it('A REMOVAL OR A THRESHOLD CHANGE READS THE PROPOSAL\'S SALT AND NO OTHER ACCOUNT FIELD', () => {
+    for (const order of [removeIt, setIt]) {
       const r = recordForOneCall(order, material);
       /* RED WHEN: the salt the proposal's identity is recomputed from is not the one handed over. */
       expect(r.proposalSalt).toEqual(bytes(SALT));
@@ -469,18 +476,19 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
     }
   });
 
-  it('A SEAT FOR ANOTHER LEAF, A THRESHOLD OTHER THAN THE PROPOSAL\'S, OR A RAISE WHOSE CHANGE IS NOT THE RECORDED ONE, IS NOT BUILT', async () => {
+  it('A REMOVAL OF ANOTHER LEAF, A THRESHOLD OTHER THAN THE PROPOSAL\'S, OR A RAISE WHOSE CHANGE IS NOT THE RECORDED ONE, IS NOT BUILT', async () => {
     for (const order of [
-      { ...seatIt, leaf: 'ef'.repeat(32) },
-      { ...seatIt, proposalSalt: 'ee'.repeat(32) },
+      { ...removeIt, leaf: 'ef'.repeat(32) },
+      { ...removeIt, proposalSalt: 'ee'.repeat(32) },
       { ...setIt, threshold: '3' },
-      { ...seatRaise, governance: { kind: 'add-signer', leaf: 'ef'.repeat(32) } },
+      { ...seatRaise, governance: { kind: 'add-signer', address: 'ef'.repeat(32), scope: RIGHTS } },
+      { ...seatRaise, governance: { kind: 'add-signer', address: ADDRESS, scope: 'ef'.repeat(32) } },
       { ...seatRaise, governance: { kind: 'threshold', threshold: '2' } },
     ] as GovernedCallOrder[]) {
       const log: string[] = [];
       /* RED WHEN: a round approved for one change can carry out another, or a raise proves a change nobody wrote down. */
       expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, order)).toThrow(/not the one the company wrote down|not for this change/u);
-      const base = order.circuit === 'amendSigner' ? seatIt : order.circuit === 'setThreshold' ? setIt : seatRaise;
+      const base = order.circuit === 'amendSigner' ? removeIt : order.circuit === 'setThreshold' ? setIt : seatRaise;
       await expect(build(depsWith(log, []), { account: ACCOUNT, order, material, chain, opened: openedFor(base) }))
         .rejects.toThrow(/does not match the company's own record of this proposal/u);
       expect(log).toEqual([]);
@@ -499,15 +507,16 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
 
 describe('AN APPROVAL OF A SEAT OR A THRESHOLD IS BOUND TO THE CHANGE ASKED FOR', () => {
   it('is built when the change and its salt make the proposal named, and refused when they do not', async () => {
-    const id = seatRoundId(LEAF, SALT);
-    const bound: GovernedCallOrder = { circuit: 'approve', proposal: id, of: { governance: { kind: 'add-signer', leaf: LEAF }, proposalSalt: SALT } };
+    const id = seatRoundId(ADDRESS, SALT);
+    const bound: GovernedCallOrder = { circuit: 'approve', proposal: id, of: { governance: { kind: 'add-signer', address: ADDRESS, scope: RIGHTS }, proposalSalt: SALT } };
     const handed: Handed[] = [];
     await build(depsWith([], handed), { account: ACCOUNT, order: bound, material, chain });
     expect(handed[0]!.options.args).toEqual([bytes(id)]);
     for (const order of [
-      { ...bound, of: { governance: { kind: 'add-signer', leaf: 'ef'.repeat(32) }, proposalSalt: SALT } },
+      { ...bound, of: { governance: { kind: 'add-signer', address: 'ef'.repeat(32), scope: RIGHTS }, proposalSalt: SALT } },
+      { ...bound, of: { governance: { kind: 'add-signer', address: ADDRESS, scope: 'ef'.repeat(32) }, proposalSalt: SALT } },
       { ...bound, of: { governance: { kind: 'threshold', threshold: '1' }, proposalSalt: SALT } },
-      { ...bound, of: { governance: { kind: 'add-signer', leaf: LEAF }, proposalSalt: 'ee'.repeat(32) } },
+      { ...bound, of: { governance: { kind: 'add-signer', address: ADDRESS, scope: RIGHTS }, proposalSalt: 'ee'.repeat(32) } },
     ] as GovernedCallOrder[]) {
       const log: string[] = [];
       /* RED WHEN: a device approves a proposal for a change other than the one it was asked to approve. */
@@ -746,7 +755,7 @@ describe('A SEAT, A REMOVAL, A THRESHOLD, A VAULT\'S THRESHOLD, AN ADOPTION AND 
   const L = '1e'.repeat(32);
   const idFor = (g: RoundChangeOnTheWire) => hex(accountPure.proposalIdOf(payloadOf(g), accountPure.noVault(), bytes(S)));
   const raised = { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: S, changeAmount: '0', changeBatchDigest: '77'.repeat(32) };
-  const seatG = { kind: 'add-signer', leaf: L } as const;
+  const seatG = { kind: 'add-signer', address: L, scope: V } as const;
   const removalG = { kind: 'remove-signer', leaf: L } as const;
   const thresholdG = { kind: 'threshold', threshold: '2' } as const;
   const vaultG = { kind: 'vault-threshold', vault: V, threshold: '2' } as const;
@@ -754,8 +763,8 @@ describe('A SEAT, A REMOVAL, A THRESHOLD, A VAULT\'S THRESHOLD, AN ADOPTION AND 
   const payKeyG = { kind: 'pay-key', commitment: C } as const;
   /* Each honest order, then the same order handed another salt. */
   const kinds: Array<[string, GovernedCallOrder, (salt: string) => GovernedCallOrder]> = [
-    ['a seat carried out', { circuit: 'amendSigner', leaf: L, proposal: idFor(seatG), proposalSalt: S },
-      (salt) => ({ circuit: 'amendSigner', leaf: L, proposal: idFor(seatG), proposalSalt: salt })],
+    ['an invitation raised', { circuit: 'propose', governance: seatG, half: raised, proposal: idFor(seatG) },
+      (salt) => ({ circuit: 'propose', governance: seatG, half: { ...raised, proposalSalt: salt }, proposal: idFor(seatG) })],
     ['a removal carried out', { circuit: 'amendSigner', leaf: L, proposal: idFor(removalG), proposalSalt: S, removing: true },
       (salt) => ({ circuit: 'amendSigner', leaf: L, proposal: idFor(removalG), proposalSalt: salt, removing: true })],
     ['a threshold carried out', { circuit: 'setThreshold', threshold: '2', proposal: idFor(thresholdG), proposalSalt: S },

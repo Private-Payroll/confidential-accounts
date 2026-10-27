@@ -1,15 +1,22 @@
 /**
- * **A PAYROLL RUN DRAWN ON THIS SIGNER'S DEVICE, FROM THE COMPANY'S OWN
- * RECORDS, AND FILED SEALED AND SIGNED.**
+ * **A PAYROLL RUN DRAWN ON THIS SIGNER'S DEVICE, OVER ONE OF THE COMPANY'S
+ * LISTS, FROM ITS OWN RECORDS, AND FILED SEALED AND SIGNED.**
  *
- * The people are the ones this device believes (`readPeopleHere`): a person
- * whose record was filed by a seat it does not believe is not drawn over, and
- * an active person who is not payable at what their own wallet signed refuses
- * the draw by name (`whyNotPayable`, the one check every reader shares). Who
- * the run pays and leaves out, what it repeats and every payslip are made by
- * the rules the service's own draw uses (`run-drawing.ts`), each payslip sealed
- * to the payslip key the person's signed code names. Nothing is minted for
- * anybody: a run drawn here pays only people on the roster.
+ * A run pays one list: the employees (`readPeopleHere`), or the vendors paid by
+ * monthly terms (`readVendorsHere`), and names it inside its seal. The payees are
+ * the ones this device believes: one whose record was filed by a seat it does
+ * not believe is not drawn over, and an active one who is not payable at what
+ * their own wallet signed, or a vendor at the address they were added by,
+ * refuses the draw by name (`whyNotPayable`, `whyVendorNotPayable`). One whose
+ * dates leave out every day of the month is set aside with that reason
+ * (`outsideTheirDates`) and nobody is asked to confirm it; an employee is paid
+ * the salary line in force at the month's end (`amountOnTheRun`), a vendor their
+ * monthly terms (`vendorAmountOnTheRun`). Who the run pays and leaves out, what
+ * it repeats and every payslip are made by the rules the service's own draw uses
+ * (`run-drawing.ts`), each payslip sealed to the payslip key the payee's signed
+ * code names; a vendor added by address who has not claimed their place is paid
+ * with no payslip. Nothing is minted for anybody: a run drawn here pays only
+ * people on its list.
  *
  * The run is sealed under the company's key in force and signed with this
  * seat's filing key; the service keeps it only for a seat its directory
@@ -20,17 +27,20 @@ import { randomBytes, type Hex } from '../../../src/core/crypto.js';
 import { assets as theAssets, type AssetRegistry } from '../../../src/core/assets.js';
 import { isLiveRound } from '../../../src/core/retry-cover.js';
 import type { PayrollRound } from '../../../src/core/account.js';
-import type { PayrollRun, RosterEmployee, RunRepeatRecord, SealedProposal } from '../../../src/core/types.js';
-import { canonicalPeriod, openSealedRun, sealedRunOf } from '../../../src/core/run-legs.js';
+import type { PayrollRun, RunList, RunRepeatRecord, RunSkip, SealedProposal } from '../../../src/core/types.js';
+import { datesOfTheRecordRefusal, earliestStopOf, outsideTheirDates } from '../../../src/core/payable-days.js';
+import { canonicalPeriod, openSealedRun, runsOfList, sealedRunOf } from '../../../src/core/run-legs.js';
 import {
-  amountOnTheRun, assembledRun, peopleDrawn, peopleOnTheRun, recordSkips, refuseAPayrollThatMayBeOnChain,
+  amountOnTheRun, assembledRun, peopleDrawn, peopleOnTheRun, recordSkipsEach, refuseAPayrollThatMayBeOnChain,
   refuseAPeriodAlreadyRaised, samePeriod, withNumberedExtras,
 } from '../../../src/core/run-drawing.js';
+import { vendorAmountOnTheRun, type VendorRecord } from '../../../src/core/vendor-record.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import type { PeopleHere } from './people-on-device.js';
-import { payrollRoundsHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import {
+  payeesHere, payrollRoundsHere, proposalsListedHere, runsListedHere, twoEntriesAtOneAddress, type CompanyRecordsHere, type ListPayee, type PayeesHere,
+} from './run-rebuilt-here.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -45,8 +55,8 @@ export interface RunDrawDoors {
   readonly signingSecret: Hex;
   /** The company's account on the chain and its label, as its record names them: what each payslip names. */
   readonly company: { readonly account: string | null; readonly label: CompanyLabel | null };
-  /** The company's records, read afresh: its people as this device believes them, its runs and its proposals. */
-  readonly records: Pick<CompanyRecordsHere, 'people' | 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'> & { readonly proposals: () => Promise<readonly SealedProposal[]> };
+  /** The company's records, read afresh: its people and its vendors as this device believes them, its runs and its proposals. */
+  readonly records: Pick<CompanyRecordsHere, 'people' | 'vendors' | 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'> & { readonly proposals: () => Promise<readonly SealedProposal[]> };
   /** Who is confirming what the run leaves out or repeats: the signed-in person's name. */
   readonly by: string;
   readonly registry?: AssetRegistry;
@@ -58,6 +68,8 @@ export interface RunDrawDoors {
 /** What the person drawing the run asked for. */
 interface RunAsked {
   readonly period: string;
+  /** The list the run pays: the employees (when absent), or the vendors paid monthly. */
+  readonly list?: RunList;
   /** The people chosen, when not everybody is. */
   readonly employeeIds?: readonly string[];
   /** Everybody the run would leave out, named, and why. */
@@ -79,8 +91,6 @@ const RUN_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 const newRunId = (random: (n: number) => Uint8Array = randomBytes): string =>
   `run_${Array.from(random(12), (b) => RUN_ALPHABET[b & 63]).join('')}`;
 
-/** The company's payroll rounds, as its proposals record them, opened here. */
-
 /**
  * **A REPEAT, CONFIRMED BY NAMING EVERY RUN FOR THE MONTH THAT HAS BEEN RAISED**
  * - one not drafted only, or one whose round may be live - and nothing else,
@@ -100,7 +110,11 @@ const confirmedRepeatHere = (
   const named = new Set(ack.runIds);
   const unnamed = [...expected].filter((id) => !named.has(id));
   if (unnamed.length) {
-    throw new RunNotDrawnHere(`this confirmation leaves out ${unnamed.join(', ')}. A repeat is confirmed by naming every run `
+    const describe = (id: string): string => {
+      const r = runs.find((x) => x.id === id)!;
+      return `the ${r.status === 'draft' ? 'draft' : 'raised'} run for ${r.period} (${r.employees.length} ${r.employees.length === 1 ? 'person' : 'people'})`;
+    };
+    throw new RunNotDrawnHere(`this confirmation leaves out ${unnamed.map(describe).join(', ')}. A repeat is confirmed by naming every run `
       + `for ${period} that has been raised. Name all of them and confirm again.`);
   }
   const extra = [...named].filter((id) => !expected.has(id));
@@ -126,49 +140,114 @@ const drawn = <T>(make: () => T): T => {
 };
 
 /**
- * **WHO THE COMPANY'S PEOPLE ARE, AS THIS DEVICE BELIEVES THEM**, or a refusal
+ * **WHO THE LIST'S PEOPLE ARE FOR `period`, AS THIS DEVICE BELIEVES THEM**, or a refusal
  * naming who would be paid at what their own wallet did not sign, or whose
- * record this device does not believe at all.
+ * record this device does not believe at all, or whose dates are not calendar
+ * dates in order. Anybody whose dates leave out every day of the period is set
+ * aside in `datedOut`, with why, before either refusal or any choice of who the
+ * run pays is read. A leaver is paid for the days their dates give, as anybody
+ * active is; one with no leaving or end date is set aside with why, and one who
+ * never had an address was never paid and is not named.
  */
-const peopleToDrawOver = (here: PeopleHere, asked: RunAsked): { all: RosterEmployee[]; handedOver: Set<string> } => {
+const peopleToDrawOver = (
+  here: PayeesHere & { readonly refused?: readonly { readonly id: string; readonly why: string }[] }, asked: RunAsked, period: string,
+): { all: ListPayee[]; handedOver: Set<string>; datedOut: { person: RunSkip; reason: string }[] } => {
   const chosen = (id: string) => asked.employeeIds === undefined || asked.employeeIds.includes(id);
-  const notPayable = here.notPayable.filter((p) => chosen(p.here.person.id));
+  const broken = [...here.people, ...here.notPayable.map((p) => p.here)]
+    .filter((p) => p.person.status !== 'leaver' && chosen(p.person.id))
+    .map((p) => ({ name: p.person.name, why: datesOfTheRecordRefusal(p.person) }))
+    .filter((p) => p.why !== null);
+  if (broken.length > 0) {
+    throw new RunNotDrawnHere(`${broken.map((p) => `${p.name}: ${p.why}`).join('; ')}. A run is drawn only over records whose dates `
+      + 'are calendar dates, in order, so whether they are paid for the month cannot be said. Put their record right, or mark '
+      + 'them a leaver, and draw the run again.');
+  }
+  const datedOut: { person: RunSkip; reason: string }[] = [];
+  const setAside = (p: PayeesHere['people'][number], why: string): false => {
+    datedOut.push({ person: { employeeId: p.person.id, name: p.person.name, waiting: 'outside their dates' }, reason: `${p.person.name} is not paid for ${period}: ${why}` });
+    return false;
+  };
+  const inTheirDates = (p: PayeesHere['people'][number]): boolean => {
+    if (p.person.status === 'leaver') {
+      /* A leaver who never had an address was never paid: an invitation withdrawn, drawn over by no run and named by none. */
+      if (!p.person.address) return false;
+      if (earliestStopOf(p.person) === null) return setAside(p, 'they were made a leaver with no leaving date or end date, so the days they worked are not known');
+    }
+    const why = outsideTheirDates(p.person, period);
+    return why === null ? true : setAside(p, why);
+  };
+  const people = here.people.filter(inTheirDates);
+  const notPayableInDates = here.notPayable.filter((p) => inTheirDates(p.here));
+  const notPayable = notPayableInDates.filter((p) => chosen(p.here.person.id));
   if (notPayable.length > 0) {
     throw new RunNotDrawnHere(`${notPayable.map((p) => `${p.here.person.name} cannot be paid: ${p.why}`).join('; ')}. A run pays `
       + 'each person only at the address and payslip key their own wallet signed. Ask them to give their code again, or mark '
       + 'them a leaver, and draw the run again.');
   }
   const unread = here.notBelieved.filter(chosen);
+  const unreadable = (here.refused ?? []).filter((r) => chosen(r.id));
+  if (unreadable.length > 0) {
+    throw new RunNotDrawnHere(`${unreadable.length} of the company's people ${unreadable.length === 1 ? 'has a record' : 'have records'} `
+      + `this device cannot read as a person's record (${unreadable.map((r) => r.why).join('; ')}), so it cannot say whether they should be paid. `
+      + 'Ask a signer of the company to file their record again, or reload the page.');
+  }
   if (unread.length > 0) {
     throw new RunNotDrawnHere(`${unread.length} of the company's people ${unread.length === 1 ? 'has a record' : 'have records'} `
       + 'filed by a seat this device does not believe, so this device cannot say whether they should be paid. Ask a signer of '
       + 'the company to file their record again, or reload the page.');
   }
   /* Somebody not payable and not chosen is still on the roster: leaving them out is named like leaving anybody out. */
-  const everybody = [...here.people, ...here.notPayable.map((p) => p.here)];
+  const everybody = [...people, ...notPayableInDates.map((p) => p.here)];
+  /* A leaver within their dates is paid for the days before they left, as anybody active is. */
   return {
-    all: everybody.map((p) => p.person),
+    all: everybody.map((p) => (p.person.status === 'leaver' ? { ...p.person, status: 'active' as const } : p.person)),
     handedOver: new Set(everybody.filter((p) => p.handedOver).map((p) => p.person.id)),
+    datedOut,
   };
 };
 
 /**
- * **DRAWS A RUN FOR `asked.period` ON THIS DEVICE, AND FILES IT.** Refused,
+ * **A VENDOR LIST AS A MONTHLY RUN DRAWS OVER IT**: the vendors paid by monthly terms. A vendor paid by one-off payments
+ * is never on a monthly run, so they are neither drawn nor recorded as left out.
+ */
+const paidMonthly = (here: PayeesHere): PayeesHere => {
+  const monthly = (p: { readonly person: ListPayee }) => !('terms' in p.person) || p.person.terms.kind === 'monthly';
+  return { ...here, people: here.people.filter(monthly), notPayable: here.notPayable.filter((n) => monthly(n.here)) };
+};
+
+/** What one payee is paid on a run for `period`: an employee their salary line in force, a vendor their monthly terms. */
+const specOf = (p: ListPayee, period: string) => ('terms' in p
+  ? { name: p.name, asset: p.terms.kind === 'monthly' ? p.terms.asset : '', amount: vendorAmountOnTheRun(p, period) }
+  : { name: p.name, asset: p.asset, amount: amountOnTheRun(p, period) });
+
+/**
+ * **DRAWS A RUN FOR `asked.period` OVER ONE LIST ON THIS DEVICE, AND FILES IT.** Refused,
  * with nothing filed, when anybody it would leave out is not named in the
  * confirmation, when an active person is not payable at what their own wallet
- * signed, when a run for the month has already been raised and this is not a
- * confirmed repeat, and when nobody is left to pay. Returns the run as filed.
+ * signed, when a run for the month on the same list has already been raised and
+ * this is not a confirmed repeat, and when nobody is left to pay. Only runs on
+ * the same list count: the payroll and a vendor run for one month never refuse
+ * each other. Somebody outside their
+ * dates is left out and recorded so, signed by `doors.by`. Returns the run as filed.
  */
 export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise<PayrollRun> {
   const period = drawn(() => canonicalPeriod(asked.period));
   const at = (doors.now ?? (() => new Date().toISOString()))();
   const assets = doors.registry ?? theAssets;
-  const [here, sealedRuns, proposals] = await Promise.all([doors.records.people(), runsListedHere(doors.records), proposalsListedHere(doors.records)]);
-  const { all, handedOver } = peopleToDrawOver(here, asked);
+  const list: RunList = asked.list ?? 'employees';
+  const [read, sealedRuns, proposals] = await Promise.all([
+    payeesHere(doors.records, list).catch((e: unknown) => { throw new RunNotDrawnHere(String((e as Error)?.message ?? e).replace(/\s*Nothing was built or sent\.\s*$/u, '')); }),
+    runsListedHere(doors.records), proposalsListedHere(doors.records)]);
+  const here = list === 'vendors' ? paidMonthly(read) : read;
+  const { all, handedOver, datedOut } = peopleToDrawOver(here, asked, period);
   const skip = asked.skipPending === undefined ? undefined
     : { employeeIds: [...asked.skipPending.employeeIds], reason: asked.skipPending.reason, by: doors.by };
   const { roster, leftOut } = drawn(() => peopleDrawn(all, asked.employeeIds, skip, (e) => handedOver.has(e.id)));
-  const runs = sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keyOf(doors.viewingKey, r.keyEpoch)));
+  if (list === 'vendors') {
+    const twice = twoEntriesAtOneAddress(roster as VendorRecord[]);
+    if (twice !== null) throw new RunNotDrawnHere(`${twice}. Mark one of them a leaver, and draw the run again.`);
+  }
+  const runs = runsOfList(sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keyOf(doors.viewingKey, r.keyEpoch))), list);
   const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey, {
     identity: doors.records.roundIdentity, nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000)),
   });
@@ -179,16 +258,20 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
     drawn(() => refuseAPayrollThatMayBeOnChain(period, runs, rounds));
   }
   const runId = newRunId();
-  const skips = leftOut && skip ? drawn(() => recordSkips(runId, leftOut, skip, at)) : undefined;
+  const left = [
+    ...(leftOut && skip ? leftOut.map((person) => ({ person, by: skip.by, reason: skip.reason })) : []),
+    ...datedOut.map((d) => ({ ...d, by: doors.by })),
+  ];
+  const skips = left.length > 0 ? drawn(() => recordSkipsEach(runId, left, at)) : undefined;
   const { employees, payslips } = drawn(() => peopleOnTheRun({
-    runId, period, specs: roster.map((e) => ({ name: e.name, asset: e.asset, amount: amountOnTheRun(e, period) })), roster, assets,
+    runId, period, specs: roster.map((e) => specOf(e, period)), roster, assets,
     company: doors.company,
   }));
   const repeats = drawn(() => withNumberedExtras(period, employees, repeated, [...(asked.repeats?.extra ?? [])], runs,
     (id) => all.find((p) => p.id === id)?.name ?? null));
   const run = assembledRun({
     runId, accountId: doors.accountId, period, employees, payslips,
-    ...(skips ? { skips } : {}), ...(repeats ? { repeats } : {}),
+    ...(skips ? { skips } : {}), ...(repeats ? { repeats } : {}), list,
   });
   const sealing = sealingWith(doors.viewingKey, doors.keyEpoch);
   const filing = signRunFiling(doors.accountId, sealedRunOf(run, sealing.key, sealing.epoch), doors.signingSecret);

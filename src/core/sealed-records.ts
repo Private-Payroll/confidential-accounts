@@ -46,7 +46,7 @@ import {
  * a failure that looks like corruption and is impossible to diagnose from the
  * data. The compiler is a better place to catch that than a support ticket.
  */
-export type Purpose = 'roster' | 'policy' | 'payroll' | 'inbox' | 'proposals' | 'vaults' | 'one-offs';
+export type Purpose = 'roster' | 'policy' | 'payroll' | 'inbox' | 'proposals' | 'vaults' | 'one-offs' | 'vendors';
 
 /**
  * One key per purpose, derived from the account's viewing key.

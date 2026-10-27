@@ -24,6 +24,9 @@ import {
   buildCreationInsert, requireCreatableAuthority, submitCreationInsertTx, type CreationInsertPrimitives,
 } from './partial-contract.js';
 import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ceiling.js';
+import { Contract } from '../../contracts/managed/contract/index.js';
+import { witnesses } from '../../contracts/src/witnesses.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from './vault-contract.js';
 
 const HEADER = new TextEncoder().encode('midnight:verifier-key[v6]:');
 const standIn = (name: string) => {
@@ -51,11 +54,11 @@ const recording = (): CreationInsertPrimitives & { built: any[] } => {
 };
 
 describe('the two steps, as lists', () => {
-  it('the first step is the eight a company governs itself with, and pays with none of them', () => {
+  it('the first step is the nine a company governs itself with, the seat an invited person takes among them, and pays with none of them', () => {
     /* A product decision, written out: a change to it should have to change this line. */
     expect([...FIRST_STEP_CIRCUITS]).toEqual([
       'adopt', 'amendSigner', 'approve', 'cancel', 'closeExpiredRun', 'propose',
-      'removeSignerAndSetThreshold', 'setThreshold',
+      'removeSignerAndSetThreshold', 'seatInvited', 'setThreshold',
     ]);
     /* RED WHEN the payment step is moved into the deploy, so an unfinished company could pay. */
     expect(FIRST_STEP_CIRCUITS as readonly string[]).not.toContain('recordPaymentFromVault');
@@ -75,6 +78,15 @@ describe('the two steps, as lists', () => {
     expect(DEPLOYED_CIRCUITS.map(creationStepOf).filter((s) => s === null)).toEqual([]);
     expect([...FIRST_STEP_CIRCUITS, ...SECOND_STEP_CIRCUITS].sort()).toEqual([...DEPLOYED_CIRCUITS]);
     expect(creationStepOf('recordPayment')).toBeNull();
+  });
+
+  it('the circuits the deploy steps name are exactly the compiled account\'s, and every one served to a device is among them', () => {
+    const compiled = Object.keys(new Contract(witnesses as never).impureCircuits).sort();
+    /* RED WHEN: the account gains, loses or renames a circuit and the deploy steps are not told, so a company is created without it or asked for a key that does not exist. */
+    expect([...FIRST_STEP_CIRCUITS, ...SECOND_STEP_CIRCUITS].sort()).toEqual(compiled);
+    expect([...DEPLOYED_CIRCUITS].sort()).toEqual(compiled);
+    /* RED WHEN: a device is told to prove, or to fetch the key of, a circuit the account does not have. */
+    for (const c of ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE) expect(compiled, c).toContain(c);
   });
 });
 

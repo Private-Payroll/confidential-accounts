@@ -529,7 +529,7 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE A RAISE WRIT
     /* RED WHEN the private leg of a run is checked with the public leg's payments, or the refusal names a token rather than its symbol. */
     const otherForm = aDevice({ legPayments: async () => ({ asset: TOKEN, form: 'unshielded', payments: [{ kind: 'unshielded', token: TOKEN, amount: '5' }] }) });
     const refused = await sendRaiseFromDevice(otherForm.doors, { ...RAISE, form: 'shielded' }).catch((e) => e);
-    /* RED WHEN the refusal stops saying in plain words which payments came back, which were asked for, and that nothing was sent or spent (ruled copy fix, 1 Oct). */
+    /* RED WHEN the refusal stops saying in plain words which payments came back, which were asked for, and that nothing was sent or spent. */
     expect(String(refused?.message)).toBe('The service returned the public tPAY payments when the private tPAY payments were asked for. '
       + 'Nothing was sent for approval and no fee was spent.');
     expect(serviceCalls(otherForm.log)).toEqual([]);
@@ -917,18 +917,19 @@ describe('A GOVERNANCE PROPOSAL STANDS WHERE THE CHAIN SAYS, NEVER WHERE THE SER
 });
 
 describe('THE BAR A PROPOSAL IS CARRIED OUT AT IS READ FROM THE PERSON\'S OWN WALLET, NEVER FROM THE SERVICE', () => {
-  const SEAT_ADDED: GovernanceOnTheWire = { kind: 'add-signer', leaf: 'e5'.repeat(32) };
+  const SEAT_ADDED: GovernanceOnTheWire = { kind: 'add-signer', address: 'e5'.repeat(32), scope: '5c'.repeat(32) };
   const seatAdded = { viewingKey: GOVERNED_KEY, change: SEAT_ADDED, summary: 'Add a signer', body: { signerId: 'sig_1' } } as Parameters<typeof governOnDevice>[1];
 
-  it('a signer seated is carried out only at the seat bar: two approvals at a threshold of two wait while the account stores a policy bar of three', async () => {
+  it('an invitation is left for the invitee only at the seat bar: two approvals at a threshold of two wait while the account stores a policy bar of three', async () => {
     const d = aGovernedDevice({ held: true, bar: 2, policyBar: 3, governance: SEAT_ADDED, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 2, raisedAt: 1 }) });
     /* RED WHEN: adding a signer is counted against the account's threshold, below the seat bar the chain's own seating holds it to. */
     expect((await governOnDevice(d.doors, seatAdded)).state).toBe('waiting-for-approvals');
     expect(d.log.filter((l) => /^carry/u.test(l))).toEqual([]);
-    /* At the seat bar it is carried out. */
+    /* At the seat bar it waits for the person invited, and no signer's device carries it out. */
     const met = aGovernedDevice({ held: true, bar: 2, policyBar: 3, governance: SEAT_ADDED, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 3, raisedAt: 1 }) });
-    expect((await governOnDevice(met.doors, seatAdded)).state).toBe('done');
-    expect(met.log.filter((l) => /^carry/u.test(l))).toEqual(['carry prp_gov amendSigner']);
+    expect((await governOnDevice(met.doors, seatAdded)).state).toBe('waiting-for-the-invitee');
+    /* RED WHEN: a signer's device carries out an approved invitation. */
+    expect(met.log.filter((l) => /^carry/u.test(l))).toEqual([]);
   });
 
   it('no device asks the service for the account\'s bars, and a wallet read without the seat bar is refused, never taken as met', async () => {

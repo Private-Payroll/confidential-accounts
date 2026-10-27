@@ -29,7 +29,7 @@ import { vaultDetails } from '../../src/testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
-import { openPayslip } from '../../src/core/payslip-open.js';
+import { openPayslip, type OpenedPayslip } from '../../src/core/payslip-open.js';
 import { paymentsOnTheChain } from 'vaults-web-shared/my-payslips.js';
 import { answerPayslipAsk, realDeps, type PayslipReaderDeps } from 'vaults-web-shared/payslip-worker-entry.js';
 import type { ChainReader } from 'vaults-web-shared/payslip-worker-client.js';
@@ -92,7 +92,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
 
     /* The chain opens and approves the leg the product raised, and the leg pays person 0. */
     const sim = await AccountSimulator.create(privateStateFor(9));
-    await sim.seatLeaf(fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 61);
+    await sim.seatWrittenLeaf(created.secrets[0]!, fromHex(created.account.signers[0]!.leafCommitment!), [privateStateFor(9)], 61);
     sim.at(NOW);
     await sim.adoptVault(PAYROLL_VAULT, [privateStateFor(9)]);
     const legDevice = deviceCarrying(created.secrets[0]!, legChange);
@@ -167,10 +167,14 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
 
     const answers = [] as string[];
     const late = [] as string[];
+    /* What a payee's device does: every slip of the company's month, tried with its own key. */
+    const mine = (secret: string): OpenedPayslip => {
+      const opened = payroll.payslipsOf(label, '2026-08').flatMap((s) => { try { return [openPayslip(s, secret)]; } catch { return []; } });
+      expect(opened).toHaveLength(1);
+      return opened[0]!;
+    };
     for (const p of people) {
-      const [sealed] = payroll.payslipsFor(
-        (store.getEmployee(p.employee.id)!.wrappingPublicKey as string), label);
-      const opened = openPayslip(sealed!, p.secret.wrappingSecret);
+      const opened = mine(p.secret.wrappingSecret);
       expect(opened.receipt).not.toBeNull();
       answers.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, NOW, registry, [company])).get(run.id)!);
       late.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, Number(CLOSES) + 60, registry, [company]))
@@ -191,10 +195,8 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
      * carry its window's end, or a retry does not write every receipt again.
      */
     expect(late).toEqual(['paid', 'paid', 'cannot-tell']);
-    const person1 = openPayslip(payroll.payslipsFor(
-      store.getEmployee(people[1]!.employee.id)!.wrappingPublicKey as string, label)[0]!, people[1]!.secret.wrappingSecret);
-    const person2 = openPayslip(payroll.payslipsFor(
-      store.getEmployee(people[2]!.employee.id)!.wrappingPublicKey as string, label)[0]!, people[2]!.secret.wrappingSecret);
+    const person1 = mine(people[1]!.secret.wrappingSecret);
+    const person2 = mine(people[2]!.secret.wrappingSecret);
     /* RED WHEN a retry does not extend the window of the people it names, and only theirs. */
     expect(person1.receipt!.until).toBe(Number(RETRY_CLOSES));
     expect(person2.receipt!.until).toBe(Number(CLOSES));

@@ -43,9 +43,11 @@ import {
   createCircuitContext,
 } from '@midnight-ntwrk/compact-runtime';
 import { Contract, type Ledger, ledger, pureCircuits } from '../managed/contract/index.js';
+import { createHash } from 'node:crypto';
 import {
   witnesses,
   type AccountPrivateState,
+  type InvitedAddress,
   type SignerPath,
   ALL_VAULTS,
   NO_VAULT,
@@ -61,13 +63,9 @@ import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 /**
  * Thirty-two zero bytes.
  *
- * **IT WAS THE FILLER `addSigner` TOOK ON THE BOOTSTRAP PATH, AND THAT PATH IS
- * GONE.** The constructor takes no threshold, so no account is ever in the
- * state that opened the free branch and every seating names a real proposal.
- * What the constant is for now is naming NO proposal — a value
- * `persistentCommit` can never produce, so it is in no account's
- * `openProposals` — which is exactly what the tests that assert an unapproved
- * seating is refused need to hand in. It is also `propose`'s unread `root` on
+ * It names NO proposal — a value `persistentCommit` can never produce, so it
+ * is in no account's `openProposals` — which is what the tests that assert an
+ * unapproved call is refused hand in. It is also `propose`'s unread `root` on
  * the governance path.
  */
 export const ZERO_32 = new Uint8Array(32);
@@ -95,6 +93,27 @@ const bytes = (seed: number): Uint8Array => {
 export const leafOfDevice = (state: AccountPrivateState): Uint8Array =>
   pureCircuits.signerLeaf(
     pureCircuits.signerPublicKey(state.secretKey), state.blinding, state.scope);
+
+const testBytes = (label: string, of: Uint8Array): Uint8Array =>
+  Uint8Array.from(createHash('sha256').update(label).update(of).digest());
+
+/**
+ * The wallet address a test device is invited at: a coin secret key and an
+ * address salt of its own, worked out from its seat key so every device has a
+ * different one and the same device always has the same one.
+ */
+export const invitedAddressFor = (state: AccountPrivateState): InvitedAddress => ({
+  coinSecretKey: testBytes('a test wallet coin secret key', state.secretKey),
+  addressSalt: testBytes('a test invitation address salt', state.secretKey),
+});
+
+/** The commitment a seating proposal names for an invited address, as an inviter makes it from the address. */
+export const invitedAddressCommitmentOf = (invite: InvitedAddress): Uint8Array =>
+  pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt);
+
+/** What the signers approve to seat `who` at their invited address, with `who`'s own rights. */
+export const invitePayloadFor = (who: AccountPrivateState, invite: InvitedAddress = invitedAddressFor(who)): Uint8Array =>
+  pureCircuits.signerInvitePayload(invitedAddressCommitmentOf(invite), who.scope);
 
 /**
  * A token's 32 bytes, from the 64 lower-case hex characters the ledger and
@@ -308,13 +327,9 @@ export class AccountSimulator {
    * account this factory makes is one seat at one approval** and there is no
    * `create(x, 2n)` state to ask for any more.
    *
-   * **WHICH MEANS THE BOOTSTRAP WINDOW IS SHUT AND `addSigner(leaf, ZERO_32)`
-   * NO LONGER SEATS ANYBODY.** That call was how nearly every fixture in this
-   * directory built itself. `liveAccount` below is the replacement and it does
-   * on the simulator exactly what a founder now does on chain. The reasoning is
-   * in the contract beside `threshold = 1` and in `docs/company-accounts.md`
-   * section 10a; the short version is that no writer can produce the state that
-   * opens the window, so the free branch is dead code.
+   * Every later seat is an approved invitation the invitee carries out
+   * (`seatInvited`); `liveAccount` below does on the simulator exactly what a
+   * founder does on chain.
    */
   static async create(
     founder: AccountPrivateState,
@@ -341,17 +356,10 @@ export class AccountSimulator {
    * **AN ACCOUNT WITH `devices` SEATED AND THE THRESHOLD AT `threshold`, BUILT
    * THE WAY A FOUNDER NOW HAS TO BUILD ONE.**
    *
-   * **THIS REPLACES `create(x, n)` FOLLOWED BY `addSigner(leaf, ZERO_32)`,
-   * WHICH WAS HOW ALMOST EVERY FIXTURE IN THIS DIRECTORY WAS MADE.** That
-   * pattern used the bootstrap window: an account founded needing more
-   * approvals than it had seats let its one signer seat the rest alone. The
-   * constructor no longer takes a threshold, so the window is shut from birth
-   * and a bare `addSigner` is refused *"there is no open proposal with that
-   * id"*.
-   *
-   * **WHAT IT DOES INSTEAD IS NOT A SHORTCUT — IT IS THE REAL PATH.** Every
-   * seat after the first is `propose` (which counts its raiser) → `approve` by
-   * each other approver → `amendSigner`, and the threshold is raised at the end
+   * **IT IS NOT A SHORTCUT — IT IS THE REAL PATH.** Every
+   * seat after the first is `propose` of an invitation (which counts its
+   * raiser) → `approve` by each other approver → `seatInvited` by the invitee,
+   * and the threshold is raised at the end
    * by the same steps through
    * `setThreshold`. Every one of those goes through the compiled circuits with
    * every assert live, which is the point of this simulator.
@@ -387,46 +395,56 @@ export class AccountSimulator {
 
   /**
    * Seats `who` through the approved path, with `approvers` (who must already
-   * be seated) voting: the first raises it, which counts as their approval, and
-   * the rest approve. `seed` picks the round's salt.
+   * be seated) voting: the first raises the invitation, which counts as their
+   * approval, the rest approve, and `who` takes the seat with `seatInvited`
+   * from the address it was invited at. `seed` picks the round's salt. The
+   * simulator is left acting as the raiser, as it was before the seat.
    *
-   * **THE PROPOSING DEVICE AND THE AMENDING DEVICE MUST CARRY THE SAME SALT.**
-   * `propose` commits to it and `amendSigner` recomputes
-   * `proposalIdOf(signerAddPayload(leaf), noVault(), proposalSalt())` from the
-   * witness, so a device that proposed under one salt and amended under
-   * another fails to recognise its own proposal. `applying` is how a device is
-   * handed a round's salt here.
+   * The raising device and the invitee must carry the same proposal salt:
+   * `propose` commits to it and `seatInvited` recomputes the proposal's id
+   * from the witness. The salt travels to the invitee with the invitation.
    */
   async seatSigner(
     who: AccountPrivateState,
     approvers: AccountPrivateState[],
     seed = 301,
-  ): Promise<Uint8Array> {
-    return this.seatLeaf(this.leafOf(who), approvers, seed);
-  }
-
-  /**
-   * The same, for a leaf that belongs to no device this simulator can derive
-   * from — a leaf the PRODUCT wrote, or a deliberately wrong one.
-   *
-   * `what-a-signer-is.test.ts` needs this: its whole point is that the leaf
-   * comes from `MidnightCommitments` or from `AccountService.create` rather
-   * than from `leafOf`, and seating it is how the contract is asked whether it
-   * agrees. The tree accepts any 32 bytes, which is why a wrong derivation is
-   * silent until somebody tries to prove membership.
-   */
-  async seatLeaf(
-    leaf: Uint8Array,
-    approvers: AccountPrivateState[],
-    seed = 301,
+    intoVacatedSlot = false,
   ): Promise<Uint8Array> {
     const c = change(0n, seed);
-    const payload = pureCircuits.signerAddPayload(leaf);
+    const invite = invitedAddressFor(who);
+    const payload = invitePayloadFor(who, invite);
     const by = approvers[0]!;
     await this.as(this.applying(by, c)).propose(payload);
     const id = this.proposalId(payload, c.salt);
     for (const a of approvers.slice(1)) await this.as(a).approve(id);
-    await this.as(this.applying(by, c)).addSigner(leaf, id);
+    await this.seatInvited(id, { ...who, invite, proposalSalt: c.salt }, intoVacatedSlot);
+    this.as(this.applying(by, c));
+    return id;
+  }
+
+  /**
+   * Seats, by invitation, the device holding `secrets` — keys the product made
+   * and wrote down — and refuses unless the leaf the chain seated is `leaf`, the
+   * leaf the product wrote for that seat. A product that derived its leaf
+   * differently from the contract is caught here, before anything else runs.
+   */
+  async seatWrittenLeaf(
+    secrets: { signingSecret: string; blinding: string; scope: string },
+    leaf: Uint8Array,
+    approvers: AccountPrivateState[],
+    seed = 301,
+  ): Promise<Uint8Array> {
+    const bytesOf = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^0x/u, ''), 'hex'));
+    const device: AccountPrivateState = {
+      ...privateStateFor(seed + 1000),
+      secretKey: bytesOf(secrets.signingSecret),
+      blinding: bytesOf(secrets.blinding),
+      scope: bytesOf(secrets.scope),
+    };
+    const id = await this.seatSigner(device, approvers, seed);
+    if (!this.ledger.signerLeaves.member(leaf)) {
+      throw new Error('the leaf the product wrote down is not the leaf the chain seats for the same keys');
+    }
     return id;
   }
 
@@ -653,19 +671,20 @@ export class AccountSimulator {
   }
 
   /**
-   * Seats a signer.
+   * The invitee takes their seat, acting as `invitee`, which must carry the
+   * invitation (`invite`) and the proposal's salt. The simulator is left acting
+   * as the invitee.
    *
    * `intoVacatedSlot` defaults to false — append into a fresh slot — because
    * that is what an account does until somebody leaves. Pass true to take a
    * slot a removal freed. The two are separate operations because the signer
    * tree is sparse and a never-written slot has no path to prove anything
-   * about; see the argument's comment in the contract.
+   * about.
    */
-  addSigner(leaf: Uint8Array, proposal: Uint8Array = ZERO_32, intoVacatedSlot = false) {
-    /* `amendSigner` with `removing` false. The method keeps its name because
-     * seating is still its own act everywhere above the ABI. */
-    return this.run('amendSigner',
-      (c) => this.contract.impureCircuits.amendSigner(c, leaf, proposal, intoVacatedSlot, false));
+  seatInvited(proposal: Uint8Array, invitee: AccountPrivateState, intoVacatedSlot = false) {
+    this.as(invitee);
+    return this.run('seatInvited',
+      (c) => this.contract.impureCircuits.seatInvited(c, proposal, intoVacatedSlot));
   }
 
   /** What a vacated slot holds, from the contract's own definition. */
@@ -687,9 +706,8 @@ export class AccountSimulator {
    * is touched, so there is nothing else to pass.
    */
   removeSigner(removedLeaf: Uint8Array, proposal: Uint8Array) {
-    /* `amendSigner` with `removing` true; `intoVacatedSlot` is ignored there. */
     return this.run('amendSigner',
-      (c) => this.contract.impureCircuits.amendSigner(c, removedLeaf, proposal, false, true));
+      (c) => this.contract.impureCircuits.amendSigner(c, removedLeaf, proposal));
   }
 
   /** Removes one signer and sets the threshold, under one approved proposal. */
@@ -1090,6 +1108,11 @@ export class AccountSimulator {
    * A fifth thing, `credited`, ADDED value on the way in for `credit`'s
    * callers; that circuit and its callers are both gone.
    */
+  /** `who`'s device as the invitee: carrying `c`'s salt and the address it was invited at. */
+  invited(who: AccountPrivateState, c: Change, invite: InvitedAddress = invitedAddressFor(who)): AccountPrivateState {
+    return { ...this.applying(who, c), invite };
+  }
+
   applying(device: AccountPrivateState, c: Change) {
     return {
       ...device,

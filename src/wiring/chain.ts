@@ -505,11 +505,6 @@ export class ChainLedger implements Ledger {
       () => this.inner.cancel(accountId, proposalId, by));
   }
 
-  addSigner(accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef): Promise<TxRef> {
-    return this.write(accountId, 'adding a signer',
-      () => this.inner.addSigner(accountId, leaf, proposalId, by));
-  }
-
   removeSigner(accountId: string, removedLeaf: Hex, proposalId: Hex, by: SignerRef): Promise<TxRef> {
     return this.write(accountId, 'removing a signer',
       () => this.inner.removeSigner(accountId, removedLeaf, proposalId, by));

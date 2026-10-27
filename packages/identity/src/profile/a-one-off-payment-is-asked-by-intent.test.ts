@@ -66,6 +66,16 @@ describe('a one-off payment is one act, by intent', () => {
     expect(read.kind === 'act' ? read.intent.fields : null).toEqual({ record: 'acc_1', company: LABEL, account: ACCOUNT, proposal: 'prp_abcdefghijkl' });
   });
 
+  it('names the vendor entry it pays, when it pays one, by its record\'s name, and the wallet reads that entry\'s versions', () => {
+    const read = parseAsk(act({ intent: intent({ vendor: 'ven_0123456789abcdef0123' }) }), PAGE, NOW);
+    /* RED WHEN: a one-off to a vendor entry cannot be asked by intent. */
+    expect(read.kind === 'act' ? read.intent.fields.vendor : null).toBe('ven_0123456789abcdef0123');
+    /* RED WHEN: a vendor entry is named by anything but a record's name, which could carry words the wallet would show. */
+    expect(refusal(act({ intent: intent({ vendor: 'Acme Printing Ltd' }) }))).toBe('not-an-act');
+    /* RED WHEN: the wallet cannot read the vendor entry a payment names from the company's records. */
+    expect(routeOf(intentShapeOf('one-off-payment')!, 'GET', '/api/accounts/acc_1/records/vendor/ven_0123456789abcdef0123/versions')).not.toBeNull();
+  });
+
   it('may ask the page only for the company\'s records, the vault\'s records, the proposal, its charge and its payment', () => {
     const shape = intentShapeOf('one-off-payment')!;
     /* RED WHEN: the raise, the approval, the charge or the payment is not counted as sent. */

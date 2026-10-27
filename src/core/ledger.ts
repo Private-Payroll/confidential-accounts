@@ -323,7 +323,7 @@ export interface LedgerStatus {
   vaultThresholds: Array<{ vault: Hex; threshold: number }>;
   /**
    * How many signers are seated. Public on chain, and on the boundary because
-   * it is what decides whether `addSigner`'s bootstrap window is open.
+   * a threshold can never be set above it.
    *
    * **ON THE MIDNIGHT LEDGER THAT WINDOW IS NEVER OPEN** — the constructor
    * founds every account at one seat and one approval and nothing can push the
@@ -823,26 +823,6 @@ export interface Ledger {
   cancel(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef>;
 
   /**
-   * Puts a signer's leaf in the on-chain tree.
-   *
-   * Two paths, and which one applies is not the caller's choice. While the
-   * account still has fewer signers than its threshold it is being set up and
-   * any existing signer may add another — otherwise a 2-of-3 account could
-   * never reach three signers, because it would need two approvals it cannot
-   * yet collect.
-   *
-   * Once the account is live, adding a signer IS an approval round: propose,
-   * reach the threshold, then call this. A single existing signer used to be
-   * able to add signers freely, which made the threshold decorative — one
-   * stolen key could manufacture as many approvers as it liked.
-   *
-   * On the boundary at all because `grantAccess` used to skip it entirely: a
-   * granted signer could read the account and not act on it, and every approval
-   * they made failed inside a proof.
-   */
-  addSigner(accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef): Promise<TxRef>;
-
-  /**
    * Removes a signer, by clearing the one slot they occupy.
    *
    * ONE ARGUMENT, where this used to take a sixteen-wide list of survivors to
@@ -1049,23 +1029,32 @@ export const viewDigestOf = (assets: ReadonlyArray<{ key: string; commitment: He
  * others — without pretending the simulation hides anything, which it does not.
  */
 /**
- * What a proposal must commit to for `addSigner` to accept it.
+ * What a proposal must commit to for `seatInvited` to accept it: the invited
+ * address's commitment and the rights the seat will carry.
  *
  * Domain separated from an ordinary payment payload on purpose, and the
  * separator is load bearing: without it, a proposal approved to pay salaries
- * would be a valid authorisation to add a signer, since both are just "a
- * commitment the signers approved". The thing being approved has to be part of
- * what is approved. The SIMULATED half of the contract's `signerAddPayload`.
+ * would be a valid authorisation to seat somebody, since both are just "a
+ * commitment the signers approved". The SIMULATED half of the contract's
+ * `signerInvitePayload`.
  */
-const simulatedSignerAddPayload = (leaf: Hex): Hex =>
-  toHex(sha256(utf8('midnight-accounts:add-signer:' + leaf)));
+const simulatedSignerInvitePayload = (address: Hex, scope: Hex): Hex =>
+  toHex(sha256(utf8('midnight-accounts:invite-signer:' + address + ':' + scope)));
+
+/** The SIMULATED half of the contract's `inviteAddressOf`: a commitment to a coin public key under a salt. */
+const simulatedInviteAddressOf = (coinPublicKey: Hex, salt: Hex): Hex =>
+  toHex(hmac(sha256, fromHexKey(salt), utf8('invite-address:' + coinPublicKey)));
+
+/** The SIMULATED half of the contract's `coinPublicKeyOf`. */
+const simulatedCoinPublicKeyOf = (coinSecretKey: Hex): Hex =>
+  toHex(sha256(utf8('simulated-coin-pk:' + coinSecretKey)));
 
 /**
  * What a proposal must commit to for `removeSigner` to accept it.
  *
- * Separately domain separated from `signerAddPayload`, for the same reason that
- * one is separated from a payment: an approval to add somebody must not double
- * as an approval to remove somebody.
+ * Separately domain separated from `signerInvitePayload`, for the same reason
+ * that one is separated from a payment: an approval to seat somebody must not
+ * double as an approval to remove somebody.
  *
  * The survivor list it used to carry has been dropped. Under the generation
  * design the caller supplied the leaves to re-seat, the ledger could not check
@@ -1273,6 +1262,22 @@ interface SimAccount {
  * finality, reorgs, fees, or zero knowledge. It also cannot tell you whether a
  * circuit will *prove* — only whether the sequence is legal.
  */
+/**
+ * What an invitee's device holds when it takes the seat an approved invitation
+ * names: the invitation's proposal, the coin secret key of the address it was
+ * invited at with the salt that hides that address, and the public half of the
+ * new seat with its blinding and rights. The coin secret key is the wallet's own;
+ * on the chain it never leaves the wallet's proof.
+ */
+export interface InvitedSeat {
+  readonly proposalId: Hex;
+  readonly coinSecretKey: Hex;
+  readonly addressSalt: Hex;
+  readonly signerPublicKey: Hex;
+  readonly blinding: Hex;
+  readonly scope: Hex;
+}
+
 export class SimulatedLedger implements Ledger {
   /** Nothing this class writes has ever been near a chain, and it says so itself. */
   readonly wiring = 'simulated' as const;
@@ -1550,8 +1555,8 @@ export class SimulatedLedger implements Ledger {
      *
      * A proposal authorised two different things depending on who spent it.
      * `execute` checked the CHANGE — the asset, amount and entries the signers
-     * agreed to move. `addSigner`, `removeSigner` and `setThreshold` check the
-     * PAYLOAD — the domain-separated statement of which signer, which removal,
+     * agreed to move. `seatInvited`, `removeSigner` and `setThreshold` check the
+     * PAYLOAD — the domain-separated statement of which invitation, which removal,
      * which threshold. Since `execute` was deleted only the payload half has a
      * reader; the change is stored here and opened by nothing. The first
      * version of this map stored only the change, so the governance methods
@@ -1739,33 +1744,25 @@ export class SimulatedLedger implements Ledger {
   }
 
   /**
-   * Mirrors the contract's two paths exactly — including the boundary between
-   * them, which is `signerCount < threshold` and not something more intuitive
-   * like "has the account been used yet".
+   * The invitee takes the seat an approved invitation names, as the contract's
+   * `seatInvited` does: the invitation must commit to the address worked out
+   * from `seat.coinSecretKey` and `seat.addressSalt`, and to `seat.scope`; the
+   * leaf is built here from the seat's public key, blinding and that scope,
+   * never handed in. Refuses a leaf already seated and an invitation not yet
+   * approved. The invitee need not be a signer.
    */
-  async addSigner(
-    accountId: string, leaf: Hex, proposalId: Hex | null, by: SignerRef,
-  ): Promise<TxRef> {
-    const a = this.requireSigner(accountId, by);
-    if (a.signerLeaves.has(leaf)) throw new Error('that signer is already in the set');
-
-    if (a.signerLeaves.size < a.threshold) {
-      // Bootstrap. Any existing signer may add another, because the account
-      // cannot yet collect the approvals its own threshold requires.
-      a.signerLeaves.add(leaf);
-      return this.touch(a);
+  async seatInvited(accountId: string, seat: InvitedSeat): Promise<TxRef> {
+    const a = this.accounts.get(accountId);
+    if (!a) throw new Error('account is not open on this ledger');
+    const address = this.commitments.inviteAddressOf(this.commitments.coinPublicKeyOf(seat.coinSecretKey), seat.addressSalt);
+    const approved = this.requireApproved(a, seat.proposalId);
+    if (approved.payloadHash !== this.commitments.signerInvitePayload(address, seat.scope)) {
+      throw new Error('that proposal does not invite this wallet with these rights');
     }
-
-    if (!proposalId) throw new Error('adding a signer needs an approved proposal');
-    const approved = this.requireApproved(a, proposalId);
-    // The approved proposal has to be for THIS leaf. Without this any approved
-    // proposal would authorise adding anyone — the same hole in a different place.
-    if (approved.payloadHash !== this.commitments.signerAddPayload(leaf)) {
-      throw new Error('that proposal is not for this signer');
-    }
-
+    const leaf = this.commitments.signerLeaf(seat.signerPublicKey, seat.blinding, seat.scope);
+    if (a.signerLeaves.has(leaf)) throw new Error('that signer is already on this account');
     a.signerLeaves.add(leaf);
-    a.openProposals.delete(proposalId);
+    a.openProposals.delete(seat.proposalId);
     return this.touch(a);
   }
 
@@ -1819,10 +1816,8 @@ export class SimulatedLedger implements Ledger {
       throw new Error('the threshold must be at least one');
     }
     /*
-     * The guard that is easy to miss. `addSigner` treats `signerCount <
-     * threshold` as "still being set up" and lets ONE signer seat another.
-     * Raising the threshold above the number of seated signers would hand that
-     * power back.
+     * A threshold above the number of seated signers would leave an account
+     * that can never approve anything again.
      */
     if (newThreshold > a.signerLeaves.size) {
       throw new Error(
@@ -1992,7 +1987,7 @@ export class SimulatedLedger implements Ledger {
      *
      * **THIS READ A VAULT'S THRESHOLD UNTIL 4 Sep, AND THAT WAS THE WRONG ONE
      * OF THE CONTRACT'S TWO ENTRY POINTS.** The four callers below are all
-     * governance — `addSigner`, `removeSigner`, `setThreshold`,
+     * governance — `seatInvited`, `removeSigner`, `setThreshold`,
      * `setVaultThreshold` — so this method is the mirror of `requireApproved`
      * and of nothing else. The vault-aware rule belongs to the PAYMENT path,
      * where it is modelled correctly and separately by `thresholdFor` (above,
@@ -2351,7 +2346,7 @@ export interface CommitmentScheme {
    * and it is a fact about this file rather than a judgement:**
    * `SimulatedLedger` seats a signer, removes one, and moves both the account's
    * and a vault's threshold, and recomputes all four payloads to check the
-   * round it is handed (`addSigner`, `removeSigner`, `setThreshold`,
+   * round it is handed (`seatInvited`, `removeSigner`, `setThreshold`,
    * `setVaultThreshold` below). Both implementations really do produce these
    * values, so neither is invented and no second definition of a rule is
    * created by putting them here.
@@ -2366,7 +2361,7 @@ export interface CommitmentScheme {
    * MIS-WIRE LANDS.** `signerRemovePayload` is the circuit's
    * `removeSignerPayload`; `signerThresholdPayload` is its
    * `setThresholdPayload`; `vaultThresholdPayload` is its
-   * `setVaultThresholdPayload`. Only `signerAddPayload` matches. The names are
+   * `setVaultThresholdPayload`. `signerInvitePayload` matches. The names are
    * kept as they were rather than renamed to the circuits' — a rename is churn
    * across every citation of them and would not have caught the mis-wiring,
    * which was never a naming mistake — and what catches a swap is the mirrored
@@ -2377,7 +2372,11 @@ export interface CommitmentScheme {
    * measured: *"type error: setThresholdPayload argument 1 ... expected value
    * of type Uint<0..18446744073709551616> but received 2"*.
    */
-  signerAddPayload(leaf: Hex): Hex;
+  signerInvitePayload(address: Hex, scope: Hex): Hex;
+  /** A hiding commitment to an invited address's coin public key under `salt`. */
+  inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex;
+  /** The coin public key a wallet's coin secret key makes. */
+  coinPublicKeyOf(coinSecretKey: Hex): Hex;
   signerRemovePayload(removedLeaf: Hex): Hex;
   signerThresholdPayload(newThreshold: number): Hex;
   vaultThresholdPayload(vault: Hex, newThreshold: number): Hex;
@@ -2499,8 +2498,14 @@ export const SimulatedCommitments: CommitmentScheme = {
    * stay apart. The two schemes never mix: a commitment is only ever checked
    * against the scheme that made it, which is now true of these four as well.
    */
-  signerAddPayload(leaf) {
-    return simulatedSignerAddPayload(leaf);
+  signerInvitePayload(address, scope) {
+    return simulatedSignerInvitePayload(address, scope);
+  },
+  inviteAddressOf(coinPublicKey, salt) {
+    return simulatedInviteAddressOf(coinPublicKey, salt);
+  },
+  coinPublicKeyOf(coinSecretKey) {
+    return simulatedCoinPublicKeyOf(coinSecretKey);
   },
   signerRemovePayload(removedLeaf) {
     return simulatedSignerRemovePayload(removedLeaf);

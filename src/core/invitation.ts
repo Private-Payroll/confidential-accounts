@@ -78,7 +78,36 @@ export const tokenOfLink = (link: string): Hex | null => {
 
 /* ------------------------------------------------------------------ the offer */
 
-/** What a payee is offered: the person record it names, and their pay. */
+/**
+ * **THE FOUR KINDS OF INVITATION**, one system for all of them: an employee
+ * and a vendor are paid, a signer is seated, and a super admin joins the
+ * company's committee. The kind is the one thing about an invitation the
+ * service is told; everything the person is offered stays sealed in the offer.
+ */
+export const INVITATION_KINDS = ['employee', 'vendor', 'signer', 'super-admin'] as const;
+export type InvitationKind = typeof INVITATION_KINDS[number];
+
+/** The kinds whose invitee hands over where they are paid, and is accepted on one route. */
+export const PAYEE_KINDS: readonly InvitationKind[] = ['employee', 'vendor'];
+
+/** An employee works full-time or part-time. A contractor is a vendor, never an employee. */
+export const EMPLOYEE_CLASSIFICATIONS = ['full-time', 'part-time'] as const;
+export type EmployeeClassification = typeof EMPLOYEE_CLASSIFICATIONS[number];
+
+/** An employee's and a vendor's ids, drawn on the inviting device; the two lists never share an id. */
+export const EMPLOYEE_ID = /^emp_[0-9a-f]{20}$/u;
+export const VENDOR_ID = /^ven_[0-9a-f]{20}$/u;
+
+export { isCalendarDate, isUtcMoment, utcMomentOf } from './calendar-days.js';
+import { isCalendarDate, isUtcMoment } from './calendar-days.js';
+
+/**
+ * What an employee is offered: the person record it names, their pay, the
+ * date they start and, for a fixed term, the date they end. An offer made
+ * before the classification, the end date and the address existed carries
+ * none of them and still opens; a new one always names full-time or
+ * part-time.
+ */
 export interface EmployeeOffer {
   readonly kind: 'employee';
   /** The id of the person record the invitation is for. */
@@ -88,8 +117,54 @@ export interface EmployeeOffer {
   readonly email: string | null;
   readonly asset: AssetId;
   readonly baseAmount: bigint;
+  /** A calendar date (2026-07-01). */
   readonly startDate: string;
+  /** For a fixed-term employee, the calendar date they end, on or after the start date. */
+  readonly endDate?: string;
+  readonly classification?: EmployeeClassification;
+  /** The address the inviter typed, when the person was added by their address; what was typed, read in full when they claim it. */
+  readonly address?: string;
 }
+
+/**
+ * What a vendor is offered: a place on the company's vendor list from a start
+ * date and, for monthly payments that stop, to an end date. A vendor is paid
+ * on the terms of their vendor entry, so the offer carries no salary and no
+ * full-time or part-time classification.
+ */
+export interface VendorOffer {
+  readonly kind: 'vendor';
+  /** The id of the vendor entry the invitation is for (`ven_` and twenty hex digits). */
+  readonly person: string;
+  readonly name: string;
+  readonly email: string | null;
+  readonly startDate: string;
+  readonly endDate?: string;
+  readonly address?: string;
+}
+
+/**
+ * What a super admin is offered: a key on the company's committee. A super
+ * admin joins under the committee's own rules, approved by the super admins
+ * on the chain, so this offer is opened but never accepted as a seat or as
+ * pay.
+ */
+export interface SuperAdminOffer {
+  readonly kind: 'super-admin';
+  readonly name: string;
+  readonly address?: string;
+}
+
+/**
+ * Why no seat makes or files a super admin's invitation: a super admin is a key on the committee, invited by the
+ * super admins themselves under the committee's own rules, and that way of inviting is not built yet.
+ */
+export const SUPER_ADMIN_INVITED_BY_THE_COMMITTEE = 'a super admin is invited by the company\'s super admins under the committee\'s own rules, '
+  + 'not by a signer\'s seat, and that way of inviting is not built yet';
+
+/** Why a super admin's invitation is not accepted on the signers' or the payees' path. */
+export const SUPER_ADMIN_JOINS_BY_THE_COMMITTEE = 'a super admin joins under the committee\'s own rules: the company\'s super admins add '
+  + 'their key on the chain with their own proposal, approved at their own threshold, so this invitation is not accepted here and nothing was sent.';
 
 /** What a signer is offered: a seat, with the secret their keys are proved by. */
 export interface SignerOffer {
@@ -100,6 +175,12 @@ export interface SignerOffer {
   readonly seat: { readonly nonce: Hex; readonly secret: Hex };
   /** Who the seat is for, as the seat that invited signed it; the joiner's device copies it into the seat request. */
   readonly invited: SignedSeatInvitation;
+  /**
+   * Only on a seat offered by address: the address the inviter typed, and the salt of the proposal raised to seat
+   * it. With the address's salt and rights in `invited`, they are everything the invitee's wallet needs to take the
+   * seat with `seatInvited`, and none of it is held only at the service: the inviting device keeps the link.
+   */
+  readonly byAddress?: { readonly address: string; readonly proposalSalt: Hex };
 }
 
 /**
@@ -123,9 +204,12 @@ export interface ReissueOffer {
  * invitation's id, the sign-in of the person invited, and the name and role
  * they are offered. Where the joiner's keys reached the inviter in a code their
  * wallet signed, it also names the leaf that code carries, so the seat is bound
- * to that leaf from the start. The service cannot write one, because only a
- * seat's filing key signs it, and every approving device holds a seat request
- * to it before it approves the leaf.
+ * to that leaf from the start. Where the seat is raised as an invitation by
+ * address, it also names that address's hiding commitment, its salt and the
+ * rights the seat will carry, so the payload every signer approves is made from
+ * what the inviting seat signed and from nothing the raiser says beside it. The
+ * service cannot write one, because only a seat's filing key signs it, and
+ * every approving device holds a seat request to it before it approves.
  */
 export interface SeatInvitationTerms {
   /** The company's id on this service. */
@@ -139,12 +223,30 @@ export interface SeatInvitationTerms {
   /** Only for a seat added from a code: the leaf the code carries. */
   readonly leaf?: Hex;
   /**
+   * Only on an invitation raised by address: the hiding commitment to the invitee's address (`inviteAddressOf`), the
+   * salt it was made under, and the rights the seat will carry, all hex. The proposal's payload is made from these.
+   */
+  readonly invite?: SeatInvitationAddress;
+  /**
+   * Only beside `invite`, on an invitation made by address: the identity on the chain of the proposal raised to seat
+   * the address. The seat the invitee's wallet takes with `seatInvited` is bound to this invitation by it: a device
+   * believes the leaf the account's history shows that proposal closed with, and no other.
+   */
+  readonly proposal?: Hex;
+  /**
    * Only on an invitation re-issued for a seat the chain already holds: the invitation it replaces - the one the
    * proposal that seated that leaf carried - by its id and its signature. Its terms are this one's own, but for the
    * id, so it verifies only where the person, name, role and seat are exactly the ones that seat was proposed with
    * (`replacedBy`).
    */
   readonly replaces?: { readonly invitation: Hex; readonly signedBy: Hex; readonly signature: Hex };
+}
+
+/** The address a seat is invited at, as the inviting seat signs it. */
+export interface SeatInvitationAddress {
+  readonly address: Hex;
+  readonly salt: Hex;
+  readonly scope: Hex;
 }
 
 /** A seat invitation, signed by the filing key of the seat that invited (`signedBy`). */
@@ -163,6 +265,10 @@ export const signSeatInvitation = (terms: SeatInvitationTerms, signingSecret: He
   const t: SeatInvitationTerms = {
     company: terms.company, invitation: terms.invitation.toLowerCase() as Hex, person: terms.person, name: terms.name, role: terms.role,
     ...(terms.leaf === undefined ? {} : { leaf: terms.leaf.toLowerCase() as Hex }),
+    ...(terms.invite === undefined ? {} : { invite: {
+      address: terms.invite.address.toLowerCase() as Hex, salt: terms.invite.salt.toLowerCase() as Hex, scope: terms.invite.scope.toLowerCase() as Hex,
+    } }),
+    ...(terms.proposal === undefined ? {} : { proposal: terms.proposal.toLowerCase() as Hex }),
     ...(terms.replaces === undefined ? {} : { replaces: {
       invitation: terms.replaces.invitation.toLowerCase() as Hex, signedBy: terms.replaces.signedBy.toLowerCase() as Hex, signature: terms.replaces.signature.toLowerCase() as Hex,
     } }),
@@ -173,10 +279,19 @@ export const signSeatInvitation = (terms: SeatInvitationTerms, signingSecret: He
 
 const seatInvitationTermsRefusal = (t: Partial<SeatInvitationTerms> | null | undefined): string | null => {
   if (typeof t !== 'object' || t === null) return 'it names nobody';
-  const keys = Object.keys(t).sort().join(',');
+  /* An invitation by address carries one more field beside any of the shapes signed before it. */
+  const keys = Object.keys(t).filter((k) => k !== 'invite' && k !== 'proposal').sort().join(',');
+  if ('proposal' in t && (!('invite' in t) || !HEX64.test(String(t.proposal)))) return 'the proposal it names is not one raised to seat the address it invites';
   if (keys !== 'company,invitation,name,person,role' && keys !== 'company,invitation,leaf,name,person,role'
     && keys !== 'company,invitation,leaf,name,person,replaces,role') {
     return 'it carries something a seat invitation does not';
+  }
+  if ('invite' in t) {
+    const a = t.invite as Partial<SeatInvitationAddress> | null | undefined;
+    if (typeof a !== 'object' || a === null || Object.keys(a).sort().join(',') !== 'address,salt,scope'
+      || !HEX64.test(String(a.address)) || !HEX64.test(String(a.salt)) || !HEX64.test(String(a.scope))) {
+      return 'the address it invites is not named by its commitment, its salt and the rights it carries';
+    }
   }
   if (t.replaces !== undefined) {
     const r = t.replaces as Partial<NonNullable<SeatInvitationTerms['replaces']>> | null;
@@ -250,7 +365,13 @@ export interface InvitationOffer {
    * the company's key can be answered.
    */
   readonly expiresAt: number;
-  readonly for: EmployeeOffer | SignerOffer | ReissueOffer;
+  /**
+   * When the inviting seat made the offer, as one UTC moment (2026-06-20T15:00:00Z), signed with the rest of it beside
+   * the inviter's filing key, so a person's timeline never rests on the service's clock. An offer made before it
+   * existed carries none and still opens.
+   */
+  readonly madeAt?: string;
+  readonly for: EmployeeOffer | VendorOffer | SignerOffer | SuperAdminOffer | ReissueOffer;
   readonly inviter: Inviter;
 }
 
@@ -293,22 +414,112 @@ export const whyThisOfferIsNotSigned = (signed: SignedOffer): string | null => {
   if (!directoryEntrySignedBy(o.label, o.account, o.inviter.committeeKey, s)) return 'the seat that invited did not sign its entry for this company';
   if (seatOpeningRefusal(o.inviter.opening) !== null) return 'the seat that invited did not hand over its own seat\'s opening';
   if (!verify(offerMessage(o), signed.signature, s.signingKey)) return 'the seat that invited did not sign this offer';
-  const f = o.for;
-  if (f?.kind === 'signer' || f?.kind === 'reissue') {
-    if (f.kind === 'signer' && (!HEX64.test(String(f.seat?.nonce)) || !HEX64.test(String(f.seat?.secret)))) {
-      return 'it offers a seat without the secret to prove one with';
-    }
-    /* Who the seat is for, signed by the same seat that signed the offer, for the same company, name and role. */
-    const invited = seatInvitationRefusal(f.invited);
-    if (invited !== null) return `it does not say who the seat is for (${invited})`;
-    const t = f.invited.terms;
-    if (f.invited.signedBy !== s.signingKey || t.company !== o.company || t.name !== f.name || t.role !== f.role) {
-      return 'who the seat is for was not signed by the seat that invited, for this offer';
-    }
-  } else if (f?.kind !== 'employee' || typeof f.person !== 'string' || typeof f.baseAmount !== 'bigint') {
-    return 'it offers nothing this service knows';
+  return whatIsOfferedRefusal(o);
+};
+
+/*
+ * The address a person was added by is carried as the inviter typed it, one unbroken string; the device that claims
+ * it reads it in full against the person's own wallet.
+ */
+const ADDRESS_TYPED = /^\S{1,512}$/u;
+
+const addressRefusal = (address: unknown): string | null =>
+  address === undefined || (typeof address === 'string' && ADDRESS_TYPED.test(address)) ? null
+    : 'the address it names is not one: enter the address the person gave you in full, or leave it out';
+
+const datesRefusal = (startDate: unknown, endDate: unknown): string | null => {
+  if (!isCalendarDate(startDate)) return 'its start date is not a calendar date such as 2026-07-01: enter it as year, month and day';
+  if (endDate === undefined) return null;
+  if (!isCalendarDate(endDate)) return 'its end date is not a calendar date such as 2026-07-01: enter it as year, month and day, or leave it out';
+  return endDate < startDate ? 'its end date is before its start date: set an end date on or after the start date' : null;
+};
+
+const CONTRACTOR = 'a contractor is added as a vendor, not as an employee: invite them as a vendor';
+
+/*
+ * What an offer offers, checked the same way on the inviting device before it signs and on the invitee's device
+ * when it opens. Fields that came later (the moment it was made, an employee's classification, end date and address)
+ * are checked when present, so an offer made before them still opens.
+ */
+const whatIsOfferedRefusal = (o: InvitationOffer): string | null => {
+  if ('madeAt' in o && !isUtcMoment(o.madeAt)) {
+    return 'it says when it was made in a form that is not one UTC moment such as 2026-06-20T15:00:00Z: make the invitation again';
   }
-  return null;
+  const f = o.for as InvitationOffer['for'] | undefined;
+  const s = o.inviter.statement;
+  switch (f?.kind) {
+    case 'signer':
+    case 'reissue': {
+      if (f.kind === 'signer' && (!HEX64.test(String(f.seat?.nonce)) || !HEX64.test(String(f.seat?.secret)))) {
+        return 'it offers a seat without the secret to prove one with';
+      }
+      /* Who the seat is for, signed by the same seat that signed the offer, for the same company, name and role. */
+      const invited = seatInvitationRefusal(f.invited);
+      if (invited !== null) return `it does not say who the seat is for (${invited})`;
+      const t = f.invited.terms;
+      if (f.invited.signedBy !== s.signingKey || t.company !== o.company || t.name !== f.name || t.role !== f.role) {
+        return 'who the seat is for was not signed by the seat that invited, for this offer';
+      }
+      const byAddress = (f as { byAddress?: { address?: unknown; proposalSalt?: unknown } }).byAddress;
+      if (byAddress !== undefined) {
+        if (typeof byAddress !== 'object' || byAddress === null || Object.keys(byAddress).sort().join(',') !== 'address,proposalSalt'
+          || !HEX64.test(String(byAddress.proposalSalt)) || addressRefusal(byAddress.address) !== null || byAddress.address === undefined
+          || t.invite === undefined || t.proposal === undefined) {
+          return 'it offers a seat by address without the address, the proposal raised for it and the address\'s commitment';
+        }
+      }
+      return null;
+    }
+    case 'employee': {
+      if (typeof f.person !== 'string' || typeof f.baseAmount !== 'bigint') return 'it does not name the employee\'s record and their pay';
+      const c = (f as { classification?: unknown }).classification;
+      if (typeof c === 'string' && c.trim().toLowerCase() === 'contractor') return CONTRACTOR;
+      if (c !== undefined && !EMPLOYEE_CLASSIFICATIONS.includes(c as EmployeeClassification)) {
+        return 'it classifies the employee as something other than full-time or part-time: choose full-time or part-time';
+      }
+      return datesRefusal(f.startDate, f.endDate) ?? addressRefusal(f.address);
+    }
+    case 'vendor': {
+      const v = f as unknown as Record<string, unknown>;
+      if ('baseAmount' in v || 'salary' in v || 'asset' in v) {
+        return 'a vendor\'s invitation carries no salary: a vendor is paid on the terms of their vendor entry, so leave the salary out, or invite them as an employee';
+      }
+      if ('classification' in v) {
+        return 'a vendor\'s invitation carries no full-time or part-time classification: that is an employee\'s, so leave it out, or invite them as an employee';
+      }
+      if (Object.keys(v).some((k) => !['kind', 'person', 'name', 'email', 'startDate', 'endDate', 'address'].includes(k))) {
+        return 'it carries something a vendor\'s invitation does not: make the invitation again';
+      }
+      if (typeof f.person !== 'string' || !VENDOR_ID.test(f.person) || typeof f.name !== 'string' || f.name === ''
+        || (f.email !== null && typeof f.email !== 'string')) {
+        return 'it does not name the vendor entry, the vendor\'s name and their email: make the invitation again';
+      }
+      return datesRefusal(f.startDate, f.endDate) ?? addressRefusal(f.address);
+    }
+    case 'super-admin': {
+      if (Object.keys(f).some((k) => !['kind', 'name', 'address'].includes(k)) || typeof f.name !== 'string' || f.name === '') {
+        return 'it does not name the super admin it invites, and only that: make the invitation again';
+      }
+      return addressRefusal(f.address);
+    }
+    default:
+      return 'it offers none of the four kinds of invitation (an employee, a vendor, a signer or a super admin): ask whoever invited you for a new invitation';
+  }
+};
+
+/**
+ * **WHY THIS DEVICE MAY NOT SIGN THIS OFFER AS A NEW INVITATION**, or null:
+ * what it offers is checked as the invitee's device will check it, and a new
+ * offer also says, as one UTC moment, when it was made, and a new employee's
+ * says full-time or part-time.
+ */
+export const whyThisOfferCannotBeMade = (o: InvitationOffer): string | null => {
+  if (!isUtcMoment(o.madeAt)) return 'it does not say, as one UTC moment, when it was made';
+  const c = o.for.kind === 'employee' ? (o.for as { classification?: unknown }).classification : null;
+  if (typeof c === 'string' && c.trim().toLowerCase() === 'contractor') return CONTRACTOR;
+  if (o.for.kind === 'employee' && c === undefined) return 'an employee is invited as full-time or part-time: choose one';
+  if (o.for.kind === 'employee' && !EMPLOYEE_ID.test(String(o.for.person))) return 'an employee\'s invitation names an employee\'s id, and this one does not: make it again';
+  return whatIsOfferedRefusal(o);
 };
 
 /** Why an offer may no longer be answered at `now`, by the expiry its inviter signed, or null. */
@@ -354,15 +565,17 @@ export const openOffer = (sealed: Sealed, token: Hex): SignedOffer => {
 /**
  * **AN INVITATION AS THE INVITING DEVICE FILES IT**: everything the service
  * keeps, and the seat's signature over it. Nothing in it opens the offer or
- * accepts the invitation.
+ * accepts the invitation, and nothing in it names, dates, addresses or
+ * classifies the person: that is all in the sealed offer. A re-issued seat
+ * invitation is filed as a signer's.
  */
 export interface InvitationFiling {
   readonly company: string;
-  readonly kind: 'employee' | 'signer';
+  readonly kind: InvitationKind;
   readonly id: Hex;
   readonly acceptanceHash: Hex;
   readonly offer: Sealed;
-  /** A payee's invitation: the person record it is for. */
+  /** An employee's or a vendor's invitation: the id of the record it is for, and no other kind's carries one. */
   readonly person?: string;
   /**
    * The epoch of the company key the offer's inbox and seat secret were made under. The service keeps it and judges
@@ -398,14 +611,18 @@ export const whyThisIsNotAnInvitation = (x: unknown, company: string): string | 
   const allowed = ['company', 'kind', 'id', 'acceptanceHash', 'offer', 'person', 'keyEpoch', 'filedBy'];
   if (Object.keys(f).some((k) => !allowed.includes(k))) return 'it carries something an invitation does not, and nothing unread is kept';
   if (f.company !== company) return 'it is for another company';
-  if (f.kind !== 'employee' && f.kind !== 'signer') return 'it is neither a payee\'s nor a signer\'s';
+  if (!INVITATION_KINDS.includes(f.kind as InvitationKind)) {
+    return 'it is none of the four kinds of invitation (an employee, a vendor, a signer or a super admin): make it again as one of them';
+  }
   if (!HEX64.test(String(f.id)) || !HEX64.test(String(f.acceptanceHash))) return 'it is not named by a lookup id and an acceptance hash';
   if (!Number.isSafeInteger(f.keyEpoch) || (f.keyEpoch as number) < 0) return 'it does not name the epoch of the company key it was made under';
   const o = f.offer as Record<string, unknown> | null;
   if (o === null || typeof o !== 'object' || ['iv', 'tag', 'body'].some((k) => typeof o[k] !== 'string')) return 'it carries no sealed offer';
-  if (f.kind === 'employee' ? typeof f.person !== 'string' || f.person === '' : f.person !== undefined) {
-    return 'a payee\'s invitation names the person it is for, and only a payee\'s does';
+  if (PAYEE_KINDS.includes(f.kind as InvitationKind) ? typeof f.person !== 'string' || f.person === '' : f.person !== undefined) {
+    return 'an employee\'s or a vendor\'s invitation names the record it is for, and no other kind\'s does';
   }
+  if (f.kind === 'vendor' && !VENDOR_ID.test(String(f.person))) return 'a vendor\'s invitation names a vendor entry\'s id, and this one does not';
+  if (f.kind === 'employee' && !EMPLOYEE_ID.test(String(f.person))) return 'an employee\'s invitation names an employee\'s id, and this one does not';
   return null;
 };
 
@@ -421,11 +638,11 @@ export const INVITATION_REFUSAL = {
 } as const;
 export type InvitationRefusal = keyof typeof INVITATION_REFUSAL;
 
-/** Why `invite` (of `kind`) cannot be opened at `now`, or null when it can. */
+/** Why `invite` cannot be opened or accepted at `now` as one of `kinds`, or null when it can. */
 export const whyThisInvitationIsClosed = (
-  invite: { kind: string; revokedAt?: string; acceptedAt?: string; expiresAt?: string } | null, kind: 'employee' | 'signer', now: number,
+  invite: { kind: string; revokedAt?: string; acceptedAt?: string; expiresAt?: string } | null, kinds: readonly InvitationKind[], now: number,
 ): InvitationRefusal | null => {
-  if (invite === null || invite.kind !== kind) return 'not-found';
+  if (invite === null || !kinds.includes(invite.kind as InvitationKind)) return 'not-found';
   if (invite.revokedAt) return 'withdrawn';
   if (!invite.expiresAt || Date.parse(invite.expiresAt) <= now) return 'expired';
   if (invite.acceptedAt) return 'used';

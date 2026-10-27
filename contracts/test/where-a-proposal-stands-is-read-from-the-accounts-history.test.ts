@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import * as accountModule from '../managed/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, change, leafOfDevice, privateStateFor } from './simulator.js';
+import { AccountSimulator, change, invitePayloadFor, privateStateFor } from './simulator.js';
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { roundsOnChainIn, vouchedRunIdentityOf, vouchingRunsIn } from 'vaults-web-shared/governed-call-builder.js';
 import { vouchedFreshOf } from '../../src/midnight/record-tree.js';
@@ -37,8 +37,8 @@ const roundsAsked = (history: ContractHistory, chainIds: readonly string[]) => a
 /** A governance proposal `by` raises, with the salt `seed` picks: its payload, the device carrying its salt, and its identity. */
 const aChange = (sim: AccountSimulator, by: typeof A, n: number, seed: number) => {
   const c = change(0n, seed);
-  const payload = pureCircuits.signerAddPayload(leafOfDevice(privateStateFor(n)));
-  return { payload, by: sim.applying(by, c), id: sim.proposalId(payload, c.salt) };
+  const payload = invitePayloadFor(privateStateFor(n));
+  return { payload, by: sim.applying(by, c), id: sim.proposalId(payload, c.salt), invitee: sim.invited(privateStateFor(n), c) };
 };
 
 describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKER', () => {
@@ -103,8 +103,8 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     await sim.as(again.by).cancel(again.id);
     block(12, [['approve', '25'.repeat(32)], ['cancel', '26'.repeat(32)]]);
     /* `carried` is carried out in a block where somebody's withdrawal of another proposal failed. */
-    await sim.as(carried.by).addSigner(leafOfDevice(privateStateFor(3)), carried.id);
-    block(13, [['cancel', '27'.repeat(32), false], ['amendSigner', '28'.repeat(32)]]);
+    await sim.seatInvited(carried.id, carried.invitee);
+    block(13, [['cancel', '27'.repeat(32), false], ['seatInvited', '28'.repeat(32)]]);
     /* `again` is proposed again under the same salt: the same identity, held a second time. */
     await sim.as(again.by).propose(again.payload);
     /* `quick` is proposed and withdrawn within one block: no block's state ever holds it. */
@@ -116,7 +116,7 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     expect(answer.ok).toBe(true);
     const r = answer.rounds as Record<string, any>;
     /* RED WHEN: a failed call of the block that closed it is named among the calls that closed it - a change carried out beside a failed withdrawal would read withdrawn. */
-    expect(r[hex(carried.id)].closedBy).toEqual(['amendSigner']);
+    expect(r[hex(carried.id)].closedBy).toEqual(['seatInvited']);
     /* RED WHEN: a propose whose transaction failed is counted beside the one that raised it, so the one that did is not named. */
     expect(r[hex(carried.id)].txRef).toBe('22'.repeat(32));
     /* RED WHEN: an identity held again after it closed is read from its first time held - closed, with that time's block and call. */

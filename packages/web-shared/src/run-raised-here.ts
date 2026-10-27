@@ -165,7 +165,7 @@ export async function raiseLegHere(
   if (run.status !== 'draft' && run.status !== 'proposed') throw new LegNotRaisedHere(`this run is ${run.status}`);
   const leg = raised(() => legOf(run, legChoiceOf(input), registry));
   const paid = legEmployees(run, leg);
-  const facts = await payableFactsHere(records, paid, 'Leave this run unraised until their record is put right.',
+  const facts = await payableFactsHere(records, run, paid, 'Leave this run unraised until their record is put right.',
     'This device will not raise a run it would not pay.');
 
   const state = await signedStateHere(records, accountId, key);

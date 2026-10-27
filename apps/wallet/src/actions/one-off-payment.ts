@@ -18,7 +18,8 @@ import {
   approvedAlready, governedCallServiceFor, nothingWasSentBy, notEnoughApprovalsYet, type GovernedCallDoors, type RoundOnThePage,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
-import { oneOffOfTheProposalHere, oneOffsHere } from '../../../../packages/web-shared/src/one-off-here.js';
+import { oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere } from '../../../../packages/web-shared/src/one-off-here.js';
+import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { oneOffToPayHere, type OneOffAsked, type OneOffRaiseDoors } from '../../../../packages/web-shared/src/one-off-raised-here.js';
 import { approveWith, chargeWith, raiseOneOffWith, spendingPolicyWith } from '../../../../packages/web-shared/src/one-off-in-the-wallet.js';
 import { ChargeNotYetSeen, type ChargeDoors, type ChargesInFlight } from '../../../../packages/web-shared/src/run-charged-here.js';
@@ -95,6 +96,12 @@ const WAIT_MS = 10 * 60_000;
 const EVERY_MS = 6_000;
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
+/* The refusals that mean the proposal's record can never be the payment shown (another vault, currency, filer, vendor address or keys); a record not found yet is not among them. */
+const NEVER_MATCHES = new RegExp([
+  'another one-off payment, or another version', 'raised by another proposal', 'paid from another vault', 'paid in another currency',
+  'filed by another seat', 'pays another address than the vendor', 'pays other keys than the vendor',
+].join('|'), 'u');
+
 /** The account's and the vault's pure circuits this action computes with, read from the compiled contracts this wallet ships. */
 interface Pure {
   readonly account: CompanyRecordsHere['roundIdentity'] & {
@@ -121,7 +128,7 @@ const pureCircuits = (): Promise<Pure> => {
 
 /**
  * The payment the page asks for, read from its fields: the vault, the currency, the amount, the payee's address and
- * name, and the reason, with the form the address decides, each as the record's own rules (`oneOffTidied`) tidy it.
+ * name, the vendor entry it pays if it names one, and the reason, with the form the address decides, each as the record's own rules (`oneOffTidied`) tidy it.
  * Returns the words of the refusal when any of it is not one a one-off payment can carry; those rules decide, never a
  * second statement of them here.
  */
@@ -142,7 +149,7 @@ export function oneOffAskedOf(
   }
   const given = {
     vault: vault as string, asset: f['token'] as AssetId, amount: BigInt(f['amount']), form,
-    payee: { ref: null, name: f['payeeName'] ?? null, address, network }, reason: f['reason'] ?? '',
+    payee: { ref: f['vendor'] ?? null, name: f['payeeName'] ?? null, address, network }, reason: f['reason'] ?? '',
   };
   let tidied: OneOffOpened;
   try {
@@ -159,13 +166,15 @@ export function oneOffAskedOf(
 
 /**
  * Why the one-off's own record, opened by this wallet, is not the payment the window showed as the page's words, or
- * null when every fact matches: the vault, the currency, the amount, the payee's address and name, and the reason.
+ * null when every fact matches: the vault, the currency, the amount, the payee's address and name, the vendor entry it
+ * names or that it names none, and the reason.
  */
 export const notAsShown = (shown: Omit<OneOffAsked, 'opensAt' | 'closesAt'>, record: Pick<OneOffOpened, 'vault' | 'asset' | 'amount' | 'payee' | 'reason'>): string | null => {
   if (record.vault.toLowerCase() !== shown.vault.toLowerCase()) return 'it pays from another vault';
   if (record.asset.toLowerCase() !== shown.asset.toLowerCase()) return 'it pays in another currency';
   if (record.amount !== shown.amount) return 'it pays another amount';
   if (record.payee.address !== shown.payee.address) return 'it pays another address';
+  if ((record.payee.ref ?? null) !== (shown.payee.ref ?? null)) return 'it names another vendor entry';
   if ((record.payee.name ?? null) !== (shown.payee.name ?? null)) return 'it names the payee otherwise';
   if (record.reason !== shown.reason) return 'it gives another reason';
   return null;
@@ -175,9 +184,11 @@ export const notAsShown = (shown: Omit<OneOffAsked, 'opensAt' | 'closesAt'>, rec
  * The company's records as this wallet reads them for a one-off payment: the directory it judges every filing by, the
  * company's state, its proposals and runs as the service holds them (each judged where it is used), where each proposal
  * stands on the chain and what the account records as paid (the wallet's own indexer), the vault's spending policy
- * (sealed records this seat opens, checked against the chain), and the one-off records under the company key.
+ * (sealed records this seat opens, checked against the chain), the one-off records under the company key, and the
+ * company's vendors, read and judged as every device reads them, for a payment naming a vendor entry to be checked
+ * against it.
  */
-export function oneOffRecordsFor(r: CompanyReach, reach: Pick<OneOffPaymentReach, 'assets'>, pure: Pure): CompanyRecordsHere & { readonly oneOffs: NonNullable<CompanyRecordsHere['oneOffs']> } {
+export function oneOffRecordsFor(r: CompanyReach, reach: Pick<OneOffPaymentReach, 'assets' | 'network'>, pure: Pure): CompanyRecordsHere & { readonly oneOffs: NonNullable<CompanyRecordsHere['oneOffs']> } {
   const registry = reach.assets ?? theAssets;
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
@@ -187,6 +198,7 @@ export function oneOffRecordsFor(r: CompanyReach, reach: Pick<OneOffPaymentReach
   return {
     directory,
     people: async () => { throw new Error('a one-off payment reads no person of the company.'); },
+    vendors: () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, { send: r.send, directory, network: reach.network ?? NETWORK }),
     state: async (id) => {
       const b = await served(companyWirePaths.one(r.accountId, 'state', id, 1)) as { filed?: unknown } | null;
       return b?.filed == null ? null : fromCompanyWire(b.filed, { company: r.accountId, kind: 'state', id, version: 1 }).sealed;
@@ -421,6 +433,7 @@ export function oneOffPaymentAction(reach: OneOffPaymentReach): ActionDefinition
           ? { key: 'act.one-off-payment.shown.amount-raw', values: raw, from: 'page' as const }
           : { key: 'act.one-off-payment.shown.amount', values: { shown: formatAmount(BigInt(raw.amount), asset), symbol: asset.symbol, name: asset.name, ...raw }, from: 'page' as const },
         { key: 'act.one-off-payment.shown.payee', values: { payee: f['payee'] ?? '' }, from: 'page' as const },
+        ...(f['vendor'] === undefined ? [] : [{ key: 'act.one-off-payment.shown.vendor', values: { vendor: f['vendor'] }, from: 'page' as const }]),
         ...(f['payeeName'] === undefined ? [] : [{ key: 'act.one-off-payment.shown.name', values: { name: f['payeeName'] }, from: 'page' as const }]),
         { key: 'act.one-off-payment.shown.reason', values: { reason: f['reason'] ?? '' }, from: 'page' as const },
         { key: 'act.one-off-payment.shown.vault', values: { vault: f['vault'] ?? '' }, from: 'page' as const },
@@ -511,14 +524,15 @@ export function oneOffPaymentAction(reach: OneOffPaymentReach): ActionDefinition
           }
           let chainId: string;
           try {
-            const { believed } = await oneOffsHere(records, r.accountId);
-            const found = await oneOffOfTheProposalHere(records, r.accountId, r.companyKeys, named, believed);
+            const found = await oneOffRaisedByHere(records, r.accountId, r.companyKeys, named);
             if (found === null) throw new StepRefused(why('not-a-one-off'));
             const differs = notAsShown(asked, found.oneOff);
             if (differs !== null) throw new StepRefused(why('not-as-shown', { says: differs }));
+            await refuseAOneOffToAnotherVendorHere(records, found.oneOff);
             chainId = found.oneOff.proposal.chainId;
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
+            if (e instanceof OneOffRefused && NEVER_MATCHES.test(e.message)) throw new StepRefused(why('not-as-shown', { says: said(e).replace(/\.$/u, '') }));
             throw new StepRefused(why('not-found', { says: said(e) }));
           }
           here.round = { id: named, chainId };

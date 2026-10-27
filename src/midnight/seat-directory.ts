@@ -439,6 +439,12 @@ export type EntryJudge =
     readonly by: 'a-member'; readonly proofOf: (entry: DirectoryEntry) => SeatProof | null; readonly leafOf: LeafOf;
     /** The seat the account's deploy seated, as the person's own wallet read it: the one entry believed without an invitation. */
     readonly founding: string | null;
+    /**
+     * The seat an invitation made by address took, by its proposal's identity on chain, as the account's own history
+     * shows it (`seatsInvitedIn`), or null where it shows none or cannot tell. Absent on a device that cannot read the
+     * history: no seat is believed from an invitation made by address there.
+     */
+    readonly invitedLeafOf?: (proposal: string) => string | null;
   };
 
 export const AT_THE_SERVER: EntryJudge = Object.freeze({ by: 'the-server' });
@@ -472,26 +478,42 @@ export const proofsOpenedWith = (company: string, viewingKeys: readonly Hex[]): 
  * seat the account's deploy seated as the person's own wallet read it) held to
  * the invitation it carries.
  */
-export const asAMember = (proofOf: (entry: DirectoryEntry) => SeatProof | null, leafOf: LeafOf, founding: string | null): EntryJudge =>
-  ({ by: 'a-member', proofOf, leafOf, founding: typeof founding === 'string' ? founding.toLowerCase() : null });
+export const asAMember = (
+  proofOf: (entry: DirectoryEntry) => SeatProof | null, leafOf: LeafOf, founding: string | null,
+  invitedLeafOf?: (proposal: string) => string | null,
+): EntryJudge =>
+  ({
+    by: 'a-member', proofOf, leafOf, founding: typeof founding === 'string' ? founding.toLowerCase() : null,
+    ...(invitedLeafOf === undefined ? {} : { invitedLeafOf }),
+  });
 
 /**
  * **WHY A MEMBER'S DEVICE DOES NOT BELIEVE THE INVITATION AN ENTRY CARRIES**,
  * or null when it does: signed by the filing key of a seat `dir` holds and has
  * not retired and whose role may invite (`mayInvite`), for this company,
  * naming the entry's person and the entry's seat; a re-issue only as exactly
- * the invitation it replaces, signed by a seat it holds (`replacedBy`). Every invitation an entry carries names its leaf, so one person's
- * invitation seats one leaf and no other seat can be entered under it. The
- * founding seat needs none.
+ * the invitation it replaces, signed by a seat it holds (`replacedBy`). An
+ * invitation made by address names no person and no leaf, only the proposal
+ * raised for the address: its seat is the one the account's history shows that
+ * proposal took (`invitedLeafOf`), and none where the history cannot tell. So
+ * every invitation seats one leaf and no other seat can be entered under it.
+ * The founding seat needs none.
  */
 const invitationRefusalOf = (
-  dir: Directory, entry: DirectoryEntry, proof: SeatProof, founding: string | null,
+  dir: Directory, entry: DirectoryEntry, proof: SeatProof, judge: Extract<EntryJudge, { by: 'a-member' }>,
 ): DirectoryRefusalCode | null => {
+  const founding = judge.founding;
   if (founding !== null && entry.statement.seat.toLowerCase() === founding) return null;
   const invited = proof.invited;
   if (invited === undefined || seatInvitationRefusal(invited) !== null || invited.terms.company !== dir.company) return 'not-invited';
-  if (invited.terms.person !== entry.person) return 'invited-someone-else';
-  if (invited.terms.leaf === undefined || invited.terms.leaf.toLowerCase() !== entry.statement.seat.toLowerCase()) return 'invited-another-leaf';
+  const seat = entry.statement.seat.toLowerCase();
+  if (invited.terms.leaf === undefined && invited.terms.invite !== undefined && invited.terms.proposal !== undefined) {
+    /* Made by address: the invitee's wallet chose its own leaf, so the seat is the one the chain shows the invitation's own proposal took. */
+    if ((judge.invitedLeafOf?.(invited.terms.proposal.toLowerCase()) ?? null) !== seat) return 'invited-another-leaf';
+  } else {
+    if (invited.terms.person !== entry.person) return 'invited-someone-else';
+    if (invited.terms.leaf === undefined || invited.terms.leaf.toLowerCase() !== seat) return 'invited-another-leaf';
+  }
   const inviter = dir.seats.find((x) => x.signingKey.toLowerCase() === invited.signedBy.toLowerCase());
   if (inviter === undefined || inviter.retired !== null) return 'inviter-not-seated';
   if (!mayInvite(inviter)) return 'inviter-may-not-invite';
@@ -704,8 +726,8 @@ const rotationApplied = (
  * Replayed (`chain` null): reading back every filing. An entry is judged as
  * `judge` says (`EntryJudge`): on a member's device, its proof is opened and
  * must prove its wallet key for its seat and, for every seat but the founding
- * one, carry the invitation a seat it holds signed for its person and its seat
- * (`invitationRefusalOf`), which gives it its role, and it is believed only as the first such entry for
+ * one, carry the invitation a seat it holds signed for its person and its seat,
+ * or for the proposal that seated it (`invitationRefusalOf`), which gives it its role, and it is believed only as the first such entry for
  * its seat and for its keys. With `now`, a change must
  * name at least the approvals a change of who is seated needs now, and its
  * quorum is counted against that bar, over seats not retired that are seated
@@ -776,7 +798,7 @@ export const applyFiling = (
       if (typeof proved === 'string') throw new DirectoryRefused(proved);
       proof = proved.proof;
       /* A seat goes to the person a seat of this company invited: every entry but the founding seat's carries that invitation. */
-      const uninvited = invitationRefusalOf(dir, entry, proof, ctx.judge.founding);
+      const uninvited = invitationRefusalOf(dir, entry, proof, ctx.judge);
       if (uninvited !== null) throw new DirectoryRefused(uninvited);
       /*
        * A retired seat holds no person, wallet or records key any more: who left can be seated again under a new leaf.

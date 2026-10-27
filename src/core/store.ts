@@ -2,6 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { canonical, utf8, type Hex } from './crypto.js';
 import type { SealedAccount, SealedProposal, SealedRun, SealedEmployee, Invite, User, CompanyVault, AccountDeploy, AccountOpeningRecord } from './types.js';
+import type { InvitationKind } from './invitation.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { employeeRowOf, personRecordFromRow, rowChangesThePerson } from './person-record.js';
@@ -266,172 +267,24 @@ class EntriesKept {
   }
 }
 
-/**
- * **WHERE A PAYSLIP LOOKUP LOOKS, SO IT DOES NOT READ EVERY RECORD TO ANSWER.**
- *
- * A payee's page asks two things with no viewing key: which slips are sealed to
- * one public key, and which company labels one company's slips name. Both
- * are answered from fields already outside the envelope - a slip's `sealedTo`
- * and `issuedBy`, a roster record's public key, an account's company label -
- * so this holds nothing the records do not already show. It exists so that the
- * answer costs the size of the answer rather than the size of the store.
- *
- * **BUILT FROM THE DATA IT DESCRIBES, AND REBUILT WHEN THE DATA IS REPLACED.**
- * It remembers which `data` object it was built from; a reset, a load, or a
- * write that failed and was put back replaces that object, and the next
- * lookup rebuilds rather than answering about records that are gone. Every
- * write between those is applied to it as it happens.
- */
-class PayslipIndex {
-  /** Slips that name the key they are sealed to: key -> run ids. */
-  private readonly sealedTo = new Map<string, Set<string>>();
-  /** Slips sealed before they named a key: employee id -> run ids. */
-  private readonly unnamed = new Map<string, Set<string>>();
-  /** Roster records by their public key: key -> employee ids. */
-  private readonly byKey = new Map<string, Set<string>>();
-  private readonly keyOfEmployee = new Map<string, string>();
-  /** Per run, what it was indexed under, so a rewrite can take it back out. */
-  private readonly ofRun = new Map<string, {
-    accountId: string; keys: string[]; unnamed: string[]; named: string[];
-  }>();
-  /** Per account, every address its slips name, counted across runs. */
-  private readonly namedBy = new Map<string, Map<string, number>>();
-  /** Per account, its contract address as indexed. */
-  private readonly addressOf = new Map<string, string>();
-  /** Address -> accounts that hold it now or whose slips name it. */
-  private readonly accountsAt = new Map<string, Map<string, number>>();
-
-  constructor(readonly builtFrom: Shape) {
-    for (const a of Object.values(builtFrom.accounts)) this.account(a);
-    for (const versions of Object.values(builtFrom.people)) {
-      const newest = versions[versions.length - 1];
-      if (newest !== undefined) this.employee(employeeRowOf(newest, null));
-    }
-    for (const r of Object.values(builtFrom.runs)) this.run(r);
-  }
-
-  private static add<K, V>(m: Map<K, Set<V>>, k: K, v: V) {
-    let set = m.get(k);
-    if (!set) m.set(k, set = new Set());
-    set.add(v);
-  }
-  private static drop<K, V>(m: Map<K, Set<V>>, k: K, v: V) {
-    const set = m.get(k);
-    if (!set) return;
-    set.delete(v);
-    if (set.size === 0) m.delete(k);
-  }
-  private static count(m: Map<string, Map<string, number>>, k: string, v: string, by: 1 | -1) {
-    let inner = m.get(k);
-    if (!inner) m.set(k, inner = new Map());
-    const n = (inner.get(v) ?? 0) + by;
-    if (n > 0) inner.set(v, n); else inner.delete(v);
-    if (inner.size === 0) m.delete(k);
-  }
-
-  account(a: SealedAccount) {
-    const before = this.addressOf.get(a.id);
-    /* A company is found by its label: what every payslip key of its payees is worked out from. */
-    const now = typeof a.companyLabel === 'string' ? a.companyLabel : undefined;
-    if (before === now) return;
-    if (before !== undefined) PayslipIndex.count(this.accountsAt, before, a.id, -1);
-    if (now !== undefined) {
-      PayslipIndex.count(this.accountsAt, now, a.id, 1);
-      this.addressOf.set(a.id, now);
-    } else {
-      this.addressOf.delete(a.id);
-    }
-  }
-
-  employee(e: SealedEmployee) {
-    const before = this.keyOfEmployee.get(e.id);
-    const now = e.wrappingPublicKey ? e.wrappingPublicKey.toLowerCase() : undefined;
-    if (before === now) return;
-    if (before !== undefined) PayslipIndex.drop(this.byKey, before, e.id);
-    if (now !== undefined) {
-      PayslipIndex.add(this.byKey, now, e.id);
-      this.keyOfEmployee.set(e.id, now);
-    } else {
-      this.keyOfEmployee.delete(e.id);
-    }
-  }
-
-  run(r: SealedRun) {
-    const before = this.ofRun.get(r.id);
-    if (before) {
-      for (const k of before.keys) PayslipIndex.drop(this.sealedTo, k, r.id);
-      for (const e of before.unnamed) PayslipIndex.drop(this.unnamed, e, r.id);
-      for (const a of before.named) {
-        PayslipIndex.count(this.namedBy, before.accountId, a, -1);
-        PayslipIndex.count(this.accountsAt, a, before.accountId, -1);
-      }
-    }
-    const keys: string[] = [];
-    const unnamed: string[] = [];
-    const named = new Set<string>();
-    for (const p of r.payslips ?? []) {
-      if (p.sealedTo !== undefined) keys.push(p.sealedTo.toLowerCase());
-      else unnamed.push(p.employeeId);
-      if (p.issuedBy) named.add(p.issuedBy.toLowerCase());
-    }
-    for (const k of keys) PayslipIndex.add(this.sealedTo, k, r.id);
-    for (const e of unnamed) PayslipIndex.add(this.unnamed, e, r.id);
-    for (const a of named) {
-      PayslipIndex.count(this.namedBy, r.accountId, a, 1);
-      PayslipIndex.count(this.accountsAt, a, r.accountId, 1);
-    }
-    this.ofRun.set(r.id, { accountId: r.accountId, keys, unnamed, named: [...named] });
-  }
-
-  runsSealedTo(key: string): string[] {
-    const out = new Set(this.sealedTo.get(key) ?? []);
-    for (const e of this.byKey.get(key) ?? []) for (const r of this.unnamed.get(e) ?? []) out.add(r);
-    return [...out].sort();
-  }
-  employeesWithKey(key: string): string[] { return [...(this.byKey.get(key) ?? [])].sort(); }
-  addressesNamedBy(accountId: string): string[] { return [...(this.namedBy.get(accountId)?.keys() ?? [])].sort(); }
-  accountsNaming(address: string): string[] { return [...(this.accountsAt.get(address)?.keys() ?? [])].sort(); }
-}
-
 export class MemoryStore {
   protected data: Shape = emptyShape();
 
-  private payslipIndex: PayslipIndex | null = null;
-
-  /** The payslip index for the data as it is now; see `PayslipIndex`. */
-  private payslips(): PayslipIndex {
-    if (this.payslipIndex?.builtFrom !== this.data) this.payslipIndex = new PayslipIndex(this.data);
-    return this.payslipIndex;
-  }
-
-  /** Applied to the index only when one exists for this data; otherwise the next lookup builds it. */
-  private indexed(apply: (ix: PayslipIndex) => void) {
-    if (this.payslipIndex?.builtFrom === this.data) apply(this.payslipIndex);
-  }
-
   /**
-   * **THE RUNS HOLDING A SLIP SEALED TO THIS PUBLIC KEY.** A slip that names its
-   * key is found by it; one sealed before slips named their key is found by the
-   * roster record that holds the key now. Lower-case hex in, run records out.
+   * **A COMPANY'S PAYSLIPS FOR ONE MONTH, FOUND BY THE COMPANY'S LABEL.** Every
+   * run of every account carrying the label for that month, as kept: a payee's
+   * device asks with no viewing key and no payslip key, and tries every slip with
+   * its own key, so nothing here says or can say whose any slip is.
    */
-  runsWithPayslipsSealedTo(publicKey: string): SealedRun[] {
-    return this.payslips().runsSealedTo(publicKey.toLowerCase())
-      .map(id => this.data.runs[id]).filter((r): r is SealedRun => r !== undefined);
+  runsOfLabelFor(label: string, period: string): SealedRun[] {
+    const accounts = new Set(this.accountsCarrying(label));
+    return Object.values(this.data.runs).filter((r) => accounts.has(r.accountId) && r.period === period);
   }
 
-  /** The roster records whose public key is this one. */
-  employeeIdsWithKey(publicKey: string): string[] {
-    return this.payslips().employeesWithKey(publicKey.toLowerCase());
-  }
-
-  /** Every company address one company's slips name, lower-cased. */
-  payslipAddressesNamedBy(accountId: string): string[] {
-    return this.payslips().addressesNamedBy(accountId);
-  }
-
-  /** The accounts whose contract address is this one, or whose slips name it. */
-  accountsAtPayslipAddress(address: string): string[] {
-    return this.payslips().accountsNaming(address.toLowerCase());
+  /** The accounts carrying this company label, lower-cased in. */
+  accountsCarrying(label: string): string[] {
+    const asked = label.toLowerCase();
+    return Object.values(this.data.accounts).filter((a) => typeof a.companyLabel === 'string' && a.companyLabel === asked).map((a) => a.id).sort();
   }
 
   protected flush() { /* nothing to do in memory */ }
@@ -515,7 +368,7 @@ export class MemoryStore {
   }
 
   putAccount(a: SealedAccount) {
-    this.data.accounts[a.id] = a; this.observe(a); this.indexed(ix => ix.account(a)); this.flush();
+    this.data.accounts[a.id] = a; this.observe(a); this.flush();
   }
   getAccount(id: string) { return this.data.accounts[id] ?? null; }
   listAccounts() { return Object.values(this.data.accounts); }
@@ -530,7 +383,7 @@ export class MemoryStore {
 
   /* Runs are stored SEALED: the amounts live here as well as on the roster. */
   putRun(r: SealedRun) {
-    this.data.runs[r.id] = r; this.observe(r); this.indexed(ix => ix.run(r)); this.flush();
+    this.data.runs[r.id] = r; this.observe(r); this.flush();
   }
   getRun(id: string) { return this.data.runs[id] ?? null; }
   /**
@@ -550,7 +403,6 @@ export class MemoryStore {
     this.data.proposals[p.id] = p;
     this.observe(r);
     this.observe(p);
-    this.indexed(ix => ix.run(r));
     this.flush();
     return true;
   }
@@ -573,33 +425,10 @@ export class MemoryStore {
   /** Every version of every person this store holds, one list per person: what moves to where a company's records are kept. */
   peopleHeld(): Array<readonly SealedCompanyRecord[]> { return Object.values(this.data.people).map((all) => [...all]); }
 
-  /**
-   * **NAMES THE KEY ON EVERY SLIP OF THE PERSON `id` SEALED BEFORE SLIPS NAMED
-   * ONE**: the payslip key their newest record holds, which is the key such a
-   * slip was found by while the person was held here. Only on a run the service
-   * drew itself: a run a seat's device filed is kept as it was signed, and names
-   * the key on every slip it seals. Done before the person is let go of, so a
-   * payee's older slips are still found by their key once nothing here holds
-   * the person.
-   */
-  nameTheKeyOnOlderSlipsOf(id: string): void {
-    const newest = this.newestPerson(id);
-    const key = newest?.facts?.wrappingPublicKey;
-    if (typeof key !== 'string') return;
-    for (const run of Object.values(this.data.runs)) {
-      if (run.filedBy !== undefined || !(run.payslips ?? []).some((p) => p.employeeId === id && p.sealedTo === undefined)) continue;
-      this.putRun({
-        ...run,
-        payslips: run.payslips.map((p) => (p.employeeId === id && p.sealedTo === undefined ? { ...p, sealedTo: key.toLowerCase() as Hex } : p)),
-      });
-    }
-  }
-
   /** Lets go of the person `id`, once every version of theirs is filed where a company's records are kept. */
   letGoOfPerson(id: string): void {
     const { [id]: _moved, ...rest } = this.data.people;
     this.data.people = rest;
-    this.payslipIndex = null;
     this.flush();
   }
 
@@ -655,14 +484,17 @@ export class MemoryStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  /** What a payee handed over and nobody has admitted yet, from their invitation; null when nothing waits. */
-  handoverFor(subjectId: string): SealedEmployee['inbox'] {
-    return this.invitationsOf(subjectId).find(i => i.handover)?.handover ?? null;
+  /**
+   * What a payee handed over and nobody has admitted yet, from their invitation of `kind`; null when nothing waits.
+   * Read by kind, so a vendor's hand-over never reaches an employee's record, or the reverse.
+   */
+  handoverFor(subjectId: string, kind: InvitationKind): SealedEmployee['inbox'] {
+    return this.invitationsOf(subjectId).find(i => i.kind === kind && i.handover)?.handover ?? null;
   }
 
   /** The person as the service's older payroll code reads one: their newest record, and what waits on their invitation. */
   private rowOf(rec: SealedCompanyRecord): SealedEmployee {
-    return employeeRowOf(rec, this.handoverFor(rec.id));
+    return employeeRowOf(rec, this.handoverFor(rec.id, 'employee'));
   }
 
   /**
@@ -684,10 +516,9 @@ export class MemoryStore {
     if (rowChangesThePerson(newest, e)) {
       const rec = personRecordFromRow(e, (newest?.version ?? 0) + 1);
       this.data.people[e.id] = [...(this.data.people[e.id] ?? []), rec];
-      this.indexed(ix => ix.employee(employeeRowOf(rec, null)));
     }
     const waiting = e.inbox ?? null;
-    if (canonical(waiting) === canonical(this.handoverFor(e.id))) return;
+    if (canonical(waiting) === canonical(this.handoverFor(e.id, 'employee'))) return;
     const invites = this.invitationsOf(e.id);
     if (waiting === null) {
       for (const i of invites) if (i.handover) this.data.invites[i.token] = { ...i, handover: null };
@@ -944,7 +775,7 @@ export class MemoryStore {
    * newest version and every digest of each record, so an entry is looked up
    * rather than found by reading every entry the company filed. Built from the
    * manifest the first time a company's is asked for, grown as entries are
-   * entered, built again only when the data is replaced - see `PayslipIndex`.
+   * entered, built again only when the data is replaced (a reset, a load, a write put back).
    */
   private entriesKept: { readonly builtFrom: Shape; readonly of: Map<string, EntriesKept> } | null = null;
   private entriesOf(accountId: string): EntriesKept {
@@ -965,7 +796,7 @@ export class MemoryStore {
    * The record trees as kept for the data as it is now, one per company that
    * filed a header: built from the headers the first time a company's is
    * asked for, grown as each header is kept, and built again only when the
-   * data is replaced (a reset, a load, a write put back) - see `PayslipIndex`.
+   * data is replaced (a reset, a load, a write put back).
    */
   private treesKept: { readonly builtFrom: Shape; readonly of: Map<string, TreeKept> } | null = null;
 

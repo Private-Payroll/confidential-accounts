@@ -64,6 +64,8 @@ export const EXTRA_ARGUMENTS: Record<WitnessName, readonly unknown[]> = {
   localSecretKey: [],
   signerBlinding: [],
   signerScope: [],
+  inviteeCoinSecretKey: [],
+  inviteAddressSalt: [],
   signerRights: [],
   runOpening: [new Uint8Array(32).fill(0x2b)],
   signerPath: [VACANT_SLOT],

@@ -11,8 +11,9 @@ import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { payslipKeypairForWallet } from './payslip-key.js';
 import { sealHandover } from './invite-handover.js';
-import { openPayslip } from './payslip-open.js';
-import { wrapKey, toHex, randomBytes, unwrapKey, unseal, type Hex } from './crypto.js';
+import { openPayslip, NOT_YOUR_PAYSLIP, type SealedPayslip } from './payslip-open.js';
+import { SLIPS_ARE_NOT_ITS_PEOPLE } from './run-raising.js';
+import { toHex, randomBytes, unwrapKey, unseal, type Hex } from './crypto.js';
 import { runMaterialFor, type RunMaterial } from '../midnight/run-material.js';
 import { paidMovementOfLeaf, payoutLeafOf } from '../midnight/payout-tree.js';
 import { movementOfPayslip, type PayslipCircuits } from 'vaults-web-shared/payslip-movement.js';
@@ -34,7 +35,7 @@ import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../testing/assets.js';
 /**
  * **EACH PAYSLIP SAYS WHETHER IT WAS PAID - "RECORDED AS PAID", "NOT YET" OR
  * "CANNOT TELL" - FROM WHAT THE PAYEE'S OWN DEVICE READ, AND ONLY ITS PAYEE CAN
- * ASK.**
+ * OPEN IT.**
  *
  * Every payee below is hired through the real invitation, with a key their own
  * wallet's words work out for the company's address, and every run is raised
@@ -124,21 +125,31 @@ const raiseLeg = async (h: H, c: C, runId: string, asset?: string): Promise<RunM
   return material;
 };
 
+/** The months this file's runs are drawn for, newest first, which is how a payee's page asks for them. */
+const PERIODS = ['2026-09', '2026-08', '2026-07'] as const;
+
+/** What a payee's device does: asks for every slip of the company's months, newest first, and keeps those its key opens. */
+const slipsOf = (h: H, label: string, secret: Hex, periods: readonly string[] = PERIODS): SealedPayslip[] =>
+  periods.flatMap((period) => h.payroll.payslipsOf(label, period)).filter((s) => {
+    try { openPayslip(s, secret); return true; } catch (e) { if ((e as Error).message !== NOT_YOUR_PAYSLIP) throw e; return false; }
+  });
+
 /** What the device read at one company address: its completed payments, or `null` when it could not read. */
 type Record = (company: string) => Hex[] | null;
 
 /**
  * The wire, as the page meets it. Payslips come from the service's own
- * `payslipsFor`, behind the same proof the route asks for. **The service's own
+ * `payslipsOf`, every slip of the company's month. `everyCompany` stands for
+ * a service that sends every company's slips for the month whatever label was
+ * asked. **The service's own
  * list of completed payments answers `serviceSays`**, which a test sets to a
  * payment the contract does not hold, so a page that asked it and believed it
  * would show that slip paid. The device's own read answers from `paid`. Every
  * request, and every read, is kept.
  */
 type Wired = Fetch & { reader: ChainReader; reads: Array<{ company: string; movements: Hex[] }> };
-const wire = (h: H, paid: Record, opts: { ignoreFrom?: boolean; serviceSays?: Hex[] } = {}) => {
+const wire = (h: H, paid: Record, opts: { everyCompany?: boolean; serviceSays?: Hex[] } = {}) => {
   const seen: Array<{ url: string; body: string; init: RequestInit | undefined }> = [];
-  let live: { publicKey: string; value: string } | null = null;
   const reads: Wired['reads'] = [];
   const reader: ChainReader = {
     recorded: async (indexer, company, payments) => {
@@ -155,17 +166,13 @@ const wire = (h: H, paid: Record, opts: { ignoreFrom?: boolean; serviceSays?: He
   const fetcher: Fetch = async (url, init) => {
     const body = init?.body ? String(init.body) : '';
     seen.push({ url, body, init });
-    const b = body ? JSON.parse(body) : {};
-    if (url === '/api/payslips/proof') {
-      live = { publicKey: b.publicKey, value: toHex(randomBytes(32)) };
-      return new Response(JSON.stringify({ sealed: wrapKey(live.value, b.publicKey), expiresAt: '' }));
-    }
-    if (url === '/api/payslips') {
-      const ok = live && live.publicKey === b.publicKey && live.value === b.answer;
-      live = null;
-      if (!ok) return new Response('{"error":"refused"}', { status: 403 });
-      return new Response(JSON.stringify(
-        opts.ignoreFrom ? h.payroll.payslipsFor(b.publicKey) : h.payroll.payslipsFor(b.publicKey, b.from)));
+    if (url.startsWith('/api/payslips?')) {
+      const q = new URLSearchParams(url.slice('/api/payslips?'.length));
+      const period = q.get('period')!;
+      const labels = opts.everyCompany
+        ? [...new Set(Object.values(h.store.snapshot().accounts).map((a) => a.companyLabel).filter((l) => typeof l === 'string').map(String))]
+        : [q.get('company')!];
+      return new Response(JSON.stringify(labels.flatMap((l) => h.payroll.payslipsOf(l, period))));
     }
     if (url.startsWith('/api/payslips/paid?')) {
       /* The service's word. RED WHEN the page believes it. */
@@ -184,9 +191,10 @@ const shown = async (
   /* The accounts the payee's wallet read the label off; left out, the account the company has now. */
   openedFor: string[] = [from.address],
 ) => {
-  const mine = await fetchMyPayslips(keys, from.label, fetcher);
-  const chain = await paymentsOnTheChain(mine.opened, fetcher.reader, INDEXER, CONFIRMED, now, REGISTRY, openedFor);
-  return Object.fromEntries(mine.opened.map(s => [s.period, chain.get(s.runId)]));
+  const opened = [];
+  for (const period of PERIODS) opened.push(...(await fetchMyPayslips(keys, from.label, period, fetcher)).opened);
+  const chain = await paymentsOnTheChain(opened, fetcher.reader, INDEXER, CONFIRMED, now, REGISTRY, openedFor);
+  return Object.fromEntries(opened.map(s => [s.period, chain.get(s.runId)]));
 };
 
 describe('each payslip says whether it was paid, from the chain', () => {
@@ -231,7 +239,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     /* A reader that answers for a different number of payments than it was asked about. */
     const { fetcher } = wire(h, listOf([]));
     const short: ChainReader = { recorded: async () => [] };
-    const mine = await fetchMyPayslips(dana.keys, c.label, fetcher);
+    const mine = await fetchMyPayslips(dana.keys, c.label, '2026-08', fetcher);
     expect((await paymentsOnTheChain(mine.opened, short, INDEXER, CONFIRMED, NOW, REGISTRY, [c.address])).get(mine.opened[0]!.runId))
       .toBe('cannot-tell');
     /*
@@ -251,7 +259,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     const dana = hire(h, c, 'Dana');
     await raise(h, c, '2026-08');
     const { fetcher, seen } = wire(h, listOf([]));
-    const [slip] = (await fetchMyPayslips(dana.keys, c.label, fetcher)).opened;
+    const [slip] = (await fetchMyPayslips(dana.keys, c.label, '2026-08', fetcher)).opened;
     /* The run was raised while the company had no address to read the record at. */
     const noAddress = { ...slip!, receipt: { ...slip!.receipt!, company: null } };
     /* RED WHEN a receipt with nowhere to ask reads as not paid. */
@@ -297,7 +305,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     h.store.putAccount({ ...h.accounts.require(c.accountId), contractAddress: moved });
     await raiseLeg(h, c, run.id, TEST_TOKEN);
     const receiptOf = (who: typeof ben) =>
-      openPayslip(h.payroll.payslipsFor(who.keys.publicKey, c.label)[0]!, who.keys.secret).receipt!;
+      openPayslip(slipsOf(h, c.label, who.keys.secret)[0]!, who.keys.secret).receipt!;
     /* Both legs name the one label, which a company keeps wherever its account is. */
     expect(receiptOf(ben).label).toBe(c.label);
     expect(receiptOf(cat).label).toBe(c.label);
@@ -332,7 +340,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     expect(unopened.reads).toEqual([]);
     /* Nor one that opened no account at all: a label locates no contract. RED WHEN the default reads one. */
     const none = wire(h, both).fetcher;
-    const mine = await fetchMyPayslips(ben.keys, c.label, none);
+    const mine = await fetchMyPayslips(ben.keys, c.label, '2026-08', none);
     const chain = await paymentsOnTheChain(mine.opened, none.reader, INDEXER, CONFIRMED, NOW, REGISTRY);
     expect(chain.get(mine.opened[0]!.runId)).toBe('cannot-tell');
     expect(none.reads).toEqual([]);
@@ -344,7 +352,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     const dana = hire(h, c, 'Dana');
     await raise(h, c, '2026-08');
     await raise(h, c, '2026-09');
-    const [sep, aug] = h.payroll.payslipsFor(dana.keys.publicKey, c.label);
+    const [sep, aug] = slipsOf(h, c.label, dana.keys.secret);
     expect(openPayslip(aug!, dana.keys.secret).receipt?.runId).toBe(aug!.runId);
     /*
      * The service moves August's receipt onto September's slip. RED WHEN the
@@ -362,7 +370,7 @@ describe('each payslip says whether it was paid, from the chain', () => {
     const dana = hire(h, c, 'Dana');
     await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
     const { fetcher, seen } = wire(h, listOf([]));
-    const mine = await fetchMyPayslips(dana.keys, c.label, fetcher);
+    const mine = await fetchMyPayslips(dana.keys, c.label, '2026-08', fetcher);
     /* RED WHEN a draft goes out with no receipt, which tells the store its leg is not raised. */
     expect(mine.sealed[0]!.receipt).not.toBeNull();
     expect(mine.opened[0]!.receipt).toBeNull();
@@ -410,7 +418,7 @@ describe('nothing the page sends names which payment it opened', () => {
 });
 
 describe('a company cannot put a payslip on the page of somebody who did not accept it', () => {
-  it('A SLIP SEALED TO A STRANGER\'S KEY IS NOT SENT TO THEM, AND NOT SHOWN IF IT IS', async () => {
+  it('A SLIP SEALED TO A STRANGER\'S KEY IS NOT SENT AS THE COMPANY\'S THEY ASKED FOR, AND NOT SHOWN IF IT IS', async () => {
     const h = harness();
     const acme = await company(h, 'Acme');
     const dana = hire(h, acme, 'Dana');
@@ -425,12 +433,11 @@ describe('a company cannot put a payslip on the page of somebody who did not acc
     hireWithKey(h, other, 'Dana', dana.keys.publicKey, other.label);
     await h.payroll.createRunFromRoster(other.accountId, '2026-09', other.viewingKey);
     /* The control: its slip really is sealed to Dana's key and opens with it. */
-    const everything = h.payroll.payslipsFor(dana.keys.publicKey);
-    expect(everything.map(s => openPayslip(s, dana.keys.secret).payslip.period).sort())
-      .toEqual(['2026-08', '2026-09']);
+    expect(slipsOf(h, other.label, dana.keys.secret).map(s => openPayslip(s, dana.keys.secret).payslip.period)).toEqual(['2026-09']);
 
-    /* RED WHEN the service sends every slip sealed to the key, whoever issued it. */
-    expect(h.payroll.payslipsFor(dana.keys.publicKey, acme.label).map(s => s.period)).toEqual(['2026-08']);
+    /* RED WHEN the service sends another company's slips as the company asked for. */
+    expect(slipsOf(h, acme.label, dana.keys.secret).map(s => s.period)).toEqual(['2026-08']);
+    expect(h.payroll.payslipsOf(acme.label, '2026-09')).toEqual([]);
     const honest = wire(h, listOf([]));
     expect(Object.keys(await shown(honest.fetcher, dana.keys, acme))).toEqual(['2026-08']);
 
@@ -446,15 +453,17 @@ describe('a company cannot put a payslip on the page of somebody who did not acc
     expect(Object.keys(await shown(honest.fetcher, dana.keys, acme))).toEqual(['2026-08']);
 
     /* And a service that sends it anyway: RED WHEN the page shows a slip naming another company. */
-    const careless = wire(h, listOf([]), { ignoreFrom: true });
-    const mine = await fetchMyPayslips(dana.keys, acme.label, careless.fetcher);
-    expect(mine.opened.map(s => s.period)).toEqual(['2026-08']);
-    expect(mine.refused).toBe(1);
+    const careless = wire(h, listOf([]), { everyCompany: true });
+    const august = await fetchMyPayslips(dana.keys, acme.label, '2026-08', careless.fetcher);
+    expect(august.opened.map(s => s.period)).toEqual(['2026-08']);
+    const september = await fetchMyPayslips(dana.keys, acme.label, '2026-09', careless.fetcher);
+    expect(september.opened).toEqual([]);
+    expect(september.refused).toBe(1);
   });
 });
 
-describe('the payslip lookups read what they answer and not every record', () => {
-  it('BY COUNT OF READS: NO LISTING, AND ONE RECORD READ PER RUN FOUND', async () => {
+describe('a company\'s month is every slip of its own runs for that month, and nothing says whose', () => {
+  it('ONE COMPANY\'S MONTH OUT OF MANY: ITS OWN SLIPS ONLY, AND NOTHING BESIDE A SLIP NAMES A PERSON, A KEY OR A LABEL', async () => {
     const h = harness();
     const companies: C[] = [];
     for (let i = 0; i < 12; i++) companies.push(await company(h, `Co ${i}`));
@@ -465,80 +474,45 @@ describe('the payslip lookups read what they answer and not every record', () =>
     const target = companies[5]!;
     const dana = hire(h, target, 'Dana');
     await h.payroll.createRunFromRoster(target.accountId, '2026-08', target.viewingKey);
-    /* The index is built on the first lookup, as it is once per process. */
-    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toHaveLength(1);
-
-    /* From here every read of the three collections is counted. */
-    const data = (h.store as any).data;
-    const counts = { listed: 0, read: 0 };
-    for (const name of ['accounts', 'runs', 'people'] as const) {
-      data[name] = new Proxy(data[name], {
-        ownKeys: (t) => { counts.listed += 1; return Reflect.ownKeys(t); },
-        get: (t, k, r) => { if (typeof k === 'string') counts.read += 1; return Reflect.get(t, k, r); },
-      });
-    }
-    const listings = ['listAccounts', 'listRuns', 'listEmployees'] as const;
-    const called: string[] = [];
-    for (const m of listings) {
-      const real = (h.store as any)[m].bind(h.store);
-      (h.store as any)[m] = (...a: unknown[]) => { called.push(m); return real(...a); };
-    }
-
-    /* A second run for Dana, written after the index was built, is found too. */
     await h.payroll.createRunFromRoster(target.accountId, '2026-09', target.viewingKey);
-    counts.listed = 0; counts.read = 0; called.length = 0;
-    const found = h.payroll.payslipsFor(dana.keys.publicKey, target.label);
-    expect(found.map(s => s.period)).toEqual(['2026-09', '2026-08']);
-    /*
-     * RED WHEN either lookup goes back to walking every account: thirteen
-     * companies are listed and every run of each is read.
-     */
-    expect(called).toEqual([]);
-    expect(counts.listed).toBe(0);
-    expect(counts.read).toBe(2);
-
-    counts.listed = 0; counts.read = 0;
+    /* RED WHEN another company's slips, or another month's, are sent as this company's month. */
+    expect(h.payroll.payslipsOf(target.label, '2026-07')).toHaveLength(1);
+    expect(h.payroll.payslipsOf(target.label, '2026-08')).toHaveLength(2);
+    expect(slipsOf(h, target.label, dana.keys.secret).map(s => s.period)).toEqual(['2026-09', '2026-08']);
+    expect(slipsOf(h, companies[4]!.label, dana.keys.secret)).toEqual([]);
+    /* RED WHEN anything the service keeps or sends of a slip names its person, its key or its label. */
+    const kept = JSON.stringify(h.store.snapshot().runs).toLowerCase();
+    const sent = JSON.stringify(PERIODS.flatMap(p => h.payroll.payslipsOf(target.label, p))).toLowerCase();
+    for (const v of [dana.id, dana.keys.publicKey, target.label]) {
+      expect(kept).not.toContain(v.toLowerCase());
+      expect(sent).not.toContain(v.toLowerCase());
+    }
     expect(h.payroll.payslipAddressesOf(target.label)).toEqual([{ label: target.label, account: target.address }]);
-    expect(called).toEqual([]);
-    expect(counts.listed).toBe(0);
-    /* One account record, read for its label and its address now. */
-    expect(counts.read).toBe(1);
   });
 
-  it('A SLIP SEALED BEFORE SLIPS NAMED THEIR KEY IS FOUND BY THE ROSTER RECORD\'S KEY', async () => {
+  it('A RUN WHOSE SLIPS ARE NOT ONE TO EACH PERSON ITS SEALED RECORD NAMES IS NOT RAISED, AND NOTHING IS WRITTEN', async () => {
     const h = harness();
     const c = await company(h);
-    const dana = hire(h, c, 'Dana');
-    const eli = hire(h, c, 'Eli');
+    hire(h, c, 'Dana');
+    hire(h, c, 'Eli');
     const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
     const stored = h.store.getRun(run.id)!;
-    /* Written as a run from before `sealedTo` existed. */
-    h.store.putRun({ ...stored, payslips: stored.payslips.map(({ sealedTo: _k, ...p }) => p) });
-    /* RED WHEN the index finds slips only by the key they name. */
-    const found = h.payroll.payslipsFor(dana.keys.publicKey, c.label);
-    expect(found.map(s => openPayslip(s, dana.keys.secret).payslip.name)).toEqual(['Dana']);
-    /* Each person's own slip only, out of the one run. */
-    expect(h.payroll.payslipsFor(eli.keys.publicKey, c.label)
-      .map(s => openPayslip(s, eli.keys.secret).payslip.name)).toEqual(['Eli']);
+    /*
+     * The store loses one slip, or carries one nobody's sealed entry names. RED WHEN the raise seals receipts beside
+     * the slips there are by position alone, or leaves a slip nobody is named for without a receipt of its length.
+     */
+    for (const payslips of [stored.payslips.slice(0, 1), [...stored.payslips, stored.payslips[0]!]]) {
+      h.store.putRun({ ...stored, payslips });
+      const before = JSON.stringify(h.store.getRun(run.id));
+      await expect(raiseLeg(h, c, run.id)).rejects.toThrow(SLIPS_ARE_NOT_ITS_PEOPLE);
+      expect(JSON.stringify(h.store.getRun(run.id))).toBe(before);
+    }
+    /* The run as drawn is raised. */
+    h.store.putRun(stored);
+    await raiseLeg(h, c, run.id);
   });
 
-  it('THE INDEX FOLLOWS A ROSTER KEY THAT CHANGES AFTER IT WAS BUILT', async () => {
-    const h = harness();
-    const c = await company(h);
-    const dana = hire(h, c, 'Dana');
-    const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
-    const stored = h.store.getRun(run.id)!;
-    h.store.putRun({ ...stored, payslips: stored.payslips.map(({ sealedTo: _k, ...p }) => p) });
-    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toHaveLength(1);
-    /* The roster record's key changes once the index exists. */
-    const renewed = payslipKeypairForWallet(newWords(), c.label, ORIGIN);
-    h.store.putEmployee({ ...h.store.getEmployee(dana.id)!, wrappingPublicKey: renewed.publicKey });
-    /* RED WHEN a roster write is not applied to the index: the old key goes on finding the slip. */
-    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toEqual([]);
-    expect(h.payroll.payslipsFor(renewed.publicKey)).toHaveLength(1);
-  });
-
-  it('THE INDEX FOLLOWS A COMPANY THAT MOVES, AND A STORE LOADED FROM ITS FILE', async () => {
+  it('A COMPANY THAT MOVES IS FOUND BY ITS LABEL AT ITS ACCOUNT NOW, AND A STORE LOADED FROM ITS FILE ANSWERS THE SAME', async () => {
     const h = harness();
     const c = await company(h);
     const dana = hire(h, c, 'Dana');
@@ -548,23 +522,18 @@ describe('the payslip lookups read what they answer and not every record', () =>
     h.store.putAccount({ ...h.accounts.require(c.accountId), contractAddress: moved });
     /* RED WHEN the lookup answers with the account the company had before. */
     expect(h.payroll.payslipAddressesOf(c.label)).toEqual([{ label: c.label, account: moved }]);
-    expect(h.store.accountsAtPayslipAddress(c.label)).toEqual([c.accountId]);
-    /* RED WHEN an account's address finds a company: the index is by label alone. */
+    /* RED WHEN an account's address finds a company: the lookup is by label alone. */
     expect(h.payroll.payslipAddressesOf(moved)).toEqual([]);
     expect(h.payroll.payslipAddressesOf(c.address)).toEqual([]);
-    /* A store emptied is asked about what it holds now. RED WHEN the index outlives its data. */
-    const emptied = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-emptied-')), 'db.json'));
-    for (const a of Object.values(h.store.snapshot().accounts)) emptied.putAccount(a);
-    for (const r of Object.values(h.store.snapshot().runs)) emptied.putRun(r);
-    expect(emptied.runsWithPayslipsSealedTo(dana.keys.publicKey)).toHaveLength(1);
-    expect(emptied.accountsAtPayslipAddress(c.label)).toEqual([c.accountId]);
-    emptied.reset();
-    expect(emptied.runsWithPayslipsSealedTo(dana.keys.publicKey)).toEqual([]);
-    expect(emptied.accountsAtPayslipAddress(c.label)).toEqual([]);
-    /* A store read back from its file answers the same. */
+    /* The slip sealed before the move is still the company's month. */
+    expect(slipsOf(h, c.label, dana.keys.secret).map(s => s.period)).toEqual(['2026-08']);
+    /* A store emptied is asked about what it holds now; one read back from its file answers the same. */
     const again = new FileStore((h.store as any).path);
-    expect(again.runsWithPayslipsSealedTo(dana.keys.publicKey)).toHaveLength(1);
-    expect(again.accountsAtPayslipAddress(c.label)).toEqual([c.accountId]);
+    expect(again.runsOfLabelFor(c.label, '2026-08')).toHaveLength(1);
+    expect(again.accountsCarrying(c.label)).toEqual([c.accountId]);
+    again.reset();
+    expect(again.runsOfLabelFor(c.label, '2026-08')).toEqual([]);
+    expect(again.accountsCarrying(c.label)).toEqual([]);
   });
 });
 
@@ -575,7 +544,7 @@ describe('a payment that can no longer be made does not say "not yet"', () => {
     const dana = hire(h, c, 'Dana');
     await raise(h, c, '2026-08');
     const { fetcher } = wire(h, listOf([]));
-    const [slip] = (await fetchMyPayslips(dana.keys, c.label, fetcher)).opened;
+    const [slip] = (await fetchMyPayslips(dana.keys, c.label, '2026-08', fetcher)).opened;
     /* The receipt carries the end of the window it can be paid in, sealed with it. */
     expect(slip!.receipt!.until).toBe(CLOSES);
     expect(await shown(fetcher, dana.keys, c, CLOSES - 1)).toEqual({ '2026-08': 'not-yet' });
@@ -592,31 +561,30 @@ describe('a payment that can no longer be made does not say "not yet"', () => {
 });
 
 describe('what a payslip names cannot be changed by whoever holds the store', () => {
-  it('A COMPANY LABEL SWAPPED BESIDE THE SEAL IS REFUSED BY THE PAGE, NOT SHOWN', async () => {
+  it('A COMPANY LABEL A SERVICE WRITES BESIDE THE SEAL IS IGNORED, AND ANOTHER COMPANY\'S SLIP SENT AS ONE ASKED FOR IS REFUSED', async () => {
     const h = harness();
     const acme = await company(h, 'Acme');
     const dana = hire(h, acme, 'Dana');
     await h.payroll.createRunFromRoster(acme.accountId, '2026-08', acme.viewingKey);
-    const [real] = h.payroll.payslipsFor(dana.keys.publicKey, acme.label);
+    const [real] = slipsOf(h, acme.label, dana.keys.secret);
     expect(openPayslip(real!, dana.keys.secret).issuedBy).toBe(acme.label);
     /*
-     * The slip was sealed naming Acme; the store relabels it as another
-     * company's. RED WHEN the page believes the label beside the seal: it
-     * shows the slip as the other company's.
+     * The slip was sealed naming Acme; a service writes another company's label
+     * beside it. RED WHEN the page believes anything beside the seal: it shows
+     * the slip as the other company's.
      */
     const other = 'co_' + 'ef'.repeat(32);
     const relabelled = { ...real!, issuedBy: other };
     expect(openPayslip(relabelled, dana.keys.secret).issuedBy).toBe(acme.label);
-    /* A service that relabels every slip it sends as the other company's. */
+    /* A service that sends Acme's slips, labelled beside the seal, when asked for the other company's. */
     const w = wire(h, listOf([])).fetcher;
     const liar: Fetch = async (url, init) => {
-      if (url !== '/api/payslips') return w(url, init);
-      const body = JSON.parse(String(init!.body));
-      const answered = await w(url, { ...init, body: JSON.stringify({ ...body, from: acme.label }) });
+      if (!url.startsWith('/api/payslips?')) return w(url, init);
+      const answered = await w(url.replace(encodeURIComponent(other), encodeURIComponent(acme.label)), init);
       return new Response(JSON.stringify((await answered.json()).map((p: typeof real) => ({ ...p, issuedBy: other }))));
     };
-    /* Asked for the other company's slips, the page refuses Acme's slip relabelled as one. */
-    const mine = await fetchMyPayslips(dana.keys, other, liar);
+    /* Asked for the other company's slips, the page refuses Acme's slip sent as one. */
+    const mine = await fetchMyPayslips(dana.keys, other, '2026-08', liar);
     expect(mine.opened).toEqual([]);
     expect(mine.refused).toBe(1);
   });
@@ -643,7 +611,7 @@ describe('what a payslip names cannot be changed by whoever holds the store', ()
     await raiseLeg(h, c, b.run.id);
     expect(lengthOf(b.run.id)).toEqual(lengthOf(a.run.id));
     const { fetcher } = wire(h, listOf([]));
-    const sep = h.payroll.payslipsFor(dana.keys.publicKey, c.label).find(p => p.runId === b.run.id)!;
+    const sep = slipsOf(h, c.label, dana.keys.secret).find(p => p.runId === b.run.id)!;
     const opened = openPayslip(sep, dana.keys.secret);
     expect(opened.receipt).not.toBeNull();
     expect(opened.receipt!.company).toBeNull();
@@ -677,37 +645,10 @@ describe('a leg is raised only with its payments in its people\'s order', () => 
   });
 });
 
-describe('the payslip index follows a run and an account written again after it was built', () => {
-  it('A SLIP WRITTEN AGAIN TO ANOTHER KEY AND THE COMPANY WRITTEN AGAIN AT ANOTHER ADDRESS ARE FOLLOWED BY BOTH LOOKUPS', async () => {
-    const h = harness();
-    const c = await company(h);
-    const dana = hire(h, c, 'Dana');
-    const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
-    /* The index is built. */
-    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toHaveLength(1);
-    expect(h.payroll.payslipAddressesOf(c.label)).toEqual([{ label: c.label, account: c.address }]);
-
-    /* The slip written again to another key, and the company at another address. */
-    const renewed = payslipKeypairForWallet(newWords(), c.label, ORIGIN);
-    const moved = 'cd'.repeat(32);
-    const stored = h.store.getRun(run.id)!;
-    h.store.putAccount({ ...h.accounts.require(c.accountId), contractAddress: moved });
-    h.store.putRun({ ...stored, payslips: stored.payslips.map(p => ({ ...p, sealedTo: renewed.publicKey })) });
-    /*
-     * RED WHEN the writes are not applied to the index: the old key goes on
-     * finding the slip, and the company's account now is not known.
-     */
-    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toEqual([]);
-    expect(h.payroll.payslipsFor(renewed.publicKey)).toHaveLength(1);
-    expect(h.store.accountsAtPayslipAddress(c.label)).toEqual([c.accountId]);
-    expect(h.payroll.payslipAddressesOf(c.label)).toEqual([{ label: c.label, account: moved }]);
-  });
-});
-
 describe('the device builds the value it looks for from what the payee holds, and a forged receipt or slip reads "not yet"', () => {
   /** A receipt as sealed, opened to its plain text: every field it carries, and nothing parsed away. */
   const receiptText = (h: H, who: { keys: { secret: Hex; publicKey: Hex } }, from: string): string => {
-    const [sealed] = h.payroll.payslipsFor(who.keys.publicKey, from);
+    const [sealed] = slipsOf(h, from, who.keys.secret);
     const r = sealed!.receipt!;
     return unseal(r.sealed, unwrapKey(r.wrapped, who.keys.secret));
   };
@@ -720,8 +661,8 @@ describe('the device builds the value it looks for from what the payee holds, an
     const { material } = await raise(h, c, '2026-08');
     /* Eli, second on the leg, was paid. Dana was not. */
     const { fetcher } = wire(h, listOf([paidMovementOfLeaf(material.leaves[1]!)]));
-    const [danas] = (await fetchMyPayslips(dana.keys, c.label, fetcher)).opened;
-    const [elis] = (await fetchMyPayslips(eli.keys, c.label, fetcher)).opened;
+    const [danas] = (await fetchMyPayslips(dana.keys, c.label, '2026-08', fetcher)).opened;
+    const [elis] = (await fetchMyPayslips(eli.keys, c.label, '2026-08', fetcher)).opened;
     /* The control: Eli's own slip, with his own receipt, reads paid. */
     expect((await paymentsOnTheChain([elis!], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY, [c.address])).get(elis!.runId))
       .toBe('paid');
@@ -742,7 +683,7 @@ describe('the device builds the value it looks for from what the payee holds, an
     const dana = hire(h, c, 'Dana');
     const { material } = await raise(h, c, '2026-08');
     const { fetcher } = wire(h, listOf([paidMovementOfLeaf(material.leaves[0]!)]));
-    const [slip] = (await fetchMyPayslips(dana.keys, c.label, fetcher)).opened;
+    const [slip] = (await fetchMyPayslips(dana.keys, c.label, '2026-08', fetcher)).opened;
     const read = async (s: typeof slip) =>
       (await paymentsOnTheChain([s!], fetcher.reader, INDEXER, CONFIRMED, NOW, REGISTRY, [c.address])).get(slip!.runId);
     expect(await read(slip)).toBe('paid');
@@ -759,7 +700,7 @@ describe('the device builds the value it looks for from what the payee holds, an
     const { material } = await raise(h, c, '2026-08');
     for (const recorded of [[paidMovementOfLeaf(material.leaves[0]!)], []]) {
       const { fetcher } = wire(h, listOf(recorded));
-      const [slip] = (await fetchMyPayslips(dana.keys, c.label, fetcher)).opened;
+      const [slip] = (await fetchMyPayslips(dana.keys, c.label, '2026-08', fetcher)).opened;
       /* RED WHEN an unconfirmed address is asked about: it reads paid, or "not yet". */
       expect((await paymentsOnTheChain([slip!], fetcher.reader, INDEXER, () => false, NOW, REGISTRY, [c.address])).get(slip!.runId))
         .toBe('cannot-tell');
@@ -807,7 +748,7 @@ describe('the device builds the value it looks for from what the payee holds, an
     const untilOf = () => {
       const again = { ...run, payslips: (h.payroll as any).withReceipts(run, seeds, payKey) };
       (h.payroll as unknown as { putRun: (r: typeof again, k: Hex) => void }).putRun(again, c.viewingKey);
-      return openPayslip(h.payroll.payslipsFor(dana.keys.publicKey, c.label)[0]!, dana.keys.secret).receipt!.until;
+      return openPayslip(slipsOf(h, c.label, dana.keys.secret)[0]!, dana.keys.secret).receipt!.until;
     };
     /* RED WHEN a retry only written down extends the window: nothing raised can pay Dana after it closes. */
     expect(untilOf()).toBe(CLOSES);

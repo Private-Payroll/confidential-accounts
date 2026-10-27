@@ -11,14 +11,15 @@ import type { WiringName } from './provenance.js';
  * ELSE.**
  *
  * The service keeps each payslip as ciphertext: the slip sealed under a fresh
- * key, and that key wrapped to the payee's own public key. What it hands out
- * is exactly that, and this file is what turns it into a line a person can
- * read. It takes the payee's secret as an argument and sends it nowhere; there
- * is no network call in this file, and the page's own module graph stays free
- * of the wallet SDK because nothing here imports it.
+ * key, and that key wrapped to the payee's own public key, with nothing beside
+ * it that says whose it is. It hands out every slip of a company's month, and
+ * this file is what tries one with the payee's key and turns it into a line a
+ * person can read. It takes the payee's secret as an argument and sends it
+ * nowhere; there is no network call in this file, and the page's own module
+ * graph stays free of the wallet SDK because nothing here imports it.
  */
 
-/** One payslip as the service holds it and hands it back: ciphertext, and the run's own facts beside it. */
+/** One payslip as the service holds it and hands it back: ciphertext, and the run's own facts beside it, naming nobody. */
 export interface SealedPayslip {
   runId: string;
   period: string;
@@ -30,15 +31,6 @@ export interface SealedPayslip {
    * recorded which ledger it was, which is never read as a chain's.
    */
   wiring: WiringName | null;
-  /**
-   * **THE LABEL OF THE COMPANY THE PAYEE'S KEY WAS WORKED OUT FROM.** A payee's
-   * payslip key is derived from the key their wallet gives for one company,
-   * named by its label, so this is the label to name to the wallet to open this
-   * slip. A company keeps its label when its account is replaced, so every
-   * earlier slip stays openable. `null` for a slip sealed to a key that was not
-   * derived from any company's.
-   */
-  issuedBy: string | null;
   wrapped: { ephemeral: Hex } & Sealed;
   slip: Sealed;
   /**
@@ -98,6 +90,15 @@ export interface PayslipContents {
 export interface OpenedPayslip extends Omit<SealedPayslip, 'wrapped' | 'slip' | 'receipt'> {
   payslip: PayslipContents;
   /**
+   * **THE LABEL OF THE COMPANY THE PAYEE'S KEY WAS WORKED OUT FROM**, as sealed
+   * inside the slip. A payee's payslip key is derived from the key their wallet
+   * gives for one company, named by its label, so this is the label to name to
+   * the wallet to open this slip. A company keeps its label when its account is
+   * replaced, so every earlier slip stays openable. `null` for a slip sealed to
+   * a key that was not derived from any company's, or one that names none.
+   */
+  issuedBy: string | null;
+  /**
    * The payee's own receipt, opened. `null` when the slip carries none, and
    * when the one it carries does not open with this key or does not name this
    * slip's run - either way nothing can be asked of the chain for it.
@@ -123,27 +124,23 @@ export function openPayslip(entry: SealedPayslip, wrappingSecret: Hex): OpenedPa
   let payslip: PayslipContents;
   try {
     const slipKey = unwrapKey(entry.wrapped, wrappingSecret);
+    /* A slip is sealed padded with spaces after its text, to one length for every slip; reading it ignores them. */
     payslip = parseCanonical<PayslipContents>(unseal(entry.slip, slipKey));
   } catch {
     throw new Error(NOT_YOUR_PAYSLIP);
   }
   const { wrapped: _w, slip: _s, receipt: sealedReceipt, ...facts } = entry;
   /*
-   * **THE ADDRESS THE SLIP NAMES IS THE ONE SEALED INSIDE IT.** The copy beside
-   * the ciphertext is what the service files it under, and anybody who can
-   * write the store can change it without touching the slip. Changing the
-   * sealed one means sealing a new slip, which anybody holding the payee's
-   * public key can do, so this stops a relabelled slip and not a forged one.
-   * A slip that carries one is named by it, and a page that asked for one
-   * address refuses a slip sealed naming another. A slip sealed before the
-   * address was written inside keeps the copy beside it.
+   * **THE LABEL THE SLIP NAMES IS ONLY EVER THE ONE SEALED INSIDE IT.** Nothing
+   * beside the ciphertext names a company, and anything a service puts there is
+   * ignored. Changing the sealed one means sealing a new slip, which anybody
+   * holding the payee's public key can do, so a page that asked for one label
+   * refuses a slip sealed naming another; it does not stop a forged one.
    */
-  const sealedIssuer = Object.prototype.hasOwnProperty.call(payslip, 'issuedBy')
-    ? (typeof payslip.issuedBy === 'string' ? payslip.issuedBy.toLowerCase() : null)
-    : undefined;
+  const { issuedBy: _beside, ...run } = facts as typeof facts & { issuedBy?: unknown };
   return {
-    ...facts,
-    issuedBy: sealedIssuer === undefined ? facts.issuedBy : sealedIssuer,
+    ...run,
+    issuedBy: typeof payslip.issuedBy === 'string' ? payslip.issuedBy.toLowerCase() : null,
     payslip,
     receipt: openReceipt(sealedReceipt ?? null, entry.runId, wrappingSecret),
   };
@@ -223,23 +220,9 @@ export function openReceipt(
   }
 }
 
-/** The public half of a payslip secret, so a page holding only the secret can ask for its slips. */
+/** The public half of a payslip secret. */
 export const payslipPublicKeyOf = (wrappingSecret: Hex): Hex =>
   toHex(x25519.getPublicKey(fromHex(wrappingSecret)));
-
-/**
- * **WHAT THE SERVICE BINDS A PROOF TO.** A request for somebody's payslips
- * names a public key, and the service answers only after the asker has shown
- * they hold the matching secret: it seals a one-use value to that key, and
- * only the holder of the secret can read it back.
- */
-export const payslipProofSubject = (publicKey: Hex): string =>
-  'payslips:' + publicKey.toLowerCase();
-
-/** Reads back the one-use value the service sealed to this payee's public key. */
-export const answerPayslipProof = (
-  sealedToMe: { ephemeral: Hex } & Sealed, wrappingSecret: Hex,
-): Hex => unwrapKey(sealedToMe, wrappingSecret);
 
 /** A public key as the service accepts one: 32 bytes, lower-case hex. */
 export const PAYSLIP_PUBLIC_KEY = /^[0-9a-f]{64}$/u;

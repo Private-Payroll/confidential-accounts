@@ -29,18 +29,19 @@ import type { PendingSignerPayload } from '../core/types.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { directoryEntryMade } from '../midnight/seat-directory.js';
 import { leafOfTheContract, leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
+import { anAddress } from '../testing/an-invitee.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { seatSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
 import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
-import { foldOffersHere, offerVaultKeysHere, refuseASeatNotForTheInvited, rosterHere, seatingOf } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere, foldOffersHere, offerVaultKeysHere, refuseASeatNotForTheInvited, rosterHere, seatingOf } from 'vaults-web-shared/roster-here.js';
 import { recordsEnteredFor, manifestServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
 import { ACME, aRecordFiledBy, ORIGIN, fromAda } from './a-company-of-two-seats.test-support.js';
 import {
   aCompanyWhoseSignersChange, ADA, ADDRESS, anchorDoorsOf, api, BO, CO, committeeKeyOfLeaf, companyNow, deviceOf, directoryOf, events, KEY, LABEL,
-  recordsReadBy, rosterDoorsOf, seatsOnTheChain, sendAs, store, walletOf, type Seat,
+  recordsReadBy, rosterDoorsOf, seatsOnTheChain, sendAs, store, theInviteeTakesTheSeatHere, walletOf, type Seat,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
 
 aCompanyWhoseSignersChange();
@@ -60,7 +61,7 @@ const seatingDevice = (s: Seat) => ({ ...deviceOf(s), roster: rosterDoorsOf(s) }
 describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN AND THE ANCHOR', () => {
   it('DEE IS SEATED ON THE CHAIN, ADMITTED TO THE ROSTER, FILES HER OWN ENTRY WITH HER INVITATION, AND EVERY DEVICE BELIEVES HER AND OPENS EVERY BATCH', async () => {
     /* Ada's device invites Dee, its seat signing who the seat is for; Dee's device accepts under her own sign-in and wallet. */
-    const made = await inviteSignerHere(ACME, ADA, { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
@@ -81,12 +82,21 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
     await expect(refuseASeatNotForTheInvited(sealed, KEY, box, { ...payload, opening: another }, seating))
       .rejects.toThrow(/not made for the wallet it names/u);
 
-    /* Ada's device raises the proposal to seat Dee, which is her approval; Bo's device approves it, carries it out and admits her. */
-    expect((await seatSignerOnDevice(seatingDevice(ADA), { viewingKey: KEY, signerId, readOut: accepted.fingerprint })).state).toBe('waiting-for-approvals');
-    /* RED WHEN: the proposal to seat her is not carried out on the chain, or she is not admitted once it is. */
-    expect(await seatSignerOnDevice(seatingDevice(BO), { viewingKey: KEY, signerId, readOut: accepted.fingerprint }).catch((e: unknown) => e))
-      .toMatchObject({ state: 'done' });
-    expect(events).toEqual(['chain propose', 'chain approve', `chain amendSigner adding ${leaf}`]);
+    /*
+     * Ada's device raises the proposal to invite Dee's address, which is her approval; Bo's device approves it. Dee's own
+     * wallet then takes the seat, and Bo's device admits her.
+     */
+    const at = anAddress(MidnightCommitments, 41);
+    const invite = { address: at.address, salt: at.addressSalt, scope: MidnightCommitments.allVaults() };
+    const raised = await seatSignerOnDevice(seatingDevice(ADA), { viewingKey: KEY, signerId, readOut: accepted.fingerprint, invite });
+    expect(raised.state).toBe('waiting-for-approvals');
+    /* RED WHEN: the approved proposal is carried out by a signer's device, and not left for the person invited. */
+    expect((await seatSignerOnDevice(seatingDevice(BO), { viewingKey: KEY, signerId, readOut: accepted.fingerprint, invite })).state)
+      .toBe('waiting-for-the-invitee');
+    theInviteeTakesTheSeatHere(raised.round!.chainId, invite.address, leaf);
+    /* RED WHEN: she is not admitted once the chain holds her seat. */
+    await admitSignerHere(rosterDoorsOf(BO), { signerId, readOut: accepted.fingerprint });
+    expect(events).toEqual(['chain propose', 'chain approve', `chain seatInvited ${leaf}`]);
     expect(seatsOnTheChain()).toContain(leaf);
     /* RED WHEN: the person seated on the chain is not admitted to the roster. */
     expect(companyNow().signers.find((x) => x.name === 'dee')?.status).toBe('active');
