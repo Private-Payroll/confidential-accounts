@@ -458,7 +458,8 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
   };
 
   /*
-   * Every file in the tree whose assertions are gated on the verifier keys.
+   * Every file in the tree whose assertions are gated on the verifier keys: it names a key
+   * folder, or imports the helper that reads them, and it skips something.
    *
    * THE TWO THINGS IT LOOKS FOR ARE ASSEMBLED FROM PIECES, AND THAT IS NOT
    * DECORATION. Written out whole, they would appear in THIS file, and this file
@@ -476,8 +477,25 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
   // their own, after the build: a test that needs them names that command.
   const WALLET_ACCOUNT_KEYS = ['npm run vendor-keys', 'account'].join(':');
   const GATE = `skip${'If'}(`;
+  // The helper every account and vault key gate reads the keys through: a file that imports it is
+  // gated on the keys whether or not any title names a key folder.
+  const KEYS_HELPER = ['keys', 'on', 'disk'].join('-');
+  const ACCOUNT_AND_VAULT_KEYS: readonly string[] = [KEY_DIR, VAULT_KEY_DIR, KEYS_HELPER];
 
-  const gatedOnKeys = (dirs: readonly string[] = [KEY_DIR, VAULT_KEY_DIR]): string[] => {
+  const isGatedOnKeys = (text: string, dirs: readonly string[]): boolean =>
+    dirs.some((d) => text.includes(d)) && text.includes(GATE);
+
+  // Every tree a test can live in: the three fixed ones, and each src folder under apps/ and packages/.
+  const keyRoots = (): string[] => {
+    const grouped = ['apps', 'packages'].flatMap((group) =>
+      !existsSync(join(ROOT, group)) ? [] : readdirSync(join(ROOT, group))
+        .filter((name) => existsSync(join(ROOT, group, name, 'src')) && statSync(join(ROOT, group, name, 'src')).isDirectory())
+        .map((name) => `${group}/${name}/src`));
+    return ['src', 'scripts', 'contracts/test', ...grouped.sort()];
+  };
+  const KEY_ROOTS: readonly string[] = keyRoots();
+
+  const gatedOnKeys = (dirs: readonly string[] = ACCOUNT_AND_VAULT_KEYS): string[] => {
     const out: string[] = [];
     const walk = (rel: string) => {
       for (const name of readdirSync(join(ROOT, rel))) {
@@ -486,12 +504,12 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
         if (statSync(join(ROOT, child)).isDirectory()) { walk(child); continue; }
         if (!/\.test\.tsx?$/.test(name)) continue;
         const text = readFileSync(join(ROOT, child), 'utf8');
-        // Gated means BOTH: it names the key directory, and it turns something
-        // off. Either alone is a file that merely mentions one of them.
-        if (dirs.some((d) => text.includes(d)) && text.includes(GATE)) out.push(child);
+        // Gated means BOTH: it names a key directory or imports the keys helper, and it turns
+        // something off. Either alone is a file that merely mentions one of them.
+        if (isGatedOnKeys(text, dirs)) out.push(child);
       }
     };
-    for (const tree of ['src', 'scripts', 'contracts/test', 'packages/web-shared/src', 'apps/wallet/src', 'apps/web/src']) walk(tree);
+    for (const tree of KEY_ROOTS) walk(tree);
     return out.sort();
   };
 
@@ -609,6 +627,8 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'apps/wallet/src/actions/finish-company.test.ts',
       'apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts',
       'apps/wallet/src/chain/a-signer-invited-by-address-is-seated-from-the-wallet.test.ts',
+      'contracts/test/keys-on-disk.test.ts',
+      'contracts/test/the-compiled-keys-are-the-keys-on-disk.test.ts',
     ];
     expect(gated.filter((f) => !NAMED.includes(f)),
       'a test is gated on proving keys and this list does not name it').toEqual([]);
@@ -663,6 +683,26 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     expect(WALLET_ACCOUNT_NAMED.filter((f) => existsSync(join(ROOT, f)) && !walletAccountGated.includes(f)),
       'a test named here is still in this tree and is no longer gated on the account\'s keys in the wallet')
       .toEqual([]);
+  });
+
+  it('a test is gated on the keys by the helper it imports, with no key folder named, and the walk reaches every package', () => {
+    /* RED WHEN: a test that reads the proving keys through the shared helper, and names no key folder in its text, is not counted as needing the keys, so it can stop running in every job unnoticed. */
+    const throughHelper = `import { keysOnDisk } from './${KEYS_HELPER}.js';\ndescribe.${GATE}!K.ok)('x', () => {});\n`;
+    expect(isGatedOnKeys(throughHelper, ACCOUNT_AND_VAULT_KEYS)).toBe(true);
+    /* RED WHEN: a test that only reads the shared keys helper is listed as needing the vault's keys, the network's circuits or the wallet's copy of the account's keys, which it does not. */
+    for (const other of [[VAULT_KEY_DIR], [NETWORK_KEY_DIR], [WALLET_ACCOUNT_KEYS]]) {
+      expect(isGatedOnKeys(throughHelper, other), other[0]).toBe(false);
+    }
+    /* RED WHEN: a test that skips on something unrelated to the keys is counted as needing them, so the list names tests the key job has no reason to run. */
+    expect(isGatedOnKeys(`describe.${GATE}!process.env.SOMETHING)('x', () => {});\n`, ACCOUNT_AND_VAULT_KEYS)).toBe(false);
+    /* RED WHEN: a test that imports the keys helper but never skips anything is counted as needing the keys, though it runs everywhere. */
+    expect(isGatedOnKeys(`import { keysOnDisk } from './${KEYS_HELPER}.js';\n`, ACCOUNT_AND_VAULT_KEYS)).toBe(false);
+    /* RED WHEN: a key-gated test placed in the identity package is never looked for, so it can stop running in every job unnoticed. */
+    expect(KEY_ROOTS).toContain('packages/identity/src');
+    /* RED WHEN: a tree the key gate used to read is no longer read, so a test in it can drop out of the list silently. */
+    for (const old of ['src', 'scripts', 'contracts/test', 'packages/web-shared/src', 'apps/wallet/src', 'apps/web/src']) {
+      expect(KEY_ROOTS, old).toContain(old);
+    }
   });
 
   it('and the rule above refuses every way that coverage can be taken away', () => {
