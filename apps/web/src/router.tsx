@@ -24,6 +24,42 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/*
+ * THE INVITATION LINK'S TOKEN. A link to join a company carries its token after
+ * the address's `#`. It is read once, held in this tab's memory against the
+ * invitation it came with, and taken out of the address bar, so it is in no
+ * history entry, no saved session and no request. It is not written to any
+ * storage: a reload loses it, and the person opens the link again.
+ */
+const LINK_TOKEN = /^[0-9a-f]{64}$/;
+let held: { id: string; token: string } | null = null;
+
+/**
+ * Holds the token in `hash` when `path` is the joining page of an invitation
+ * and the hash is a token. Whatever the hash held, it is then taken out of the
+ * address on that page. A page that is not the joining page keeps its hash.
+ * Asking again without a token keeps the token already held.
+ */
+export function holdLink(path: string, hash: string): void {
+  const page = EVERY_PAGE.find((p) => p.holdsLinkToken === true);
+  const id = page === undefined ? undefined : matchAddress(page.path, normalised(path))?.id;
+  if (id === undefined) return;
+  const token = hash.slice(1);
+  if (LINK_TOKEN.test(token)) { held = { id, token }; changed(); }
+  if (hash !== '') window.history.replaceState(null, '', path + window.location.search);
+}
+
+/** Forgets the held token, as the person leaves the invitation or signs out. */
+export function forgetLink(): void {
+  held = null;
+  changed();
+}
+
+/** The token the link to invitation `id` carried, or null when none is held for that invitation. */
+export function useHeldLink(id: string): string | null {
+  return useSyncExternalStore(subscribe, () => (held !== null && held.id === id ? held.token : null));
+}
+
 /** The address the tab is at, without a trailing slash, followed as it changes. */
 export function useAddress(): string {
   return useSyncExternalStore(subscribe, () => normalised(window.location.pathname));

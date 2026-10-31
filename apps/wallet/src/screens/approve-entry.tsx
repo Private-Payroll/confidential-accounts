@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Button } from 'vaults-ui';
 import { framingOf, listen } from 'midnight-identity/profile/channel';
 import { EMBEDDER } from '../config.js';
-import type { Channel, ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
+import type { Channel, ChannelState, ChannelWindow, NotAskedWhy } from 'midnight-identity/profile/channel';
 import { hrefOf } from '../routes.js';
 import { useSession } from '../session.js';
 import type { Phase } from '../session.js';
@@ -60,6 +60,10 @@ import type { LabelReader } from './company-on-chain.js';
  * the ask does, with an Approve that asks for the passkey and a Decline, in
  * place of the unlock screen.
  *
+ * **A PAGE THAT STOPPED BEFORE ASKING IS SAID HERE.** When the page says it will
+ * not ask, this window shows the page's reason in this wallet's own words, in place
+ * of waiting for a request that is not coming.
+ *
  * **AN ACTION THAT HAS JUST ENDED IS SAID HERE.** An action locks the wallet
  * when it ends, so its outcome - done, or stopped at a step with how many
  * transactions had already gone - is shown in this locked window until another
@@ -73,6 +77,15 @@ import type { LabelReader } from './company-on-chain.js';
  * so, because a person who has just been sent to make a wallet reasonably
  * wonders where their offer went.
  */
+
+/** Why the page did not ask, in this wallet's words: the page sends only which of these it was. */
+const NOT_ASKED_SAYS: Readonly<Record<NotAskedWhy, string>> = Object.freeze({
+  'signed-out': 'The page that opened this wallet stopped before asking anything: you are no longer signed in there.',
+  'saved-keys-unread': 'The page that opened this wallet stopped before asking anything: it could not read your saved keys from its service.',
+  'saved-keys-older': 'The page that opened this wallet stopped before asking anything: the saved keys its service handed back are older than the ones it last opened.',
+  'ask-not-built': 'The page that opened this wallet stopped before asking anything: it could not put together what it wanted to ask.',
+});
+const NOT_ASKED_UNNAMED = 'The page that opened this wallet stopped before asking anything.';
 
 /** What `entryFor` would have rendered for this phase, when the words below
  * are not the right ones. Passed in rather than derived, so `app.tsx` keeps
@@ -148,6 +161,17 @@ export function ApproveEntry({
     return (
       <AnswerHolders request={channelState.request} channel={channel} consent={quietConsentFor(framing)} now={now}
         {...(readHolders === undefined ? {} : { readHolders })} />
+    );
+  }
+  if (channelState.of === 'not-asked') {
+    return (
+      <>
+        <h1>The page did not ask</h1>
+        <p className="lede" data-page-did-not-ask={channelState.why ?? ''}>
+          {channelState.why === null ? NOT_ASKED_UNNAMED : NOT_ASKED_SAYS[channelState.why]} Nothing has been sent and
+          nothing has been signed. The page says what to do next.
+        </p>
+      </>
     );
   }
   const end = theEndHere();

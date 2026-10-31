@@ -27,6 +27,8 @@ import { payeeFor } from '../testing/payees.js';
 import { payeeOf } from '../midnight/payee-address.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany, type VendorByAddressDoors } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
+import { payeesHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import {
   admitVendorHere, changeVendorHere, readVendorsHere, VendorNotChanged, type VendorChange, type VendorHere, type VendorsHere,
 } from 'vaults-web-shared/vendors-on-device.js';
@@ -36,7 +38,7 @@ aCompanyOfTwoSeats();
 
 const NETWORK = theNetwork();
 const device: PeopleDevice = {
-  company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda, directory: acmeDirectory, network: NETWORK,
+  company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda, directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: ADA.entered,
 };
 const walletOf = (n: number) => identityFromSecret(new Uint8Array(32).fill(n));
@@ -203,5 +205,29 @@ describe('A VENDOR IS CHANGED ON A SEAT\'S DEVICE', () => {
     /* A vendor paid within their dates only. */
     expect((await readVendorsHere(device, '2027-07')).notPayable.find((x) => x.here.vendor.id === made.person)?.why).toMatch(/end date is 2027-06-30, before 2027-07/u);
     await expect(changeVendorHere(device, await hereOf(made.person!), { status: 'leaver' }, raisedFeb)).resolves.toMatchObject({ status: 'leaver' });
+  });
+});
+
+describe('A VENDOR READ SAYS WHETHER A HAND-OVER WAITS, ONLY WHEN IT IS ASKED', () => {
+  it('flags a pending vendor whose hand-over waits, sends nothing more when not asked, and a vendor run lists them as handed over', async () => {
+    const made = await inviteHere(ACME, ADA, 'vendor', vendorSpec(7), ORIGIN, fromAda, HELD);
+    const asked: string[] = [];
+    const counting = { ...device, send: ((path: string, init: { method: 'GET' }) => { asked.push(path); return fromAda(path, init); }) as typeof fromAda };
+    const seen = async (asking?: { handedOver?: boolean }) =>
+      (await readVendorsHere(counting, undefined, asking)).vendors.find((v) => v.vendor.id === made.person)!;
+    /* RED WHEN: a read that was not asked for the flag sends a request for it, or carries one. */
+    expect((await seen()).handedOver).toBeUndefined();
+    expect(asked.some((p) => p.endsWith('/handover'))).toBe(false);
+    /* RED WHEN: a pending vendor whose hand-over has not come is flagged as handed over. */
+    expect((await seen({ handedOver: true })).handedOver).toBe(false);
+    const code = codeFor(7, made.person!, shieldedOf(7));
+    const { fingerprint } = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs('usr_v7'));
+    /* RED WHEN: a pending vendor whose hand-over waits is not flagged, so a vendor run reports them as not set up. */
+    expect((await seen({ handedOver: true })).handedOver).toBe(true);
+    const listed = await payeesHere({ vendors: () => readVendorsHere(device, undefined, { handedOver: true }) } as never, 'vendors');
+    expect(listed.people.find((p) => p.person.id === made.person)?.handedOver).toBe(true);
+    /* RED WHEN: a vendor already admitted is asked of the service again, or flagged. */
+    await admitVendorHere(device, await hereOf(made.person!), fingerprint);
+    expect((await seen({ handedOver: true })).handedOver).toBeUndefined();
   });
 });

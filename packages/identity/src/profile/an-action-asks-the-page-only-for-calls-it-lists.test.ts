@@ -189,4 +189,34 @@ describe('the end of an action tells the page only the public parts its entry li
       expect(readActEnded(ended(outcome), { nonce: 'n1', intent: 'name-a-vault' }), JSON.stringify(outcome)).toBeNull();
     }
   });
+
+  const stopped = (why: string, said: Record<string, unknown>) => ({
+    schema: 'midnight-identity/act-ended/v1', nonce: 'n1', intent: 'name-a-vault', ended: 'stopped', step: 1, steps: 2,
+    relayed: 0, unconfirmed: 0, why, ...said,
+  });
+  const at = { nonce: 'n1', intent: 'name-a-vault' };
+  it('a stop for a refused check carries the key of its words and the kind of refusal, and nothing else of them', () => {
+    const read = readActEnded(stopped('check-failed', { refused: 'act.name-a-vault.why.start-owed', code: 'chain-unread' }), at);
+    /* RED WHEN: the page cannot say which check refused, or of what kind. */
+    expect(read).toMatchObject({ why: 'check-failed', refused: 'act.name-a-vault.why.start-owed', code: 'chain-unread' });
+    /* RED WHEN: a code reaches the page without the key it qualifies. */
+    expect(readActEnded(stopped('check-failed', { code: 'chain-unread' }), at)).not.toHaveProperty('code');
+  });
+  it('drops a refusal not in its shape, or on any stop but a refused check, and keeps the rest of the end', () => {
+    for (const said of [
+      { refused: 'act.name-a-vault.why.start-owed 12 USDC' }, { refused: 'Setting up this vault did not finish' },
+      { refused: `act.x.why.${'ab'.repeat(32)}0` }, { refused: { key: 'act.x.why.y' } },
+    ]) {
+      const read = readActEnded(stopped('check-failed', said), at);
+      /* RED WHEN: words, an amount, a digit or anything but a key in its shape reaches the page as the refusal. */
+      expect(read, JSON.stringify(said)).not.toBeNull();
+      expect(read, JSON.stringify(said)).not.toHaveProperty('refused');
+    }
+    const badCode = readActEnded(stopped('check-failed', { refused: 'act.x.why.y', code: 'seat 7' }), at);
+    /* RED WHEN: a code not in its shape reaches the page. */
+    expect(badCode).toMatchObject({ refused: 'act.x.why.y' });
+    expect(badCode).not.toHaveProperty('code');
+    /* RED WHEN: a stop that is not a refused check carries a refusal. */
+    expect(readActEnded(stopped('step-failed', { refused: 'act.x.why.y', code: 'z' }), at)).not.toHaveProperty('refused');
+  });
 });

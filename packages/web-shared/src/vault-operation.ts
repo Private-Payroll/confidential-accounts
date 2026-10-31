@@ -1,10 +1,12 @@
 /**
- * **CREATING A COMPANY'S VAULT, OPENING ITS POOL, PUTTING MONEY IN IT AND
- * PAYING SOMEBODY OUT OF IT, FROM A SIGNER'S OWN DEVICE.**
+ * **CREATING A COMPANY'S VAULT (WHICH ALSO OPENS ITS POOL), PUTTING MONEY IN IT
+ * AND PAYING SOMEBODY OUT OF IT, FROM A SIGNER'S OWN DEVICE.**
  *
- * Each of the four is one operation a person starts with one press. Everything
+ * Each of the three is one operation a person starts with one press. Everything
  * it touches is handed in, so the same order runs in a test against the ledger's
- * own objects.
+ * own objects. The file also holds the public forms of a deposit and a payment
+ * (`depositPubliclyIntoCompanyVault`, `payPubliclyFromCompanyVault`) and the
+ * rebuilding of a vault's notes from the chain (`vaultNotesHere`).
  *
  * ── CREATING A VAULT IS ONE OPERATION WITH NO SUCCESS STATE UNTIL THE END ──
  *
@@ -116,7 +118,7 @@ import type {
   VaultBuilderClient,
 } from './vault-worker-client.js';
 import { VaultAskFailed } from './vault-worker-client.js';
-import { ReadRanOutOfTime } from './read-bound.js';
+import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS } from './read-bound.js';
 import type { Kept, KeptOnThisDevice } from './in-flight-on-this-device.js';
 import type { AccountHolders } from 'midnight-identity/profile/records-key';
 
@@ -180,8 +182,8 @@ interface ChainHereDoors extends VaultOnChainDoors {
 
 /** The vault could not be read on this device, and the service is not asked in its place. Nothing was sent. */
 export class VaultNotReadHere extends Error {
-  constructor(readonly vault: Hex, why: string) {
-    super(`${why} The company's service is not asked in its place. Nothing was sent.`);
+  constructor(readonly vault: Hex, why: string, options?: ErrorOptions) {
+    super(`${why} The company's service is not asked in its place. Nothing was sent.`, options);
     this.name = 'VaultNotReadHere';
   }
 }
@@ -206,7 +208,7 @@ async function readHere(
     read = await doors.builder.vaultOnChain(
       account === undefined ? { vault, indexer } : { vault, account: String(account).toLowerCase(), indexer });
   } catch (e) {
-    throw new VaultNotReadHere(vault, `this device could not read the vault from the chain (${(e as Error)?.message ?? e}).`);
+    throw new VaultNotReadHere(vault, `this device could not read the vault from the chain (${(e as Error)?.message ?? e}).`, { cause: e });
   }
   return read;
 }
@@ -773,15 +775,26 @@ export const START_STOP = {
 export type StartStopCode = ReaderRefusalCode | (typeof START_STOP)[keyof typeof START_STOP];
 
 /**
+ * **WHICH READ ON THIS DEVICE A START STOPPED AT.** The chain at one block could not be read, or where the start
+ * stands could not be worked out from it. Pressing again can clear either. Carried with the stop so it says which
+ * read failed, never what was read.
+ */
+export const START_READ_STOP = { chainUnread: 'chain-unread', standingUnread: 'standing-unread' } as const;
+export type StartReadStopCode = (typeof START_READ_STOP)[keyof typeof START_READ_STOP];
+
+/**
  * **THE VAULT WAS SENT AND ITS START IS NOT FINISHED.**
  * Names the vault and the step; the vault takes no money until it is started,
  * and running `createCompanyVault` again for it carries on from what the chain
  * shows. It holds nothing.
  */
 export class VaultStartOwed extends Error {
-  /** When the start stopped for a reason of its own: what kind of thing stopped it. Absent where pressing again is all that is left. */
-  readonly stoppedAt?: StartStopCode;
-  constructor(readonly vault: Hex, why: string, stoppedAt?: StartStopCode) {
+  /**
+   * When the start stopped for a reason of its own: what kind of thing stopped it; or, as a `START_READ_STOP`, which
+   * read on this device failed. Absent where pressing again is all that is left and no read is to name.
+   */
+  readonly stoppedAt?: StartStopCode | StartReadStopCode;
+  constructor(readonly vault: Hex, why: string, stoppedAt?: StartStopCode | StartReadStopCode) {
     super(`Setting up this vault did not finish: ${why} `
       + 'This app puts no money into it until it is set up. Finish setting it up to carry on.');
     this.name = 'VaultStartOwed';
@@ -818,20 +831,45 @@ async function theCommitteeAVaultIsBornHeldBy(doors: CreateVaultDoors): Promise<
  * SET-UP IS CARRIED ON**: the chain shows it, and the deploy its
  * address was made from was held by the company's committee at counter 0, ran
  * this build's circuits and wrote nothing. Every later change needs the
- * committee's signatures, so this one read is enough.
+ * committee's signatures, so this one read is enough. Both chain reads, the
+ * vault's notes and how it was deployed, are asked inside one wait: a read that
+ * ran out of time is asked again, and a wait in which every read ran out stops
+ * as a chain this device could not read.
  */
 async function readBornHeld(doors: CreateVaultDoors, vault: Hex): Promise<void> {
   doors.progress?.('waiting for the chain');
-  const view = await until(doors, async () => {
+  let deployedWith: BornHeldReadWith | undefined;
+  const asDeployed = await untilReadHere(doors, async () => {
     let v: VaultChainView;
     try {
       v = await notesAsThisDeviceReadsThem(doors, vault);
     } catch (e) {
-      throw new VaultStartOwed(vault, `the chain could not be read for it on this device (${(e as Error)?.message ?? e}).`);
+      if (ranOutOfTime(e)) return RAN_OUT;
+      throw new VaultStartOwed(vault, `the chain could not be read for it on this device (${(e as Error)?.message ?? e}).`, START_READ_STOP.chainUnread);
     }
-    return v.onChain ? v : null;
+    if (!v.onChain) return null;
+    deployedWith ??= await bornHeldReadWith(doors, vault);
+    try {
+      return await doors.builder.vaultAsDeployed!({ vault, account: doors.account, ...deployedWith });
+    } catch (e) {
+      if (ranOutOfTime(e)) return RAN_OUT;
+      throw e;
+    }
   });
-  if (view === null) throw new VaultStartOwed(vault, 'it was sent and the chain has not shown it yet.');
+  if (asDeployed === RAN_OUT) throw new VaultStartOwed(vault, `it was sent, and ${NOT_READ_IN_TIME}`, START_READ_STOP.chainUnread);
+  if (asDeployed === null) throw new VaultStartOwed(vault, 'it was sent and the chain has not shown it yet.');
+  if (asDeployed.refusal !== null) {
+    throw new VaultNotTheCompanys(vault, `${asDeployed.refusal.replace(/ Nothing was sent\.$/u, '')} This vault is not set up and no money `
+      + 'is put into it; create a new vault.');
+  }
+}
+
+type BornHeldReadWith = { readonly indexer: { readonly indexerUri: string; readonly indexerWsUri: string }; readonly holders: Committee };
+
+/** The indexer and committee a vault's deploy is read against, once the chain shows the vault; refuses before any read of the deploy when this device has no reader for it, or the indexer or the committee cannot be named. */
+async function bornHeldReadWith(
+  doors: CreateVaultDoors, vault: Hex,
+): Promise<BornHeldReadWith> {
   if (doors.builder.vaultAsDeployed === undefined) {
     throw new VaultNotTheCompanys(vault, 'this device cannot read how this vault was created, so it is not set up from here and '
       + 'no money is put into it. Reload the page and try again; if it still cannot be read, create a new vault.');
@@ -848,11 +886,7 @@ async function readBornHeld(doors: CreateVaultDoors, vault: Hex): Promise<void> 
     }
     throw e;
   });
-  const { refusal } = await doors.builder.vaultAsDeployed({ vault, account: doors.account, holders, indexer });
-  if (refusal !== null) {
-    throw new VaultNotTheCompanys(vault, `${refusal.replace(/ Nothing was sent\.$/u, '')} This vault is not set up and no money `
-      + 'is put into it; create a new vault.');
-  }
+  return { indexer, holders };
 }
 
 /**
@@ -956,9 +990,20 @@ const randomHex = (): string => Array.from(crypto.getRandomValues(new Uint8Array
 /** One block's view of the vault and the company's account, read on this device at the indexer the person's own wallet names. */
 type ChainAtTheStart = Awaited<ReturnType<typeof chainAtOneBlockHere>>;
 
+/** What a read on this device answers when it ran out of time: not shown yet, and asked again. */
+const RAN_OUT: unique symbol = Symbol('the read ran out of time');
+
+/** A read that did not answer within SERVICE_READ_BOUND_MS, on its own or as the cause of a vault not read here. */
+const ranOutOfTime = (e: unknown): boolean =>
+  e instanceof ReadRanOutOfTime || (e instanceof VaultNotReadHere && e.cause instanceof ReadRanOutOfTime);
+
+/** What a wait says when every read in it ran out of time: the chain was never read, so nothing is said of what it holds. */
+const NOT_READ_IN_TIME = `this device could not read the chain in time: no read answered within ${SERVICE_READ_BOUND_SECONDS} seconds.`;
+
 /**
  * Where a vault's start stands now, read off both contracts at one block on this device, with the chain it was read at;
- * null only while the chain the wallet reads does not hold the vault and the account yet. Anything else that stops the
+ * null only while the chain the wallet reads does not hold the vault and the account yet, and `RAN_OUT` when the read
+ * of the block did not answer within SERVICE_READ_BOUND_MS, which a later read can clear. Anything else that stops the
  * read - a wallet that names no indexer, a read that fails, a standing the worker cannot work out - is the start not
  * finished at once, naming the vault and why: waiting would not change it.
  */
@@ -974,7 +1019,8 @@ async function standingIfRead(
   try {
     chain = await oneBlockOrNotYet(doors, vault, indexer);
   } catch (e) {
-    throw new VaultStartOwed(vault, `this device could not read the chain at one block (${(e as Error)?.message ?? e}).`);
+    if (e instanceof ReadRanOutOfTime) return RAN_OUT;
+    throw new VaultStartOwed(vault, `this device could not read the chain at one block (${(e as Error)?.message ?? e}).`, START_READ_STOP.chainUnread);
   }
   if (chain === null) return null;
   const now = BigInt(Math.floor((doors.clock?.() ?? Date.now()) / 1000));
@@ -986,23 +1032,44 @@ async function standingIfRead(
       ...(window === undefined ? {} : { window: { opensAt: window.opensAt.toString(), closesAt: window.closesAt.toString() } }),
     });
   } catch (e) {
-    throw new VaultStartOwed(vault, `where its start stands could not be worked out on this device (${(e as Error)?.message ?? e}).`);
+    throw new VaultStartOwed(vault, `where its start stands could not be worked out on this device (${(e as Error)?.message ?? e}).`, START_READ_STOP.standingUnread);
   }
   return { chain, now, standing: read.standing, run: read.run };
 }
 
-type StartStanding = NonNullable<Awaited<ReturnType<typeof standingIfRead>>>;
+type StartStanding = Exclude<NonNullable<Awaited<ReturnType<typeof standingIfRead>>>, typeof RAN_OUT>;
+
+/**
+ * `until` for a read on this device: a read that ran out of time is asked again, and is counted as the
+ * SERVICE_READ_BOUND_MS it waited and the pause after it, so a wait whose every read runs out of time ends within
+ * `waitMs`. Answers `RAN_OUT` when the wait ended and every read in it ran out, so the chain was never read.
+ */
+async function untilReadHere<T>(pacing: Pacing, ask: () => Promise<T | null | typeof RAN_OUT>): Promise<T | null | typeof RAN_OUT> {
+  const every = pacing.everyMs ?? 6_000;
+  const tries = Math.max(1, Math.ceil((pacing.waitMs ?? 10 * 60_000) / every));
+  const aReadThatRanOut = Math.ceil((SERVICE_READ_BOUND_MS + every) / every);
+  let everyReadRanOut = true;
+  for (let counted = 0; counted < tries;) {
+    const got = await ask();
+    if (got !== null && got !== RAN_OUT) return got;
+    if (got === null) everyReadRanOut = false;
+    counted += got === RAN_OUT ? aReadThatRanOut : 1;
+    await pacing.sleep(every);
+  }
+  return everyReadRanOut ? RAN_OUT : null;
+}
 
 /**
  * Where a vault's start stands now, waiting only while the chain the wallet reads does not hold the vault and the
- * account at all; a wait that runs out is the start not finished, naming the vault. An indexer that holds both but has
- * not yet caught up with this person's last send answers at once with the older state: only `untilTheChainShows`,
- * after a send, waits for what was sent.
+ * account at all, or its read of the block ran out of time; a wait that runs out is the start not finished, naming
+ * the vault. An indexer that holds both but has not yet caught up with this person's last send answers at once with
+ * the older state: only `untilTheChainShows`, after a send, waits for what was sent.
  */
 async function standingNow(
   doors: CreateVaultDoors, vault: Hex, secret?: SecretReadBack, window?: { opensAt: bigint; closesAt: bigint },
 ): Promise<StartStanding> {
-  const got = await until(doors, () => standingIfRead(doors, vault, secret, window));
+  const got = await untilReadHere(doors, () => standingIfRead(doors, vault, secret, window));
+  if (got === RAN_OUT) throw new VaultStartOwed(vault, NOT_READ_IN_TIME, START_READ_STOP.chainUnread);
   if (got === null) throw new VaultStartOwed(vault, 'the chain your wallet reads has not shown it and your company\'s account yet.');
   return got;
 }
@@ -1035,10 +1102,11 @@ async function untilTheChainShows(
   doors: CreateVaultDoors, vault: Hex, what: string,
   seen: (now: StartStanding) => boolean, secret?: SecretReadBack,
 ): Promise<StartStanding> {
-  const got = await until(doors, async () => {
+  const got = await untilReadHere(doors, async () => {
     const now = await standingIfRead(doors, vault, secret);
-    return now !== null && seen(now) ? now : null;
+    return now === null || now === RAN_OUT ? now : seen(now) ? now : null;
   });
+  if (got === RAN_OUT) throw new VaultStartOwed(vault, `${what} was sent, and ${NOT_READ_IN_TIME}`, START_READ_STOP.chainUnread);
   if (got === null) throw new VaultStartOwed(vault, `${what} was sent and the chain has not shown it yet.`);
   return got;
 }
@@ -1120,29 +1188,6 @@ interface StartRound {
 }
 
 /**
- * **A START'S PROPOSAL WRITTEN DOWN AS THE COMPANY'S, AND RAISED WITH IT.**
- * Run on every pass, keyed by the proposal's identity on the chain: the record
- * the company's proposals already hold for it, read only through the company's
- * directory as this device believes it (`listedHere`), or none, in which case
- * this seat seals and signs one. With `raise`, the chain does not hold the
- * proposal yet: the call is built on the account's call state and sent with
- * the record in one request, written down first and then relayed
- * (`submitProvenCall`), or sent again under the record already there. Without
- * it the chain holds it, and only the record is written down. What this seat
- * filed is then entered in the company's records. A record served under the
- * identity that this company could not have written down for this proposal -
- * its filing signature does not hold, or it is over another payload - is
- * refused by name and neither entered nor raised under, whatever key it names.
- *
- * The approvals, the adoption and the secret read nothing written here: they
- * are made from the chain. So once the raise is sent, or with none to send,
- * nothing here stops the start: a record the service will not give or keep,
- * one this device cannot seal while the company's key is being changed, one
- * not entered, or another seat's record that seat has not entered yet, is
- * returned as a sentence for the press to say, and written down or entered on
- * a later press. Null when the record is written down and believed.
- */
-/**
  * **THE VAULT'S ADOPTION THE CHAIN CARRIED OUT, WRITTEN DOWN AS CARRIED OUT**:
  * each record of it the company's proposals still hold open, asked of the
  * service by this seat once this device's own read of the chain shows the vault
@@ -1166,6 +1211,29 @@ async function carriedOutWrittenDown(doors: CreateVaultDoors, vault: Hex, round:
   }
 }
 
+/**
+ * **A START'S PROPOSAL WRITTEN DOWN AS THE COMPANY'S, AND RAISED WITH IT.**
+ * Run on every pass, keyed by the proposal's identity on the chain: the record
+ * the company's proposals already hold for it, read only through the company's
+ * directory as this device believes it (`listedHere`), or none, in which case
+ * this seat seals and signs one. With `raise`, the chain does not hold the
+ * proposal yet: the call is built on the account's call state and sent with
+ * the record in one request, written down first and then relayed
+ * (`submitProvenCall`), or sent again under the record already there. Without
+ * it the chain holds it, and only the record is written down. What this seat
+ * filed is then entered in the company's records. A record served under the
+ * identity that this company could not have written down for this proposal -
+ * its filing signature does not hold, or it is over another payload - is
+ * refused by name and neither entered nor raised under, whatever key it names.
+ *
+ * The approvals, the adoption and the secret read nothing written here: they
+ * are made from the chain. So once the raise is sent, or with none to send,
+ * nothing here stops the start: a record the service will not give or keep,
+ * one this device cannot seal while the company's key is being changed, one
+ * not entered, or another seat's record that seat has not entered yet, is
+ * returned as a sentence for the press to say, and written down or entered on
+ * a later press. Null when the record is written down and believed.
+ */
 async function proposedAndWrittenDown(
   doors: CreateVaultDoors, vault: Hex, round: StartRound,
   raise?: { readonly order: GovernedCallOrder; readonly opened: OpenedRound },
@@ -1299,16 +1367,21 @@ const secretRunRound = (
 /**
  * Refuses a start, before anything is raised, for a vault or a company account whose circuits are not the ones this
  * app was built with, or whose read does not say: the account would otherwise adopt a vault this app then never starts.
- * The read is the vault worker's at the wallet's indexer, with the account named; who holds either is not asked.
+ * The read is the vault worker's at the wallet's indexer, with the account named; who holds either is not asked. A read
+ * that runs out of time is asked again within the wait.
  */
 async function refuseCircuitsNotThisBuilds(doors: CreateVaultDoors, vault: Hex): Promise<void> {
-  let read: Awaited<ReturnType<VaultBuilderClient['vaultOnChain']>>;
-  try {
-    read = await readHere(doors, vault, doors.account);
-  } catch (e) {
-    if (e instanceof VaultNotReadHere) throw new VaultStartOwed(vault, (e as Error).message);
-    throw e;
-  }
+  const read = await untilReadHere(doors, async () => {
+    try {
+      return await readHere(doors, vault, doors.account);
+    } catch (e) {
+      if (ranOutOfTime(e)) return RAN_OUT;
+      if (e instanceof VaultNotReadHere) throw new VaultStartOwed(vault, (e as Error).message, START_READ_STOP.chainUnread);
+      throw e;
+    }
+  });
+  if (read === RAN_OUT) throw new VaultStartOwed(vault, `${NOT_READ_IN_TIME} Nothing was sent.`, START_READ_STOP.chainUnread);
+  if (read === null) throw new VaultStartOwed(vault, `${NO_VAULT_YET} Nothing was sent.`);
   if (!read.onChain) throw new VaultStartOwed(vault, `${NO_VAULT_YET} Nothing was sent.`);
   const circuits = circuitsOfARead(read);
   if (circuits !== null) throw new VaultStartOwed(vault, `${circuits.why} Nothing was sent.`);

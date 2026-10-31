@@ -766,10 +766,10 @@ export const newerNamedRefusal = (here: DirectoryHere, read: RecordRead): string
 const filingRefusalNow = (
   here: DirectoryBelieved, filer: Hex | null, kind: FiledKind, recordKey: string, version: number,
 ): string | null => {
-  if (filer === null) return 'it carries no valid signature for this record';
+  if (filer === null) return NO_SIGNATURE;
   const seat = here.dir.seats.find((x) => x.signingKey === filer.toLowerCase());
   if (seat !== undefined && here.another.has(seat.seat)) {
-    return 'it is signed by a seat whose own wallet has not attested the records key its directory entry names';
+    return RECORDS_KEY_NOT_ATTESTED;
   }
   const refused = filingRefusalOf(here.dir, here.holders, filer, kind, recordKey, version);
   return refused === null ? null : FILING_REFUSAL[refused];
@@ -808,6 +808,25 @@ const ANCHOR_REFUSAL = Object.freeze({
     + 'happens again, this page does not read that record yet',
 } as const);
 
+/** A record that carries no signature a filer could have made. */
+const NO_SIGNATURE = 'it carries no valid signature for this record';
+/** A record signed by a seat whose own wallet never attested the records key its entry names. */
+const RECORDS_KEY_NOT_ATTESTED = 'it is signed by a seat whose own wallet has not attested the records key its directory entry names';
+
+/**
+ * **THE CODE OF A REASON A FILER IS NOT BELIEVED**, as a fixed word a log can carry: the key of the anchor or filing
+ * reason it is, `no-signature`, `records-key-not-attested`, `past-a-stop`, `sealed-under-an-older-key`, or `other` for a
+ * reason this does not name (a first version's). The reason's sentence itself never leaves this module this way.
+ */
+export const filingRefusalCodeOf = (why: string): string => {
+  for (const [code, says] of [...Object.entries(ANCHOR_REFUSAL), ...Object.entries(FILING_REFUSAL)]) if (why === says) return code;
+  if (why === NO_SIGNATURE) return 'no-signature';
+  if (why === RECORDS_KEY_NOT_ATTESTED) return 'records-key-not-attested';
+  if (why.startsWith('the company\'s records cannot be read past a batch')) return 'past-a-stop';
+  if (why.startsWith('it is sealed under the company\'s key at epoch')) return 'sealed-under-an-older-key';
+  return 'other';
+};
+
 /**
  * **THE ONE RULE FOR BELIEVING A RECORD READ ON THIS DEVICE.** The record must
  * be one this read asked for, filed within the boundary its seat's leaving
@@ -825,7 +844,7 @@ const ANCHOR_REFUSAL = Object.freeze({
 const refusalHere = (
   here: DirectoryHere, filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest: boolean, sealedAt?: number,
 ): string | null => {
-  if (filer === null) return 'it carries no valid signature for this record';
+  if (filer === null) return NO_SIGNATURE;
   const s = heldStandingOf(here.records, read, filer);
   if (s.standing === 'not-asked') return ANCHOR_REFUSAL['not-asked'];
   const past = pastItsBoundaryHere(here, filer, recordKey, s.version ?? read.version ?? 1);
@@ -1100,7 +1119,7 @@ export const refusedForItsKey = (listed: { readonly leftOut?: ReadonlyMap<string
  */
 const otherBytesRefusal = (here: DirectoryHere, store: 'run' | 'proposal', x: ListedRecord): string | null => {
   const filer = typeof x.filedBy?.publicKey === 'string' ? x.filedBy.publicKey.toLowerCase() as Hex : null;
-  if (filer === null) return 'it carries no valid signature for this record';
+  if (filer === null) return NO_SIGNATURE;
   const entry = store === 'run' ? runEntry(here.dir.company, x as unknown as SealedRun, 1) : proposalEntry(here.dir.company, x as unknown as SealedProposal);
   const s = heldStandingOf(here.records, { store, kind: store, id: x.id, digest: entry.digest, ...(store === 'proposal' ? { version: 1 } : {}) }, filer);
   switch (s.standing) {

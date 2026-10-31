@@ -251,6 +251,73 @@ const ONE_OFF_PAYMENT_CALLS: readonly CallRoute[] = Object.freeze([
   ...UPKEEP_CALLS,
 ].map((r) => Object.freeze(r)) as CallRoute[]);
 
+/*
+ * What inviting somebody reads and writes: the company's records the seat, the directory, the vendors and the roster
+ * are read from, the invitation filed with its first record, the offer read to tell whether an invitation is already
+ * filed, and for a seat offered by address the proposal raised with this seat's approval, plus the upkeep's routes.
+ */
+const INVITE_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'GET', path: '/api/accounts/:record/runs' },
+  { method: 'POST', path: '/api/accounts/:record/invites' },
+  { method: 'GET', path: '/api/invites/:invitation/offer' },
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What approving a signer invited by address reads and writes: the company's records the seat, the directory, the
+ * roster and the proposal are read from, the proposal's standing, and the one approval sent, plus the upkeep's
+ * routes. No route that files or raises a proposal is listed: the wallet approves only one the chain has raised.
+ */
+const APPROVE_SIGNER_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What admitting a signer seated by address reads and writes: the company, its roster and its proposals read, the
+ * roster filed with the person in it and the company's key wrapped to them, in one call, plus the upkeep's routes.
+ */
+const ADMIT_SIGNER_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/accounts/:record/signers/:signer/admit' },
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What admitting a person or a vendor reads and writes: the company's records, its people and its invitations read,
+ * what the person handed over read, and their record filed active in one call, plus the upkeep's routes.
+ */
+const ADMIT_PERSON_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'GET', path: '/api/accounts/:record/invites' },
+  { method: 'GET', path: '/api/employees/:employee/handover' },
+  { method: 'POST', path: '/api/employees/:employee/admit' },
+  { method: 'GET', path: '/api/accounts/:record/vendors/:vendor/handover' },
+  { method: 'POST', path: '/api/accounts/:record/vendors/:vendor/admit' },
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)
+    && !(u.method === 'GET' && u.path === '/api/employees/:employee/handover')),
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What changing a person or a vendor reads and writes: the company's records, its people, its runs and proposals (for
+ * the months already raised) read, and the next version of the record filed in one call, plus the upkeep's routes.
+ */
+const CHANGE_PERSON_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'GET', path: '/api/accounts/:record/runs' },
+  { method: 'POST', path: '/api/people/:person/status' },
+  { method: 'POST', path: '/api/people/:person/details' },
+  { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
 /** Every action a wallet runs, by name. */
 export const ACT_INTENTS = Object.freeze({
   /** Finish creating the company this wallet drew the label for: its account sent and finished, its pay-record key committed and sealed. */
@@ -324,7 +391,8 @@ export const ACT_INTENTS = Object.freeze({
    * inviter-signed offer itself with the link's `token`, takes the company's inbox key, the record and the address
    * from it (the page's `address` only names it, and must be the offer's), checks the address is its own, signs a
    * claim of it with that address's key and its payee's code, seals both to the company's inbox key and hands them to
-   * the invitation. One added by a shielded address accepts with their code and the fingerprint read out instead.
+   * the invitation. It lists the company among those that pay this person in the saved keys before it hands anything
+   * over. One added by a shielded address joins with `join-by-code` instead.
    */
   'claim-by-address': Object.freeze({
     fields: Object.freeze({
@@ -334,6 +402,43 @@ export const ACT_INTENTS = Object.freeze({
       Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-payee' }),
     ]),
+  }),
+  /*
+   * A person or vendor invited by link, or by a private address, joins from their own wallet: the wallet opens the
+   * inviter-signed offer itself with the link's `token`, takes the record, the company's inbox key and any address the
+   * inviter typed from it, and is paid at that address only if it holds it, or else at a private address of its own.
+   * It signs its payee's code with its payslip key for the company, lists the company among those that pay this
+   * person in the saved keys, seals the code to the company's inbox key and hands it to the invitation. The
+   * fingerprint the inviter checks is shown in the wallet's own window and never sent to the page.
+   */
+  'join-by-code': Object.freeze({
+    fields: Object.freeze({ company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const }),
+    calls: Object.freeze([
+      Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
+      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-payee' }),
+    ]),
+  }),
+  /*
+   * Invite an employee, a vendor or a signer (`kind`) to the company, with the seat this wallet holds there: the
+   * invitation, the offer and the first record are sealed and signed in the wallet and filed, and a signer, invited
+   * only by a private address, gets the proposal to seat that address raised with this seat's approval, the
+   * invitation kept in the saved keys before the raise. `token` is the page's own token for the link, so the page
+   * makes the link itself and nothing secret comes back. The person's details are the page's words, and never reach
+   * the service but sealed. It tells the page where the invitation got to, whether the upkeep was all done and how
+   * many records it anchored.
+   */
+  invite: Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, token: 'token' as const, kind: 'words' as const,
+      personName: 'words' as const, email: 'words' as const, title: 'words' as const, startDate: 'words' as const, endDate: 'words' as const,
+      classification: 'words' as const, address: 'words' as const, asset: 'token' as const, amount: 'amount' as const,
+      terms: 'words' as const, termsAsset: 'token' as const, termsAmount: 'amount' as const, role: 'words' as const, scope: 'seat' as const,
+    }),
+    optional: Object.freeze([
+      'email', 'title', 'startDate', 'endDate', 'classification', 'address', 'asset', 'amount', 'terms', 'termsAsset', 'termsAmount', 'role', 'scope',
+    ]),
+    calls: INVITE_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
    * A signer invited by address takes the seat from their own wallet: the wallet opens the offer with the link's
@@ -347,6 +452,77 @@ export const ACT_INTENTS = Object.freeze({
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/seat', sends: true }),
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-signer' }),
     ]),
+  }),
+  /*
+   * Approve, with the seat this wallet holds, the proposal (`proposal`, its name in the company's records) another
+   * seat raised to seat a private address. `personName`, `role` (one of the four a signer may hold), `address` (the
+   * commitment to the address), `scope` and `coinKey` are what the page showed: the wallet opens the proposal itself and approves it only when it invites
+   * exactly those, the coin key makes the commitment, and that wallet holds no seat here and no other open invitation.
+   * It raises nothing. It tells the page where the proposal got to, the approvals the chain shows, whether the upkeep
+   * was all done and how many records it anchored.
+   */
+  'approve-signer': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const,
+      personName: 'words' as const, role: 'words' as const, address: 'seat' as const, scope: 'seat' as const, coinKey: 'seat' as const,
+    }),
+    calls: APPROVE_SIGNER_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Admit, with the seat this wallet holds, the signer waiting under `signer` whose own wallet took their seat by
+   * address: the wallet holds their request to the seat the chain shows their invitation's proposal took, records the
+   * coin key of the address they were invited at, files the roster with them in it and wraps the company's key to
+   * them. Nothing is read out. `personName` is the name the page showed. It tells the page whether they were admitted
+   * now or already, whether the upkeep was all done and how many records it anchored.
+   */
+  'admit-signer': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, signer: 'record' as const,
+      personName: 'words' as const,
+    }),
+    calls: ADMIT_SIGNER_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Admit, with the seat this wallet holds, the employee or vendor (`kind`) waiting under `person`: their wallet's
+   * code is opened with the company's keys and held to the fingerprint they read out (`fingerprint`), or, for someone
+   * added at a public address, to their wallet's signed claim of it, with nothing read out. Their record is filed
+   * active at the address and payslip key their wallet handed over. `personName` is the name the page showed, held to
+   * their record. It tells the page whether they were admitted now or already, and how the upkeep went.
+   */
+  'admit-person': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, kind: 'words' as const,
+      person: 'record' as const, personName: 'words' as const, fingerprint: 'words' as const,
+    }),
+    optional: Object.freeze(['fingerprint']),
+    calls: ADMIT_PERSON_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+  }),
+
+  /*
+   * Change, with the seat this wallet holds, the record of the employee or vendor (`kind`) under `person`, as the next
+   * version signed by this seat. An employee's pay (`payAmount` in `asset` from `payFrom`), classification (from
+   * `classificationFrom`), end and leaving dates, or else their status (`status`, a leaver with their `leavingDate`); a
+   * vendor's terms (`terms`, `termsAsset`, `termsAmount`), end date and status. `clear` names the dates taken off, by
+   * field name, separated by commas. Nothing changes a month a run has already been raised for. It tells the page
+   * whether the record was changed, and how the upkeep went.
+   */
+  'change-person': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, kind: 'words' as const,
+      person: 'record' as const, personName: 'words' as const, payAmount: 'amount' as const, asset: 'token' as const,
+      payFrom: 'words' as const, classification: 'words' as const, classificationFrom: 'words' as const, endDate: 'words' as const,
+      leavingDate: 'words' as const, status: 'words' as const, terms: 'words' as const, termsAsset: 'token' as const,
+      termsAmount: 'amount' as const, clear: 'words' as const,
+    }),
+    optional: Object.freeze([
+      'payAmount', 'asset', 'payFrom', 'classification', 'classificationFrom', 'endDate', 'leavingDate', 'status', 'terms',
+      'termsAsset', 'termsAmount', 'clear',
+    ]),
+    calls: CHANGE_PERSON_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
   }),
 }) satisfies Readonly<Record<string, IntentShape>>;
 

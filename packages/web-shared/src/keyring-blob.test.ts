@@ -4,7 +4,7 @@ import { fromHex, randomBytes, seal, signingPublicKeyOf, toHex, unseal, wrapKey 
 import { inboxPublicKey } from '../../../src/core/sealed-records.js';
 import {
   counterOf, creationIn, KeyringDidNotOpen, metadataFrom, metadataOf, openKeyring, sealKeyring, seatsOf, tidiedWith, servedKeysOpenedFrom,
-  withCreation, withNewSeat, withoutCreation, type Keyring, type SavedCreation, type ServedKeys,
+  withCreation, withNewSeat, withoutCreation, withPaidBy, withPayeeJoinKept, withPendingSeat, type Keyring, type PendingSeat, type SavedCreation, type ServedKeys,
 } from './keyring-blob.js';
 
 /*
@@ -185,6 +185,47 @@ describe('what an action changes in saved keys', () => {
     expect(seated.accounts['acc_C']?.signingSecret).toBe(HEX('11'));
     /* RED WHEN: a seat is written over the only copy of another seat's secrets for the same company. */
     expect(() => withNewSeat(seated, 'acc_C', { ...aSeat(), signingSecret: HEX('99') })).toThrow();
+  });
+
+  it('keeps a seat before its leaf is published under its signing public key, again without change, and never over another', () => {
+    const pending: PendingSeat = {
+      accountId: 'acc_C', signingPublicKey: signingPublicKeyOf(HEX('11')).toUpperCase() as never, signingSecret: HEX('11'),
+      wrappingSecret: HEX('22'), blinding: HEX('33'), scope: HEX('44'), seat: 2,
+    };
+    const k: Keyring = { accounts: {} };
+    const kept = withPendingSeat(k, pending);
+    const key = signingPublicKeyOf(HEX('11')).toLowerCase();
+    expect(kept.pendingSeats).toEqual({ [key]: pending });
+    /* RED WHEN: the same seat kept again is refused or changes the saved keys. */
+    expect(withPendingSeat(kept, pending)).toBe(kept);
+    /* RED WHEN: another seat is written over a seat kept under the same key, the only copy of a leaf maybe published. */
+    expect(() => withPendingSeat(kept, { ...pending, blinding: HEX('99') })).toThrow(/not written over/u);
+  });
+
+  it('lists a company that pays this person once, beside every company listed before, and lists nothing that is not a company', () => {
+    const A = `co_${'a'.repeat(64)}`;
+    const B = `co_${'b'.repeat(64)}`;
+    const k: Keyring = { accounts: {}, paidBy: [A, 'kept as it was'] };
+    const listed = withPaidBy(k, B as never);
+    /* RED WHEN: listing a company drops or reorders one listed before. */
+    expect(listed.paidBy).toEqual([A, 'kept as it was', B]);
+    /* RED WHEN: a company already listed is listed twice, or listing it again writes new saved keys. */
+    expect(withPaidBy(listed, B as never)).toBe(listed);
+    expect(withPaidBy({ accounts: {} }, A as never).paidBy).toEqual([A]);
+    /* RED WHEN: something that is not a company's label is listed as a company that pays you. */
+    expect(() => withPaidBy(k, 'acc_1' as never)).toThrow(/not a company/u);
+  });
+
+  it('keeps a join as a payee under its invitation, again without change, never over another, and never for the page', () => {
+    const A = `co_${'a'.repeat(64)}`;
+    const kept = withPayeeJoinKept({ accounts: {} }, 'inv_1', { company: A, address: 'mn_shield-addr_one' });
+    expect(kept.payeeJoinsKept).toEqual({ inv_1: { company: A, address: 'mn_shield-addr_one' } });
+    /* RED WHEN: the same join kept again is refused or changes the saved keys. */
+    expect(withPayeeJoinKept(kept, 'inv_1', { company: A, address: 'mn_shield-addr_one' })).toBe(kept);
+    /* RED WHEN: another join is written over one kept under the same invitation, whose code may have been handed over. */
+    expect(() => withPayeeJoinKept(kept, 'inv_1', { company: A, address: 'mn_shield-addr_two' })).toThrow(/not written over/u);
+    /* RED WHEN: the address a join was paid at reaches what the page is shown of the saved keys. */
+    expect(JSON.stringify(metadataOf(kept))).not.toContain('mn_shield-addr_one');
   });
 });
 

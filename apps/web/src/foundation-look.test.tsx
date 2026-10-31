@@ -87,8 +87,9 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 /**
  * THE PAGES DRAWN BEFORE ANYONE IS SIGNED IN, outside any frame: the landing
  * page is a layout of its own, where a visitor signs in, until it is redrawn
- * on the kit's layouts; and joining, not built yet, which a visitor opens
- * before signing in.
+ * on the kit's layouts; and joining, which a visitor opens
+ * from an invitation link before signing in. A signed-in person opens it in
+ * the frame like any other page.
  */
 const OUTSIDE_A_FRAME: readonly PageId[] = ['landing', 'join'];
 
@@ -111,6 +112,14 @@ describe('every page in the kit\'s layout', () => {
       expect(layout!.className.split(/\s+/), id).toContain('max-w-7xl');
       expect(c.querySelector('[data-menu]'), id).not.toBeNull();
     }
+  });
+
+  /* RED WHEN: a signed-in person who opens an invitation link is refused the joining page, or is shown it without the menu. */
+  it('draws the joining page in the frame for a signed-in person', async () => {
+    expect(mayOpen(PAGES.join, SIGNER)).toBe(true);
+    const c = await draw('join', SIGNER);
+    expect(c.querySelector('[data-menu]')).not.toBeNull();
+    expect(c.querySelector('[data-screen=join]')).not.toBeNull();
   });
 
   /* RED WHEN: a page a visitor cannot open is exempted from the frame. */
@@ -266,7 +275,7 @@ describe('no page draws what the kit draws', () => {
     const onDemand = new Set([...PAGES_TS.matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[\w-]+)\.js'\)/g)].map((m) => `apps/web/src/${m[1]!}.tsx`));
     const everyFile = walk('apps/web/src');
     const importers = everyFile.filter((f) => Object.keys(KIT_ENTRIES).some((e) => f.text.includes(`from '${e}'`))).map((f) => f.path);
-    expect(importers).toEqual(['apps/web/src/screens/home.tsx', 'apps/web/src/screens/payroll.tsx', 'apps/web/src/screens/people.tsx', 'apps/web/src/screens/proposals.tsx', 'apps/web/src/screens/vault.tsx']);
+    expect(importers).toEqual(['apps/web/src/screens/home.tsx', 'apps/web/src/screens/payroll.tsx', 'apps/web/src/screens/people.tsx', 'apps/web/src/screens/proposals.tsx', 'apps/web/src/screens/vault.tsx', 'apps/web/src/screens/vendors.tsx']);
     for (const p of importers) {
       expect(onDemand.has(p), p).toBe(true);
       const name = p.replace(/^apps\/web\/src\//, '').replace(/\.tsx$/, '');

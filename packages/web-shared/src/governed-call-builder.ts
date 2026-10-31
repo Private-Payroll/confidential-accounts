@@ -852,13 +852,6 @@ const argumentsBuilt = (deps: Pick<GovernedCallDeps, 'accountPure'>, order: Gove
     : a === NO_VAULT ? deps.accountPure.noVault() : a));
 };
 
-/**
- * **WHY A CALL COULD NOT BE BUILT, IN THE CONTRACT'S OR THE WITNESS'S OWN
- * WORDS.** The call builder lifts a failed assertion's sentence to the top, but
- * a witness that refuses - "you are not a signer on this account" - arrives
- * wrapped as a generic failure to run the circuit, with the sentence one level
- * down. That sentence is the one a person can act on, so it is brought up.
- */
 /** What each call is called in a sentence a person reads. */
 const CALLED: Readonly<Record<string, string>> = {
   approve: 'approval', propose: 'proposal', amendSigner: 'removal', setThreshold: 'threshold change',
@@ -867,6 +860,13 @@ const CALLED: Readonly<Record<string, string>> = {
   setPolicy: 'spending policy', setPolicyBar: 'change of the approvals a policy change needs',
 };
 
+/**
+ * **WHY A CALL COULD NOT BE BUILT, IN THE CONTRACT'S OR THE WITNESS'S OWN
+ * WORDS.** The call builder lifts a failed assertion's sentence to the top, but
+ * a witness that refuses - "you are not a signer on this account" - arrives
+ * wrapped as a generic failure to run the circuit, with the sentence one level
+ * down. That sentence is the one a person can act on, so it is brought up.
+ */
 export class CallNotBuilt extends Error {
   constructor(readonly circuit: string, why: string, options?: { cause?: unknown }) {
     super(`this ${CALLED[circuit] ?? 'proposal'} could not be built on this device: ${why}. Nothing was proved or sent.`, options);
@@ -1143,9 +1143,6 @@ export async function buildGovernedCall(
   }
 }
 
-/* ── THE COMPANY'S RECORD ANCHOR, MOVED ON FROM THIS DEVICE ──────────────────── */
-
-/** Thrown, with nothing built or sent, when an anchor call - or a recovery, `recovery` - cannot be made as this device would send it. */
 /** What an invitee's wallet takes an invited seat with: its seat, the address's coin key and salt, and the proposal's salt. */
 export interface InvitedSeatInput {
   readonly account: string;
@@ -1203,6 +1200,9 @@ export async function buildSeatInvitedCall(deps: GovernedCallDeps, input: Invite
   }
 }
 
+/* ── THE COMPANY'S RECORD ANCHOR, MOVED ON FROM THIS DEVICE ──────────────────── */
+
+/** Thrown, with nothing built or sent, when an anchor call - or a recovery, `recovery` - cannot be made as this device would send it. */
 export class AnchorNotBuilt extends Error {
   constructor(why: string, options?: { cause?: unknown; recovery?: boolean }) {
     super(`${options?.recovery === true ? 'the recovery of the company\'s records was not carried out' : 'the company\'s records were not anchored'}: ${why}. `
@@ -1710,7 +1710,6 @@ export function roundsOnChainIn(
   return out;
 }
 
-/** What a payroll run's identity on chain is made from, as its sealed proposal holds them, with the head its raiser checked: decimal and hexadecimal. */
 /**
  * Every circuit of the account that closes a proposal (`closeProposal`, ConfidentialAccount.compact), named so a
  * block that holds any of them beside a seating is never read as that seating's. Checked against the contract's
@@ -1723,9 +1722,10 @@ export const PROPOSAL_CLOSING_CIRCUITS: readonly string[] = Object.freeze([
 
 /**
  * The leaf each invitation's proposal seated, read from the account's own history: for each proposal asked
- * about, the one leaf that entered the account's signers in the block where the account stopped holding the
+ * about, the one leaf that entered the account's signers in a block where the account stopped holding the
  * proposal, when that block's only successful call that closes a proposal is one `seatInvited`, and exactly
- * one leaf entered. The steps carry no call's arguments, so a block where anything
+ * one leaf entered. Every such block is read, the latest seating taken: a proposal cancelled and raised again under
+ * its own salt closes once for the cancel and again when it seats. The steps carry no call's arguments, so a block where anything
  * else closed a proposal (a `cancel` of this one beside a seating for another, say) cannot show which call closed
  * which. Null for a proposal never closed, closed by anything else, or closed in such a block: a state is the
  * whole block's, and no seat is bound to an invitation on a guess.
@@ -1758,17 +1758,22 @@ export function seatsInvitedIn(
     const hex = String(asked).toLowerCase();
     if (!HEX64.test(hex)) throw new Error('an invitation\'s proposal was asked about by an identity that is not thirty-two bytes');
     const id = bytesOf('proposal', hex);
-    const gone = blocks.findIndex((b, i) => i > 0 && blocks[i - 1]!.view.openProposals.member(id) && !b.view.openProposals.member(id));
-    if (gone < 1) { out.set(hex, null); continue; }
-    const closers = blocks[gone]!.steps.filter((x) => x.kind === 'call' && x.succeeded && PROPOSAL_CLOSING_CIRCUITS.includes(x.entryPoint ?? ''));
-    const before = leavesOf(blocks[gone - 1]!.view);
-    const added = [...leavesOf(blocks[gone]!.view)].filter((l) => !before.has(l));
-    const onlyThisSeating = closers.length === 1 && closers[0]!.entryPoint === 'seatInvited';
-    out.set(hex, onlyThisSeating && added.length === 1 ? added[0]! : null);
+    /* Every block where the account stopped holding it: a proposal cancelled and raised again closes more than once. */
+    let seat: string | null = null;
+    blocks.forEach((b, gone) => {
+      if (gone < 1 || !blocks[gone - 1]!.view.openProposals.member(id) || b.view.openProposals.member(id)) return;
+      const closers = b.steps.filter((x) => x.kind === 'call' && x.succeeded && PROPOSAL_CLOSING_CIRCUITS.includes(x.entryPoint ?? ''));
+      const before = leavesOf(blocks[gone - 1]!.view);
+      const added = [...leavesOf(b.view)].filter((l) => !before.has(l));
+      const onlyThisSeating = closers.length === 1 && closers[0]!.entryPoint === 'seatInvited';
+      if (onlyThisSeating && added.length === 1) seat = added[0]!;
+    });
+    out.set(hex, seat);
   }
   return out;
 }
 
+/** What a payroll run's identity on chain is made from, as its sealed proposal holds them, with the head its raiser checked: decimal and hexadecimal. */
 export interface VouchedRunOnTheWire {
   readonly root: string; readonly payees: string; readonly opensAt: string; readonly closesAt: string; readonly required: string;
   readonly vault: string; readonly head: string; readonly r: string;

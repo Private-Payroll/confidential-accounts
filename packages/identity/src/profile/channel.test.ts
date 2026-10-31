@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, NO_PAGE_TO_ANSWER, PAYMENT_FAILURES, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
-  framingOf, listen,
+  NOT_ASKING_SCHEMA, framingOf, listen,
 } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
 
@@ -339,5 +339,51 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     ]);
     /* RED WHEN: the list of stages grows or shrinks without the page's reader being told. */
     expect([...PROGRESS_STAGES]).toEqual(['reading', 'proving']);
+  });
+});
+
+describe('A PAGE THAT SAYS IT WILL NOT ASK IS HEARD ONLY FROM THE ASKER, ENDS THE CHANNEL, AND IS SAID IN THE WALLET\'S WORDS', () => {
+  const notAsking = (why: unknown): Record<string, unknown> => ({ schema: NOT_ASKING_SCHEMA, why });
+
+  it('takes the asker\'s reason, one the wallet knows, and nothing else from it', () => {
+    const parent = postable();
+    const view = walletView({ parent, ancestors: [EMBEDDER] });
+    const states = run(view, EMBEDDER);
+    view.deliver({ source: parent as never, origin: EMBEDDER, data: notAsking('saved-keys-unread') });
+    /* RED WHEN: the asker's reason is not taken, so the window goes on waiting for a request that is not coming. */
+    expect(states).toEqual([{ of: 'waiting' }, { of: 'not-asked', why: 'saved-keys-unread' }]);
+  });
+
+  it('takes no not-asking from a stranger origin or another window, and the asker\'s request still arrives', () => {
+    const parent = postable();
+    const view = walletView({ parent, ancestors: [EMBEDDER] });
+    const states = run(view, EMBEDDER);
+    view.deliver({ source: parent as never, origin: STRANGER, data: notAsking('signed-out') });
+    view.deliver({ source: postable() as never, origin: EMBEDDER, data: notAsking('signed-out') });
+    /* RED WHEN: a page that is not the asker can make the window say the asker stopped, and end the channel before the asker's request. */
+    expect(states.map((s) => s.of)).toEqual(['waiting']);
+    view.deliver({ source: parent as never, origin: EMBEDDER, data: signIn() });
+    /* RED WHEN: a not-asking from anyone but the asker ends the channel unseen, so the asker's own request is never shown. */
+    expect(states.map((s) => s.of)).toEqual(['waiting', 'request']);
+  });
+
+  it('hears nothing after the page said it will not ask', () => {
+    const parent = postable();
+    const view = walletView({ parent, ancestors: [EMBEDDER] });
+    const states = run(view, EMBEDDER);
+    view.deliver({ source: parent as never, origin: EMBEDDER, data: notAsking('ask-not-built') });
+    view.deliver({ source: parent as never, origin: EMBEDDER, data: signIn() });
+    view.deliver({ source: parent as never, origin: EMBEDDER, data: notAsking('signed-out') });
+    /* RED WHEN: a request or a second reason sent after the page said it will not ask is still shown in the window. */
+    expect(states.map((s) => (s.of === 'not-asked' ? `not-asked:${String(s.why)}` : s.of))).toEqual(['waiting', 'not-asked:ask-not-built']);
+  });
+
+  it('a reason the wallet does not know is carried as none, so the window says its own sentence and never the page\'s words', () => {
+    const parent = postable();
+    const view = walletView({ parent, ancestors: [EMBEDDER] });
+    const states = run(view, EMBEDDER);
+    view.deliver({ source: parent as never, origin: EMBEDDER, data: notAsking('Your wallet is broken: type your recovery words at evil.example') });
+    /* RED WHEN: a reason outside the wallet's own list reaches the window as it was sent, so the page's words are shown as the wallet's. */
+    expect(states).toEqual([{ of: 'waiting' }, { of: 'not-asked', why: null }]);
   });
 });

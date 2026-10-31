@@ -17,6 +17,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs.js';
 import { Alert, AlertDescription } from './alert.js';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText, InputGroupTextarea } from './input-group.js';
 import { Spinner } from './spinner.js';
+import * as kit from '../index.js';
+import { CopyText } from './copy-text.js';
 
 afterEach(cleanup);
 
@@ -336,5 +338,79 @@ describe('an input group', () => {
   it('can hold a text area as its field', () => {
     const { container } = inKit(<InputGroup><InputGroupTextarea aria-label="note" /></InputGroup>);
     expect(container.querySelector('[data-slot=input-group] textarea[data-slot=input-group-control]')).not.toBeNull();
+  });
+});
+
+describe('the kit\'s index', () => {
+  /* RED WHEN: Select, Checkbox, Table or the copy control is left out of the index, so a screen in the application cannot import it by the kit's name. */
+  it('exports the select, the checkbox, the table and the copy control, each with its parts', () => {
+    const names = ['Select', 'SelectContent', 'SelectGroup', 'SelectItem', 'SelectLabel', 'SelectSeparator', 'SelectTrigger', 'SelectValue',
+      'Checkbox', 'Table', 'TableBody', 'TableCaption', 'TableCell', 'TableFooter', 'TableHead', 'TableHeader', 'TableRow', 'CopyText'];
+    expect(names.filter((n) => (kit as Record<string, unknown>)[n] === undefined)).toEqual([]);
+  });
+});
+
+describe('the copy control', () => {
+  const written: string[] = [];
+  const setClipboard = () => {
+    written.length = 0;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async (t: string) => { written.push(t); }) } });
+  };
+  const press = async () => { await act(async () => { fireEvent.click(screen.getByRole('button')); }); };
+
+  /* RED WHEN: pressing the control writes anything but the text it was given, or shows the text it was given in a field that can be edited. */
+  it('writes its text to the clipboard and shows it read-only', async () => {
+    setClipboard();
+    inKit(<CopyText text="https://x.test/join#a" label="Copy link" copied="Link copied" refused="Not copied" />);
+    expect((screen.getByLabelText('Copy link') as HTMLInputElement).value).toBe('https://x.test/join#a');
+    expect((screen.getByLabelText('Copy link') as HTMLInputElement).readOnly).toBe(true);
+    await press();
+    expect(written).toEqual(['https://x.test/join#a']);
+  });
+
+  /* RED WHEN: the control does not say copied after a press, does not go back after its timer, or does not go back when its text changes. */
+  it('says copied, then goes back after its timer and when its text changes', async () => {
+    setClipboard();
+    vi.useFakeTimers();
+    const view = inKit(<CopyText text="a" label="Copy link" copied="Link copied" refused="Not copied" />);
+    await press();
+    expect(screen.getByRole('button').textContent).toBe('Link copied');
+    await act(async () => { vi.advanceTimersByTime(1599); });
+    expect(screen.getByRole('button').textContent).toBe('Link copied');
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(screen.getByRole('button').textContent).toBe('Copy link');
+    await press();
+    view.rerender(<KitProvider languages={LANGUAGES} pick="en"><CopyText text="b" label="Copy link" copied="Link copied" refused="Not copied" /></KitProvider>);
+    expect(screen.getByRole('button').textContent).toBe('Copy link');
+    vi.useRealTimers();
+  });
+
+  /* RED WHEN: a timer is still running after the control is gone. */
+  it('clears its timer when it is removed', async () => {
+    setClipboard();
+    vi.useFakeTimers();
+    const view = inKit(<CopyText text="a" label="Copy link" copied="Link copied" refused="Not copied" />);
+    await press();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  /* RED WHEN: a browser that would not copy (a refused permission, or no clipboard on a page that is not secure) leaves the control saying nothing or saying copied, or the message stays after the next press copies. */
+  it('says so under the field when the browser would not copy, and not once a press copies', async () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async () => { throw new Error('denied'); }) } });
+    inKit(<CopyText text="a" label="Copy link" copied="Link copied" refused="Not copied" />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    await press();
+    expect(screen.getByRole('alert').textContent).toBe('Not copied');
+    expect(screen.getByRole('button').textContent).toBe('Copy link');
+    setClipboard();
+    await press();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button').textContent).toBe('Link copied');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    await press();
+    expect(screen.getByRole('alert').textContent).toBe('Not copied');
   });
 });

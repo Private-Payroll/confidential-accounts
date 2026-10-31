@@ -32,6 +32,7 @@ import { directoryHere, judgeIn } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { ACME, acmeDirectory, acmeDirectoryDeps, fromAda, ORIGIN } from './a-company-of-two-seats.test-support.js';
 import {
   aCompanyWhoseSignersChange, acmeChain, ADA, ADDRESS, BO, anchorDoorsOf, aPolicyFiledBy, api, apiAs, attestedByTheRoster, chargedOnChain, CO, CY,
@@ -78,7 +79,7 @@ const aOneOffPaidBeforeCyWasSeated = async (asset: AssetId, reason: string) => {
 
 const NETWORK = theNetwork();
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
+  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** A payee invited by Ada, who accepts and is admitted: paid in the test's settlement currency, as payroll pays. */

@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { PAGES, isBuilt, type Page } from '../pages.js';
 import { STEP } from './step-ids.js';
-import { EVERY_STEP, isBuiltStep, SETUP_STEPS } from './steps.js';
-import { blockedBy, firstOpen, skippedFor, skipStep, STANDING, standingOf } from './standing.js';
+import { EVERY_STEP, isBuiltStep, SETUP_STEPS, type SetupStep } from './steps.js';
+import { blockedBy, firstOpen, skippedFor, skipStep, someoneInvited, STANDING, standingOf } from './standing.js';
 import type { CompanyCreation } from '../adapters/creation-standing.js';
 
 /*
@@ -44,13 +44,29 @@ const ACTS_FOR: Record<string, string> = {
   'start-again.tsx': 'adapters/start-again.js',
   'account-tokens.tsx': 'adapters/account-balances.js',
   'deposit.tsx': 'adapters/deposit.js',
+  'invite.tsx': 'adapters/invite.js',
+  'signers.tsx': 'adapters/signer-acts.js',
+  /* The People page's two acts share one adapter, because admitting and changing a person are one wallet conversation asked of the same record: the admit control (shown by the person's panel, the invitations page and home) and the panel's change forms. */
+  'admit.tsx': 'adapters/person-acts.js',
+  'person-panel.tsx': 'adapters/person-acts.js',
+  /* The Vendors page's panel acts through the same adapter, because a vendor's record is admitted and changed in the same wallet conversation as a person's. */
+  'vendor-panel.tsx': 'adapters/person-acts.js',
+};
+/** Files other than the action's own that may import its adapter, because they only read what it names: the vault adapter's `namedFor` is the one source of a company's record, label and account (the invite, signer and person acts all ask it), and the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
+const ALSO_READ_BY: Record<string, string[]> = {
+  'adapters/create-vault.js': ['adapters/invite.ts', 'adapters/person-acts.ts', 'adapters/signer-acts.ts'],
+  'adapters/person-acts.js': ['records/parts.tsx'],
+  'adapters/invite.js': ['actions/signers.tsx', 'actions/vendor-panel.tsx', 'adapters/person-acts.ts', 'fields/form-fields.tsx', 'screens/vendors.tsx'],
 };
 /** The components in actions/ that are no step's: each with the only files that may show it, one component called from each, never a copy. */
 const NO_STEP: Record<string, string[]> = {
-  'committee-change.tsx': ['records/vault-pending', 'screens/settings-sections'],
+  'committee-change.tsx': ['actions/signers', 'records/vault-pending'],
   'start-again.tsx': ['actions/finish-company'],
   'account-tokens.tsx': ['actions/deposit', 'shell/account-menu'],
   'deposit.tsx': ['screens/vault'],
+  'admit.tsx': ['actions/person-panel', 'actions/vendor-panel', 'records/parts'],
+  'person-panel.tsx': ['screens/people'],
+  'vendor-panel.tsx': ['screens/vendors'],
 };
 
 describe('every step is in the list, and every entry is a step', () => {
@@ -60,9 +76,9 @@ describe('every step is in the list, and every entry is a step', () => {
    * an everyday action (depositing, running payroll) made a setup step again.
    * The design's five steps, written out by hand: there is no step for handing the company over.
    */
-  it('has the design\'s five steps, in order, and builds only creating the company, finishing it and creating a vault', () => {
+  it('has the design\'s five steps, in order, and builds every one of them', () => {
     expect(EVERY_STEP.map((s) => s.id)).toEqual(['createCompany', 'finishCompany', 'signers', 'vault', 'people']);
-    expect(EVERY_STEP.filter(isBuiltStep).map((s) => s.id)).toEqual([STEP.createCompany, STEP.finishCompany, STEP.vault]);
+    expect(EVERY_STEP.filter(isBuiltStep).map((s) => s.id)).toEqual([STEP.createCompany, STEP.finishCompany, STEP.signers, STEP.vault, STEP.people]);
     expect(Object.values(STEP).sort()).toEqual(Object.keys(SETUP_STEPS).sort());
   });
 
@@ -84,9 +100,11 @@ describe('every step is in the list, and every entry is a step', () => {
 
   /*
    * RED WHEN: the committee change is a step again, or is shown from any file but the vault panel's and the signers
-   * page's (a copy of it, or a third place it is drawn), or the signers step is built before adding signers is.
+   * component's (a copy of it, or a third place it is drawn); or the signers step and the signers page do not draw that one
+   * component, the page from its own screen and the step from the list; or the step stops saying that choosing how many
+   * must approve is Coming soon.
    */
-  it('shows the committee change from the vault panel and the signers page only, and leaves the signers step Coming soon', () => {
+  it('shows the committee change from the vault panel and the signers component only, which the step and the page both draw', () => {
     /* Every one of them is a file in actions/, and no step shows it. */
     const shown = EVERY_STEP.filter(isBuiltStep).map((st) => (st.shows as { action: { name: string } }).action.name);
     expect(Object.keys(NO_STEP).every((f) => actionFiles().includes(f))).toBe(true);
@@ -95,11 +113,15 @@ describe('every step is in the list, and every entry is a step', () => {
       const target = `${ACTIONS}/${file}`.replace(/\.tsx$/, '');
       expect(everyFile().filter((p) => modulesNamed(p, read(p)).includes(target)).map((p) => p.replace(/\.tsx?$/, '')).sort(), file).toEqual([...mounts].sort());
     }
-    expect('comingSoon' in SETUP_STEPS[STEP.signers].shows).toBe(true);
+    const signersStep = SETUP_STEPS[STEP.signers] as SetupStep;
+    expect(isBuiltStep(signersStep) && signersStep.shows.action.name).toBe('Signers');
+    expect(typeof signersStep.alsoSoon).toBe('function');
     expect(SETUP_STEPS[STEP.signers].page).toBe('settingsSigners');
     expect(PAGES.settingsSigners.shows).toHaveProperty('already');
     expect(((PAGES.settingsSigners as Page).shows as unknown as { already: { screenName: string } }).already.screenName).toBe('SignersBuilt');
-    expect(read('screens/settings-sections.tsx')).toMatch(/export function SignersBuilt\b[\s\S]*<CommitteeChange \/>/);
+    expect(read('screens/settings-sections.tsx')).toMatch(/export function SignersBuilt\b[\s\S]*<Signers \/>/);
+    expect(read('screens/settings-sections.tsx')).not.toMatch(/CommitteeChange/);
+    expect(read(`${ACTIONS}/signers.tsx`).match(/<CommitteeChange\b/g)).toHaveLength(1);
   });
 
   /* RED WHEN: a step that can be skipped cannot be, or finishing the company can be skipped. */
@@ -117,14 +139,17 @@ describe('a step and its page are one component', () => {
   /*
    * RED WHEN: an action's adapter is imported anywhere but its action's own
    * file, which is what a copy of a step, made into a page or another step,
-   * has to do to act; or an action has no adapter listed here.
+   * has to do to act; or an action has no adapter listed here; or an adapter two
+   * actions share is imported by any file but those two actions (and the files
+   * listed as reading what it names), so one of them is not the only way to act.
    */
   it('lets only an action\'s own file reach the adapter that acts for it', () => {
     expect(Object.keys(ACTS_FOR).sort()).toEqual(actionFiles());
-    for (const [file, adapter] of Object.entries(ACTS_FOR)) {
+    for (const adapter of new Set(Object.values(ACTS_FOR))) {
       const target = adapter.replace(/\.js$/, '');
       const importers = everyFile().filter((p) => modulesNamed(p, read(p)).includes(target));
-      expect(importers, adapter).toEqual([`${ACTIONS}/${file}`]);
+      const actions = Object.entries(ACTS_FOR).filter(([, a]) => a === adapter).map(([file]) => `${ACTIONS}/${file}`);
+      expect([...importers].sort(), adapter).toEqual([...actions, ...(ALSO_READ_BY[adapter] ?? [])].sort());
     }
   });
 
@@ -162,7 +187,44 @@ describe('a step and its page are one component', () => {
       checked.push(`${s.id} on ${s.page}`);
     }
     /* Each built step whose page is built, named here, so the check above is seen reading it. */
-    expect(checked).toEqual(['vault on vaults']);
+    expect(checked).toEqual(['vault on vaults', 'people on people']);
+  });
+});
+
+describe('each piece the forms and pages share has one home', () => {
+  /*
+   * RED WHEN: a piece the people's and vendors' pages, panels and the invite form share is written again in another file (a second
+   * `useAdmitBySays`, `BeliefLeftOut`, `TermsOf`, `PayField`, `TermsChoice`, `DayForm`, `DateField` or `CalendarDate`), the keypad an
+   * amount is typed on is set anywhere but the field that draws it, or a calendar day is written out beside the one that draws it:
+   * the copies drift, as the invite form's amount and the vendor panel's did. Each is found by what it is called and by what it does.
+   */
+  it('defines each shared piece in one file and sets the amount keypad in one', () => {
+    const files = everyFile();
+    const definedIn = (name: string): string[] => files.filter((p) => new RegExp(`(?:function|const)\\s+${name}\\b`).test(read(p)));
+    expect({
+      useAdmitBySays: definedIn('useAdmitBySays'), BeliefLeftOut: definedIn('BeliefLeftOut'), TermsOf: definedIn('TermsOf'), CalendarDate: definedIn('CalendarDate'),
+      PayField: definedIn('PayField'), TermsChoice: definedIn('TermsChoice'), DayForm: definedIn('DayForm'), DateField: definedIn('DateField'),
+    }).toEqual({
+      useAdmitBySays: ['actions/admit.tsx'], BeliefLeftOut: ['records/parts.tsx'], TermsOf: ['records/parts.tsx'], CalendarDate: ['records/parts.tsx'],
+      PayField: ['fields/form-fields.tsx'], TermsChoice: ['fields/form-fields.tsx'], DayForm: ['fields/form-fields.tsx'], DateField: ['fields/form-fields.tsx'],
+    });
+    expect(files.filter((p) => /invitations\.kind\./.test(read(p)))).toEqual(['records/parts.tsx']);
+    expect(files.filter((p) => /\binputMode\b/.test(read(p)))).toEqual(['fields/form-fields.tsx']);
+    expect(files.filter((p) => /\bDECIMAL_KEYPAD\b/.test(read(p)))).toEqual(['adapters/invite.ts', 'fields/form-fields.tsx']);
+    expect(files.filter((p) => /calendar\(\w+\) \|\| \w+/.test(read(p)))).toEqual(['records/parts.tsx']);
+  });
+
+  /* RED WHEN: the shared form fields file reaches anything but the invite adapter's names, or a form field is imported from an action's file (an action file made a library of fields). */
+  it('keeps the shared fields to the names the invite adapter holds, and no action file a library of fields', () => {
+    expect(modulesNamed('fields/form-fields.tsx', read('fields/form-fields.tsx')).sort()).toEqual(['adapters/invite']);
+    const fieldNames = /\b(?:\w*Form|\w*Field|\w*Choice)\b/;
+    for (const f of actionFiles()) {
+      const stem = f.replace(/\.tsx?$/, '');
+      for (const p of everyFile().filter((x) => x !== `${ACTIONS}/${f}`)) {
+        const from = [...read(p).matchAll(new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'(?:\\./|\\.\\./actions/)${stem}\\.js'`, 'g'))].flatMap((m) => m[1]!.split(',').map((n) => n.trim()).filter(Boolean));
+        expect(from.filter((n) => fieldNames.test(n) && n !== 'InvitePeople'), `${p} imports a field from ${f}`).toEqual([]);
+      }
+    }
   });
 });
 
@@ -180,10 +242,10 @@ describe('the vault step', () => {
     expect(held.sort()).toEqual([VAULT.accountNotFundable, VAULT.accountNotHandedOver, VAULT.held, VAULT.notFundable].sort());
     const vault = EVERY_STEP.find((s) => s.id === STEP.vault)!;
     for (const standing of Object.values(VAULT)) {
-      expect(vault.done({ company: 'c-1', vaults: [{ standing }], creation: null }), standing).toBe(held.includes(standing));
+      expect(vault.done({ company: 'c-1', vaults: [{ standing }], creation: null, invited: false }), standing).toBe(held.includes(standing));
     }
-    expect(vault.done({ company: 'c-1', vaults: null, creation: null })).toBe(false);
-    expect(vault.done({ company: 'c-1', vaults: [], creation: null })).toBe(false);
+    expect(vault.done({ company: 'c-1', vaults: null, creation: null, invited: false })).toBe(false);
+    expect(vault.done({ company: 'c-1', vaults: [], creation: null, invited: false })).toBe(false);
   });
 });
 
@@ -192,8 +254,8 @@ const creation = (over: Partial<CompanyCreation> = {}): CompanyCreation => ({
 });
 
 describe('where a step stands', () => {
-  const none = { company: null, vaults: null, creation: null };
-  const created = { company: 'c-1', vaults: null, creation: creation({ standing: 'pay-key-owed', confirmedFinished: false, mark: 'not-finished' }) };
+  const none = { company: null, vaults: null, creation: null, invited: false };
+  const created = { company: 'c-1', vaults: null, invited: false, creation: creation({ standing: 'pay-key-owed', confirmedFinished: false, mark: 'not-finished' }) };
   const finished = { ...created, creation: creation() };
 
   /* RED WHEN: a step skipped is shown as done, a step done is shown as skipped, or a step neither is shown as either. */
@@ -202,7 +264,7 @@ describe('where a step stands', () => {
     expect(standingOf(create, none, new Set([STEP.createCompany]))).toBe(STANDING.skipped);
     expect(standingOf(create, none, new Set())).toBe(STANDING.open);
     expect(standingOf(create, created, new Set([STEP.createCompany]))).toBe(STANDING.done);
-    for (const s of EVERY_STEP.filter((x) => !isBuiltStep(x) && x.skippable)) expect(standingOf(s, created, new Set([s.id])), s.id).toBe(STANDING.skipped);
+    for (const s of EVERY_STEP.filter((x) => x.skippable && !x.done(created))) expect(standingOf(s, created, new Set([s.id])), s.id).toBe(STANDING.skipped);
   });
 
   /* RED WHEN: a step that cannot be skipped is shown as skipped because a skip was kept for it, so the wizard moves past it. */
@@ -257,5 +319,50 @@ describe('where a step stands', () => {
       expect(blockedBy(index(id), none), id).toBe(STEP.finishCompany);
       expect(blockedBy(index(id), finished), id).toBeNull();
     }
+  });
+});
+
+describe('the People step', () => {
+  const read = (value: unknown) => ({ of: 'read', value }) as never;
+  const unread = { of: 'unreadable' } as never;
+  const vendorsOf = (vendors: unknown[]) => read({ vendors, notBelieved: [], notPayable: [] });
+  const person = { id: 'e1', name: 'Ana' };
+  const invitation = (kind: string) => ({ kind, name: null, sentAt: '2026-09-11T00:00:00.000Z', expiresAt: null });
+  const nobody = { people: read([]), invitations: read([]), vendors: vendorsOf([]) };
+  const people = () => EVERY_STEP.find((s) => s.id === STEP.people)!;
+
+  /*
+   * RED WHEN: somebody invited to be paid (an invitation waiting for an employee or for a vendor, a person the company holds, a vendor) does
+   * not make the step done; or an invitation for a signer does; or a read that failed is counted as somebody, or as nobody
+   * when another read says there is somebody.
+   */
+  it('says somebody is invited once an employee invitation waits, a person is held or a vendor is held, and not for a signer or for nothing read', () => {
+    expect(someoneInvited(nobody)).toBe(false);
+    expect(someoneInvited({ ...nobody, invitations: read([invitation('employee')]) })).toBe(true);
+    expect(someoneInvited({ ...nobody, invitations: read([invitation('signer')]) })).toBe(false);
+    expect(someoneInvited({ ...nobody, invitations: read([invitation('vendor')]) })).toBe(true);
+    expect(someoneInvited({ ...nobody, people: read([person]) })).toBe(true);
+    expect(someoneInvited({ ...nobody, vendors: vendorsOf([{ id: 'v1' }]) })).toBe(true);
+    expect(someoneInvited({ people: unread, invitations: unread, vendors: unread })).toBe(false);
+    expect(someoneInvited({ people: unread, invitations: read([invitation('employee')]), vendors: unread })).toBe(true);
+    expect(someoneInvited({ people: read([person]), invitations: unread, vendors: undefined })).toBe(true);
+    expect(someoneInvited({ people: read([]), invitations: read([]), vendors: undefined })).toBe(false);
+  });
+
+  /* RED WHEN: the step is done whatever the facts say (it once was never done), or is done without the fact, or the fact is ignored for a skipped step. */
+  it('is done exactly when the facts say somebody is invited, and done outranks skipped', () => {
+    const facts = { company: 'c-1', vaults: null, creation: null };
+    expect(people().done({ ...facts, invited: true })).toBe(true);
+    expect(people().done({ ...facts, invited: false })).toBe(false);
+    expect(standingOf(people(), { ...facts, invited: true }, new Set([STEP.people]))).toBe(STANDING.done);
+    expect(standingOf(people(), { ...facts, invited: false }, new Set([STEP.people]))).toBe(STANDING.skipped);
+    expect(standingOf(people(), { ...facts, invited: false }, new Set())).toBe(STANDING.open);
+  });
+
+  /* RED WHEN: filing an invitation makes the step undoable-for-good (the wizard would then close its tab), or the signers step takes on a fact the unit did not give it. */
+  it('can be returned to once done, and the signers step still has no done fact', () => {
+    expect(people().cannotBeUndone).toBe(false);
+    const facts = { company: 'c-1', vaults: null, creation: null, invited: true };
+    expect(EVERY_STEP.find((s) => s.id === STEP.signers)!.done(facts)).toBe(false);
   });
 });

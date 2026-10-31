@@ -4,12 +4,13 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
 import { ActionStopped } from './run.js';
+import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
 
 /*
  * **A SEAT ACTION DOES WHAT THE COMPANY IS OWED OF ITS SEAT, IN ITS OWN WINDOW, AND ANCHORS WHAT IT FILED AT ITS END.**
  * Opening a company's pages signs nothing, so every seat action in the wallet starts by changing the company's key when
  * a removal left it owed and following a roster no device believes, and ends by filing each vault's records again for
- * the signers seated since and anchoring on the chain. Each is worked out from the wallet's own reads, built on the
+ * the signers seated since, giving each vault's secret to every other seat that lacks it, and anchoring on the chain. Each is worked out from the wallet's own reads, built on the
  * wallet's own chain state, and never stops the action for what it could not do. The shared steps it calls are stood in
  * here, so the order, the doors the wallet hands them and what the page is told can each be tried.
  */
@@ -25,6 +26,8 @@ const t = vi.hoisted(() => ({
   roster: async (_d: Record<string, any>): Promise<unknown> => null,
   notes: { of: 'as-filed', notes: [], unexplained: 0, said: [] } as unknown,
   owedFiled: [] as unknown[],
+  gives: [] as Record<string, any>[],
+  give: null as null | ((input: Record<string, any>) => Promise<unknown>),
 }));
 vi.mock('../../../../packages/web-shared/src/company-key-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/company-key-here.js')>()),
@@ -46,6 +49,15 @@ vi.mock('../../../../packages/web-shared/src/records-anchored-here.js', async (r
   anchoredOnTheWayIn: async (doors: Record<string, any>) => { t.order.push('anchor'); t.anchorDoors.push(doors); return typeof t.onTheWayIn === 'function' ? (t.onTheWayIn as (d: unknown) => unknown)(doors) : t.onTheWayIn; },
   anchorTheRecordsHere: async () => { t.order.push('anchor now'); return t.anchorNow; },
   directoryChangeFiledHere: async (_doors: unknown, _change: unknown, signedFor: number) => { t.order.push(`filed the change ${signedFor}`); return { version: signedFor, anchor: {} }; },
+}));
+vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>()),
+  giveEachVaultSecretHere: async (input: Record<string, any>) => {
+    t.order.push(`give ${String(input['seat']).slice(0, 4)} ${String(input['vaultIds'][0]).slice(0, 4)}`);
+    t.gives.push(input);
+    if (t.give !== null) return t.give(input);
+    return { given: input['vaultIds'], had: [] };
+  },
 }));
 vi.mock('../../../../packages/web-shared/src/vault-keys-given.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-keys-given.js')>()),
@@ -70,10 +82,11 @@ const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 const LEAF = 'aa'.repeat(32);
 const VAULTS = ['d1'.repeat(32), 'd2'.repeat(32)];
+const JOINER = 'bb'.repeat(32);
 const SEAT = { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) };
 const CHAIN_STATE = { blockHash: 'b1', accountState: 'AAAA', parameters: 'BBBB' };
 
-const ctxWith = (name: 'create-vault' | 'give-vault-keys' | 'private-deposit', over: Record<string, unknown> = {}) => {
+const ctxWith = (name: 'create-vault' | 'give-vault-keys' | 'private-deposit' | 'admit-signer' | 'approve-signer', over: Record<string, unknown> = {}) => {
   const calls: string[] = [];
   const told: Record<string, unknown> = {};
   let keys = { accounts: { acc_1: SEAT }, counter: 1, ...(over['owed'] === undefined ? {} : { directoryEntriesOwed: { acc_1: over['owed'] } }) } as Record<string, any>;
@@ -123,6 +136,19 @@ const reachWith = (over: Record<string, unknown> = {}) => ({
   ...over,
 }) as never;
 
+/** A company whose chain seats this seat and a joiner, with both vaults, and whose directory believes this seat in `role`. */
+const givingReach = (role: string | null = 'admin', over: Record<string, unknown> = {}) => {
+  const believed = () => ({
+    dir: { seats: role === null ? [] : [{ seat: LEAF, signingKey: signingPublicKeyOf(SEAT.signingSecret).toLowerCase(), wrappingKey: '00'.repeat(32), role, retired: null }] },
+    another: new Set(), holders: { seats: [LEAF, JOINER] }, leafOf: () => null,
+  });
+  return reachWith({
+    holders: async () => ({ seats: [LEAF, JOINER], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: VAULTS, account: ACCOUNT, founding: LEAF }),
+    judges: { ...(reachWith() as any).judges, directoryHereFor: () => async () => believed() },
+    ...over,
+  });
+};
+
 const company = (reaches = [reachWith()]) => {
   let read = 0;
   const renewed: number[] = [];
@@ -130,7 +156,7 @@ const company = (reaches = [reachWith()]) => {
 };
 
 beforeEach(() => {
-  t.order = []; t.rotated = []; t.rotationDoors = null; t.anchorDoors = []; t.rebuilt = []; t.owedFiled = [];
+  t.order = []; t.rotated = []; t.rotationDoors = null; t.anchorDoors = []; t.rebuilt = []; t.owedFiled = []; t.gives = []; t.give = null;
   t.onTheWayIn = { anchored: 2, head: '00' }; t.anchorNow = { anchored: 3, head: '00' };
   t.roster = async () => null; t.notes = { of: 'as-filed', notes: [], unexplained: 0, said: [] };
 });
@@ -160,7 +186,7 @@ describe('every seat action starts with what the company is owed of its seat and
     for (const action of [giveVaultKeysAction(vaults), createVaultAction(vaults)]) {
       const shown = await action.shown({ name: 'create-vault', fields } as ActIntent);
       /* RED WHEN: a rotation, a roster filing, a vault's records filed again or an anchor is done in the window without being listed before the passkey, or is marked as something this wallet read or only the page says. */
-      for (const line of ['may', 'rotation', 'roster', 'vaults', 'anchor']) expect(shown, line).toContainEqual({ key: `act.upkeep.shown.${line}`, from: 'action' });
+      for (const line of ['may', 'rotation', 'roster', 'vaults', 'secrets', 'anchor']) expect(shown, line).toContainEqual({ key: `act.upkeep.shown.${line}`, from: 'action' });
       /* RED WHEN: the window says the action is done before the upkeep it also runs is listed. */
       expect(shown.findIndex((l) => l.key === 'act.upkeep.shown.anchor')).toBeLessThan(shown.findIndex((l) => l.key.endsWith('.shown.nothing-else')));
       expect(action.checks).toContainEqual({ key: 'act.upkeep.check.worked-out' });
@@ -326,6 +352,72 @@ describe('the tail files each vault again with this seat, then anchors what the 
     }
   });
 
+  it('gives each vault\'s secret to each other seat the chain holds, one seat and one vault at a time, before the anchor', async () => {
+    let reads = 0;
+    const base = givingReach() as any;
+    const r = reachWith({
+      holders: async () => ({ seats: [LEAF, JOINER.toUpperCase()], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: VAULTS, account: ACCOUNT, founding: LEAF }),
+      judges: { ...base.judges, directoryHereFor: () => async () => { reads += 1; return base.judges.directoryHereFor()(); } },
+    });
+    t.give = async (input) => { await input['directory'](); return { given: input['vaultIds'], had: [] }; };
+    const { ctx, told } = ctxWith('give-vault-keys');
+    await upkeepSteps(company([r]).doors, {}).last.run(ctx);
+    /* RED WHEN: the vaults' secrets are not given in the action's last step, are given after the anchor so a copy is filed and never anchored, or this seat gives one to itself. */
+    expect(t.order).toEqual([`refile d1d1`, `refile d2d2`, `give bbbb d1d1`, `give bbbb d2d2`, 'anchor']);
+    for (const g of t.gives) {
+      expect(g['me'].signerId).toBe(LEAF);
+      expect(typeof g['records']).toBe('function');
+    }
+    /* RED WHEN: the directory is read again for every seat and vault instead of once for the step. */
+    expect(reads).toBe(1);
+    expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
+  });
+
+  it('leaves for the next action, never refuses, a seat with no directory entry this wallet believes yet', async () => {
+    const r = givingReach();
+    t.give = async () => { throw new Error('the new signer has no entry in the company\'s directory that this device believes yet'); };
+    const { ctx, told } = ctxWith('admit-signer');
+    /* RED WHEN: a joiner who has not filed their entry yet makes the action fail after what it sent, or is reported as given. */
+    await expect(upkeepSteps(company([r]).doors, {}).last.run(ctx)).resolves.toBeUndefined();
+    expect(t.order.at(-1)).toBe('anchor');
+    expect(told).toEqual({ upkeep: UPKEEP.partial, anchored: 2 });
+  });
+
+  it('tries each vault alone, so one this seat cannot give does not keep the next from being given', async () => {
+    const r = givingReach();
+    t.give = async (input) => {
+      if (input['vaultIds'][0] === VAULTS[0]) throw new Error('no copy is wrapped to this signer\'s records key');
+      return { given: input['vaultIds'], had: [] };
+    };
+    const { ctx, told } = ctxWith('approve-signer');
+    await upkeepSteps(company([r]).doors, {}).last.run(ctx);
+    /* RED WHEN: the vaults are given as one batch that stops at the first it cannot give. */
+    expect(t.gives.map((g) => g['vaultIds'])).toEqual([[VAULTS[0]], [VAULTS[1]]]);
+    expect(told).toMatchObject({ upkeep: UPKEEP.partial });
+  });
+
+  it('asks for a vault\'s secret by the vault\'s lower-case name when the chain names the vault in upper case', async () => {
+    const r = givingReach('admin', {
+      holders: async () => ({ seats: [LEAF, JOINER], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: VAULTS.map((v) => v.toUpperCase()), account: ACCOUNT, founding: LEAF }),
+    });
+    const { ctx } = ctxWith('give-vault-keys');
+    await upkeepSteps(company([r]).doors, {}).last.run(ctx);
+    /* RED WHEN: a vault the chain names in upper case is asked for under that name, which the pool does not hold, and the act ends partial with no word of why. */
+    expect(t.gives.map((g) => g['vaultIds'])).toEqual([[VAULTS[0]], [VAULTS[1]]]);
+  });
+
+  it('gives nothing from a seat whose role may not file a vault\'s secret, or that this wallet does not believe, and says so', async () => {
+    for (const role of ['viewer', null]) {
+      t.order = []; t.gives = [];
+      const { ctx, told } = ctxWith('give-vault-keys');
+      await upkeepSteps(company([givingReach(role)]).doors, {}).last.run(ctx);
+      /* RED WHEN: a viewer, or a seat this wallet does not believe, files a version of a vault's secret that every device then refuses. */
+      expect(t.gives, String(role)).toEqual([]);
+      expect(t.order.at(-1), String(role)).toBe('anchor');
+      expect(told, String(role)).toEqual({ upkeep: UPKEEP.partial, anchored: 2 });
+    }
+  });
+
   it('reads a vault\'s records again with this seat\'s own signer and the coins of this wallet', () => {
     const { ctx } = ctxWith('private-deposit');
     const doors = rebuildDoorsIn(ctx, reachWith(), apiOver(ctx), sendOver(ctx), { coins: () => undefined });
@@ -406,5 +498,28 @@ describe('the upkeep says what it could not do, and stops only for what the page
     (ctx as { call: unknown }).call = async () => { throw new ActionStopped('stopped'); };
     /* RED WHEN: Stop or the deadline reaching a call inside the upkeep is swallowed, and the action runs on after it. */
     await expect(upkeepSteps(company().doors, {}).first.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
+  });
+
+  it('never swallows a stop reaching a vault secret being given', async () => {
+    const r = givingReach();
+    t.give = async (input) => {
+      try { await input['records']('nonce-secret').get(VAULTS[0]); } catch { /* the store wraps what reached its call */ }
+      throw new Error('the vault\'s secret was not given');
+    };
+    const { ctx } = ctxWith('give-vault-keys');
+    const calls = { n: 0 };
+    (ctx as { call: unknown }).call = async () => { calls.n += 1; throw new ActionStopped('stopped'); };
+    /* RED WHEN: Stop reaching the giving of a vault's secret is swallowed, and the action goes on to anchor. */
+    await expect(upkeepSteps(company([r]).doors, {}).last.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
+    expect(t.order).not.toContain('anchor');
+    expect(calls.n).toBe(1);
+  });
+
+  it('never swallows a stop raised by a read outside the step\'s watched calls while a secret is given', async () => {
+    t.give = async () => { throw new ActionStopped('stopped'); };
+    const { ctx } = ctxWith('give-vault-keys');
+    /* RED WHEN: a stop from the company's own reads (the directory or a record's judge), which the watched calls never see, is taken as a give left for later and the action goes on to anchor. */
+    await expect(upkeepSteps(company([givingReach()]).doors, {}).last.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
+    expect(t.order).not.toContain('anchor');
   });
 });

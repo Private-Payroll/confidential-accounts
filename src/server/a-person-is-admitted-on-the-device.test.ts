@@ -27,6 +27,7 @@ import {
   peopleRecords, sendAs, store,
 } from './a-company-of-two-seats.test-support.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 /** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
 const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
@@ -35,7 +36,7 @@ aCompanyOfTwoSeats();
 const NETWORK = theNetwork();
 const adasDevice = (over: Partial<PeopleDevice> = {}): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda,
-  directory: acmeDirectory, network: NETWORK, entered: ADA.entered, ...over,
+  directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal, entered: ADA.entered, ...over,
 });
 const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n, classification: 'full-time' as const, startDate: '2026-10-01' });
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;

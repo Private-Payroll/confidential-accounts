@@ -13,7 +13,7 @@ import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
 import { READER_REFUSAL } from '../../../src/midnight/secret-readers.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
-  createCompanyVault, START_STOP, depositIntoCompanyVault, openCompanyVaultPool, DepositNotYetSeen,
+  createCompanyVault, START_STOP, START_READ_STOP, depositIntoCompanyVault, openCompanyVaultPool, DepositNotYetSeen,
   DepositNotSent, DepositStillInFlight, DepositLandedNotYetRecorded, settleDepositInFlight, DEPOSIT_TIME_TO_LIVE_MS,
   payPrivatelyFromCompanyVault, PaymentNotYetSeen, PaymentNotAsBuilt, PaymentLandedUnrecorded,
   mergeNotesInCompanyVault, MergeNotYetSeen, MergeNotAsBuilt,
@@ -30,6 +30,7 @@ import { vaultNoteCommitment } from '../../../src/midnight/note-index.js';
 import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import { PaymentJournalInStore } from '../../../src/midnight/vault-journal.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
 import { vaultBuilderOver, VaultAskFailed, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
 import type { EventOnTheWire } from './vault-builder.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
@@ -59,7 +60,7 @@ const walletKey = (n: number): string => Buffer.from(schnorr.getPublicKey(new Ui
 
 /**
  * Deposits or payments in flight, kept for the length of one test in the clear, one per vault, each changed only
- * under its claim. The sealing is `in-flight-on-this-device.test.ts`'s.
+ * under its claim. The sealing is in-flight-on-this-device.ts's, tested in a-deposit-in-flight-stays-in-this-browser.test.ts.
  */
 let claims = 0;
 const inFlightInMemory = <T,>(kept = new Map<string, Kept<T>>()): KeptOnThisDevice<T> => ({
@@ -286,7 +287,6 @@ const startDoors = () => {
     secretReaders: { company: LABEL, committeeKey: committee.committee[0]!, read: async () => null, roster: async () => [], directory: adasDirectory } as SecretReaderSources,
   };
 };
-/** A start whose chain already shows the secret set, so the company's records already hold it too. */
 /** The newest secret a nonce-secret record holds, opened with `companyKey`. */
 const newestSecretIn = (rec: Parameters<typeof openNonceSecrets>[0], companyKey: Uint8Array): string => {
   const opened = openNonceSecrets(rec, VAULT, recordsKeypairFrom(companyKey));
@@ -301,6 +301,7 @@ const anUnsetNewerSecret = async (records: (r: WireRecord) => MemorySealedPoolSt
   await records('nonce-secret').put(VAULT, startNonceSecretAgain(first, VAULT, [recordsReaderOf(companyKey)]) as never);
   return newestSecretIn(first, companyKey);
 };
+/** A start whose chain already shows the secret set, so the company's records already hold it too. */
 const filedAlready = async () => {
   const doors = startDoors();
   await doors.records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(doors.me.companyKey)]));
@@ -580,6 +581,141 @@ describe('CREATING A VAULT', () => {
       expect(e.message).toMatch(/this device could not read the chain at one block \(the indexer refused the query\)\./u);
       expect(tries).toBe(1);
       expect(asked).toEqual([]);
+      /* RED WHEN: the stop does not say which read failed, so the wallet's stop line cannot name it. */
+      expect(e.stoppedAt).toBe(START_READ_STOP.chainUnread);
+    });
+
+    /** A real pace: ten minutes asked every six seconds, with sleeps that pass the time they would take on a clock kept here. */
+    const aRealPace = () => {
+      const clock = { ms: 0 };
+      return { clock, pace: { waitMs: 10 * 60_000, everyMs: 6_000, sleep: async (ms: number) => { clock.ms += ms; } } };
+    };
+
+    it('A READ OF THE BLOCK THAT RUNS OUT OF TIME IS ASKED AGAIN, AND THE START CARRIES ON WHEN IT ANSWERS', async () => {
+      const log: string[] = [];
+      const asked: string[] = [];
+      const b = builder(log);
+      let reads = 0;
+      let ranOut = 0;
+      const once = { ...b, chainAtOneBlock: async (i: Parameters<VaultBuilderClient['chainAtOneBlock']>[0]) => {
+        reads += 1;
+        if (reads === 2) { ranOut += 1; throw new ReadRanOutOfTime('The network (chain-at-one-block)'); }
+        return b.chainAtOneBlock(i);
+      } };
+      const { pace } = aRealPace();
+      const done = await create(await filedAlready(), aServiceThatLies(serviceFrom([held], log), asked), log, { ...pace, builder: once }, VAULT);
+      /* RED WHEN: a read that ran out of time stops the start as a read that failed, naming twenty seconds. */
+      expect(done).toEqual({ vault: VAULT, state: 'started' });
+      expect(ranOut).toBe(1);
+      /* RED WHEN: the read that ran out is not asked again: the one read is tried twice, the others once. */
+      expect(reads).toBe(3);
+      expect(asked).toEqual([]);
+    });
+
+    it('A READ OF THE BLOCK THAT RUNS OUT OF TIME EVERY TIME ENDS THE START WITHIN ITS WAIT, NAMING THE VAULT, AND NOTHING IS SENT', async () => {
+      const log: string[] = [];
+      const asked: string[] = [];
+      const { clock, pace } = aRealPace();
+      let reads = 0;
+      const never = { ...builder(log), chainAtOneBlock: async () => {
+        reads += 1;
+        clock.ms += SERVICE_READ_BOUND_MS;
+        throw new ReadRanOutOfTime('The network (chain-at-one-block)');
+      } };
+      const e = await create(await filedAlready(), aServiceThatLies(serviceFrom([held], log), asked), log, { ...pace, builder: never }, VAULT)
+        .catch((x) => x);
+      /* RED WHEN: a wait that runs out escapes as a read that failed, rather than a start to finish that names the vault. */
+      expect(e).toBeInstanceOf(VaultStartOwed);
+      expect(e.vault).toBe(VAULT);
+      /* RED WHEN: a chain never read is said to be behind, or the stop does not say a read failed. */
+      expect(e.message).toMatch(/this device could not read the chain in time: no read answered within 20 seconds\./u);
+      expect(e.message).not.toMatch(/has not shown it/u);
+      expect(e.stoppedAt).toBe(START_READ_STOP.chainUnread);
+      /* RED WHEN: reads that run out of time are each counted as one pause, stretching the wait past its ten minutes. */
+      expect(clock.ms).toBeLessThanOrEqual(pace.waitMs);
+      /* RED WHEN: the start gives up before it has waited, after the first read that ran out. */
+      expect(reads).toBeGreaterThan(1);
+      expect(asked).toEqual([]);
+      expect(log.filter((l) => l.startsWith('sent'))).toEqual([]);
+    });
+
+    /** A builder whose read of the vault, with the account named or without, runs out of time once and then answers. */
+    const vaultReadRunsOutOnce = (log: string[], withAccount: boolean) => {
+      const b = builder(log);
+      const ran = { out: 0, reads: 0 };
+      const once = { ...b, vaultOnChain: async (i: Parameters<VaultBuilderClient['vaultOnChain']>[0]) => {
+        if ((i.account !== undefined) === withAccount) {
+          ran.reads += 1;
+          if (ran.out === 0) { ran.out += 1; throw new ReadRanOutOfTime('The network (vault-on-chain)'); }
+        }
+        return b.vaultOnChain(i);
+      } };
+      return { ran, builder: once };
+    };
+
+    it('A READ OF THE VAULT AS IT WAS BORN THAT RUNS OUT OF TIME IS ASKED AGAIN, AND THE START CARRIES ON', async () => {
+      const log: string[] = [];
+      const { ran, builder: once } = vaultReadRunsOutOnce(log, false);
+      const done = await create(await filedAlready(), serviceFrom([held], log), log, { ...aRealPace().pace, builder: once }, VAULT);
+      /* RED WHEN: a read of the vault as it was born that ran out of time stops the start at once, as a read that failed. */
+      expect(done).toEqual({ vault: VAULT, state: 'started' });
+      expect(ran).toMatchObject({ out: 1 });
+      expect(ran.reads).toBeGreaterThan(1);
+    });
+
+    it('A READ OF THE VAULT\'S CIRCUITS THAT RUNS OUT OF TIME IS ASKED AGAIN, AND THE START CARRIES ON', async () => {
+      const log: string[] = [];
+      const { ran, builder: once } = vaultReadRunsOutOnce(log, true);
+      const done = await create(await filedAlready(), serviceFrom([held], log), log, { ...aRealPace().pace, builder: once }, VAULT);
+      /* RED WHEN: a read of the vault's circuits that ran out of time stops the start at once, as a read that failed. */
+      expect(done).toEqual({ vault: VAULT, state: 'started' });
+      expect(ran).toMatchObject({ out: 1 });
+      expect(ran.reads).toBeGreaterThan(1);
+    });
+
+    /** A builder whose read of how the vault was deployed runs out of time `times` times, each passing twenty seconds on `clock`, and then answers. */
+    const deployReadRunsOut = (log: string[], times: number, clock?: { ms: number }) => {
+      const b = builder(log);
+      const ran = { out: 0, reads: 0 };
+      const slow = { ...b, vaultAsDeployed: async (i: Parameters<NonNullable<VaultBuilderClient['vaultAsDeployed']>>[0]) => {
+        ran.reads += 1;
+        if (ran.out < times) {
+          ran.out += 1;
+          if (clock !== undefined) clock.ms += SERVICE_READ_BOUND_MS;
+          throw new ReadRanOutOfTime('The network (vault-as-deployed)');
+        }
+        return b.vaultAsDeployed!(i);
+      } };
+      return { ran, builder: slow };
+    };
+
+    it('A READ OF HOW THE VAULT WAS DEPLOYED THAT RUNS OUT OF TIME IS ASKED AGAIN, AND THE START CARRIES ON', async () => {
+      const log: string[] = [];
+      const { ran, builder: once } = deployReadRunsOut(log, 1);
+      const done = await create(await filedAlready(), serviceFrom([held], log), log, { ...aRealPace().pace, builder: once }, VAULT);
+      /* RED WHEN: a read of how the vault was deployed that ran out of time stops the start at once, rather than being asked again. */
+      expect(done).toEqual({ vault: VAULT, state: 'started' });
+      expect(ran.out).toBe(1);
+      expect(ran.reads).toBeGreaterThan(1);
+    });
+
+    it('A READ OF HOW THE VAULT WAS DEPLOYED THAT RUNS OUT OF TIME EVERY TIME ENDS THE START WITHIN ITS WAIT, AS A CHAIN NOT READ, AND NOTHING IS SENT', async () => {
+      const log: string[] = [];
+      const asked: string[] = [];
+      const { clock, pace } = aRealPace();
+      const { ran, builder: never } = deployReadRunsOut(log, Number.POSITIVE_INFINITY, clock);
+      const e = await create(await filedAlready(), aServiceThatLies(serviceFrom([held], log), asked), log, { ...pace, builder: never }, VAULT)
+        .catch((x) => x);
+      expect(e).toBeInstanceOf(VaultStartOwed);
+      expect(e.vault).toBe(VAULT);
+      /* RED WHEN: a wait in which every read of how the vault was deployed ran out stops without saying the chain was not read, so the wallet cannot name it. */
+      expect(e.stoppedAt).toBe(START_READ_STOP.chainUnread);
+      expect(e.message).toMatch(/this device could not read the chain in time: no read answered within 20 seconds\./u);
+      /* RED WHEN: reads of how the vault was deployed that run out of time are each counted as one pause, stretching the wait past its ten minutes. */
+      expect(clock.ms).toBeLessThanOrEqual(pace.waitMs);
+      expect(ran.reads).toBeGreaterThan(1);
+      expect(asked).toEqual([]);
+      expect(log.filter((l) => l.startsWith('sent'))).toEqual([]);
     });
 
     it('A STANDING THE VAULT WORKER CANNOT WORK OUT STOPS THE START, NAMING THE VAULT AND WHY', async () => {
@@ -590,6 +726,8 @@ describe('CREATING A VAULT', () => {
       expect(e).toBeInstanceOf(VaultStartOwed);
       expect(e.vault).toBe(VAULT);
       expect(e.message).toMatch(/where its start stands could not be worked out on this device \(the account's state could not be read\)\./u);
+      /* RED WHEN: the stop does not say which read failed, so the wallet's stop line cannot name it. */
+      expect(e.stoppedAt).toBe(START_READ_STOP.standingUnread);
     });
 
     it('AN INDEXER THAT NEVER SHOWS THEM IS THE START NOT FINISHED, NAMING THE VAULT, AND NOTHING IS SENT', async () => {
@@ -3554,7 +3692,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
      * Ada's wallet then reads nothing, so each press stops right after the adoption. `refuseApprove` makes the
      * account's approve circuit refuse as the chain does for a seat that approved already.
      */
-    const adoptionPress = (over: { open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; failCarried?: boolean; kept?: SealedProposal[]; role?: 'viewer'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain'; counted?: boolean; refuseApprove?: boolean } = {}) => {
+    const adoptionPress = (over: { ranOutAfterSend?: boolean; open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; failCarried?: boolean; kept?: SealedProposal[]; role?: 'viewer'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain'; counted?: boolean; refuseApprove?: boolean } = {}) => {
       const log: string[] = [];
       const chain = { open: over.open ?? false, approvals: 0, adopted: over.adopted ?? false };
       const kept = proposalsKeptInATest({
@@ -3566,8 +3704,19 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
         onRaise: (id) => { if (id === ADOPTION.proposal) { chain.open = true; if (over.counted !== false) chain.approvals = 1; } },
       });
       const a = { ...ada([null], log), proposals: kept.doors };
+      /* With `ranOutAfterSend`, the first read of the block after a step is sent runs out of time, as on stagenet. */
+      const base = builder(log);
+      const ran = { out: 0, sent: false };
       const b: VaultBuilderClient = {
-        ...builder(log),
+        ...base,
+        chainAtOneBlock: async (i) => {
+          if (over.ranOutAfterSend === true && ran.sent && ran.out === 0) {
+            ran.out += 1;
+            log.push('the read after the send ran out of time');
+            throw new ReadRanOutOfTime('The network (chain-at-one-block)');
+          }
+          return base.chainAtOneBlock(i);
+        },
         governedCall: async (i) => {
           log.push(`built ${i.order.circuit}`);
           if (over.refuseApprove === true && i.order.circuit === 'approve') {
@@ -3582,6 +3731,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       const service = serviceFrom([heldByThem], log, {
         startAccountCall: async (_v, body) => {
           log.push(`sent ${body.call}`);
+          ran.sent = true;
           if (body.call === 'approve') chain.approvals = 1;
           if (body.call === 'adopt') { chain.adopted = true; chain.open = false; }
           return { txRef: 't' };
@@ -3591,12 +3741,26 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       });
       /* A press carrying on the vault, or, given null, creating one. */
       const press = (resume: Hex | null = VAULT as Hex) => createCompanyVault({
-        ...pacing, ...walletReadsTheVault, ...a, account: ACCOUNT, service, builder: b,
+        ...pacing, ...(over.ranOutAfterSend === true ? { waitMs: 10 * 60_000, everyMs: 6_000 } : {}),
+        ...walletReadsTheVault, ...a, account: ACCOUNT, service, builder: b,
       }, resume ?? undefined).then((r) => { came = r; return new Error('the press ended without a refusal'); }, (x: unknown) => x as Error);
       /* What the last press came to, when it ended without a refusal. */
       let came: VaultCreated | undefined;
-      return { press, log, kept, chain, came: () => came };
+      return { press, log, kept, chain, ran, came: () => came };
     };
+
+    it('a read that runs out of time right after a step is sent is asked again, and the start goes on when the chain shows the step', async () => {
+      const without = adoptionPress();
+      const expected = await without.press();
+      const t = adoptionPress({ ranOutAfterSend: true });
+      const e = await t.press();
+      /* RED WHEN: the read after the send that ran out of time stops the start, though the chain then shows the step. */
+      expect(t.ran.out).toBe(1);
+      expect(t.log.indexOf('the read after the send ran out of time')).toBeGreaterThan(t.log.indexOf('sent adopt'));
+      expect(t.chain.adopted).toBe(true);
+      expect(e.message).toBe(expected.message);
+      expect(t.log.filter((l) => l.startsWith('sent '))).toEqual(['sent adopt']);
+    });
 
     it('a new vault\'s adoption is written down by the device that raises it, in the same request as its raise', async () => {
       const t = adoptionPress();

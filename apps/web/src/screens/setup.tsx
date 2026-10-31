@@ -2,9 +2,10 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Alert, AlertDescription, Badge, Button, ComingSoon, Progress, SectionLoading, Tabs, TabsContent, TabsList, TabsTrigger, useText } from 'vaults-ui';
 import { readVaultRows } from '../adapters/vault-rows.js';
+import { CompanyRecordsProvider } from '../records/company-records.js';
 import { SessionProvider, useSession } from '../session.js';
 import { STEP, type StepId } from '../setup/step-ids.js';
-import { blockedBy, firstOpen, isDoneForGood, nextAfter, skippedFor, skipStep, STANDING, standingOf, useCreationFact } from '../setup/standing.js';
+import { blockedBy, firstOpen, isDoneForGood, nextAfter, skippedFor, skipStep, STANDING, standingOf, useCreationFact, useInvitedFact } from '../setup/standing.js';
 import { EVERY_STEP, isBuiltStep, takeAsked, type SetupFacts } from '../setup/steps.js';
 
 /**
@@ -12,7 +13,8 @@ import { EVERY_STEP, isBuiltStep, takeAsked, type SetupFacts } from '../setup/st
  * the kit's tabs, one to a step, each saying where its step stands; below
  * them, the step; across the bottom, a bar with one mark per step, and "Skip
  * for now" and "Continue". A step not built yet is shown Coming soon, with
- * what it will be.
+ * what it will be; a step built except for one part shows that part Coming soon
+ * beside its action.
  *
  * A STEP THAT CANNOT BE UNDONE, ONCE DONE, IS DONE FOR GOOD: its tab says
  * done and cannot be pressed, and the wizard moves on to the next step that
@@ -31,8 +33,16 @@ import { EVERY_STEP, isBuiltStep, takeAsked, type SetupFacts } from '../setup/st
  * so a step already done is never shown open, not even for a moment. The step
  * the wizard opens at is chosen again when that reading arrives, unless the
  * person, or whoever opened the wizard, had already chosen one.
+ *
+ * THE WIZARD BRINGS ITS OWN READ OF THE COMPANY'S RECORDS, because the focused
+ * frame it is drawn in holds none, and two steps read them: the signers step
+ * (its component) and the People step's done fact.
  */
 export function Setup() {
+  return <CompanyRecordsProvider><SetupSteps /></CompanyRecordsProvider>;
+}
+
+function SetupSteps() {
   const t = useText();
   const session = useSession();
   const { person } = session;
@@ -51,7 +61,8 @@ export function Setup() {
   const [started, setStarted] = useState<string | null>(null);
   const creationCompany = company ?? started;
   const { creation, reread } = useCreationFact(creationCompany);
-  const facts: SetupFacts = { company, vaults, creation };
+  const { invited, reload: reloadRecords } = useInvitedFact(company);
+  const facts: SetupFacts = { company, vaults, creation, invited };
   const [chosen, setCurrent] = useState<StepId>(() => asked?.step ?? firstOpen(facts, skipped));
   /* Whether the step shown was chosen, by the person or by whoever opened the wizard, rather than picked from what was known at the start. */
   const [moved, setMoved] = useState(asked !== null);
@@ -111,6 +122,7 @@ export function Setup() {
 
   const Action = isBuiltStep(step) && !closed[index] ? step.shows.action : null;
   const soon = isBuiltStep(step) ? null : (step.shows as { comingSoon: (x: typeof t) => string }).comingSoon(t);
+  const alsoSoon = isBuiltStep(step) && step.alsoSoon !== undefined ? step.alsoSoon(t) : null;
 
   return (
     /* Marked as reading, as every page that reads is, so nothing waits on a step drawn before the company is read. */
@@ -134,6 +146,7 @@ export function Setup() {
             <HugeiconsIcon icon={step.icon} strokeWidth={2} className="size-5 text-muted-foreground" />
             <h1 className="text-xl font-semibold">{step.name(t)}</h1>
             {soon === null || blocker !== null ? null : <ComingSoon explanation={soon} />}
+            {alsoSoon === null || blocker !== null || Action === null ? null : <ComingSoon explanation={alsoSoon} />}
           </div>
           <p className="max-w-prose text-sm text-muted-foreground">{step.line(t)}</p>
           {forGood[index]
@@ -149,7 +162,12 @@ export function Setup() {
               ? <p className="max-w-prose text-sm text-muted-foreground" data-coming-soon-step>{soon}</p>
               : Action === null
                 ? <SectionLoading rows={2} data-step-reading="" />
-                : <SessionProvider session={{ ...session, company }}><Action leadTo={choose} onChanged={(startedCompany) => { if (startedCompany !== undefined) setStarted(startedCompany); void read(); void reread(startedCompany); }} creation={creationCompany} startNewCompany={startNewCompany} /></SessionProvider>}
+                : (
+                  <>
+                    <SessionProvider session={{ ...session, company }}><Action leadTo={choose} onChanged={(startedCompany) => { if (startedCompany !== undefined) setStarted(startedCompany); reloadRecords(); void read(); void reread(startedCompany); }} creation={creationCompany} startNewCompany={startNewCompany} /></SessionProvider>
+                    {alsoSoon === null ? null : <p className="max-w-prose text-sm text-muted-foreground" data-also-soon>{alsoSoon}</p>}
+                  </>
+                )}
         </TabsContent>
       </Tabs>
       <footer className="mt-auto flex flex-col gap-3 border-t pt-4" data-setup-bar>

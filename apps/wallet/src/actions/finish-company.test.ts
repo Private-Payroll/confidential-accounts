@@ -36,7 +36,9 @@ import { StepRefused } from './definition.js';
 /*
  * FINISHING A COMPANY, AS ONE ACTION IN THE WALLET, step by step, with the chain and the account builder stood in for:
  * what each step reads, which seat it proves with, what it hands the page and in what order, and what it refuses.
- * Building the account's deploy runs against the compiled contract in the gated tests; here each step is taken up
+ * Building the account's deploy runs against the compiled contract in the tests that need the built keys (they are
+ * skipped when contracts/managed/keys is absent): account-builder.test.ts and creation-screen-in-a-browser.test.ts in
+ * apps/wallet/src/chain; here each step is taken up
  * from what the saved keys and the chain already show, as an action taken up again after a stop is.
  */
 const secret = newSecret();
@@ -141,7 +143,7 @@ const world = (opts: {
       relays.push({ tx, label });
     },
     call: async () => { throw new Error('finishing a company calls nothing'); },
-    tell: () => {},
+    tell: () => {}, show: () => {},
     keyring: {
       open: () => ({ read: () => structuredClone(keys), metadata: () => ({}) as never, seal: () => { throw new Error('not here'); }, letGo: () => {} }),
       keep: async (change) => {

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
-import type { Company, CompanyRecords, PersonRow, ProposalRow, RunRow, VaultRow } from '../adapters/company-records.js';
+import type { Company, CompanyRecords, PersonRow, ProposalRow, RunRow, VaultRow, VendorRow } from '../adapters/company-records.js';
 import { untilPageShown, untilShown } from '../page-shown.test-support.js';
 
 /*
@@ -95,15 +95,27 @@ const PROPOSALS: ProposalRow[] = [
   { id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 1, needed: 2, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'r1', period: '2026-10', asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately' } },
   { id: 'p2', kind: 'add-signer', status: 'executed', raisedBy: null, approvals: 2, needed: null, raisedAt: '2026-09-20T00:00:00.000Z', pays: null },
 ];
+/** What a person's row carries beyond the list's columns: the token, the classification and dates in force, the history lines and how they are admitted. */
+const MORE: Omit<PersonRow, 'id' | 'name' | 'title' | 'standing' | 'pay' | 'paid' | 'startedAt'> = {
+  asset: NIGHT_TOKEN, classification: 'full-time', endDate: null, leavingDate: null, pays: [], classifications: [], admittedAt: null, admitBy: 'fingerprint', notPayable: null,
+};
 const PEOPLE: PersonRow[] = [
-  { id: 'e1', name: 'Ana', title: 'Engineer', standing: 'active', pay: NIGHT(5_000_000n, 'private'), paid: 'privately', startedAt: '2026-01-01' },
-  { id: 'e5', name: 'Eve', title: 'Writer', standing: 'waiting-for-check', pay: NIGHT(1n, 'public'), paid: 'not-set-up', startedAt: '2026-03-01' },
+  { id: 'e1', name: 'Ana', title: 'Engineer', standing: 'active', pay: NIGHT(5_000_000n, 'private'), paid: 'privately', startedAt: '2026-01-01', ...MORE },
+  { id: 'e5', name: 'Eve', title: 'Writer', standing: 'waiting-for-check', pay: NIGHT(1n, 'public'), paid: 'not-set-up', startedAt: '2026-03-01', ...MORE },
 ];
+const VENDORS: VendorRow[] = [{
+  id: 'ven_aa', name: 'Vee', standing: 'active', handedOver: false, termsKind: 'monthly', asset: NIGHT_TOKEN, monthly: NIGHT(2_000_000n, 'public'), paid: 'publicly', startedAt: '2026-02-01',
+  endDate: null, admittedAt: null, admitBy: 'fingerprint', notPayable: null,
+}];
 const records = (over: Partial<CompanyRecords> = {}): Company => ({
   of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
   proposals: { of: 'read', value: PROPOSALS }, runs: { of: 'read', value: [RUN, PAID_RUN] }, people: { of: 'read', value: PEOPLE },
+  peopleBelief: { of: 'read', value: { rows: PEOPLE, notBelieved: [], notPayable: [], refused: [] } },
+  vendorsBelief: { of: 'read', value: { vendors: VENDORS, rows: VENDORS, notBelieved: [], notPayable: [] } },
+  /* Nobody to be paid is a vendor here: the People step stands on the vendors read, and the vendors page on the belief. */
+  vendors: { of: 'read', value: { vendors: [], rows: [], notBelieved: [], notPayable: [] } },
   vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }] },
-  invitations: { of: 'read', value: [{ kind: 'signer', name: 'Tom', sentAt: '2026-09-10T00:00:00.000Z', expiresAt: null }, { kind: 'employee', name: null, sentAt: '2026-09-11T00:00:00.000Z', expiresAt: '2026-10-11T00:00:00.000Z' }] },
+  invitations: { of: 'read', value: [{ kind: 'signer', name: 'Tom', sentAt: '2026-09-10T00:00:00.000Z', expiresAt: null }, { kind: 'employee', name: null, sentAt: '2026-09-11T00:00:00.000Z', expiresAt: '2026-10-11T00:00:00.000Z' }, { kind: 'vendor', name: 'Vik', sentAt: '2026-09-12T00:00:00.000Z', expiresAt: null }] },
   ...over,
 });
 
@@ -146,7 +158,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('every page that reads is built, at its own address', () => {
   /* RED WHEN: a page that reads shows Coming soon, or its screen is not the one its address opens. */
   it.each([
-    ['home', {}], ['proposals', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vaults', {}], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}],
+    ['home', {}], ['proposals', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vaults', {}], ['vault', { vault: VAULT }], ['people', {}], ['vendors', {}], ['invitations', {}],
   ] as const)('%s', async (id, params) => {
     const c = await draw(id, params);
     expect(q(c, '[data-screen=coming-soon]')).toBeNull();
@@ -165,8 +177,8 @@ describe('every page that reads is built, at its own address', () => {
   it('shows every action not built yet, disabled, with nothing beside it or on hover', async () => {
     /* Each page's own actions not built yet, so one hidden on one page is not covered by the same action drawn on another. */
     const EACH: Record<string, string[]> = {
-      home: ['approve', 'check-fingerprint', 'create-proposal', 'decline', 'invite'], proposals: ['approve', 'decline'], payroll: ['new-run'], run: ['approve', 'export-run'],
-      vault: ['pay-out'], people: ['invite', 'payslips'], invitations: ['check-fingerprint', 'withdraw'],
+      home: ['approve', 'create-proposal', 'decline'], proposals: ['approve', 'decline'], payroll: ['new-run'], run: ['approve', 'export-run'],
+      vault: ['pay-out'], people: ['payslips'], invitations: ['withdraw'],
     };
     const seen = new Set<string>();
     for (const [id, params] of [['home', {}], ['proposals', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}]] as const) {
@@ -174,10 +186,7 @@ describe('every page that reads is built, at its own address', () => {
       /* The actions in a proposal's and a person's panel are drawn once the panel is open. */
       if (id === 'proposals') await act(async () => { fireEvent.click(q(c, '[data-screen=proposals] tbody tr[data-row=p1]')!); });
       if (id === 'people') await act(async () => { fireEvent.click(q(c, '[data-screen=people] tbody tr[data-row]')!); });
-      /* Letting in someone who accepted is on the Waiting tab, collected with the tab of links. */
-      const before = id === 'invitations' ? all(document.body, '[data-soon]') : [];
-      if (id === 'invitations') await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
-      const soon = [...before, ...all(document.body, '[data-soon]').filter((s) => !before.includes(s))];
+      const soon = all(document.body, '[data-soon]');
       expect([...new Set(soon.map((s) => s.dataset.action!))].sort(), id).toEqual(EACH[id]);
       for (const s of soon) {
         const at = `${id} ${s.dataset.action}`;
@@ -192,7 +201,7 @@ describe('every page that reads is built, at its own address', () => {
       }
       cleanup();
     }
-    expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'create-proposal', 'decline', 'export-run', 'invite', 'new-run', 'pay-out', 'payslips', 'withdraw']);
+    expect([...seen].sort()).toEqual(['approve', 'create-proposal', 'decline', 'export-run', 'new-run', 'pay-out', 'payslips', 'withdraw']);
     const vaults = await draw('vaults');
     expect(all(vaults, '[data-soon]')).toEqual([]);
     state.creation = { company: 'c-1', standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null };
@@ -214,7 +223,7 @@ describe('home', () => {
    */
   it('shows the setup card with the steps left, a skipped one marked, each opening the wizard at it', async () => {
     skipStep('c-1', 'signers');
-    state.company = records({ vaults: { of: 'read', value: [] } });
+    state.company = records({ vaults: { of: 'read', value: [] }, people: { of: 'read', value: [] }, invitations: { of: 'read', value: [] } });
     const c = await draw('home');
     expect(all(c, '[data-part=setup-card] [data-step]').map((e) => [e.dataset.step, e.dataset.standing])).toEqual([
       ['finishCompany', 'open'], ['signers', 'skipped'], ['vault', 'open'], ['people', 'open'],
@@ -246,7 +255,7 @@ describe('home', () => {
    * is unfinished, before the adapter has said which.
    */
   it('lists "Finish creating the company" only while the company is unfinished, and opens each step at itself once it is done', async () => {
-    state.company = records({ vaults: { of: 'read', value: [] } });
+    state.company = records({ vaults: { of: 'read', value: [] }, people: { of: 'read', value: [] }, invitations: { of: 'read', value: [] } });
     let release = (): void => {};
     state.creationGate = new Promise<void>((r) => { release = r; });
     const reading = drawNow('home');
@@ -274,8 +283,8 @@ describe('home', () => {
     window.localStorage.clear();
     const c = await draw('home');
     const card = q(c, '[data-part=setup-card]')!;
-    expect(all(card, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['true', 'false', 'false', 'true', 'false']);
-    expect(q(card, '[data-steps-done]')!.textContent).toBe('2 of 5 steps done');
+    expect(all(card, '[data-slot=progress-mark]').map((m) => m.dataset.filled)).toEqual(['true', 'false', 'false', 'true', 'true']);
+    expect(q(card, '[data-steps-done]')!.textContent).toBe('3 of 5 steps done');
     fireEvent.click(q(card, '[data-action=fold-setup]')!);
     expect(q(c, '[data-part=setup-card] [data-step]')).toBeNull();
     expect(q(c, '[data-part=setup-card] [data-slot=progress]')).not.toBeNull();
@@ -285,7 +294,7 @@ describe('home', () => {
     expect(q(again, '[data-part=setup-card]')!.hasAttribute('data-folded')).toBe(true);
     expect(q(again, '[data-part=setup-card] [data-step]')).toBeNull();
     fireEvent.click(q(again, '[data-action=fold-setup]')!);
-    expect(all(again, '[data-part=setup-card] [data-step]').length).toBe(3);
+    expect(all(again, '[data-part=setup-card] [data-step]').length).toBe(2);
     window.localStorage.clear();
   });
 
@@ -312,10 +321,10 @@ describe('home', () => {
     const people = q(pending, '[data-part=people-waiting]')!;
     expect(q(people, '[data-slot=count-pill]')!.textContent).toBe('1');
     const invite = q(people, '[data-slot=section-actions] button[data-action=invite]')!;
-    expect([invite.textContent, invite.hasAttribute('disabled')]).toEqual([EN['people.invite'], true]);
+    expect([invite.textContent, invite.hasAttribute('disabled'), invite.hasAttribute('data-soon')]).toEqual([EN['people.invite'], false, false]);
     expect(EN['people.invite']).toBe('Invite');
     expect(q(pending, '[data-slot=coming-soon]')).toBeNull();
-    expect(q(people, '[data-person=e5] button[data-action=check-fingerprint]')!.hasAttribute('disabled')).toBe(true);
+    expect(q(people, '[data-person=e5] button[data-action=check-fingerprint]')!.hasAttribute('disabled')).toBe(false);
   });
 
   /* RED WHEN: a part with nothing in it shows a bare line instead of the kit's empty state, or its next action. */
@@ -354,13 +363,33 @@ describe('home', () => {
   /* RED WHEN: a step the application knows is done stays on the card; or a vault not yet held by the super admins, or vaults that could not be read, take the vault step off it. */
   it('leaves a done step off the card', async () => {
     const c = await draw('home');
-    expect(all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['finishCompany', 'signers', 'people']);
+    expect(all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['finishCompany', 'signers']);
     for (const vaults of [{ of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'start-owed' }] }, { of: 'unreadable' }] as const) {
       cleanup();
       state.company = records({ vaults: vaults as CompanyRecords['vaults'] });
       const again = await draw('home');
-      expect(all(again, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step), vaults.of).toEqual(['finishCompany', 'signers', 'vault', 'people']);
+      expect(all(again, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step), vaults.of).toEqual(['finishCompany', 'signers', 'vault']);
     }
+  });
+
+  /*
+   * RED WHEN: the card lists People for a company that has somebody invited (an employee invitation waiting, or a person held)
+   * or leaves it off for one that has not (nobody, or only an invitation for a signer): it must say what the wizard says, from the
+   * same records.
+   */
+  it('lists People on the card until somebody to be paid is invited, as the wizard says it', async () => {
+    const waiting = (kind: string) => ({ kind, name: null, sentAt: '2026-09-11T00:00:00.000Z', expiresAt: null });
+    const stepsOn = async (over: Partial<CompanyRecords>) => {
+      cleanup();
+      state.company = records({ vaults: { of: 'read', value: [] }, ...over });
+      const c = await draw('home');
+      return all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step);
+    };
+    const nobody = { people: { of: 'read', value: [] }, invitations: { of: 'read', value: [] } } as const;
+    expect(await stepsOn({ ...nobody })).toContain('people');
+    expect(await stepsOn({ ...nobody, invitations: { of: 'read', value: [waiting('signer')] } as CompanyRecords['invitations'] })).toContain('people');
+    expect(await stepsOn({ ...nobody, invitations: { of: 'read', value: [waiting('employee')] } as CompanyRecords['invitations'] })).not.toContain('people');
+    expect(await stepsOn({ invitations: { of: 'read', value: [] } })).not.toContain('people');
   });
 
   /* RED WHEN: proposals waiting, people waiting, the vaults, the next run or what passed recently is not the records', or a paid run is taken for the next one. */
@@ -535,10 +564,11 @@ describe('payroll and a run', () => {
     const run = await draw('run', { run: 'r1' });
     expect(await explained(run, '[data-payee=e2]')).toEqual([EN['kit.public.explanation.toBePaid']]);
     cleanup();
+    /* A person with no payment address yet has no pill to explain: nothing says whether their pay is public. */
     const people = await draw('people');
-    expect(await explained(people, '[data-row=e5]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+    expect(q(people, '[data-row=e5] [data-slot=public-pill]')).toBeNull();
     await act(async () => { fireEvent.click(q(people, '[data-row=e5] td')!); });
-    expect(await explained(document.body, '[data-person-panel=e5]')).toEqual([EN['kit.public.explanation.toBePaid']]);
+    expect(q(document.body, '[data-person-panel=e5] [data-slot=public-pill]')).toBeNull();
   });
 
   /* RED WHEN: a run's page does not warn that some are paid publicly, marks a payee by anything but how they are paid, or leaves a currency without its approvals. */
@@ -634,7 +664,8 @@ describe('a read that failed, on every page', () => {
     ['vaults', {}, { vaults: { of: 'unreadable' } }],
     ['vault', { vault: VAULT }, { vaults: { of: 'unreadable' } }],
     ['vault', { vault: VAULT }, { runs: { of: 'unreadable' } }],
-    ['people', {}, { people: { of: 'unreadable' } }],
+    ['people', {}, { peopleBelief: { of: 'unreadable' } }],
+    ['vendors', {}, { vendorsBelief: { of: 'unreadable' } }],
     ['invitations', {}, { invitations: { of: 'unreadable' } }],
     ['home', {}, { proposals: { of: 'unreadable' }, runs: { of: 'unreadable' } }],
   ] as const)('%s', async (id, params, over) => {
@@ -1128,32 +1159,29 @@ describe('vaults and a vault', () => {
 });
 
 describe('people and invitations', () => {
-  /* RED WHEN: the people are not in the kit's table, a person's standing or how they are paid is not theirs, their pay has no Public pill when public, or their row does not open their panel. */
+  /* RED WHEN: the people are not in the kit's table, a person's standing or how they are paid is not theirs, their pay has a visibility when no address decides it (a person with no payment address yet is shown a figure alone, never the Public pill), or their row does not open their panel. */
   it('lists the people and opens a person\'s panel', async () => {
     const c = await draw('people');
-    expect(all(c, '[data-screen=people] [data-slot=data-table] tbody tr').map((p) => [p.dataset.row, q(p, '[data-standing]')!.textContent, q(p, '[data-paid]')!.textContent, q(p, '[data-slot=amount]')!.dataset.visibility])).toEqual([
-      ['e1', EN['people.standing.active'], EN['records.paid.privately'], 'private'], ['e5', EN['people.standing.waitingForCheck'], EN['records.paid.notSetUp'], 'public'],
+    expect(all(c, '[data-screen=people] [data-slot=data-table] tbody tr').map((p) => [p.dataset.row, q(p, '[data-standing]')!.textContent, q(p, '[data-paid]')!.textContent, q(p, '[data-slot=amount]')?.dataset.visibility ?? 'none'])).toEqual([
+      ['e1', EN['people.standing.active'], EN['records.paid.privately'], 'private'], ['e5', EN['people.standing.waitingForCheck'], EN['records.paid.notSetUp'], 'none'],
     ]);
+    expect(q(c, '[data-row=e5] [data-pay-unset]')!.textContent).toMatch(/NIGHT/);
+    expect(q(c, '[data-row=e5] [data-slot=public-pill]')).toBeNull();
     await act(async () => { fireEvent.click(q(c, '[data-row=e5] td:last-child')!); });
     expect(document.querySelector('[data-person-panel=e5]')).not.toBeNull();
   });
 
-  /* RED WHEN: a sent link is not listed, a link that names nobody is given a name, the waiting tab leaves out someone waiting, or Codes received is hidden or offered as if it worked. */
+  /* RED WHEN: a sent link is not listed, a link that names nobody is given a name, a vendor's link is missing or labelled as an employee's, the waiting tab leaves out someone waiting, or a Codes received tab, or a line of signers waiting for the check, is drawn. */
   it('shows the sent links and the people waiting, by the kit\'s tabs', async () => {
     const c = await draw('invitations');
-    expect(all(c, '[data-sent] [data-invitation]').map((e) => [e.dataset.invitation, e.querySelector('.font-medium')!.textContent])).toEqual([['signer', 'Tom'], ['employee', EN['invitations.noName']]]);
-    const codesPill = q(c, '[data-tab-soon=codes] > [data-slot=coming-soon]')!;
-    await act(async () => { fireEvent.click(codesPill); });
-    expect(document.body.textContent).toContain(EN['invitations.codes.soon']);
-    await act(async () => { fireEvent.click(codesPill); });
-    const codes = q(c, '[data-tab=codes]')!;
-    expect(codes.textContent).toBe(EN['invitations.tab.codes']);
-    expect([codes.dataset.slot, codes.getAttribute('role'), codes.hasAttribute('data-disabled'), codes.tagName]).toEqual(['tabs-trigger', 'tab', true, 'SPAN']);
-    await act(async () => { fireEvent.mouseDown(codes, { button: 0 }); });
-    expect([codes.getAttribute('aria-selected'), q(c, '[data-sent]') !== null]).toEqual(['false', true]);
+    expect(all(c, '[data-sent] [data-invitation]').map((e) => [e.dataset.invitation, e.querySelector('.font-medium')!.textContent])).toEqual([['signer', 'Tom'], ['employee', EN['invitations.noName']], ['vendor', 'Vik']]);
+    expect(all(c, '[data-sent] [data-kind]').map((e) => [e.dataset.kind, e.textContent])).toEqual([['signer', EN['invitations.kind.signer']], ['employee', EN['invitations.kind.employee']], ['vendor', EN['invitations.kind.vendor']]]);
+    expect(all(c, '[data-tab]').map((t) => t.dataset.tab)).toEqual(['sent', 'waiting']);
+    expect(q(c, '[data-tab-soon]')).toBeNull();
     await act(async () => { fireEvent.mouseDown(q(c, '[data-tab=waiting]')!, { button: 0 }); });
     expect(all(c, '[data-waiting] [data-person]').map((e) => e.dataset.person)).toEqual(['e5']);
-    expect(q(c, '[data-signers-waiting] [data-slot=coming-soon]')).not.toBeNull();
+    expect(q(c, '[data-signers-waiting]')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Codes received|Signers waiting for the check/u);
   });
 });
 
@@ -1161,8 +1189,8 @@ describe('people, payroll, proposals, a run and invitations, drawn from the kit'
   /* RED WHEN: one of the five pages draws its heading other than with the kit's page header, has a second heading, or an action of the page is not in the header's actions. */
   it('heads each page with the kit\'s page header, its actions in it', async () => {
     const EACH = [
-      ['people', {}, EN['page.people.name'], ['invite']], ['payroll', {}, EN['page.payroll.name'], ['new-run']], ['proposals', {}, EN['page.proposals.name'], []],
-      ['run', { run: 'r1' }, 'October 2026', ['export-run']], ['invitations', {}, EN['page.invitations.name'], []],
+      ['people', {}, EN['page.people.name'], ['invite']], ['vendors', {}, EN['page.vendors.name'], ['invite']], ['payroll', {}, EN['page.payroll.name'], ['new-run']], ['proposals', {}, EN['page.proposals.name'], []],
+      ['run', { run: 'r1' }, 'October 2026', ['export-run']], ['invitations', {}, EN['page.invitations.name'], ['invite']],
     ] as const;
     for (const [id, params, title, actions] of EACH) {
       const c = await draw(id, params);
@@ -1175,9 +1203,9 @@ describe('people, payroll, proposals, a run and invitations, drawn from the kit'
 
   /* RED WHEN: a list with nothing in it is drawn as a bare line instead of the kit's empty state, or its words change. */
   it('shows each list with nothing in it as the kit\'s empty state, in the same words', async () => {
-    state.company = records({ proposals: { of: 'read', value: [] }, runs: { of: 'read', value: [] }, people: { of: 'read', value: [] }, invitations: { of: 'read', value: [] } });
+    state.company = records({ proposals: { of: 'read', value: [] }, runs: { of: 'read', value: [] }, people: { of: 'read', value: [] }, peopleBelief: { of: 'read', value: { rows: [], notBelieved: [], notPayable: [], refused: [] } }, invitations: { of: 'read', value: [] }, vendorsBelief: { of: 'read', value: { vendors: [], rows: [], notBelieved: [], notPayable: [] } } });
     const line = (c: ParentNode) => all(c, '[data-screen] [data-slot=empty-state] [data-slot=empty-state-line]').map((e) => e.textContent);
-    for (const [id, key] of [['people', 'people.none'], ['payroll', 'payroll.none'], ['proposals', 'proposals.none'], ['invitations', 'invitations.sent.none']] as const) {
+    for (const [id, key] of [['people', 'people.none'], ['vendors', 'vendors.none'], ['payroll', 'payroll.none'], ['proposals', 'proposals.none'], ['invitations', 'invitations.sent.none']] as const) {
       const c = await draw(id);
       expect(line(c), id).toEqual([EN[key]]);
       if (id === 'invitations') {
@@ -1211,11 +1239,11 @@ describe('people, payroll, proposals, a run and invitations, drawn from the kit'
     await act(async () => { fireEvent.click(q(people, '[data-row=e1] td')!); });
     const person = document.querySelector('[data-person-panel=e1]') as HTMLElement;
     expect(all(person, '[data-slot=item]').map((i) => q(i, '[data-slot=item-description]')!.textContent)).toEqual([
-      EN['people.column.title'], EN['people.column.standing'], EN['people.started'], EN['people.column.pay'], EN['people.column.paid'],
+      EN['people.column.title'], EN['people.column.standing'], EN['people.started'], EN['people.column.pay'], EN['people.classification'], EN['people.endDate'], EN['people.leavingDate'], EN['people.column.paid'],
     ]);
     expect(q(person, '[data-slot=item] [data-slot=item-title]')!.textContent).toBe('Engineer');
     /* A value is never cut to its first line, as the kit's item title is by default. */
-    expect(all(person, '[data-slot=item-title]').map((e) => e.className.split(/\s+/).includes('line-clamp-none'))).toEqual([true, true, true, true, true]);
+    expect(all(person, '[data-slot=item-title]').map((e) => e.className.split(/\s+/).includes('line-clamp-none'))).toEqual([true, true, true, true, true, true, true, true]);
     expect(q(person, 'dl, dt, dd')).toBeNull();
     cleanup();
     const proposals = await draw('proposals');

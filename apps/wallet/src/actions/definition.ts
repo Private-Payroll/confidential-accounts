@@ -57,16 +57,31 @@ export interface WalletRecord {
 
 /**
  * A step that finds what it acts on is not what this wallet can stand behind: it builds nothing more, and the action
- * stops with these words on the window, as a check after the passkey that did not hold.
+ * stops with these words on the window, as a check after the passkey that did not hold. `code`, when the step names
+ * one, is the kind of refusal: a short code of lower-case words that the stop carries to the page with the words' key,
+ * never their values.
  */
 export class StepRefused extends Error {
   readonly words: Words;
-  constructor(words: Words) {
+  readonly code?: string;
+  constructor(words: Words, code?: string) {
     super(`the step refused: ${words.key}`);
     this.name = 'StepRefused';
     this.words = words;
+    if (code !== undefined) this.code = code;
   }
 }
+
+/**
+ * The kind of an error as a refusal's code: its class name in lower-case words joined by hyphens (`NothingToApprove`
+ * is `nothing-to-approve`), or `error` for a name that makes none. Only the class is read, never its message, so no
+ * secret, key, address or amount reaches the page's report through it.
+ */
+export const codeOfError = (e: unknown): string => {
+  const name = String((e as { name?: unknown } | null)?.name ?? '');
+  const code = name.replace(/([a-z0-9])([A-Z])/gu, '$1-$2').toLowerCase();
+  return /^[a-z]+(?:-[a-z]+){0,7}$/u.test(code) ? code : 'error';
+};
 
 /**
  * THE PERSON'S SAVED KEYS, FOR A STEP THAT READS OR CHANGES THEM. `open` opens the sealed copy the page handed in,
@@ -123,6 +138,11 @@ export interface StepContext {
   call(method: 'GET' | 'PUT' | 'POST', path: string, body?: string): Promise<{ readonly status: number; readonly body: unknown }>;
   /** Adds to what the action's end tells the page: only the parts the action's entry lists, all of them public. */
   tell(outcome: Readonly<Record<string, string | number>>): void;
+  /**
+   * Words the wallet's own window shows when the action ends done, such as a fingerprint the person reads out. They
+   * stay in the wallet: nothing of them is sent to the page. A later call replaces an earlier one.
+   */
+  show(words: Words): void;
   /** The person's saved keys, or null when the ask carried none. */
   readonly keyring: ActKeyring | null;
 }

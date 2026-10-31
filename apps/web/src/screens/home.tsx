@@ -3,17 +3,18 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Activity01Icon, Add01Icon, ArrowDown01Icon, ArrowUp01Icon, CheckListIcon, Invoice01Icon, SafeIcon, UserAdd01Icon } from '@hugeicons/core-free-icons';
 import { Badge, Button, ComingSoon, EmptyState, PageHeader, Progress, Section, SectionRow, StatTiles, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
-import { READ, STANDING as PERSON, type CompanyRecords, type ProposalRow, type Read } from '../adapters/company-records.js';
+import { READ, type CompanyRecords, type ProposalRow, type Read } from '../adapters/company-records.js';
 import { browserKeep, keepFold, readFolds } from '../adapters/kept-folds.js';
 import { HOME, PAGE } from '../pages.js';
 import { go, PageLink } from '../router.js';
-import { blockedBy, skippedFor, STANDING, standingOf, stepsLeft, useCreationFact } from '../setup/standing.js';
+import { InvitePeople } from '../actions/invite.js';
+import { blockedBy, skippedFor, someoneInvited, STANDING, standingOf, stepsLeft, useCreationFact } from '../setup/standing.js';
 import { startSetupAt } from '../setup/asked.js';
 import { useSession } from '../session.js';
 import { useCompanyName } from '../shell/company-facts.js';
 import { EVERY_STEP, type SetupFacts } from '../setup/steps.js';
 import type { StepId } from '../setup/step-ids.js';
-import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, UnbuiltAction, useMonth, VaultTile, WithRecords } from '../records/parts.js';
+import { Approvals, CheckFingerprint, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, UnbuiltAction, useMonth, VaultTile, WaitingName, waitingRead, WithRecords } from '../records/parts.js';
 
 /** How many rows of a list Home shows before "View all". */
 const SHOWN = 3;
@@ -42,7 +43,7 @@ export function Home() {
         {(records) => (
           <>
             <PageHeader title={<span data-company-name>{nameOf(companies.find((c) => c.id === records.id) ?? {}, records.name)}</span>} />
-            <SetupCard company={records.id} vaults={records.vaults} />
+            <SetupCard company={records.id} vaults={records.vaults} invited={someoneInvited(records)} />
             <div className="flex flex-col gap-3" data-part="pending-approval">
               <h2 className="text-sm font-medium text-muted-foreground">{t('home.pendingApproval')}</h2>
               <div className="grid gap-4 lg:grid-cols-2">
@@ -69,12 +70,12 @@ export function Home() {
 
 /**
  * ONE PART OF HOME, READ ON ITS OWN: drawn by `children` from what was read,
- * or, when it could not be read, as a section under its usual title that
- * says it could not be read, so a part not read is never shown as a part
+ * or, when it could not be read, as a section under its usual title, with
+ * the part's actions still beside it, that says it could not be read, so a part not read is never shown as a part
  * with nothing in it.
  */
-function Part<T>({ read, title, children, ...marks }: { read: Read<T>; title: ReactNode; children: (value: T) => ReactNode; 'data-part': string }) {
-  if (read.of === READ.unreadable) return <Section title={title} list={false} {...marks}><ReadOf read={read}>{() => null}</ReadOf></Section>;
+function Part<T>({ read, title, actions, children, ...marks }: { read: Read<T>; title: ReactNode; actions?: ReactNode; children: (value: T) => ReactNode; 'data-part': string }) {
+  if (read.of === READ.unreadable) return <Section title={title} actions={actions} list={false} {...marks}><ReadOf read={read}>{() => null}</ReadOf></Section>;
   return <>{children(read.value)}</>;
 }
 
@@ -86,16 +87,18 @@ function Part<T>({ read, title, children, ...marks }: { read: Read<T>; title: Re
  * goes when every step is done, and is not drawn until the company's creation has
  * been read, so a finished company is never shown as unfinished for a moment. A
  * step that an unfinished step blocks cannot be opened from here: its reason is
- * shown and a button leads to the step that blocks it.
+ * shown and a button leads to the step that blocks it. Whether somebody is
+ * invited, which makes People done, comes from the same records, by the same
+ * function, as the wizard's.
  */
-function SetupCard({ company, vaults }: { company: string; vaults: CompanyRecords['vaults'] }) {
+function SetupCard({ company, vaults, invited }: { company: string; vaults: CompanyRecords['vaults']; invited: boolean }) {
   const t = useText();
   const [folded, fold] = useState(() => readFolds(browserKeep()).has(company));
   const { creation } = useCreationFact(company);
   useEffect(() => { fold(readFolds(browserKeep()).has(company)); }, [company]);
   /* Vaults that could not be read are read as none created, so the step is never shown done on a guess. */
   if (creation === null) return null;
-  const facts = { company, vaults: vaults.of === READ.read ? vaults.value : [], creation };
+  const facts = { company, vaults: vaults.of === READ.read ? vaults.value : [], creation, invited };
   const left = stepsLeft(facts);
   if (left.length === 0) return null;
   const skipped = skippedFor(company);
@@ -197,35 +200,37 @@ function ProposalsWaiting({ records }: { records: CompanyRecords }) {
   );
 }
 
-/** People to be paid waiting to join. Inviting and the fingerprint check that lets a person in are built together with joining; until then both are shown disabled. */
+/** People and vendors waiting for the check, each with the one admit control and the kind they are; the one invite panel, and a way to every one waiting, since only the first few are drawn. */
 function PeopleWaiting({ records }: { records: CompanyRecords }) {
   const t = useText();
-  const invite = <UnbuiltAction data-action="invite">{<HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />}{t('people.invite')}</UnbuiltAction>;
+  const actions = (
+    <>
+      <InvitePeople />
+      <Button variant="outline" asChild><PageLink to={PAGE.invitations} data-action="view-all-waiting">{t('home.viewAll')}</PageLink></Button>
+    </>
+  );
   return (
-    <Part read={records.people} title={t('page.people.name')} data-part="people-waiting">
-      {(rows) => {
-        const waiting = rows.filter((p) => p.standing === PERSON.waitingForCheck);
-        return (
-          <Section
-            title={t('page.people.name')}
-            count={waiting.length}
-            actions={invite}
-            empty={<EmptyState icon={UserAdd01Icon}>{t('home.peopleWaiting.none')}</EmptyState>}
-            data-part="people-waiting"
-          >
-            {waiting.slice(0, SHOWN).map((p) => (
-              <SectionRow key={p.id} data-person={p.id} actions={<UnbuiltAction size="sm" data-action="check-fingerprint">{t('people.checkFingerprint')}</UnbuiltAction>}>
-                <span className="font-medium">{p.name}</span>
-              </SectionRow>
-            ))}
-          </Section>
-        );
-      }}
+    <Part read={waitingRead(records)} title={t('page.people.name')} actions={actions} data-part="people-waiting">
+      {(waiting) => (
+        <Section
+          title={t('page.people.name')}
+          count={waiting.length}
+          actions={actions}
+          empty={<EmptyState icon={UserAdd01Icon}>{t('home.peopleWaiting.none')}</EmptyState>}
+          data-part="people-waiting"
+        >
+          {waiting.slice(0, SHOWN).map((w) => (
+            <SectionRow key={w.id} data-person={w.id} actions={<CheckFingerprint one={w} size="sm" />}>
+              <WaitingName one={w} />
+            </SectionRow>
+          ))}
+        </Section>
+      )}
     </Part>
   );
 }
 
-/** One tile per vault, or the empty state; creating one leads to the Vaults page. */
+
 function Vaults({ records }: { records: CompanyRecords }) {
   const t = useText();
   /* Creating a vault is done on the Vaults page, from the one component the setup wizard's step shows too. */

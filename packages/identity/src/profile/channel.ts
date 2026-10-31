@@ -47,17 +47,32 @@ export { readOutcome } from './act-channel.js';
  *
  * ── THE CHANNEL CARRIES A KIND AND DOES NOT READ ONE ──────────────────
  * The protocol makes the action a VALUE with a kind,
- * and this file learned nothing about kinds: it still filters on one schema and
+ * and this file learned nothing about kinds: it takes one schema as a request and
  * still hands `parseAsk` the browser's origin and the untouched message. **Which
  * kind it is, is the parser's answer and not the channel's** — a channel that
  * branched on kind would be a second place to keep in step with the first. The
  * one kind it does act on, once parsed, is `act`: an action hands the page its
  * transactions, and the saved keys it sealed again, one at a time over this
  * channel and hears back what the page did with each, so the channel carries
- * more than one message for it.
+ * more than one message for it. The one other thing it takes from the page before a
+ * request is the page saying it will not ask (`NOT_ASKING_SCHEMA`), with a reason
+ * from a closed list this wallet words itself.
  */
 
 export const READY_PING = 'midnight-identity/wallet-ready/v1';
+
+/**
+ * The page saying it stopped while preparing its ask and will not ask this window anything. It carries one reason
+ * from `NOT_ASKED_WHY` and no words of the page's own, so what the window shows is always this wallet's sentence.
+ */
+export const NOT_ASKING_SCHEMA = 'midnight-identity/not-asking/v1';
+/**
+ * Why the page stopped before asking: the person is no longer signed in there, the page could not read their saved
+ * keys from its service, the saved keys it read are older than the ones it last opened, or it could not put the ask
+ * together.
+ */
+export const NOT_ASKED_WHY = ['signed-out', 'saved-keys-unread', 'saved-keys-older', 'ask-not-built'] as const;
+export type NotAskedWhy = (typeof NOT_ASKED_WHY)[number];
 
 /**
  * **WHAT A WALLET SAYS WHILE IT WORKS, AND IT IS NEVER AN ANSWER.**
@@ -159,7 +174,6 @@ export interface RelayLabel {
   readonly also?: string;
 }
 
-/** Saved keys an action sealed again, for the page to write over the version given. */
 /**
  * One call to the service the wallet asks the page to make for an action:
  * numbered on their own from 1, a method, a path under `/api/`, and for a
@@ -185,6 +199,7 @@ export interface ActCall {
  */
 export type CalledOver = { readonly of: 'answered'; readonly status: number; readonly body: unknown } | 'refused' | 'unanswered' | 'gone';
 
+/** Saved keys an action sealed again, for the page to write over the version given. */
 export interface ActKeep {
   readonly schema: typeof ACT_KEEP_SCHEMA;
   readonly nonce: string;
@@ -234,6 +249,14 @@ export const ACT_STOPS = [
 export type ActStop = (typeof ACT_STOPS)[number];
 
 /**
+ * **WHAT A STOP FOR A REFUSED CHECK MAY SAY OF ITS REFUSAL.** The key of the words the wallet refused with
+ * (`act.<action>.why.<refusal>`), and a short code of lower-case words naming the kind of refusal. Neither can hold a
+ * digit, so neither can carry an amount, an address or a key; the words' values never cross.
+ */
+export const ACT_REFUSED_KEY = /^act\.[a-z-]+\.why\.[a-z-]+$/u;
+export const ACT_REFUSED_CODE = /^[a-z]+(?:-[a-z]+){0,7}$/u;
+
+/**
  * **HOW AN ACTION ENDED: ITS ONE TERMINAL ANSWER.** `step` is the step it
  * ended at: on `done` the last; on `stopped` the first step that did not
  * finish, which is where it can be taken up again. `relayed` is how many
@@ -254,6 +277,10 @@ export interface ActEnded {
   readonly relayed: number;
   readonly unconfirmed: number;
   readonly why?: ActStop;
+  /** On a `check-failed` stop: the key of the words the wallet refused with, in `ACT_REFUSED_KEY`'s shape. */
+  readonly refused?: string;
+  /** With `refused`, when the action names one: the kind of refusal, in `ACT_REFUSED_CODE`'s shape. */
+  readonly code?: string;
   readonly outcome?: Readonly<Record<string, string | number>>;
   /**
    * When the action opened the person's saved keys: what they hold that is not secret, as the action left them
@@ -267,7 +294,9 @@ export interface ActEnded {
 export type ChannelState =
   | { readonly of: 'waiting' }
   | { readonly of: 'request'; readonly request: Ask }
-  | { readonly of: 'refused'; readonly error: RequestError | NoPageToAnswer };
+  | { readonly of: 'refused'; readonly error: RequestError | NoPageToAnswer }
+  /** The page said it will not ask; `why` is `null` when the reason it gave is not one this wallet knows. */
+  | { readonly of: 'not-asked'; readonly why: NotAskedWhy | null };
 
 interface Postable { postMessage(message: unknown, targetOrigin: string): void }
 
@@ -538,7 +567,8 @@ const answeredIn = (view: ChannelWindow): Set<string> => {
  * at while they read it, so a second request on this channel is ignored. After
  * an `act` ask, the only thing still heard is the page saying what it did with
  * a transaction or saved keys this channel handed it, from the same window and
- * origin.
+ * origin. **A PAGE THAT SAYS IT WILL NOT ASK ends the channel the same way**: the
+ * window shows the page's reason, and a request after it is ignored.
  */
 export function listen(
   view: ChannelWindow,
@@ -638,6 +668,13 @@ export function listen(
     if (settled) { heardAfterTheAsk(event); return; }
     const body = (event.data ?? null) as { schema?: unknown } | null;
     if (body === null || typeof body !== 'object') return;
+    if (body.schema === NOT_ASKING_SCHEMA) {
+      settled = true;
+      ended = true;
+      const why = (body as { why?: unknown }).why;
+      onState({ of: 'not-asked', why: (NOT_ASKED_WHY as readonly unknown[]).includes(why) ? why as NotAskedWhy : null });
+      return;
+    }
     if (body.schema !== 'midnight-identity/disclosure-request/v1') return;
 
     settled = true;

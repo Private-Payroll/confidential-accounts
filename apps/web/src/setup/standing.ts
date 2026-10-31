@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { EVERY_STEP, type SetupFacts } from './steps.js';
 import type { StepId } from './step-ids.js';
+import { INVITED, type CompanyRecords } from '../adapters/company-records.js';
 import { creationChanged, creationHere, creationOf, type CompanyCreation } from '../adapters/creation-standing.js';
+import { OPENED, READ } from '../adapters/reads.js';
+import { useCompanyRecords } from '../records/company-records.js';
 import { keepSkips, readSkips, tabStorage } from '../adapters/kept-skips.js';
 
 export { readSkips };
@@ -70,6 +73,36 @@ export function firstOpen(facts: SetupFacts, skipped: ReadonlySet<StepId>): Step
 /** The steps not done yet, in the list's order: what the setup card on Home lists. A skipped step is not done, so it is among them. */
 export function stepsLeft(facts: SetupFacts): (typeof EVERY_STEP)[number][] {
   return EVERY_STEP.filter((s) => !s.done(facts));
+}
+
+/** The reads of the company's records that say whether somebody to be paid is invited. */
+interface InvitedReads {
+  people: CompanyRecords['people'];
+  invitations: CompanyRecords['invitations'];
+  vendors?: CompanyRecords['vendors'] | undefined;
+}
+
+/**
+ * Whether somebody to be paid is invited, which is all the People step's "done" reads: an invitation for an employee or for a vendor
+ * that waits, a person the company holds (an invited person is held from the moment they are invited), or a vendor it holds. An
+ * invitation for a signer is not somebody to pay. A read that failed says nothing, so it counts for nobody: another read
+ * can still say there is somebody. A vendor invited and not yet handed over is on the invitations read until they accept.
+ */
+export function someoneInvited(records: InvitedReads): boolean {
+  if (records.people.of === READ.read && records.people.value.length > 0) return true;
+  if (records.invitations.of === READ.read && records.invitations.value.some((i) => i.kind === INVITED.employee || i.kind === INVITED.vendor)) return true;
+  return records.vendors?.of === READ.read && records.vendors.value.vendors.length > 0;
+}
+
+/**
+ * The People step's fact for the shown company, read from its records and never from what this page remembers, so a reload
+ * or another device says the same: false while the records are not read, and never another company's. `reload` reads the
+ * records again, for a step that filed something.
+ */
+export function useInvitedFact(company: string | null): { invited: boolean; reload: () => void } {
+  const { company: records, reload } = useCompanyRecords();
+  const invited = company !== null && records?.of === OPENED.open && records.id === company && someoneInvited(records);
+  return { invited, reload };
 }
 
 /**

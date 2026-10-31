@@ -53,6 +53,7 @@ import type { ManifestEntry } from '../midnight/record-manifest.js';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { standingOnChainHere } from 'vaults-web-shared/run-rebuilt-here.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
@@ -936,7 +937,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     /* Ada's device: the directory as she believes it, her wallet's read of the chain, and her wallet's statement of her records key. */
     const seatOfAda = adaInJoined.statement.seat;
     const device = {
-      company, signingSecret: adaInJoined.signingSecret, signedInAs: USERS.ada, send: sendAs('ada'), network: NETWORK, entered: adaInJoined.entered,
+      company, signingSecret: adaInJoined.signingSecret, signedInAs: USERS.ada, send: sendAs('ada'), network: NETWORK, claimRefusal: signedClaimRefusal, entered: adaInJoined.entered,
       directory: (asked?: RecordsAsked) => directoryHere({
         accountId: at, label: adaInJoined.label, viewingKey: joined.viewingKey as Hex,
         filings: async () => (await call('GET', `/api/accounts/${at}/directory`, { token: tokens.ada })).body.filings,

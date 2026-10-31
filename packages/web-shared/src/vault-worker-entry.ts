@@ -250,7 +250,6 @@ async function roundsOnChainHere(
   const { steps } = await historyHere(d, ask, 'where the company\'s proposals stand on the chain was');
   return Object.fromEntries(roundsOnChainIn(d, steps, ask.chainIds));
 }
-/** What this copy of the app was compiled with, read from its own files and never from the service. */
 /** The seat each invitation's proposal took, read from the account's own history in this worker (`seatsInvitedIn`). */
 async function invitedSeatsHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
@@ -260,6 +259,7 @@ async function invitedSeatsHere(
   return Object.fromEntries(seatsInvitedIn(d, steps, ask.proposals));
 }
 
+/** What this copy of the app was compiled with, read from its own files and never from the service. */
 export interface ThisBuild {
   readonly vault: { readonly expectedVk: Readonly<Record<string, string>>; readonly manifest: CompiledManifest };
   readonly account: { readonly expectedVk: Readonly<Record<string, string>>; readonly manifest: CompiledManifest };
@@ -943,6 +943,10 @@ export const answerVaultAsk = async (
       }
       const v = policyBarKey();
       return { id: ask.id, ok: true, ask: 'policy-bar-key', value: Array.from(v, (b) => b.toString(16).padStart(2, '0')).join('') };
+    }
+    case 'address-claim-refusal': {
+      const { signedClaimRefusal } = await import('./signed-claim-refusal.js');
+      return { id: ask.id, ok: true, ask: 'address-claim-refusal', refusal: await signedClaimRefusal(ask.claim, ask.for) };
     }
     case 'spending-policy-keys':
       return {

@@ -28,6 +28,7 @@ import { payeeFor } from '../testing/payees.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, type PeopleDevice, type PersonHere } from 'vaults-web-shared/people-on-device.js';
 import { admitVendorHere, changeVendorHere, readVendorsHere, type VendorHere } from 'vaults-web-shared/vendors-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { payableFactsOf, payeesHere, periodsPastDraftHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { factsHere } from 'vaults-web-shared/raise-checks-here.js';
@@ -46,7 +47,7 @@ const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat
 const SLIP = 'cd'.repeat(32);
 const MONTHLY = { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 90000n };
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 const recordsOf = (s: Seat) => ({

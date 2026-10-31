@@ -260,7 +260,7 @@ const SAID_CODES = new Set<string>(Object.values(SAID));
  * account, which the wallet checks on the chain itself before it acts. Null
  * for a company with no account on the chain yet.
  */
-const namedFor = async (companyId: string): Promise<{ record: string; company: string; account: string } | null> => {
+export const namedFor = async (companyId: string): Promise<{ record: string; company: string; account: string } | null> => {
   const sealed = await api(companyRoute(companyId)) as SealedAccount;
   const company = sealed?.companyLabel, account = sealed?.contractAddress;
   return typeof company === 'string' && typeof account === 'string' ? { record: companyId, company, account } : null;

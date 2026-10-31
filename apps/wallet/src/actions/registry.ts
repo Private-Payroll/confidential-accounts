@@ -17,7 +17,14 @@ import { privateDepositAction } from './private-deposit.js';
 import { oneOffPaymentAction } from './one-off-payment.js';
 import { liveBalanceDoors } from '../screens/approve-balance.js';
 import { claimByAddressAction } from './claim-by-address.js';
+import { joinByCodeAction } from './join-by-code.js';
 import { seatInvitedAction } from './seat-invited.js';
+import { inviteAction } from './invite.js';
+import { approveSignerAction } from './approve-signer.js';
+import { admitSignerAction } from './admit-signer.js';
+import { admitPersonAction } from './admit-person.js';
+import { changePersonAction } from './change-person.js';
+import type { RoundIdentity } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
 
 /** Waits `ms`, or rejects at once when `signal` aborts first. */
 export const pause = (ms: number, signal: AbortSignal): Promise<void> => new Promise<void>((resolve, reject) => {
@@ -27,13 +34,6 @@ export const pause = (ms: number, signal: AbortSignal): Promise<void> => new Pro
   signal.addEventListener('abort', stopped, { once: true });
 });
 
-/**
- * EVERY ACTION THIS WALLET RUNS, ONE DEFINITION PER ACTION A PAGE MAY NAME.
- *
- * Keyed by the same names the ask's parser accepts, and typed so that this
- * wallet does not build while an action a page may name has no definition
- * here. An ask naming an action with none is refused before anything is shown.
- */
 /** What the vault actions read the chain with, build in, and keep a new vault's secret in: this wallet's own. */
 const VAULTS = Object.freeze({
   chain: liveCompanyChain,
@@ -44,6 +44,13 @@ const VAULTS = Object.freeze({
   indexerHttp: INDEXER_HTTP_URL,
 });
 
+/**
+ * EVERY ACTION THIS WALLET RUNS, ONE DEFINITION PER ACTION A PAGE MAY NAME.
+ *
+ * Keyed by the same names the ask's parser accepts, and typed so that this
+ * wallet does not build while an action a page may name has no definition
+ * here. An ask naming an action with none is refused before anything is shown.
+ */
 export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Object.freeze({
   'finish-company': finishCompanyAction({
     build: accountBuilding(),
@@ -70,9 +77,30 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
   'private-deposit': privateDepositAction({ ...VAULTS, balance: liveBalanceDoors }),
   'one-off-payment': oneOffPaymentAction(VAULTS),
   'claim-by-address': claimByAddressAction({ network: NETWORK }),
+  'join-by-code': joinByCodeAction({ network: NETWORK }),
   'seat-invited': seatInvitedAction({
     chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK,
     commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
+    payKeyWrapKeyOf: async () => ((await import('../../../../contracts/managed/contract/index.js')) as unknown as {
+      pureCircuits: { payKeyWrapKeyOf(account: Uint8Array, sk: Uint8Array, part: bigint): Uint8Array };
+    }).pureCircuits.payKeyWrapKeyOf,
+  }),
+  invite: inviteAction({
+    chain: VAULTS.chain, builder: VAULTS.builder, now: VAULTS.now, pause, network: NETWORK as never,
+    commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
+  }),
+  'approve-signer': approveSignerAction({
+    chain: VAULTS.chain, builder: VAULTS.builder, pause,
+    commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
+  }),
+  'admit-signer': admitSignerAction({
+    chain: VAULTS.chain, builder: VAULTS.builder, pause,
+    commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
+  }),
+  'admit-person': admitPersonAction({ chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK as never }),
+  'change-person': changePersonAction({
+    chain: VAULTS.chain, builder: VAULTS.builder, now: VAULTS.now, network: NETWORK as never,
+    roundIdentity: async () => ((await import('../../../../contracts/managed/contract/index.js')) as unknown as { pureCircuits: RoundIdentity }).pureCircuits,
   }),
 });
 

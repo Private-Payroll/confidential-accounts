@@ -71,9 +71,10 @@ const titleOf = (ended: EndedHere['ended']): string => {
  * action is never said to be finished: it says the step it stopped at, why,
  * how many transactions the page confirmed it handed over, how many it was
  * handed and did not confirm, which may still land, and what pressing again on
- * the page does. The wallet has locked itself by now, and says so; when a step
- * was still running it says that step is cut off from the keys, never that its
- * work is over.
+ * the page does. A done action shows what its steps gave this window to show.
+ * The wallet has locked itself by now, and says so; when a step was still
+ * running it says that step is cut off from the keys, never that its work is
+ * over.
  */
 export function ActOver({ end, framed }: { readonly end: EndedHere; readonly framed: boolean }): ReactNode {
   const t = useText();
@@ -100,7 +101,10 @@ export function ActOver({ end, framed }: { readonly end: EndedHere; readonly fra
       ) : awaiting !== null ? (
         <p className="lede" data-act-awaiting>{t(awaiting.key, { approvals: awaiting.approvals, needed: awaiting.needed })}</p>
       ) : (
-        <p className="lede" data-act-relayed>{t('act.over.done', { steps: ended.steps, relayed: ended.relayed })}</p>
+        <>
+          <p className="lede" data-act-relayed>{t('act.over.done', { steps: ended.steps, relayed: ended.relayed })}</p>
+          {says !== null && <p className="m-0 font-mono" data-act-shown-at-the-end>{t(says.key, { ...(says.values ?? {}) })}</p>}
+        </>
       )}
       <p className="m-0 text-sm text-muted-foreground" data-act-locked>
         {t(end.abandoned ? 'act.over.locked-cut-off' : 'act.over.locked')}

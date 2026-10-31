@@ -294,7 +294,8 @@ describe('the company switcher', () => {
     /* Names are built: none says Coming soon, and while none is open the list says where they open. */
     expect(menu.querySelector('[data-company-names] [data-slot=coming-soon]')).toBeNull();
     expect(menu.querySelector('[data-company-names=locked]')?.textContent).toBe(EN['switcher.namesLocked']);
-    expect(menu.querySelector('[data-action=join-with-a-code] [data-slot=coming-soon]')).not.toBeNull();
+    expect(menu.querySelector('[data-action=join-with-a-code]')).toBeNull();
+    expect(menu.textContent).not.toContain('Join with a code');
     /* Create a company is built: it starts the setup wizard, and is not Coming soon. */
     expect(menu.querySelector('[data-action=create-company]')).not.toBeNull();
     expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).toBeNull();

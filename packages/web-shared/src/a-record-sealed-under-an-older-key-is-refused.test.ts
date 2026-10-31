@@ -12,7 +12,7 @@ import { proposalEntry, recordKeyOf, runEntry } from '../../../src/midnight/reco
 import { keptRunHere, proposalsListedHere, runRebuiltHere } from './run-rebuilt-here.js';
 import { openTheRoundHere } from './round-opened-here.js';
 import { emptyDirectory, type Directory, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
-import { judgeIn, listedHere, RecordSealedUnderAnOlderKey, refusedForItsKey, type DirectoryHere } from './vault-page-doors.js';
+import { filingRefusalCodeOf, judgeIn, listedHere, RecordSealedUnderAnOlderKey, refusedForItsKey, type DirectoryHere } from './vault-page-doors.js';
 import { HttpCompanyRecordStore } from './http-sealed-pool-store.js';
 import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
 
@@ -68,6 +68,17 @@ describe('a record sealed under an older company key than the one in force at it
     expect(judged(here, ROSTER, 2, 1)).toBeNull();
     /* RED WHEN: a record sealed and anchored before the change of the key is refused once the key changes. */
     expect(judged(here, ROSTER, 1, 0)).toBeNull();
+  });
+
+  it('is named in a log by the code of its reason alone, as is a record no filer signed', () => {
+    const here = aCompany(2, [{ read: ROSTER, version: 1, batch: 0 }, { read: ROSTER, version: 2, batch: 3 }]);
+    /* RED WHEN: a roster refused for being sealed under an older key is logged under another code, or under its sentence. */
+    expect(filingRefusalCodeOf(judged(here, ROSTER, 2, 0)!)).toBe('sealed-under-an-older-key');
+    const unsigned = judgeIn(here)(null, ROSTER.kind as never, `${ROSTER.kind}:${ROSTER.id}`, { ...ROSTER, version: 2, digest: digestOf(2) }, false, 1);
+    /* RED WHEN: a record that carries no filer's signature is logged under another code. */
+    expect(filingRefusalCodeOf(unsigned!)).toBe('no-signature');
+    /* RED WHEN: a reason this does not know is given a code it is not. */
+    expect(filingRefusalCodeOf('a sentence nothing here says')).toBe('other');
   });
 
   it('is believed in the very batch that anchored the change, since it was sealed before it', () => {

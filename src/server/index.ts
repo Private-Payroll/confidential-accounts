@@ -76,6 +76,7 @@ import {
 import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven-submission.js';
+import type {} from './signed-in-request.js';
 
 /**
  * **`.env` IS READ HERE**, because `npm run dev` starts this file and
@@ -815,7 +816,6 @@ const answerList = <T extends Marked>(res: express.Response, rows: readonly T[])
 
 /* ------------------------- auth ------------------------- */
 
-declare global { namespace Express { interface Request { userId?: string } } }
 
 /**
  * What the limiter and the list of sign-ins need to know about the caller.

@@ -24,6 +24,7 @@ import { newestAnchored } from '../midnight/records-held.js';
 import { anchorServiceFor, anchorTheRecordsHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
 import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { directoryHere } from 'vaults-web-shared/vault-page-doors.js';
 import { anchoredOver, anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { NO_LEG, retryArgsOf } from '../midnight/spending-policy-record.js';
@@ -67,7 +68,7 @@ const landed = (tx: string): void => {
 const peopleOn = (
   s: Seat, serve: (body: unknown) => unknown = (b) => b, manifest: (m: any) => any = (m) => m,
 ): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, network: NETWORK, entered: s.entered,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
   directory: (asked) => directoryHere({
     ...acmeDirectoryDeps(),
     anchored: anchoredOver(async (path, init) => {

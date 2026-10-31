@@ -28,6 +28,7 @@
  * Nothing here opens a person, and no request carries a key.
  */
 import express from 'express';
+import type {} from './signed-in-request.js';
 import type { Invite, SealedAccount } from '../core/types.js';
 import type { InvitationKind } from '../core/invitation.js';
 import {

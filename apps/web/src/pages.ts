@@ -3,7 +3,7 @@ import type { IconSvgElement } from '@hugeicons/react';
 import {
   Activity01Icon, Analytics01Icon, ArrowDataTransferHorizontalIcon, Building03Icon, CheckListIcon, CreditCardIcon, DocumentValidationIcon, File01Icon,
   Folder01Icon, GridViewIcon, Home01Icon, Invoice01Icon, Key01Icon, LanguageSquareIcon, MailSend01Icon, MoneyReceive01Icon, Notification01Icon,
-  PaintBoardIcon, PolicyIcon, Rocket01Icon, SafeIcon, Settings01Icon, ShieldUserIcon, UserAccountIcon, UserGroupIcon, UserIcon,
+  PaintBoardIcon, PolicyIcon, Rocket01Icon, SafeIcon, Settings01Icon, ShieldUserIcon, Store01Icon, UserAccountIcon, UserGroupIcon, UserIcon,
 } from '@hugeicons/core-free-icons';
 import type { useText } from 'vaults-ui';
 import type { CompanyRecords } from './adapters/company-records.js';
@@ -40,8 +40,9 @@ export type Text = ReturnType<typeof useText>;
 
 /**
  * Who may open a page. "everyone" is anyone, signed in or not; only the
- * landing page has it, since it signs a visitor in and shows a signed-in
- * person their companies. A visitor is anyone not signed in. A company page is
+ * landing page and the joining page have it: the landing page signs a visitor
+ * in and shows a signed-in person their companies, and an invitation link
+ * opens the joining page before and after signing in. A visitor is anyone not signed in. A company page is
  * for a person who signs for a company, in the company view; an employee page
  * is for anyone signed in, in the view of their own pay. A page for anyone
  * signed in is reached from both views.
@@ -109,6 +110,8 @@ export interface Page {
    * offered across the top.
    */
   focused?: { exit: (t: Text) => string };
+  /** The page an invitation link opens: its address's `#` carries the token the page needs, which the router holds in memory. */
+  holdsLinkToken?: true;
 }
 
 /**
@@ -121,8 +124,8 @@ export const PAGES = {
     shows: { screen: Landing },
   },
   join: {
-    path: '/join', name: (t) => t('page.join.name'), icon: MailSend01Icon, group: null, audience: 'visitor',
-    shows: { comingSoon: (t) => t('page.join.soon') },
+    path: '/join/:id', name: (t) => t('page.join.name'), icon: MailSend01Icon, group: null, audience: 'everyone', holdsLinkToken: true,
+    shows: { screen: onDemand(() => import('./screens/join.js'), 'Join') },
   },
   setup: {
     path: '/setup', name: (t) => t('page.setup.name'), words: (t) => t('page.setup.words'), icon: Rocket01Icon, group: null, audience: 'signed-in',
@@ -165,6 +168,10 @@ export const PAGES = {
   people: {
     path: '/people', name: (t) => t('page.people.name'), icon: UserGroupIcon, group: 'people', audience: 'company',
     shows: { screen: onDemand(() => import('./screens/people.js'), 'People') },
+  },
+  vendors: {
+    path: '/vendors', name: (t) => t('page.vendors.name'), icon: Store01Icon, group: 'people', audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/vendors.js'), 'Vendors') },
   },
   invitations: {
     path: '/invitations', name: (t) => t('page.invitations.name'), icon: MailSend01Icon, group: 'people', audience: 'company',

@@ -5,7 +5,7 @@
  * what its intent lists, every listed route is answered by the service and its router is mounted, and a listed route is
  * marked `sends` exactly when its handler hands a transaction to the chain.
  *
- * What it does not cover, on purpose. Only two actions name their calls in the action file; the other four reach the
+ * What it does not cover, on purpose. Only three actions name their calls in the action file; the others reach the
  * service through shared page code, so for them it checks only that every `/api/` path an action file names is listed
  * (the one path ending in a variable vault step is checked up to that step). Whether a handler hands a transaction to the
  * chain is read by the name of the helper it calls: a helper renamed to something this list does not hold makes a
@@ -140,9 +140,9 @@ describe('an action asks the service only for the routes its intent lists', () =
     const sites = [...code.matchAll(/\bctx\.call\(\s*['"`](GET|PUT|POST)['"`]\s*,\s*`([^`]*)`/gu)];
     if (sites.length > 0) CALLED.set(file, sites.map((m) => key(m[1]!, asked(m[2]!))));
   }
-  const NAMED_IN_THE_ACTION = ['claim-by-address', 'seat-invited'];
+  const NAMED_IN_THE_ACTION = ['claim-by-address', 'join-by-code', 'seat-invited'];
 
-  it('claims and seats by invitation ask for exactly the routes they list, no more and no fewer', () => {
+  it('claims, joins and seats by invitation ask for exactly the routes they list, no more and no fewer', () => {
     /* RED WHEN: a wallet action asks the service for a route its list does not name, or its list names one it never asks. */
     for (const name of NAMED_IN_THE_ACTION) {
       const listed = [...listedBy(name).keys()].sort();
@@ -154,7 +154,7 @@ describe('an action asks the service only for the routes its intent lists', () =
     }
   });
 
-  it('no other action names a call in its own file, since only these two are held to their file', () => {
+  it('no other action names a call in its own file, since only these are held to their file', () => {
     /* RED WHEN: an action starts asking the service by a call written in its own file and no check holds it to its list. */
     expect([...CALLED.keys()].filter((f) => !NAMED_IN_THE_ACTION.includes(f.replace(/\.tsx?$/u, ''))).sort()).toEqual([]);
   });

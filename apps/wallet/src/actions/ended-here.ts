@@ -11,6 +11,7 @@ import type { Words } from './definition.js';
  */
 export interface EndedHere {
   readonly ended: ActEnded;
+  /** Why a stopped action stopped, or what a done action gave its window to show. */
   readonly says: Words | null;
   /** A step was still running when the action ended: it is cut off from the keys, but may still be finishing. */
   readonly abandoned: boolean;

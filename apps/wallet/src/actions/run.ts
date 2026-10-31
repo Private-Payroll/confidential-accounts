@@ -1,4 +1,4 @@
-import { ACT_ENDED_SCHEMA, MOST_ACT_STEPS, readOutcome } from 'midnight-identity/profile/channel';
+import { ACT_ENDED_SCHEMA, ACT_REFUSED_CODE, ACT_REFUSED_KEY, MOST_ACT_STEPS, readOutcome } from 'midnight-identity/profile/channel';
 import type { ActEnded, ActStop, ActingChannel, CalledOver, KeptOver, RelayLabel, StepAt } from 'midnight-identity/profile/channel';
 import { intentShapeOf, routeOf, sendsIn, type ActRequest } from 'midnight-identity/profile/request';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
@@ -89,7 +89,8 @@ export interface RunOf {
 }
 
 /**
- * How the action ended, as sent to the page; the words for the screen when a check did not hold; and whether a step
+ * How the action ended, as sent to the page; the words for the screen when a check did not hold, or those a step
+ * gave it to show when the action is done, which are never sent; and whether a step
  * was still running when it ended. Such a step is cut off from the wallet's keys and hands nothing more over, but it
  * may still be finishing work it started, so the screen does not say its work is over.
  */
@@ -123,6 +124,9 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   let unconfirmed = 0;
   let current = 1;
   let says: Words | null = null;
+  /* The kind of refusal the step that refused named, if it named one. */
+  let refusedCode: string | undefined;
+  let shownAtTheEnd: Words | null = null;
   const told: Record<string, string | number> = {};
   /* Set once the action is ending: nothing is handed over after it. */
   let closed = false;
@@ -171,6 +175,14 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       return {};
     }
   };
+  /*
+   * What a stop for a refused check says of its refusal: the key of the words, and the code the step named, each only
+   * in the shape the page reads. Never the words' values, which can hold what was entered or read.
+   */
+  const refusalOf = (why: ActStop | null): { refused?: string; code?: string } => {
+    if (why !== 'check-failed' || says === null || !ACT_REFUSED_KEY.test(says.key)) return {};
+    return { refused: says.key, ...(refusedCode !== undefined && ACT_REFUSED_CODE.test(refusedCode) ? { code: refusedCode } : {}) };
+  };
   const finish = (why: ActStop | null, step: number): RunEnded => {
     if (ended !== null) return ended;
     closed = true;
@@ -180,6 +192,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       schema: ACT_ENDED_SCHEMA, nonce: request.nonce, intent: request.intent.name,
       ended: why === null ? 'done' as const : 'stopped' as const, step, steps: total, relayed, unconfirmed,
       ...(why === null ? {} : { why }),
+      ...refusalOf(why),
       ...((): { outcome?: Readonly<Record<string, string | number>> } => {
         const outcome = Object.keys(told).length === 0 ? undefined : readOutcome({ ...told }, request.intent.name);
         return outcome === undefined || outcome === null ? {} : { outcome };
@@ -198,10 +211,11 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       });
       channel.answer(sent);
     }
-    ended = Object.freeze({ ended: sent, says, abandoned: !stepSettled });
+    ended = Object.freeze({ ended: sent, says: sent.ended === 'done' ? shownAtTheEnd : says, abandoned: !stepSettled });
     log(sent.ended === 'done'
       ? `done, ${sent.steps} of ${sent.steps} steps (relayed ${relayed})`
-      : `stopped at step ${sent.step} of ${sent.steps}: ${sent.why ?? 'step-failed'} (relayed ${relayed}, unconfirmed ${unconfirmed})`);
+      : `stopped at step ${sent.step} of ${sent.steps}: ${sent.why ?? 'step-failed'} (relayed ${relayed}, unconfirmed ${unconfirmed})`
+        + (sent.refused === undefined ? '' : ` (refused: ${sent.refused}${sent.code === undefined ? '' : ` ${sent.code}`})`));
     return ended;
   };
 
@@ -286,6 +300,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     return mine;
   };
   const tell = (outcome: Readonly<Record<string, string | number>>): void => { Object.assign(told, outcome); };
+  const show = (words: Words): void => { shownAtTheEnd = words; };
 
   /* The person's saved keys, opened once on a step's first use, and let go when the action ends. */
   let opened: HeldKeyring | null = null;
@@ -403,7 +418,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       const ran: Promise<Raced> = Promise.resolve()
         .then(() => step.run({
           intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
-          call: (method, path, body) => callInTurn(at, method, path, body), tell,
+          call: (method, path, body) => callInTurn(at, method, path, body), tell, show,
         }))
         .then(() => ({ of: 'ran' as const }), (error: unknown) => {
           log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);
@@ -437,6 +452,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       if (raced.of === 'failed') {
         if (raced.error instanceof StepRefused) {
           says = raced.error.words;
+          refusedCode = raced.error.code;
           return finish('check-failed', current);
         }
         const why = raced.error instanceof ActionStopped ? raced.error.why : 'step-failed';

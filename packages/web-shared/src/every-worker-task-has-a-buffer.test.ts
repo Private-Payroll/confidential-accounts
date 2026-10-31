@@ -96,6 +96,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   'vouched-run-identity': { run: { root: 'ab'.repeat(32), payees: '1', opensAt: '1', closesAt: '2', required: '0', vault: 'cd'.repeat(32), head: '1a'.repeat(32), r: '2b'.repeat(32) } },
   'company-wide': {},
   'policy-bar-key': {},
+  'address-claim-refusal': { claim: { kind: 'unshielded', address: 'mn_addr_undeployed1', verifyingKey: 'ab'.repeat(32), signature: 'cd'.repeat(64) }, for: {} },
   'spending-policy-keys': { vault: 'ab'.repeat(32), asset: 'cd'.repeat(32), assetBlinding: 'ef'.repeat(32) },
   'start-standing': { vault: 'ab'.repeat(32), accountState: '', vaultState: '', now: '0' },
   'set-nonce-secret': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), run: {}, proposal: '00', opensAt: '0', closesAt: '1', chain: {} },
