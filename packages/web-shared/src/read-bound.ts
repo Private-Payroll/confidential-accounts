@@ -23,6 +23,15 @@ const statusOf = (v: unknown): string => {
 const errorOf = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
 
 /**
+ * **A STEP THE PAGE TOOK WHILE PREPARING AN ASK, WRITTEN THE SAME WAY.** One line on the same console report as the
+ * reads, so a report shows which step an ask stopped at between the reads it made. The caller writes only the step's
+ * name and an error's kind: never a key, a secret, an address or an amount.
+ */
+export function notePreparing(line: string): void {
+  if (import.meta.env?.DEV && readsAreNoted()) noteRead(line);
+}
+
+/**
  * A read that was given SERVICE_READ_BOUND_MS and did not answer. Only reads raise it: a send is never cut short.
  * Made wherever a read is bounded, so it is also where every read that ran out of time is written down.
  */

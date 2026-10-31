@@ -2,10 +2,11 @@
  * address; the invitation link only lets this wallet's owner find the company. This action opens the offer the
  * inviter signed itself, with the link's token, and takes the company's inbox key, the record and the address from
  * it; checks the address is one this wallet holds; signs a claim of it with that address's own key and its payee's
- * code for the company; seals both to the inbox key the offer names and hands them to the invitation. The keys
+ * code for the company; lists the company among those that pay the person in the saved keys; seals both to the
+ * inbox key the offer names and hands them to the invitation. The keys
  * never leave the wallet: the page is handed the sealed hand-over and nothing else, and every device that admits or
  * pays the person checks the claim's signature itself. A shielded address has no claim, since no device can check
- * a proof of one: a person added by one accepts with their code and the fingerprint read out. */
+ * a proof of one: a person added by one joins with their code and the fingerprint read out (`joinByCodeAction`). */
 import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
@@ -20,6 +21,7 @@ import { addressFor } from 'midnight-identity';
 import { addressOfVerifyingKey } from 'midnight-identity/profile/disclosure';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
 import { payslipKeyOfThisWallet } from '../screens/join-code-payslip-key.js';
+import { withPaidBy } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { StepRefused, type ActionDefinition, type ShownLine, type StepContext, type Words } from './definition.js';
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
@@ -64,7 +66,7 @@ interface Opened {
 /**
  * Opens the inviter-signed offer with the link's token, and believes it only for the company, record and address
  * the page named: a page cannot have the hand-over sealed to a key the offer does not name, or made for a record
- * the offer is not for.
+ * the offer is not for. An invitation already accepted is refused as used, so a claim is handed over once.
  */
 async function openedOffer(ctx: StepContext): Promise<Opened> {
   const f = ctx.intent.fields;
@@ -73,6 +75,7 @@ async function openedOffer(ctx: StepContext): Promise<Opened> {
   const token = (f['token'] ?? '') as Hex;
   if (label === null || account === null || !/^[0-9a-f]{64}$/u.test(token)) return refuse('not-a-company');
   const got = await ctx.call('GET', `/api/invites/${invitationIdOf(token)}/offer`);
+  if (got.status === 410 && (got.body as { refused?: unknown } | null)?.refused === 'used') return refuse('used');
   const sealed = (got.body as { offer?: Sealed } | null)?.offer;
   if (got.status !== 200 || sealed === undefined) return refuse('no-offer');
   let signed: ReturnType<typeof openOffer>;
@@ -89,8 +92,9 @@ async function openedOffer(ctx: StepContext): Promise<Opened> {
 
 /**
  * The claim action. It refuses an address this wallet does not hold, before the passkey and again when it runs, an
- * offer it cannot open or that names another company, record or address than the page did, and a hand-over the
- * invitation does not take; it never signs for an address that is not its own.
+ * offer it cannot open or that names another company, record or address than the page did, an ask that handed no
+ * saved keys to list the company in, and a hand-over the invitation does not take; it never signs for an address
+ * that is not its own.
  */
 export function claimByAddressAction(reach: ClaimReach): ActionDefinition {
   return Object.freeze({
@@ -113,6 +117,8 @@ export function claimByAddressAction(reach: ClaimReach): ActionDefinition {
       run: async (ctx) => {
         const refused = fieldsRefusal(ctx.intent.fields);
         if (refused !== null) throw new StepRefused(refused);
+        const saved = ctx.keyring;
+        if (saved === null) return refuse('no-saved-keys');
         const o = await openedOffer(ctx);
         const at = heldAt(ctx.held.identity, reach.network, o.address);
         if (at === null || at.kind !== 'unshielded') return refuse('not-held');
@@ -132,6 +138,9 @@ export function claimByAddressAction(reach: ClaimReach): ActionDefinition {
         } catch (e) {
           return refuse('not-signed', { says: String((e as Error)?.message ?? e) });
         }
+        /* Listed before the hand-over, which an invitation takes once: listed after, a keep that failed would leave
+         * the person joined and their wallet not knowing the company pays them, with nothing to run again. */
+        if (!(saved.open().read().paidBy ?? []).includes(company)) await saved.keep((k) => withPaidBy(k, company));
         const handover = sealToInbox({ schema: CLAIMED_HANDOVER_SCHEMA, code, claim }, o.inbox);
         const answer = await ctx.call('POST', `/api/invites/${invitationIdOf(o.token)}/accept-payee`,
           JSON.stringify({ acceptance: acceptanceProofOf(o.token), handover, kind: o.payee }));

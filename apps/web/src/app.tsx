@@ -3,7 +3,7 @@ import { Button, PageLoading, useText } from 'vaults-ui';
 import { OF, signOut as endSignIn, whoIsSignedIn, type Company, type Person, type WhoIsSignedIn } from './adapters/session.js';
 import { HOME, isBuilt, mayOpen, outerOf, PAGES, VIEWS, viewFor, type Page, type PageId, type Params, type View, type Viewer } from './pages.js';
 import type { Preferences } from './preferences.js';
-import { go, homeOf, RESOLVED, resolve, useAddress, CurrentPageProvider } from './router.js';
+import { forgetLink, go, holdLink, homeOf, RESOLVED, resolve, useAddress, CurrentPageProvider, type Resolved } from './router.js';
 import { SessionProvider, type Session } from './session.js';
 import { AccountFrame } from './shell/account-frame.js';
 import { ComingSoonPage } from './shell/coming-soon-page.js';
@@ -31,6 +31,8 @@ export function App({ preferences, choose, mac }: AppProps) {
   const [who, setWho] = useState<WhoIsSignedIn | typeof LOADING>(LOADING);
   const [chosenView, setChosenView] = useState<View>(VIEWS.company);
   const [company, setCompany] = useState<string | null>(null);
+  /* Before the first address is read: an invitation link's token is taken out of it and held, once per load. */
+  useState(() => { holdLink(window.location.pathname, window.location.hash); return null; });
   const address = useAddress();
 
   const ask = useCallback(async () => { setWho(await whoIsSignedIn()); }, []);
@@ -67,9 +69,9 @@ export function App({ preferences, choose, mac }: AppProps) {
     const signsNow = next.of === OF.signedIn && next.companies.length > 0;
     const after: Viewer = { signedIn: next.of === OF.signedIn, view: viewFor(signsNow, VIEWS.company), signs: signsNow };
     setChosenView(VIEWS.company);
-    const target: PageId = wanted !== null && mayOpen(PAGES[wanted], after) ? wanted : HOME.visitor;
+    const target = afterSignIn(resolve(window.location.pathname, after), wanted, after);
     wanted = null;
-    go(target, true);
+    if (target !== null) go(target, true);
   }, []);
 
   /* The one list of companies, asked for again after one is created; the new one is shown. */
@@ -80,6 +82,7 @@ export function App({ preferences, choose, mac }: AppProps) {
   }, []);
 
   const signOut = useCallback(async () => {
+    forgetLink();
     const r = await endSignIn();
     setWho({ of: OF.nobody });
     setCompany(null);
@@ -135,6 +138,17 @@ export function InFrame({ current, children }: { current: PageId | null; childre
   const focused = current === null ? undefined : (PAGES[current] as Page).focused;
   if (current !== null && focused !== undefined) return <FocusedFrame current={current} exit={focused.exit}>{children}</FocusedFrame>;
   return <Shell current={current}>{children}</Shell>;
+}
+
+/**
+ * Where a person goes once signed in: the page they asked for before, when
+ * they may open it; else nowhere, when the page they are on opens for them
+ * (an invitation link's joining page, say); else the landing page. Null means
+ * stay.
+ */
+export function afterSignIn(here: Resolved, wanted: PageId | null, after: Viewer): PageId | null {
+  if (wanted !== null && mayOpen(PAGES[wanted], after)) return wanted;
+  return here.of === RESOLVED.page ? null : HOME.visitor;
 }
 
 /** The page a visitor asked for before signing in, gone on to once they have. Kept for this tab only. */

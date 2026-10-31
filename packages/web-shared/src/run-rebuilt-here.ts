@@ -142,7 +142,6 @@ export interface SpendingPoliciesHere {
   readonly onChain: (keys: readonly string[]) => Promise<ReadonlyMap<string, string | null>>;
 }
 
-/** Why this device could not read a run from the company's records. Nothing is built without it. */
 /**
  * **THE COMPANY'S RUNS AS THE SERVICE LISTS THEM**, refused as withheld when
  * the list leaves out one the company's records name (`listedHere`), with any
@@ -224,6 +223,7 @@ export async function standingOnChainHere<P extends {
   });
 }
 
+/** Why this device could not read a run from the company's records. Nothing is built without it. */
 export class RunNotReadHere extends Error {
   constructor(why: string, options?: { cause?: unknown }) {
     super(`${why} Nothing was built or sent.`, options);
@@ -410,9 +410,9 @@ export async function payeesHere(records: Pick<CompanyRecordsHere, 'people' | 'v
   const read = await records.vendors();
   return {
     list,
-    people: read.vendors.map((v) => ({ person: v.vendor, handedOver: false })),
+    people: read.vendors.map((v) => ({ person: v.vendor, handedOver: v.handedOver === true })),
     notBelieved: read.notBelieved,
-    notPayable: read.notPayable.map((n) => ({ here: { person: n.here.vendor, handedOver: false }, why: n.why })),
+    notPayable: read.notPayable.map((n) => ({ here: { person: n.here.vendor, handedOver: n.here.handedOver === true }, why: n.why })),
   };
 }
 

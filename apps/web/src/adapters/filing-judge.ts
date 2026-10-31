@@ -7,7 +7,7 @@ import {
 } from 'vaults-web-shared/keyring.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { CompanyKeys } from '../../../../src/core/company-key.js';
-import type { RosterReads } from 'vaults-web-shared/roster-here.js';
+import { signersCheckNoted, type RosterReads } from 'vaults-web-shared/roster-here.js';
 import type { DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { treeKeptHere } from 'vaults-web-shared/tree-kept-here.js';
@@ -62,8 +62,8 @@ const judges = companyJudges({
 
 /** What a roster is read with on this page. */
 export const rosterReadsFor: (companyId: string, company: CompanyLabel, account: AccountAddress) => RosterReads = judges.rosterReadsFor;
-/** The company as this page believes it, its signers read from its roster record only. */
-export const openedHere: (sealed: SealedAccount) => Promise<OpenedAccount | null> = judges.openedHere;
+/** The company as this page believes it, its signers read from its roster record only; a refusal is written to the console report, then thrown, and a company with no account yet is said once as that. */
+export const openedHere = (sealed: SealedAccount): Promise<OpenedAccount | null> => signersCheckNoted(() => judges.openedHere(sealed), sealed.id);
 /** Whether a filing's signer is one the company's directory believes, as this page reads it. */
 export const filingJudgeFor: (
   companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,

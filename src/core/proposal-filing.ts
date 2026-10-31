@@ -126,11 +126,13 @@ export type GovernancePayloadBody =
    * (`invite`, what the proposal's payload is made from), the signed invitation naming their leaf, carried to their
    * own entry once seated, and the seat raising it as an inviter record (`inviter`), handed to the person's wallet on
    * its first records-key ask. An invitation made by address waits for nobody, so it names no request
-   * (`signerId`); its invitation names the proposal instead.
+   * (`signerId`); its invitation names the proposal instead, and the proposal carries the coin key of the address
+   * typed (`coinPublicKey`), sealed like the rest, so every signer's device can tell a wallet already seated or
+   * already invited from a new person: the commitment alone hides it under a fresh salt each time.
    */
   | {
     readonly signerId?: string; readonly invite: { readonly address: string; readonly scope: string };
-    readonly invited?: SignedSeatInvitation; readonly inviter?: Inviter;
+    readonly invited?: SignedSeatInvitation; readonly inviter?: Inviter; readonly coinPublicKey?: Hex;
   }
   | { readonly newThreshold: number }
   | { readonly vault: Hex; readonly newThreshold: number }
@@ -230,15 +232,20 @@ export const seatInviterIn = (
   proposals: readonly ProposalOpened[], accountId: string, viewingKey: KeysHeld, seat: string,
 ): Inviter | null => seatAddedIn(proposals, accountId, viewingKey, seat)?.inviter ?? null;
 
-/** What one opened proposal to add a seat carries: its request id, its invitation, and the seat that raised it. */
 /** A proposal as an add-signer one is read from: its company, its sealed body, and the key epoch it was sealed at. */
 type ProposalOpened = Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'keyEpoch'>>;
 
+/** What one opened proposal to add a seat carries: its request id, its invitation, the seat that raised it, its coin key, salt and words. */
 interface AddSignerOpened {
   readonly rec: ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>;
   readonly signerId: unknown;
   readonly invited?: SignedSeatInvitation;
   readonly inviter?: Inviter;
+  readonly coinPublicKey?: unknown;
+  /** The salt the proposal's identity is made with, as its sealed body holds it. */
+  readonly salt?: unknown;
+  /** The words the raising device wrote for it. */
+  readonly summary?: unknown;
 }
 
 /** Every proposal to add a seat the key of its own epoch opens, with what it carries; one that key does not open names nothing. */
@@ -247,12 +254,19 @@ const addSignersOpened = (
 ): AddSignerOpened[] => proposals.flatMap((rec) => {
   try {
     const key = keyOf(viewingKey, rec.keyEpoch);
-    const envelope = openRecord<{ kind: string; sealedPayload: Sealed }>('proposals', accountId, rec.sealed, key);
+    const envelope = openRecord<{ kind: string; summary?: unknown; sealedPayload: Sealed }>('proposals', accountId, rec.sealed, key);
     if (envelope.kind !== 'add-signer') return [];
-    const body = parseCanonical<{ signerId?: unknown; invited?: unknown; inviter?: unknown }>(unseal(envelope.sealedPayload, key));
+    const body = parseCanonical<{
+      signerId?: unknown; invited?: unknown; inviter?: unknown; coinPublicKey?: unknown; __change?: { salt?: unknown } | null;
+    }>(unseal(envelope.sealedPayload, key));
     const invited = seatInvitationRefusal(body.invited) === null ? body.invited as SignedSeatInvitation : undefined;
     const inviter = body.inviter as Inviter | undefined;
-    return [{ rec, signerId: body.signerId, ...(invited === undefined ? {} : { invited }), ...(typeof inviter === 'object' && inviter !== null ? { inviter } : {}) }];
+    return [{
+      rec, signerId: body.signerId, ...(invited === undefined ? {} : { invited }), ...(typeof inviter === 'object' && inviter !== null ? { inviter } : {}),
+      ...(body.coinPublicKey === undefined ? {} : { coinPublicKey: body.coinPublicKey }),
+      ...(typeof body.__change === 'object' && body.__change !== null && body.__change.salt !== undefined ? { salt: body.__change.salt } : {}),
+      ...(envelope.summary === undefined ? {} : { summary: envelope.summary }),
+    }];
   } catch {
     /* A record its epoch's key does not open, or whose epoch this device cannot reach, names no seat of this company's. */
     return [];
@@ -268,6 +282,75 @@ export const invitationsByAddressIn = (
 ): SignedSeatInvitation[] => addSignersOpened(proposals, accountId, viewingKey)
   .map((x) => x.invited)
   .filter((x): x is SignedSeatInvitation => x !== undefined && x.terms.leaf === undefined && x.terms.invite !== undefined && x.terms.proposal !== undefined);
+
+/** One address the company's proposals invite to a seat: the proposal's id on the chain, and the coin key it names. */
+export interface AddressInvited {
+  readonly chainId: string;
+  readonly coinPublicKey: Hex;
+}
+
+/**
+ * **EVERY ADDRESS A PROPOSAL OF THE COMPANY'S INVITES TO A SEAT, BY ITS COIN KEY**: one entry for each proposal to add
+ * a seat by address that the key of its own epoch opens, that the seat which raised it signed, that names its id on
+ * the chain, and whose coin key makes the very commitment its signed invitation names under the invitation's own
+ * salt (`inviteAddressOf`). A proposal whose coin key does not make that commitment names nobody: a seat could
+ * otherwise seal one wallet's key beside another's address. Whether each proposal is still open, or which seat it
+ * took, is the chain's to say, never this list's.
+ */
+export const addressesInvitedIn = (
+  proposals: readonly (ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>)[],
+  accountId: string, viewingKey: KeysHeld, inviteAddressOf: (coinPublicKey: Hex, salt: Hex) => Hex,
+): AddressInvited[] => addSignersOpened(proposals, accountId, viewingKey).flatMap((x) => {
+  const invite = x.invited?.terms.invite;
+  const coin = typeof x.coinPublicKey === 'string' ? x.coinPublicKey.toLowerCase() : null;
+  if (invite === undefined || x.invited?.terms.leaf !== undefined || coin === null || !HEX64.test(coin)) return [];
+  if (typeof x.rec.chainId !== 'string' || proposalFilingRefusal(accountId, x.rec) !== null) return [];
+  let made: string;
+  try {
+    made = String(inviteAddressOf(coin as Hex, invite.salt.toLowerCase() as Hex)).toLowerCase();
+  } catch {
+    return [];
+  }
+  return made === invite.address.toLowerCase() ? [{ chainId: x.rec.chainId.toLowerCase(), coinPublicKey: coin as Hex }] : [];
+});
+
+/** One proposal to add a seat by address, as a signer's device approves it or admits the seat it took. */
+export interface AddSignerByAddress {
+  /** The proposal's identity on the chain, which its invitation names. */
+  readonly chainId: Hex;
+  readonly summary: string;
+  readonly invited: SignedSeatInvitation;
+  /** The salt the proposal's identity is made with. */
+  readonly proposalSalt: Hex;
+  /** The coin key of the address the raising device typed, or null when the proposal carries none. */
+  readonly coinPublicKey: Hex | null;
+  readonly inviter?: Inviter;
+}
+
+/**
+ * **ONE PROPOSAL TO ADD A SEAT BY ADDRESS, OPENED HERE, OR NULL**: what the proposal `rec` carries when the key of its
+ * own epoch opens it, it is filed as a proposal of this company names (`proposalFilingRefusal`), and its invitation is
+ * one made by address, naming the proposal's own identity and no leaf. Nothing here is believed: whether the seat that
+ * signed the invitation may invite, and whether the coin key makes the commitment the invitation names, are the
+ * caller's to check, against the company's directory and the account's commitments.
+ */
+export const addSignerByAddressIn = (
+  rec: ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>, accountId: string, viewingKey: KeysHeld,
+): AddSignerByAddress | null => {
+  const [x] = addSignersOpened([rec], accountId, viewingKey);
+  const t = x?.invited?.terms;
+  if (x === undefined || t === undefined || t.invite === undefined || t.proposal === undefined || t.leaf !== undefined) return null;
+  if (typeof x.rec.chainId !== 'string' || proposalFilingRefusal(accountId, x.rec) !== null) return null;
+  const chainId = x.rec.chainId.toLowerCase();
+  if (t.proposal.toLowerCase() !== chainId) return null;
+  const salt = typeof x.salt === 'string' ? x.salt.toLowerCase() : '';
+  if (!HEX64.test(salt)) return null;
+  const coin = typeof x.coinPublicKey === 'string' && HEX64.test(x.coinPublicKey.toLowerCase()) ? x.coinPublicKey.toLowerCase() as Hex : null;
+  return {
+    chainId: chainId as Hex, summary: typeof x.summary === 'string' ? x.summary : '', invited: x.invited!, proposalSalt: salt as Hex,
+    coinPublicKey: coin, ...(x.inviter === undefined ? {} : { inviter: x.inviter }),
+  };
+};
 
 /**
  * The proposal adding `seat`: the one whose invitation names that leaf, read by

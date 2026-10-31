@@ -23,6 +23,7 @@ import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice, type PersonHere } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import {
   aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, fromAda, KEY, LABEL, newestPerson, ORIGIN, sendAs,
 } from './a-company-of-two-seats.test-support.js';
@@ -34,7 +35,7 @@ aCompanyOfTwoSeats();
 const NETWORK = theNetwork();
 const device = (over: Partial<PeopleDevice> = {}): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda,
-  directory: acmeDirectory, network: NETWORK, entered: ADA.entered, ...over,
+  directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal, entered: ADA.entered, ...over,
 });
 const walletOf = (n: number) => identityFromSecret(new Uint8Array(32).fill(n));
 const unshieldedOf = (n: number): string => addressOfVerifyingKey(

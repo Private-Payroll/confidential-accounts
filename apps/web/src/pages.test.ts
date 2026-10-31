@@ -65,13 +65,14 @@ describe('every page the design names is in the list', () => {
    * changes. The design's page map and left menus, section 2, written out.
    */
   it('has the design\'s pages, views and menu groups', () => {
+    expect(EVERY_PAGE.filter((p) => p.holdsLinkToken === true).map((p) => p.id)).toEqual(['join']);
     const shape = EVERY_PAGE.map((p) => [p.id, p.audience, p.group ?? outerOf(p) ?? '-']);
     expect(shape).toEqual([
-      ['landing', 'everyone', '-'], ['join', 'visitor', '-'], ['setup', 'signed-in', '-'],
+      ['landing', 'everyone', '-'], ['join', 'everyone', '-'], ['setup', 'signed-in', '-'],
       ['home', 'company', 'top'], ['proposals', 'company', 'top'],
       ['payroll', 'company', 'money'], ['run', 'company', 'payroll'], ['vaults', 'company', 'money'], ['vault', 'company', 'vaults'],
       ['transactions', 'company', 'money'], ['reports', 'company', 'money'],
-      ['people', 'company', 'people'], ['invitations', 'company', 'people'],
+      ['people', 'company', 'people'], ['vendors', 'company', 'people'], ['invitations', 'company', 'people'],
       ['disclosures', 'company', 'compliance'], ['policies', 'company', 'compliance'], ['activity', 'company', 'compliance'],
       ['apps', 'company', 'bottom'], ['settings', 'company', 'bottom'],
       ['settingsCompany', 'company', 'settings'], ['settingsSigners', 'company', 'settings'], ['settingsRoles', 'company', 'settings'],
@@ -87,7 +88,7 @@ describe('every page the design names is in the list', () => {
   /* RED WHEN: a page that is built is shown as Coming soon, or a page not built yet is shown as working. */
   it('builds the frame\'s pages and the company pages that read, and shows every other page Coming soon', () => {
     expect(EVERY_PAGE.filter(isBuilt).map((p) => p.id)).toEqual([
-      'landing', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'invitations', 'apps',
+      'landing', 'join', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'apps',
       'settings', 'settingsAppearance', 'settingsLanguage', 'paySettings', 'payAppearance', 'payLanguage',
     ]);
   });
@@ -99,7 +100,7 @@ describe('every page the design names is in the list', () => {
    */
   it('loads every company page and the setup wizard when it is first opened', async () => {
     const onDemand = EVERY_PAGE.filter((p) => isBuilt(p) && typeof (p.shows.screen as { load?: unknown }).load === 'function').map((p) => p.id);
-    expect(onDemand).toEqual(['setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'invitations', 'apps']);
+    expect(onDemand).toEqual(['join', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'apps']);
     for (const id of onDemand) {
       const screen = PAGES[id].shows as { screen: { load: () => Promise<unknown>; screenName: string } };
       expect(typeof await screen.screen.load(), id).toBe('function');
@@ -268,7 +269,7 @@ describe('no two pages share an address or a shortcut', () => {
    */
   it('opens a page that stands for a value only with one, and never by name', () => {
     const viewer = VIEWERS.signerInTheCompanyView!;
-    expect(EVERY_PAGE.filter((p) => !reachedByName(p)).map((p) => [p.id, valuesOf(p)])).toEqual([['run', ['run']], ['vault', ['vault']]]);
+    expect(EVERY_PAGE.filter((p) => !reachedByName(p)).map((p) => [p.id, valuesOf(p)])).toEqual([['join', ['id']], ['run', ['run']], ['vault', ['vault']]]);
     expect(resolve('/payroll/', viewer).of === RESOLVED.page ? (resolve('/payroll/', viewer) as { id: PageId }).id : null).toBe('payroll');
     expect(resolve('/payroll/r-1/more', viewer).of).toBe(RESOLVED.nothing);
     expect(() => addressOf('run')).toThrow();
@@ -323,9 +324,9 @@ describe('no page opens for a person who may not see it', () => {
   /*
    * RED WHEN: a company page opens for an employee, or for a person who signs
    * for a company while they look at their own pay; an employee page opens in
-   * the company view; a visitor's page (joining) opens for a signed-in person;
-   * the landing page does not open for somebody; or any page but a visitor's
-   * or everyone's opens for a visitor. Read for every page and every
+   * the company view; the landing page or the joining page does not open for
+   * somebody, signed in or not; or any page but a visitor's or everyone's
+   * opens for a visitor. Read for every page and every
    * kind of person, through the rule and through the router.
    */
   it.each(Object.keys(VIEWERS))('%s', (who) => {
@@ -359,7 +360,7 @@ describe('no page opens for a person who may not see it', () => {
   /* RED WHEN: an address in no entry opens a page. */
   it('opens nothing at an address the list does not name', () => {
     for (const viewer of Object.values(VIEWERS)) {
-      for (const at of ['/nowhere', '/settings/appearance/more', '/HOME', '/pay/settings/company', '/api/me']) {
+      for (const at of ['/nowhere', '/settings/appearance/more', '/HOME', '/pay/settings/company', '/api/me', '/join']) {
         expect(resolve(at, viewer).of, at).toBe(RESOLVED.nothing);
       }
     }

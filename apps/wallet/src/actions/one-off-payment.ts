@@ -20,6 +20,7 @@ import {
 import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere } from '../../../../packages/web-shared/src/one-off-here.js';
 import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
+import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
 import { oneOffToPayHere, type OneOffAsked, type OneOffRaiseDoors } from '../../../../packages/web-shared/src/one-off-raised-here.js';
 import { approveWith, chargeWith, raiseOneOffWith, spendingPolicyWith } from '../../../../packages/web-shared/src/one-off-in-the-wallet.js';
 import { ChargeNotYetSeen, type ChargeDoors, type ChargesInFlight } from '../../../../packages/web-shared/src/run-charged-here.js';
@@ -198,7 +199,9 @@ export function oneOffRecordsFor(r: CompanyReach, reach: Pick<OneOffPaymentReach
   return {
     directory,
     people: async () => { throw new Error('a one-off payment reads no person of the company.'); },
-    vendors: () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, { send: r.send, directory, network: reach.network ?? NETWORK }),
+    vendors: () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
+      send: r.send, directory, network: reach.network ?? NETWORK, claimRefusal: signedClaimRefusal,
+    }),
     state: async (id) => {
       const b = await served(companyWirePaths.one(r.accountId, 'state', id, 1)) as { filed?: unknown } | null;
       return b?.filed == null ? null : fromCompanyWire(b.filed, { company: r.accountId, kind: 'state', id, version: 1 }).sealed;

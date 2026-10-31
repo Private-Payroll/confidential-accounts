@@ -38,7 +38,7 @@ import {
   refuseLeavingAVaultShort, type ApproverRoster, type GovernanceChange as VaultCheckChange,
 } from '../../../src/core/vault-approvers.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
-import type { RetirementSignature, SealedAccount, SealedProposal } from '../../../src/core/types.js';
+import type { RetirementSignature, Role, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../../../src/core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 import { proposalsListedHere, signedStateHere, standingOnChainHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
@@ -46,8 +46,8 @@ import { believedFilerHere, NotOpenedOnThisDevice, openTheRoundHere, type Record
 import { raiseLegHere, raiseRetryHere, type LegRaiseDoors } from './run-raised-here.js';
 import type { SignedRunFiling } from '../../../src/core/run-filing.js';
 import {
-  paysCommitmentOf, proposalFilingRefusal, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody, type RetirementTerms,
-  type SignedProposalFiling,
+  addressesInvitedIn, addSignerByAddressIn, paysCommitmentOf, proposalFilingRefusal, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody,
+  type RetirementTerms, type SignedProposalFiling,
 } from '../../../src/core/proposal-filing.js';
 import { directoryChangeMessage, type DirectorySeat, type SignedChange } from '../../../src/midnight/seat-directory.js';
 import { COMPANY_RECORD_KINDS, WIRE_RECORDS } from '../../../src/midnight/sealed-record-wire.js';
@@ -57,7 +57,7 @@ import type { DirectoryChangesKeptStore } from './tree-kept-here.js';
 import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors } from './company-key-here.js';
 import { removalBoundaryRefusal } from './spending-policy-here.js';
 import {
-  admitSignerHere, invitationByAddressRefusal, rosterHere, seatingOf, waitingHere, type RosterDoors, type SeatingReads,
+  admitSignerHere, believedSeatingsUnder, invitationByAddressRefusal, rosterHere, sameSignedInvitation, seatingOf, waitingHere, type RosterDoors, type RosterReads, type SeatingReads,
 } from './roster-here.js';
 import { signSeatInvitation, type Inviter, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import {
@@ -323,13 +323,13 @@ export async function sendRaiseFromDevice(
   return buildAndSend(doors, order, input.viewingKey, (tx) => service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) }));
 }
 
-/** Builds and proves what the service wrote down, hands it to `send`, and waits for the chain to hold it. */
 /**
  * The filing key of the seat this device files under, made from the signing secret it holds: sent with every relay so
  * the service pays for that seat, among every entry the person filed. It is a public key; no secret leaves the device.
  */
 const filerHere = (doors: Pick<GovernedCallDoors, 'material'>): string => signingPublicKeyOf(doors.material.signingSecret as Hex);
 
+/** Builds and proves what the service wrote down, hands it to `send`, and waits for the chain to hold it. */
 async function buildAndSend(
   doors: GovernedCallDoors, order: RaiseOrderOnTheWire, viewingKey: KeysHeld,
   send: (tx: string) => Promise<RoundOnThePage>,
@@ -761,7 +761,6 @@ async function approveHere(
   return now;
 }
 
-/** A proposal withdrawn while this device's approval of it was on its way: sent, and closed, so nothing is left to do. */
 /**
  * Hands this seat's signature over a removal's retirement to the service on its own, through the route that takes one,
  * as a raise that counted this seat's approval leaves no approval to carry it.
@@ -774,6 +773,7 @@ const retirementHanded = async (doors: GovernedCallDoors, round: RoundOnThePage,
   await doors.service.retire(round.id, { signature, filer: filerHere(doors) });
 };
 
+/** A proposal withdrawn while this device's approval of it was on its way: sent, and closed, so nothing is left to do. */
 export class WithdrawnWhileSent extends Error {
   readonly nothingWasSent = false;
   constructor() {
@@ -943,14 +943,14 @@ async function liveRoundHere(
   return null;
 }
 
+/** The account's own name for no asset, which a governance proposal's raise names: nothing moves. */
+const NO_ASSET_NAMED = { assetId: assetIdBytes(NO_ASSET) };
+
 /**
  * A proposal's raise half for a governance change: no asset, nothing moved, the
  * salt its identity is made with, and the account's asset blinding from the
  * company state its founding seat signed, which the raise commits its change with.
  */
-/** The account's own name for no asset, which a governance proposal's raise names: nothing moves. */
-const NO_ASSET_NAMED = { assetId: assetIdBytes(NO_ASSET) };
-
 const governanceHalf = (salt: string, opened: OpenedRound, assetBlinding: string) => ({
   assetId: opened.half?.assetId ?? hexOfBytes(NO_ASSET_NAMED.assetId),
   assetBlinding,
@@ -1009,7 +1009,9 @@ async function refuseASecondSignerBeforeTheFounding(doors: GovernanceDoors): Pro
  * carried out once the chain counts the approvals it needs. A proposal still
  * short of approvals is left for the others to approve from their own devices,
  * and said so. `before` is the check this device makes before it approves or
- * carries out the change; it refuses by throwing.
+ * carries out the change; it refuses by throwing. A device asked only to
+ * approve (`approveOnly`) writes nothing down and raises nothing, and refuses
+ * an approval the chain already counts for its seat (`ApprovalNotOwed`).
  */
 async function governOnDevice(
   doors: GovernanceDoors,
@@ -1030,6 +1032,11 @@ async function governOnDevice(
     highestBand?: number;
     /** For a change whose carrying out reads more than the proposal holds: the order, made from the proposal opened. */
     carry?: (opened: OpenedRound) => GovernedCallOrder;
+    /**
+     * For a device that only approves: the identity on the chain of the one proposal it may approve. It then raises
+     * nothing, and refuses with nothing sent unless the company holds exactly that proposal, raised on the chain.
+     */
+    approveOnly?: string;
   },
 ): Promise<GovernedOutcome> {
   const { service } = doors;
@@ -1068,6 +1075,11 @@ async function governOnDevice(
   let live: { round: RoundOnThePage; opened: OpenedRound } | null = found;
   /* Whether this attempt sent the raise: a raise counts as its raiser's approval on the chain. */
   let raisedHere = false;
+  /* A device that only approves sends no raise: not a new proposal, and not one the company holds that the chain has not raised. */
+  if (input.approveOnly !== undefined && (live === null || !live.round.raisedAt
+    || String(live.round.chainId).toLowerCase() !== input.approveOnly.toLowerCase())) {
+    throw new NothingToApprove();
+  }
   if (live === null) {
     if (!service.file) throw new Error('This page cannot write proposals down. Reload the page to get the current version. Nothing was sent.');
     await check();
@@ -1143,6 +1155,8 @@ async function governOnDevice(
       round = await approveHere(doors, { round, viewingKey: input.viewingKey, of, ...(retirement === undefined ? {} : { retirement }) }, true);
     } catch (e) {
       if (!approvedAlready(e)) throw e;
+      /* Asked only to approve, an approval the chain already counts is refused as owed nothing, never told as sent. */
+      if (input.approveOnly !== undefined) throw new ApprovalNotOwed('counted');
       /* This seat's raise, sent on an earlier attempt, was its approval: its retirement signature goes on its own. */
       if (retirement !== undefined) await retirementHanded(doors, round, retirement);
       round = await standingHere(doors, round.id);
@@ -1320,6 +1334,31 @@ const invitationForTheLeaf = (
   invite: { address: invite.address.toLowerCase() as Hex, salt: invite.salt.toLowerCase() as Hex, scope: invite.scope.toLowerCase() as Hex },
 }, signingSecret);
 
+/** A device asked only to approve found no proposal raised on the chain to approve: nothing was sent. */
+export class NothingToApprove extends Error {
+  readonly nothingWasSent = true;
+  constructor() {
+    super('The company holds no proposal raised on the chain for this change that this device was asked to approve, so nothing '
+      + 'was approved. Nothing was sent. Reload the page: it may have been withdrawn, or not raised yet.');
+    this.name = 'NothingToApprove';
+  }
+}
+
+/**
+ * A device asked only to approve found nothing left for this seat to approve, and sent nothing: `counted`, the chain
+ * already counts this seat's approval (a raise counts its raiser's); `carried-out`, the chain closed the proposal by
+ * carrying it out, so for a seat offered by address the invitee has taken the seat and Finish adding is what is owed.
+ */
+export class ApprovalNotOwed extends Error {
+  readonly nothingWasSent = true;
+  constructor(readonly why: 'counted' | 'carried-out') {
+    super(why === 'counted'
+      ? 'The network already counts your approval of this proposal, so nothing was approved again. Nothing was sent.'
+      : 'The network has already carried this proposal out, so there is nothing left to approve. Nothing was sent.');
+    this.name = 'ApprovalNotOwed';
+  }
+}
+
 /** The address and rights an invitation raises are not the ones a seat that may invite signed. Nothing was raised. */
 export class InvitationNotBound extends Error {
   constructor(why: string) {
@@ -1328,13 +1367,72 @@ export class InvitationNotBound extends Error {
   }
 }
 
-/** An invitation by address as its raise needs it: the signed invitation, and the salt its proposal is raised under. */
+/**
+ * An invitation by address as its raise needs it: the signed invitation, the salt its proposal is raised under, and
+ * the coin key of the address typed. A device that raises the proposal must give the coin key, which the proposal
+ * carries sealed; a device that approves a proposal already raised gives the one the proposal carries, checked again
+ * against the commitment, or none.
+ */
 export interface SeatInvitationToRaise {
   readonly invited: SignedSeatInvitation;
   /** The salt the proposal's identity was made with: the one the invitation's `proposal` names, and the invitee's wallet carries. */
   readonly proposalSalt: string;
   readonly name: string;
   readonly inviter?: Inviter;
+  readonly coinPublicKey?: Hex;
+}
+
+/** What makes the commitment to an address from its coin key and a salt, as the account makes it. */
+type InviteAddressOf = (coinPublicKey: Hex, salt: Hex) => Hex;
+
+/**
+ * **WHY A WALLET MAY NOT BE INVITED TO A SEAT HERE AGAIN, OR NULL**: the coin key of the address typed is named by
+ * a proposal of the company's to add a seat (`addressesInvitedIn`, each bound to its own commitment, read from the
+ * list the service gives only once every proposal the company's anchored records name is in it, `listedHere`) whose seat the
+ * chain holds (`invitedSeats`, then the account's holders), or whose proposal the chain holds open, approved or not
+ * (`roundsOnChain`). One wallet seated twice approves twice, and the approving devices see only a commitment under a
+ * fresh salt, so the refusal is made here, from the company's own proposals and the chain. A proposal the chain
+ * closed without a seat, never held, or whose seat has since left the account, holds the address no more. A coin key
+ * the roster this device believes records for a seat (`seated`, read from the roster here) is held too, whatever the
+ * proposals served say. `except` is the proposal this device is raising again or approving. Refuses to say yes when
+ * this device cannot read the chain for it.
+ * The words returned complete a sentence that begins "this invitation was not made:".
+ */
+export async function addressSeatedOrInvitedRefusal(
+  reads: {
+    readonly proposals?: () => Promise<readonly SealedProposal[]>;
+    readonly directory?: CompanyRecordsHere['directory'];
+    readonly roundsOnChain?: CompanyRecordsHere['roundsOnChain'];
+    readonly invitedSeats?: RosterReads['invitedSeats'];
+    readonly holders: RosterReads['holders'];
+    /** The coin keys the roster this device believes records for its seats. */
+    readonly seated?: () => Promise<readonly string[]>;
+  },
+  accountId: string, viewingKey: KeysHeld, inviteAddressOf: InviteAddressOf, coinPublicKey: Hex, except?: string,
+): Promise<string | null> {
+  const cannot = 'this device cannot read which wallets the company\'s proposals have seated or invited, so it invites nobody '
+    + 'by address: reload the page and try again';
+  if (reads.proposals === undefined || reads.directory === undefined || reads.roundsOnChain === undefined || reads.invitedSeats === undefined) {
+    return cannot;
+  }
+  const coin = coinPublicKey.toLowerCase();
+  const twice = 'the wallet at this address already holds a seat on this company, and one wallet holds one seat, or it would '
+    + 'approve twice';
+  /* A proposal the company's records name and the service left out is refused here (`listedHere`), never read as none. */
+  const listed = listedHere(await reads.directory(kindAsked('proposal')), 'proposal', await reads.proposals(), 'proposal');
+  if (reads.seated !== undefined && (await reads.seated()).some((x) => x.toLowerCase() === coin)) return twice;
+  const same = addressesInvitedIn([...listed, ...listed.setAside], accountId, viewingKey, inviteAddressOf)
+    .filter((x) => x.coinPublicKey === coin && x.chainId !== except?.toLowerCase())
+    .map((x) => x.chainId);
+  if (same.length === 0) return null;
+  const [seated, rounds, holders] = await Promise.all([reads.invitedSeats(same), reads.roundsOnChain(same), reads.holders()]);
+  const onTheChain = new Set(holders.seats.map((x) => x.toLowerCase()));
+  if (same.some((id) => { const leaf = seated[id]; return typeof leaf === 'string' && onTheChain.has(leaf.toLowerCase()); })) return twice;
+  if (same.some((id) => (seated[id] ?? null) === null && (rounds[id]?.held === 'open' || rounds[id]?.held === 'cleared'))) {
+    return 'the wallet at this address is already invited to a seat on this company by a proposal still open: withdraw that '
+      + 'invitation first, or let it be taken';
+  }
+  return null;
 }
 
 /**
@@ -1343,16 +1441,28 @@ export interface SeatInvitationToRaise {
  * checks it was signed by a seated signer who may invite, and that the proposal it raises or approves is exactly that
  * one, under that salt. Nothing waits for an acceptance and no fingerprint is read: the invitee's own wallet takes the
  * seat (`seatInvited`), proving it holds the address, once the approvals reach the seat bar, and this device never
- * carries it out. Called again from another seat's device, it approves the same proposal.
+ * carries it out. Called again from another seat's device, it approves the same proposal; asked only to approve
+ * (`approveOnly`, the proposal's identity on the chain), it raises nothing.
  */
 export async function raiseSeatInvitationOnDevice(
   doors: GovernanceDoors & { readonly roster: RosterDoors }, input: { readonly viewingKey: KeysHeld } & SeatInvitationToRaise,
+  inviteAddressOf?: InviteAddressOf, o: { readonly approveOnly?: string } = {},
 ): Promise<GovernedOutcome> {
   const t = input.invited.terms;
   if (t.invite === undefined || t.proposal === undefined || t.leaf !== undefined) {
     throw new InvitationNotBound('This invitation is not one made by address, naming the proposal raised for it, so nothing was raised.');
   }
   const invite = t.invite;
+  const coin = input.coinPublicKey?.toLowerCase() as Hex | undefined;
+  if (coin !== undefined) {
+    if (inviteAddressOf === undefined) {
+      throw new InvitationNotBound('This device cannot check the address this invitation commits to, so nothing was raised. Reload the page.');
+    }
+    if (String(inviteAddressOf(coin, invite.salt.toLowerCase() as Hex)).toLowerCase() !== invite.address.toLowerCase()) {
+      throw new InvitationNotBound('The coin key given is not the one the invitation\'s address commits to, so nothing was raised. '
+        + 'Invite the person again.');
+    }
+  }
   const seats = seatingOf(await rosterHere(doors.roster), doors.roster.reads).seats;
   const refused = invitationByAddressRefusal(doors.roster.accountId, input.invited, invite, seats);
   if (refused !== null) throw new InvitationNotBound(refused);
@@ -1373,14 +1483,112 @@ export async function raiseSeatInvitationOnDevice(
       invite: { address: change.address, scope: change.scope },
       invited: input.invited,
       ...(input.inviter === undefined ? {} : { inviter: inviterRecordOf(input.inviter) }),
+      ...(coin === undefined ? {} : { coinPublicKey: coin }),
     },
+    /* Only a raise reaches this with no round opened: a proposal raised without the coin key hides a wallet invited twice. */
+    before: async (opened) => {
+      if (opened === undefined && coin === undefined) {
+        throw new InvitationNotBound('This invitation is raised without the coin key of the address it invites, so nothing was raised. '
+          + 'Invite the person again from the device that typed the address.');
+      }
+    },
+    ...(o.approveOnly === undefined ? {} : { approveOnly: o.approveOnly }),
   });
+}
+
+/** The coin keys the roster this device believes records for the seats it holds active. */
+const coinKeysSeatedHere = (roster: RosterDoors) => async (): Promise<string[]> =>
+  (await rosterHere(roster)).account.signers.filter((x) => x.status === 'active' && typeof x.coinPublicKey === 'string')
+    .map((x) => x.coinPublicKey!.toLowerCase());
+
+/** What the person approving a seat by address was shown before they approved: the proposal, and what it invites. */
+export interface SeatInvitationShown {
+  /** The proposal's name in the company's records. */
+  readonly proposal: string;
+  readonly name: string;
+  /** The role the seat is invited with, as the proposal's signed invitation names it: what the new seat may do. */
+  readonly role: Role;
+  /** The commitment to the address invited, as the proposal's invitation names it. */
+  readonly address: string;
+  readonly scope: string;
+  readonly coinPublicKey: string;
+}
+
+/**
+ * **A SEAT OFFERED BY ADDRESS, APPROVED FROM ANOTHER SEAT'S DEVICE, EXACTLY AS IT WAS SHOWN.** The proposal is opened
+ * here from the company's records (`addSignerByAddressIn`) and approved only when it invites the very name, role,
+ * commitment, rights and coin key shown, the coin key makes that commitment under the invitation's salt, and the wallet behind it
+ * holds no seat here and no other open invitation (`addressSeatedOrInvitedRefusal`, with the coin keys the roster
+ * this device believes records), and no other proposal this device believes under the same id on the network carries
+ * another invitation (`believedSeatingsUnder`), which the admission would refuse after the seat is taken. It is then approved as every seat offered by address is
+ * (`raiseSeatInvitationOnDevice`), which raises nothing: unless the chain already holds that proposal raised, nothing
+ * is sent. A proposal the chain has already carried out is refused as owed nothing (`ApprovalNotOwed`), and so is
+ * an approval the chain already counts for this seat. Every refusal comes before anything is built or sent.
+ */
+export async function approveSeatInvitationOnDevice(
+  doors: GovernanceDoors & { readonly roster: RosterDoors }, input: { readonly viewingKey: KeysHeld; readonly shown: SeatInvitationShown },
+  inviteAddressOf: InviteAddressOf,
+): Promise<GovernedOutcome> {
+  const low = (x: unknown): string => String(x).toLowerCase();
+  const { shown } = input;
+  if (!doors.service.sealedProposals) {
+    throw new NotOpenedOnThisDevice('This page cannot read the company\'s proposals, so it cannot approve this one. Reload the page '
+      + 'to get the current version. Nothing was sent.');
+  }
+  const rec = (await doors.service.sealedProposals(doors.accountId) as readonly SealedProposal[]).find((p) => p.id === shown.proposal);
+  const body = rec === undefined ? null : addSignerByAddressIn(rec, doors.accountId, input.viewingKey);
+  if (body === null) {
+    throw new InvitationNotBound('The company holds no proposal to add a seat by address under that name that this device can open, '
+      + 'so nothing was approved. Nothing was sent. Reload the page.');
+  }
+  const invite = body.invited.terms.invite!;
+  if (body.invited.terms.name !== shown.name || low(invite.address) !== low(shown.address) || low(invite.scope) !== low(shown.scope)
+    || body.coinPublicKey === null || body.coinPublicKey !== low(shown.coinPublicKey)) {
+    throw new InvitationNotBound('The proposal the company holds under that name invites another person, address or rights than the '
+      + 'ones shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.');
+  }
+  if (body.invited.terms.role !== shown.role) {
+    throw new InvitationNotBound(`The proposal the company holds under that name invites this person as ${body.invited.terms.role}, `
+      + `not as ${String(shown.role)} as shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.`);
+  }
+  if (low(inviteAddressOf(body.coinPublicKey, low(invite.salt) as Hex)) !== low(invite.address)) {
+    throw new InvitationNotBound('The coin key this proposal carries is not the one its invitation\'s address commits to, so nothing '
+      + 'was approved. Nothing was sent. Do not approve it.');
+  }
+  /* Where the proposal stands is read from the chain, never the service's status: closed by being carried out, it owes no approval. */
+  if (doors.records?.roundsOnChain !== undefined) {
+    const [standing] = await standingOnChainHere(doors.records, [{ id: rec!.id, chainId: body.chainId, status: rec!.status }]);
+    if (standing?.status === 'executed') throw new ApprovalNotOwed('carried-out');
+  }
+  const held = await addressSeatedOrInvitedRefusal({
+    ...(doors.records?.proposals === undefined ? {} : { proposals: doors.records.proposals }),
+    ...(doors.records === undefined ? {} : { directory: doors.records.directory }),
+    ...(doors.records?.roundsOnChain === undefined ? {} : { roundsOnChain: doors.records.roundsOnChain }),
+    ...(doors.roster.reads.invitedSeats === undefined ? {} : { invitedSeats: doors.roster.reads.invitedSeats }),
+    holders: doors.roster.reads.holders,
+    seated: coinKeysSeatedHere(doors.roster),
+  }, doors.accountId, input.viewingKey, inviteAddressOf, body.coinPublicKey, body.chainId);
+  if (held !== null) throw new InvitationNotBound(`This proposal was not approved, and nothing was sent: ${held}.`);
+  const seats = seatingOf(await rosterHere(doors.roster), doors.roster.reads).seats;
+  const beside = believedSeatingsUnder(await doors.records!.directory(kindAsked('proposal')), await doors.records!.proposals!(),
+    doors.accountId, input.viewingKey, body.chainId, seats);
+  if (beside.some((x) => !sameSignedInvitation(x.invited, body.invited))) {
+    throw new InvitationNotBound('Another proposal the company holds under the same id on the network carries another invitation, '
+      + 'filed and signed by a seat that may invite, so the person could take the seat and never be admitted. Nothing was approved. '
+      + 'Nothing was sent. Do not approve it: ask the seats that raised them to withdraw both, and invite the person again.');
+  }
+  return raiseSeatInvitationOnDevice(doors, {
+    viewingKey: input.viewingKey, invited: body.invited, proposalSalt: body.proposalSalt, name: body.invited.terms.name,
+    coinPublicKey: body.coinPublicKey, ...(body.inviter === undefined ? {} : { inviter: body.inviter }),
+  }, inviteAddressOf, { approveOnly: body.chainId });
 }
 
 /**
  * The doors `inviteHere` raises a seat offered by address through, from this seat's governance doors: where this
- * device keeps the invitation before it is raised (`keep`, the page's own keeping), the proposal's identity as this
- * device's builder makes it, and the raise itself (`raiseSeatInvitationOnDevice`).
+ * device keeps the invitation before it is raised (`keep`), whether the address's wallet is already seated or invited
+ * here (`addressSeatedOrInvitedRefusal`, from the company's proposals and this device's own read of the chain), the
+ * proposal's identity as this device's builder makes it, and the raise itself (`raiseSeatInvitationOnDevice`), which
+ * checks the coin key against the commitment before the proposal carries it.
  */
 export const signerByAddressDoorsOf = (
   doors: GovernanceDoors & { readonly roster: RosterDoors }, viewingKey: KeysHeld,
@@ -1389,13 +1597,21 @@ export const signerByAddressDoorsOf = (
   keep,
   network,
   commitments,
+  held: (coinPublicKey, except) => addressSeatedOrInvitedRefusal({
+    ...(doors.records?.proposals === undefined ? {} : { proposals: doors.records.proposals }),
+    ...(doors.records === undefined ? {} : { directory: doors.records.directory }),
+    ...(doors.records?.roundsOnChain === undefined ? {} : { roundsOnChain: doors.records.roundsOnChain }),
+    ...(doors.roster.reads.invitedSeats === undefined ? {} : { invitedSeats: doors.roster.reads.invitedSeats }),
+    holders: doors.roster.reads.holders,
+    seated: coinKeysSeatedHere(doors.roster),
+  }, doors.accountId, viewingKey, (c, salt) => commitments.inviteAddressOf(c, salt), coinPublicKey, except),
   identity: async (change, salt) => {
     if (doors.builder.proposalIdentity === undefined) {
       throw new Error('This page cannot work out a proposal\'s identity. Reload the page to get the current version. Nothing was sent.');
     }
     return doors.builder.proposalIdentity(change, salt);
   },
-  raise: (input) => raiseSeatInvitationOnDevice(doors, { viewingKey, ...input }),
+  raise: (input) => raiseSeatInvitationOnDevice(doors, { viewingKey, ...input }, (c, salt) => commitments.inviteAddressOf(c, salt)),
 });
 
 /**
@@ -2337,3 +2553,10 @@ export async function removeSignerOnDevice(
       signed: e.signed, needed: e.needed };
   }
 }
+
+/**
+ * A door's fields with the company's keys added under the name the shared code reads them by. The keys are the
+ * company's, opened by a seat, never a wallet's own key; the wallet builds every door that carries them through this,
+ * so no wallet source names the field.
+ */
+export const withCompanyKeys = <T extends object>(door: T, keys: KeysHeld): T & { readonly viewingKey: KeysHeld } => ({ ...door, viewingKey: keys });

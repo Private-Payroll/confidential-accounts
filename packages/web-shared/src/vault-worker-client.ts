@@ -40,6 +40,7 @@ import type {
 } from './governed-call-builder.js';
 import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
+import type { AddressClaimFor, UnshieldedAddressClaim } from 'midnight-identity/profile/address-claim';
 import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 
 /** An invitee's call taking an invited seat, as a wallet asks its worker for it: the chain's state as base64. */
@@ -73,10 +74,10 @@ export type CreatingTransactionAnswer =
   | { readonly state: 'found'; readonly createdIn: string }
   | { readonly state: 'refused' }
   | { readonly state: 'unreadable' };
-/** One block's view of the company account, for a raise or an approval to be built on. Base64 of the bytes. */
 /** Whether the chain holds an account, the newest block's time (ms) as the indexer names it, and the newest time to live (ms) of the transactions asked about, or null when one could not be read. */
 export interface AccountPresenceOnTheWire { held: boolean; blockHeight: number; blockTime: number; ttl: number | null }
 
+/** One block's view of the company account, for a raise or an approval to be built on. Base64 of the bytes. */
 export interface AccountCallChainOnTheWire {
   readonly blockHash: string;
   readonly accountState: string;
@@ -182,6 +183,11 @@ export type VaultAsk =
   }
   | { id: number; network: string; ask: 'company-wide' }
   | { id: number; network: string; ask: 'policy-bar-key' }
+  /*
+   * **A WALLET'S SIGNED CLAIM OF AN UNSHIELDED ADDRESS, CHECKED WITH THE
+   * LEDGER** (`signedClaimRefusal`), for a page whose own code loads none.
+   */
+  | { id: number; network: string; ask: 'address-claim-refusal'; claim: UnshieldedAddressClaim; for: AddressClaimFor }
   | {
     id: number; network: string; ask: 'spending-policy-keys'; vault: string; asset: string; assetBlinding: string;
     policy?: PolicyOpeningOnTheWire; total?: string;
@@ -285,6 +291,7 @@ export type VaultAnswer =
   | Answered<'company-wide', { value: string }>
   | Answered<'spending-policy-keys', { keys: SpendingPolicyKeys }>
   | Answered<'policy-bar-key', { value: string }>
+  | Answered<'address-claim-refusal', { refusal: string | null }>
   | Answered<'start-standing', { standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>
   | Answered<'set-nonce-secret', { tx: string }>
   | Answered<'write-secret-copy', { tx: string }>
@@ -293,7 +300,6 @@ export type VaultAnswer =
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
 type VaultRequest = Without<VaultAsk>;
 
-/** What the page needs from wherever vault transactions are built. */
 /**
  * **A VAULT AS THE CHAIN HOLDS IT, AS THIS DEVICE READ IT.** `onChain: false`
  * when the indexer holds no state for the address. `notes` and `everCreated`
@@ -369,6 +375,7 @@ interface StepOnTheWire {
   readonly merge?: boolean;
 }
 
+/** What the page needs from wherever vault transactions are built. */
 export interface VaultBuilderClient {
   /**
    * The proofs the worker is working out now, each with how long it has run,
@@ -535,6 +542,12 @@ export interface VaultBuilderClient {
   }): Promise<SpendingPolicyKeys>;
   /** The key the account keeps the approvals any change to a spending policy needs under, made with the account's own function. */
   policyBarKey(): Promise<string>;
+  /**
+   * Why a wallet's claim of an unshielded address does not prove it for this company, record and payslip key, or null
+   * when it does, checked with the ledger in the worker (`signedClaimRefusal`). Absent from a builder that cannot check
+   * one, and a read that needs it then fails rather than skip the check.
+   */
+  addressClaimRefusal?(claim: UnshieldedAddressClaim, f: AddressClaimFor): Promise<string | null>;
   /** A raise or an approval on the company account, built and proved with this signer's own material. */
   governedCall(input: {
     account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire;
@@ -971,7 +984,6 @@ export function vaultBuilderOnWorkers(start: () => VaultWorkerLike, network: str
   return clientFrom(ask, proofsInProgress);
 }
 
-/** The page's client, once its first worker has said it is ready; a later worker is started when an ask needs one. */
 /**
  * The name the person's wallet gives its own vault builder's worker: a worker
  * of that name is started by the wallet, with the wallet's own keys and
@@ -979,6 +991,7 @@ export function vaultBuilderOnWorkers(start: () => VaultWorkerLike, network: str
  */
 export const WALLET_VAULT_BUILDER = 'wallet-vault-builder';
 
+/** The page's client, once its first worker has said it is ready; a later worker is started when an ask needs one. */
 export function startVaultBuilder(network: string): Promise<VaultBuilderClient> {
   const start = () => new Worker(new URL('./vault-worker-entry.js', import.meta.url), { type: 'module', name: 'vault-builder' }) as unknown as VaultWorkerLike;
   const { ask, proofsInProgress, opened } = askOver(reachOver(start), network, Date.now);
@@ -1087,6 +1100,7 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     companyWide: async () => (await ask({ ask: 'company-wide' })).value,
     spendingPolicyKeys: async (input) => (await ask({ ask: 'spending-policy-keys', ...input })).keys,
     policyBarKey: async () => (await ask({ ask: 'policy-bar-key' })).value,
+    addressClaimRefusal: async (claim, f) => (await ask({ ask: 'address-claim-refusal', claim, for: f })).refusal,
     startStanding: async (input) => {
       const a = await ask({ ask: 'start-standing', ...input });
       return { standing: a.standing, ...(a.run === undefined ? {} : { run: a.run }) };

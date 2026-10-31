@@ -42,7 +42,7 @@ vi.mock('../../../../packages/web-shared/src/roster-here.js', async (real) => ({
 }));
 
 const { companyReachFor } = await import('./company-reach.js');
-const { createVaultAction, readersFrom, recordsKeepingTheSecret, vaultDoorsFor } = await import('./create-vault.js');
+const { createVaultAction, namedCode, readersFrom, startRefusalOf, recordsKeepingTheSecret, vaultDoorsFor } = await import('./create-vault.js');
 
 const secret = newSecret();
 const identity = identityFromSecret(secret);
@@ -151,6 +151,16 @@ describe('the vault\'s secret is sealed only to the seats the wallet reads on th
     expect(routeOf(shape, 'GET', '/api/me/keys')).toBeNull();
   });
 
+  it('counts who approves each vault only from a roster that names a signer for every seat the chain holds', async () => {
+    const { ctx } = ctxWith();
+    const doorsOver = (notBelieved: string[]) => vaultDoorsFor(ctx, reach({
+      roster: async () => ({ id: 'acc_1', signers: [{ id: 's1', status: 'active', leafCommitment: LEAF }], notBelieved }),
+    }), { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'x' } as never);
+    /* RED WHEN: a vault's approvers are counted from a roster that names no signer for a seat the chain holds, such as one waiting for Finish adding. */
+    await expect(doorsOver(['bb'.repeat(32)]).approvers()).rejects.toThrow(/names no signer for 1 seat/u);
+    expect([...(await doorsOver([]).approvers()).seats.keys()]).toEqual([LEAF.toLowerCase()]);
+  });
+
   it('names the vault to the page as soon as it is built, before it is sent', async () => {
     // RED WHEN: a vault built and then stopped before its answer is named to nobody, so a second one is created
     const told: unknown[] = [];
@@ -224,5 +234,32 @@ describe('the window promises no more privacy for the vault than the page is giv
     expect(said).toMatch(/The page holds the vault's secret from the moment this wallet files it/);
     // RED WHEN: the window says less than the page can read with the secret, or that it can spend
     expect(said).toMatch(/every amount paid into and out of the vault and where each payment out goes, and it can never spend from the vault/);
+  });
+});
+
+describe('a refused start names its kind of stop to the page only from the start\'s own codes', () => {
+  it('names a start\'s stop, a read that failed and a vault not built, and nothing else', async () => {
+    const { NOT_BUILT, START_READ_STOP, START_STOP } = await import('../../../../packages/web-shared/src/vault-operation.js');
+    /* RED WHEN: a kind of stop the start names is not carried, so the page cannot say which read or check stopped it. */
+    for (const code of [START_STOP.readersCannotOpen, START_READ_STOP.chainUnread, START_READ_STOP.standingUnread, NOT_BUILT.committeeUnread]) {
+      expect(namedCode(code)).toBe(code);
+    }
+    /* RED WHEN: a code the start does not name, or none, is carried as a kind of stop. */
+    for (const code of ['seat 7', 'signer-left-out', undefined]) expect(namedCode(code)).toBeUndefined();
+  });
+
+  it('the start step passes the kind of stop to its refusal, for a start not finished and for a vault not built', async () => {
+    const { NOT_BUILT, START_READ_STOP, VaultNotBuilt, VaultStartOwed } = await import('../../../../packages/web-shared/src/vault-operation.js');
+    const told: Record<string, unknown>[] = [];
+    const ctx = { tell: (o: Record<string, string | number>) => { told.push(o); } };
+    const owed = startRefusalOf(new VaultStartOwed('ab'.repeat(32) as never, 'the read ran out.', START_READ_STOP.chainUnread), ctx);
+    /* RED WHEN: a start not finished stops with no kind of stop, so the stop line cannot say which read failed. */
+    expect(owed).toMatchObject({ words: { key: 'act.create-vault.why.start-owed' }, code: START_READ_STOP.chainUnread });
+    expect(told).toEqual([{ vault: 'ab'.repeat(32), stopped: START_READ_STOP.chainUnread }]);
+    const notBuilt = startRefusalOf(new VaultNotBuilt(NOT_BUILT.committeeUnread, 'no vault was built.'), ctx);
+    /* RED WHEN: a vault not built stops with no kind of stop. */
+    expect(notBuilt).toMatchObject({ words: { key: 'act.create-vault.why.not-built' }, code: NOT_BUILT.committeeUnread });
+    /* RED WHEN: any other error is taken for a refusal of the start. */
+    expect(startRefusalOf(new Error('no'), ctx)).toBeNull();
   });
 });

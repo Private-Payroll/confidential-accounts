@@ -39,6 +39,7 @@ import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js
 import { acceptAsPayeeHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { admitVendorHere, changeVendorHere, readVendorsHere } from 'vaults-web-shared/vendors-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { ACME, acmeDirectory, acmeDirectoryDeps, fromAda, ORIGIN, wire } from './a-company-of-two-seats.test-support.js';
 import {
   aCompanyWhoseSignersChange, acmeChain, ADA, ADDRESS, BO, anchorDoorsOf, aPolicyFiledBy, api, apiAs, attestedByTheRoster, chargedOnChain, CO, CY,
@@ -54,7 +55,7 @@ const NETWORK = theNetwork();
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const MONTHLY = { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 90000n };
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
+  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** A vendor paid monthly, added by `address` (paid at it at once, no payslip key) or invited by link and admitted on their fingerprint. */

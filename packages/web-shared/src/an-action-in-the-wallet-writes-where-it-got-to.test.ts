@@ -117,6 +117,28 @@ describe('an action in the wallet writes where it got to in the console report',
     expect(report).not.toContain('c'.repeat(32));
   });
 
+  it('a stop for a refused check names the refusal by its key and kind, and never its words', async () => {
+    const page = new APage();
+    const run = actInTheWallet(page, WALLET, {
+      intent: { name: 'move-between-vaults', vault: 'c'.repeat(64), memo: SECRET_FIELD },
+      relay: async () => true, nonce: NONCE, now: () => page.clock,
+    });
+    page.say({ schema: READY_PING });
+    page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 3 });
+    page.say({
+      schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'move-between-vaults', ended: 'stopped', step: 1, steps: 3, relayed: 0, unconfirmed: 0,
+      why: 'check-failed', refused: 'act.move-between-vaults.why.start-owed', code: 'chain-unread', says: SECRET_FIELD,
+    });
+    await settle();
+    expect(await run).toMatchObject({ of: 'stopped', step: 1, why: 'check-failed', refused: 'act.move-between-vaults.why.start-owed', code: 'chain-unread' });
+    const report = readFileSync(logPath, 'utf8');
+    /* RED WHEN: a stop for a refused check does not say which refusal ended it, and of what kind. */
+    expect(report).toContain('action move-between-vaults: stopped at step 1 of 3: check-failed (relayed 0, unconfirmed 0) '
+      + '(refused: act.move-between-vaults.why.start-owed chain-unread)');
+    /* RED WHEN: the refusal's words, or anything the wallet put beside its key, reach the report. */
+    expect(report).not.toContain(SECRET_FIELD);
+  });
+
   it('calls and transactions inside a later step are written under that step, whatever step their message carries', async () => {
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {

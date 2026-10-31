@@ -77,6 +77,9 @@ export type ActOutcome = (
     /** Transactions this page was handed and did not hand to the service. Whether any landed is read from the chain. */
     readonly unconfirmed: number;
     readonly why: ActStoppedWhy;
+    /** On a refused check: the key of the words the wallet refused with, and the kind of refusal, never the words' values. */
+    readonly refused?: string;
+    readonly code?: string;
   }
 ) & {
   /** What the wallet said the action got to, when its entry lists any: public facts only, the wallet's word. */
@@ -348,7 +351,9 @@ export async function actInTheWallet(
     if (ended.ended === 'done') return Object.freeze({ of: 'done' as const, steps: ended.steps, relayed, ...told });
     return Object.freeze({
       of: 'stopped' as const, step: ended.step, steps: ended.steps, relayed, unconfirmed: handedOver - relayed,
-      why: ended.why ?? 'step-failed', ...told,
+      why: ended.why ?? 'step-failed',
+      ...(ended.refused === undefined ? {} : { refused: ended.refused, ...(ended.code === undefined ? {} : { code: ended.code }) }),
+      ...told,
     });
   };
 
@@ -358,7 +363,8 @@ export async function actInTheWallet(
     const outcome = await ending();
     log(outcome.of === 'done'
       ? `done, ${outcome.steps} of ${outcome.steps} steps (relayed ${outcome.relayed})`
-      : `stopped at step ${outcome.step} of ${outcome.steps}: ${outcome.why} (relayed ${outcome.relayed}, unconfirmed ${outcome.unconfirmed})`);
+      : `stopped at step ${outcome.step} of ${outcome.steps}: ${outcome.why} (relayed ${outcome.relayed}, unconfirmed ${outcome.unconfirmed})`
+        + (outcome.refused === undefined ? '' : ` (refused: ${outcome.refused}${outcome.code === undefined ? '' : ` ${outcome.code}`})`));
     return outcome;
   } catch (e) {
     log(`ended with an error: ${errorLine(e)}`);

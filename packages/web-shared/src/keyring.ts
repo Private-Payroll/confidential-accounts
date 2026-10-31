@@ -22,7 +22,7 @@
  * the saved keys again**, because keeping what it read in storage would put it
  * where any script on the page can read it.
  */
-import { isReadMethod, serviceRead } from './read-bound.js';
+import { isReadMethod, notePreparing, serviceRead } from './read-bound.js';
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { Inviter, SignedSeatInvitation } from '../../../src/core/invitation.js';
 import type { DirectoryHereDeps, OwedDirectoryEntry } from './vault-page-doors.js';
@@ -36,13 +36,13 @@ import {
 } from './wallet-sign-in.js';
 import { actInTheWallet, type ActOutcome } from './wallet-act.js';
 import { pageWireSend } from './http-sealed-pool-store.js';
-import type { StepAt } from 'midnight-identity/profile/channel';
+import type { NotAskedWhy, StepAt } from 'midnight-identity/profile/channel';
 import type { KeyringHandedIn, KeysRead, SealedKeyring } from 'midnight-identity/profile/unlock';
 import { MOST_SERVED, type FoundingAsked, type ServedHandedIn } from 'midnight-identity/profile/request';
 /* The screen that draws the waiting needs the type, and it should not have to
  * know which file below this one the wallet plumbing lives in. */
 export type { WalletDialog } from './wallet-sign-in.js';
-import { askWalletForKeys } from './wallet-unlock.js';
+import { askWalletForKeys, UnlockRefused } from './wallet-unlock.js';
 import { askWalletToPay } from './wallet-balance.js';
 import { askWalletToSignCommittee, type CommitteeAsked } from './wallet-committee.js';
 import {
@@ -650,6 +650,10 @@ export async function resumeSession(
  * record cannot be read, is not named, and the saved keys open as they would with
  * none. Whatever this tab holds is dropped by `forgetLocally`; a reload asks the
  * wallet again.
+ *
+ * **A STOP WHILE PREPARING IS SAID TWICE.** The page writes which step it stopped
+ * at and the kind of error (`notePreparing`), and tells the window it opened why it
+ * will not ask (`notAsking`), so the window shows that reason instead of waiting.
  */
 export async function openKeysWithWallet(
   walletOrigin: string,
@@ -670,18 +674,60 @@ export async function openKeysWithWallet(
    * `await` is blocked as a pop-up.
    */
   const dialog = openTheWallet(view, walletOrigin, already);
+  const what = opening === undefined ? 'opening your saved keys' : 'opening a company';
+  const at = { step: OPEN_STEP.naming as OpenStep };
   try {
-    const named = opening === undefined ? null : await companyNamedFor(opening).catch(() => null);
+    /* A company the service will not name is opened as none: the saved keys still open, and the stop is written. */
+    const named = opening === undefined ? null : await companyNamedFor(opening).catch((e: unknown) => {
+      notePreparing(`${what}: the service did not name the company (${kindOf(e)}), so only the saved keys are opened`);
+      return null;
+    });
     const company = named === null || named.account === null ? null : named;
-    await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, company, undefined, company !== null);
+    await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, company, undefined, company !== null, (step) => { at.step = step; });
   } catch (e) {
+    /* Before the ask, or an ask that was never put together: the wallet was asked nothing. */
+    const before = at.step !== OPEN_STEP.answered
+      && (at.step !== OPEN_STEP.asking || !(e instanceof WalletClosed || e instanceof UnlockRefused));
+    notePreparing(`${what}: stopped while ${at.step} (${kindOf(e)})${before ? ', before anything was asked of the wallet' : ''}`);
     /* A dialog a longer journey opened is that journey's to put away. */
-    if (!already) putAway(dialog);
+    if (!already) {
+      try { if (before) dialog.notAsking?.(NOT_ASKED_AT[at.step]); } finally { putAway(dialog); }
+    }
     throw e;
   } finally {
     doneWaiting();
   }
 }
+
+/** The steps the page takes to open the saved keys, in order, as the console report names them. */
+const OPEN_STEP = {
+  naming: 'naming the company',
+  signedIn: 'checking you are signed in',
+  savedKeys: 'reading your saved keys from the service',
+  savedKeysOlder: 'checking your saved keys',
+  companies: 'reading the companies you belong to',
+  asking: 'asking the wallet',
+  answered: 'taking in what the wallet gave',
+} as const;
+type OpenStep = (typeof OPEN_STEP)[keyof typeof OPEN_STEP];
+
+/** What the window is told for a stop at each step before the ask; the wallet says it in its own words. */
+const NOT_ASKED_AT: Readonly<Record<OpenStep, NotAskedWhy>> = {
+  [OPEN_STEP.naming]: 'ask-not-built',
+  [OPEN_STEP.signedIn]: 'signed-out',
+  [OPEN_STEP.savedKeys]: 'saved-keys-unread',
+  [OPEN_STEP.savedKeysOlder]: 'saved-keys-older',
+  [OPEN_STEP.companies]: 'ask-not-built',
+  [OPEN_STEP.asking]: 'ask-not-built',
+  [OPEN_STEP.answered]: 'ask-not-built',
+};
+
+/** An error's kind, for the console report: its class, and for a wallet window that ended, how. Never its message. */
+const kindOf = (e: unknown): string => {
+  if (e instanceof WalletClosed) return `WalletClosed ${e.refusal.of}`;
+  if (e instanceof Error) return e.constructor.name !== '' && e.constructor.name !== 'Error' ? e.constructor.name : e.name;
+  return typeof e;
+};
 
 async function openKeysOnceOpen(
   walletOrigin: string, view: Openable, atOrigin: string,
@@ -696,12 +742,15 @@ async function openKeysOnceOpen(
   founding?: { readonly asked: FoundingAsked; readonly keyring: KeyringHandedIn },
   /** Whether the company is the one the person opened, named beside opening the saved keys: its key may be withheld. */
   companyIfOnChain = false,
+  /** Told each step as it starts, so a caller can say which one a stop came at. */
+  step?: (at: OpenStep) => void,
 ): Promise<{
   drawn: CompanyLabel | null; committeeKey: { tag: string; value: string } | null;
   founding: { founded: Readonly<Record<string, unknown>>; sealed: SealedKeyring; ifVersion: number } | null;
   /** With `'new'`: what the wallet read from the saved keys it sealed with the new seat, taken in only once they are kept. */
   read: KeysRead | null;
 }> {
+  step?.(OPEN_STEP.signedIn);
   const who = me;
   if (who === null) throw new Error('not signed in');
   /* **THE ADDRESS THIS TAB SIGNED IN AS, FROM THE SERVICE'S OWN ANSWER TO THAT
@@ -709,14 +758,18 @@ async function openKeysOnceOpen(
    * derives: the wallet will not answer without holding it. */
   const signedInAs = walletAddress;
   /* The saved keys a founding was handed are the copy the wallet reads: one read for the press, the one it seals over. */
+  step?.(OPEN_STEP.savedKeys);
   const handedIn = founding !== undefined ? founding.keyring : await savedKeysForTheWallet();
   /* **A READ THAT HAS GONE BACKWARDS IS NOT HANDED ON.** Saved keys only ever grow, one accepted write at a time; an
    * older version, or nothing where the wallet has read something for this tab, is the server answering from before. */
+  step?.(OPEN_STEP.savedKeysOlder);
   if (read !== null && (handedIn.version < bundleVersion || (savedKeys === 'some' && handedIn.sealed === null))) {
     throw new SavedKeysWentBack(WENT_BACK);
   }
+  step?.(OPEN_STEP.companies);
   const tidy = [...tidyOwed].map(([record, what]) => ({ record, what }));
   const keys = founding !== undefined ? undefined : { keyring: handedIn, served: await servedForTheWallet(), tidy };
+  step?.(OPEN_STEP.asking);
   const released = await askWalletForKeys(view, walletOrigin, {
     person: who.id,
     signedInAs,
@@ -729,6 +782,7 @@ async function openKeysOnceOpen(
     ...(keys === undefined ? {} : { keys }),
     ...(companyIfOnChain ? { companyIfOnChain: true } : {}),
   }, dialog);
+  step?.(OPEN_STEP.answered);
   /* A sign-out, or another person's sign-in, while the wallet was open: this
    * tab is no longer the one that asked, and nothing it was given is used. */
   if (me !== who) throw new AuthError('not signed in');
@@ -853,7 +907,10 @@ async function servedForTheAction(accountId: string): Promise<ServedHandedIn[]> 
 
 async function servedForTheWallet(): Promise<ServedHandedIn[]> {
   let listed: unknown;
-  try { listed = await api('/api/accounts'); } catch { return []; }
+  try { listed = await api('/api/accounts'); } catch (e) {
+    notePreparing(`reading the companies you belong to failed (${kindOf(e)}), so none is handed to the wallet`);
+    return [];
+  }
   if (!Array.isArray(listed)) return [];
   const out: ServedHandedIn[] = [];
   for (const a of listed.slice(0, MOST_SERVED)) {
@@ -1910,7 +1967,9 @@ const creationStateOf = (s: unknown): CompanyCreationState =>
  * entry refused on its own is handed back beside the company, with why.
  *
  * The roster opens under the company's key of the epoch it was sealed at,
- * from `companyKeys`.
+ * from `companyKeys`. A seat the chain holds that was taken on an invitation by
+ * address, whose signer waits for Finish adding, is waited for only through
+ * `invitedSeats`, the seat the chain shows that invitation's proposal took.
  *
  * Returns null rather than throwing when this device holds no keys for the
  * account. That is a real state — you are a member, on a machine you have not
@@ -1922,15 +1981,16 @@ export async function openAccount(
   anchored: (accountId: string, company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['anchored'],
   leaves: (company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['leaves'],
   companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>,
+  invitedSeats?: Parameters<typeof openAccountWith>[6],
 ): Promise<OpenedAccount | null> {
-  return openAccountWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys);
+  return openAccountWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats);
 }
 
 /** The seats the company's roster admitted, read with the same doors as `openAccount`; throws when this device holds no keys for it. */
 export async function seatsAdmittedFor(
   rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
   holders: Parameters<typeof openAccount>[1], anchored: Parameters<typeof openAccount>[2], leaves: Parameters<typeof openAccount>[3],
-  companyKeys?: Parameters<typeof openAccount>[4],
+  companyKeys?: Parameters<typeof openAccount>[4], invitedSeats?: Parameters<typeof openAccount>[5],
 ): Promise<ReadonlySet<string>> {
-  return seatsAdmittedWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys);
+  return seatsAdmittedWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats);
 }

@@ -118,9 +118,8 @@ function SignIn() {
   );
 }
 
-/** Why signing in did not happen, and what to do about it, in the person's language. */
-function SignInRefused({ why, retryAfterSeconds }: { why: SignInRefusal; retryAfterSeconds: number | null }) {
-  const t = useText();
+/** The words for a refusal of the sign-in, and what to do about it, in the person's language; asked by the landing page and by the join page. */
+export function signInRefusedSays(t: ReturnType<typeof useText>, why: SignInRefusal, retryAfterSeconds: number | null): string {
   const says: Record<SignInRefusal, string> = {
     [REFUSAL.notSetUp]: t('signIn.refused.notSetUp'),
     [REFUSAL.noWindow]: t('signIn.refused.noWindow'),
@@ -138,10 +137,15 @@ function SignInRefused({ why, retryAfterSeconds }: { why: SignInRefusal; retryAf
     [REFUSAL.unavailable]: t('signIn.refused.unavailable'),
     [REFUSAL.unreachable]: t('signIn.refused.unreachable'),
   };
+  return says[why];
+}
+
+function SignInRefused({ why, retryAfterSeconds }: { why: SignInRefusal; retryAfterSeconds: number | null }) {
+  const t = useText();
   return (
     <Alert className="max-w-sm" data-refusal={why}>
       <AlertTitle>{t('signIn.refused.title')}</AlertTitle>
-      <AlertDescription>{says[why]}</AlertDescription>
+      <AlertDescription>{signInRefusedSays(t, why, retryAfterSeconds)}</AlertDescription>
     </Alert>
   );
 }

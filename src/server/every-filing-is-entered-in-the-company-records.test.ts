@@ -19,6 +19,7 @@ import { FiledNotEntered } from 'vaults-web-shared/record-entered-here.js';
 import { enteredHere } from '../testing/records-entered.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
 import { runRoutes } from './run-routes.js';
 import {
@@ -36,7 +37,7 @@ aCompanyOfTwoSeats((app, deps) => {
 const NETWORK = theNetwork();
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory,
-  network: NETWORK, entered: s.entered,
+  network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
 });
 /** What the company's manifest holds for one record, without who signed it. */
 const enteredFor = (store_: string, id: string) =>

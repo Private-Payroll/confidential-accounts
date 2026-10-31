@@ -1,18 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bigintJsonReplacer, type Hex } from '../../../../src/core/crypto.js';
-import { sealRecord } from '../../../../src/core/sealed-records.js';
+import { bigintJsonReplacer, newSigningKeypair, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
+import { inboxPublicKey, sealRecord, sealToInbox } from '../../../../src/core/sealed-records.js';
 import { sealPerson } from '../../../../src/core/person-record.js';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode } from 'midnight-identity/profile/join-code';
-import { toCompanyWire } from '../../../../src/midnight/sealed-record-wire.js';
+import { signCompanyFiling, toCompanyWire } from '../../../../src/midnight/sealed-record-wire.js';
+import { sealVendor, type VendorRecord } from '../../../../src/core/vendor-record.js';
 import { SEED_ASSETS, StaticAssetRegistry } from '../../../../src/core/assets.js';
+import { publicAmount } from 'vaults-ui';
 
 /*
  * A COMPANY'S RECORDS, OPENED AND READ THROUGH THE ADAPTER. The keyring and
  * the service are stood in for; the runs and proposals are sealed with the
- * record code the service uses and opened with the one the legacy application
- * uses, so what is opened here is what a real record opens to. The people
+ * record code the service uses and opened with `openRecord`, the code a page
+ * opens them with, so what is opened here is what a real record opens to. The people
  * are person records sealed with the code a seat's device seals them with.
  */
 const VK = '11'.repeat(32) as Hex;
@@ -39,6 +41,14 @@ const kr = vi.hoisted(() => ({
   kept: {} as Record<string, string>,
   /* Each company this page entered and started the one-a-day anchor for, with the keys it was handed. */
   anchoring: [] as Array<{ company: string }>,
+  /* The seats the account holds on the chain, its stored bar and its vaults' own thresholds, as the wallet reads them. */
+  seats: [] as string[], policyBar: null as number | null, vaultThresholds: [] as Array<{ vault: string; threshold: number }>,
+  /* The record ids this device's directory names, by kind, and the ones whose filer its judge refuses. */
+  named: {} as Record<string, string[]>, unbelieved: [] as string[],
+  /* What the vault builder was asked to check of an address claim, what it answers, and whether it can check one at all. */
+  claims: [] as Array<{ claim: unknown; f: unknown }>, claimAnswer: null as string | null, claimCheck: true,
+  /* The seats whose directory entry this device's directory read holds; null when that read gives no directory. */
+  entries: null as string[] | null,
 }));
 vi.mock('./vault-builder.js', () => ({
   theVaultBuilder: async () => ({
@@ -48,6 +58,7 @@ vi.mock('./vault-builder.js', () => ({
       if (v === undefined) throw new Error('the indexer holds nothing for that vault');
       return v;
     },
+    ...(kr.claimCheck ? { addressClaimRefusal: async (claim: unknown, f: unknown) => { kr.claims.push({ claim, f }); return kr.claimAnswer; } } : {}),
   }),
 }));
 /* Any anchor started on this page, recorded: entering a company starts none. */
@@ -56,11 +67,34 @@ vi.mock('vaults-web-shared/records-anchored-here.js', async (real) => ({
   anchoredOnTheWayIn: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); },
   anchorTheRecordsHere: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); },
 }));
+/* The seat the chain says each proposal took, as the person's own indexer gives it, and the proposals it was asked about. */
+const chainSeats = vi.hoisted(() => ({ took: {} as Record<string, string | null>, asked: [] as string[][], fails: false }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
+  rosterReadsFor: () => ({
+    invitedSeats: async (proposals: string[]) => { chainSeats.asked.push(proposals); if (chainSeats.fails) throw new Error('the indexer did not answer'); return chainSeats.took; },
+  }),
   /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
   filingJudgeFor: () => async () => null,
+  /* The directory this device believes, stood in for: the judge below reads `kr.named` and `kr.unbelieved` off it. */
+  directoryHereFor: () => async () => (kr.entries === null ? {} : { dir: { seats: kr.entries.map((seat) => ({ seat })) } }),
   companyKeysFor: async () => ({ epoch: 0, newest: 0, key: VK, keyAt: () => VK, sealing: () => ({ key: VK, epoch: 0 }) }),
+}));
+/* What this device reads of the people: the real read, unless a test hands it an answer the real read never gives (a refused record named nowhere else). */
+const peopleAre = vi.hoisted(() => ({ answer: null as null | (() => unknown) }));
+vi.mock('vaults-web-shared/people-read-here.js', async (real) => {
+  const actual = await real<typeof import('vaults-web-shared/people-read-here.js')>();
+  return { ...actual, readPeopleHere: (...a: Parameters<typeof actual.readPeopleHere>) => (peopleAre.answer === null ? actual.readPeopleHere(...a) : Promise.resolve(peopleAre.answer())) };
+});
+/* The proposals that invite a signer by address, opened: what the core opens them to is the server's test, here only what the page asks and does with it. */
+const bya = vi.hoisted(() => ({ bodies: {} as Record<string, unknown>, asked: [] as Array<{ id: string; account: string; keys: unknown }>, throws: false }));
+vi.mock('../../../../src/core/proposal-filing.js', async (real) => ({
+  ...(await real<typeof import('../../../../src/core/proposal-filing.js')>()),
+  addSignerByAddressIn: (rec: { id: string }, account: string, keys: unknown) => {
+    bya.asked.push({ id: rec.id, account, keys });
+    if (bya.throws) throw new Error('the core could not open it');
+    return bya.bodies[rec.id] ?? null;
+  },
 }));
 /* The name a vault was filed under, as this device reads it: what the read answers, and what it was asked with. */
 const info = vi.hoisted(() => ({ answer: { state: 'none' } as unknown, asked: [] as Array<{ vault: string; keys: unknown; account: string }>, fails: false }));
@@ -72,6 +106,11 @@ vi.mock('vaults-web-shared/vault-info-here.js', async (real) => ({
     if (info.fails) throw new Error('the records could not be read');
     return info.answer;
   },
+}));
+vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
+  judgeIn: () => Object.assign((_filer: unknown, _kind: unknown, key: string) => (kr.unbelieved.some((id) => key.includes(id)) ? 'a seat this device does not believe filed it' : null), {}),
+  namedHere: (_here: unknown, _store: string, kind: string) => kr.named[kind] ?? [],
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -91,7 +130,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   openKeysWithWallet: async (...a: unknown[]) => { kr.opened += 1; kr.openedWith.push(a[4] as string | undefined); },
   /* Who holds the company, as the person's own wallet reads it with no press: the vaults its account has adopted, and its indexer. */
   /* `threshold` on this answer is the account's maintenance committee's, never the approvals the account asks for. */
-  holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted, threshold: 1, ...(kr.approvals === undefined ? {} : { approvals: kr.approvals }) }, indexer: kr.indexer }),
+  holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted, threshold: 1, seats: kr.seats, policyBar: kr.policyBar, vaultThresholds: kr.vaultThresholds, ...(kr.approvals === undefined ? {} : { approvals: kr.approvals, seatBar: Math.max(kr.approvals, kr.policyBar ?? 0) }) }, indexer: kr.indexer }),
   api: async (path: string) => {
     kr.asked.push(path);
     const a = kr.answers[path];
@@ -125,8 +164,10 @@ const payable = (n: number, kind: 'shielded' | 'unshielded', label = LABEL) => {
   return { address, wrappingPublicKey: payslipKey, handedOverBy: payeeCode.committeeKey.value, payeeCode };
 };
 /** A person as the people read answers: their newest record on the wire, and whether a hand-over waits. */
+const SEAT = newSigningKeypair().secret;
+const MADE = { madeBy: signingPublicKeyOf(SEAT), madeAt: '2026-09-01T00:00:00Z' };
 const filedPerson = (p: Record<string, unknown>, handedOver?: boolean, key = VK, company = 'c1') => ({
-  filed: toCompanyWire(sealPerson({ accountId: company, email: null, wrappingPublicKey: null, handedOverBy: null, ...p } as never, 1, 1, key)),
+  filed: toCompanyWire(signCompanyFiling(sealPerson({ accountId: company, email: null, wrappingPublicKey: null, handedOverBy: null, ...MADE, ...p } as never, 1, 1, key), SEAT)),
   ...(handedOver === undefined ? {} : { handedOver }),
 });
 const sealedProposal = (id: string, status: string, secrets: Record<string, unknown>) => ({
@@ -169,6 +210,9 @@ function everything() {
     { kind: 'employee', name: 'Used', createdAt: '2026-09-11T00:00:00.000Z', acceptedAt: '2026-09-12T00:00:00.000Z' },
     { kind: 'employee', name: 'Gone', createdAt: '2026-09-11T00:00:00.000Z', revokedAt: '2026-09-12T00:00:00.000Z' },
     { kind: 'employee', name: 'Old', createdAt: '2020-09-11T00:00:00.000Z', expiresAt: '2020-10-11T00:00:00.000Z' },
+    { kind: 'vendor', name: 'Vik', createdAt: '2026-09-12T00:00:00.000Z' },
+    { kind: 'vendor', name: 'Spent', createdAt: '2026-09-12T00:00:00.000Z', acceptedAt: '2026-09-13T00:00:00.000Z' },
+    { kind: 'super-admin', name: 'Root', createdAt: '2026-09-12T00:00:00.000Z' },
   ];
 }
 
@@ -194,7 +238,7 @@ function strings(value: unknown, at = 'answer'): string[] {
   return [];
 }
 
-beforeEach(() => { info.answer = { state: 'none' }; info.asked = []; info.fails = false; kr.anchoring = []; kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
+beforeEach(() => { info.answer = { state: 'none' }; info.asked = []; info.fails = false; kr.anchoring = []; kr.seats = []; kr.policyBar = null; kr.vaultThresholds = []; kr.named = {}; kr.unbelieved = []; kr.claims = []; kr.claimAnswer = null; kr.claimCheck = true; kr.entries = null; kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('opening a company', () => {
@@ -243,6 +287,68 @@ describe('opening a company', () => {
       expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-not-believed' });
     } finally {
       kr.account = was;
+    }
+  });
+
+  it('writes which check of the company\'s signers refused, and what stopped it, to the console report, and nothing the service served', async () => {
+    const { readCompany } = await load();
+    const { RosterNotBelieved, ROSTER_CHECK } = await import('vaults-web-shared/roster-here.js');
+    const was = kr.account;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line: unknown) => { warned.push(String(line)); });
+    vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
+    const served = `it has no entry for the seat ${'5e'.repeat(32)}`;
+    kr.account = new RosterNotBelieved(`This device does not believe the company's roster it was given (${served}).`, null, null, {
+      check: ROSTER_CHECK.seatUnnamed, stoppedBy: ['SeatNotReadOnTheChain'],
+    });
+    try {
+      expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-not-believed' });
+      /* RED WHEN: the page refuses a company's signers and its console report does not say which check refused, the error's class and what stopped it. */
+      expect(warned).toContain('read checking the company\'s signers: refused at seat-unnamed (RosterNotBelieved); stopped by SeatNotReadOnTheChain');
+      /* RED WHEN: the console report carries the refusal's message, which can name a seat or anything else the service served. */
+      expect(warned.join('\n')).not.toContain('5e'.repeat(32));
+    } finally {
+      kr.account = was;
+      warn.mockRestore();
+    }
+  });
+
+  it('says once that a company with no account on the network yet has no signers to check, and never as a refusal', async () => {
+    const { readCompany } = await load();
+    const { RosterNotBelieved, ROSTER_CHECK } = await import('vaults-web-shared/roster-here.js');
+    const was = kr.account;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line: unknown) => { warned.push(String(line)); });
+    vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
+    kr.account = new RosterNotBelieved('no account', null, null, { check: ROSTER_CHECK.noAccount });
+    try {
+      await readCompany('u1', 'c1');
+      await readCompany('u1', 'c1');
+      const said = warned.filter((l) => l.includes('checking the company\'s signers'));
+      /* RED WHEN: a company with no account yet is logged as a refusal of its signers, or logged again at every read. */
+      expect(said).toEqual(['read checking the company\'s signers: not checked, because the company has no account on the network yet']);
+    } finally {
+      kr.account = was;
+      warn.mockRestore();
+    }
+  });
+
+  it('names why the filer of the company\'s roster is not believed, by its code alone', async () => {
+    const { readCompany } = await load();
+    const { RosterNotBelieved, ROSTER_CHECK } = await import('vaults-web-shared/roster-here.js');
+    const was = kr.account;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line: unknown) => { warned.push(String(line)); });
+    vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
+    kr.account = new RosterNotBelieved(`not believed (${'5e'.repeat(32)})`, null, null, { check: ROSTER_CHECK.filerNotBelieved, because: 'no-entry' });
+    try {
+      await readCompany('u1', 'c1');
+      /* RED WHEN: a roster refused for its filer is logged without the reason's code, or with the refusal's own words. */
+      expect(warned).toContain('read checking the company\'s signers: refused at filer-not-believed (RosterNotBelieved); because no-entry');
+      expect(warned.join('\n')).not.toContain('5e'.repeat(32));
+    } finally {
+      kr.account = was;
+      warn.mockRestore();
     }
   });
 
@@ -321,8 +427,8 @@ describe('each read, on its own', () => {
     expect(kr.asked.some((p) => p.endsWith('/state') || p.includes('/state?'))).toBe(false);
   });
 
-  /* RED WHEN: an active person is shown as paid at an address, or with a payslip key, their own wallet did not sign, or with no code at all. */
-  it('hands on the people as unreadable when an active person is not payable at what their own wallet signed', async () => {
+  /* RED WHEN: an active person is shown as paid at an address, or with a payslip key, their own wallet did not sign, or with no code at all: they must be named not payable with why, and kept off the people shown. */
+  it('names an active person not payable, with why, when they are not payable at what their own wallet signed', async () => {
     const { readCompany } = await load();
     const ana = { id: 'emp_e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'active' };
     const good = payable(1, 'shielded');
@@ -335,24 +441,279 @@ describe('each read, on its own', () => {
     ] as const) {
       kr.answers[ROUTE('/people')] = { people: [filedPerson(p, false)] };
       const c = await readCompany('u1', 'c1');
-      if (c.of !== 'open') throw new Error('not open');
+      if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error(`not read: ${what}`);
       expect(c.people.of, what).toBe('unreadable');
+      expect(c.peopleBelief.value.notPayable.map((x) => [x.person.id, x.why !== '']), what).toEqual([['emp_e1', true]]);
     }
     kr.answers[ROUTE('/people')] = { people: [filedPerson({ ...ana, ...good }, false)] };
     const c = await readCompany('u1', 'c1');
-    expect(c.of === 'open' && c.people.of).toBe('read');
+    expect(c.of === 'open' && c.people.of === 'read' && c.people.value.map((x) => x.id)).toEqual(['emp_e1']);
+    expect(c.of === 'open' && c.peopleBelief?.of === 'read' && c.peopleBelief.value.notPayable).toEqual([]);
   });
 
-  /* RED WHEN: a person record sealed under another key, or filed for another company, is shown as a person rather than the people being handed on unreadable. */
-  it('hands on the people as unreadable when a record is not this company\'s or will not open', async () => {
+  /* RED WHEN: a person added by an unshielded address with no claim of it their own wallet signed (or a forged one) is shown as payable. */
+  it('does not show a person added by an unshielded address as payable without their wallet\'s signed claim of it', async () => {
+    const { readCompany } = await load();
+    const typed = REAL_ADDRESSES['2 unshielded']!.bech32;
+    kr.answers[ROUTE('/people')] = { people: [filedPerson({
+      id: 'emp_e2', name: 'Bo', title: 'Designer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-02-01', status: 'active', invitedAddress: typed,
+      ...payable(2, 'unshielded'), addressClaim: { kind: 'unshielded', address: typed, signature: 'ff'.repeat(64) },
+    }, false)] };
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
+    expect(c.people.of).toBe('unreadable');
+    expect(c.peopleBelief.value.notPayable.map((x) => [x.person.id, /claim/u.test(x.why)])).toEqual([['emp_e2', true]]);
+  });
+
+  /* RED WHEN: a person added by an unshielded address is read as payable on the page without their wallet's signed claim checked by the vault builder, or is read at all when the builder cannot check it. */
+  it('checks the signed claim of a person added by an unshielded address in the vault builder, and reads no people when it cannot', async () => {
+    const { readCompany } = await load();
+    const typed = REAL_ADDRESSES['2 unshielded']!.bech32;
+    const claim = { kind: 'unshielded', address: typed, verifyingKey: 'aa'.repeat(32), signature: 'ff'.repeat(64) };
+    kr.answers[ROUTE('/people')] = { people: [filedPerson({
+      id: 'emp_e2', name: 'Bo', title: 'Designer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-02-01', status: 'active', invitedAddress: typed,
+      ...payable(2, 'unshielded'), addressClaim: claim,
+    }, false)] };
+    const held = await readCompany('u1', 'c1');
+    expect(held.of === 'open' && held.people.of === 'read' && held.people.value.map((p) => p.id)).toEqual(['emp_e2']);
+    expect(kr.claims).toEqual([{ claim, f: expect.objectContaining({ company: LABEL, person: 'emp_e2', payslipKey: '02'.repeat(32), address: typed }) }]);
+    kr.claimAnswer = 'the claim\'s signature is not the address\'s';
+    const refused = await readCompany('u1', 'c1');
+    if (refused.of !== 'open' || refused.peopleBelief?.of !== 'read') throw new Error('not read');
+    expect(refused.people.of).toBe('unreadable');
+    expect(refused.peopleBelief.value.notPayable.map((x) => [x.person.id, x.why.includes(kr.claimAnswer!)])).toEqual([['emp_e2', true]]);
+    kr.claimCheck = false;
+    const unchecked = await readCompany('u1', 'c1');
+    expect(unchecked.of === 'open' && [unchecked.people.of, unchecked.peopleBelief?.of]).toEqual(['unreadable', 'unreadable']);
+  });
+
+  /* RED WHEN: the company's read does not tell an accepted signer from a seated one by the roster and the chain, or counts a change of signers at the threshold where a stored bar is higher. */
+  it('reads each signer as accepted or seated, and the approvals a change of signers needs with the vaults at that number', async () => {
+    const { readCompany } = await load();
+    const leaf = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
+    const was = kr.account;
+    kr.account = { id: 'c1', name: 'Northwind', signers: [
+      { id: 's1', name: 'Priya', status: 'active', leafCommitment: leaf(1) }, { id: 's2', name: 'Sam', status: 'pending', leafCommitment: leaf(2) },
+    ] };
+    kr.seats = [leaf(1), leaf(2)];
+    kr.approvals = 2;
+    kr.policyBar = 3;
+    kr.vaultThresholds = [{ vault: 'ab'.repeat(32), threshold: 3 }];
+    const c = await readCompany('u1', 'c1');
+    kr.account = was;
+    if (c.of !== 'open') throw new Error('not open');
+    expect(c.signerStandings).toEqual({ of: 'read', value: [
+      { id: 's1', name: 'Priya', accepted: false, seatOnChain: true, you: false, entryFiled: null },
+      { id: 's2', name: 'Sam', accepted: true, seatOnChain: true, you: false, entryFiled: null },
+    ] });
+    expect(c.approvalsForSigners).toEqual({ of: 'read', value: { count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: ['ab'.repeat(32)] } });
+    expect(c.approvalsNeeded).toEqual({ of: 'read', value: 2 });
+  });
+
+  it('marks as you the one signer whose signing key is the seat this device holds, whatever the names say, and whose entry the directory holds', async () => {
+    const { readCompany } = await load();
+    const leaf = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
+    const was = kr.account;
+    /* The founding seat saved under the name the create step gives a person with no name, and the signer signed in here named apart. */
+    kr.account = { id: 'c1', name: 'Northwind', signers: [
+      { id: 'sF', name: 'You', status: 'active', leafCommitment: leaf(1), signingPublicKey: 'b1'.repeat(32) },
+      { id: 's1', name: 'KC-Wallet 2', status: 'active', leafCommitment: leaf(2), signingPublicKey: 'A1'.repeat(32) },
+    ] };
+    kr.seats = [leaf(1), leaf(2)];
+    kr.entries = [leaf(1)];
+    try {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.signerStandings?.of !== 'read') throw new Error('not open');
+      /* RED WHEN: the signer marked as you is chosen by name, by order or by anything but the signing key of the seat this device holds. */
+      expect(c.signerStandings.value.map((s) => [s.name, s.you])).toEqual([['You', false], ['KC-Wallet 2', true]]);
+      /* RED WHEN: a seated signer whose entry the company's directory does not hold is not told apart from one whose entry it holds. */
+      expect(c.signerStandings.value.map((s) => s.entryFiled)).toEqual([true, false]);
+      kr.entries = null;
+      const unread = await readCompany('u1', 'c1');
+      if (unread.of !== 'open' || unread.signerStandings?.of !== 'read') throw new Error('not open');
+      /* RED WHEN: a directory this device could not read is told as an entry not filed. */
+      expect(unread.signerStandings.value.map((s) => s.entryFiled)).toEqual([null, null]);
+    } finally {
+      kr.account = was;
+    }
+  });
+
+  it('marks as you only the row with both the seat id and the signing key this device holds, never a second row carrying its key', async () => {
+    const { readCompany } = await load();
+    const leaf = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
+    const was = kr.account;
+    /* A second row a believed filer put under this device's signing key, beside this device's own seat. */
+    kr.account = { id: 'c1', name: 'Northwind', signers: [
+      { id: 'sX', name: 'Copy', status: 'pending', leafCommitment: leaf(3), signingPublicKey: 'a1'.repeat(32) },
+      { id: 's1', name: 'KC-Wallet 2', status: 'active', leafCommitment: leaf(2), signingPublicKey: 'a1'.repeat(32) },
+    ] };
+    kr.seats = [leaf(2), leaf(3)];
+    try {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.signerStandings?.of !== 'read') throw new Error('not open');
+      /* RED WHEN: a row carrying this device's signing key under another id than this device's own seat is marked as you. */
+      expect(c.signerStandings.value.map((s) => [s.id, s.you])).toEqual([['sX', false], ['s1', true]]);
+    } finally {
+      kr.account = was;
+    }
+  });
+
+  /* RED WHEN: a record this device does not believe, or one the directory names and the service did not give, is shown as a person or left unsaid. */
+  it('names the records it does not believe, and those named and not given', async () => {
+    const { readCompany } = await load();
+    kr.named = { person: ['emp_ghost'] };
+    kr.unbelieved = ['emp_e1'];
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
+    expect([...c.peopleBelief.value.notBelieved].sort()).toEqual(['emp_e1', 'emp_ghost']);
+    /* RED WHEN: people not believed are dropped from the people read and the screens lose them without a word. */
+    expect(c.people.of).toBe('unreadable');
+  });
+
+  /* RED WHEN: a record filed for another company reads as a person, or hides the people that are fine; one sealed under another key reads as read. */
+  it('names a record that is not a person of this company as refused, and hands on one it cannot open as unreadable', async () => {
     const { readCompany } = await load();
     const ana = { id: 'emp_e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'pending', address: null };
-    for (const wrong of [filedPerson(ana, false, OTHER_VK), filedPerson(ana, false, VK, 'c2')]) {
-      kr.answers[ROUTE('/people')] = { people: [wrong] };
+    kr.answers[ROUTE('/people')] = { people: [filedPerson(ana, false, VK, 'c2'), filedPerson({ ...ana, id: 'emp_e3', name: 'Cat' }, false)] };
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
+    expect(c.peopleBelief.value.refused.map((x) => x.id)).toEqual(['emp_e1']);
+    /* RED WHEN: a refused id is listed again among those not believed. */
+    expect(c.peopleBelief.value.notBelieved).toEqual([]);
+    expect(c.people.of).toBe('unreadable');
+    kr.answers[ROUTE('/people')] = { people: [filedPerson(ana, false, OTHER_VK)] };
+    const d = await readCompany('u1', 'c1');
+    if (d.of !== 'open') throw new Error('not open');
+    expect([d.people.of, d.peopleBelief?.of, d.runs.of]).toEqual(['unreadable', 'unreadable', 'read']);
+  });
+
+  /* RED WHEN: a person whose record was refused is left out of the people while the people read still says it is complete. */
+  it('does not call the people complete when a record was refused, even one this device lists as believed nowhere else', async () => {
+    const { readCompany } = await load();
+    peopleAre.answer = () => ({ people: [], notBelieved: [], notPayable: [], refused: [{ id: 'emp_e1', why: 'it is filed for another company' }] });
+    try {
       const c = await readCompany('u1', 'c1');
-      if (c.of !== 'open') throw new Error('not open');
-      expect([c.people.of, c.runs.of]).toEqual(['unreadable', 'read']);
+      if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
+      expect(c.people.of).toBe('unreadable');
+      /* RED WHEN: the page that names the refused record is not told which it is. */
+      expect(c.peopleBelief.value.refused.map((x) => x.id)).toEqual(['emp_e1']);
+      expect(c.peopleBelief.value.notBelieved).toEqual([]);
+    } finally {
+      peopleAre.answer = null;
     }
+    /* With nothing refused, left out or not payable, the same read is complete. */
+    peopleAre.answer = () => ({ people: [], notBelieved: [], notPayable: [], refused: [] });
+    try {
+      const c = await readCompany('u1', 'c1');
+      expect(c.of === 'open' && c.people).toEqual({ of: 'read', value: [] });
+    } finally {
+      peopleAre.answer = null;
+    }
+  });
+
+  /* RED WHEN: the vendors are not read with the belief check, or a pending vendor whose hand-over waits is shown as not yet invited-and-waiting, or a vendor the directory names and the service did not give is dropped. */
+  it('reads the vendors, each with where it stands and whether a hand-over waits, and names the ones it does not believe', async () => {
+    const { readCompany } = await load();
+    const vendor = (id: string, name: string) => ({ versions: [toCompanyWire(signCompanyFiling(sealVendor({
+      id, accountId: 'c1', name, email: null, network: 'stagenet', startDate: '2026-10-01', terms: { kind: 'one-off' }, status: 'pending', address: null,
+      wrappingPublicKey: null, handedOverBy: null, admittedBy: null, admittedAt: null, ...MADE,
+    } as VendorRecord, 1, 1, VK), SEAT))] });
+    kr.named = { vendor: ['ven_aa11aa11aa11aa11aa11', 'ven_bb22bb22bb22bb22bb22', 'ven_ghost'] };
+    kr.answers[ROUTE('/records/vendor/ven_aa11aa11aa11aa11aa11/versions')] = vendor('ven_aa11aa11aa11aa11aa11', 'Vee');
+    kr.answers[ROUTE('/records/vendor/ven_bb22bb22bb22bb22bb22/versions')] = vendor('ven_bb22bb22bb22bb22bb22', 'Wes');
+    kr.answers[ROUTE('/vendors/ven_aa11aa11aa11aa11aa11/handover')] = { inbox: { sealed: 'x' } };
+    kr.answers[ROUTE('/vendors/ven_bb22bb22bb22bb22bb22/handover')] = { inbox: null };
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
+    /* RED WHEN: a vendor this device does not believe is dropped from the vendors read without a word. */
+    expect(c.vendors?.of).toBe('unreadable');
+    expect(c.vendorsBelief.value.vendors.map((v) => [v.id, v.standing, v.handedOver, v.termsKind, v.paid])).toEqual([
+      ['ven_aa11aa11aa11aa11aa11', 'waiting-for-check', true, 'one-off', 'not-set-up'], ['ven_bb22bb22bb22bb22bb22', 'invited', false, 'one-off', 'not-set-up'],
+    ]);
+    expect(c.vendorsBelief.value.notBelieved).toEqual(['ven_ghost']);
+    expect(c.vendorsBelief.value.notPayable).toEqual([]);
+    kr.named = { vendor: ['ven_aa11aa11aa11aa11aa11', 'ven_bb22bb22bb22bb22bb22'] };
+    const d = await readCompany('u1', 'c1');
+    expect(d.of === 'open' && d.vendors?.of === 'read' && d.vendors.value.vendors.length).toBe(2);
+  });
+
+  /* RED WHEN: a vendor's panel cannot show what they are paid, their dates, how they are admitted or whether they will be paid; a vendor the check will not pay is left out of `rows` or not marked with why; or a vendor who is paid is marked. */
+  it('reads each vendor with their terms, dates and how to admit them, and keeps one who will not be paid in the rows, marked with why', async () => {
+    const { readCompany } = await load();
+    const vendor = (id: string, name: string, over: Record<string, unknown>) => ({ versions: [toCompanyWire(signCompanyFiling(sealVendor({
+      id, accountId: 'c1', name, email: null, network: 'stagenet', startDate: '2026-10-01', terms: { kind: 'one-off' }, status: 'pending', address: null,
+      wrappingPublicKey: null, handedOverBy: null, admittedBy: null, admittedAt: null, ...MADE, ...over,
+    } as VendorRecord, 1, 1, VK), SEAT))] });
+    kr.named = { vendor: ['ven_aa11aa11aa11aa11aa11', 'ven_cc33cc33cc33cc33cc33'] };
+    kr.answers[ROUTE('/records/vendor/ven_aa11aa11aa11aa11aa11/versions')] = vendor('ven_aa11aa11aa11aa11aa11', 'Vee', {
+      terms: { kind: 'monthly', asset: NIGHT.code, amount: 2_500_000n }, endDate: '2026-12-31', invitedAddress: payable(2, 'unshielded').address.bech32,
+    });
+    kr.answers[ROUTE('/records/vendor/ven_cc33cc33cc33cc33cc33/versions')] = vendor('ven_cc33cc33cc33cc33cc33', 'Cy', { status: 'active', admittedAt: '2026-10-02T00:00:00.000Z' });
+    kr.answers[ROUTE('/vendors/ven_aa11aa11aa11aa11aa11/handover')] = { inbox: { sealed: 'x' } };
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
+    const { rows, vendors, notPayable } = c.vendorsBelief.value;
+    expect(rows.map((v) => [v.id, v.name, v.standing, v.notPayable !== null && v.notPayable !== ''])).toEqual([
+      ['ven_cc33cc33cc33cc33cc33', 'Cy', 'active', true], ['ven_aa11aa11aa11aa11aa11', 'Vee', 'waiting-for-check', false],
+    ]);
+    expect(notPayable.map((n) => [n.vendor.id, n.why !== ''])).toEqual([['ven_cc33cc33cc33cc33cc33', true]]);
+    expect(rows.find((v) => v.id === 'ven_cc33cc33cc33cc33cc33')!.notPayable).toBe(notPayable[0]!.why);
+    expect(vendors.map((v) => v.id)).toEqual(['ven_aa11aa11aa11aa11aa11']);
+    const vee = rows.find((v) => v.name === 'Vee')!;
+    expect([vee.termsKind, vee.asset, vee.endDate, vee.admitBy, vee.admittedAt]).toEqual(['monthly', NIGHT.code, '2026-12-31', 'claim', null]);
+    expect(vee.monthly).toEqual(publicAmount(2_500_000n, NIGHT.decimals, NIGHT.symbol));
+    const cy = rows.find((v) => v.name === 'Cy')!;
+    expect([cy.termsKind, cy.asset, cy.monthly, cy.endDate, cy.admitBy, cy.admittedAt]).toEqual(['one-off', null, null, null, 'fingerprint', '2026-10-02T00:00:00.000Z']);
+  });
+
+  /* RED WHEN: a vendor who has not been admitted yet, or who has left, and whose record names an address that does not hold, is marked as one this device will not pay (only an active vendor can be, as only an active person can), so a vendor waiting for the check loses the admit control; or an active one is not marked; or the guard on `vendors` is lifted by one who is not an active vendor. */
+  it('marks as not payable only an active vendor, as for a person, and never one who is not admitted yet or has left', async () => {
+    const { readCompany } = await load();
+    const ids = { cy: 'ven_cc33cc33cc33cc33cc33', lee: 'ven_ee55ee55ee55ee55ee55', wes: 'ven_dd44dd44dd44dd44dd44', di: 'ven_ff66ff66ff66ff66ff66' };
+    const vendor = (id: string, name: string, over: Record<string, unknown>) => ({ versions: [toCompanyWire(signCompanyFiling(sealVendor({
+      id, accountId: 'c1', name, email: null, network: 'stagenet', startDate: '2026-10-01', terms: { kind: 'one-off' }, status: 'pending', address: null,
+      wrappingPublicKey: null, handedOverBy: null, admittedBy: null, admittedAt: null, ...MADE, ...over,
+    } as VendorRecord, 1, 1, VK), SEAT))] });
+    const set = (named: string[]) => {
+      kr.named = { vendor: named };
+      kr.answers[ROUTE(`/records/vendor/${ids.cy}/versions`)] = vendor(ids.cy, 'Cy', { status: 'active', admittedAt: '2026-10-02T00:00:00.000Z' });
+      kr.answers[ROUTE(`/records/vendor/${ids.lee}/versions`)] = vendor(ids.lee, 'Lee', { status: 'leaver', admittedAt: '2026-10-02T00:00:00.000Z', address: payable(1, 'shielded').address });
+      kr.answers[ROUTE(`/records/vendor/${ids.wes}/versions`)] = vendor(ids.wes, 'Wes', { address: payable(2, 'shielded').address });
+      kr.answers[ROUTE(`/records/vendor/${ids.di}/versions`)] = vendor(ids.di, 'Di', {});
+      kr.answers[ROUTE(`/vendors/${ids.wes}/handover`)] = { inbox: { sealed: 'x' } };
+      for (const id of [ids.cy, ids.lee, ids.di]) kr.answers[ROUTE(`/vendors/${id}/handover`)] = { inbox: null };
+    };
+    set([ids.cy, ids.lee, ids.wes, ids.di]);
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
+    expect(c.vendorsBelief.value.rows.map((v) => [v.name, v.standing, v.notPayable !== null])).toEqual([
+      ['Cy', 'active', true], ['Di', 'invited', false], ['Lee', 'leaver', false], ['Wes', 'waiting-for-check', false],
+    ]);
+    expect(c.vendorsBelief.value.notPayable.map((n) => n.vendor.name)).toEqual(['Cy']);
+    expect(c.vendors?.of).toBe('unreadable');
+    set([ids.lee, ids.wes, ids.di]);
+    const d = await readCompany('u1', 'c1');
+    if (d.of !== 'open' || d.vendorsBelief?.of !== 'read') throw new Error('not read');
+    expect([d.vendors?.of, d.vendorsBelief.value.notPayable, d.vendorsBelief.value.rows.map((v) => v.notPayable)]).toEqual(['read', [], [null, null, null]]);
+  });
+
+  /* RED WHEN: a vendor with no payment address yet is taken to be paid publicly or privately (a screen would then draw the Public pill, or promise privacy, before an address decides it), or one with an address is not. */
+  it('knows how a vendor is paid only when the record holds the address that decides it', async () => {
+    const { readCompany, visibilityKnown } = await load();
+    const vendor = (id: string, name: string, over: Record<string, unknown>) => ({ versions: [toCompanyWire(signCompanyFiling(sealVendor({
+      id, accountId: 'c1', name, email: null, network: 'stagenet', startDate: '2026-10-01', terms: { kind: 'monthly', asset: NIGHT.code, amount: 2_500_000n }, status: 'active', address: null,
+      wrappingPublicKey: null, handedOverBy: null, admittedBy: null, admittedAt: '2026-10-02T00:00:00.000Z', ...MADE, ...over,
+    } as VendorRecord, 1, 1, VK), SEAT))] });
+    kr.named = { vendor: ['ven_aa11aa11aa11aa11aa11', 'ven_bb22bb22bb22bb22bb22', 'ven_cc33cc33cc33cc33cc33'] };
+    kr.answers[ROUTE('/records/vendor/ven_aa11aa11aa11aa11aa11/versions')] = vendor('ven_aa11aa11aa11aa11aa11', 'Ada', { ...payable(1, 'shielded') });
+    kr.answers[ROUTE('/records/vendor/ven_bb22bb22bb22bb22bb22/versions')] = vendor('ven_bb22bb22bb22bb22bb22', 'Bea', { ...payable(2, 'unshielded') });
+    kr.answers[ROUTE('/records/vendor/ven_cc33cc33cc33cc33cc33/versions')] = vendor('ven_cc33cc33cc33cc33cc33', 'Cal', {});
+    for (const id of ['ven_aa11aa11aa11aa11aa11', 'ven_bb22bb22bb22bb22bb22', 'ven_cc33cc33cc33cc33cc33']) kr.answers[ROUTE(`/vendors/${id}/handover`)] = { inbox: null };
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
+    expect(c.vendorsBelief.value.rows.map((v) => [v.name, v.paid, visibilityKnown(v.paid)])).toEqual([
+      ['Ada', 'privately', true], ['Bea', 'publicly', true], ['Cal', 'not-set-up', false],
+    ]);
   });
 
   /*
@@ -367,7 +728,7 @@ describe('each read, on its own', () => {
     const all = strings(c);
     expect(all.filter((s) => /sentence|wrote/.test(s))).toEqual([]);
     expect(all.filter((s) => /\.(standing|paid|kind|status|of)=/.test(s)).map((s) => s.replace(/^.*=/, '')).sort().filter((v, i, a) => a.indexOf(v) === i)).toEqual([
-      'active', 'add-signer', 'draft', 'employee', 'executed', 'held-by-committee', 'invited', 'leaver', 'not-known', 'not-set-up', 'open', 'payroll', 'privately', 'publicly', 'read', 'settled', 'signer', 'unknown', 'waiting-for-check',
+      'active', 'add-signer', 'draft', 'employee', 'executed', 'held-by-committee', 'invited', 'leaver', 'not-known', 'not-set-up', 'open', 'payroll', 'privately', 'publicly', 'read', 'settled', 'signer', 'unknown', 'vendor', 'waiting-for-check',
     ]);
   });
 });
@@ -412,6 +773,68 @@ describe('amounts, marked by how they are paid', () => {
       ['Ana', 'active', 'privately', 'private'], ['Bo', 'active', 'publicly', 'public'], ['Eve', 'waiting-for-check', 'not-set-up', 'public'],
       ['Fay', 'invited', 'not-set-up', 'public'], ['Gus', 'leaver', 'privately', 'private'],
     ]);
+  });
+
+  /* RED WHEN: a person's row loses what the People page's panel shows: the currency they are paid in, the classification and the end and leaving dates in force, the whole salary and classification history with when each line was made, or when they were admitted. */
+  it('gives a person\'s row everything the People panel shows, with the history lines in order', async () => {
+    const { personRow } = await load();
+    const person = {
+      id: 'e', name: 'A', title: 'T', asset: NIGHT.code, baseAmount: 5_000_000n, startDate: '2026-01-01', status: 'active', address: { kind: 'shielded' },
+      endDate: '2027-06-30', leavingDate: '2027-05-31', admittedAt: '2026-01-02T09:00:00.000Z',
+      pay: [{ amount: 5_000_000n, from: '2026-01-01', madeBy: null, madeAt: '2026-01-01T08:00:00.000Z' }, { amount: 6_000_000n, from: '2027-01-01', madeBy: null, madeAt: '2026-12-01T10:30:00.000Z' }],
+      classifications: [{ classification: 'full-time', from: '2026-01-01', madeBy: null, madeAt: '2026-01-01T08:00:00.000Z' }, { classification: 'part-time', from: '2027-01-01', madeBy: null, madeAt: null }],
+    };
+    const row = personRow(person as never, undefined, '2026-12-31');
+    expect([row.asset, row.classification, row.endDate, row.leavingDate, row.admittedAt]).toEqual([NIGHT.code, 'full-time', '2027-06-30', '2027-05-31', '2026-01-02T09:00:00.000Z']);
+    expect(row.pays.map((l) => [l.amount === null ? null : formatTokenAmount(l.amount, 'en'), l.amount === null ? null : visibilityOf(l.amount), l.from, l.madeAt])).toEqual([
+      ['5', 'private', '2026-01-01', '2026-01-01T08:00:00.000Z'], ['6', 'private', '2027-01-01', '2026-12-01T10:30:00.000Z'],
+    ]);
+    expect(row.classifications).toEqual([
+      { classification: 'full-time', from: '2026-01-01', madeAt: '2026-01-01T08:00:00.000Z' }, { classification: 'part-time', from: '2027-01-01', madeAt: null },
+    ]);
+    expect(personRow(person as never, undefined, '2027-02-01').classification).toBe('part-time');
+    /* A record filed before the history was kept has one line, from the start date; a person with no dates or lines has none to show. */
+    const plain = personRow({ id: 'p', name: 'P', title: 'T', asset: NIGHT.code, baseAmount: 7_000_000n, startDate: '2026-03-01', status: 'pending', address: null } as never, undefined, '2026-12-31');
+    expect([plain.pays.map((l) => [l.from, l.madeAt]), plain.classifications, plain.classification, plain.endDate, plain.leavingDate, plain.admittedAt]).toEqual([[['2026-03-01', null]], [], null, null, null, null]);
+  });
+
+  /* RED WHEN: a person with no payment address yet is taken to be paid publicly or privately (a screen would then draw the Public pill, or promise privacy, before an address decides it), or one with an address is not. */
+  it('knows how a person is paid only when the record holds the address that decides it', async () => {
+    const { personRow, visibilityKnown } = await load();
+    const at = (address: { kind: string } | null) => personRow({ id: 'e', name: 'A', title: 'T', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'active', address } as never);
+    expect([at(null), at({ kind: 'shielded' }), at({ kind: 'unshielded' })].map((r) => [r.paid, visibilityKnown(r.paid)])).toEqual([['not-set-up', false], ['privately', true], ['publicly', true]]);
+  });
+
+  /* RED WHEN: a person added by an unshielded address is asked for a fingerprint they cannot give (their wallet's signed claim admits them), or one added by link or at a private address is admitted without the fingerprint they read out. */
+  it('says whether a person is admitted on a fingerprint or on their wallet\'s signed claim, by the address they were added at', async () => {
+    const { personRow } = await load();
+    const at = (invitedAddress?: string | null) => personRow({ id: 'e', name: 'A', title: 'T', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'pending', address: null, ...(invitedAddress === undefined ? {} : { invitedAddress }) } as never).admitBy;
+    expect([at(), at(null), at(PRIVATE_ADDRESS), at(PUBLIC_ADDRESS), at(`  ${PRIVATE_ADDRESS} `)]).toEqual(['fingerprint', 'fingerprint', 'fingerprint', 'claim', 'fingerprint']);
+  });
+
+  /* RED WHEN: one record this device does not believe, or one that is refused or active and not payable, takes the believed people off the page with it (the guard on `people` is lifted for the page by `rows`), or `rows` carries someone who is not believed or is active and not payable. */
+  it('keeps the believed people in rows while the people read stays unreadable, and leaves the others out of them', async () => {
+    const { readCompany } = await load();
+    kr.unbelieved = ['emp_e1'];
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
+    expect(c.people.of).toBe('unreadable');
+    expect(c.peopleBelief.value.notBelieved).toEqual(['emp_e1']);
+    expect(c.peopleBelief.value.rows.map((p) => [p.id, p.name, p.standing, p.asset])).toEqual([
+      ['emp_e2', 'Bo', 'active', NIGHT.code], ['emp_e5', 'Eve', 'waiting-for-check', NIGHT.code], ['emp_e6', 'Fay', 'invited', NIGHT.code], ['emp_e7', 'Gus', 'leaver', NIGHT.code],
+    ]);
+    kr.unbelieved = [];
+    const ana = { id: 'emp_e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'active' };
+    kr.answers[ROUTE('/people')] = { people: [filedPerson({ ...ana, ...payable(1, 'shielded'), payeeCode: null }, false), filedPerson({ ...ana, id: 'emp_e3', name: 'Cat', status: 'pending', address: null }, true)] };
+    const d = await readCompany('u1', 'c1');
+    if (d.of !== 'open' || d.peopleBelief?.of !== 'read') throw new Error('not read');
+    expect([d.people.of, d.peopleBelief.value.notPayable.map((x) => x.person.id), d.peopleBelief.value.rows.map((p) => p.id)]).toEqual(['unreadable', ['emp_e1'], ['emp_e1', 'emp_e3']]);
+    /* The active person the check will not pay is a row marked with why, and the pending person is a row unmarked. */
+    expect(d.peopleBelief.value.rows.map((p) => [p.id, p.notPayable !== null && p.notPayable !== ''])).toEqual([['emp_e1', true], ['emp_e3', false]]);
+    expect(d.peopleBelief.value.rows[0]!.notPayable).toBe(d.peopleBelief.value.notPayable[0]!.why);
+    kr.answers[ROUTE('/people')] = { people: [filedPerson({ ...ana, ...payable(1, 'shielded') }, false)] };
+    const e = await readCompany('u1', 'c1');
+    expect(e.of === 'open' && e.people.of === 'read' && e.peopleBelief?.of === 'read' && e.people.value).toEqual(e.of === 'open' && e.peopleBelief?.of === 'read' ? e.peopleBelief.value.rows : null);
   });
 
   /* RED WHEN: decimals are written in the adapter instead of read from the registry it is given. */
@@ -558,12 +981,29 @@ describe('proposals, vaults and invitations', () => {
     expect(info.asked).toEqual([]);
   });
 
-  /* RED WHEN: a link used, withdrawn or expired is listed as waiting to be used, or one that names nobody is given a name. */
-  it('lists only the links still waiting to be used', async () => {
+  /* RED WHEN: a link used, withdrawn or expired is listed as waiting to be used, one that names nobody is given a name, a link for a vendor is left out, or one for a kind the page cannot send is listed. */
+  it('lists only the links still waiting to be used, a vendor\'s among them', async () => {
     const { readCompany } = await load();
     const c = await readCompany('u1', 'c1');
     if (c.of !== 'open' || c.invitations.of !== 'read') throw new Error('not read');
-    expect(c.invitations.value.map((i) => [i.kind, i.name])).toEqual([['signer', 'Tom'], ['employee', null]]);
+    expect(c.invitations.value.map((i) => [i.kind, i.name])).toEqual([['signer', 'Tom'], ['employee', null], ['vendor', 'Vik']]);
+  });
+
+  /* RED WHEN: a vendor's link is dropped or listed as an employee's, a vendor's link used, withdrawn or expired is listed, or a link of a kind the page cannot send is listed. */
+  it('keeps a waiting vendor link as a vendor\'s, and drops a used, withdrawn or expired one and every other kind', async () => {
+    const { invitationRows } = await load();
+    const at = '2026-09-12T00:00:00.000Z';
+    expect(invitationRows([
+      { kind: 'vendor', name: 'Vik', createdAt: at },
+      { kind: 'vendor', createdAt: at, expiresAt: '2999-01-01T00:00:00.000Z' },
+      { kind: 'vendor', name: 'Spent', createdAt: at, acceptedAt: at },
+      { kind: 'vendor', name: 'Gone', createdAt: at, revokedAt: at },
+      { kind: 'vendor', name: 'Old', createdAt: at, expiresAt: '2020-10-11T00:00:00.000Z' },
+      { kind: 'super-admin', name: 'Root', createdAt: at },
+    ], Date.parse('2026-10-29T00:00:00.000Z'))).toEqual([
+      { kind: 'vendor', name: 'Vik', sentAt: at, expiresAt: null },
+      { kind: 'vendor', name: null, sentAt: at, expiresAt: '2999-01-01T00:00:00.000Z' },
+    ]);
   });
 
   /*
@@ -703,5 +1143,74 @@ describe('the names in the one list of companies', () => {
     /* No second list of companies is asked for: the names are the one list's. */
     expect(fetched.filter((p) => p.startsWith('/api/accounts'))).toEqual([]);
     vi.unstubAllGlobals();
+  });
+});
+
+describe('the signers invited by address', () => {
+  const body = (name: string) => ({ chainId: 'cc', summary: '', proposalSalt: 'aa', coinPublicKey: '0c'.repeat(32), invited: { terms: { name, role: 'approver', invite: { address: 'ab'.repeat(32), salt: 'cd'.repeat(32), scope: 'ef'.repeat(32) } } } });
+  const open = async () => {
+    const { readCompany } = await load();
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open') throw new Error('not open');
+    return c;
+  };
+  beforeEach(() => { bya.bodies = {}; bya.asked = []; bya.throws = false; });
+
+  /* RED WHEN: a proposal that invites a signer by address is not handed on with its record id, and its role, or is opened for another company or under a key other than the company's. */
+  it('opens each proposal from the one list of proposals, under the company\'s own keys, and hands on those that invite by address', async () => {
+    bya.bodies['p1'] = body('Sam');
+    const c = await open();
+    expect(c.signersInvited).toEqual({ of: 'read', value: [{
+      proposal: 'p1', name: 'Sam', role: 'approver', address: 'ab'.repeat(32), scope: 'ef'.repeat(32), coinKey: '0c'.repeat(32), status: 'open', approvals: null,
+      seat: null,
+    }] });
+    expect(bya.asked.map((a) => [a.id, a.account])).toEqual([['p1', 'c1'], ['p2', 'c1']]);
+    expect((bya.asked[0]!.keys as { key: string }).key).toBe(VK);
+    expect(kr.asked.filter((p) => p.endsWith('/proposals'))).toHaveLength(1);
+  });
+
+  /* RED WHEN: proposals that cannot be read are told as no signer invited, or a core that cannot open one takes the proposals' own list down with it. */
+  /* RED WHEN: a seat request the chain does not show the proposal took, filed by the service or another invitee, hides Approve; or the seat the chain says it took does not reach the signers page, so Approve stays on an invitation carried out. */
+  it('reads the seat each invitation took from the chain alone, with the entry waiting at that seat, and never from a request naming it', async () => {
+    const SEAT = '5e'.repeat(32);
+    bya.bodies['p1'] = body('Sam');
+    const forged = { name: 'Sam', role: 'approver', signingPublicKey: 'b1'.repeat(32), wrappingPublicKey: 'b2'.repeat(32), leafCommitment: SEAT, invited: { terms: { proposal: 'CC' } } };
+    kr.answers[ROUTE()] = { ...(kr.answers[ROUTE()] as object), pendingSigners: [{ id: 'sX', userId: 'u8', createdAt: 'x', sealed: sealToInbox(forged, inboxPublicKey(VK, 'c1')) }] };
+    const was = kr.account;
+    kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active' }, { id: 'sB', name: 'Sam', status: 'pending', leafCommitment: SEAT }] };
+    chainSeats.took = {}; chainSeats.asked = []; chainSeats.fails = false;
+    try {
+      const asked = await open();
+      expect(asked.signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: null }] });
+      expect(chainSeats.asked).toEqual([['cc']]);
+      chainSeats.took = { cc: SEAT.toUpperCase() };
+      expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: 'sB' } }] });
+      chainSeats.took = { cc: '6f'.repeat(32) };
+      expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: null } }] });
+      chainSeats.fails = true;
+      expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: null }] });
+      chainSeats.fails = false;
+      chainSeats.took = { cc: SEAT };
+      kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active' }, { id: 'sB', name: 'Sam', status: 'active', leafCommitment: SEAT.toUpperCase() }] };
+      /* RED WHEN: an invitation stays waiting after the chain shows its seat taken and the believed roster holds an active signer at that seat. */
+      expect((await open()).signersInvited).toEqual({ of: 'read', value: [] });
+      kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active', leafCommitment: SEAT }] };
+      chainSeats.took = { cc: '6f'.repeat(32) };
+      /* RED WHEN: an active signer at another seat than the one the chain says the proposal took ends the invitation's wait. */
+      expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: null } }] });
+    } finally {
+      kr.account = was;
+      chainSeats.took = {}; chainSeats.fails = false;
+    }
+  });
+
+  it('says unreadable, apart from the proposals, when they cannot be read or one cannot be opened', async () => {
+    kr.answers[ROUTE('/proposals')] = new Error('the service could not be reached');
+    const down = await open();
+    expect([down.proposals.of, down.signersInvited?.of]).toEqual(['unreadable', 'unreadable']);
+    everything();
+    bya.throws = true;
+    const broke = await open();
+    expect([broke.proposals.of, broke.signersInvited?.of]).toEqual(['read', 'unreadable']);
   });
 });

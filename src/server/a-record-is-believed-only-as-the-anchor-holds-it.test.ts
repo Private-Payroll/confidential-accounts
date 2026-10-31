@@ -30,6 +30,7 @@ import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-ent
 import { anchorServiceFor, anchorTheRecordsHere, type AnchorDoors, type Anchored } from 'vaults-web-shared/records-anchored-here.js';
 import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import {
   believedProposalIdsOnChainHere, believedRunsHere, keptRunHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere,
 } from 'vaults-web-shared/run-rebuilt-here.js';
@@ -68,7 +69,7 @@ const anchoredByAda = async (): Promise<Anchored> => {
 };
 /** Ada's device reading the company's people, over what `serve` makes of what the service sends. */
 const peopleOn = (s: Seat, serve: (body: unknown) => unknown = (b) => b): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, network: NETWORK, entered: s.entered,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
   directory: acmeDirectory,
   send: async (path, init) => {
     const r = await sendAs(s.person)(path, init);

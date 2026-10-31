@@ -68,7 +68,7 @@ const OPEN: Company = {
     currencies: [{ code: '00'.repeat(32), symbol: 'NIGHT', privately: privateAmount(5n, 6, 'NIGHT'), publicly: publicAmount(2n, 6, 'NIGHT') }],
     legs: [{ code: `${'00'.repeat(32)}:shielded`, asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately', vault: 'x1', payees: 2 }], unrecognised: 0,
   }] },
-  people: { of: 'read', value: [{ id: 'e1', name: 'Ana', title: 'Engineer', standing: 'active', pay: privateAmount(5n, 6, 'NIGHT'), paid: 'privately', startedAt: '2026-01-01' }] },
+  people: { of: 'read', value: [{ id: 'e1', name: 'Ana', title: 'Engineer', standing: 'active', pay: privateAmount(5n, 6, 'NIGHT'), paid: 'privately', startedAt: '2026-01-01', asset: '00'.repeat(32), classification: 'full-time', endDate: null, leavingDate: null, pays: [], classifications: [], admittedAt: null, admitBy: 'fingerprint', notPayable: null }] },
   vaults: { of: 'read', value: [{ vault: 'x1', createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }] },
   invitations: { of: 'read', value: [{ kind: 'signer', name: 'Tom', sentAt: '2026-09-10T00:00:00.000Z', expiresAt: null }] },
 };
@@ -224,11 +224,12 @@ describe('one menu, in every file', () => {
    * of a focused page, and the way from an action opened in the right-hand
    * panel on the vault pages to the setup step that makes it possible, and
    * the way from a company whose creation is not finished, opened from any
-   * list of companies, to the step that finishes it.
+   * list of companies, to the step that finishes it, and the way on from the
+   * joining page, once a person has joined or left, to where their view begins.
    */
   it('goes to a page from code only where it is named', () => {
     expect(APP_CODE.filter((f) => GOES.test(f.text) && f.path !== 'apps/web/src/router.tsx').map((f) => f.path).sort()).toEqual([
-      'apps/web/src/app.tsx', 'apps/web/src/records/vault-pending.tsx', 'apps/web/src/screens/home.tsx', 'apps/web/src/screens/landing.tsx',
+      'apps/web/src/app.tsx', 'apps/web/src/records/vault-pending.tsx', 'apps/web/src/screens/home.tsx', 'apps/web/src/screens/join.tsx', 'apps/web/src/screens/landing.tsx',
       'apps/web/src/screens/settings.tsx', 'apps/web/src/setup/asked.ts', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
       'apps/web/src/shell/shell.tsx',
     ]);

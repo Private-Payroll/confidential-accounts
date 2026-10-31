@@ -92,6 +92,7 @@ import { vaultDetails } from '../testing/vault-details.js';
 import { checkedHeadsInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { openTheRoundHere, raiseRetryOnDevice, raiseRunOnDevice, SentAndNotYetSeen, sendRaiseFromDevice, sendRetryFromDevice } from 'vaults-web-shared/governed-call-on-device.js';
 import { paymentChecked, paymentsCheckedDigest, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../core/device-raise.js';
@@ -207,7 +208,7 @@ const WINDOW = { opensAt: String(NOW + 3600), closesAt: String(NOW + 7200) };
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 const aPayee = async (n: number, paidAt = n, paid: { address: string; asset: string } = { address: addressOf(paidAt), asset: TEST_SETTLEMENT_ASSET }) => {
@@ -1264,10 +1265,9 @@ describe('THE RAISE CHECKS ARE ONE LIST, RUN WHERE A ROUND IS RAISED AND AGAIN W
 
 /** A window for the leg raised again after the first one's has closed. */
 const LATER = { viewingKey: KEY, vault: VAULT, opensAt: String(AFTER + 100), closesAt: String(AFTER + 3600) };
-/** The company's record of a proposal, set to `status` where it is kept, as a withdrawal that did or did not take. */
 /**
  * A round withdrawn - the service's record marked so and this file's chain no longer holding it - or held open again
- * by both, as a withdrawal that did not take.
+ * by both, as a withdrawal that did not take. The company's record of the proposal is set to `status` where it is kept.
  */
 const standing = (id: string, status: 'open' | 'cancelled') => {
   const kept = store.getProposal(id)!;

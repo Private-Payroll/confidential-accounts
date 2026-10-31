@@ -1,6 +1,6 @@
 import {
-  ACT_CALL_SCHEMA, ACT_ENDED_SCHEMA, ACT_KEEP_SCHEMA, ACT_RELAY_SCHEMA, ACT_STOPS, MOST_ACT_CALL_BODY, MOST_ACT_CALLS,
-  MOST_ACT_RELAYS, MOST_ACT_STEPS, MOST_ACT_TRANSACTION,
+  ACT_CALL_SCHEMA, ACT_ENDED_SCHEMA, ACT_KEEP_SCHEMA, ACT_REFUSED_CODE, ACT_REFUSED_KEY, ACT_RELAY_SCHEMA, ACT_STOPS,
+  MOST_ACT_CALL_BODY, MOST_ACT_CALLS, MOST_ACT_RELAYS, MOST_ACT_STEPS, MOST_ACT_TRANSACTION,
 } from './channel.js';
 import type { ActCall, ActEnded, ActKeep, ActRelay, ActStop } from './channel.js';
 import { readKeysRead, readSealedKeyring } from './unlock.js';
@@ -133,8 +133,13 @@ export function readActEnded(raw: unknown, expecting: { readonly nonce: string; 
     });
   }
   if (ended !== 'stopped' || !(ACT_STOPS as readonly unknown[]).includes(m['why'])) return null;
+  /* Which refusal a refused check stopped at, kept only in its own shape and only on `check-failed`; anything else is dropped. */
+  const refused = m['refused'], code = m['code'];
+  const said = m['why'] === 'check-failed' && typeof refused === 'string' && ACT_REFUSED_KEY.test(refused)
+    ? { refused, ...(typeof code === 'string' && ACT_REFUSED_CODE.test(code) ? { code } : {}) }
+    : {};
   return Object.freeze({
     schema: ACT_ENDED_SCHEMA, nonce: expecting.nonce, intent: expecting.intent, ended, step: m['step'] as number,
-    steps: m['steps'] as number, relayed, unconfirmed, why: m['why'] as ActStop, ...told,
+    steps: m['steps'] as number, relayed, unconfirmed, why: m['why'] as ActStop, ...said, ...told,
   });
 }

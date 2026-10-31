@@ -189,6 +189,13 @@ export interface Signer {
     committeeKey: { tag: string; value: string };
     statement: import('midnight-identity/profile/records-key').DirectoryEntryStatement;
   } | null;
+  /**
+   * The coin key of the private address this seat was invited at, recorded when a seat taken by address is admitted:
+   * taken from the proposal that seated it and held there to the commitment and salt its invitation names. Every device
+   * refuses to invite or approve that wallet to a second seat, which would approve twice. Absent for a seat made any
+   * other way.
+   */
+  coinPublicKey?: Hex;
   /*
    * `blinding` USED TO BE HERE, AND IT WAS TAKEN BACK OUT. Read this before
    * putting anything like it back.
@@ -689,14 +696,11 @@ export type ApprovalUnknown = 'not-yet-proposed' | 'no-status' | 'not-open';
 /**
  * **WHAT THE CHAIN SAYS ABOUT ONE APPROVAL ROUND — OR THAT WE DO NOT KNOW.**
  *
- * `satisfied` used to be a boolean this service computed from its own count
- * against its own copy of the threshold, and a boolean cannot hold the third
- * case. **A round nobody can find on chain and a round that lacks approvals are
- * different facts** — the first is our ignorance and the second is the signers'
- * position — and merging them lets a product show "waiting for signatures" when
- * the truth is "we cannot see the chain". This type makes that merge
- * unwritable: there is no boolean to read, and `unknown` carries no counts
- * because we have none.
+ * There is no boolean: **a round nobody can find on chain and a round that lacks
+ * approvals are different facts** — the first is our ignorance and the second is
+ * the signers' position — and merging them lets a product show "waiting for
+ * signatures" when the truth is "we cannot see the chain". This type cannot
+ * merge them, and `unknown` carries no counts because we have none.
  *
  * `approvals` and `threshold` are both the LEDGER's, never ours. They are
  * public on chain by design (decision 0003) so carrying them here is not a
@@ -757,11 +761,10 @@ export interface Proposal {
    * **THE SIGNATURES WE HOLD. NOT THE COUNT THAT DECIDES ANYTHING.**
    *
    * These are kept because an approval is a signature over `digest` and we are
-   * the ones storing it, and because `approval-signature.test.ts` spends one
-   * against another round. `length` used to be the number `satisfied` was
-   * computed from; it is not any more, and the two can legitimately differ —
-   * the chain counts nullifiers and can hold an approval we never recorded, or
-   * refuse one we did.
+   * the ones storing it, and because a signature made for one proposal is tried
+   * against another to show it no longer verifies. The count that decides is the
+   * chain's, not `length`, and the two can legitimately differ — the chain counts
+   * nullifiers and can hold an approval we never recorded, or refuse one we did.
    */
   approvals: Approval[];
   status: ProposalStatus;
@@ -787,7 +790,6 @@ export interface Proposal {
   txRef?: string;
 }
 
-/** A person on the payroll, held at account level rather than inside a run. */
 /** One seat's signature over a removal's retirement, for the directory version it names. */
 export interface RetirementSignature { signedFor: number; publicKey: Hex; signature: Hex }
 
@@ -858,6 +860,7 @@ export interface SealedProposal {
   wiring?: WiringName | null;
 }
 
+/** A person on the payroll, held at account level rather than inside a run. */
 export interface RosterEmployee {
   id: string;
   accountId: string;
@@ -889,17 +892,17 @@ export interface RosterEmployee {
   /**
    * WHAT THEY ARE PAID IN. One asset, and there is deliberately no second one.
    *
-   * An earlier version of this had `denomination` — what the contract of
-   * employment says — beside `settlementAsset`, what actually moves, so that a
-   * person hired at $5,000 could be paid in USDC at a recorded rate. **That was
-   * ruled out: everybody is paid in the currency they are assigned here, and
-   * there are no exchange rates in this product.**
+   * There is no second field, such as a `denomination` (what a contract of
+   * employment says) beside `settlementAsset` (what actually moves). **Everybody
+   * is paid in the currency they are assigned here, and there are no exchange
+   * rates in this product**, so a person hired at $5,000 is not paid in USDC at
+   * a recorded rate.
    *
    * Keeping both fields under that rule would have been strictly worse than
    * having one. They would be required to be equal, so every read would need to
    * decide which to trust, every write would need to keep them in step, and the
    * first time they disagreed the system would have to invent a rate to
-   * reconcile them — which is exactly the thing being ruled out. Two fields that
+   * reconcile them — which is exactly what this product does without. Two fields that
    * must always be equal is one field and a bug waiting to be written.
    *
    * What is lost, and it is worth knowing rather than discovering: if somebody
@@ -1079,23 +1082,16 @@ export interface Invite {
   /**
    * **THE HASH OF THE TOKEN, NOT THE TOKEN.**
    *
-   * This used to be the credential itself, sitting in a table any database
-   * backup carries. Every audit of this flow has circled the same fact: an
-   * invite is a bearer credential, and we were storing spendable copies of all
-   * of them. Sessions already learned this — `tokenHash` in `sessions.ts`, with
-   * the same reasoning: *"a hash, so the stored value is useless if the table
-   * leaks."*
+   * An invite is a bearer credential, so the table keeps only its hash, as
+   * sessions do with `tokenHash` in `sessions.ts` (*"a hash, so the stored value
+   * is useless if the table leaks"*).
    *
-   * **The half of this that is true, and only that half, may be counted:**
-   * nobody who takes the DATABASE can produce a usable invite, or read the offer
-   * sealed under the raw token.
-   *
-   * An earlier version of this said the raw token exists only in the message
-   * sent to the person it is for. It does not — the delivery port holds every
-   * token it has been given, in memory, for the life of the process, with the
-   * name and email beside it. That is a real retention and it is not
-   * this field's. **And since the offer is sealed to it, a retained token is no
-   * longer just a bearer credential: it is the key to a salary.**
+   * **That is the whole claim:** nobody who takes the DATABASE can produce a
+   * usable invite, or read the offer sealed under the raw token. The raw token
+   * also lives in the delivery port's memory, with the name and email beside it,
+   * for the life of the process. That retention is not this field's, and
+   * because the offer is sealed to the token, **a retained token is the key to a
+   * salary.**
    */
   token: string;
   accountId: string;
@@ -1489,7 +1485,6 @@ export interface RunPayout {
   company?: string | null;
 }
 
-/** What a person checking a statement receives. Proves the statement without carrying the underlying data. */
 /**
  * A payroll run as the SERVER holds it.
  *
@@ -1570,16 +1565,14 @@ export interface SealedRun {
  * new sealed artefact re-creating exactly the approval history `cancel` erases
  * on purpose.
  *
- * **BOUNDED, BECAUSE A MEMBER CAN CAUSE THESE — AND BOTH FIELDS ARE BOUNDED,
- * WHICH THIS SENTENCE USED TO DENY.** It said *`count` is every attempt ever
- * refused against this proposal*, and that is FALSE at source: `refuseApproval`
- * returns at `REFUSED_APPROVALS_KEPT` without writing, and the increment sits
- * past that return, so **`count` freezes with `recent` at
- * `REFUSED_APPROVALS_KEPT`.**
+ * **BOUNDED, BECAUSE A MEMBER CAN CAUSE THESE.** Both fields stop at
+ * `REFUSED_APPROVALS_KEPT`: `refuseApproval` returns there without writing, and
+ * the increment sits past that return, so `count` freezes together with
+ * `recent`.
  *
- * **SO `count` IS ATTEMPTS RECORDED, NEVER ATTEMPTS MADE**, and a reader of
- * this record who needs *made* has to read `logs/REPORT-REFUSALS.txt`, which
- * receives every one of them. A refused approval below the cap costs one
+ * **SO `count` IS ATTEMPTS RECORDED, NEVER ATTEMPTS MADE**, and a reader who
+ * needs attempts made has to read the service's refusal log, which receives
+ * every one of them (the report written for each refused approval). A refused approval below the cap costs one
  * durable write, the same cost an accepted one already carries; above the cap
  * it costs none, and the refusal returned says so in words rather than leaving
  * a full list to read as a complete one.

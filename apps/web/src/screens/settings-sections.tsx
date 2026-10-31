@@ -1,5 +1,5 @@
 import { useText } from 'vaults-ui';
-import { CommitteeChange } from '../actions/committee-change.js';
+import { Signers } from '../actions/signers.js';
 import { useDay } from '../records/parts.js';
 import { useSession } from '../session.js';
 
@@ -19,17 +19,18 @@ export function CompanyCreated() {
 
 /**
  * SETTINGS > SIGNERS AND APPROVALS, THE PART BUILT SO FAR: what anyone can
- * look up about a company's signers, said where signers are added and
- * removed, and who holds the company, with the change of the super admins a
- * vault may be owed (the one component the vault panel shows too). The rest of
- * the section is not built yet and says so below.
+ * look up about a company's signers, and the signers component (where each
+ * stands, the invitations waiting for approvals, Finish adding, Add a signer,
+ * and who holds the company, with the change of the super admins a vault may
+ * be owed), which the wizard's signers step draws too. Choosing how many must
+ * approve is not built yet and says so below.
  */
 export function SignersBuilt() {
   const t = useText();
   return (
     <>
       <p className="text-sm text-muted-foreground" data-public-facts>{t('settingsSigners.publicFacts')}</p>
-      <CommitteeChange />
+      <Signers />
     </>
   );
 }

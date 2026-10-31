@@ -153,6 +153,19 @@ export const invitationRoutes = (deps: {
     return invite!;
   };
   const isAnswer = (x: Invite | Answer): x is Answer => 'status' in x && 'body' in x;
+  /*
+   * The id a signer's own seat request on this invitation was given, when the same signed-in person asks again with
+   * the link's proof and that request is still waiting: an answer that never reached their wallet is given again, and
+   * nothing is filed twice. Expiry is not asked again: the request was made while the invitation was open.
+   */
+  const seatRequestAskedAgain = (req: express.Request, acceptance: string): string | null => {
+    const invite = deps.store.invitationById(String(req.params.id));
+    const signedIn = (req as { userId?: unknown }).userId;
+    if (invite === null || invite.kind !== 'signer' || invite.revokedAt || !invite.acceptedAt || typeof invite.subjectId !== 'string') return null;
+    if (typeof signedIn !== 'string' || !acceptsTheInvitation(acceptance, invite.acceptanceHash)) return null;
+    const rec = deps.store.getAccount(invite.accountId);
+    return rec !== null && rec.pendingSigners.some((p) => p.id === invite.subjectId && p.userId === signedIn) ? invite.subjectId : null;
+  };
 
   /*
    * **AN INVITATION OF AN EMPLOYEE, A VENDOR OR A SIGNER IS FILED HERE.** Whatever
@@ -277,6 +290,8 @@ export const invitationRoutes = (deps: {
   router.post('/api/invites/:id/accept-signer', logged, deps.signedIn, json, async (req, res) => {
     const b = z.object({ acceptance: z.string(), waiting: SEALED, for: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional() }).strict().safeParse(req.body);
     if (!b.success) { res.status(400).json({ refused: 'not-an-acceptance', error: 'an acceptance is the proof the link gives and what was sealed on this device, and nothing else. Nothing was sent.' }); return; }
+    const again = b.data.for === undefined ? seatRequestAskedAgain(req, b.data.acceptance) : null;
+    if (again !== null) { res.status(201).json({ id: again }); return; }
     const invite = accepting(req, ['signer'], b.data.acceptance);
     if (isAnswer(invite)) { res.status(invite.status).json(invite.body); return; }
     const signedIn = (req as { userId?: unknown }).userId as string;

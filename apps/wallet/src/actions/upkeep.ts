@@ -2,7 +2,8 @@
  * **WHAT A SEAT ACTION ALSO OWES ITS COMPANY, WORKED OUT AND DONE IN THE WALLET, IN THE SAME WINDOW.** Opening a
  * company's pages signs nothing; instead every seat action in this wallet starts by changing the company's key when a
  * removed signer's key is still the one in use, and following a roster no device believes, and ends by filing each
- * vault's records again for the signers seated since its last write and anchoring on the chain what was filed. What is
+ * vault's records again for the signers seated since its last write, giving each vault's secret to every other seat
+ * that lacks it, and anchoring on the chain what was filed. What is
  * owed is worked out from this wallet's own reads: the chain through its own indexer, the company's records as the
  * judges believe them, and the seat in the saved keys. A list the page or the service keeps is never asked.
  * Upkeep never stops the action it rides on for what it could not do; it says so in the action's outcome, and the
@@ -22,7 +23,8 @@ import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here
 import { ownEntryFiled, rosterFollowed } from '../../../../packages/web-shared/src/vault-keys-given.js';
 import { withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
 import {
-  browserInFlightRecords, deviceRecordsFor, deviceSignerFrom, directoryFilingsFrom, fileDirectoryFiling, readersIn,
+  browserInFlightRecords, deviceRecordsFor, deviceSignerFrom, directoryFilingsFrom, fileDirectoryFiling, giveEachVaultSecretHere, readersIn,
+  type DirectoryHere, type DirectoryRead,
 } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-operation.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
@@ -31,6 +33,7 @@ import { intentShapeOf, routeOf, sendsIn } from 'midnight-identity/profile/reque
 import { apiOver, sendOver, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
+import { mayFile } from '../../../../src/midnight/seat-directory.js';
 
 /** Where this wallet keeps the coins it put into a vault; absent where the browser keeps no database. */
 export interface UpkeepReach {
@@ -165,11 +168,16 @@ export async function rotationDoorsIn(r: CompanyReach, api: Api): Promise<Rotati
   };
 }
 
-/** What one vault's records are filed again from: this seat, the directory's signers, and the coins this wallet kept. */
-export function rebuildDoorsIn(ctx: StepContext, r: CompanyReach, api: Api, send: ReturnType<typeof sendOver>, reach: UpkeepReach): RebuildDoors {
+/**
+ * What one vault's records are filed again from: this seat, the directory's signers, and the coins this wallet kept.
+ * A caller that has already read the directory in this step hands that read in, so it is read once.
+ */
+export function rebuildDoorsIn(
+  ctx: StepContext, r: CompanyReach, api: Api, send: ReturnType<typeof sendOver>, reach: UpkeepReach, read?: DirectoryRead,
+): RebuildDoors {
   const person = ctx.person ?? (() => { throw new StepRefused(why('no-person')); })();
   const me = deviceSignerFrom(r.leaf, r.companyKey);
-  const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
+  const directory = read ?? r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const kept = (reach.coins ?? keptInTheWallet)({ signerId: me.signerId, wrappingSecret: me.wrappingSecret });
   return {
@@ -197,6 +205,53 @@ export async function anchoredAtTheEnd(doors: AnchorDoors): Promise<{ readonly a
     }
   }
   return 'notAnchored' in first ? { notAnchored: first.notAnchored } : { anchored: first.anchored };
+}
+
+/**
+ * Each vault's secret given to every other seat the chain holds that lacks it, before the anchor so the copies filed
+ * are anchored with the action's own records. Each seat and vault is tried alone with `giveEachVaultSecretHere`, which
+ * wraps the secret to the records key the seat's believed directory entry names and gives nothing to a seat already
+ * holding it. Only a seat this wallet believes, whose role may file a vault's nonce secret, gives: any other seat gives
+ * nothing, since every device would refuse the version it filed. A seat with no believed entry yet, a vault this seat
+ * holds no copy of, or a filing the service refused is left for the company's next seat action; only a stop ends the
+ * step. A stop from a read made through the company's own calls reaches the catch as itself, so it is rethrown there;
+ * one the record store wrapped is caught by the watched calls after each pair.
+ */
+async function vaultSecretsGiven(
+  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedCalls>, reach: UpkeepReach,
+  vaults: readonly string[], seats: readonly string[], left: () => void,
+): Promise<void> {
+  const others = [...new Set(seats.map((x) => x.toLowerCase()))].filter((x) => x !== r.leaf.toLowerCase());
+  if (vaults.length === 0 || others.length === 0) return;
+  const read = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
+  let once: Promise<DirectoryHere> | null = null;
+  const directory = () => (once ??= read());
+  let doors: RebuildDoors;
+  let mine: { readonly role: Parameters<typeof mayFile>[0]['role'] } | null = null;
+  try {
+    doors = rebuildDoorsIn(ctx, r, w.api, w.send, reach, directory);
+    mine = (await doors.seatHere?.()) ?? null;
+  } catch (e) {
+    if (e instanceof ActionStopped) throw e;
+    left();
+    return;
+  }
+  w.rethrow();
+  if (mine === null || !mayFile(mine).includes('nonce-secret')) {
+    left();
+    return;
+  }
+  for (const seat of others) {
+    for (const vault of vaults) {
+      try {
+        await giveEachVaultSecretHere({ vaultIds: [vault.toLowerCase()], me: doors.me, seat, directory, records: doors.records });
+      } catch (e) {
+        if (e instanceof ActionStopped) throw e;
+        left();
+      }
+      w.rethrow();
+    }
+  }
 }
 
 const ROTATED: ReadonlySet<KeyRotated['state']> = new Set(['rotated', 'rotated-elsewhere']);
@@ -291,8 +346,11 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       const w = watchedCalls(ctx);
       const r = await company.reach(ctx);
       let vaults: readonly string[] = [];
+      let seats: readonly string[] = [];
       try {
-        vaults = (await r.holders()).adoptedVaults;
+        const held = await r.holders();
+        vaults = held.adoptedVaults;
+        seats = held.seats;
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         left();
@@ -302,6 +360,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         w.rethrow();
         if ((notes.of !== 'as-filed' && notes.of !== 'filed') || notes.said.some((s) => NOT_FILED_AGAIN.test(s))) left();
       }
+      await vaultSecretsGiven(ctx, r, w, reach, vaults, seats, left);
       let anchored = 0;
       try {
         const done = await anchoredAtTheEnd(await anchorDoorsIn(r, w.api));
@@ -326,6 +385,7 @@ export const upkeepShown = (o: { readonly ownEntry?: boolean } = {}): ShownLine[
   { key: 'act.upkeep.shown.rotation', from: 'action' },
   { key: 'act.upkeep.shown.roster', from: 'action' },
   { key: 'act.upkeep.shown.vaults', from: 'action' },
+  { key: 'act.upkeep.shown.secrets', from: 'action' },
   { key: 'act.upkeep.shown.anchor', from: 'action' },
 ];
 

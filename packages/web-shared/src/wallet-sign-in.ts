@@ -1,7 +1,7 @@
 import {
-  ACT_CALL_SCHEMA, ACT_KEEP_SCHEMA, ACT_RELAY_SCHEMA, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
+  ACT_CALL_SCHEMA, ACT_KEEP_SCHEMA, ACT_RELAY_SCHEMA, NOT_ASKING_SCHEMA, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
 } from 'midnight-identity/profile/channel';
-import type { ProgressStage } from 'midnight-identity/profile/channel';
+import type { NotAskedWhy, ProgressStage } from 'midnight-identity/profile/channel';
 import type { DisclosureResponse } from 'midnight-identity/profile/disclosure';
 import { signInAsk } from '../../../src/core/wallet-sign-in-ask.js';
 
@@ -307,6 +307,26 @@ export interface WalletDialog {
   onStage?(watch: (stage: ProgressStage | null) => void): () => void;
   /** `askWallet` tells the dialog what the wallet said. Nothing else calls it. */
   saw?(stage: ProgressStage | null): void;
+  /**
+   * **WHETHER THE DOCUMENT IN THE WINDOW HAS SAID IT IS LISTENING.** A wallet says so once, as soon as it has loaded,
+   * and that can be before this page has finished preparing its ask; the dialog hears it from the moment the window
+   * opens, so an ask started after it is still sent. Optional so a dialog made in a test may leave it out.
+   */
+  heardReady?(): boolean;
+  /**
+   * **ONE LISTENER FOR THE WINDOW, FOR AS LONG AS THE DIALOG IS OPEN.** `askWallet` hears the window through it: every
+   * message from this window at the wallet's origin is handed to the one ask listening, and the dialog notes the
+   * wallet saying it is listening even while no ask is. Returns the way to stop hearing. Optional so a dialog made in a
+   * test may leave it out, and an ask then listens on the page itself.
+   */
+  listen?(hears: (event: MessageEvent) => void): () => void;
+  /**
+   * **THE PAGE STOPPED WHILE PREPARING, AND SAYS SO TO THE WINDOW.** Tells a document that has said it is listening,
+   * and has been asked nothing, why this page will not ask it anything, so the window shows that reason instead of
+   * waiting for a request. Returns whether it was told. That document has then been answered, so a later ask through
+   * this dialog gets a fresh one.
+   */
+  notAsking?(why: NotAskedWhy): boolean;
 }
 
 export function openWalletDialog(view: Openable, walletOrigin: string): WalletDialog {
@@ -340,12 +360,25 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
   let shut = false;
   let stage: ProgressStage | null = null;
   const stageWatchers = new Set<(stage: ProgressStage | null) => void>();
+  /* Whether the document now in the window has said it is listening. Heard from the moment the window opens, from
+   * that window and the wallet's origin only, because the wallet says it once and does not wait for this page. */
+  let ready = false;
+  let hears: ((event: MessageEvent) => void) | null = null;
+  const fromTheWindow = (event: MessageEvent): void => {
+    if (!wallet || event.origin !== walletOrigin) return;
+    if (event.source !== ((wallet.messageSource ?? wallet) as MessageEventSource)) return;
+    if ((event.data as { schema?: unknown } | null)?.schema === READY_PING) ready = true;
+    hears?.(event);
+  };
+  if (wallet) view.addEventListener('message', fromTheWindow);
   /* **CLOSING IS SAID ONCE.** Two paths can reach it — an ask settling and the
    * person giving up — and a `close()` on a window that is already gone is not
    * an error but is not a second event either. */
   const closeNow = (): void => {
     if (shut) return;
     shut = true;
+    hears = null;
+    view.removeEventListener('message', fromTheWindow);
     wallet?.close?.();
   };
   return {
@@ -388,13 +421,29 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
          * a window nobody is looking at while the new one stays on screen for
          * ever.
          */
+        ready = false;
         const reached = view.open(dialogUrl(walletOrigin), WALLET_DIALOG_NAME, featuresFor(view));
         if (!reached) return null;
         wallet = reached;
         wallet.focus?.();
+        /* A fresh document says it is listening once it has loaded; the window's listener starts again for it. */
+        view.removeEventListener('message', fromTheWindow);
+        view.addEventListener('message', fromTheWindow);
       }
       unasked = false;
       return wallet;
+    },
+    heardReady(): boolean { return ready; },
+    listen(next: (event: MessageEvent) => void): () => void {
+      hears = next;
+      return () => { if (hears === next) hears = null; };
+    },
+    notAsking(why: NotAskedWhy): boolean {
+      if (!wallet || shut || !ready || !unasked || wallet.closed === true) return false;
+      unasked = false;
+      /* Telling the window is a courtesy to the person: a window that cannot take it is closed all the same. */
+      try { wallet.postMessage({ schema: NOT_ASKING_SCHEMA, why }, walletOrigin); } catch { return false; }
+      return true;
     },
     moreThanOneAsk(): void { more = true; },
     askEnded(): void {
@@ -583,6 +632,8 @@ export function askWallet(
     const wallet: WalletWindow = opened;
 
     let done = false;
+    /* Set once the ask is listening; until then there is nothing to stop hearing. */
+    let unhear = (): void => {};
     let timer = view.setTimeout(() => stop(new WalletClosed(
       { of: 'silent' },
       'your wallet did not answer. It may not have finished loading, or the window may have '
@@ -614,7 +665,7 @@ export function askWallet(
       if (done) return;
       done = true;
       view.clearTimeout(timer);
-      view.removeEventListener('message', onMessage);
+      unhear();
       dialog.saw?.(null);
       /*
        * **CLOSED WHEN THE ANSWER ARRIVES OR THE ASK IS REFUSED — IF THIS ASK
@@ -716,6 +767,19 @@ export function askWallet(
       resolve(answer);
     }
 
-    view.addEventListener('message', onMessage);
+    if (done) return;
+    if (dialog.listen !== undefined) {
+      unhear = dialog.listen(onMessage);
+    } else {
+      view.addEventListener('message', onMessage);
+      unhear = () => { view.removeEventListener('message', onMessage); };
+    }
+    /* The wallet said it was listening before this ask began, while the page was still preparing it: it will not say
+     * so again, so the ask is sent now. */
+    if (dialog.heardReady?.() === true) {
+      asked = true;
+      waitForTheWallet();
+      wallet.postMessage(message, walletOrigin);
+    }
   });
 }

@@ -1,5 +1,5 @@
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, Building03Icon, QrCodeIcon, Tick02Icon, UnfoldMoreIcon } from '@hugeicons/core-free-icons';
+import { Add01Icon, Building03Icon, Tick02Icon, UnfoldMoreIcon } from '@hugeicons/core-free-icons';
 import {
   ComingSoon, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, usePopupSide, useSidebar, useText,
@@ -18,7 +18,7 @@ import { ShortcutKeys } from './shortcut-keys.js';
  * THE COMPANY SWITCHER, AT THE TOP OF THE LEFT MENU: every company the person
  * signs for, in the order the service lists them (a company whose creation is not
  * finished is marked, and opens at "Finish creating the company"), then "Create a company",
- * which starts the setup wizard, and "Join with a code", Coming soon. It reads
+ * which starts the setup wizard. It reads
  * the application's one list of companies, as the landing page does.
  *
  * NO LIST HERE IS RANKED BY MONEY, and none is ranked at all: a company is
@@ -86,11 +86,6 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
               <HugeiconsIcon icon={Add01Icon} strokeWidth={2} className="size-4" />
               <span className="flex-1">{t('switcher.create')}</span>
             </DropdownMenuItem>
-            <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground" data-action="join-with-a-code">
-              <HugeiconsIcon icon={QrCodeIcon} strokeWidth={2} className="size-4" />
-              <span className="flex-1">{t('switcher.join')}</span>
-              <ComingSoon explanation={t('switcher.joinSoon')} />
-            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

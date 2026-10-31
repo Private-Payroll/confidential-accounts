@@ -131,10 +131,10 @@ function adaptersWalk(pageSide = false): Promise<BuildGraph> {
 }
 
 /**
- * SHARED MODULES THE PAGE REACHES THAT WRITE A FIGURE INTO A SENTENCE ONLY THE
- * LEGACY PAGE SHOWS, each with the one formatter it calls and why none of it
- * reaches a screen here. The adapter that reaches it hands a screen a code
- * for every answer, never a sentence, and its own test shows that.
+ * SHARED MODULES THE PAGE REACHES THAT WRITE A FIGURE INTO A SENTENCE THAT
+ * ONLY THE PAGES IN src/web SHOW, each with the one formatter it calls and why
+ * none of it reaches a screen here. The adapter that reaches it hands a screen
+ * a code for every answer, never a sentence, and its own test shows that.
  */
 const SENTENCES_FOR_THE_LEGACY_PAGE: Readonly<Record<string, { writes: string; times: number; why: string }>> = {
   'packages/web-shared/src/vault-operation.ts': {
@@ -286,8 +286,8 @@ describe('every rule, over the application', () => {
   it('styles only the elements it writes', () => {
     expect(stylesReachingIntoComponents([...OWN, ...STYLE])).toEqual([]);
     expect(namedOutside(OWN, 'AmountFigure', [])).toEqual([]);
-    /* The figure alone, with no Public pill, only where a column of the same row says whether it is public. */
-    expect(namedOutside(OWN, 'AmountFigureOnly', ['apps/web/src/screens/vault.tsx'])).toEqual([]);
+    /* The figure alone, with no Public pill, only where a column of the same row says whether it is public, and in `PayAmount`, for an amount somebody is paid when no address decides yet whether it is: the words beside it say no address is set. */
+    expect(namedOutside(OWN, 'AmountFigureOnly', ['apps/web/src/screens/vault.tsx', 'apps/web/src/records/parts.tsx'])).toEqual([]);
   });
 
   /* RED WHEN: the application, its stylesheet or its page spaces, aligns or places by left and right. */
@@ -305,7 +305,7 @@ describe('every rule, over the application', () => {
    * through an adapter carries an English sentence a screen could show.
    *
    * Shared code reached through an adapter is not read for sentences: the
-   * legacy application shows its words, so it keeps them, and each adapter's
+   * pages in src/web show its words, so it keeps them, and each adapter's
    * own test shows that none of them is handed to a screen. What is read is
    * the shared code the page reaches that the adapters do not, which the
    * rule above, that only the adapters reach shared code, keeps empty; so a
@@ -324,7 +324,7 @@ describe('every rule, over the application', () => {
    * RED WHEN: the application turns any value into text or a number, or shared
    * browser code its page reaches puts a figure on a screen, anywhere but the
    * kit's amount component; or a shared module named below as writing only
-   * sentences the legacy page shows writes a figure some other way, or no
+   * sentences only the pages in src/web show writes a figure some other way, or no
    * longer writes one and is still named.
    */
   it('shows an amount only through the amount component', () => {

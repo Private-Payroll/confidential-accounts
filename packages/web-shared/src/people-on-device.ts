@@ -2,11 +2,13 @@
  * **A COMPANY'S PEOPLE, READ AND CHANGED ON A SEAT'S OWN DEVICE.** Each step is
  * one function a screen can call.
  *
- *   · **reading** (`readPeopleHere`): every person's newest record, opened
- *     here with the company's key, believed only when a seat this device
- *     believes filed it, and payable only while their record names the address
- *     its first version was filed with, if any, and, for an unshielded one, with
- *     their wallet's signed claim of it checked here (`addedByAddressRefusal`);
+ *   · **reading** (`readPeopleHere`, which needs no seat secret and is kept
+ *     apart so a page can load it alone): every person's newest record,
+ *     opened here with the company's key, believed only when a seat this
+ *     device believes filed it, and payable only while their record names the
+ *     address its first version was filed with, if any, and, for an unshielded
+ *     one, with their wallet's signed claim of it checked where the ledger
+ *     loads, through the reader's `claimRefusal`;
  *   · **a status** (`setStatusHere`): active only for somebody with somewhere
  *     to be paid, or a leaver;
  *   · **a change** (`changePersonHere`): a salary or classification line, an
@@ -34,11 +36,11 @@
  * that names a signer other than its filer is not believed. The service checks
  * who filed it and what the route is for, and opens nothing.
  */
-import { keyOf, sealingWith } from '../../../src/core/company-key.js';
-import { canonical, randomBytes, signingPublicKeyOf, toHex, type Hex } from '../../../src/core/crypto.js';
+import { sealingWith } from '../../../src/core/company-key.js';
+import { randomBytes, signingPublicKeyOf, toHex, type Hex } from '../../../src/core/crypto.js';
 import { AnswerToAnOldInvitation, answerOpenedWith } from '../../../src/core/answer-opened.js';
 import {
-  madeByRefusal, openPerson, peopleServed, personChanged, personVersionsRefusal, sealPerson, stopDateRefusal, whyNotPayable, type MadeBy, type PersonChange,
+  personChanged, sealPerson, stopDateRefusal, type MadeBy, type PersonChange,
 } from '../../../src/core/person-record.js';
 import { isCalendarDate, utcMomentOf } from '../../../src/core/invitation.js';
 import { earliestStopOf } from '../../../src/core/payable-days.js';
@@ -46,22 +48,22 @@ import { assets as defaultAssets, whyTheMoneyCannotReach, type AssetRegistry } f
 import type { Invite, RosterEmployee } from '../../../src/core/types.js';
 import type { Payee } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
-import {
-  signCompanyFiling, toCompanyWire, verifiedCompanyFiler,
-} from '../../../src/midnight/sealed-record-wire.js';
-import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
+import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import { joinCodeSignedBy, type JoinCode, type PayeeParts } from 'midnight-identity/profile/join-code';
 import { payeeCodeFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
-import { judgeIn, kindAsked, namedHere, seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
-import { InvitationRefused, payeeAt, type InvitationSend, type InvitingCompany } from './invitation-on-device.js';
+import { judgeIn, kindAsked, seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
+import { payeeAt, type InvitationSend, type InvitingCompany } from './invitation-on-device.js';
 import {
-  readAddressClaim, readClaimedHandover, typedAddressIsShielded, type AddressClaim, type AddressClaimFor,
+  readClaimedHandover, typedAddressIsShielded, type AddressClaim,
 } from 'midnight-identity/profile/address-claim';
-import { unshieldedClaimRefusal } from 'midnight-identity/profile/address-claim-signed';
 import { readJoinParts } from 'midnight-identity/profile/join-code';
-import { fromCompanyWire, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  answered, at, claimFor, readPeopleHere, typedAddressOf, type ClaimRefusal, type PeopleHere, type PersonHere,
+} from './people-read-here.js';
+
+export { claimFor, readPeopleHere, type ClaimRefusal, type PeopleHere, type PeopleReader, type PersonHere } from './people-read-here.js';
 
 /** What a device acting on a company's people needs: the company opened, its seat, and how it reaches the service. */
 export interface PeopleDevice {
@@ -74,73 +76,11 @@ export interface PeopleDevice {
   /** The company's directory as this device believes it, read afresh for every step (`directoryHere`): who filed a version, and whose wallet a seat's is. */
   readonly directory: DirectoryRead;
   readonly network: NetworkName;
+  /** Where a wallet's signed claim of the unshielded address a person or vendor was added by is checked. */
+  readonly claimRefusal: ClaimRefusal;
   readonly registry?: AssetRegistry;
   /** The one filing call, bound to this company and this seat: every version filed here is entered in the company's records. */
   readonly entered: RecordsEntered;
-}
-
-/** What a claim of the address a person or vendor was added by answers: their company, their record, their payslip key and that address. */
-export const claimFor = (
-  d: { readonly company: Pick<InvitingCompany, 'label'>; readonly network: NetworkName },
-  person: { readonly id: string; readonly invitedAddress?: string | null }, payslipKey: string,
-): AddressClaimFor => ({
-  company: d.company.label, person: person.id, payslipKey: payslipKey.toLowerCase(),
-  address: person.invitedAddress as string, network: d.network,
-});
-
-/**
- * The address a person's record was first filed with (`invitedAddress` of version 1, or null when they were
- * invited by link), or a refusal when version 1 is not one this device believes was filed by a seat. Read for
- * every person, whatever the newest version says: a seat that files a version leaving the typed address out
- * must not turn somebody added by address into somebody payable wherever a wallet signs.
- */
-async function typedAddressOf(
-  d: PeopleDevice, id: string, newest: SealedCompanyRecord | null, judge: ReturnType<typeof judgeIn>,
-): Promise<{ readonly typed: string | null } | { readonly refused: string }> {
-  const first = newest !== null && newest.version === 1 ? newest : await firstVersionOf(d, id);
-  if (first === null || judge(verifiedCompanyFiler(first), 'person', companyRecordKey('person', id), companyRecordEntry(first), false, first.keyEpoch) !== null) {
-    return { refused: 'the first version of their record is not one this device believes was filed by a seat, so this device cannot tell how this person was added and will not pay them. Ask a signer to file their record again' };
-  }
-  return { typed: openPerson(first, keyOf(d.company.viewingKey, first.keyEpoch)).invitedAddress ?? null };
-}
-
-/**
- * Why a person is not payable on this device for the address they were added by, or null when nothing about it
- * stops them. Their record must name exactly the address version 1 of it was filed with by a seat this device
- * believes, or none when version 1 named none: a later version that names another address, or drops it, is never
- * paid. An unshielded address must be proved by their wallet's claim, signed with that address's key and checked
- * here. A shielded address has no claim: they were admitted on the fingerprint they read out (`whyNotPayable`
- * refuses a record that rests on a claim of one instead).
- */
-async function addedByAddressRefusal(
-  d: PeopleDevice, rec: SealedCompanyRecord, person: RosterEmployee, judge: ReturnType<typeof judgeIn>,
-): Promise<string | null> {
-  const first = await typedAddressOf(d, rec.id, rec, judge);
-  if ('refused' in first) return first.refused;
-  if (first.typed !== (person.invitedAddress ?? null)) {
-    return first.typed === null
-      ? 'their record names an address they were added by, and its first version names none, so they are not paid at it'
-      : 'their record does not name the address it was first filed with, so they are not paid at another';
-  }
-  if (first.typed === null || typedAddressIsShielded(first.typed)) return null;
-  const claim = readAddressClaim(person.addressClaim);
-  if (claim === null) return 'their record carries no claim, signed with the key of the address they were added by, that their wallet holds it';
-  const why = unshieldedClaimRefusal(claim, claimFor(d, person, person.wrappingPublicKey ?? ''), d.network as never);
-  return why === null ? null : `their claim of the address they were added by is refused: ${why}`;
-}
-
-/** Version 1 of a person's record, as the service holds it, or null when it holds none. Believed only once judged. */
-async function firstVersionOf(d: PeopleDevice, id: string): Promise<SealedCompanyRecord | null> {
-  const b = answered(await d.send(at(d, `/records/person/${encodeURIComponent(id)}/1`), { method: 'GET' }), 200);
-  if (b.filed === null || b.filed === undefined) return null;
-  return fromCompanyWire(b.filed as never, { company: d.company.id, kind: 'person', id }).sealed;
-}
-
-/** A person as this device read them: the whole entry, the version it is, and whether something waits to be admitted. */
-export interface PersonHere {
-  readonly person: RosterEmployee;
-  readonly version: number;
-  readonly handedOver: boolean;
 }
 
 /** Thrown when this device will not make a change; nothing was filed, and the message says what resolves it. */
@@ -151,102 +91,8 @@ export class PersonNotChanged extends Error {
   }
 }
 
-const answered = (r: { status: number; body: unknown }, ok: number): Record<string, unknown> => {
-  const b = (r.body ?? {}) as Record<string, unknown>;
-  if (r.status !== ok) {
-    throw new InvitationRefused(r.status, typeof b.refused === 'string' ? b.refused : null,
-      typeof b.error === 'string' ? b.error : `the service answered ${r.status} and said nothing, so nothing is known to have been filed.`);
-  }
-  return b;
-};
-const at = (d: PeopleDevice, path: string) => `/api/accounts/${encodeURIComponent(d.company.id)}${path}`;
-
-/** The people as this device read them: those it believes and would pay, those no seat it believes filed, and those active with nothing their own wallet signed for where they are paid. */
-export interface PeopleHere {
-  readonly people: readonly PersonHere[];
-  readonly notBelieved: readonly string[];
-  /** People whose newest record the service gave does not read as a person record, each with why: also in `notBelieved`, never read or paid. */
-  readonly refused?: readonly { readonly id: string; readonly why: string }[];
-  /** Active people whose address or payslip key is not what their own code names (`whyNotPayable`): never read as payable, and made leavers to be added again. */
-  readonly notPayable: readonly { readonly here: PersonHere; readonly why: string }[];
-}
-
-/**
- * **EVERY PERSON ON THE COMPANY'S PAYROLL, OPENED HERE.** A version no seat
- * this device believes filed is not opened: it is named in `notBelieved`, so a
- * screen never shows it as a person and never hides that it is there. So is a
- * person the company's records name whom the service did not give at all. An
- * active person, or a leaver with an address, who may still be paid for days
- * before they left, whose address or payslip key is not their own code's is not
- * read as a person either, whoever filed them: they are named in `notPayable`,
- * with why. A version that names a signer other than the seat that filed it is
- * not believed (`madeByRefusal`), and neither is a person any of whose versions
- * rewrites the history the versions before it made (`historyKeptHere`). A
- * person whose record does not read as a person record at all - one filed with
- * the payslip key beside its seal among them - is refused alone (`refused`,
- * with why), and everybody else is still read.
- */
-export async function readPeopleHere(d: PeopleDevice): Promise<PeopleHere> {
-  const answer = answered(await d.send(at(d, '/people'), { method: 'GET' }), 200);
-  const here = await d.directory(kindAsked('company', 'person'));
-  const judge = judgeIn(here);
-  const people: PersonHere[] = [];
-  const notBelieved: string[] = [];
-  const notPayable: { here: PersonHere; why: string }[] = [];
-  const { people: served, refused } = peopleServed(answer, d.company.id);
-  for (const { id } of refused) notBelieved.push(id);
-  /* A person the company's records name and the service did not give is not believed, never left out unseen. */
-  const given = new Set([...served.map(({ rec }) => rec.id), ...refused.map(({ id }) => id)]);
-  for (const id of namedHere(here, 'company', 'person')) if (!given.has(id)) notBelieved.push(id);
-  for (const { rec, handedOver } of served) {
-    if (judge(verifiedCompanyFiler(rec), 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), true, rec.keyEpoch) !== null) {
-      notBelieved.push(rec.id);
-      continue;
-    }
-    const here: PersonHere = { person: openPerson(rec, keyOf(d.company.viewingKey, rec.keyEpoch)), version: rec.version, handedOver };
-    if (madeByRefusal(here.person, verifiedCompanyFiler(rec)) !== null || (rec.version > 1 && !(await historyKeptHere(d, rec, judge)))) {
-      notBelieved.push(rec.id);
-      continue;
-    }
-    const why = here.person.status === 'pending' || (here.person.status === 'leaver' && !here.person.address) ? null
-      : whyNotPayable({ ...here.person, status: 'active' }, d.company.label) ?? await addedByAddressRefusal(d, rec, here.person, judge);
-    if (why !== null) { notPayable.push({ here, why }); continue; }
-    people.push(here);
-  }
-  return { people, notBelieved, refused, notPayable };
-}
-
 /** Who makes a version on this device, and when: this seat's signing key, and this device's clock as one UTC moment. */
 export const madeHere = (signingSecret: Hex): MadeBy => ({ madeBy: signingPublicKeyOf(signingSecret), madeAt: utcMomentOf(Date.now()) });
-
-/**
- * Whether the person `newest` is, read here over all their versions, keeps the history the versions a seat filed
- * before it made (`personVersionsRefusal`): one read of their versions, made for each person filed more than once
- * each time the people are read. Their first version must be believed.
- */
-async function historyKeptHere(d: PeopleDevice, newest: SealedCompanyRecord, judge: ReturnType<typeof judgeIn>): Promise<boolean> {
-  let recs: SealedCompanyRecord[];
-  try {
-    const b = answered(await d.send(at(d, `/records/person/${encodeURIComponent(newest.id)}/versions`), { method: 'GET' }), 200);
-    if (!Array.isArray(b.versions)) return false;
-    recs = b.versions.map((w) => fromCompanyWire(w, { company: d.company.id, kind: 'person', id: newest.id }).sealed);
-  } catch {
-    return false;
-  }
-  if (recs.length !== newest.version || canonical(recs.at(-1)) !== canonical(newest)) return false;
-  const opened: { person: RosterEmployee; filer: Hex | null }[] = [];
-  for (const [i, rec] of recs.entries()) {
-    const filer = verifiedCompanyFiler(rec);
-    if (rec.version !== i + 1) return false;
-    /* A version no seat this device believes filed is not part of the company's history: passed over, unless it is the first. */
-    if (judge(filer, 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), i === recs.length - 1, rec.keyEpoch) !== null) {
-      if (i === 0) return false;
-      continue;
-    }
-    try { opened.push({ person: openPerson(rec, keyOf(d.company.viewingKey, rec.keyEpoch)), filer }); } catch { if (i === 0) return false; }
-  }
-  return personVersionsRefusal(opened) === null;
-}
 
 /**
  * **A VERSION OF A PERSON, SEALED AND SIGNED ON THIS DEVICE, FILED AT `path`
@@ -374,10 +220,10 @@ const refuseACodeThatCannotBePaid = (
  * unshielded claim not signed with the typed address's key, or, when no claim is checked, has another fingerprint
  * than the one read out. People and vendors are admitted through it alike.
  */
-export function payeeCodeHandedOver(
+export async function payeeCodeHandedOver(
   d: PeopleDevice, who: { readonly id: string; readonly name: string; readonly invitedAddress?: string | null },
   box: NonNullable<Invite['handover']>, readOut: string, typed: string | null,
-): { readonly code: JoinCode; readonly claim: AddressClaim | null } {
+): Promise<{ readonly code: JoinCode; readonly claim: AddressClaim | null }> {
   const byAddress = typed !== null;
   const byClaim = typed !== null && !typedAddressIsShielded(typed);
   let code: JoinCode;
@@ -403,7 +249,7 @@ export function payeeCodeHandedOver(
     if (code.person !== who.id || (code.parts as PayeeParts).address !== typed) {
       throw new PersonNotChanged(`what was handed over names another address or record than the one ${who.name} was added by, so it is not admitted. Mark this person a leaver and add them again.`);
     }
-    const why = unshieldedClaimRefusal(claimed!.claim, claimFor(d, who, (code.parts as PayeeParts).payslipKey), d.network as never);
+    const why = await d.claimRefusal(claimed!.claim, claimFor(d, who, (code.parts as PayeeParts).payslipKey));
     if (why !== null) throw new PersonNotChanged(`the claim of the address ${who.name} was added by is refused: ${why}. Nothing they handed over is used.`);
   } else {
     code = opened as JoinCode;
@@ -426,7 +272,8 @@ export function payeeCodeHandedOver(
  * exactly the typed address: no device can check a proof that a wallet holds a
  * shielded address. A person added by an unshielded address reads out nothing:
  * what they handed over must be their wallet's claim of the address that was
- * typed, signed with its key and checked here, and `readOut` is not read.
+ * typed, signed with its key and checked by the device's `claimRefusal`, and
+ * `readOut` is not read.
  */
 export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: string): Promise<RosterEmployee> {
   const id = here.person.id;
@@ -442,7 +289,7 @@ export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: stri
   }
   const typed = first.typed;
   const byAddress = typed !== null;
-  const { code, claim } = payeeCodeHandedOver(d, here.person, box, readOut, typed);
+  const { code, claim } = await payeeCodeHandedOver(d, here.person, box, readOut, typed);
   const invites = answered(await d.send(at(d, '/invites'), { method: 'GET' }), 200) as unknown as (Invite & { subjectId?: string })[];
   const invite = (Array.isArray(invites) ? invites : []).filter((i) => i.subjectId === id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (invite === undefined) throw new PersonNotChanged(`there is no invitation on record for ${here.person.name}, so there is no way to tell who set this address. Invite them again rather than admitting it.`);

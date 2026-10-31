@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActEnded, ActingChannel, StepAt } from 'midnight-identity/profile/channel';
 import type { ActRequest } from 'midnight-identity/profile/request';
 import { runAction } from './run.js';
-import type { ActionDefinition, ActionStep, Held } from './definition.js';
+import { StepRefused, type ActionDefinition, type ActionStep, type Held } from './definition.js';
 
 /*
  * **WHAT ONLY THE WALLET KNOWS OF AN ACTION, WRITTEN TO THE CONSOLE REPORT.** The page sees step numbers and stop
@@ -77,6 +77,46 @@ describe('an action writes what only the wallet knows of it to the console repor
     /* RED WHEN: a line carries the action's fields or a transaction the wallet built. */
     expect(lines.join('\n')).not.toContain(SECRET_FIELD);
     expect(lines.join('\n')).not.toContain(SECRET_TRANSACTION);
+  });
+
+  it('a step that refuses ends the action naming its refusal by key and kind, in the end and the log, never its words', async () => {
+    const { channel: c, ended } = channel();
+    await runAction({
+      definition: actionOf([
+        { title: { key: 'act.step.read-it' }, run: async () => {
+          throw new StepRefused({ key: 'act.move-between-vaults.why.start-owed', values: { says: SECRET_FIELD } }, 'chain-unread');
+        } },
+        { title: { key: 'act.step.never' }, run: async () => {} },
+      ]),
+      request, channel: c, held, stop: new AbortController().signal,
+    });
+    /* RED WHEN: the end does not carry which refusal stopped it, or of what kind. */
+    expect(ended[0]).toMatchObject({ ended: 'stopped', step: 1, why: 'check-failed', refused: 'act.move-between-vaults.why.start-owed', code: 'chain-unread' });
+    /* RED WHEN: the wallet's stop line does not name the refusal. */
+    expect(lines).toContain('action move-between-vaults in the wallet: stopped at step 1 of 2: check-failed (relayed 0, unconfirmed 0) '
+      + '(refused: act.move-between-vaults.why.start-owed chain-unread)');
+    /* RED WHEN: the refusal's words' values reach the page or the log. */
+    expect(JSON.stringify(ended)).not.toContain(SECRET_FIELD);
+    expect(lines.join('\n')).not.toContain(SECRET_FIELD);
+  });
+
+  it('a refusal or code not in its shape, or a stop that is not a refused check, carries no refusal', async () => {
+    const end = async (step: ActionStep) => {
+      const { channel: c, ended } = channel();
+      await runAction({ definition: actionOf([step]), request, channel: c, held, stop: new AbortController().signal });
+      return ended[0]!;
+    };
+    const oddCode = await end({ title: { key: 'act.step.x' }, run: async () => { throw new StepRefused({ key: 'act.move-between-vaults.why.y' }, 'seat 7'); } });
+    /* RED WHEN: a code not in its shape is carried. */
+    expect(oddCode).toMatchObject({ why: 'check-failed', refused: 'act.move-between-vaults.why.y' });
+    expect(oddCode).not.toHaveProperty('code');
+    const oddKey = await end({ title: { key: 'act.step.x' }, run: async () => { throw new StepRefused({ key: 'Some words 12' }, 'z'); } });
+    /* RED WHEN: a key not in its shape is carried. */
+    expect(oddKey).toMatchObject({ why: 'check-failed' });
+    expect(oddKey).not.toHaveProperty('refused');
+    const failed = await end({ title: { key: 'act.step.x' }, run: async () => { throw new Error('no'); } });
+    /* RED WHEN: a step that failed is reported as a refusal. */
+    expect(failed).not.toHaveProperty('refused');
   });
 
   it('writes nothing outside a development build with the console report on', async () => {

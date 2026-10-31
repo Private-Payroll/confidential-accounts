@@ -26,6 +26,7 @@ import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire
 import { payeeFor } from '../testing/payees.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { changePersonHere, makeMyselfPayableHere, PersonNotChanged, readPeopleHere, admitHere, setStatusHere, type PeopleDevice, type PersonHere } from 'vaults-web-shared/people-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { raiseLegHere, type LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import { legPaymentsHere } from 'vaults-web-shared/material-made-here.js';
@@ -50,7 +51,7 @@ const hired = (n: number, startDate = '2026-10-01') => ({
   classification: 'full-time' as const, startDate,
 });
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** A payee invited, accepted with the code their own wallet signed, and admitted. */

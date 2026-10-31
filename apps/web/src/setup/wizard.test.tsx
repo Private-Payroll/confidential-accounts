@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { CurrentPageProvider } from '../router.js';
@@ -49,6 +49,19 @@ const state = vi.hoisted(() => ({
   changed: [] as (string | null)[],
   /** The label the keyring holds for the creation this tab keeps; null when it keeps none. */
   label: null as string | null,
+  /** The company's records as the one read of them gives them, to the provider the shell holds above every page. */
+  records: null as unknown,
+  /** How many times the vaults were read, so a test can tell the wizard read again after a step told it something changed. */
+  vaultReads: 0,
+  /** How many times anything asked the company's records to be read again. */
+  reloads: 0,
+  /** What signing a change of the super admins comes to. */
+  signedChange: { of: 'done' } as Record<string, unknown>,
+  /** The invitations the page sent to the wallet, and what sending one comes to. */
+  sent: [] as unknown[],
+  invited: { of: 'done', link: 'https://example.test/join/inv_1#token', already: false } as Record<string, unknown>,
+  /** What the service then lists for the company, as the one read of its records says it, once an invitation is filed. */
+  afterInvite: null as unknown,
 }));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
@@ -67,11 +80,27 @@ vi.mock('../adapters/creation-standing.js', async (real) => ({
 }));
 vi.mock('../adapters/vault-rows.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-rows.js')>()),
-  readVaultRows: vi.fn(async () => { if (state.vaultsGate !== null) await state.vaultsGate; return state.vaults; }),
+  readVaultRows: vi.fn(async () => { state.vaultReads += 1; if (state.vaultsGate !== null) await state.vaultsGate; return state.vaults; }),
+}));
+vi.mock('../adapters/committee-change.js', () => ({
+  signChange: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['sign-change', ...args])); return state.signedChange; }),
+}));
+vi.mock('../adapters/invite.js', async (real) => ({
+  ...(await real<typeof import('../adapters/invite.js')>()),
+  sendInvite: vi.fn(async (...args: unknown[]) => {
+    state.sent.push(args[2]);
+    if (state.invited.of === 'done' && state.afterInvite !== null) state.records = state.afterInvite;
+    return state.invited;
+  }),
+}));
+vi.mock('../adapters/session.js', async (real) => ({
+  ...(await real<typeof import('../adapters/session.js')>()),
+  companyNamesFor: async () => new Map(),
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readVaultName: vi.fn(async (_p: string, _c: string, _v: string, unread?: unknown) => (state.vaultName === 'unread' ? unread ?? null : state.vaultName)),
+  readCompany: vi.fn(async () => state.records),
 }));
 vi.mock('../adapters/create-vault.js', async (real) => ({
   ...(await real<typeof import('../adapters/create-vault.js')>()),
@@ -127,6 +156,7 @@ const { EVERY_STEP, isBuiltStep, startSetupAt, takeAsked } = await import('./ste
 const { isDoneForGood, skippedFor, useCreationFact } = await import('./standing.js');
 const { HANDOVER } = await import('../adapters/handover-state.js');
 const { STEP } = await import('./step-ids.js');
+const recordsModule = await import('../records/company-records.js');
 
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
@@ -136,7 +166,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 function sessionWith(over: Partial<Session> = {}): Session {
   return {
     person: { id: 'u1', name: 'Priya' }, companies: [], company: null, chooseCompany: vi.fn(),
-    viewer: { signedIn: true, view: VIEWS.employee, signs: false }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
+    viewer: { signedIn: true, view: VIEWS.company, signs: true }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
     choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}), ...over,
   };
 }
@@ -146,6 +176,17 @@ const framed = (node: React.ReactNode, session: Session) => (
     <SessionProvider session={session}><PanelProvider><CurrentPageProvider id="setup">{node}</CurrentPageProvider></PanelProvider></SessionProvider>
   </KitProvider>
 );
+/** A person who signs for the company shown, which they look at from the company's side, where its records are read. The wizard is drawn with no provider of the records above it, as the focused frame draws it, and brings its own. */
+const SIGNER_ADDRESS = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
+const signing = (over: Partial<Session> = {}): Session => sessionWith({ company: 'c-1', ...over });
+/** The company's records, opened, with nobody waiting and nobody invited. */
+const openRecords = (over: Record<string, unknown> = {}) => ({
+  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
+  proposals: { of: 'read', value: [] }, runs: { of: 'read', value: [] }, people: { of: 'read', value: [] }, vaults: { of: 'read', value: [] },
+  invitations: { of: 'read', value: [] },
+  approvalsForSigners: { of: 'unreadable' }, signerStandings: { of: 'read', value: [] }, signersInvited: { of: 'read', value: [] },
+  ...over,
+});
 /** A step's own component, drawn on its own. */
 async function draw(node: React.ReactNode, session: Session) {
   const view = render(framed(node, session));
@@ -174,6 +215,8 @@ beforeEach(() => {
   forgetWhatStartAgainSaid();
   state.vaults = []; state.ready = { of: 'ready' }; state.vaultCreated = { of: 'done', vault: 'v-new' }; state.opened = []; state.vaultName = 'Payroll';
   state.creation = { standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null }; state.gate = null; state.vaultsGate = null; state.changed = []; state.onCreate = null; state.label = null;
+  state.records = openRecords(); state.vaultReads = 0; state.reloads = 0; state.signedChange = { of: 'done' };
+  state.sent = []; state.invited = { of: 'done', link: 'https://example.test/join/inv_1#token', already: false }; state.afterInvite = null;
   /* What a tab remembers between showings of the wizard starts empty for every test. */
   for (const c of [null, 'c-1']) skippedFor(c).clear();
   window.sessionStorage.clear();
@@ -190,18 +233,85 @@ describe('the wizard reads the one list', () => {
     expect(q(container, '[data-progress]')!.getAttribute('aria-valuemax')).toBe(String(EVERY_STEP.length));
   });
 
-  /* RED WHEN: a step not built is shown without Coming soon and its line, or a built step does not show its own component. */
-  it('shows a built step\'s component and a step not built Coming soon', async () => {
-    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
+  /* RED WHEN: a step not built is shown without Coming soon and its line, a built step does not show its own component, or a built step with a part not built shows that part as the whole step. */
+  it('shows a built step\'s component, with the part of it not built Coming soon, and a step not built Coming soon', async () => {
+    const { container } = await drawWizard(signing());
     for (const s of EVERY_STEP.filter((x) => !x.cannotBeUndone || x.id === STEP.vault)) {
       await pick(container, s.id);
       expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(s.id);
-      if (isBuiltStep(s)) expect(q(container, '[data-current-step] [data-action]'), s.id).not.toBeNull();
-      else {
+      if (isBuiltStep(s)) {
+        expect(q(container, '[data-current-step] [data-action]'), s.id).not.toBeNull();
+        expect(q(container, '[data-coming-soon-step]'), s.id).toBeNull();
+      } else {
         expect(q(container, '[data-current-step] [data-slot=coming-soon]'), s.id).not.toBeNull();
         expect(q(container, '[data-coming-soon-step]')!.textContent, s.id).toBe(EN[`setup.step.${s.id}.soon`]);
       }
     }
+  });
+
+  /*
+   * RED WHEN: the signers step does not draw the signers component and the committee change, once each, or is Coming
+   * soon as a whole; or it does not say that choosing how many must approve is Coming soon, in the words kept for it;
+   * or it says so for a step that is held back.
+   */
+  it('draws the signers and the committee change in the signers step, with choosing how many must approve Coming soon', async () => {
+    const { container } = await drawWizard(signing());
+    await pick(container, STEP.signers);
+    const step = q(container, '[data-current-step]')!;
+    expect(step.getAttribute('data-current-step')).toBe(STEP.signers);
+    expect(step.querySelectorAll('[data-action=signers]')).toHaveLength(1);
+    expect(step.querySelectorAll('[data-action=committee-change]')).toHaveLength(1);
+    expect(q(container, '[data-coming-soon-step]')).toBeNull();
+    expect(q(container, '[data-also-soon]')!.textContent).toBe(EN['setup.step.signers.soon']);
+    expect(EN['setup.step.signers.soon']).toMatch(/how many of the signers must approve/i);
+    expect(EN['setup.step.signers.soon']).not.toMatch(/invite/i);
+    expect(q(step, '[data-slot=coming-soon]')).not.toBeNull();
+  });
+
+  /* RED WHEN: a press in the signers step that changes who holds the company is not told to the wizard, which then reads the company again. */
+  it('reads the company again when the committee change is signed inside the signers step', async () => {
+    state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
+    const { container } = await drawWizard(signing());
+    await pick(container, STEP.signers);
+    const before = state.vaultReads;
+    await act(async () => { fireEvent.click(q(container, '[data-action=sign-change]')!); await settle(); });
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(state.acted).toContain(JSON.stringify(['sign-change', 'u1', 'c-1']));
+    expect(state.vaultReads).toBeGreaterThan(before);
+  });
+
+  /*
+   * RED WHEN: one act in the signers step, an invitation sent for a signer or the committee change signed, asks for
+   * the company's records to be read again more than once, or not at all, so the same read is asked for two or three times, or the step goes on
+   * showing what it read before.
+   */
+  it.each([
+    ['an invitation sent for a signer', async (c: HTMLElement) => {
+      await act(async () => { fireEvent.change(q(c, '[data-field=name]')!, { target: { value: 'Zed' } }); await settle(); });
+      await act(async () => { fireEvent.change(q(c, '[data-field=address]')!, { target: { value: SIGNER_ADDRESS } }); await settle(); });
+      await act(async () => { fireEvent.click(q(c, '[data-action=send-invite]')!); await settle(); });
+      expect(state.sent).toHaveLength(1);
+    }],
+    ['the committee change signed', async (c: HTMLElement) => {
+      await act(async () => { fireEvent.click(q(c, '[data-action=sign-change]')!); await settle(); });
+      await act(async () => { fireEvent.click([...c.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+      expect(state.acted).toContain(JSON.stringify(['sign-change', 'u1', 'c-1']));
+    }],
+  ])('asks for the company\'s records to be read once for one act in the signers step: %s', async (_name, act1) => {
+    state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
+    const original = recordsModule.useCompanyRecords;
+    const counting = vi.spyOn(recordsModule, 'useCompanyRecords').mockImplementation(() => {
+      const records = original();
+      return useMemo(() => ({ ...records, reload: () => { state.reloads += 1; records.reload(); } }), [records]);
+    });
+    try {
+      const { container } = await drawWizard(signing());
+      await pick(container, STEP.signers);
+      state.reloads = 0;
+      await act1(container);
+      await untilPageShown(container);
+      expect(state.reloads).toBe(1);
+    } finally { counting.mockRestore(); }
   });
 
   /* RED WHEN: creating the company is not drawn with its own component before there is a company, or finishing it is not drawn with its own component for a company that is not finished. */
@@ -273,6 +383,7 @@ describe('a step held back until the company is finished', () => {
     }
     await pick(container, STEP.signers);
     expect(q(container, '[data-coming-soon-step]'), 'a step not built shows the reason, not Coming soon').toBeNull();
+    expect(q(container, '[data-also-soon]'), 'nor the part of it not built').toBeNull();
     expect(q(container, '[data-current-step] [data-slot=coming-soon]'), 'nor the Coming soon mark').toBeNull();
   });
 
@@ -593,7 +704,7 @@ describe('a step that cannot be undone', () => {
 
   /* RED WHEN: a skipped step, a step not done, or a step done that can be undone, is closed as if done for good. */
   it('leaves every other step open to return to', async () => {
-    const facts = { company: 'c-1', vaults: null, creation: null };
+    const facts = { company: 'c-1', vaults: null, creation: null, invited: false };
     const doneButUndoable = { ...EVERY_STEP.find((s) => s.id === STEP.people)!, done: () => true };
     expect(isDoneForGood(doneButUndoable, facts)).toBe(false);
     expect(isDoneForGood({ ...doneButUndoable, cannotBeUndone: true }, facts)).toBe(true);
@@ -1546,5 +1657,67 @@ describe('finishing the company', () => {
     expect(state.acted).toEqual([JSON.stringify(['carry', 'u1', null])]);
     fireEvent.click(q(container, `[data-lead-to=${STEP.createCompany}]`)!);
     expect(leadTo).toHaveBeenCalledWith(STEP.createCompany);
+  });
+});
+
+describe('the People step is done once somebody is invited', () => {
+  const read = (value: unknown) => ({ of: 'read', value });
+  const waiting = (kind: string) => ({ kind, name: 'Ada', sentAt: '2026-10-29T00:00:00.000Z', expiresAt: null });
+  const stand = (c: HTMLElement, id: string) => q(c, `[data-setup-steps] [data-step=${id}]`)!.getAttribute('data-standing');
+  const continueButton = (c: HTMLElement) => q(c, '[data-action=continue]') as HTMLButtonElement;
+
+  /*
+   * RED WHEN: after an invitation is filed from the People step the step still reads open and Continue stays disabled; or the
+   * wizard does not read the company's records again when the step says something changed; or the step is done before.
+   */
+  it('reads not done and shuts Continue before an invitation is filed, then done and opens Continue after', async () => {
+    state.afterInvite = openRecords({ invitations: read([waiting('employee')]) });
+    const { container } = await drawWizard(signing());
+    await pick(container, STEP.people);
+    expect(stand(container, STEP.people)).toBe('open');
+    expect(continueButton(container).disabled).toBe(true);
+    expect(q(container, '[data-why-disabled~=continue]')!.textContent).toBe(EN['setup.continue.notDone']);
+    await act(async () => { fireEvent.change(q(container, '[data-field=name]')!, { target: { value: 'Ada' } }); await settle(); });
+    await act(async () => { fireEvent.click(q(container, '[data-action=send-invite]')!); await settle(); });
+    await untilPageShown(container);
+    expect(state.sent).toHaveLength(1);
+    expect(stand(container, STEP.people)).toBe('done');
+    expect(q(container, `[data-setup-steps] [data-step=${STEP.people}] [data-done]`)!.textContent).toBe(EN['setup.done']);
+    expect(q(container, `[data-mark=${STEP.people}]`)!.getAttribute('data-filled')).toBe('true');
+    expect(q(container, '[data-progress]')!.getAttribute('aria-valuenow')).toBe('3');
+  });
+
+  /*
+   * RED WHEN: the fact is kept by the page (in its memory or the tab's storage) instead of read from what the company holds, so
+   * a reload, or another device, shows the step open for somebody already invited; or a vendor's waiting invitation does not count; or a signer's invitation counts.
+   */
+  it('reads it from the company\'s records, so a fresh showing of the wizard says the same, and a signer\'s invitation is not somebody to pay', async () => {
+    state.records = openRecords({ invitations: read([waiting('employee')]) });
+    const first = await drawWizard(signing());
+    expect(stand(first.container, STEP.people)).toBe('done');
+    expect(window.sessionStorage.length).toBe(0);
+    cleanup();
+    state.records = openRecords({ invitations: read([waiting('signer')]) });
+    const second = await drawWizard(signing());
+    expect(stand(second.container, STEP.people)).toBe('open');
+    cleanup();
+    state.records = openRecords({ people: read([{ id: 'e1', name: 'Ana' }]) });
+    const third = await drawWizard(signing());
+    expect(stand(third.container, STEP.people)).toBe('done');
+    cleanup();
+    state.records = openRecords({ invitations: read([waiting('vendor')]) });
+    const fourth = await drawWizard(signing());
+    expect(stand(fourth.container, STEP.people)).toBe('done');
+  });
+
+  /* RED WHEN: the step is counted done with no company shown, or with the records of another company than the one being set up. */
+  it('is not done while no company is shown, or for another company\'s records', async () => {
+    state.records = openRecords({ id: 'c-other', invitations: read([waiting('employee')]) });
+    const other = await drawWizard(signing());
+    expect(stand(other.container, STEP.people)).toBe('open');
+    cleanup();
+    state.records = openRecords({ invitations: read([waiting('employee')]) });
+    const none = await drawWizard(sessionWith());
+    expect(stand(none.container, STEP.people)).toBe('open');
   });
 });

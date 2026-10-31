@@ -1,5 +1,5 @@
 /**
- * THE COMPONENT KIT THE NEW PAYROLL APPLICATION IS BUILT FROM.
+ * THE COMPONENT KIT THE PAYROLL WEB APPLICATION (apps/web) IS BUILT FROM.
  *
  * What an application uses is re-exported here. An amount is made by
  * `publicAmount` or `privateAmount`, by whoever knows how the money is held,
@@ -31,7 +31,13 @@ export { Popover, PopoverContent, PopoverTrigger } from './components/popover.js
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/tooltip.js';
 export { Alert, AlertAction, AlertDescription, AlertTitle } from './components/alert.js';
 export { Avatar, AvatarFallback, AvatarImage } from './components/avatar.js';
+export { Calendar } from './components/calendar.js';
 export { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './components/card.js';
+export { Checkbox } from './components/checkbox.js';
+export { CopyText, type CopyTextProps } from './components/copy-text.js';
+export {
+  Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet, FieldTitle,
+} from './components/field.js';
 export { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './components/dialog.js';
 export {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem,
@@ -43,10 +49,14 @@ export { Item, ItemContent, ItemDescription, ItemTitle } from './components/item
 export { Kbd, KbdGroup } from './components/kbd.js';
 export { Label } from './components/label.js';
 export { RadioGroup, RadioGroupItem } from './components/radio-group.js';
+export {
+  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectScrollDownButton, SelectScrollUpButton, SelectSeparator, SelectTrigger, SelectValue,
+} from './components/select.js';
 export { Separator } from './components/separator.js';
 export { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from './components/sheet.js';
 export { Skeleton } from './components/skeleton.js';
 export { Spinner } from './components/spinner.js';
+export { Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow } from './components/table.js';
 export { Tabs, TabsContent, TabsList, TabsTrigger } from './components/tabs.js';
 export { Textarea } from './components/textarea.js';
 export {

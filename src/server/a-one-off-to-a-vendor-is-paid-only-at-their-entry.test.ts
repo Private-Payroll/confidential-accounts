@@ -19,6 +19,7 @@ import { vaultDetails } from '../testing/vault-details.js';
 import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import type { PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { changeVendorHere, readVendorsHere, type VendorsHere } from 'vaults-web-shared/vendors-on-device.js';
+import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { openTheRoundHere } from 'vaults-web-shared/round-opened-here.js';
 import { refuseWhatThisDeviceDidNotMake } from 'vaults-web-shared/what-this-device-made.js';
 import { oneOffsHere, oneOffsKeptHere, oneOffVendorRefusal, refuseAOneOffToAnotherVendorHere, type OneOffsHere } from 'vaults-web-shared/one-off-here.js';
@@ -42,7 +43,7 @@ const NETWORK = theNetwork();
 const NOW = BigInt(Math.floor(Date.now() / 1000));
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** `s`'s device's records with the company's vendors read on it, or with what `vendors` says instead. */

@@ -36,11 +36,12 @@ const gate = vi.hoisted(() => ({ open: (): void => {}, wait: Promise.resolve() a
 vi.mock('./registry.js', () => {
   const step = (n: number) => ({
     title: { key: 'ask.balance.vault', values: { vault: `step ${n}` } },
-    run: async (c: { relay(tx: string): Promise<void>; signal: AbortSignal }) => {
+    run: async (c: { relay(tx: string): Promise<void>; signal: AbortSignal; show(w: unknown): void }) => {
       if (n === 2) await gate.wait;
       if (c.signal.aborted) throw new Error('stopped before it was built');
       gate.built.push(n);
       await c.relay(`dHg${n}`);
+      if (n === 3) c.show({ key: 'act.join-by-code.over.fingerprint', values: { fingerprint: 'K7QM-2XRT-9VBN-4HCD-PW3S', address: 'an address' } });
     },
   });
   const action = {
@@ -217,6 +218,10 @@ describe('an action runs whole in one window, on one passkey', () => {
     await waitFor(() => expect(phaseNow).toBe('locked'));
     /* RED WHEN: the locked window forgets the action, and shows the unlock screen or a waiting line instead. */
     await waitFor(() => expect(document.querySelector('[data-act-ended="done"]')).not.toBeNull());
+    /* RED WHEN: what a done action gave its window to show, a fingerprint to read out, is not shown there. */
+    expect(document.querySelector('[data-act-shown-at-the-end]')?.textContent).toContain('K7QM-2XRT-9VBN-4HCD-PW3S');
+    /* RED WHEN: what a done action shows in its window is also sent to the page. */
+    expect(JSON.stringify(posted)).not.toContain('K7QM');
   });
 
   it('Stop between two steps leaves "step 2 of 3", and nothing more is handed to the page', async () => {

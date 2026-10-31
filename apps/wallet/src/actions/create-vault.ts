@@ -1,19 +1,19 @@
 import { fromHex, type Hex } from '../../../../src/core/crypto.js';
-import { approverRosterFrom } from '../../../../src/core/vault-approvers.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import { rosterRefusalOf } from '../../../../src/midnight/secret-readers.js';
 import type { SealedPool } from '../../../../src/midnight/vault-pool.js';
 import { governedCallServiceFor } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import {
-  createCompanyVault, VaultNotBuilt, VaultNotTheCompanys, VaultStartOwed, type CreateVaultDoors, type SecretKeptHere, type VaultService,
+  createCompanyVault, NOT_BUILT, START_READ_STOP, START_STOP, VaultNotBuilt, VaultNotTheCompanys, VaultStartOwed,
+  type CreateVaultDoors, type SecretKeptHere, type VaultService,
 } from '../../../../packages/web-shared/src/vault-operation.js';
 import { VaultInfoRefused, vaultInfoRecordsFor } from '../../../../packages/web-shared/src/vault-info-here.js';
 import { deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { DeviceRecords } from '../../../../packages/web-shared/src/deposit-on-device.js';
 import { readAccountAddress, readCompanyLabel, readVaultAddress, type VaultAddress } from 'midnight-identity/profile/company-label';
 import { vaultOnChain, fromIndexerAt } from '../chain/company-label-on-chain.js';
-import { enteredFor, type CompanyReach } from './company-reach.js';
+import { approversHere, enteredFor, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type StepContext, type Words } from './definition.js';
 import { vaultKeysShown, vaultKeysSteps, type VaultKeysReach } from './give-vault-keys.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -43,6 +43,25 @@ export interface CreateVaultReach extends VaultKeysReach {
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
   key: `act.create-vault.why.${key}`, ...(values === undefined ? {} : { values }),
 });
+
+/** The kinds of stop a refused start names to the page with its words' key: the start's own, its reads' and a vault not built. */
+const NAMED_TO_THE_PAGE = new Set<string>([...Object.values(START_STOP), ...Object.values(START_READ_STOP), ...Object.values(NOT_BUILT)]);
+export const namedCode = (code: string | undefined): string | undefined => (code !== undefined && NAMED_TO_THE_PAGE.has(code) ? code : undefined);
+
+/**
+ * The step's refusal for what stopped the vault's creation or start, with the kind of stop the page may be told, and
+ * the vault told when one was sent; null for anything else, which the step throws as it came.
+ */
+export const startRefusalOf = (e: unknown, ctx: Pick<StepContext, 'tell'>): StepRefused | null => {
+  if (e instanceof VaultStartOwed) {
+    ctx.tell({ vault: String(e.vault).toLowerCase(), ...(e.stoppedAt === undefined ? {} : { stopped: e.stoppedAt }) });
+    return new StepRefused(why('start-owed', { says: e.message }), namedCode(e.stoppedAt));
+  }
+  if (e instanceof VaultNotBuilt) return new StepRefused(why('not-built', { code: e.code, says: e.message }), namedCode(e.code));
+  if (e instanceof VaultNotTheCompanys) return new StepRefused(why('not-the-companys', { says: e.message }));
+  if (e instanceof VaultInfoRefused) return new StepRefused(why('name-refused', { says: e.message }));
+  return null;
+};
 
 /** Readers of the vault's secret: every signer's records key from the roster this wallet believes, refused unless each seat the chain holds is one of them. */
 export const readersFrom = async (r: CompanyReach): Promise<Hex[]> => {
@@ -135,16 +154,7 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: CreateVa
         return { seats: here.dir.seats, leafOf: here.leafOf };
       },
     },
-    approvers: async () => {
-      const [account, held, wide] = await Promise.all([r.roster(), r.holders(), r.builder.companyWide()]);
-      const onTheChain = new Set(held.seats.map((x) => x.toLowerCase()));
-      return approverRosterFrom({
-        threshold: held.approvals, vaultThresholds: held.vaultThresholds,
-        seated: account.signers.filter((x) => x.status === 'active' && x.leafCommitment !== null && onTheChain.has(x.leafCommitment.toLowerCase()))
-          .map((x) => ({ leaf: x.leafCommitment!, ...(x.rights === undefined ? {} : { rights: x.rights }) })),
-        adoptedVaults: held.adoptedVaults, companyWide: wide,
-      });
-    },
+    approvers: () => approversHere(r),
     vaultName: (vault) => vault,
   };
 }
@@ -211,14 +221,7 @@ export function createVaultAction(reach: CreateVaultReach): ActionDefinition {
               ctx.tell({ round: done.awaiting.round, approvals: done.awaiting.approvals, needed: done.awaiting.needed });
             }
           } catch (e) {
-            if (e instanceof VaultStartOwed) {
-              ctx.tell({ vault: String(e.vault).toLowerCase(), ...(e.stoppedAt === undefined ? {} : { stopped: e.stoppedAt }) });
-              throw new StepRefused(why('start-owed', { says: e.message }));
-            }
-            if (e instanceof VaultNotBuilt) throw new StepRefused(why('not-built', { code: e.code, says: e.message }));
-            if (e instanceof VaultNotTheCompanys) throw new StepRefused(why('not-the-companys', { says: e.message }));
-            if (e instanceof VaultInfoRefused) throw new StepRefused(why('name-refused', { says: e.message }));
-            throw e;
+            throw startRefusalOf(e, ctx) ?? e;
           }
         },
       };

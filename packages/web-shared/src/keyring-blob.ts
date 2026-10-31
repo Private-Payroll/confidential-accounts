@@ -13,10 +13,11 @@
  * open nothing, for a page that may not hold the secrets beside them, and `metadataFrom` reads them again on the page;
  * `seatsOf` and `servedKeysOpenedFrom` are what a wallet reads from the saved keys for a page, none of it a secret.
  */
-import type { Inviter, SignedSeatInvitation } from '../../../src/core/invitation.js';
+import type { Inviter, SignedSeatInvitation, SignerOffer } from '../../../src/core/invitation.js';
+import type { KeptSeatInvitation } from './invitation-on-device.js';
 import type { DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import { isCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { fromHex, seal, signingPublicKeyOf, toHex, unseal, unwrapKey, utf8, type Hex, type Sealed } from '../../../src/core/crypto.js';
@@ -80,6 +81,12 @@ export interface AccountKeys {
    * that seat is taken again.
    */
   opening?: SeatOpening;
+  /**
+   * **WHICH OF THIS WALLET'S OWN SEATS FOR THE COMPANY THIS IS**: the `n` of
+   * `seatKeysFor(identity, label, n)` it was derived as. Absent for a seat made
+   * any other way.
+   */
+  seat?: number;
 }
 
 /** An entry as a saved bundle may hold it: material saved before scopes were recorded has no scope. */
@@ -112,6 +119,22 @@ export interface PendingSeat {
   opening?: SeatOpening;
   /** Who the seat is for, as the seat that invited signed it; promoted with the material and carried into the seat's own entry. */
   invited?: SignedSeatInvitation;
+  /** Which of this wallet's own seats for the company this is, as `AccountKeys.seat` says; absent for a seat made any other way. */
+  seat?: number;
+  /**
+   * What asking to be admitted needs, kept from the invitation this seat was taken by when it was opened: the
+   * invitation's id, the proof the link gives, the company's inbox key, the company's label and account, and the
+   * offer. A step taken up again after the service has closed the offer asks from this. Absent for a seat made any
+   * other way.
+   */
+  joining?: {
+    invitation: string;
+    acceptance: Hex;
+    inbox: Hex;
+    label: string;
+    account: string;
+    offer: SignerOffer;
+  };
 }
 
 /**
@@ -129,8 +152,8 @@ export interface Keyring {
    *
    *
    * An entry here is key material this device sealed BEFORE publishing the leaf
-   * it makes, and it survives until the seat it belongs to is on the roster and
-   * has been promoted into `accounts`.
+   * it makes. It stays after the seat it belongs to is kept in `accounts` as
+   * well: the wallet never drops a seat it holds.
    *
    * **KEYED BY THE KEY BECAUSE KEYING BY ACCOUNT DESTROYS MATERIAL.** If a
    * POST succeeds and the promotion then fails, an entry here holds the ONLY
@@ -146,7 +169,8 @@ export interface Keyring {
    */
   pendingSeats?: Record<string, PendingSeat>;
   /**
-   * **THE COMPANIES THAT PAY THIS PERSON, BY THEIR PUBLIC CONTRACT ADDRESS.**
+   * **THE COMPANIES THAT PAY THIS PERSON, BY THEIR LABELS.** The person's wallet lists a company here when they join it
+   * as a payee, before it hands the company anything, and never takes one off.
    *
    * Kept here, sealed with everything else, because the service must not hold
    * in a form it can read which signed-in person is paid by which company. It
@@ -177,6 +201,21 @@ export interface Keyring {
    * keys written before it have no such field.
    */
   directoryEntriesOwed?: Record<string, OwedDirectoryEntry>;
+  /**
+   * **EVERY SEAT THIS PERSON OFFERED BY ADDRESS, AS THEIR SEAT SIGNED IT BEFORE RAISING IT**, keyed by the invitation's
+   * id, until it expires: the token, the link and the signed offer, which carries the secret the invitee's new keys
+   * are proved by. Kept before the proposal is raised, so an attempt stopped after the raise is taken up again with
+   * the same invitation and no second proposal, and nothing the seating needs exists only at the service. Never part
+   * of what the page is shown. Optional, because saved keys written before it have no such field.
+   */
+  seatInvitationsKept?: Record<string, KeptSeatInvitation>;
+  /**
+   * **EVERY INVITATION THIS PERSON JOINED AS A PAYEE BY CODE**, keyed by the invitation's id: the company and the
+   * address the code names. Kept before the code is handed over, so a join whose answer never came back can show the
+   * same fingerprint again when the invitation is already used, and never one for a code this wallet did not make.
+   * Never part of what the page is shown. Optional, because saved keys written before it have no such field.
+   */
+  payeeJoinsKept?: Record<string, PayeeJoinKept>;
   /**
    * HOW MANY TIMES THESE SAVED KEYS HAVE BEEN WRITTEN, one more on every write (`sealKeyring`). Absent on saved keys
    * written before it was kept, which read as 0 (`counterOf`).
@@ -382,6 +421,67 @@ export function withNewSeat(k: Keyring, accountId: string, keys: AccountKeys): K
     throw new Error('these saved keys already hold a seat on this company, so a new one is not written over it. Nothing was changed.');
   }
   return { ...k, accounts: { ...k.accounts, [accountId]: keys } };
+}
+
+/**
+ * The keyring with a seat offered by address kept under its invitation's id, and every kept one that has expired by
+ * `now` let go. Refuses to write over another invitation kept under the same id: the one kept first may be the only
+ * copy of a proposal already raised.
+ */
+export function withSeatInvitationKept(k: Keyring, kept: KeptSeatInvitation, now: number): Keyring {
+  const held = k.seatInvitationsKept ?? {};
+  const was = held[kept.id];
+  if (was !== undefined && was.offer.signature !== kept.offer.signature) {
+    throw new Error('these saved keys already keep another invitation under this id, so it is not written over. Nothing was changed.');
+  }
+  const live = Object.fromEntries(Object.entries(held).filter(([id, x]) => id !== kept.id && x.offer.offer.expiresAt > now));
+  return { ...k, seatInvitationsKept: { ...live, [kept.id]: kept } };
+}
+
+/**
+ * The keyring holding a seat kept before its leaf is published, under its signing public key, as `pendingSeats` is
+ * keyed. The same seat kept again changes nothing; another seat under the same key is refused, since the one kept
+ * first may be the only copy of a leaf already published.
+ */
+export function withPendingSeat(k: Keyring, seat: PendingSeat): Keyring {
+  const key = seat.signingPublicKey.toLowerCase();
+  const was = k.pendingSeats?.[key];
+  if (was !== undefined) {
+    if (was.accountId === seat.accountId && was.signingSecret === seat.signingSecret && was.blinding === seat.blinding && was.scope === seat.scope) return k;
+    throw new Error('these saved keys already keep another seat under this key, so it is not written over. Nothing was changed.');
+  }
+  return { ...k, pendingSeats: { ...(k.pendingSeats ?? {}), [key]: seat } };
+}
+
+/** A join as a payee, as its wallet kept it before handing the code over: the company's label and the address paid. */
+export interface PayeeJoinKept {
+  readonly company: string;
+  readonly address: string;
+}
+
+/**
+ * The keyring keeping a join as a payee under its invitation's id. The same join kept again changes nothing; another
+ * under the same id is refused, since the one kept first may be the only record of a code already handed over.
+ */
+export function withPayeeJoinKept(k: Keyring, invitation: string, kept: PayeeJoinKept): Keyring {
+  const was = k.payeeJoinsKept?.[invitation];
+  if (was !== undefined) {
+    if (was.company === kept.company && was.address === kept.address) return k;
+    throw new Error('these saved keys already keep another join under this invitation, so it is not written over. Nothing was changed.');
+  }
+  return { ...k, payeeJoinsKept: { ...(k.payeeJoinsKept ?? {}), [invitation]: { company: kept.company, address: kept.address } } };
+}
+
+/**
+ * The keyring listing this company among those that pay this person, after every company listed before, in their
+ * order. A company already listed changes nothing; a value that is not a company's label is refused, so the list
+ * never names something no screen can open.
+ */
+export function withPaidBy(k: Keyring, company: CompanyLabel): Keyring {
+  if (!isCompanyLabel(company)) throw new Error('that is not a company\'s label, so it is not listed as a company that pays you. Nothing was changed.');
+  const listed = k.paidBy ?? [];
+  if (listed.includes(company)) return k;
+  return { ...k, paidBy: [...listed, company] };
 }
 
 /** The keyring owing this company's directory the entry given: it replaces one owed before, which a newer signing supersedes. */

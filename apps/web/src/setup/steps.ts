@@ -4,6 +4,8 @@ import { Building03Icon, CheckmarkCircle02Icon, SafeIcon, UserAdd01Icon, UserGro
 import { CreateCompany } from '../actions/create-company.js';
 import { FinishCompany } from '../actions/finish-company.js';
 import { CreateVault } from '../actions/create-vault.js';
+import { InvitePeople } from '../actions/invite.js';
+import { Signers } from '../actions/signers.js';
 import type { CompanyCreation } from '../adapters/creation-standing.js';
 import type { VaultRow } from '../adapters/company-records.js';
 import { wasHandedOver } from '../adapters/vault-rows.js';
@@ -25,7 +27,8 @@ import { STEP, type StepId, type StepProps } from './step-ids.js';
  * of its own names that page; the page shows the same component the wizard
  * does, from `actions/`, and never a copy of it. A step not built yet is in
  * the list as Coming soon, and the change that builds it puts its component
- * here in place of the line.
+ * here in place of the line; a part of a built step that is not built yet is
+ * its `alsoSoon` line, shown beside the component.
  */
 
 /** What the application knows about the company being set up, which is all a step's "done" reads. */
@@ -36,6 +39,8 @@ export interface SetupFacts {
   vaults: readonly Pick<VaultRow, 'standing'>[] | null;
   /** Where the company stands in being created, and what this tab keeps of it; null while that is not known. */
   creation: CompanyCreation | null;
+  /** Whether somebody to be paid is invited, as the company's records say it; false while they are not read. */
+  invited: boolean;
 }
 
 export interface SetupStep {
@@ -58,6 +63,8 @@ export interface SetupStep {
   cannotBeUndone: boolean;
   /** Its component, or, while it is not built, what it will be. */
   shows: { action: ComponentType<StepProps> } | { comingSoon: (t: Text) => string };
+  /** For a step that is built, what part of it is not built yet, said as Coming soon beside its component. */
+  alsoSoon?: (t: Text) => string;
   /** The page the same action is done from outside setup, if it has one. */
   page?: PageId;
 }
@@ -77,7 +84,7 @@ export const SETUP_STEPS = {
   },
   [STEP.signers]: {
     name: (t) => t('setup.step.signers.name'), line: (t) => t('setup.step.signers.line'), icon: UserAdd01Icon,
-    done: never, skippable: true, cannotBeUndone: false, shows: { comingSoon: (t) => t('setup.step.signers.soon') }, page: 'settingsSigners',
+    done: never, skippable: true, cannotBeUndone: false, shows: { action: Signers }, alsoSoon: (t) => t('setup.step.signers.soon'), page: 'settingsSigners',
   },
   [STEP.vault]: {
     name: (t) => t('setup.step.vault.name'), line: (t) => t('setup.step.vault.line'), icon: SafeIcon,
@@ -85,7 +92,7 @@ export const SETUP_STEPS = {
   },
   [STEP.people]: {
     name: (t) => t('setup.step.people.name'), line: (t) => t('setup.step.people.line'), icon: UserGroupIcon,
-    done: never, skippable: true, cannotBeUndone: false, shows: { comingSoon: (t) => t('setup.step.people.soon') }, page: 'people',
+    done: (f) => f.invited, skippable: true, cannotBeUndone: false, shows: { action: InvitePeople }, page: 'people',
   },
 } as const satisfies Record<StepId, SetupStep>;
 
