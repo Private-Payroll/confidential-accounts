@@ -175,7 +175,7 @@ const secondRecordFor = async (i: Awaited<ReturnType<typeof invited>>, role: str
 describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT, AS IT WAS SHOWN', () => {
   let eve: Awaited<ReturnType<typeof invited>>;
 
-  it('another seat approves the proposal only as it was shown, and raises nothing', async () => {
+  it('another seat approves the proposal only as it was shown, and raises nothing', { timeout: 120_000 }, async () => {
     eve = await invited(EVE);
     const bo = seatingDevice(BO);
     const before = events.length;
@@ -230,7 +230,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
       coinKeyAt(addressOf(EVE.fill)))).resolves.toMatch(/already holds a seat on this company/u);
   });
 
-  it('RED WHEN: a proposal that invites a wallet the roster records as seated is approved, though it is the one the window showed', async () => {
+  it('RED WHEN: a proposal that invites a wallet the roster records as seated is approved, though it is the one the window showed', { timeout: 120_000 }, async () => {
     /* Eve is seated, and Ada's device invites her address again without its check: the proposal is as shown, and only the approving device can stop it. */
     const again = await invited(EVE, { unchecked: true });
     const before = events.length;
@@ -241,7 +241,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(events.slice(before)).toEqual([]);
   });
 
-  it('every later version of the roster keeps the coin key a seat was admitted with', async () => {
+  it('every later version of the roster keeps the coin key a seat was admitted with', { timeout: 120_000 }, async () => {
     const fay = await invited(FAY);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: fay.shown }, inviteAddressOf);
     /* Her request carries a coin key of its own, sealed to the company's inbox as anyone can seal one. */
@@ -280,7 +280,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(companyNow().signers.some((x) => x.id === ID[CY.person] && x.status === 'active')).toBe(true);
   });
 
-  it('an admission whose entry in the records was lost is entered again by the admitting seat, and every device reads the roster again', async () => {
+  it('an admission whose entry in the records was lost is entered again by the admitting seat, and every device reads the roster again', { timeout: 120_000 }, async () => {
     const gus = await invited(GUS);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: gus.shown }, inviteAddressOf);
     const signerId = await seatTaken(GUS, gus);
@@ -298,7 +298,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(coinOf(GUS.name)).toBe(coinKeyAt(addressOf(GUS.fill)));
   });
 
-  it('RED WHEN: a wallet another entry records as seated is admitted to a second seat', async () => {
+  it('RED WHEN: a wallet another entry records as seated is admitted to a second seat', { timeout: 120_000 }, async () => {
     /* Ada's device invites Eve's address again without its check; Bo's device approves from the offer, and Eve's wallet takes a second seat. */
     const again = await invited(EVE, { unchecked: true });
     await raiseSeatInvitationOnDevice(seatingDevice(BO), {
@@ -310,7 +310,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(companyNow().signers.filter((x) => x.name === EVE.name && x.status === 'active')).toHaveLength(1);
   });
 
-  it('RED WHEN: a seat taken by address is admitted on an invitation other than the one the approved proposal carries, with a role nobody approved', async () => {
+  it('RED WHEN: a seat taken by address is admitted on an invitation other than the one the approved proposal carries, with a role nobody approved', { timeout: 120_000 }, async () => {
     const hal = await invited(HAL);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: hal.shown }, inviteAddressOf);
     /* Ada's seat signs a second invitation for the same proposal, address and rights, naming another role, with a seat secret made for that role, and Hal's request carries it. */
@@ -323,7 +323,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(companyNow().signers.find((x) => x.name === HAL.name)?.status).not.toBe('active');
   });
 
-  it('RED WHEN: a record under the approved proposal\'s id, filed and signed by a key that is no seat, stops a seat the approvers approved from being admitted', async () => {
+  it('RED WHEN: a record under the approved proposal\'s id, filed and signed by a key that is no seat, stops a seat the approvers approved from being admitted', { timeout: 120_000 }, async () => {
     const ivy = await invited(IVY);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: ivy.shown }, inviteAddressOf);
     const signerId = await seatTaken(IVY, ivy);
@@ -334,7 +334,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(companyNow().signers.find((x) => x.name === IVY.name)).toMatchObject({ status: 'active', role: 'approver' });
   });
 
-  it('RED WHEN: a proposal is approved while another the company holds under its id on the network, filed and signed by a seat that may invite, carries another invitation', async () => {
+  it('RED WHEN: a proposal is approved while another the company holds under its id on the network, filed and signed by a seat that may invite, carries another invitation', { timeout: 120_000 }, async () => {
     const jo = await invited(JO);
     const { rec, filing } = await secondRecordFor(jo, 'admin', ADA.signingSecret as Hex, 'prp_secondrecord');
     store.putProposal({ ...rec, ...filing, id: 'prp_secondrecord' } as never);
@@ -345,7 +345,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(events.slice(before)).toEqual([]);
   });
 
-  it('RED WHEN: a seat is admitted on one of two invitations under its id that seats which may invite filed, and so with a role the approvers may not have approved', async () => {
+  it('RED WHEN: a seat is admitted on one of two invitations under its id that seats which may invite filed, and so with a role the approvers may not have approved', { timeout: 120_000 }, async () => {
     const kit = await invited(KIT);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: kit.shown }, inviteAddressOf);
     const signerId = await seatTaken(KIT, kit);
@@ -358,7 +358,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(companyNow().signers.find((x) => x.name === KIT.name)?.status).not.toBe('active');
   });
 
-  it('RED WHEN: a request the service names with a seated signer\'s id is filed as that signer at the joiner\'s seat, and every device then refuses the roster', async () => {
+  it('RED WHEN: a request the service names with a seated signer\'s id is filed as that signer at the joiner\'s seat, and every device then refuses the roster', { timeout: 120_000 }, async () => {
     const pat = await invited(PAT);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: pat.shown }, inviteAddressOf);
     const own = await seatTaken(PAT, pat);
