@@ -657,7 +657,11 @@ export type ProposalKind =
   /** One vault's own threshold. Its own kind for the same reason its
    *  payload has its own domain string: it is not a change to the account's. */
   | 'set-vault-threshold'
-  | 'change-policy';
+  | 'change-policy'
+  /** A new vault's adoption into the company's account, and its first secret: raised by the device setting the vault up. */
+  | 'adopt-vault' | 'vault-secret'
+  /** The company's account committed to its pay-record key, raised by the founding seat's device. */
+  | 'pay-key';
 /**
  * `cancelled` is distinct from `rejected`: rejected is a judgement about the
  * proposal, cancelled is a round that was withdrawn. It existed because the

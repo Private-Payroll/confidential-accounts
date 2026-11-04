@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
@@ -58,6 +55,7 @@ import { LANGUAGES } from '../languages.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { EVERY_SHORTCUT } from '../shortcuts.js';
+import { ENGLISH } from '../english.test-support.js';
 import { menuFor } from './menu.js';
 import { AccountFrame } from './account-frame.js';
 import { PanelProvider, RightPanel, usePanel } from './right-panel.js';
@@ -73,7 +71,7 @@ import { Shell } from './shell.js';
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
 
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 /* Every phrase in a language that is not English: the same key, the English words backwards. A page found by one of these is found by its own language's name. */
 const XX = Object.fromEntries(Object.entries(EN).map(([k, v]) => [k, [...v].reverse().join('')]));
 const TEST_LANGUAGES = languagesFrom({ './locales/en.json': EN, './locales/de.json': XX });
@@ -693,7 +691,7 @@ describe('the pages', () => {
    * RED WHEN: a tab of Settings carries a Coming soon pill; the Company tab
    * does not show the day the company shown was created, or stops saying the
    * rest is Coming soon; or the line on what anyone can look up is not on the
-   * Signers tab, or that tab stops saying the rest is Coming soon.
+   * Signers tab, or that tab carries a Coming soon pill again.
    */
   it('shows no pill on Settings\' tabs, the day created on Company and the public line on Signers', async () => {
     const company = await draw(sessionFor(signer, { company: 'c-3' }), 'settingsCompany');
@@ -706,7 +704,8 @@ describe('the pages', () => {
     expect(signers.container.querySelector('[data-public-facts]')!.textContent).toBe(EN['settingsSigners.publicFacts']);
     expect(EN['settingsSigners.publicFacts']).toMatch(/^Anyone can look up how many sign/);
     expect(signers.container.querySelector('[data-company-created]')).toBeNull();
-    expect(signers.container.querySelector('[data-screen=coming-soon] [data-slot=page-header] [data-slot=coming-soon]')).not.toBeNull();
+    expect(signers.container.querySelector('[data-screen=coming-soon]')).toBeNull();
+    expect(signers.container.querySelector('[data-screen=settings] [data-slot=coming-soon]')).toBeNull();
   });
 
   /* RED WHEN: a signer looking at their own pay is not told so, or has no way back. */

@@ -58,7 +58,7 @@ beforeEach(async () => {
 const raisedOnTheChain = async (p: { id: string }, at: Invitee = bo.at) => {
   const { proposalSalt } = accounts.governanceAsked(p.id, viewingKey);
   const change = { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: proposalSalt };
-  await ledger.propose(company, MidnightCommitments.signerInvitePayload(at.address, at.scope), change, ada, MidnightCommitments.noVault());
+  await ledger.propose(company, MidnightCommitments.signerInvitePayload(at.address, at.scope, 0), change, ada, MidnightCommitments.noVault());
 };
 const statusOf = (signerId: string) => accounts.open(company, viewingKey).signers.find((s) => s.id === signerId)!.status;
 

@@ -9,8 +9,8 @@
  * functions are substituted as modules, each recording what it was handed;
  * the vault's record is a real
  * sealed pool in memory, and the plan is the run planner's own. Each step
- * function's own work - written down first, read on this device, sent and
- * recorded - is `vault-operation.test.ts`'s, and a leg paid end to end is
+ * function's own work - read on this device, built, written down before it is
+ * sent, sent and recorded - is `vault-operation.test.ts`'s, and a leg paid end to end is
  * `a-private-payment-from-the-page.test.ts`'s.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -34,6 +34,8 @@ let poolOf: ((notes: Array<{ nonce: string; value: bigint }>) => Promise<void>) 
 /* What the vault's record holds once the rebuild before planning has filed what the chain holds; null, it files nothing. */
 let rebuiltTo: Array<{ nonce: string; value: bigint }> | null = null;
 let rebuilds = 0;
+/* The payment, by index, whose send stops the leg after it may have gone, as a payment not yet seen does. */
+let stopsAt: number | null = null;
 vi.mock('./payments-made-here.js', () => ({
   legToPayHere: async () => ({
     order: { ...order, required: '2', payments: order.payments.map((p) => ({ ...p, paid: paidOnTheAccount.has(p.index) })) },
@@ -74,6 +76,7 @@ vi.mock('./vault-operation.js', async (real) => {
         throw new actual.NotesMovedUnderAStep('the chain no longer holds a note this vault\'s record would spend for this payment');
       }
       calls.push(`pay ${i.payment.index} ${i.payment.amount} from ${i.notes.map((n) => `${n.nonce.slice(0, 2)}:${n.value}`).join('+')}`);
+      if (stopsAt === i.payment.index) throw new actual.PaymentNotYetSeen(VAULT as never, 'o', 'the wallet stopped waiting');
       if (!accountLags) paidOnTheAccount.add(i.payment.index);
       const left = i.notes.reduce((t, n) => t + BigInt(n.value), 0n) - BigInt(i.payment.amount);
       const named = !unnamed.has(i.payment.index);
@@ -81,6 +84,7 @@ vi.mock('./vault-operation.js', async (real) => {
     },
     payPubliclyFromCompanyVault: async (d: { paidYet: () => Promise<boolean | null> }, i: { payment: PrivatePaymentOnTheWire }) => {
       calls.push(`pay publicly ${i.payment.index} ${i.payment.amount} asking ${String(await d.paidYet())}`);
+      if (stopsAt === i.payment.index) throw new actual.PublicPaymentNotYetSeen(VAULT as never, `u${i.payment.index}`);
       paidOnTheAccount.add(i.payment.index);
       return { txRef: `u${i.payment.index}` };
     },
@@ -103,7 +107,7 @@ vi.mock('../../../src/midnight/payment-plan.js', async (real) => {
   const actual = await real<typeof import('../../../src/midnight/payment-plan.js')>();
   return { ...actual, planRun: (i: Parameters<typeof actual.planRun>[0]) => { planned.push(i as never); return planAnswer ?? actual.planRun(i); } };
 });
-const { payAnApprovedLeg, LegNotPayable } = await import('./leg-paid-here.js');
+const { payAnApprovedLeg, LegNotPayable, LegStopped } = await import('./leg-paid-here.js');
 type Leg = import('./leg-paid-here.js').LegHere;
 type Doors = import('./leg-paid-here.js').LegDoors;
 type Paid = import('./leg-paid-here.js').LegPaid;
@@ -138,7 +142,7 @@ beforeEach(() => {
   calls.length = 0; paidOnTheAccount = new Set(); moveOnce = null; planned = []; planAnswer = null;
   movedTo = null; movesEveryTime = 0; unnamed = new Set(); accountLags = false;
   charging = 'no-policy'; charges.length = 0; raisedByALeaver = false; askedInCalls = false;
-  rebuiltTo = null; rebuilds = 0;
+  rebuiltTo = null; rebuilds = 0; stopsAt = null;
 });
 
 describe('PAYING AN APPROVED LEG', () => {
@@ -319,5 +323,71 @@ describe('PAYING AN APPROVED LEG', () => {
     /* RED WHEN: a payment goes out from a policy vault after its charge was refused - the chain refuses it after a fee. */
     await expect(payAnApprovedLeg(await aVault([]), leg)).rejects.toThrow(/past its limit for the period/u);
     expect(calls).toEqual(['charge refused']);
+  });
+});
+
+describe('A LEG THAT STOPS PART WAY, AND PAID AGAIN', () => {
+  it('A PRIVATE LEG STOPPED AFTER ITS FIRST PERSON SAYS WHO WAS PAID AND WHY IT STOPPED; PAID AGAIN, ONLY THE PERSON STILL OWED IS PAID', async () => {
+    order = anOrder([aPayment(0, 30), aPayment(1, 40), aPayment(2, 20)]);
+    const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 200n }]);
+    stopsAt = 1;
+    const stopped = await payAnApprovedLeg(doors, leg).catch((e: unknown) => e);
+    /* RED WHEN: a stop after a payment went is thrown as the step's own error, losing who the leg had already paid. */
+    expect(stopped).toBeInstanceOf(LegStopped);
+    const { done, cause } = stopped as InstanceType<typeof LegStopped>;
+    expect(done).toMatchObject({ paid: [0], sentNotNamed: [], alreadyPaid: [], payees: 3 });
+    expect(done.steps.map((x) => x.kind)).toEqual(['payment']);
+    expect(String((cause as Error).message)).toMatch(/the wallet stopped waiting/u);
+    expect((stopped as Error).message).toMatch(/1 of the leg's 3 payment\(s\) were sent/u);
+    /* Paid again: the account shows person 0 paid and person 1's payment landed; only person 2 is owed. */
+    stopsAt = null; calls.length = 0; paidOnTheAccount.add(1);
+    const again = await payAnApprovedLeg(doors, leg);
+    /* RED WHEN: paying again sends a payment to anyone the account records paid. */
+    expect(calls.filter((c) => c.startsWith('pay'))).toEqual([expect.stringMatching(/^pay 2 20 /u)]);
+    expect(again).toMatchObject({ paid: [2], alreadyPaid: [0, 1] });
+  });
+
+  it('A PUBLIC LEG STOPPED AFTER ITS FIRST PERSON SAYS WHO WAS PAID; PAID AGAIN, NOBODY THE ACCOUNT RECORDS PAID IS PAID AGAIN', async () => {
+    order = anOrder([aPayment(0, 30, 'unshielded'), aPayment(1, 40, 'unshielded')], 'unshielded');
+    stopsAt = 1;
+    const stopped = await payAnApprovedLeg(await aVault([]), leg).catch((e: unknown) => e);
+    /* RED WHEN: a public leg's stop loses the payments it had already sent. */
+    expect(stopped).toBeInstanceOf(LegStopped);
+    expect((stopped as InstanceType<typeof LegStopped>).done).toMatchObject({ paid: [0], payees: 2 });
+    stopsAt = null; calls.length = 0;
+    await payAnApprovedLeg(await aVault([]), leg);
+    expect(calls.filter((c) => c.startsWith('pay'))).toEqual(['pay publicly 1 40 asking true']);
+  });
+
+  it('A STOP BEFORE ANY STEP WAS SENT IS THE STEP\'S OWN REFUSAL, NOT A LEG STOPPED PART WAY', async () => {
+    order = anOrder([aPayment(0, 30)]);
+    stopsAt = 0;
+    /* RED WHEN: a leg that sent nothing is reported as one stopped part way. */
+    const stopped = await payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]), leg).catch((e: unknown) => e);
+    expect(stopped).not.toBeInstanceOf(LegStopped);
+  });
+});
+
+describe('A MERGE THIS DEVICE CANNOT PROVE', () => {
+  it('A PLAN WITH A MERGE IS REFUSED BEFORE THE RUN IS CHARGED WHEN THIS DEVICE CANNOT PROVE A MERGE, AND PAID AS PLANNED WHEN IT CAN', async () => {
+    charging = 'charged';
+    order = anOrder([aPayment(0, 250)]);
+    const notes = [{ nonce: 'a1'.repeat(32), value: 120n }, { nonce: 'a2'.repeat(32), value: 100n }, { nonce: 'a3'.repeat(32), value: 90n }];
+    const cannot = { ...(await aVault(notes)), mergesProvedHere: async () => false } as Doors;
+    /* RED WHEN: a run whose plan needs a merge this wallet cannot prove is charged first, and then stops at the merge. */
+    await expect(payAnApprovedLeg(cannot, leg)).rejects.toThrow(LegNotPayable);
+    await expect(payAnApprovedLeg(cannot, leg)).rejects.toThrow(/does not\s+yet hold the key a merge is proved with, so the run was not charged/u);
+    expect(charges).toEqual([]);
+    expect(calls).toEqual([]);
+    const can = { ...(await aVault(notes)), mergesProvedHere: async () => true } as Doors;
+    await payAnApprovedLeg(can, leg);
+    expect(calls).toEqual(['charge charged', 'merge a1:120+a2:100+a3:90', 'pay 0 250 from e7:310']);
+  });
+
+  it('A PLAN WITH NO MERGE IS PAID WHETHER OR NOT THIS DEVICE CAN PROVE A MERGE', async () => {
+    order = anOrder([aPayment(0, 30)]);
+    const doors = { ...(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }])), mergesProvedHere: async () => false } as Doors;
+    /* RED WHEN: a leg that needs no merge is refused because this wallet cannot prove one. */
+    expect(await payAnApprovedLeg(doors, leg)).toMatchObject({ paid: [0] });
   });
 });

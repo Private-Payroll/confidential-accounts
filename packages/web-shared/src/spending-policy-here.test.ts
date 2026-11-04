@@ -7,7 +7,7 @@
  * and what the chain holds is a map this file keeps. The directory is one this
  * file writes, judged by the device's own rules (`judgeIn`, `readersIn`).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { canonical, newSigningKeypair, newWrappingKeypair, seal } from '../../../src/core/crypto.js';
 import { signedFoundingState } from '../../../src/core/founding-state.js';
@@ -17,11 +17,23 @@ import { openSpendingPolicy, sealSpendingPolicy } from '../../../src/midnight/sp
 import { MOST_ROLES_ASKED } from 'midnight-identity/profile/request';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import {
-  chainReadThroughTheWallet, setPolicyBarOnDevice, setSpendingPolicyOnDevice, spendingPolicyHere, type PolicyGovernanceDoors,
+  chainReadThroughTheWallet, policyProposedHere, policyReadHere, setPolicyBarOnDevice, setSpendingPolicyOnDevice, spendingPolicyHere,
+  type PolicyGovernanceDoors,
 } from './spending-policy-here.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
+import { withCompanyKeys } from './governed-call-on-device.js';
 import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
+
+/*
+ * The proposal a device opens from the company's records, stood in for: what its sealed body says the change is, as
+ * `round-opened-here.ts` opens it (followed in its own tests). Null when no proposal is opened here.
+ */
+const round = vi.hoisted(() => ({ opened: null as null | { chainId: string; governance: Record<string, string> } }));
+vi.mock('./round-opened-here.js', async (real) => ({
+  ...(await real<typeof import('./round-opened-here.js')>()),
+  openTheRoundHere: async () => { if (round.opened === null) throw new Error('no proposal is opened here'); return round.opened; },
+}));
 
 const COMPANY = 'acme';
 const VAULT = 'fa'.repeat(32);
@@ -216,6 +228,40 @@ describe('A VAULT\'S SPENDING POLICY, READ AND SET ON THIS DEVICE', () => {
     /* RED WHEN: a new version is sealed to anybody but the seats this device believes now, each under its own seat. */
     expect(filed3[1]!.wrapped.map((w) => w.signerId).sort()).toEqual([SEAT, SECOND]);
     expect(opened(filed3[1]!).blinding).not.toBe('c3'.repeat(32));
+  });
+
+  /*
+   * RED WHEN: the policy a proposal sets is read from anything but the version of its record this device believes and
+   * opens with its own seat's key; its currency is taken on anybody's word rather than found by the key the proposal
+   * commits to; a proposal whose policy opens from no believed version, or names a currency this device does not know,
+   * is read at all; or terms a page names are approved when they are not the ones the proposal opens to.
+   */
+  it('THE POLICY A PROPOSAL SETS IS READ HERE, ITS CURRENCY FOUND BY ITS KEY AND ITS TERMS OPENED FROM A BELIEVED VERSION', async () => {
+    const B = 'b3'.repeat(32);
+    const OTHER = '00'.repeat(32);
+    const doorsFor = (filed: SealedCompanyRecord[]) => ({ ...reader(new Map(), filed), service: {}, filing: { keyEpoch: 0 } }) as unknown as PolicyGovernanceDoors;
+    const doors = doorsFor([versionOf(1, B, [ME], founder)]);
+    round.opened = {
+      chainId: 'CC'.repeat(32),
+      governance: { kind: 'spending-policy', vault: VAULT, assetKey: made('asset', TEST_TOKEN), commitment: made('commitment', TERMS.periodLimit, B) },
+    };
+    try {
+      const read = await policyReadHere(doors, withCompanyKeys({ proposal: 'p1', vault: VAULT, among: [OTHER, TEST_TOKEN] }, VIEWING));
+      expect(read).toEqual({ chainId: 'cc'.repeat(32), commitment: made('commitment', TERMS.periodLimit, B), asset: TEST_TOKEN, opening: { terms: TERMS, blinding: B } });
+      /* RED WHEN: a currency this device does not know, or one the proposal is not for, is taken as the policy's. */
+      await expect(policyReadHere(doors, withCompanyKeys({ proposal: 'p1', vault: VAULT, among: [OTHER] }, VIEWING))).rejects.toThrow(/in a currency this device knows/u);
+      /* RED WHEN: a proposal on another vault than the one named is read. */
+      await expect(policyReadHere(doors, withCompanyKeys({ proposal: 'p1', vault: 'fb'.repeat(32), among: [TEST_TOKEN] }, VIEWING))).rejects.toThrow(/does not set a spending policy/u);
+      /* RED WHEN: a policy is read from a version nobody this device believes signed. */
+      await expect(policyReadHere(doorsFor([versionOf(1, B, [ME], stranger)]), withCompanyKeys({ proposal: 'p1', vault: VAULT, among: [TEST_TOKEN] }, VIEWING)))
+        .rejects.toThrow(/None of the company's records/u);
+      /* The terms a page names are still held to the ones the proposal opens to. */
+      await expect(policyProposedHere(doors, withCompanyKeys({ proposal: 'p1', vault: VAULT, asset: TEST_TOKEN, terms: TERMS }, VIEWING))).resolves.toMatchObject({ opening: { terms: TERMS } });
+      await expect(policyProposedHere(doors, withCompanyKeys({ proposal: 'p1', vault: VAULT, asset: TEST_TOKEN, terms: { ...TERMS, periodLimit: '90' } }, VIEWING)))
+        .rejects.toThrow(/not the one shown/u);
+    } finally {
+      round.opened = null;
+    }
   });
 
   it('WHAT THE CHAIN HOLDS IS TAKEN FROM THE WALLET ONLY WHEN IT ANSWERS EVERY KEY ASKED, IN THE ORDER ASKED', async () => {

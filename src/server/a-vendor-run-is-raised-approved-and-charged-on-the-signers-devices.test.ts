@@ -183,7 +183,8 @@ describe('A VENDOR RUN IS RAISED, APPROVED AND CHARGED THROUGH THE SIGNERS\' OWN
     const read = await readVendorsHere(peopleOn(ADA));
     await changeVendorHere(peopleOn(ADA), read.vendors.find((v) => v.vendor.id === changing)!, { terms: { ...MONTHLY, amount: 95000n } }, pastDraft);
     await expect(approveOnDevice({ ...deviceOf(BO), records: recordsOf(BO) }, { round, viewingKey: KEY })).rejects.toThrow(/their terms are 95000 a month/u);
-    await withdrawOnDevice({ ...deviceOf(ADA), records: recordsOf(ADA) }, { round, viewingKey: KEY });
+    /* The test's chain keeps this machine's time, the time the run's window was set an hour ahead of. */
+    await withdrawOnDevice({ ...deviceOf(ADA), records: recordsOf(ADA) }, { round, viewingKey: KEY, chainTime: async () => Date.now() });
     const again = await drawRunHere(drawingOn(ADA), { period: '2031-04', list: 'vendors', employeeIds: [changing], skipPending: PAID_IN_MARCH_ONLY, repeats: { runIds: [run.id], reason: 'Vendor 87\'s terms changed' } });
     expect(again.employees.find((e) => e.id === changing)?.amount).toBe(95000n);
     const second = await raiseOn(ADA, again.id);

@@ -54,8 +54,8 @@ const accountPure = {
   runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint) => sha(root, payees, opensAt, closesAt),
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
   retrySaltOf: (leg: Uint8Array, fresh: Uint8Array) => sha(Buffer.from('retry-salt'), leg, fresh),
-  signerInvitePayload: (address: Uint8Array, scope: Uint8Array) => sha(Buffer.from('invite'), address, scope),
-  removeSignerPayload: (leaf: Uint8Array) => sha(Buffer.from('remove'), leaf),
+  signerInvitePayload: (address: Uint8Array, scope: Uint8Array, t: bigint) => sha(Buffer.from('invite'), address, scope, t),
+  removeAndSetThresholdPayload: (leaf: Uint8Array, t: bigint) => sha(Buffer.from('remove'), leaf, t),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
   /* Asked of the account's own function first, so a call with other arguments than the account takes is refused as the account refuses it. */
   recoverAnchorPayload: (...args: [Uint8Array, bigint, Uint8Array]) => {
@@ -89,8 +89,8 @@ const record = (digest: Uint8Array, vault: Uint8Array, salt = SALT) => ({
   chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt, summary: 'the proposal',
 });
 const payloadOf = (g: GovernanceOnTheWire) => (g.kind === 'add-signer'
-  ? accountPure.signerInvitePayload(bytes(g.address), bytes(g.scope))
-  : g.kind === 'remove-signer' ? accountPure.removeSignerPayload(bytes(g.leaf))
+  ? accountPure.signerInvitePayload(bytes(g.address), bytes(g.scope), 0n)
+  : g.kind === 'remove-signer' ? accountPure.removeAndSetThresholdPayload(bytes(g.leaf), 0n)
     : accountPure.setThresholdPayload(BigInt((g as { threshold: string }).threshold)));
 
 const seat = { kind: 'add-signer', address: ADDRESS, scope: RIGHTS } as const;
@@ -99,21 +99,24 @@ const three = { kind: 'threshold', threshold: '3' } as const;
 /* What the device opened: the company's own records of a run, an invitation, a removal and a threshold change. */
 /* The run as the approving device made it again: here the honest case, the run the record names (`what-this-device-made.ts`). */
 const MADE = RUN_MADE.made;
+/* The deadline each record raised here carries, in seconds: 1 Jan 2100, after every clock these tests run on. */
+const RAISE_BY = '4102444800';
 const RUN: OpenedRound = {
-  ...record(accountPure.runPayload(bytes(run.root), 3n, 100n, 200n), bytes(run.vault)), half,
+  ...record(accountPure.runPayload(bytes(run.root), 3n, 100n, 200n), bytes(run.vault)), half, raiseBy: RAISE_BY,
   /* What its proposal seals beside the salt, its head one this device checked. */
   vouched: { ...RUN_VOUCHED, checkedHere: true },
   /* A run is raised only as this device made it again, with what the company's records account for on the chain. */
   made: { ...RUN_MADE.made, raising: { period: '2026-09', knownRounds: [], knownLeaves: [], knownNonces: [] } },
 };
-const SEAT: OpenedRound = { ...record(payloadOf(seat), accountPure.noVault()), governance: seat, half: { ...half, changeAmount: '0' } };
-const REMOVAL: OpenedRound = { ...record(payloadOf(removal), accountPure.noVault()), governance: removal, half: { ...half, changeAmount: '0' } };
+const SEAT: OpenedRound = { ...record(payloadOf(seat), accountPure.noVault()), governance: seat, half: { ...half, changeAmount: '0' }, raiseBy: RAISE_BY };
+const REMOVAL: OpenedRound = { ...record(payloadOf(removal), accountPure.noVault()), governance: removal, half: { ...half, changeAmount: '0' }, raiseBy: RAISE_BY };
 const recovery = { kind: 'recover-anchor', resumesFrom: LEAF, latest: '1800003600', lastRecovery: '00'.repeat(32) } as const;
 const RECOVERY: OpenedRound = {
   ...record(accountPure.recoverAnchorPayload(bytes(LEAF), 1800003600n, new Uint8Array(32)), accountPure.noVault()), governance: recovery, half: { ...half, changeAmount: '0' },
+  raiseBy: recovery.latest,
 };
 const approveRecovery: GovernedCallOrder = { circuit: 'approve', proposal: RECOVERY.chainId, of: { governance: recovery, proposalSalt: SALT } };
-const THREE: OpenedRound = { ...record(payloadOf(three), accountPure.noVault()), governance: three, half: { ...half, changeAmount: '0' } };
+const THREE: OpenedRound = { ...record(payloadOf(three), accountPure.noVault()), governance: three, half: { ...half, changeAmount: '0' }, raiseBy: RAISE_BY };
 
 /* And what an honest service hands over for each. */
 const raiseRun: GovernedCallOrder = { circuit: 'propose', run, half: { ...half, assetBlinding: BLINDING, proposalSalt: SALT }, proposal: RUN.chainId };
@@ -122,7 +125,9 @@ const raiseSeat: GovernedCallOrder = {
   circuit: 'propose', governance: seat, half: { ...half, assetBlinding: BLINDING, changeAmount: '0', proposalSalt: SALT }, proposal: SEAT.chainId,
 };
 const approveSeat: GovernedCallOrder = { circuit: 'approve', proposal: SEAT.chainId, of: { governance: seat, proposalSalt: SALT } };
-const removeIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: REMOVAL.chainId, proposalSalt: SALT, removing: true };
+const removeIt: GovernedCallOrder = {
+  circuit: 'removeSignerAndSetThreshold', leaf: LEAF, threshold: '0', proposal: REMOVAL.chainId, proposalSalt: SALT, removing: true,
+};
 const setIt: GovernedCallOrder = { circuit: 'setThreshold', threshold: '3', proposal: THREE.chainId, proposalSalt: SALT };
 
 const depsWith = (log: string[], raising = false): GovernedCallDeps => ({
@@ -196,31 +201,33 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
 
   it.each([
     ['proposal identity', 'approve', { ...approveRun, proposal: OTHER }, noHalf(RUN)],
-    ['proposal identity', 'amendSigner', { ...removeIt, proposal: OTHER }, noHalf(REMOVAL)],
+    ['proposal identity', 'removeSignerAndSetThreshold', { ...removeIt, proposal: OTHER }, noHalf(REMOVAL)],
     ['salt', 'propose', { ...raiseRun, half: { ...raiseRun.half, proposalSalt: OTHER } }, RUN],
-    ['salt', 'amendSigner', { ...removeIt, proposalSalt: OTHER }, noHalf(REMOVAL)],
+    ['salt', 'removeSignerAndSetThreshold', { ...removeIt, proposalSalt: OTHER }, noHalf(REMOVAL)],
     ['salt', 'setThreshold', { ...setIt, proposalSalt: OTHER }, noHalf(THREE)],
     ['salt', 'approve', { ...approveSeat, of: { governance: seat, proposalSalt: OTHER } }, noHalf(SEAT)],
-    ['leaf', 'amendSigner', { ...removeIt, leaf: OTHER }, noHalf(REMOVAL)],
+    ['leaf', 'removeSignerAndSetThreshold', { ...removeIt, leaf: OTHER }, noHalf(REMOVAL)],
     ['invitation', 'approve', { ...approveSeat, of: { governance: { ...seat, address: OTHER }, proposalSalt: SALT } }, noHalf(SEAT)],
     ['invitation', 'approve', { ...approveSeat, of: { governance: { ...seat, scope: OTHER }, proposalSalt: SALT } }, noHalf(SEAT)],
     ['invitation', 'propose', { ...raiseSeat, governance: { ...seat, address: OTHER } }, SEAT],
     /* A removal record naming a leaf its own payload is not for, and a service agreeing with it. */
-    ['leaf', 'amendSigner', { ...removeIt, leaf: OTHER }, { ...noHalf(REMOVAL), governance: { kind: 'remove-signer', leaf: OTHER } }],
+    ['leaf', 'removeSignerAndSetThreshold', { ...removeIt, leaf: OTHER }, { ...noHalf(REMOVAL), governance: { kind: 'remove-signer', leaf: OTHER } }],
     /* A removal record whose identity is made with a vault, which no governance round names. */
-    ['vault', 'amendSigner', { ...removeIt, proposal: record(payloadOf(removal), bytes(OTHER)).chainId },
+    ['vault', 'removeSignerAndSetThreshold', { ...removeIt, proposal: record(payloadOf(removal), bytes(OTHER)).chainId },
       { ...record(payloadOf(removal), bytes(OTHER)), governance: removal }],
     /* A removal handed over as an invitation's record, to carry out. */
-    ['leaf', 'amendSigner', { ...removeIt, proposal: SEAT.chainId }, noHalf(SEAT)],
+    ['leaf', 'removeSignerAndSetThreshold', { ...removeIt, proposal: SEAT.chainId }, noHalf(SEAT)],
     /*
      * An invitation's record whose payload is not the one the address it was opened for makes, approved for that address:
      * the payload is made again from the address, never read from the record.
      */
     ['invitation', 'approve', { ...approveSeat, of: { governance: { ...seat, address: OTHER }, proposalSalt: SALT } }, { ...noHalf(SEAT), governance: { ...seat, address: OTHER } }],
     /* A payroll record handed over as a removal to carry out, and as an invitation to approve. */
-    ['leaf', 'amendSigner', { ...removeIt, proposal: RUN.chainId }, noHalf(RUN)],
+    ['leaf', 'removeSignerAndSetThreshold', { ...removeIt, proposal: RUN.chainId }, noHalf(RUN)],
     ['invitation', 'approve', { ...approveSeat, proposal: RUN.chainId }, noHalf(RUN)],
     ['threshold', 'setThreshold', { ...setIt, threshold: '2' }, noHalf(THREE)],
+    /* A removal record that keeps the threshold, carried out as one that sets it. */
+    ['threshold', 'removeSignerAndSetThreshold', { ...removeIt, threshold: '2' }, noHalf(REMOVAL)],
     /* A recovery from another head, with another last time, or after another latest recovery, than the company's record of it: never called a leaf. */
     ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, resumesFrom: OTHER }, proposalSalt: SALT } }, noHalf(RECOVERY)],
     ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, latest: '1800003601' }, proposalSalt: SALT } }, noHalf(RECOVERY)],
@@ -409,6 +416,20 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     expect(opened.salt).toBe(accounts.governanceAsked(thresholdChange.id, viewingKey).proposalSalt);
   });
 
+  it('opened to be withdrawn, a proposal is opened with the kind its record seals, and only if its identity on the chain is the one its record makes', async () => {
+    const withIdentity = (proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => Uint8Array) =>
+      ({ ...recordsHere, roundIdentity: { runPayload: pureCircuits.runPayload, proposalIdOf } }) as unknown as CompanyRecordsHere;
+    const opened = await openTheRoundHere(honest(), company, thresholdChange.id, viewingKey, false, withIdentity(pureCircuits.proposalIdOf), leaves, true);
+    /* RED WHEN: a withdrawal cannot tell the wallet which kind of proposal it opened, so a kind the wallet never withdraws is withdrawn. */
+    expect([opened.kind, opened.chainId]).toEqual(['set-threshold', thresholdChange.chainId]);
+    /* RED WHEN: a withdrawal is opened under an identity its own record's payload, vault and salt do not make. */
+    await expect(openTheRoundHere(honest(), company, thresholdChange.id, viewingKey, false, withIdentity(() => new Uint8Array(32).fill(0xee)), leaves, true))
+      .rejects.toThrow(/identity on the chain is not the one its own record makes/u);
+    /* RED WHEN: a page that cannot work out an identity opens a proposal to be withdrawn unchecked. */
+    await expect(openTheRoundHere(honest(), company, thresholdChange.id, viewingKey, false, recordsHere, leaves, true))
+      .rejects.toThrow(/cannot work out a proposal's identity on the chain/u);
+  });
+
   it('a proposal sealed before a change of the company\'s key opens with its own epoch\'s key, and the salt sealed in it is the one carried out', async () => {
     const newer = 'a7'.repeat(32) as Hex;
     /* This device after one change of the key: the new key in force, and the key the proposal was sealed under reached through it. */
@@ -456,6 +477,11 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       /retirement of the leaving signer is not in its shape/u],
     ['a removal whose retirement is signed at no approvals', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(32), retirement: { filedUpTo: {}, threshold: 0 } } })],
       /retirement of the leaving signer is not in its shape/u],
+    /* RED WHEN: a removal's new threshold is read as anything but a whole number, so a removal is approved at a threshold nobody raised. */
+    ['a removal whose new threshold is written as text', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(32), newThreshold: '2' } })],
+      /does not say which threshold it leaves the company at/u],
+    ['a removal whose new threshold is not a whole number', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(32), newThreshold: 1.5 } })],
+      /does not say which threshold it leaves the company at/u],
     ['a threshold change that names no threshold', 'prp_x', [aRecord('prp_x', { kind: 'set-threshold' })],
       /does not say how many approvals it requires/u],
     /* RED WHEN: a spending policy's vault, currency key or commitment is taken from its record unchecked - or a policy bar that is not a whole number of at least one. */
@@ -476,9 +502,9 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     ['a record another company wrote, in this company\'s list', 'prp_x', [aRecord('prp_x', {}, 'acc_other')],
       /hold no proposal by that name/u],
     ['a record nobody wrote', 'prp_nobody', [], /hold no proposal by that name/u],
-    /* RED WHEN: a run in no asset - the step that sets a vault's secret - is opened here, skipping the check of who it is sealed to. */
+    /* RED WHEN: a run in no asset - the step that sets a vault's secret - is opened here, skipping the check of who it is sealed to, or its refusal sends the person anywhere but the wallet's approval of the vault's set-up step. */
     ['a vault\'s set-up step, written down as a payroll run', 'prp_x', [aRecord('prp_x', { asset: NO_ASSET })],
-      /pays nothing: it sets up one of the company's vaults, and it is approved only from setting that vault up/u],
+      /pays nothing: it sets up one of the company's vaults, and it is approved only in the wallet, by the approval of a vault's set-up step or by setting the vault up.*Approve it from the vault's set-up step instead/u],
   ] as Array<[string, string, ReturnType<typeof sealedProposalFor>[], RegExp]>)(
     'is not built from: %s', async (_what, id, extra, says) => {
       const refused = await openTheRoundHere(honest(extra), company, id, viewingKey, false).catch((e) => e);
@@ -487,6 +513,17 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       expect(refused.message).toMatch(says);
       expect(refused.message).toMatch(/Nothing was built or sent\.$/u);
     });
+
+  it('a proposal opened only to learn whether it is a removal is refused with its own kind before a run is made again or checked', async () => {
+    const run = await openTheRoundHere(honest([aRecord('prp_x', {})]), company, 'prp_x', viewingKey, false, undefined, undefined, false, 'remove-signer').catch((e) => e);
+    /* RED WHEN: a run opened only to read who is leaving is held to its own checks, so a run that fails them refuses with no kind and holds up other approvals. */
+    expect(run).toBeInstanceOf(NotOpenedOnThisDevice);
+    expect(run.kind).toBe('payroll');
+    const whole = await openTheRoundHere(honest([aRecord('prp_x', {})]), company, 'prp_x', viewingKey, false).catch((e) => e);
+    /* RED WHEN: a run opened to be approved skips the checks of what it pays. */
+    expect(whole).toBeInstanceOf(NotOpenedOnThisDevice);
+    expect(whole.kind).toBeUndefined();
+  });
 
   it('a proposal refused for its kind says which kind its sealed record names', async () => {
     const setUp = await openTheRoundHere(honest([aRecord('prp_x', { asset: NO_ASSET })]), company, 'prp_x', viewingKey, false).catch((e) => e);
@@ -504,6 +541,15 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     /* RED WHEN: a removal's leaf or retirement is read from anywhere but the proposal's own sealed payload. */
     expect(opened.governance).toEqual({ kind: 'remove-signer', leaf: 'ab'.repeat(32) });
     expect(opened.retirement).toEqual(retirement);
+  });
+
+  it('a removal is read with the new threshold it carries, and one that keeps the threshold in force names none', async () => {
+    const opened = await openTheRoundHere(honest([aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(32), newThreshold: 2 } })]), company, 'prp_x', viewingKey, false);
+    /* RED WHEN: a removal's new threshold is dropped when it is opened, so its approval and its carrying out keep the threshold in force. */
+    expect(opened.governance).toEqual({ kind: 'remove-signer', leaf: 'ab'.repeat(32), threshold: '2' });
+    const keeps = await openTheRoundHere(honest([aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(32), newThreshold: 0 } })]), company, 'prp_x', viewingKey, false);
+    /* RED WHEN: a removal sealed with 0 opens as a change to the threshold. */
+    expect(keeps.governance).toEqual({ kind: 'remove-signer', leaf: 'ab'.repeat(32) });
   });
 
   it('a spending policy and a policy bar written whole are not refused for what their records say', async () => {

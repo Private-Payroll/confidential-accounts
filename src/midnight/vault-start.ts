@@ -194,6 +194,48 @@ export const secretRunProposalOf = (
 ): Hex => toHex(P.proposalIdOf(
   P.runPayload(fromHex(run.root), run.payees, window.opensAt, window.closesAt, 0n), fromHex(run.vault), fromHex(run.salt)));
 
+/** The public parts of a vault's first secret run, as the transaction that set its secret discloses them; numbers in decimal digits. */
+export interface FirstSecretRunParts {
+  readonly root: string;
+  readonly opensAt: string;
+  readonly closesAt: string;
+  readonly salt: string;
+  readonly nonce: string;
+  readonly copiesRoot: string;
+  readonly count: string;
+}
+
+const DIGITS = /^[0-9]{1,20}$/u;
+
+/**
+ * **A VAULT'S FIRST SECRET RUN, MADE AGAIN FROM ITS PUBLIC PARTS** once its secret is set, with the contracts' own
+ * functions: its identity on the chain and its payload, and the root a first secret run of these parts has under a
+ * secret's commitment. The run's one leaf names the commitment it sets (`secretRunDetails`), so the run whose root is
+ * the one made under the commitment a vault holds is a run that set that secret. Nothing here is a key: every part is
+ * disclosed on the chain by the call that set the secret. Refuses a part that is not one.
+ */
+export function firstSecretRunCarriedOf(
+  circuits: { readonly vault: VaultStartPure; readonly account: AccountStartPure }, vault: Hex, parts: FirstSecretRunParts,
+): { readonly proposal: Hex; readonly payload: Hex; rootUnder(commitment: string): Hex } {
+  const V = circuits.vault;
+  const P = circuits.account;
+  const v = vaultBytes(vault);
+  const hexes = [parts.root, parts.salt, parts.nonce, parts.copiesRoot];
+  if (hexes.some((h) => typeof h !== 'string' || !HEX32.test(h)) || [parts.opensAt, parts.closesAt, parts.count].some((n) => typeof n !== 'string' || !DIGITS.test(n))) {
+    throw new Error('these are not the public parts of a first secret run: four values of 64 lower-case hex characters and three whole numbers.');
+  }
+  const payload = P.runPayload(fromHex(parts.root), 1n, BigInt(parts.opensAt), BigInt(parts.closesAt), 0n);
+  return {
+    proposal: toHex(P.proposalIdOf(payload, v, fromHex(parts.salt))),
+    payload: toHex(payload),
+    rootUnder: (commitment) => {
+      if (typeof commitment !== 'string' || !HEX32.test(commitment)) throw new Error('a secret\x27s commitment is 64 lower-case hex characters, and this is not one.');
+      const details = V.secretRunDetails(v, ZERO, fromHex(commitment), fromHex(parts.copiesRoot), BigInt(parts.count));
+      return sumTreeOfLeaves([toHex(P.payoutLeaf(details, fromHex(parts.nonce)))], [0n], NO_ASSET).root;
+    },
+  };
+}
+
 /** The window a secret run raised at `now` (seconds) is given. */
 export const secretRunWindowFrom = (now: bigint): { opensAt: bigint; closesAt: bigint } =>
   ({ opensAt: now - SECRET_RUN_OPENS_BEFORE, closesAt: now + SECRET_RUN_OPEN_FOR });
@@ -236,6 +278,8 @@ export interface RoundStanding {
   readonly needed: number;
   /** A signer was removed since it was raised, so it can never be carried out. */
   readonly stale: boolean;
+  /** Read for a seat: the account holds that seat's approval marker for it, so the account refuses the seat's approve. */
+  readonly approvedHere?: boolean;
 }
 
 /** A proposal as a device raises or approves it: what it commits to, under which vault, with which salt. */
@@ -276,14 +320,19 @@ const removalsSoFar = (P: Pick<AccountStartPure, 'removalCountKey'>, a: Pick<Acc
   return a.proposalHolds.member(key) ? a.proposalHolds.lookup(key).removals : 0n;
 };
 
-/** Where one proposal stands on the account, at `bar` approvals, as the account's ledger holds it. */
+/**
+ * Where one proposal stands on the account, at `bar` approvals, as the account's ledger holds it. With `approvedHere`,
+ * whether the account holds one seat's approval marker for a proposal, it also says whether that seat's approval is
+ * already counted.
+ */
 export const standingOf = (
   P: Pick<AccountStartPure, 'removalCountKey'>, a: Pick<AccountLedgerForAStart, 'openProposals' | 'approvalCounts' | 'proposalHolds'>,
-  proposal: Hex, bar: bigint, isRun: boolean,
+  proposal: Hex, bar: bigint, isRun: boolean, approvedHere?: (id: Uint8Array) => boolean,
 ): RoundStanding => {
   const id = fromHex(proposal);
   const open = a.openProposals.member(id);
-  if (!open) return { proposal, open, approvals: 0, needed: Number(bar), stale: false };
+  const mine = approvedHere === undefined ? {} : { approvedHere: approvedHere(id) };
+  if (!open) return { proposal, open, approvals: 0, needed: Number(bar), stale: false, ...mine };
   const hold = a.proposalHolds.member(id) ? a.proposalHolds.lookup(id) : { needed: bar, removals: removalsSoFar(P, a) };
   const removed = removalsSoFar(P, a) - hold.removals;
   const higher = hold.needed > bar ? hold.needed : bar;
@@ -292,6 +341,7 @@ export const standingOf = (
     approvals: Number(a.approvalCounts.member(id) ? a.approvalCounts.lookup(id) : 0n),
     needed: Number(isRun ? higher + removed : higher),
     stale: !isRun && removed !== 0n,
+    ...mine,
   };
 };
 
@@ -307,18 +357,21 @@ export function startStandingOf(
     readonly run?: SecretRun; readonly now: bigint;
     /** A window to make the run's identity with, for a device about to raise it. */
     readonly window?: { readonly opensAt: bigint; readonly closesAt: bigint };
+    /** Whether the account holds this device's seat's approval marker for a proposal: each round then says so. */
+    readonly approvedHere?: (id: Uint8Array) => boolean;
   },
 ): StartStanding {
   const V = circuits.vault;
   const P = circuits.account;
   const a = input.account;
+  const mine = input.approvedHere;
   const v = vaultBytes(input.vault);
   const adoption = adoptionRoundOf(P, input.vault);
   const adopted = adoptedSetOf(a).member(v);
   const out: StartStanding = {
     adopted,
     adoption: {
-      ...standingOf(P, a, adoption.proposal, a.threshold, false),
+      ...standingOf(P, a, adoption.proposal, a.threshold, false, mine),
       payload: adoption.payload, named: toHex(P.noVault()), salt: adoption.salt,
     },
   };
@@ -339,7 +392,7 @@ export function startStandingOf(
   for (const [id, window] of a.runWindow) {
     if (toHex(id) !== secretRunProposalOf(P, run, window)) continue;
     found = {
-      ...standingOf(P, a, toHex(id), bar, true),
+      ...standingOf(P, a, toHex(id), bar, true, mine),
       payload: payloadOf(P, run, window), named: run.vault, salt: run.salt,
       opensAt: window.opensAt, closesAt: window.closesAt,
       inWindow: window.opensAt <= input.now && input.now < window.closesAt,

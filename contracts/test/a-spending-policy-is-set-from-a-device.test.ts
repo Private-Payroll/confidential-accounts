@@ -52,7 +52,8 @@ import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } fr
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from 'vaults-web-shared/governed-call-builder.js';
 import type { PolicyGovernanceDoors } from 'vaults-web-shared/spending-policy-here.js';
 import type { GovernedCallService } from 'vaults-web-shared/governed-call-on-device.js';
-import { setSpendingPolicyOnDevice, setPolicyBarOnDevice, spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
+import { approveSpendingPolicyOnDevice, setSpendingPolicyOnDevice, setPolicyBarOnDevice, spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
+import { approverRosterFrom } from '../../src/core/vault-approvers.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
 import { canonical, newWrappingKeypair, seal, signingPublicKeyOf, type Hex } from '../../src/core/crypto.js';
@@ -173,7 +174,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     const id = hex(circuits.proposalIdOf(payload, circuits.noVault(), c.salt));
     const opened: OpenedRound = {
       chainId: id, digest: hex(payload), vault: hex(circuits.noVault()), salt: hex(c.salt), summary: '', governance,
-      half: { assetId: hex(c.asset), changeAmount: '0', changeBatchDigest: hex(c.batch) },
+      half: { assetId: hex(c.asset), changeAmount: '0', changeBatchDigest: hex(c.batch) }, raiseBy: String(Math.floor(Date.now() / 1000) + 86_400),
     };
     await directly(who, {
       circuit: 'propose', ...(governance.kind === 'adopt-vault' ? { adoption: governance } : { governance }), proposal: id,
@@ -225,10 +226,17 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
    * real HTTP in `src/server/record-manifest-route.test.ts` and `src/server/a-read-is-proven-for-what-it-asks.test.ts`.
    */
   let enteredBy: FiledBy[] = [];
-  /* Where each proposal stands, as the wallet's indexer shows this file's chain to every device: each proposal the account holds, with its approvals. */
+  /*
+   * Where each proposal stands, as the wallet's indexer shows this file's chain to every device: each proposal the account
+   * holds, with its approvals and the seats whose approval marker the account holds for it, made with its own derivation.
+   */
   const watching = roundsOnATestChain(async () => {
     const l = ledgerNow();
-    return [...l.openProposals].map(([id]: [Uint8Array]) => ({ id: hex(id), approvals: Number(l.approvalCounts.member(id) ? l.approvalCounts.lookup(id) : 0n) }));
+    const approvedBy = (id: Uint8Array) => [founder, blake]
+      .filter((s) => l.approvals.member(circuits.approvalNullifierOf(s.secretKey, Buffer.from(company, 'hex'), id))).map((s) => hex(s.secretKey));
+    return [...l.openProposals].map(([id]: [Uint8Array]) => ({
+      id: hex(id), approvals: Number(l.approvalCounts.member(id) ? l.approvalCounts.lookup(id) : 0n), approvedBy: approvedBy(id),
+    }));
   });
   const enteredAs = (who: AccountPrivateState): RecordsEntered => ({
     enter: async (filed) => { for (const e of filed) enteredBy.push({ entry: e as ManifestEntryBody, signingSecret: hex(who.secretKey) as Hex }); },
@@ -264,7 +272,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
         return { ...believed, records } as never;
       },
       people: notHere as never, runs: notHere as never, policy: notHere as never,
-      roundsOnChain: watching,
+      roundsOnChain: (ids: readonly string[]) => watching(ids, hex(who.secretKey)),
       state: async (id) => (id === '0' ? state : null),
       proposals: async () => proposals,
       roundIdentity: accountModule.pureCircuits,
@@ -288,7 +296,10 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
   const doorsFor = (who: AccountPrivateState, person: 'ada' | 'blake'): PolicyGovernanceDoors => ({
     service, builder: builder(), material: keyringOf(who), accountId: company, records: recordsFor(who, person),
     filing: { seat: hex(leafOfDevice(who)), keyEpoch: 0, salt: () => hex(crypto.getRandomValues(new Uint8Array(32))), newId: () => newProposalId(), entered: enteredAs(who) },
-    approvers: async () => { throw new Error('a spending policy changes no seat and no vault\'s threshold'); },
+    /* Both seats may approve every vault's runs: a policy is counted against them at its bands. */
+    approvers: async () => approverRosterFrom({
+      threshold: 1, vaultThresholds: [], seated: [founder, blake].map((x) => ({ leaf: hex(leafOfDevice(x)) })), adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
+    }),
     vaultName: () => 'the vault',
     sleep: async () => {}, waitMs: 10, everyMs: 1,
   });
@@ -318,7 +329,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     /* A second signer, invited at a threshold of one and seated by their own wallet, and the vault the policy is for, adopted. */
     const address = hex(invitedAddressCommitmentOf(invitedAddressFor(blake)));
     const invited = await raisedAndCarried(founder, { kind: 'add-signer', address, scope: hex(blake.scope) },
-      circuits.signerInvitePayload(Buffer.from(address, 'hex'), blake.scope), 11, null);
+      circuits.signerInvitePayload(Buffer.from(address, 'hex'), blake.scope, 0n), 11, null);
     send(await inviteeSeatCall({
       accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who: blake,
       proposal: invited.id, salt: invited.salt,
@@ -381,6 +392,33 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     expect(policies).toHaveLength(1);
     const read = await readBy(founder, 'ada');
     expect(read).toMatchObject({ state: 'set', version: 1 });
+  });
+
+  it('A SECOND SIGNER APPROVES AND CARRIES OUT A POLICY AND A BAR ANOTHER SEAT RAISED, AS EACH PROPOSAL OPENS, AND FILES NOTHING', async () => {
+    const barKey = await builder().policyBarKey();
+    expect((await setPolicyBarOnDevice(doorsFor(founder, 'ada'), { viewingKey, newBar: 2, seated: 2 })).state).toBe('done');
+    const raised = await setSpendingPolicyOnDevice(doorsFor(founder, 'ada'), { viewingKey, vault: VAULT, asset: TEST_TOKEN, terms: TERMS });
+    expect(raised.state).toBe('waiting-for-approvals');
+    const round = raised.round!;
+    const asked = { viewingKey, proposal: round.id, vault: VAULT, asset: TEST_TOKEN, terms: TERMS, approveOnly: String(round.chainId) };
+    /* RED WHEN: a second signer's approval of a policy at its bar is not counted by the chain, or carries it out in the same call. */
+    expect((await approveSpendingPolicyOnDevice(doorsFor(blake, 'blake'), { ...asked, stopBeforeCarry: true })).state).toBe('ready-to-carry');
+    expect((await readBy(blake, 'blake')).state).toBe('none');
+    /* RED WHEN: the policy approved by a second signer cannot be carried out on the chain as the version the raising seat filed. */
+    expect((await approveSpendingPolicyOnDevice(doorsFor(blake, 'blake'), { ...asked, carryOnly: true })).state).toBe('done');
+    expect(await readBy(blake, 'blake')).toMatchObject({ state: 'set', version: 1 });
+    /* RED WHEN: approving or carrying out another seat's policy files a version of its record. */
+    expect(policies).toHaveLength(1);
+    /* The bar lowered to one: raised by the founding seat, approved and carried out by the second. */
+    const lowered = await setPolicyBarOnDevice(doorsFor(founder, 'ada'), { viewingKey, newBar: 1, seated: 2 });
+    expect(lowered.state).toBe('waiting-for-approvals');
+    const bar = { viewingKey, newBar: 1, seated: 2, approveOnly: String(lowered.round!.chainId) };
+    /* RED WHEN: a second signer cannot approve the approvals a policy change needs, or the approval carries it out in the same call. */
+    expect((await setPolicyBarOnDevice(doorsFor(blake, 'blake'), { ...bar, stopBeforeCarry: true })).state).toBe('ready-to-carry');
+    expect(barOnChain(barKey)).toBe(2n);
+    /* RED WHEN: the bar approved by a second signer cannot be carried out on the chain. */
+    expect((await setPolicyBarOnDevice(doorsFor(blake, 'blake'), { ...bar, carryOnly: true })).state).toBe('done');
+    expect(barOnChain(barKey)).toBe(1n);
   });
 
   it('THE WORKER SAYS THE APPROVALS A RUN\'S BAND NEEDS BY THE CONTRACT\'S OWN FUNCTION, AND NONE FOR A TOTAL ABOVE EVERY BAND', async () => {
@@ -486,7 +524,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     const vault = Buffer.from(VAULT, 'hex');
     const payload = circuits.runPayload(root, BigInt(leaves.length), w.opensAt, w.closesAt, required);
     const id = circuits.proposalIdOf(payload, vault, c.salt);
-    await callDirectly(founder, 'propose', [new Uint8Array(32), root, BigInt(leaves.length), w.opensAt, w.closesAt, required, true, vault], {
+    await callDirectly(founder, 'propose', [new Uint8Array(32), root, BigInt(leaves.length), w.opensAt, w.closesAt, required, true, vault, BigInt(Math.floor(Date.now() / 1000) + 86_400)], {
       assetId: c.asset, assetBlinding: founder.assetBlinding, proposalSalt: c.salt, changeAmount: 0n, changeBatchDigest: c.batch,
     });
     /* The founding signer's raise is their approval; the other approvers named approve. */

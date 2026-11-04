@@ -134,6 +134,40 @@ export class RemoteFeeSponsor implements FeeSponsor {
     return this.codec.read(fromBase64(body.tx));
   }
 
+  /**
+   * Adds the fee to a transaction that is handed back to be submitted elsewhere: the fee payer holds such a
+   * booking under its shorter rules, and never releases it on anyone's word. Not remembered here, since nothing
+   * here submits or releases it; the booking's name is answered for `done`.
+   */
+  async addFeeToHandBack(customerFinalised: unknown, ttl: Date): Promise<{ finalised: unknown; booking: string | null }> {
+    if (this.company === null) {
+      throw new NothingWasSent(
+        'the fee payer was asked to pay without being told which company the transaction is '
+        + 'for, and a fee is never paid without that record. Nothing was booked.');
+    }
+    const tx = toBase64(await this.codec.write(customerFinalised));
+    let res: Response;
+    try {
+      res = await this.call('POST', 'fee', { company: this.company, tx, ttl: ttl.toISOString(), handedBack: true });
+    } catch (e) {
+      throw new NothingWasSent(
+        `the fee payer could not be reached, so no fee was added and nothing was sent: ${String((e as Error)?.message ?? e)}`);
+    }
+    const body = await RemoteFeeSponsor.said(res);
+    if (!res.ok || typeof body.booking !== 'string' || typeof body.tx !== 'string') {
+      throw new NothingWasSent(
+        typeof body.error === 'string' ? body.error
+          : `the fee payer answered ${res.status} and added no fee. Nothing was sent.`);
+    }
+    return { finalised: await this.codec.read(fromBase64(body.tx)), booking: body.booking };
+  }
+
+  /** Tells the fee payer the holder of a handed-back booking is done with it. Nothing is released. */
+  async done(booking: string): Promise<void> {
+    const res = await this.call('POST', 'done', { booking });
+    if (!res.ok) throw new Error(`the fee payer answered ${res.status} when told a handed-back booking is done`);
+  }
+
   async submit(finalisedTransaction: unknown): Promise<TxRef> {
     const key = toBase64(await this.codec.write(finalisedTransaction));
     if (this.sent.has(key)) {

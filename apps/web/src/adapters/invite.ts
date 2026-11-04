@@ -33,7 +33,7 @@ export const CLASSIFICATIONS = EMPLOYEE_CLASSIFICATIONS;
 /** The fields of the form, named as the draft names them; and the phases the form is in; and the scopes a signer can be offered. */
 export const FIELD = {
   kind: 'kind', way: 'way', name: 'name', email: 'email', title: 'title', startDate: 'startDate', endDate: 'endDate', classification: 'classification',
-  asset: 'asset', amount: 'amount', terms: 'terms', termsAsset: 'termsAsset', termsAmount: 'termsAmount', address: 'address', role: 'role',
+  asset: 'asset', amount: 'amount', terms: 'terms', termsAsset: 'termsAsset', termsAmount: 'termsAmount', address: 'address', role: 'role', threshold: 'threshold',
 } as const satisfies Record<string, keyof InviteDraft>;
 export const FORM = { edit: 'edit', busy: 'busy', sent: 'sent' } as const;
 export const SCOPE = { all: 'all', chosen: 'chosen' } as const;
@@ -42,6 +42,8 @@ export const SCOPE = { all: 'all', chosen: 'chosen' } as const;
 export interface InviteDraft {
   kind: InviteKind; way: InviteWay; name: string; email: string; title: string; startDate: string; endDate: string;
   classification: string; asset: string; amount: string; terms: string; termsAsset: string; termsAmount: string; address: string; role: string;
+  /** For a signer: the approvals the company needs once the seat is taken, as chosen; null keeps the number the company has now. */
+  threshold: number | null;
 }
 
 /** The currencies a pay can be in. */
@@ -52,7 +54,7 @@ export function emptyDraft(kind: InviteKind = INVITE_KIND.employee, registry: As
   const first = payAssets(registry)[0]?.code ?? '';
   return {
     kind, way: INVITE_WAY.link, name: '', email: '', title: '', startDate: '', endDate: '', classification: CLASSIFICATIONS[0],
-    asset: first, amount: '', terms: VENDOR_TERMS[0], termsAsset: first, termsAmount: '', address: '', role: SIGNER_ROLES[1],
+    asset: first, amount: '', terms: VENDOR_TERMS[0], termsAsset: first, termsAmount: '', address: '', role: SIGNER_ROLES[1], threshold: null,
   };
 }
 
@@ -63,15 +65,15 @@ export const PROBLEM = {
   noName: 'no-name', noStart: 'no-start', badStart: 'bad-start', badEnd: 'bad-end', endBeforeStart: 'end-before-start', badEmail: 'bad-email',
   noAsset: 'no-asset', noAmount: 'no-amount', badAmount: 'bad-amount', zeroAmount: 'zero-amount', tooManyDecimals: 'too-many-decimals',
   noAddress: 'no-address', badAddress: 'bad-address', notPrivateAddress: 'not-private-address', noRole: 'no-role', roleLater: 'role-later',
-  superAdmin: 'super-admin',
+  superAdmin: 'super-admin', badThreshold: 'bad-threshold', thresholdTooHigh: 'threshold-too-high',
 } as const;
 export type InviteProblem = (typeof PROBLEM)[keyof typeof PROBLEM];
 
 type AskMade =
   | { readonly of: typeof MADE.ask; readonly ask: InviteAsk }
-  | { readonly of: typeof MADE.problem; readonly problem: InviteProblem; readonly field: keyof InviteDraft };
+  | { readonly of: typeof MADE.problem; readonly problem: InviteProblem; readonly field: keyof InviteDraft; readonly most?: number };
 
-const problem = (field: keyof InviteDraft, why: InviteProblem): AskMade => ({ of: MADE.problem, problem: why, field });
+const problem = (field: keyof InviteDraft, why: InviteProblem, most?: number): AskMade => ({ of: MADE.problem, problem: why, field, ...(most === undefined ? {} : { most }) });
 const DAY = /^\d{4}-\d{2}-\d{2}$/u;
 const isDay = (s: string): boolean => DAY.test(s) && !Number.isNaN(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
 const EMAIL = /^[^\s@]+@[^\s@]+$/u;
@@ -110,8 +112,15 @@ export function addressIsPrivate(entry: string, network: NetworkName = NETWORK a
 
 export interface Named { readonly record: string; readonly company: string; readonly account: string }
 
-/** The ask made from what was typed, or the first thing wrong with it, named by its field. */
-export function askOf(d: InviteDraft, named: Named, registry: AssetRegistry = assets, network: NetworkName = NETWORK as NetworkName): AskMade {
+/**
+ * The ask made from what was chosen, or the first thing wrong with it, named by its field. A signer's approvals chosen for after the seat is
+ * taken must be a whole number of one or more and, where the seats the chain holds are known (`seated`), no more than those and the new one:
+ * the company could never meet more, so it is refused here with the most it could have (`most`). Left unchosen (null), the ask carries none and
+ * the number the company has now is kept.
+ */
+export function askOf(
+  d: InviteDraft, named: Named, registry: AssetRegistry = assets, network: NetworkName = NETWORK as NetworkName, seated: number | null = null,
+): AskMade {
   if (d.kind === INVITE_KIND.superAdmin) return problem(FIELD.kind, PROBLEM.superAdmin);
   const name = d.name.trim();
   if (name === '') return problem(FIELD.name, PROBLEM.noName);
@@ -122,7 +131,11 @@ export function askOf(d: InviteDraft, named: Named, registry: AssetRegistry = as
     }
     const wrong = addressProblem(d.address, true, network);
     if (wrong !== null) return problem(FIELD.address, wrong);
-    return { of: MADE.ask, ask: { ...company, kind: INVITE_KIND.signer, name, role: d.role, address: d.address.trim() } };
+    const threshold = d.threshold;
+    if (threshold === null) return { of: MADE.ask, ask: { ...company, kind: INVITE_KIND.signer, name, role: d.role, address: d.address.trim() } };
+    if (!Number.isSafeInteger(threshold) || threshold < 1) return problem(FIELD.threshold, PROBLEM.badThreshold);
+    if (seated !== null && threshold > seated + 1) return problem(FIELD.threshold, PROBLEM.thresholdTooHigh, seated + 1);
+    return { of: MADE.ask, ask: { ...company, kind: INVITE_KIND.signer, name, role: d.role, address: d.address.trim(), threshold } };
   }
   const email = d.email.trim();
   if (email !== '' && !EMAIL.test(email)) return problem(FIELD.email, PROBLEM.badEmail);
@@ -181,6 +194,8 @@ export const WHY = {
   noOpening: 'no-opening',
   ownAddress: 'own-address',
   widerScope: 'wider-scope',
+  notAThreshold: 'not-a-threshold',
+  thresholdRefused: 'threshold-refused',
   notMade: 'not-made',
   notFiled: 'not-filed',
   raisedNotFiled: 'raised-not-filed',
@@ -210,7 +225,7 @@ export type Invited =
   | { readonly of: typeof INVITED.done; readonly link: string; readonly token: string; readonly already: boolean }
   | { readonly of: typeof INVITED.stopped; readonly why: InviteWhy; readonly token: string; readonly keeps: boolean; readonly link: string | null; readonly handedOver: boolean }
   | { readonly of: typeof INVITED.refused; readonly why: ActRefusal }
-  | { readonly of: typeof INVITED.problem; readonly problem: InviteProblem; readonly field: keyof InviteDraft };
+  | { readonly of: typeof INVITED.problem; readonly problem: InviteProblem; readonly field: keyof InviteDraft; readonly most?: number };
 
 /** What the wallet's end answer is called when it is done, and the outcome it names and says when the invitation was filed before. */
 const DONE = 'done';
@@ -219,18 +234,19 @@ const ALREADY_FILED = 'already-filed';
 /**
  * INVITES SOMEBODY FROM THE SHOWN COMPANY, through the person's wallet. `token`, when the last press of this same
  * invitation kept one, makes this press carry on that invitation; the wallet wrapper refuses a token that is not a whole
- * one before the wallet is asked, and that refusal comes back as a refusal.
+ * one before the wallet is asked, and that refusal comes back as a refusal. `seated` is the seats the chain holds, as the page read them,
+ * or null when it did not.
  */
 export async function sendInvite(
-  personId: string, companyId: string, draft: InviteDraft, token?: string, onStep?: (step: number, steps: number) => void,
+  personId: string, companyId: string, draft: InviteDraft, token?: string, onStep?: (step: number, steps: number) => void, seated: number | null = null,
 ): Promise<Invited> {
   try {
     if (ACCOUNT_ORIGIN === '') return { of: INVITED.refused, why: ACT_REFUSAL.notSetUp };
     if (!(await keyringFor(personId))) return { of: INVITED.refused, why: ACT_REFUSAL.notSignedIn };
     const named = await namedFor(companyId);
     if (named === null) return { of: INVITED.refused, why: ACT_REFUSAL.didNotFinish };
-    const made = askOf(draft, named);
-    if (made.of === MADE.problem) return { of: INVITED.problem, problem: made.problem, field: made.field };
+    const made = askOf(draft, named, undefined, undefined, seated);
+    if (made.of === MADE.problem) return { of: INVITED.problem, problem: made.problem, field: made.field, ...(made.most === undefined ? {} : { most: made.most }) };
     const sent = await inviteInTheWallet(made.ask, ACCOUNT_ORIGIN, {
       ...(onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) }),
       ...(token === undefined ? {} : { token }),

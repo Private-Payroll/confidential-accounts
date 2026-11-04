@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
 import type { Company } from './adapters/company-records.js';
 import { untilPageShown } from './page-shown.test-support.js';
+import { ENGLISH } from './english.test-support.js';
 
 /*
  * ONE MENU. No page adds a second menu beside the main left menu: whatever a
@@ -51,7 +52,7 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
 const SRC = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SRC, '../../..');
-const EN = JSON.parse(readFileSync(`${SRC}/locales/en.json`, 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 
 const SIGNER: Viewer = { signedIn: true, view: VIEWS.company, signs: true };
@@ -63,10 +64,10 @@ const OPEN: Company = {
   of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
   proposals: { of: 'read', value: [{ id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 0, needed: 1, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'x1', period: '2026-10', asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately' } }] },
   runs: { of: 'read', value: [{
-    id: 'x1', period: '2026-10', status: 'proposed', settledAt: null,
+    id: 'x1', period: '2026-10',
     payees: [{ id: 'e1', name: 'Ana', amount: privateAmount(5n, 6, 'NIGHT'), paid: 'privately' }, { id: 'e2', name: 'Bo', amount: publicAmount(2n, 6, 'NIGHT'), paid: 'publicly' }],
     currencies: [{ code: '00'.repeat(32), symbol: 'NIGHT', privately: privateAmount(5n, 6, 'NIGHT'), publicly: publicAmount(2n, 6, 'NIGHT') }],
-    legs: [{ code: `${'00'.repeat(32)}:shielded`, asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately', vault: 'x1', payees: 2 }], unrecognised: 0,
+    legs: [{ code: `${'00'.repeat(32)}:shielded`, asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately', vault: 'x1', payees: 2, proposal: null, form: 'shielded', list: 'employees', people: 2, total: 0n, pays: [] }], unrecognised: 0,
   }] },
   people: { of: 'read', value: [{ id: 'e1', name: 'Ana', title: 'Engineer', standing: 'active', pay: privateAmount(5n, 6, 'NIGHT'), paid: 'privately', startedAt: '2026-01-01', asset: '00'.repeat(32), classification: 'full-time', endDate: null, leavingDate: null, pays: [], classifications: [], admittedAt: null, admitBy: 'fingerprint', notPayable: null }] },
   vaults: { of: 'read', value: [{ vault: 'x1', createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }] },

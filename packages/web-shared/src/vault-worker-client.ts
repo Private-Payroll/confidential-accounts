@@ -7,6 +7,7 @@
  * progress has run (`proofsInProgress`).
  */
 import type { Committee } from '../../../src/midnight/vault-committee.js';
+import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire } from './vault-builder.js';
@@ -51,6 +52,8 @@ export interface InvitedSeatOnTheWire {
   readonly invite: { readonly coinSecretKey: string; readonly addressSalt: string };
   readonly proposalSalt: string;
   readonly intoVacatedSlot: boolean;
+  /** The threshold the invitation sets once the seat is taken, as digits; "0" keeps the one in force. */
+  readonly newThreshold: string;
   readonly chain: { readonly accountState: string; readonly parameters: string };
 }
 
@@ -156,7 +159,7 @@ export type VaultAsk =
   | {
     id: number; network: string; ask: 'start-standing'; vault: string; account: string;
     accountState: string; vaultState: string; secret?: string; readers?: readonly string[]; now: string;
-    window?: { opensAt: string; closesAt: string };
+    window?: { opensAt: string; closesAt: string }; seat?: string;
   }
   | {
     id: number; network: string; ask: 'set-nonce-secret'; vault: string; account: string; run: SecretRunOnTheWire;
@@ -188,6 +191,12 @@ export type VaultAsk =
    * LEDGER** (`signedClaimRefusal`), for a page whose own code loads none.
    */
   | { id: number; network: string; ask: 'address-claim-refusal'; claim: UnshieldedAddressClaim; for: AddressClaimFor }
+  /*
+   * **A ONE-OFF PAYMENT'S RECORD, OPENED** with the company's key at its epoch (`openOneOff`), for a page whose own
+   * code loads no address decoder: opening it decodes the payee's address. The answer carries its payment leaf, built
+   * here from the record's secrets, and none of the secrets.
+   */
+  | { id: number; network: string; ask: 'one-off-opened'; rec: SealedCompanyRecord; key: string }
   | {
     id: number; network: string; ask: 'spending-policy-keys'; vault: string; asset: string; assetBlinding: string;
     policy?: PolicyOpeningOnTheWire; total?: string;
@@ -215,7 +224,11 @@ export type VaultAsk =
   /* Every head the account's history shows, one per block, read in the worker at the indexer the wallet names. */
   | { id: number; network: string; ask: 'anchors-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   /* Where each proposal asked about stands, read in the worker from the account's history at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'rounds-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[] }
+  | { id: number; network: string; ask: 'rounds-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[]; seat?: string }
+  /* Which of the leaves asked about the account records paid, read in the worker from its history's latest state at the indexer the wallet names. */
+  | { id: number; network: string; ask: 'paid-leaves'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; leaves: readonly string[] }
+  /* Every run open now that a removal has outrun, read in the worker from the account's history at the indexer the wallet names. */
+  | { id: number; network: string; ask: 'runs-outrun'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'seat-invited' } & Omit<InvitedSeatOnTheWire, never>
   | { id: number; network: string; ask: 'invited-seats'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; proposals: readonly string[] }
   | {
@@ -234,6 +247,20 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'account-presence'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] };
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
+
+/**
+ * A one-off payment as the worker opens it, as much of it as a page reads: the vault it is paid from, its currency and the ledger token that currency is paid in (read off the
+ * currency's own row, for the way the payee is paid), its amount (a whole number in decimal), who it pays, why, and the proposal it is raised over;
+ * and its payment leaf, the one leaf of the tree its payment is made from, built in the worker from the record's own secrets as the wallet builds it to pay
+ * (`oneOffBuiltHere`), so a page can ask the account whether it is paid. Null when the worker holds no vault details circuits to build it with. The secrets
+ * themselves never leave the worker.
+ */
+export interface OneOffOnTheWire {
+  readonly vault: string; readonly asset: string; readonly token: string; readonly amount: string; readonly reason: string;
+  readonly payee: { readonly ref: string | null; readonly name: string | null; readonly address: string };
+  readonly proposal: { readonly id: string; readonly chainId: string };
+  readonly leaf: string | null;
+}
 
 /** What each seat's opening opens and the tag it anchors under, and this signer's own (`seatOpeningsIn`). */
 export interface SeatOpeningsAnswer {
@@ -280,6 +307,8 @@ export type VaultAnswer =
   | Answered<'seat-openings', SeatOpeningsAnswer>
   | Answered<'anchors-on-chain', AnchorsOnChain>
   | Answered<'rounds-on-chain', { rounds: Record<string, RoundOnChain> }>
+  | Answered<'paid-leaves', { paid: Record<string, boolean> }>
+  | Answered<'runs-outrun', { runs: Record<string, number> }>
   | Answered<'invited-seats', { seats: Record<string, string | null> }>
   | Answered<'seat-invited', { tx: string }>
   | Answered<'anchor', { tx: string }>
@@ -292,6 +321,7 @@ export type VaultAnswer =
   | Answered<'spending-policy-keys', { keys: SpendingPolicyKeys }>
   | Answered<'policy-bar-key', { value: string }>
   | Answered<'address-claim-refusal', { refusal: string | null }>
+  | Answered<'one-off-opened', { oneOff: OneOffOnTheWire }>
   | Answered<'start-standing', { standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>
   | Answered<'set-nonce-secret', { tx: string }>
   | Answered<'write-secret-copy', { tx: string }>
@@ -548,6 +578,11 @@ export interface VaultBuilderClient {
    * one, and a read that needs it then fails rather than skip the check.
    */
   addressClaimRefusal?(claim: UnshieldedAddressClaim, f: AddressClaimFor): Promise<string | null>;
+  /**
+   * A one-off payment's record opened in the worker with the company's key at its epoch (`openOneOff`), refused as the
+   * opening refuses it. Absent from a builder that cannot open one, and a read that needs it then reads none.
+   */
+  openOneOff?(rec: SealedCompanyRecord, key: string): Promise<OneOffOnTheWire>;
   /** A raise or an approval on the company account, built and proved with this signer's own material. */
   governedCall(input: {
     account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire;
@@ -616,11 +651,27 @@ export interface VaultBuilderClient {
   /**
    * **WHERE EACH PROPOSAL ASKED ABOUT STANDS ON THE CHAIN**, by its identity on
    * chain, read in this worker from the same history at the indexer the
-   * person's own wallet names (`indexer`), and from nowhere else.
+   * person's own wallet names (`indexer`), and from nowhere else. With `seat`,
+   * this device's signing secret, each says whether that seat's approval is
+   * already counted (`approvedHere`) and, while held, whether that seat raised
+   * it (`raisedHere`), which decides who may withdraw a change to the company.
    */
   roundsOnChain(input: {
-    account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[];
+    account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[]; seat?: string;
   }): Promise<Record<string, RoundOnChain>>;
+  /**
+   * **WHICH OF THE LEAVES ASKED ABOUT THE ACCOUNT RECORDS PAID**, by each leaf as 64 lower-case hex digits: true once
+   * the account's `movements` hold the entry its own `paidMovementOf` makes of that leaf. Read in this worker from the
+   * latest state of the history at the indexer the person's own wallet names, and from nowhere else; a state that
+   * cannot be read is refused, never answered "not paid". `false` means only "not seen in the newest state this indexer
+   * holds", which an indexer behind the chain gives for a leaf just paid: never "owed", always "not yet seen".
+   */
+  paidLeaves(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string }; leaves: readonly string[] }): Promise<Record<string, boolean>>;
+  /**
+   * **EVERY RUN OPEN NOW**, by its identity on chain, with the signers removed since it was raised, 0 included
+   * (`runsOutrunIn`), read in this worker from the history at the indexer the person's own wallet names.
+   */
+  runsOutrun(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<Record<string, number>>;
   /**
    * **THE SEAT EACH INVITATION'S PROPOSAL TOOK**, by the proposal's identity on chain: the one leaf the account's
    * history shows entering with the one `seatInvited` call that closed it, or null (`seatsInvitedIn`). Read in this
@@ -681,6 +732,8 @@ export interface VaultBuilderClient {
     secret?: string; readers?: readonly string[]; now: string;
     /** A window to make the first secret run's identity with, for a raise about to be built. */
     window?: { opensAt: string; closesAt: string };
+    /** This device's signing secret: each round then says whether this seat's approval is already counted (`approvedHere`). */
+    seat?: string;
   }): Promise<{ standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>;
   /** The vault's first secret set under its approved run, built against one block's view of both contracts. */
   setNonceSecret(input: {
@@ -768,7 +821,7 @@ const START_MS = 30_000;
  */
 export const CHAIN_READS: ReadonlySet<string> = new Set([
   'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'public-deposit-landed', 'anchors-on-chain', 'rounds-on-chain',
-  'invited-seats', 'account-call-chain', 'account-presence',
+  'paid-leaves', 'runs-outrun', 'invited-seats', 'account-call-chain', 'account-presence',
 ]);
 
 /** What the worker says when its code is loaded and it starts on an ask: a read's time limit starts here. */
@@ -1081,6 +1134,8 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
       return { landed: a.landed, now: a.now, seatsNow: a.seatsNow, deployed: a.deployed, vouching: a.vouching };
     },
     roundsOnChain: async (input) => (await ask({ ask: 'rounds-on-chain', ...input })).rounds,
+    paidLeaves: async (input) => (await ask({ ask: 'paid-leaves', ...input })).paid,
+    runsOutrun: async (input) => (await ask({ ask: 'runs-outrun', ...input })).runs,
     invitedSeats: async (input) => (await ask({ ask: 'invited-seats', ...input })).seats,
     seatInvited: async (input) => (await ask({ ask: 'seat-invited', ...input })).tx,
     anchor: async (input) => ({ tx: (await ask({ ask: 'anchor', ...input })).tx }),
@@ -1101,6 +1156,7 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     spendingPolicyKeys: async (input) => (await ask({ ask: 'spending-policy-keys', ...input })).keys,
     policyBarKey: async () => (await ask({ ask: 'policy-bar-key' })).value,
     addressClaimRefusal: async (claim, f) => (await ask({ ask: 'address-claim-refusal', claim, for: f })).refusal,
+    openOneOff: async (rec, key) => (await ask({ ask: 'one-off-opened', rec, key })).oneOff,
     startStanding: async (input) => {
       const a = await ask({ ask: 'start-standing', ...input });
       return { standing: a.standing, ...(a.run === undefined ? {} : { run: a.run }) };

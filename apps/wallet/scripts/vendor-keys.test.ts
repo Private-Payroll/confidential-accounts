@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { KEYS_DIR, REPO_ROOT, WALLET_DIR, accountFilesOf, vendorAccountKeys } from './vendor-keys.mjs';
+import { KEYS_DIR, REPO_ROOT, WALLET_DIR, accountFilesOf, keysFolderOrRefuse, pruneOrRefuse, pruneStale, staleKeysOf, vendorAccountKeys, wroteLine } from './vendor-keys.mjs';
+import { ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, VAULT_CIRCUITS_THE_WALLET_DEPLOYS } from '../src/chain/account-circuits.js';
+import { ACCOUNT_KEYS_FOLDER, VAULT_KEYS_FOLDER } from '../src/chain/key-material.js';
 
 /*
  * The script that puts the proving keys where the wallet serves them. Its
@@ -117,5 +120,141 @@ describe('the vault\'s circuits are copied from the vault\'s own compile, whole 
     const out = quiet();
     expect(vendorAccountKeys({ repoRoot: c.root, keysDir: c.keysDir, circuits: ['deposit'], folder: 'vault', expectedVk: { deposit: sha('another') }, artefacts, log: out.log, compiled: 'managed-vault', verifierOnly: true })).toBe(1);
     expect(artefacts).toEqual({});
+  });
+});
+
+describe('a circuit the compile no longer builds leaves nothing behind in the keys the wallet serves', () => {
+  type Pins = Record<string, { bytes: number; sha256: string }>;
+  /** A served folder holding `propose` (still built) and `amendSigner` (no longer built), each pinned. */
+  const aFolderWithAGone = () => {
+    const keysDir = mkdtempSync(join(tmpdir(), 'vendor-served-'));
+    const graveyard = mkdtempSync(join(tmpdir(), 'vendor-graveyard-'));
+    mkdirSync(join(keysDir, 'account'), { recursive: true });
+    mkdirSync(join(keysDir, 'zswap/9'), { recursive: true });
+    const artefacts: Pins = {};
+    for (const name of ['propose', 'amendSigner']) {
+      for (const suffix of ['.prover', '.verifier', '.bzkir']) {
+        writeFileSync(join(keysDir, `account/${name}${suffix}`), `${name}${suffix}`);
+        artefacts[`account/${name}${suffix}`] = { bytes: 1, sha256: sha(`${name}${suffix}`) };
+      }
+    }
+    writeFileSync(join(keysDir, 'zswap/9/spend.prover'), 'the network key');
+    artefacts['zswap/9/spend.prover'] = { bytes: 1, sha256: sha('the network key') };
+    const expected = accountFilesOf(['propose'], 'account').map((f) => f.served);
+    return { keysDir, graveyard, artefacts, expected };
+  };
+
+  it('a file or pin under a walked folder that the compile does not build is named, and the network\'s pins and the built circuits are not', () => {
+    // RED WHEN: a removed circuit's key files and pins stay in the keys folder, so the wallet serves a 19 MB prover nothing proves with
+    const f = aFolderWithAGone();
+    expect(staleKeysOf({ keysDir: f.keysDir, artefacts: f.artefacts, folders: ['account'], expected: f.expected })).toEqual([
+      'account/amendSigner.bzkir', 'account/amendSigner.prover', 'account/amendSigner.verifier',
+    ]);
+    expect(staleKeysOf({ keysDir: f.keysDir, artefacts: f.artefacts, folders: ['vault'], expected: [] })).toEqual([]);
+  });
+
+  it('a run without --prune is refused by file name and moves nothing', () => {
+    // RED WHEN: a stale key is passed over silently, or the script moves files nobody told it to move
+    const f = aFolderWithAGone();
+    const out = quiet();
+    const before = { ...f.artefacts };
+    expect(pruneOrRefuse({ keysDir: f.keysDir, artefacts: f.artefacts, folders: ['account'], expected: f.expected, prune: false, graveyard: f.graveyard, stamp: 'T', log: out.log })).toBe(1);
+    expect(out.lines.join('\n')).toMatch(/account\/amendSigner\.prover[\s\S]*--prune/u);
+    expect(f.artefacts).toEqual(before);
+    expect(existsSync(join(f.keysDir, 'account/amendSigner.prover'))).toBe(true);
+    expect(readdirSync(f.graveyard)).toEqual([]);
+  });
+
+  it('--prune moves the files into the graveyard under a name that says where they came from, and drops their pins', () => {
+    // RED WHEN: the files are deleted rather than moved, or a pin outlives its file
+    const f = aFolderWithAGone();
+    const out = quiet();
+    expect(pruneOrRefuse({ keysDir: f.keysDir, artefacts: f.artefacts, folders: ['account'], expected: f.expected, prune: true, graveyard: f.graveyard, stamp: 'T', log: out.log })).toBe(0);
+    expect(readdirSync(f.graveyard).sort()).toEqual([
+      'vendor-keys-pruned-T-account-amendSigner.bzkir', 'vendor-keys-pruned-T-account-amendSigner.prover', 'vendor-keys-pruned-T-account-amendSigner.verifier',
+    ]);
+    expect(readFileSync(join(f.graveyard, 'vendor-keys-pruned-T-account-amendSigner.prover'), 'utf8')).toBe('amendSigner.prover');
+    expect(existsSync(join(f.keysDir, 'account/amendSigner.prover'))).toBe(false);
+    expect(Object.keys(f.artefacts).sort()).toEqual([
+      'account/propose.bzkir', 'account/propose.prover', 'account/propose.verifier', 'zswap/9/spend.prover',
+    ]);
+    expect(existsSync(join(f.keysDir, 'zswap/9/spend.prover'))).toBe(true);
+  });
+
+  it('a folder the run did not walk is never pruned, and a pin whose file is already gone is dropped without a move', () => {
+    // RED WHEN: a vault compile that is missing makes the vault's served keys look stale
+    const f = aFolderWithAGone();
+    mkdirSync(join(f.keysDir, 'vault'), { recursive: true });
+    writeFileSync(join(f.keysDir, 'vault/payout.prover'), 'a vault key');
+    f.artefacts['vault/payout.prover'] = { bytes: 1, sha256: sha('a vault key') };
+    expect(staleKeysOf({ keysDir: f.keysDir, artefacts: f.artefacts, folders: ['account'], expected: f.expected }).some((s) => s.startsWith('vault/'))).toBe(false);
+    f.artefacts['account/gone.prover'] = { bytes: 1, sha256: 'x' };
+    expect(pruneStale({ keysDir: f.keysDir, artefacts: f.artefacts, stale: ['account/gone.prover'], graveyard: f.graveyard, stamp: 'T' })).toBe(0);
+    expect(f.artefacts['account/gone.prover']).toBeUndefined();
+  });
+
+  it('the manifest the wallet ships pins no account or vault circuit that the wallet neither holds nor proves', () => {
+    // RED WHEN: a removed circuit's pins stay in manifest.json, so the wallet pins and serves keys for a circuit the contract no longer has
+    const pins = (JSON.parse(readFileSync(join(KEYS_DIR, 'manifest.json'), 'utf8')) as { artefacts: Pins }).artefacts;
+    const circuitsPinnedUnder = (folder: string): string[] => [...new Set(Object.keys(pins)
+      .filter((served) => served.startsWith(`${folder}/`))
+      .map((served) => served.slice(folder.length + 1).replace(/\.(?:prover|verifier|bzkir)$/u, '')))].sort();
+    expect(circuitsPinnedUnder(ACCOUNT_KEYS_FOLDER).filter((c) => !ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR.includes(c))).toEqual([]);
+    expect(circuitsPinnedUnder(VAULT_KEYS_FOLDER).filter((c) => !VAULT_CIRCUITS_THE_WALLET_DEPLOYS.includes(c))).toEqual([]);
+  });
+});
+
+describe('the script reports where it wrote, and refuses a keys folder that is not there', () => {
+  it('the success line names the manifest the run wrote, read from where it was written', () => {
+    // RED WHEN: the success line names apps/wallet/public/keys whatever folder the run wrote to, so it reports success at a path it never touched
+    const repoRoot = join(tmpdir(), 'a-repository');
+    const line = wroteLine({ repoRoot, manifestPath: join(repoRoot, 'other', 'place', 'manifest.json'), pins: 3 });
+    expect(line).toContain('Wrote 3 pins to other/place/manifest.json');
+    expect(line).not.toContain('apps/wallet/public/keys');
+  });
+
+  it('a missing keys folder is refused by name, with what restores it, and is not created', () => {
+    // RED WHEN: a run whose keys folder is missing creates it and reports success instead of stopping
+    const repoRoot = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'vendor-folder-'));
+    const keysDir = join(repoRoot, 'apps', 'wallet', 'public', 'keys');
+    const q = quiet();
+    expect(keysFolderOrRefuse({ keysDir, repoRoot, log: q.log })).toBe(1);
+    const said = q.lines.join('\n');
+    expect(said).toContain('REFUSED');
+    expect(said).toContain('apps/wallet/public/keys');
+    expect(said).toContain('manifest.json');
+    expect(said).toMatch(/restore|check out/iu);
+    expect(existsSync(keysDir)).toBe(false);
+    mkdirSync(keysDir, { recursive: true });
+    const ok = quiet();
+    expect(keysFolderOrRefuse({ keysDir, repoRoot, log: ok.log })).toBe(0);
+    expect(ok.lines).toEqual([]);
+  });
+
+  it('the script run against a repository with no keys folder stops before any download and creates nothing', () => {
+    // RED WHEN: a first run in a checkout without the keys folder dials the network and then makes the folder itself
+    const root = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'vendor-spawn-'));
+    const scripts = join(root, 'apps', 'wallet', 'scripts');
+    mkdirSync(scripts, { recursive: true });
+    copyFileSync(join(HERE, 'vendor-keys.mjs'), join(scripts, 'vendor-keys.mjs'));
+    const ran = spawnSync(process.execPath, [join(scripts, 'vendor-keys.mjs')], { encoding: 'utf8', timeout: 20_000 });
+    expect(ran.status).toBe(1);
+    expect(ran.stdout).toContain('REFUSED');
+    expect(ran.stdout).toContain('apps/wallet/public/keys');
+    expect(existsSync(join(root, 'apps', 'wallet', 'public'))).toBe(false);
+  });
+
+  it('the script run through a symlinked folder, as macOS temp folders are, still runs and refuses', () => {
+    // RED WHEN: the script decides it was not run directly because its path goes through a symlink, so it does nothing and exits 0 with the keys folder unchecked
+    const real = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'vendor-real-'));
+    const scripts = join(real, 'apps', 'wallet', 'scripts');
+    mkdirSync(scripts, { recursive: true });
+    copyFileSync(join(HERE, 'vendor-keys.mjs'), join(scripts, 'vendor-keys.mjs'));
+    const link = `${real}-link`;
+    symlinkSync(real, link);
+    const ran = spawnSync(process.execPath, [join(link, 'apps', 'wallet', 'scripts', 'vendor-keys.mjs')], { encoding: 'utf8', timeout: 20_000 });
+    expect(ran.status).toBe(1);
+    expect(ran.stdout).toContain('REFUSED');
+    expect(existsSync(join(real, 'apps', 'wallet', 'public'))).toBe(false);
   });
 });

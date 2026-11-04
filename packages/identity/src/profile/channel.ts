@@ -194,10 +194,11 @@ export interface ActCall {
 
 /**
  * What became of a call: the service's status and body as the page reports
- * them; `refused` when the page would not make it; `unanswered` when the action
+ * them; `refused` when the page would not make it; `unreached` when the page
+ * made it and the service gave no answer at all; `unanswered` when the action
  * ended first; `gone` when the page could not be handed it.
  */
-export type CalledOver = { readonly of: 'answered'; readonly status: number; readonly body: unknown } | 'refused' | 'unanswered' | 'gone';
+export type CalledOver = { readonly of: 'answered'; readonly status: number; readonly body: unknown } | 'refused' | 'unreached' | 'unanswered' | 'gone';
 
 /** Saved keys an action sealed again, for the page to write over the version given. */
 export interface ActKeep {
@@ -652,7 +653,7 @@ export function listen(
       const status = body['status'];
       called(body['outcome'] === 'answered' && typeof status === 'number' && Number.isSafeInteger(status) && status >= 100 && status <= 599
         ? Object.freeze({ of: 'answered' as const, status, body: body['body'] ?? null })
-        : 'refused');
+        : body['outcome'] === 'unreached' ? 'unreached' : 'refused');
       return;
     }
     if (body['schema'] !== ACT_RELAYED_SCHEMA) return;

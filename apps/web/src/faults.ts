@@ -19,6 +19,8 @@ export const FAULT = {
   depositCheckPays: 'web-12-deposit-check-pays',
   privateDepositPaidHere: 'web-13-private-deposit-paid-here',
   noClaimCheckInTheBuilder: 'web-14-no-claim-check-in-the-builder',
+  noAccountToReadProposalsFrom: 'web-15-no-account-to-read-proposals-from',
+  noIndexerToReadProposalsAt: 'web-16-no-indexer-to-read-proposals-at',
 } as const;
 
 export type FaultCode = (typeof FAULT)[keyof typeof FAULT];

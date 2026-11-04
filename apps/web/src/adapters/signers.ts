@@ -1,3 +1,4 @@
+import { invitationThresholdRefusal } from '../../../../src/core/invitation.js';
 import type { AddSignerByAddress } from '../../../../src/core/proposal-filing.js';
 import type { Proposal, ProposalStatus, Role, SealedProposal } from '../../../../src/core/types.js';
 import { READ, type Read } from './reads.js';
@@ -63,32 +64,34 @@ export function signerStandings(
 /**
  * The approvals a change of who is seated needs: the account's seat bar as its wallet read and checked it. `vaultsAtThatNumber`
  * lists the adopted vaults whose own threshold is that number; it does not say any of them set it, because a policy band or a
- * change of the bar may have. `raisedAboveTheAccount` says the bar is higher than the account's own threshold.
+ * change of the bar may have. `raisedAboveTheAccount` says the bar is higher than the account's own threshold. `seated` is how
+ * many seats the chain holds, or null when the wallet gave no seats; the approvals a new seat may set are at most `seated` and one.
  */
 export interface SignersApprovals {
   readonly count: number;
   readonly raisedAboveTheAccount: boolean;
   readonly vaultsAtThatNumber: readonly string[];
+  readonly seated: number | null;
 }
 
 /**
  * The count is the seat bar the wallet read (`seatBar`), never the threshold: a change of signers short of it is refused by
  * the account. Unreadable when the bar is missing or is not a whole number of one or more, or is below the threshold.
  */
-export function approvalsForSigners(g: Pick<ChainSeats, 'approvals' | 'seatBar' | 'vaultThresholds' | 'adoptedVaults'>): Read<SignersApprovals> {
+export function approvalsForSigners(g: Pick<ChainSeats, 'approvals' | 'seatBar' | 'vaultThresholds' | 'adoptedVaults'> & Partial<Pick<ChainSeats, 'seats'>>): Read<SignersApprovals> {
   const bar = g.seatBar;
   if (!Number.isSafeInteger(bar) || bar < 1 || !Number.isSafeInteger(g.approvals) || bar < g.approvals) return { of: READ.unreadable };
   const adopted = new Set((g.adoptedVaults ?? []).map((v) => v.toLowerCase()));
   const vaults = (g.vaultThresholds ?? []).filter((v) => v.threshold === bar && adopted.has(v.vault.toLowerCase())).map((v) => v.vault);
-  return { of: READ.read, value: { count: bar, raisedAboveTheAccount: bar > g.approvals, vaultsAtThatNumber: vaults } };
+  return { of: READ.read, value: { count: bar, raisedAboveTheAccount: bar > g.approvals, vaultsAtThatNumber: vaults, seated: Array.isArray(g.seats) ? g.seats.length : null } };
 }
 
 /**
  * A signer invited by their private address, as the company's proposals carry it: the proposal's record id, whom it invites, with
  * which role (the signed terms'), at which address and with which rights, the coin key of that address (null when the proposal
- * carries none, and then no approval of it can be made), where the service says the proposal stands, how many approvals the chain
- * counts (null: nothing a page reads gives the count of one proposal, and the sealed list and the service's number are not it), and
- * the seat the chain says the proposal took, if any. Everything an approval is asked with is here, because the wallet checks it against
+ * carries none, and then no approval of it can be made), where the chain holds the proposal and how many approvals the chain counts
+ * for it, both as the page's chain read gives them (never the service's status, its number or the sealed list), and the seat the
+ * chain says the proposal took, if any. Everything an approval is asked with is here, because the wallet checks it against
  * the proposal itself. Only the chain's word that the proposal took a seat hides Approve; the wallet still refuses an approval the chain
  * does not owe.
  */
@@ -100,13 +103,20 @@ export interface SignerInvited {
   readonly scope: string;
   readonly coinKey: string | null;
   readonly status: ProposalStatus;
-  readonly approvals: number | null;
+  /** How many approvals the chain counts for it. */
+  readonly approvals: number;
   /**
    * The seat the chain says this proposal took, read through the person's own indexer, with the roster's entry waiting at that
    * seat (null when none waits there yet); null when the chain shows no seat taken by it, or could not be read.
    */
   readonly seat: { readonly signer: string | null } | null;
+
+  /** The approvals the company will need once the seat is taken, as the digits the invitation binds; null or absent where it binds none (the number in force is kept). */
+  readonly threshold?: string | null;
 }
+
+/** The approvals an invitation binds, as the digits its signed terms hold: a whole number of one up to the most an account stores, or null where none is bound. */
+const thresholdOf = (bound: string | undefined): string | null => (bound !== undefined && invitationThresholdRefusal(bound) === null ? bound : null);
 
 /**
  * Each proposal that invites a signer by address and still waits, in the order the service listed them; every other proposal
@@ -117,7 +127,7 @@ export interface SignerInvited {
  * is left out: the service never marks it so.
  */
 export function signersInvitedIn(
-  proposals: readonly { readonly rec: SealedProposal; readonly opened: Proposal }[],
+  proposals: readonly { readonly rec: SealedProposal; readonly opened: Proposal; readonly status: ProposalStatus; readonly approvals: number }[],
   open: (rec: SealedProposal) => AddSignerByAddress | null,
   here: {
     readonly taken: Readonly<Record<string, string | null>>;
@@ -127,7 +137,7 @@ export function signersInvitedIn(
 ): SignerInvited[] {
   const low = (x: string): string => x.toLowerCase();
   const taken = new Map(Object.entries(here.taken).map(([k, v]) => [low(k), typeof v === 'string' ? low(v) : null]));
-  return proposals.flatMap(({ rec, opened }) => {
+  return proposals.flatMap(({ rec, status, approvals }) => {
     const body = open(rec);
     const invite = body?.invited.terms.invite;
     if (body === null || invite === undefined) return [];
@@ -136,8 +146,25 @@ export function signersInvitedIn(
     const entry = leaf === null ? undefined : here.waiting.find((w) => typeof w.leafCommitment === 'string' && low(w.leafCommitment) === leaf);
     return [{
       proposal: rec.id, name: body.invited.terms.name, role: body.invited.terms.role, address: invite.address, scope: invite.scope, coinKey: body.coinPublicKey,
-      status: opened.status, approvals: null,
+      status, approvals,
       seat: leaf === null ? null : { signer: entry?.id ?? null },
+      threshold: thresholdOf(invite.threshold),
     }];
+  });
+}
+
+
+
+/**
+ * The proposals that wait to set the company's approvals, each with the number it holds. Only a proposal the chain still holds open,
+ * of the kind that sets the account's own threshold (never a vault's), and whose asks the company's sealed record gave as a whole
+ * number, is listed; a vault's own threshold is another kind and is never taken for the company's.
+ */
+export function thresholdChangesWaiting(
+  proposals: readonly { readonly id: string; readonly kind: string; readonly status: string; readonly asks?: { readonly threshold?: unknown } }[],
+): readonly { readonly id: string; readonly count: number }[] {
+  return proposals.flatMap((p) => {
+    const count = p.asks?.threshold;
+    return p.kind === 'set-threshold' && p.status === 'open' && typeof count === 'number' && Number.isSafeInteger(count) && count >= 1 ? [{ id: p.id, count }] : [];
   });
 }

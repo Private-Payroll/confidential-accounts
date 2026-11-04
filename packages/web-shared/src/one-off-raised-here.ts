@@ -20,7 +20,7 @@ import { assetIdBytes, assetIdHex, assets as theAssets, type AssetId } from '../
 import { canonical, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import type { Privacy } from '../../../src/core/movement.js';
 import type { PaymentsAmong } from '../../../src/core/ledger.js';
-import { batchDigestOf, sealTransferProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
+import { batchDigestOf, raiseByOf, sealTransferProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
 import { DEVICE_RAISE_VERSION } from '../../../src/core/device-raise.js';
 import { refuseARunNoVaultCanPay } from '../../../src/core/run-raising.js';
 import { refuseWhatTheVaultCannotPay } from '../../../src/core/vault-holdings.js';
@@ -33,7 +33,7 @@ import { companyRecordEntry, proposalEntry } from '../../../src/midnight/record-
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { oneOffSaltOf } from '../../../src/midnight/run-keys.js';
 import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
-import type { RaiseDoors, RoundOnThePage } from './governed-call-on-device.js';
+import { theRoundAsked, type RaiseDoors, type RoundOnThePage } from './governed-call-on-device.js';
 import {
   oneOffBuiltHere, oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere, type OneOffBelieved, type OneOffReadDoors, type OneOffRecords, type OneOffsHere,
 } from './one-off-here.js';
@@ -244,7 +244,7 @@ export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAske
   const named = { assetId: assetIdBytes(tidied.asset) };
   const assetId = hex(named.assetId);
   const opened: OpenedRound = {
-    chainId, digest, vault, salt, summary: SUMMARY,
+    chainId, digest, vault, salt, summary: SUMMARY, raiseBy: raiseByOf(proposal.createdAt),
     half: { assetId, changeAmount: String(change.amount), changeBatchDigest: change.batchDigest },
     made: {
       kind: 'transfer', asset: tidied.asset, facts: { payee: tidied.paidTo, token: tidied.token, amount: tidied.amount }, seed,
@@ -270,7 +270,7 @@ export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAske
   const filed = [proposalEntry(accountId, proposal)];
   let round: RoundOnThePage;
   try {
-    round = await service.file(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, vault });
+    round = theRoundAsked(await service.file(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, vault }), proposal.id, chainId);
   } catch (e) {
     /* Written down and not sent is still written down: its filer enters it, as a payroll raise does. */
     await doors.recorded.entered.enter(filed).catch(() => undefined);

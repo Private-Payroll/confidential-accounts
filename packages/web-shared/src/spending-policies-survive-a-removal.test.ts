@@ -21,9 +21,10 @@ import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { kindAsked } from './vault-page-doors.js';
 import {
-  refusePolicyChangeHere, removalBoundaryRefusal, sealPoliciesToNewSignersHere, setSpendingPolicyOnDevice, spendingPolicyHere,
-  type PoliciesResealed, type PolicyGovernanceDoors,
+  approveSpendingPolicyOnDevice, bandsInForceHere, refusePolicyChangeHere, removalBoundaryRefusal, sealPoliciesToNewSignersHere, setSpendingPolicyOnDevice,
+  spendingPolicyHere, type PoliciesResealed, type PolicyGovernanceDoors, type PolicySteps,
 } from './spending-policy-here.js';
+import { approverRosterFrom, type ApproverRoster } from '../../../src/core/vault-approvers.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import type { OpenedRound } from './governed-call-builder.js';
 import * as onDevice from './governed-call-on-device.js';
@@ -384,11 +385,19 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
    * Ada, Bo and Cy seated at a seat bar of two, the policy in force readable by all three, Cy's removal raised with
    * `removal` approvals (two, the seat bar, by default) and `policy` (a proposal for a change of policy, at its
    * approvals so far) raised beside it where given. Ada's device; everything it would send is written down, and the
-   * chain is never reached.
+   * chain is never reached. All three may approve the vault's runs, at a threshold of one, unless `approvers` says
+   * otherwise; `another` are seats this device does not believe now.
    */
-  const aCompany = (filed: SealedCompanyRecord[], policy?: { commitment: string; approvals: number }, removal = 2) => {
+  const everyoneOnTheVault = () => approverRosterFrom({
+    threshold: 1, vaultThresholds: [], seated: EVERYONE.map((x) => ({ leaf: x.seat })), adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
+  });
+  const aCompany = (
+    filed: SealedCompanyRecord[], policy?: { commitment: string; approvals: number }, removal = 2,
+    o: { readonly approvers?: () => ApproverRoster; readonly another?: readonly Signer[]; readonly chain?: Map<string, string> } = {},
+  ) => {
     const w: World = {
-      seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1), filed, seatBar: 2,
+      seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: o.chain ?? chainHolding(TERMS, B1), filed, seatBar: 2,
+      ...(o.another === undefined ? {} : { another: o.another }),
     };
     const served = [
       { id: 'prp_removal', accountId: COMPANY, status: 'open', chainId: '0a'.repeat(32), approvalCount: removal, raisedAt: 'now', createdAt: '2026-10-16' },
@@ -405,7 +414,8 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
       ...recordsOf(w),
       roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(ids.map((id) => {
         const p = served.find((x) => x.chainId === id)!;
-        return [id, { held: 'open' as const, approvals: p.approvalCount, raisedAt: 1, txRef: id }];
+        /* This seat's approval of neither proposal is on the test's chain. */
+        return [id, { held: 'open' as const, approvals: p.approvalCount, raisedAt: 1, txRef: id, approvedHere: false }];
       })),
     };
     const doors = {
@@ -420,14 +430,19 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
       },
       material: { signingSecret: ADA.filing.secret, blinding: '00'.repeat(32), scope: '00'.repeat(32) },
       filing: { seat: ADA.seat, keyEpoch: 0, salt: () => '11'.repeat(32), newId: () => 'p1', entered: { enter: async () => {} } },
-      approvers: async () => { throw new Error('not read here'); }, vaultName: () => 'the vault',
+      approvers: async () => (o.approvers ?? everyoneOnTheVault)(), vaultName: () => 'the vault',
       builder: {
         policyBarKey: async () => made('bar'),
         proposalIdentity: async () => ({ digest: 'dd'.repeat(32), chainId: '0c'.repeat(32), noVault: '00'.repeat(32) }),
         governedCall: async () => { sent.push('build'); throw new Error('nothing is built here'); },
       },
     } as unknown as PolicyGovernanceDoors;
-    return { doors, records, sent, set: (terms: typeof TERMS) => setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms }) };
+    return {
+      doors, records, sent, set: (terms: typeof TERMS) => setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms }),
+      approve: (terms: typeof TERMS, steps: Omit<PolicySteps, 'approveOnly'> = {}) => approveSpendingPolicyOnDevice(doors, {
+        viewingKey: VIEWING, proposal: 'prp_policy', vault: VAULT, asset: TEST_TOKEN, terms, approveOnly: '0b'.repeat(32), ...steps,
+      }),
+    };
   };
 
   it('A POLICY WHOSE HIGHEST BAND IS ABOVE THE SEAT BAR IS NOT RAISED, APPROVED OR CARRIED OUT WHILE A REMOVAL IS APPROVED, UNTIL IT IS CARRIED OUT OR WITHDRAWN', async () => {
@@ -482,5 +497,91 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
     const approving = aCompany([v1, versionOf(2, B3, [ADA, BO, CY], ADA, AT)], { commitment: commitmentOf(AT, B3), approvals: 1 });
     await expect(approving.set(AT)).rejects.toThrow(/nothing is built here/u);
     expect(approving.sent).toEqual(['build']);
+  });
+
+  describe('ANOTHER SIGNER APPROVES AND CARRIES OUT A SPENDING POLICY AS ITS PROPOSAL OPENS, AND FILES NOTHING', () => {
+    const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
+    const v2 = versionOf(2, B3, [ADA, BO, CY], ADA, AT);
+
+    it('approving files no version of the policy, even where raising the same terms here would file one', async () => {
+      /* Cy is seated and on the chain, and this device does not believe Cy now: raising these terms here seals a new version. */
+      const raising = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 1 }, 1, { another: [CY] });
+      await raising.set(AT).catch(() => undefined);
+      expect((await raising.records.spendingPolicies!.versions(POLICY_KEY)).length).toBe(3);
+      const approving = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 1 }, 1, { another: [CY] });
+      await expect(approving.approve(AT)).rejects.toThrow(/nothing is built here/u);
+      /* RED WHEN: approving another signer's policy files a version of it, so an approval writes the company's records. */
+      expect((await approving.records.spendingPolicies!.versions(POLICY_KEY)).length).toBe(2);
+      /* RED WHEN: the approval is not built for the proposal the chain holds, as it opens. */
+      expect(approving.sent).toEqual(['build']);
+    });
+
+    it('a proposal that sets other terms than the ones shown is not approved', async () => {
+      const c = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 1 }, 1);
+      /* RED WHEN: a policy is approved on the page's word of its terms, not on the version this device opened from the proposal. */
+      await expect(c.approve(OTHER_TERMS)).rejects.toThrow(/not the one shown/u);
+      expect(c.sent).toEqual([]);
+    });
+
+    it('a policy whose highest band asks for more signers than may approve its vault\'s runs is refused before any build', async () => {
+      const onlyAda = () => approverRosterFrom({
+        threshold: 1, vaultThresholds: [], adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
+        seated: [{ leaf: ADA.seat }, ...[BO, CY].map((x) => ({ leaf: x.seat, rights: { mayApprove: false, everyVault: true, onVaults: [] } }))],
+      });
+      const c = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 1 }, 1, { approvers: onlyAda });
+      /* RED WHEN: a policy is approved with its bands not counted against the signers who may approve its vault's runs. */
+      await expect(c.approve(AT)).rejects.toThrow(/unable to pay: the vault \(its runs need 2 approvals and 1 signer could give them\)/u);
+      expect(c.sent).toEqual([]);
+      /* RED WHEN: the band check is made only at the approval, and a policy that leaves the vault short is carried out. */
+      const carrying = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 2 }, 1, { approvers: onlyAda });
+      await expect(carrying.approve(AT, { carryOnly: true })).rejects.toThrow(/unable to pay/u);
+      expect(carrying.sent).toEqual([]);
+    });
+
+    it('the bands counted are those of the policy the chain holds in force, opened from the version that makes it', async () => {
+      const w: World = { seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(AT, B3), filed: [v1, v2] };
+      /* RED WHEN: the band counted is not the highest band of the policy in force, so a vault's bar is read short of what its runs need. */
+      expect(await bandsInForceHere(doorsOf(w))).toEqual([{ vault: VAULT, band: 2 }]);
+      /* RED WHEN: a version the chain does not hold in force is counted as the vault's policy. */
+      expect(await bandsInForceHere(doorsOf({ ...w, chain: chainHolding(TERMS, B1) }))).toEqual([{ vault: VAULT, band: 1 }]);
+      /* RED WHEN: a policy the chain holds none for is counted as in force. */
+      expect(await bandsInForceHere(doorsOf({ ...w, chain: new Map() }))).toEqual([]);
+    });
+
+    it('a policy at its bar is carried out by another signer as the policy it opened', async () => {
+      const c = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 2 }, 1);
+      const built: unknown[] = [];
+      (c.doors.builder as { governedCall: unknown }).governedCall = async ({ order }: { order: unknown }) => { built.push(order); throw new Error('nothing is built here'); };
+      await expect(c.approve(AT, { carryOnly: true })).rejects.toThrow(/nothing is built here/u);
+      /* RED WHEN: the policy carried out is not the one the proposal commits to, opened from the version this device believes. */
+      expect(built).toMatchObject([{ circuit: 'setPolicy', vault: VAULT, commitment: commitmentOf(AT, B3), proposal: '0b'.repeat(32), policy: { terms: AT, blinding: B3 } }]);
+    });
+  });
+
+  describe('A REMOVAL IS COUNTED AGAINST EVERY VAULT\'S APPROVERS AT THE TOP BAND OF ITS POLICIES IN FORCE', () => {
+    const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
+    const above = versionOf(2, B3, [ADA, BO, CY], ADA, ABOVE);
+    const removeCy = (c: ReturnType<typeof aCompany>) => onDevice.governOnDevice(c.doors, {
+      viewingKey: VIEWING as never, change: { kind: 'remove-signer', leaf: CY.seat }, summary: 'Remove Cy', body: {} as never,
+    });
+
+    it('a removal that leaves the vault fewer approvers than its policy\'s top band needs is neither approved nor sent', async () => {
+      const c = aCompany([v1, above], undefined, 1, { chain: chainHolding(ABOVE, B3) });
+      /* RED WHEN: a removal is judged without the bands in force, and leaves no run in the vault's top band able to be paid. */
+      await expect(removeCy(c)).rejects.toThrow(/unable to pay: the vault \(its runs need 3 approvals and 2 signers could give them\)/u);
+      expect(c.sent).toEqual([]);
+      /* The control: under a policy whose top band two can give, the removal passes the count and is approved. */
+      const within = aCompany([v1, above], undefined, 1);
+      await expect(removeCy(within)).rejects.toThrow(/nothing is built here/u);
+      expect(within.sent).toEqual(['build']);
+    });
+
+    it('a removal is refused while a policy in force does not open on this device, since its band cannot be counted', async () => {
+      /* The chain holds a commitment no version this device believes opens. */
+      const c = aCompany([v1], undefined, 1, { chain: chainHolding(OTHER_TERMS, B2) });
+      /* RED WHEN: a policy in force that this device cannot open is left out of a removal's count, which could let it leave the vault short. */
+      await expect(removeCy(c)).rejects.toThrow(/cannot open a spending policy one of the company's vaults holds now/u);
+      expect(c.sent).toEqual([]);
+    });
   });
 });

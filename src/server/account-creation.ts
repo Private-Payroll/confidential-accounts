@@ -5,11 +5,20 @@
  *   POST /api/accounts/:id/creation          the deploy and its signed second step, recorded together, then the deploy sent
  *   POST /api/accounts/:id/creation/finish   the second step sent, the same bytes as recorded, once the chain shows the deploy
  *   POST /api/accounts/:id/creation/again    a deploy that ran out before it landed, carried again: the same account
- *   POST /api/accounts/:id/creation/pay-key  a step of committing the account to its pay-record key, built on the device
+ *   POST /api/accounts/:id/creation/pay-key  an approval of committing the account to its pay-record key, or its carrying
+ *                                            out, built on a signer's device; never its raise
+ *   POST /api/accounts/:id/creation/pay-key/proposal  that proposal's record, sealed and signed on the founding
+ *                                            signer's device, written down, then its raise sent when it comes with one
  *   GET  /api/accounts/:id/creation          where the creation stands, read from the record and the chain
  *
- * The three sends above are one at a time for a company. The standing also says what time it is here and whether the
- * step it holds for where the company stands may be replaced (its own time to live, not a device's guess), and a
+ * **THE PAY-RECORD KEY'S PROPOSAL IS WRITTEN DOWN BEFORE IT IS RAISED**, as the company's other proposals are: sealed
+ * under the company's key and signed by its founding seat on the device, kept here as it was sent, so every signer's page
+ * lists it and every signer's wallet can approve it. A raise is taken only beside its record and sent only once the
+ * record is kept; one sent any other way is refused. Nothing about it is kept in the clear.
+ *
+ * The first three sends above are one at a time for a company, and so is each step of the pay-record key. The standing
+ * also says what time it is here and whether the step it holds for where the company stands may be replaced (its own
+ * time to live, not a device's guess), and a
  * refusal for a step's time left says so and what the time is, so a device with a wrong clock can build by this one.
  *
  * **THIS SERVICE BUILDS NOTHING HERE AND HOLDS NO KEY.** The founding signer's
@@ -51,7 +60,8 @@ import express from 'express';
 import { z } from 'zod';
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { canonical, type Hex } from '../core/crypto.js';
-import type { AccountDeploy, AccountOpeningRecord, SealedAccount } from '../core/types.js';
+import type { AccountDeploy, AccountOpeningRecord, SealedAccount, SealedProposal } from '../core/types.js';
+import { proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { accountDeployDigest } from '../core/store.js';
 import type { Ledger } from '../core/ledger.js';
 import { isAccountId, isSignerId } from '../core/account.js';
@@ -89,8 +99,15 @@ export interface AccountCreationDeps {
     recordAccountDeploy(d: AccountDeploy): boolean;
     replaceAccountDeploy(d: AccountDeploy): boolean;
     keepOnlyAccountDeployDigests(accountId: string): boolean;
+    getProposal(id: string): SealedProposal | null;
+    putProposal(p: SealedProposal): void;
+    listProposals(accountId: string): SealedProposal[];
   };
-  readonly ledger: Pick<Ledger, 'sendVault'>;
+  readonly ledger: Pick<Ledger, 'sendVault'> & Partial<Pick<Ledger, 'wiring'>>;
+  /** The company's sealed records: the founding seat is read from the signature on the company's first state. */
+  readonly records: Pick<CompanyRecordStore, 'get'>;
+  /** A proposal's identity on the chain, from its payload and its salt, for no vault (the account's own `proposalIdOf`). */
+  readonly proposalIdOf: (payload: Hex, salt: Hex) => Hex;
   /** The account's contract state as the indexer serves it, or null when there is none. */
   readonly contractState: (address: Hex) => Promise<unknown | null>;
   /** Where a company's account address is recorded, so the ledger finds it. */
@@ -457,7 +474,10 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       ? record.deployDigest === accountDeployDigest(deploy) && record.insertDigest === accountDeployDigest(insert)
       : record.deploy === deploy && record.insert === insert;
 
-  const send = async (res: express.Response, accountId: string, what: string, bytes: Uint8Array, check: (tx: unknown) => string | null | Promise<string | null>) => {
+  /** `after`, when given, is said after the error of a send that failed, for what was done before it. */
+  const send = async (
+    res: express.Response, accountId: string, what: string, bytes: Uint8Array, check: (tx: unknown) => string | null | Promise<string | null>, after?: string,
+  ) => {
     if (typeof deps.ledger.sendVault !== 'function') {
       res.status(503).json({ nothingWasSent: true, error: 'this deployment does not send transactions, so nothing was sent.' });
       return null;
@@ -469,7 +489,8 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       /* A code rides only on a nothing-sent answer: a 502 may have landed, and no page may say otherwise. */
       const code = nothing ? feeAnswerCodeOf(e) : null;
       res.status(nothing ? 422 : 502).json({
-        nothingWasSent: nothing, error: (e as { message?: string })?.message ?? 'unknown error', ...(code ? { code } : {}),
+        nothingWasSent: nothing, error: `${(e as { message?: string })?.message ?? 'unknown error'}${after === undefined ? '' : ` ${after}`}`,
+        ...(code ? { code } : {}),
       });
       return null;
     }
@@ -757,15 +778,163 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
   });
 
   /*
-   * **THE COMPANY'S PAY-RECORD KEY, COMMITTED AND SEALED FROM ITS FOUNDING
-   * SIGNER'S DEVICE.** The proposal that commits the account to the key is raised,
-   * approved and carried out by sealing the founding signer's copy, each built
-   * and proved on that device. This service reads each as exactly one call of
-   * that circuit to this company's account, moving nothing, and pays the fee.
-   * Only while the account is complete and not yet committed to a key. One of
-   * each is sent at a time.
+   * **THE COMPANY'S PAY-RECORD KEY, COMMITTED AND SEALED FROM A SIGNER'S
+   * DEVICE.** The proposal that commits the account to the key is raised by the
+   * founding signer's device together with its record (`/pay-key/proposal`, and
+   * never here), approved by any signer's, and carried out by sealing the
+   * carrying signer's own copy, each built and proved on that device. This
+   * service reads each as exactly one call of that circuit to this company's
+   * account, moving nothing, and pays the fee. Only while the account is complete
+   * and not yet committed to a key. One of each is sent at a time.
    */
   const payKeySending = new Set<string>();
+  const payKeyOwed = async (res: express.Response, account: SealedAccount, nothing: string): Promise<AccountDeploy | null> => {
+    const recorded = deps.store.getAccountDeploy(account.id);
+    const standing = await standingOf(recorded);
+    if (recorded === null || standing !== 'pay-key-owed') {
+      res.status(409).json({
+        nothingWasSent: true, state: standing,
+        error: standing === 'finished'
+          ? `this company's account is already committed to its pay-record key. ${nothing}`
+          : `this company's account is not finished yet, so its pay-record key cannot be committed. ${nothing}`,
+      });
+      return null;
+    }
+    return recorded;
+  };
+  const PAY_KEY_WHAT: Readonly<Record<'propose' | 'approve' | 'sealPayKey', string>> = {
+    propose: 'raising the proposal that commits the company to its pay-record key',
+    approve: 'approving the proposal that commits the company to its pay-record key',
+    sealPayKey: 'sealing the company\'s pay-record key to the signer carrying it out',
+  };
+  /**
+   * One step of committing the key sent, one at a time for each step of a company: the reference it was sent under, or
+   * null once answered. `nothing` is said with a refusal, and for a raise after a send that failed too.
+   */
+  const sendStep = async (
+    res: express.Response, account: string, recorded: AccountDeploy, call: 'propose' | 'approve' | 'sealPayKey', tx: string, nothing: string,
+  ): Promise<{ ref: string } | null> => {
+    const key = `${account}:${call}`;
+    if (payKeySending.has(key)) {
+      res.status(409).json({ nothingWasSent: true, error: `this step is being sent right now by another request. ${nothing}` });
+      return null;
+    }
+    payKeySending.add(key);
+    try {
+      return await send(res, account, PAY_KEY_WHAT[call], new Uint8Array(Buffer.from(tx, 'base64')),
+        (read) => refusalForPayKeyCall(read, { account: recorded.address, circuit: call }), call === 'propose' ? nothing : undefined);
+    } finally {
+      payKeySending.delete(key);
+    }
+  };
+  /** The founding seat's signing public key, read from the company's first state as filed; null when this service holds none. */
+  const foundingSignerKeyOf = async (accountId: string): Promise<string | null> => {
+    const state = await deps.records.get(accountId, 'state', '0');
+    const key = state?.filedBy?.publicKey;
+    return typeof key === 'string' && HEX64.test(key.toLowerCase()) ? key.toLowerCase() : null;
+  };
+
+  /*
+   * THE PAY-RECORD KEY'S PROPOSAL, WRITTEN DOWN BEFORE IT IS RAISED. What is kept is the filing as the founding seat's
+   * device sealed and signed it, and nothing in the clear: refused when it carries a secret by name, is not signed as this
+   * company's by the seat that signed its first state, says it pays anything, or names an identity on the chain other
+   * than the one its payload and salt make for no vault. Written down once for its identity: the same proposal written
+   * again is answered with the record already held, so a device taken up again raises the one every page lists. With
+   * `tx`, the proposal's raise, which is sent only once the record is kept here: a record refused sends nothing.
+   */
+  const payKeyFiling = new Set<string>();
+  r.post('/api/accounts/:id/creation/pay-key/proposal', ...guard, async (req, res) => {
+    const NOTHING = 'Nothing was written down or sent.';
+    const secret = secretCarried(req.body);
+    if (secret !== null) {
+      res.status(400).json({
+        nothingWasSent: true, code: 'a-secret-was-sent',
+        error: `this proposal carries "${secret}", which never leaves the founding signer's device, so it was refused. Treat what was sent as disclosed. ${NOTHING}`,
+      });
+      return;
+    }
+    const body = z.object({ proposal: z.unknown(), proposalSalt: HEX_64, tx: z.string().min(1).max(TX_LIMIT).optional() })
+      .strict().safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ nothingWasSent: true, error: `this is not the pay-record key's proposal to write down. ${NOTHING}` });
+      return;
+    }
+    const account = accountOf(req);
+    const recorded = await payKeyOwed(res, account, NOTHING);
+    if (recorded === null) return;
+    const filing = body.data.proposal as SignedProposalFiling;
+    const why = proposalFilingRefusal(account.id, filing);
+    const founding = await foundingSignerKeyOf(account.id);
+    const refusal = why !== null ? `this is not a proposal this company can write down: ${why}`
+      : filing.pays !== undefined ? 'the pay-record key\'s proposal pays nothing, and this one says it does'
+        : founding === null ? 'this service holds no first state of this company, so it cannot tell its founding seat'
+          : filing.filedBy.publicKey.toLowerCase() !== founding ? 'this proposal is not signed by the seat that founded this company'
+            : deps.proposalIdOf(filing.digest, body.data.proposalSalt.toLowerCase() as Hex).toLowerCase() !== filing.chainId.toLowerCase()
+              ? 'this proposal\'s identity on the chain is not the one its payload and its salt make'
+              : null;
+    if (refusal !== null) {
+      res.status(422).json({ nothingWasSent: true, error: `${refusal}. ${NOTHING}` });
+      return;
+    }
+    if (payKeyFiling.has(account.id)) {
+      res.status(409).json({ nothingWasSent: true, error: `this company's pay-record key's proposal is being written down right now by another request. ${NOTHING}` });
+      return;
+    }
+    payKeyFiling.add(account.id);
+    try {
+      const chainId = filing.chainId.toLowerCase();
+      const already = deps.store.listProposals(account.id).find((p) => p.chainId.toLowerCase() === chainId);
+      let id: string;
+      if (already !== undefined) {
+        if (already.filedBy?.publicKey.toLowerCase() !== founding || proposalFilingRefusal(account.id, already) !== null) {
+          res.status(409).json({ nothingWasSent: true, error: `this company holds another record under this proposal's identity on the chain. ${NOTHING}` });
+          return;
+        }
+        /*
+         * A raise sent under a record written earlier must carry that record's deadline, which is its `createdAt` plus a
+         * day: a later one could land after a withdrawal judged by the record. The record is handed back, signed as it was
+         * filed, so the founding seat's device builds the raise again from it.
+         */
+        if (body.data.tx !== undefined && already.createdAt !== filing.createdAt) {
+          res.status(409).json({
+            nothingWasSent: true, code: 'raise-under-its-record',
+            record: {
+              id: already.id, digest: already.digest, chainId: already.chainId, keyEpoch: already.keyEpoch, createdAt: already.createdAt,
+              sealed: already.sealed, filedBy: already.filedBy, ...(already.pays === undefined ? {} : { pays: already.pays }),
+            },
+            error: `this proposal was written down already, at ${already.createdAt}, and a raise sent under it must carry the time `
+              + `that record says it may reach the chain by. Build the raise again from the record returned here. ${NOTHING}`,
+          });
+          return;
+        }
+        id = already.id;
+      } else {
+        if (deps.store.getProposal(filing.id) !== null) {
+          res.status(409).json({ nothingWasSent: true, error: `a proposal by this name is already written down. ${NOTHING}` });
+          return;
+        }
+        deps.store.putProposal({
+          id: filing.id, accountId: account.id, status: 'open', createdAt: filing.createdAt, digest: filing.digest,
+          chainId: filing.chainId, approvalCount: 0, keyEpoch: filing.keyEpoch, sealed: filing.sealed,
+          filedBy: { publicKey: filing.filedBy.publicKey, signature: filing.filedBy.signature },
+          wiring: deps.ledger.wiring ?? null,
+        });
+        id = filing.id;
+      }
+      const status = already === undefined ? 201 : 200;
+      if (body.data.tx === undefined) {
+        res.status(status).json({ proposal: { id } });
+        return;
+      }
+      /* The record is kept above, before the raise is handed to the chain: a raise this service sends always has one. */
+      const sent = await sendStep(res, account.id, recorded, 'propose', body.data.tx, 'It is written down, and its raise was not sent.');
+      if (sent === null) return;
+      res.status(status).json({ proposal: { id }, txRef: sent.ref });
+    } finally {
+      payKeyFiling.delete(account.id);
+    }
+  });
+
   r.post('/api/accounts/:id/creation/pay-key', ...guard, async (req, res) => {
     const body = z.object({
       call: z.enum(['propose', 'approve', 'sealPayKey']),
@@ -775,35 +944,21 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       res.status(400).json({ nothingWasSent: true, error: 'this is not a step of committing the company to its pay-record key. Nothing was sent.' });
       return;
     }
-    const account = accountOf(req);
-    const recorded = deps.store.getAccountDeploy(account.id);
-    const standing = await standingOf(recorded);
-    if (recorded === null || standing !== 'pay-key-owed') {
+    if (body.data.call === 'propose') {
       res.status(409).json({
-        nothingWasSent: true, state: standing,
-        error: standing === 'finished'
-          ? 'this company\'s account is already committed to its pay-record key. Nothing was sent.'
-          : 'this company\'s account is not finished yet, so its pay-record key cannot be committed. Nothing was sent.',
+        nothingWasSent: true, code: 'raised-with-its-record',
+        error: 'the proposal that commits the company to its pay-record key is raised only together with its record, which '
+          + 'this service writes down first, so every signer\'s page lists it and any signer can approve it. Finish the '
+          + 'company again from its page. Nothing was sent.',
       });
       return;
     }
-    const key = `${account.id}:${body.data.call}`;
-    if (payKeySending.has(key)) {
-      res.status(409).json({ nothingWasSent: true, error: 'this step is being sent right now by another request. Nothing was sent.' });
-      return;
-    }
-    payKeySending.add(key);
-    try {
-      const what = body.data.call === 'propose' ? 'raising the proposal that commits the company to its pay-record key'
-        : body.data.call === 'approve' ? 'approving the proposal that commits the company to its pay-record key'
-          : 'sealing the company\'s pay-record key to its founding signer';
-      const sent = await send(res, account.id, what, new Uint8Array(Buffer.from(body.data.tx, 'base64')),
-        (tx) => refusalForPayKeyCall(tx, { account: recorded.address, circuit: body.data.call }));
-      if (sent === null) return;
-      res.json({ txRef: sent.ref });
-    } finally {
-      payKeySending.delete(key);
-    }
+    const account = accountOf(req);
+    const recorded = await payKeyOwed(res, account, 'Nothing was sent.');
+    if (recorded === null) return;
+    const sent = await sendStep(res, account.id, recorded, body.data.call, body.data.tx, 'Nothing was sent.');
+    if (sent === null) return;
+    res.json({ txRef: sent.ref });
   });
 
   return r;

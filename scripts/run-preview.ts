@@ -177,6 +177,10 @@ import {
   CIRCUITS_THAT_READ_NO_WITNESS, refuseACallWithoutItsPrivateState,
 } from '../src/midnight/governed-call.js';
 import type { Job } from '../src/core/jobs.js';
+import { RAISE_WINDOW_SECONDS } from '../src/core/proposal-filing.js';
+
+/** A raise's deadline: a day after this machine's clock, the window a device gives a raise it writes down. */
+const aDayFromNow = (): bigint => BigInt(Math.floor(Date.now() / 1000) + RAISE_WINDOW_SECONDS);
 
 const hex = (u: Uint8Array) => Buffer.from(u).toString('hex');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -438,7 +442,7 @@ const leafOf = (s: AccountPrivateState) =>
 const invitedAt = (seed: number) => ({ coinSecretKey: seededBytes(seed), addressSalt: seededBytes(seed + 1) });
 const invitationOf = (s: AccountPrivateState, invite: { coinSecretKey: Uint8Array; addressSalt: Uint8Array }) =>
   pureCircuits.signerInvitePayload(
-    pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt), s.scope);
+    pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt), s.scope, 0n);
 
 /* ------------------------------------------------------------------ */
 
@@ -459,17 +463,17 @@ const invitationOf = (s: AccountPrivateState, invite: { coinSecretKey: Uint8Arra
  * `MIDNIGHT_GOVERNANCE_RUN`, so the list has to be the union of what either
  * path drives:
  *
- *   the default path   `cancel`, `propose`, `approve`, `amendSigner`
+ *   the default path   `cancel`, `propose`, `approve`
  *   the governance path (`GOVERNANCE-RUN.command` sets the variable, and the
  *                        steps live in `scripts/governance-steps.ts`)
- *                      `propose`, `approve`, `cancel`, `amendSigner`,
- *                      `setThreshold`
+ *                      `propose`, `approve`, `cancel`,
+ *                      `removeSignerAndSetThreshold`, `setThreshold`
  *
  * Checked against every `found.callTx.<circuit>(` in this file and in
  * `scripts/governance-steps.ts`, which is the check the comment above invites.
  */
 const CIRCUITS_THIS_RUN_DRIVES = [
-  'amendSigner', 'propose', 'approve', 'cancel', 'setThreshold',
+  'removeSignerAndSetThreshold', 'propose', 'approve', 'cancel', 'setThreshold',
 ] as const;
 
 async function main() {
@@ -481,7 +485,7 @@ async function main() {
    * BEFORE A WALLET SYNCS, A PROOF IS BUILT OR A TRANSACTION IS SUBMITTED.
    *
    * Not theoretical. The circuits this run does call are called well inside it,
-   * after `cancel`, `amendSigner`, `propose` and two `approve`s have each been
+   * after `cancel`, `propose` and two `approve`s have each been
    * proven, balanced and SUBMITTED for real. Reaching a missing circuit there
    * costs a live account those transactions and their fees before the failure
    * appears — and it appears as an SDK TypeError on an undefined callTx member,
@@ -1123,8 +1127,8 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     /*
      * Every transaction a full run against a fresh deploy submits.
      * Thirteen, counted off the call sites: the approved add of B (propose, one
-     * approve, amendSigner), then the approved add of C (propose, two approves,
-     * amendSigner), the payment round (propose, two approves), and the job
+     * approve, seatInvited), then the approved add of C (propose, two approves,
+     * seatInvited), the payment round (propose, two approves), and the job
      * section's propose, approve and cancel.
      *
      * IT WAS ELEVEN, AND SEATING B IS WHY IT MOVED. `S35d` shut the bootstrap
@@ -1138,7 +1142,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
      * **HAND-COUNTED DELIBERATELY — `T-344`, `SC13` §4 `F5`.**
      * `src/midnight/run-cost.ts` DERIVES a count and is called by nothing,
      * which looks like a missed wiring. It is not: `circuitsForRun` models ONE
-     * payroll run with no term for `amendSigner` or `cancel`, so no input
+     * payroll run with no term for a seat or a `cancel`, so no input
      * yields this scripted walk. Its own file carries the reciprocal.
      */
     const CIRCUITS = 13;
@@ -1828,7 +1832,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
     await becomeSigner(signerA, 'A');
     await callCircuit('propose (add signer B)',
-      () => found.callTx.propose(addBPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
+      () => found.callTx.propose(addBPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault(), aDayFromNow()),
       async () => isOpen(await readState(), addBId));
 
     await becomeSigner(signerA, 'A');
@@ -1877,15 +1881,16 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
         circuitId: 'seatInvited',
         contractAddress,
         /*
-         * TWO arguments: WHICH approved invitation B takes, and `false` to
-         * append into a fresh slot rather than reuse one a removal freed. This
-         * account has never lost anybody, so there is nothing vacated to take.
+         * THREE arguments: WHICH approved invitation B takes, `false` to
+         * append into a fresh slot rather than reuse one a removal freed (this
+         * account has never lost anybody, so there is nothing vacated to take),
+         * and 0, the threshold the invitation sets, which keeps the one in force.
          * Everything else the call reads is B's own: the coin secret key, the
          * address salt, the seat key, the blinding and the rights. This call
          * site is `as any`, so the arity was checked against
          * contracts/managed/contract/index.d.ts by hand.
          */
-        args: [addBId, false],
+        args: [addBId, false, 0n],
         privateStateId: PRIVATE_STATE_KEY,
       } as any);
       good(`  step 1 — build the unproven transaction: ${((Date.now() - t1) / 1000).toFixed(1)}s`);
@@ -1966,7 +1971,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     note(`the invitation is ${hex(addId).slice(0, 24)}…`);
 
     await becomeSigner(signerA, 'A');
-    await callCircuit('propose (add signer C)', () => found.callTx.propose(addPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    await callCircuit('propose (add signer C)', () => found.callTx.propose(addPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault(), aDayFromNow()),
       async () => isOpen(await readState(), addId));
 
     await becomeSigner(signerA, 'A');
@@ -1983,10 +1988,10 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
     // C takes the seat: `seatInvited` reads proposalSalt() from C's private
     // state, and the id on chain was made with A's salt, which travels to C
-    // with the invitation. `false` takes a fresh slot.
+    // with the invitation. `false` takes a fresh slot; 0 keeps the threshold.
     await becomeSigner({ ...signerC, invite: inviteC }, 'C (invited)');
     await callCircuit('seatInvited C (approved)',
-      () => found.callTx.seatInvited(addId, false),
+      () => found.callTx.seatInvited(addId, false, 0n),
       async () => !!(await readState()).signers.findPathForLeaf(leafOf(signerC)));
 
     const afterAdd = await readState();
@@ -2068,7 +2073,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   note(`proposing to pay ${minor(PAYING)} — proposal ${hex(proposalId).slice(0, 24)}…`);
 
   await becomeSigner(signerA, 'A');
-  await callCircuit('propose', () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
+  await callCircuit('propose', () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault(), aDayFromNow()),
     async () => isOpen(await readState(), proposalId));
 
   await becomeSigner(signerA, 'A');
@@ -2359,7 +2364,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   // the payment round that has just settled.
   pendingChange = { asset: ASSET.code, amount: 0n, batch: seededBytes(902), salt: jobSalt };
   await becomeSigner(signerA, 'A');
-  await callCircuit('propose (for the job run)', () => found.callTx.propose(jobPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
+  await callCircuit('propose (for the job run)', () => found.callTx.propose(jobPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault(), aDayFromNow()),
     async () => isOpen(await readState(), jobProposalId));
 
   const approvalsBefore = approvalsFor(await readState(), jobProposalId);

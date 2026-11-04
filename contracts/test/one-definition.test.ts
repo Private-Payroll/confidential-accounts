@@ -259,13 +259,14 @@ const SCHEMES: Entry[] = [
      * assertions: the Midnight adapter EQUALS the circuit (here), and the
      * simulated scheme does NOT (the test at the bottom of this file).
      *
-     * The invitation's payload binds the invited address's commitment AND the
-     * seat's rights, so both arguments are carried through, never one.
+     * The invitation's payload binds the invited address's commitment, the
+     * seat's rights and the threshold the seat sets, so every argument is
+     * carried through, never one.
      */
     circuit: 'signerInvitePayload',
     mirrored: () => ({
-      fromContract: hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD)),
-      fromClient: MidnightCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD)),
+      fromContract: hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD, 3n)),
+      fromClient: MidnightCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 3),
     }),
   },
   {
@@ -426,10 +427,10 @@ const SCHEMES: Entry[] = [
   },
   {
     /* The client name is `signerRemovePayload`; the circuit's is this. */
-    circuit: 'removeSignerPayload',
+    circuit: 'removeAndSetThresholdPayload',
     mirrored: () => ({
-      fromContract: hex(pureCircuits.removeSignerPayload(LEAF)),
-      fromClient: MidnightCommitments.signerRemovePayload(hex(LEAF)),
+      fromContract: hex(pureCircuits.removeAndSetThresholdPayload(LEAF, 2n)),
+      fromClient: MidnightCommitments.signerRemovePayload(hex(LEAF), 2),
     }),
   },
   {
@@ -476,13 +477,6 @@ const SCHEMES: Entry[] = [
       'than asserted by hand. A retirement round is claimed by the vault from the salt, so ' +
       'a second derivation here produces rounds that can never be run — mirror it instead, ' +
       'and the ratchet will refuse until you do.',
-  },
-  {
-    circuit: 'removeAndSetThresholdPayload',
-    contractOnly:
-      'NO METHOD ON EITHER SCHEME DERIVES THIS YET: no product caller raises a combined removal ' +
-      'and threshold round. The day the removal flow raises one, mirror it the way ' +
-      'removeSignerPayload is mirrored, and the ratchet will refuse until you do.',
   },
   {
     circuit: 'companyWide',
@@ -768,6 +762,10 @@ const SCHEMES: Entry[] = [
     contractOnly: 'the key a hold is placed under, from the holder\'s secret key; only holdRun and releaseHold derive it, inside the proof.',
   },
   {
+    circuit: 'approvalNullifierOf',
+    contractOnly: 'one seat\'s approval marker for one proposal in one account; approve and propose write it through approvalNullifier, and a device reads its own seat\'s from the ledger\'s approvals with this circuit off pureCircuits (roundsOnChainIn, startStandingOf), never a copy.',
+  },
+  {
     circuit: 'releasedMark',
     contractOnly: 'what a released hold is marked with; releaseHold writes it and holdRun and the receipt step compare against it.',
   },
@@ -903,7 +901,7 @@ describe('one definition: the contract and the client agree', () => {
     /* The client's name and the circuit's differ for these three. That is
      * exactly the drift a name-matching grep cannot see, and the reason this
      * table is a declared map rather than a comparison of two name sets. */
-    { method: 'signerRemovePayload', circuit: 'removeSignerPayload', kind: 'mirrored' },
+    { method: 'signerRemovePayload', circuit: 'removeAndSetThresholdPayload', kind: 'mirrored' },
     { method: 'signerThresholdPayload', circuit: 'setThresholdPayload', kind: 'mirrored' },
     { method: 'vaultThresholdPayload', circuit: 'setVaultThresholdPayload', kind: 'mirrored' },
     {
@@ -1021,12 +1019,12 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'anchorHeadOf', 'anchorHeldOf', 'anchorKey', 'anchorRecoveredOf', 'anchorSeatKey', 'anchorTagOf', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
+      'adoptVaultPayload', 'anchorHeadOf', 'anchorHeldOf', 'anchorKey', 'anchorRecoveredOf', 'anchorSeatKey', 'anchorTagOf', 'approvalNullifierOf', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
       'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf', 'lastRecoveryKey', 'legTakenOf', 'legTakenTag',
       'paidFromMark', 'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf', 'periodTotalTag',
       'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
-      'recoverAnchorPayload', 'releasedMark', 'removalCountKey', 'removeAndSetThresholdPayload', 'reseatPayload', 'retireVaultPayload', 'retrySaltOf',
+      'recoverAnchorPayload', 'releasedMark', 'removalCountKey', 'reseatPayload', 'retireVaultPayload', 'retrySaltOf',
       'rightsScopeOf', 'runApprovalsNeeded', 'setPolicyBarPayload', 'setPolicyPayload', 'slotOf',
       'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'vaultBarOf', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);
@@ -1081,9 +1079,9 @@ describe('one definition: the contract and the client agree', () => {
     }
   });
 
-  it('the SIMULATED governance payloads are the values they have always been', () => {
-    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF)))
-      .toBe('2d46fcd7808701be6eba93811b7a829e61111f96e999347d375a6f19433121c4');
+  it('the SIMULATED governance payloads are pinned to fixed values', () => {
+    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF), 0))
+      .toBe('b6588d1a55f778562051f9827192c4bab3b23621e21684f4acae381148387e69');
     expect(SimulatedCommitments.signerThresholdPayload(3))
       .toBe('cffb8ca4c82c7d95e140142b8947eb56fecca0d575f37fd9af91a5422d212246');
     expect(SimulatedCommitments.vaultThresholdPayload(hex(VAULT), 2))
@@ -1105,11 +1103,17 @@ describe('one definition: the contract and the client agree', () => {
    */
   it('the invitation adapters carry every argument through, not one of them', () => {
     for (const scheme of [MidnightCommitments, SimulatedCommitments]) {
-      const base = scheme.signerInvitePayload(hex(LEAF), hex(PAYLOAD));
+      const base = scheme.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 0);
       /* RED WHEN: an invitation's payload drops the address, so one approval seats any wallet. */
-      expect(scheme.signerInvitePayload(hex(VAULT), hex(PAYLOAD))).not.toBe(base);
+      expect(scheme.signerInvitePayload(hex(VAULT), hex(PAYLOAD), 0)).not.toBe(base);
       /* RED WHEN: an invitation's payload drops the rights, so the invitee chooses their own. */
-      expect(scheme.signerInvitePayload(hex(LEAF), hex(ROOT))).not.toBe(base);
+      expect(scheme.signerInvitePayload(hex(LEAF), hex(ROOT), 0)).not.toBe(base);
+      /* RED WHEN: an invitation's payload drops the threshold, so the invitee chooses the threshold the seat sets. */
+      expect(scheme.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 3)).not.toBe(base);
+      /* RED WHEN: a removal's payload drops the leaf or the threshold, so one approval removes anyone or sets any threshold. */
+      const removal = scheme.signerRemovePayload(hex(LEAF), 0);
+      expect(scheme.signerRemovePayload(hex(VAULT), 0)).not.toBe(removal);
+      expect(scheme.signerRemovePayload(hex(LEAF), 2)).not.toBe(removal);
       const address = scheme.inviteAddressOf(hex(PK), hex(SALT));
       expect(scheme.inviteAddressOf(hex(VAULT), hex(SALT))).not.toBe(address);
       expect(scheme.inviteAddressOf(hex(PK), hex(BATCH))).not.toBe(address);
@@ -1149,14 +1153,14 @@ describe('one definition: the contract and the client agree', () => {
      * described honestly because a test that claims more than it checks is
      * worse than no test.
      */
-    expect(SimulatedCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD)))
-      .not.toBe(hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD)));
+    expect(SimulatedCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 0))
+      .not.toBe(hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD, 0n)));
     expect(SimulatedCommitments.inviteAddressOf(hex(PK), hex(SALT)))
       .not.toBe(hex(pureCircuits.inviteAddressOf(PK, SALT)));
     expect(SimulatedCommitments.coinPublicKeyOf(hex(SIGNING_SECRET)))
       .not.toBe(hex(pureCircuits.coinPublicKeyOf(SIGNING_SECRET)));
-    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF)))
-      .not.toBe(hex(pureCircuits.removeSignerPayload(LEAF)));
+    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF), 0))
+      .not.toBe(hex(pureCircuits.removeAndSetThresholdPayload(LEAF, 0n)));
     /*
      * **THE OTHER TWO.** All four governance payloads are on
      * `CommitmentScheme` now, so all four have a simulated implementation that

@@ -1581,7 +1581,7 @@ async function main() {
   console.log(`  Next: NOT a ${runAsset.symbol} deposit; the account keeps no books of its own`);
   console.log(`  (C292), so there is no balance on chain to credit and no circuit that could`);
   console.log(`  settle one. What this account CAN do is govern itself and its`);
-  console.log(`  vaults: propose → approve → amendSigner / setThreshold / adopt /`);
+  console.log(`  vaults: propose → approve → removeSignerAndSetThreshold / setThreshold / adopt /`);
   console.log(`  setVaultThreshold / retireVault, and pay through a vault's recordPayment.`);
 
   await env.shutdown(false);

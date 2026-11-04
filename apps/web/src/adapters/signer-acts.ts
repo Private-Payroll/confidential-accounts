@@ -11,7 +11,7 @@ import type { SignerInvited } from './signers.js';
  * The acts the signers page asks of the person's wallet: approving a signer invited by address, finishing adding one who took
  * their seat, and, from a seat just added, giving its own keys to the company.
  */
-export const SIGNER_ACT = { approve: 'approve-signer', admit: 'admit-signer', giveKeys: 'give-vault-keys' } as const;
+export const SIGNER_ACT = { approve: 'approve-proposal', admit: 'admit-signer', giveKeys: 'give-vault-keys' } as const;
 export type SignerAct = (typeof SIGNER_ACT)[keyof typeof SIGNER_ACT];
 
 /** Every reason the wallet gives for an act it stopped, as the last part of the key it names: `act.<act>.why.<reason>`; `stopped` is no key at all, `other` one this page does not know. */

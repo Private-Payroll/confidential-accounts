@@ -61,7 +61,7 @@ export function theInviteeTakesTheSeat(
 ): Promise<TxRef> {
   const seat: InvitedSeat = {
     proposalId, coinSecretKey: invitee.coinSecretKey, addressSalt: invitee.addressSalt,
-    signerPublicKey: invitee.signerPublicKey, blinding: invitee.blinding, scope: invitee.scope,
+    signerPublicKey: invitee.signerPublicKey, blinding: invitee.blinding, scope: invitee.scope, newThreshold: 0,
   };
   return ledger.seatInvited(accountId, seat);
 }

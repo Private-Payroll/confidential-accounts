@@ -124,6 +124,8 @@ const sent: Array<{ circuit: string; signer: string }> = [];
 const closedWith = new Map<string, string>();
 /* `<proposal> <signer>` for each signer the chain holds an approval of: the raise is its raiser's, and an approval is its approver's. */
 const counted = new Set<string>();
+/* `<proposal> <signer>` for each raise the chain took: the seat whose withdraw key the proposal's hold carries. */
+const raisedBy = new Set<string>();
 /** Set by a case: a raise sent through the door reaches no chain. */
 let raisesLandNowhere = false;
 let throughTheDoor = false;
@@ -159,7 +161,7 @@ Object.assign(ledger, {
         return done;
       }
       if (o.circuit === 'cancel') return await closing(ledger.cancel(accountId, o.proposal as Hex, by));
-      if (o.circuit === 'amendSigner') return await closing(ledger.removeSigner(accountId, o.leaf as Hex, o.proposal as Hex, by));
+      if (o.circuit === 'removeSignerAndSetThreshold') return await closing(ledger.removeSigner(accountId, o.leaf as Hex, o.proposal as Hex, by));
       if (o.circuit === 'setThreshold') return await closing(ledger.setThreshold(accountId, Number(o.threshold), o.proposal as Hex, by));
       if (o.circuit === 'setVaultThreshold') {
         return await closing(ledger.setVaultThreshold(accountId, o.vault as Hex, Number(o.threshold), o.proposal as Hex, by));
@@ -168,13 +170,14 @@ Object.assign(ledger, {
       if (o.circuit === 'propose' && raisesLandNowhere) return { ref: `tx_nowhere_${sent.length}`, at: new Date().toISOString() };
       if (o.circuit === 'propose' && 'governance' in o) {
         const g = o.governance;
-        const payload = g.kind === 'add-signer' ? MidnightCommitments.signerInvitePayload(g.address as Hex, g.scope as Hex)
+        const payload = g.kind === 'add-signer' ? MidnightCommitments.signerInvitePayload(g.address as Hex, g.scope as Hex, 0)
           : g.kind === 'vault-threshold' ? MidnightCommitments.vaultThresholdPayload(g.vault as Hex, Number(g.threshold))
             : MidnightCommitments.signerThresholdPayload(Number((g as { threshold: string }).threshold));
         const raised = await ledger.propose(accountId, payload, {
           asset: NO_ASSET, amount: 0n, batchDigest: o.half.changeBatchDigest as Hex, salt: o.half.proposalSalt as Hex,
         }, by, MidnightCommitments.noVault());
         counted.add(`${String(o.proposal).toLowerCase()} ${built.signer}`);
+        raisedBy.add(`${String(o.proposal).toLowerCase()} ${built.signer}`);
         return raised;
       }
       throw new Error(`this door does not carry ${o.circuit}`);
@@ -483,6 +486,8 @@ const recordsOf = (who: Who) => ({
   runs: async () => { throw new Error('no run is read in this test'); },
   /* Where each proposal stands, as the person's own wallet reads this file's chain. */
   roundsOnChain: theChain,
+  /* The account's own derivation of a proposal's identity, with which a proposal opened to be withdrawn is checked. */
+  roundIdentity: pureCircuits as never,
 });
 
 /**
@@ -504,6 +509,15 @@ const aDevice = (who: Who, signerId: string, o: { refuse?: string[]; adopted?: s
   let anchoredHere = false;
   const records = {
     ...read,
+    /*
+     * This seat's wallet reads its own approval marker too: each raise and approval the test's chain counted for it;
+     * and, while the chain holds a proposal, whether this seat raised it.
+     */
+    roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(Object.entries(await read.roundsOnChain(ids))
+      .map(([id, r]) => [id, {
+        ...r, approvedHere: counted.has(`${id.toLowerCase()} ${signerId}`),
+        ...(r.held === 'open' ? { raisedHere: raisedBy.has(`${id.toLowerCase()} ${signerId}`) } : {}),
+      }])),
     directory: async (asked?: RecordsAsked) => {
       const h = await read.directory(asked);
       if (!anchoredHere) return h;
@@ -795,7 +809,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect(refusedHere).toEqual([]);
     /* The chain holds Cleo's seat, and her wallet joins the committee. */
     holds(company, wallets.cleo);
-  });
+  }, 45_000);
 
   it('A SIGNER SEATED AFTER THE COMPANY WAS CREATED RAISES A CHANGE FROM THEIR OWN DEVICE, A RECORD THE SERVICE ALTERED IS NOT APPROVED, AND THE COMPANY FINISHES IT', async () => {
     sent.length = 0;

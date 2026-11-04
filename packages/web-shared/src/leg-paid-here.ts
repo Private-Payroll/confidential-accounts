@@ -53,6 +53,13 @@ export interface LegDoors extends PayoutDoors {
    * not, `null` when this deployment cannot say.
    */
   readonly paidYet: (payment: PrivatePaymentOnTheWire) => Promise<boolean | null>;
+  /**
+   * Whether this device can prove a merge of the vault's notes. When it says
+   * no, a plan with a merge step is refused before the run is charged or
+   * anything is sent, so nothing is charged that cannot be paid; absent, a
+   * merge is proved as any step is.
+   */
+  readonly mergesProvedHere?: () => Promise<boolean>;
 }
 
 /** The approved leg, as this device opens it from the company's records: a leg, or one retry raised on it. */
@@ -104,6 +111,27 @@ export class LegNotPayable extends Error {
   }
 }
 
+/**
+ * **THE LEG STOPPED AFTER SOME OF ITS STEPS WERE SENT.** `done` is what was
+ * sent before the stop, as `LegPaid` says it, with `payees`, how many people
+ * the leg pays; `cause` is the stop itself. Paying the leg again pays only the
+ * people still owed: the account refuses a second payment of anyone it records
+ * paid, and a step still on its way is waited for, never sent twice.
+ */
+export class LegStopped extends Error {
+  constructor(readonly done: LegPaid & { readonly payees: number }, readonly cause: unknown) {
+    const sentTo = done.paid.length + done.sentNotNamed.length;
+    super(`${String((cause as Error)?.message ?? cause).replace(/\s*$/u, '')} Before this stop, ${sentTo} of the leg's ${done.payees} `
+      + `payment(s) were sent${done.alreadyPaid.length === 0 ? '' : ` and ${done.alreadyPaid.length} were already paid`}. Paying the `
+      + 'leg again pays only the people still owed.', { cause });
+    this.name = 'LegStopped';
+  }
+}
+
+/** Why a plan with a merge step is not started here: this wallet cannot yet prove the merge. */
+const A_MERGE_IS_NOT_PROVED_HERE = 'This leg\'s plan merges some of the vault\'s notes into one before it pays, and this wallet does not '
+  + 'yet hold the key a merge is proved with, so the run was not charged. Update the wallet and pay the run again.';
+
 /** How many times a leg is planned again after the vault's notes moved under one of its steps, before it stops. */
 const PLANS_AT_MOST = 3;
 
@@ -148,12 +176,34 @@ async function sendStep(
  * when the chain already holds it as charged or its vault has no policy.
  * Before each person is paid, a run its seat raised after its own removal was
  * raised, or one whose raiser this device cannot say, is refused
- * (`refuseARunALeaverRaisedHere`), and nothing more is sent.
+ * (`refuseARunALeaverRaisedHere`), and nothing more is sent. A plan with a
+ * merge this device cannot prove (`mergesProvedHere`) is refused before the
+ * charge. A stop after any step was sent is a `LegStopped` saying what was.
  */
 export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<LegPaid> {
-  const steps: LegStepSent[] = [];
-  const paid: number[] = [];
-  const sentNotNamed: number[] = [];
+  const done: LegProgress = { steps: [], paid: [], sentNotNamed: [], alreadyPaid: null, payees: 0 };
+  try {
+    return await legPaidStepByStep(doors, leg, done);
+  } catch (e) {
+    if (done.steps.length === 0 || e instanceof LegStopped) throw e;
+    throw new LegStopped({
+      paid: [...done.paid], sentNotNamed: [...done.sentNotNamed], alreadyPaid: [...(done.alreadyPaid ?? [])], steps: [...done.steps],
+      payees: done.payees,
+    }, e);
+  }
+}
+
+/** What the leg has sent so far, kept outside its loop so a stop can say it. */
+interface LegProgress {
+  readonly steps: LegStepSent[];
+  readonly paid: number[];
+  readonly sentNotNamed: number[];
+  alreadyPaid: number[] | null;
+  payees: number;
+}
+
+async function legPaidStepByStep(doors: LegDoors, leg: LegHere, done: LegProgress): Promise<LegPaid> {
+  const { steps, paid, sentNotNamed } = done;
   let alreadyPaid: number[] | null = null;
   let chargeSettled = false;
   /* The run charged to its vault's period, when the vault is under a policy: once, just before the leg's first step. */
@@ -169,6 +219,8 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
     const { order } = toPay;
     const beforeAPayment = () => refuseARunALeaverRaisedHere(leg.records, leg.accountId, leg.viewingKey, toPay.proposalId);
     alreadyPaid ??= order.payments.filter((p) => p.paid === true).map((p) => p.index);
+    done.alreadyPaid = alreadyPaid;
+    done.payees = order.payments.length;
     /* Nobody this loop has already sent a payment to is planned again, whatever the account's read says yet. */
     const sentTo = new Set([...paid, ...sentNotNamed]);
     const owed = order.payments.filter((p) => p.paid !== true && !sentTo.has(p.index));
@@ -202,6 +254,9 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
     });
     if (plan.ok === false) throw new LegNotPayable(plan.message);
     if (plan.steps.some((st) => st.kind === 'batch')) throw new LegNotPayable(A_BATCH_IS_NOT_PAID_YET);
+    if (plan.steps.some((st) => st.kind === 'merge') && doors.mergesProvedHere !== undefined && !(await doors.mergesProvedHere())) {
+      throw new LegNotPayable(A_MERGE_IS_NOT_PROVED_HERE);
+    }
     /* ---- the leg is payable as planned: the run charged to its period before the plan's first step is sent ---- */
     await chargedFirst(toPay);
     const held = new Map(pool.notes.map((n) => [n.nonce, wireOf(n)]));

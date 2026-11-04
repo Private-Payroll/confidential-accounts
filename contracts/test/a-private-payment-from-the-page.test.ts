@@ -768,7 +768,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
     /* No approvals beyond the vault's bar: `required` is nothing. */
     /* The founding signer's raise is its own approval, which meets the vault's bar. */
-    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault)], staged);
+    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault), now + 86_400n], staged);
     const paidNow = () => new Set(run.tree.leaves.filter((leaf) =>
       accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))));
     const order = () => {
@@ -1031,7 +1031,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   const raisingOn = (here: ReturnType<typeof recordsHere>): LegRaiseDoors => ({
     service: { ...governedCallServiceFor(api), callState: async () => ({ account: company, accountState: '', parameters: '' }) as never },
     builder: {
-      governedCall: async ({ order }: { order: { run: { root: string; payees: string; opensAt: string; closesAt: string; vault: string; required?: string }; half: Record<string, string> } }) => {
+      governedCall: async ({ order, opened }: { order: { run: { root: string; payees: string; opensAt: string; closesAt: string; vault: string; required?: string }; half: Record<string, string> }; opened: { raiseBy: string } }) => {
         const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
         const staged = {
           ...founder, assetId: fromHex(order.half.assetId!), assetBlinding: fromHex(order.half.assetBlinding!),
@@ -1041,7 +1041,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
           compiledContract: accountCompiled, circuitId: 'propose', contractAddress: company, coinPublicKey: keys.coinPublicKey,
           initialContractState: asRuntime(chain.contract(company)), initialZswapChainState: new L.ZswapChainState(),
           ledgerParameters: L.LedgerParameters.initialParameters(), initialPrivateState: staged,
-          args: [ZERO_32, fromHex(order.run.root), BigInt(order.run.payees), BigInt(order.run.opensAt), BigInt(order.run.closesAt), BigInt(order.run.required ?? '0'), true, fromHex(order.run.vault)],
+          args: [ZERO_32, fromHex(order.run.root), BigInt(order.run.payees), BigInt(order.run.opensAt), BigInt(order.run.closesAt), BigInt(order.run.required ?? '0'), true, fromHex(order.run.vault), BigInt(opened.raiseBy)],
         }, keys.encryptionPublicKey);
         return { tx: base64FromBytes(built.private.unprovenTx.serialize()) };
       },
@@ -1570,7 +1570,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const id = idFrom(run.tree.leaves, window);
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
     /* The founding signer's raise is its own approval, which meets the vault's bar. */
-    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault)], staged);
+    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault), now + 86_400n], staged);
     const paidNow = () => new Set(run.tree.leaves.filter((leaf) =>
       accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))));
     const order = () => {

@@ -9,6 +9,11 @@ vi.mock('./act-intents.js', () => ({
     'move-between-vaults': {
       fields: { company: 'company', account: 'account', vault: 'vault', seat: 'seat', amount: 'amount' },
     },
+    /* The same action as one that asks the page to send what it finishes. */
+    'move-between-vaults-sent': {
+      fields: { company: 'company', account: 'account', vault: 'vault', seat: 'seat', amount: 'amount' },
+      calls: [{ method: 'POST', path: '/api/accounts/:record/vaults/:vault/move', sends: true }],
+    },
   }),
 }));
 
@@ -107,5 +112,18 @@ describe('an action ask names the action and the ids and amounts it acts on, and
     /* RED WHEN: an intent is ignored on another kind, so a page can name an action behind a payment's screen. */
     expect(refusal({ ...balance, intent: intent() })).toBe('act-fields-on-another-kind');
     expect(refusal({ ...act(), kind: 'sign-in', intent: intent() })).toBe('act-fields-on-another-kind');
+  });
+});
+
+describe('an action ask may still name which way its calls go, and the wallet takes nothing from it', () => {
+  it('whatever way a page names, the action is read without it', () => {
+    const sent = (over: Record<string, unknown>) => act({ intent: intent({ name: 'move-between-vaults-sent', ...over }) });
+    for (const path of ['service', 'chain', 'elsewhere', '', 1, null]) {
+      const read = parseAsk(sent({ path }), ORIGIN, NOW);
+      /* RED WHEN: the way a page names reaches the wallet, so the page decides where a signed call goes. */
+      expect(read.kind === 'act' ? 'path' in read.intent.fields : null, String(path)).toBe(false);
+    }
+    /* RED WHEN: an action that asks the page for no call is refused for naming a way it does not use. */
+    expect(refusal(act({ intent: intent({ path: 'service' }) }))).toBe('accepted');
   });
 });

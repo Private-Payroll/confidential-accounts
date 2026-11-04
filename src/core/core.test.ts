@@ -2856,7 +2856,7 @@ describe('removing a signer', () => {
     };
     const before = new Set((await h.ledger.status(c.account.id))!.openProposals.map((p) => p.id));
     await h.ledger.propose(
-      c.account.id, SimulatedCommitments.signerRemovePayload(ref(leaving).leaf),
+      c.account.id, SimulatedCommitments.signerRemovePayload(ref(leaving).leaf, 0),
       { asset: NO_ASSET, amount: 0n, batchDigest: commit('', ''), salt: newProposalSalt() }, ref(0),
       SimulatedCommitments.noVault());
     const round = (await h.ledger.status(c.account.id))!.openProposals.find((p) => !before.has(p.id))!;
@@ -3211,7 +3211,7 @@ describe('removing a signer', () => {
      * only guard that counts against a signer calling the contract themselves.
      */
     await h.ledger.propose(
-      c.account.id, SimulatedCommitments.signerRemovePayload(goneLeaf),
+      c.account.id, SimulatedCommitments.signerRemovePayload(goneLeaf, 0),
       { asset: NO_ASSET, amount: 0n, batchDigest: commit('', ''), salt: newProposalSalt() }, by,
       SimulatedCommitments.noVault());
     const [round] = (await h.ledger.status(c.account.id))!.openProposals;

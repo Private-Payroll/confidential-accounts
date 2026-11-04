@@ -27,6 +27,7 @@
  * held open on the account, read from the signers or counted toward theirs.
  */
 import { commit } from '../../../src/core/crypto.js';
+import { raiseByOf } from '../../../src/core/proposal-filing.js';
 import { assetIdHex, NO_ASSET } from '../../../src/core/assets.js';
 import type { ResumesFrom } from '../../../src/midnight/record-tree.js';
 import type {
@@ -34,6 +35,7 @@ import type {
 } from './vault-worker-client.js';
 import type { GovernanceOnTheWire, OpenedRound, RoundOnChain, SignerMaterial } from './governed-call-builder.js';
 import { sameGovernance } from './governance-compared.js';
+import { ApprovalNotOwed } from './governed-call-on-device.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { whyNotInstallable, type SuperAdminChangeOnTheWire } from 'midnight-identity/profile/request';
 import { joinedBy, superAdminChangeBytes } from 'midnight-identity/profile/committee-sign';
@@ -172,7 +174,9 @@ export interface FromTheChainDoors {
    * How a call this device proved is sent: through the company's service,
    * which pays its fee; where that is absent, refuses, or says it sent a call
    * the chain does not show in time, through the person's own wallet, which
-   * pays it - only once the person, told why, chooses it (`chosen`).
+   * pays it - only once the person, told why, chooses it (`chosen`). A wallet
+   * that asks the service nothing leaves `service` out, and answers `chosen`
+   * with the choice the person already made in its window.
    */
   readonly send: {
     readonly service?: (tx: string) => Promise<unknown>;
@@ -226,7 +230,7 @@ async function watchedOnTheChain<T>(
  * IT**: through the company's service, watched for at the indexer the person's
  * own wallet names from the moment it is handed over (`went`: what the chain
  * shows of it, null while it shows nothing), never waiting on the service's
- * answer. Where the service is absent, refuses it, does not answer, or says it
+ * answer. Where the service is absent (not reachable, or not asked), refuses it, does not answer, or says it
  * sent it, and the chain does not show it in time, the person is told why and
  * chooses whether their own wallet sends it, and pays; declined, nothing more
  * is sent. So a service answering "sent" can never stop the call. Refused, in
@@ -238,7 +242,7 @@ export async function sentFromHere<T>(
   const withinMs = doors.watch?.withinMs ?? LANDED_WITHIN_MS;
   let why: string;
   if (doors.send.service === undefined) {
-    why = 'the company\'s service is not reachable from this page';
+    why = 'the company\'s service is not asked to send this call';
   } else {
     /* The service's answer is never waited on: a service that never answers stops nothing. */
     let answered = false;
@@ -286,13 +290,27 @@ export async function callStateHere(doors: Pick<FromTheChainDoors, 'account' | '
   return { ...chain, account: doors.account };
 }
 
-/** Where a proposal stands, read from the account's history at the indexer the person's own wallet names. */
-async function standingOnTheChain(doors: Pick<FromTheChainDoors, 'account' | 'indexer' | 'builder'>, chainId: string): Promise<RoundOnChain> {
-  const rounds = await doors.builder.roundsOnChain({ account: doors.account, indexer: doors.indexer, chainIds: [chainId] });
+/**
+ * Where a proposal stands, read from the account's history at the indexer the person's own wallet names. With `seat`,
+ * this device's signing secret, it also says whether the chain holds that seat's approval of it (`approvedHere`).
+ */
+async function standingOnTheChain(
+  doors: Pick<FromTheChainDoors, 'account' | 'indexer' | 'builder'>, chainId: string, seat?: string,
+): Promise<RoundOnChain> {
+  const rounds = await doors.builder.roundsOnChain({
+    account: doors.account, indexer: doors.indexer, chainIds: [chainId], ...(seat === undefined ? {} : { seat }),
+  });
   return rounds[chainId.toLowerCase()] ?? { held: 'never', approvals: 0 };
 }
 
 const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+/**
+ * The deadline a raise from the chain carries, as no record of it is written down: a recovery's own last time to be
+ * carried out, past which it is void, and for any other change a day from now (`RAISE_WINDOW_SECONDS`).
+ */
+const raiseByFromTheChain = (change: GovernanceOnTheWire): string => (change.kind === 'recover-anchor'
+  ? change.latest : raiseByOf(new Date().toISOString()));
 
 /** The proposal as this device makes it again from the change and its salt, with the account's own functions. */
 async function openedFrom(doors: Pick<FromTheChainDoors, 'builder'>, change: GovernanceOnTheWire, salt: string, summary: string): Promise<OpenedRound> {
@@ -330,7 +348,7 @@ async function raiseSignersProposal(
 ): Promise<{ readonly file: ProposalFile; readonly sentBy: SentBy }> {
   const random = doors.random ?? ((n: number) => crypto.getRandomValues(new Uint8Array(n)));
   const salt = hexOf(random(32));
-  const opened = await openedFrom(doors, input.change, salt, input.summary);
+  const opened = { ...await openedFrom(doors, input.change, salt, input.summary), raiseBy: raiseByFromTheChain(input.change) };
   const file: ProposalFile = {
     format: PROPOSAL_FILE_FORMAT, company: doors.accountId, account: doors.account.toLowerCase(), change: input.change, salt,
     chainId: opened.chainId.toLowerCase(), summary: input.summary, ...(input.resumesFrom === undefined ? {} : { resumesFrom: input.resumesFrom }),
@@ -379,7 +397,9 @@ async function fileAgainstTheChain(doors: FromTheChainDoors, file: ProposalFile)
  * **A FILE'S PROPOSAL APPROVED FROM THIS DEVICE**: checked against the chain
  * (`fileAgainstTheChain`) and against the change's own check (`check`, which
  * throws in words that say why), its approval built on the account's state at
- * the wallet's indexer, bound to the change and its salt, and sent.
+ * the wallet's indexer, bound to the change and its salt, and sent. When the chain already holds this seat's approval
+ * of it (its own approval, or its raise counted as its approval), it is refused as `ApprovalNotOwed('counted')` with
+ * nothing built or sent.
  */
 export async function approveFromAFile(
   doors: FromTheChainDoors, file: ProposalFile, check: (file: ProposalFile) => Promise<void>,
@@ -398,15 +418,23 @@ async function approveSignersProposal(
 ): Promise<{ readonly sentBy: SentBy; readonly approvalsBefore: number }> {
   const { opened, standing } = await fileAgainstTheChain(doors, file);
   await check(file);
+  /* Whether this seat's approval is already counted is the chain's answer, read for this seat, before anything is built. */
+  const seat = doors.material.signingSecret;
+  const mine = await standingOnTheChain(doors, file.chainId, seat);
+  if (mine.approvedHere === undefined) {
+    throw new Error('whether your approval of this proposal is already counted was not read from the chain, so nothing was built or sent. '
+      + 'Reload the page and try again');
+  }
+  if (mine.approvedHere) throw new ApprovalNotOwed('counted');
   const chain = await callStateHere(doors);
   const { tx } = await doors.builder.governedCall({
     account: chain.account, material: doors.material, chain, opened,
     order: { circuit: 'approve', proposal: opened.chainId, of: { governance: file.change as GovernanceOnTheWire, proposalSalt: file.salt } },
   });
-  /* Sent when the chain counts one more approval than before it, or no longer holds the proposal open. */
+  /* Sent when the chain holds this seat's own approval, never a count another seat's approval can also raise, or no longer holds the proposal open. */
   const { sentBy } = await sentFromHere(doors, tx, async () => {
-    const now = await standingOnTheChain(doors, file.chainId);
-    return now.held !== 'open' || now.approvals > standing.approvals ? true : null;
+    const now = await standingOnTheChain(doors, file.chainId, seat);
+    return now.held !== 'open' || now.approvedHere === true ? true : null;
   });
   return { sentBy, approvalsBefore: standing.approvals };
 }

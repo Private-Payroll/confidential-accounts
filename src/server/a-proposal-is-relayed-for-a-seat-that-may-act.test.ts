@@ -23,21 +23,34 @@ import { FeeNotPaid } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION } from '../core/device-raise.js';
 import type { LedgerStatus } from '../core/ledger.js';
 import type { SealedProposal } from '../core/types.js';
+import type { ClosedOnChain } from './proposal-closed-on-chain.js';
 import type { Hex } from '../core/crypto.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { acceptanceHashOf } from '../core/invitation.js';
-import { adoptionRoundOf, type AccountStartPure } from '../midnight/vault-start.js';
+import { adoptionRoundOf, firstSecretRunCarriedOf, firstSecretRunOf, secretRunWindowFrom, type AccountStartPure } from '../midnight/vault-start.js';
+import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
+import { pureCircuits as vaultPure } from '../../contracts/managed-vault/contract/index.js';
 
 /* ── the chain, stood in ─────────────────────────────────────────────────── */
 
 const open = new Map<string, number>();
 /* The vaults the company's account lists on the stand-in chain: those it adopted. */
 const adopted = new Set<string>();
+/* The commitment of the secret each vault holds on the stand-in chain; a vault not named holds none. */
+const secrets = new Map<string, string>();
+/* The vaults whose every sealed copy is written on the stand-in chain; the others are not started. */
+const started = new Set<string>();
 let unreadable = false;
 let refuseAtTheDoor: string | null = null;
 /* A fee the fee payer could not pay, refused before anything reached the chain. */
 let feeNotPaid = false;
+/* The time of the newest block the stand-in indexer names, in milliseconds; null when it does not answer. */
+let chainTime: number | null = null;
+/* How the stand-in account's history shows a proposal closed, or that it never held it. */
+let history: ClosedOnChain = 'never';
+/* The stand-in history behind the chain's own read: it has not yet seen the raise that read holds open. */
+let historyBehind = false;
 const sent: Array<{ accountId: string; circuit: string; proposal: string }> = [];
 const tx = (circuit: string, proposal: string): string => Buffer.from(JSON.stringify({ circuit, proposal })).toString('base64');
 
@@ -75,6 +88,13 @@ aCompanyOfTwoSeats((app, deps) => {
     proposalIdOf: (h, salt, vault) => MidnightCommitments.proposalId(h as Hex, salt as Hex, vault as Hex | undefined),
     adoptionOf: (vault) => adoptionRoundOf(pureCircuits as unknown as AccountStartPure, vault),
     vaultsAdopted: async () => (unreadable ? null : [...adopted]),
+    firstSecretRunOf: (vault, parts) => firstSecretRunCarriedOf({ vault: vaultPure as never, account: pureCircuits as never }, vault, parts),
+    vaultSecretOf: async (vault) => (unreadable ? null : { commitment: secrets.get(vault) ?? '00'.repeat(32), started: started.has(vault) }),
+    closedOnChain: async (_accountId, chainId) => (open.has(chainId) && !historyBehind ? 'open' : history),
+    chainTimeOf: async () => {
+      if (chainTime === null) throw new Error('the indexer did not answer');
+      return chainTime;
+    },
   }));
 });
 
@@ -92,7 +112,8 @@ const proposal = (over: Partial<SealedProposal> = {}): SealedProposal => ({
 });
 
 beforeEach(() => {
-  open.clear(); adopted.clear(); sent.length = 0; unreadable = false; refuseAtTheDoor = null; feeNotPaid = false;
+  open.clear(); adopted.clear(); secrets.clear(); started.clear(); sent.length = 0; unreadable = false; refuseAtTheDoor = null; feeNotPaid = false;
+  chainTime = Date.parse(proposal().createdAt); history = 'never'; historyBehind = false;
   store.putProposal(proposal());
 });
 
@@ -223,11 +244,13 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
   });
 
   it('A WITHDRAWAL: NO CALL FOR ONE ONLY WRITTEN DOWN, THE DEVICE\'S CALL FOR ONE ON THE CHAIN, AND NONE FOR ONE SENT AND NOT YET SEEN', async () => {
-    /* Only written down: withdrawn here with no call. RED WHEN a call is demanded for it, or one is sent. */
+    /* Only written down, the chain's time past its deadline: withdrawn here with no call. RED WHEN a call is demanded for it, or one is sent. */
+    chainTime = Date.parse('2026-10-08T00:00:00.000Z');
     let r = await post('ada', `/api/proposals/${P}/cancel`, {});
     expect(r.body).toMatchObject({ status: 'cancelled' });
     expect(sent).toEqual([]);
     /* Sent, and not seen yet: it may still land. RED WHEN it is closed here. */
+    chainTime = Date.parse(proposal().createdAt);
     store.putProposal(proposal({ txRef: 'ref-x' }));
     r = await post('ada', `/api/proposals/${P}/cancel`, {});
     expect(r.status).toBe(422);
@@ -247,6 +270,89 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     unreadable = true;
     expect((await post('ada', `/api/proposals/${P}/cancel`, {})).status).toBe(422);
     expect(store.getProposal(P)!.status).toBe('open');
+  });
+
+  it('A PROPOSAL SENT AND NEVER SEEN IS WITHDRAWN WITH NO CALL ONLY ONCE THE CHAIN\'S OWN TIME IS PAST ITS DEADLINE AND THE CHAIN NEVER HELD IT', async () => {
+    /* Written down at 2026-10-07T00:00:00Z: a raise of it lands only in a block before a day later. */
+    const DEADLINE = Date.parse('2026-10-08T00:00:00.000Z');
+    store.putProposal(proposal({ txRef: 'ref-x' }));
+    const cancel = (body: object = {}) => post('ada', `/api/proposals/${P}/cancel`, body);
+
+    /* Inside the deadline it may still land. RED WHEN it is closed here, or the refusal does not say until when. */
+    chainTime = DEADLINE - 1_000;
+    let r = await cancel();
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatch(/may still arrive until 2026-10-08T00:00:00\.000Z, by the chain's time/u);
+    expect(store.getProposal(P)!.status).toBe('open');
+    /* RED WHEN a time the caller names is taken in place of the chain's. */
+    expect((await cancel({ chainTime: DEADLINE + 1_000 })).status).toBe(400);
+    expect(store.getProposal(P)!.status).toBe('open');
+
+    /* Past the deadline and a raise of it did land: RED WHEN it is closed here as withdrawn. */
+    chainTime = DEADLINE;
+    for (const landed of ['open', 'carried', 'withdrawn', 'unknown'] as const) {
+      history = landed;
+      r = await cancel();
+      expect(r.status, landed).toBe(422);
+      expect(store.getProposal(P)!.status, landed).toBe('open');
+    }
+    history = 'never';
+
+    /* RED WHEN it is closed with the chain's time unread, or read from this service's own clock. */
+    chainTime = null;
+    expect((await cancel()).status).toBe(422);
+    expect(store.getProposal(P)!.status).toBe('open');
+
+    /* Past the deadline by the chain's time, never held: no raise of it can land. RED WHEN it is still refused, or a call is sent. */
+    chainTime = DEADLINE;
+    r = await cancel();
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ status: 'cancelled' });
+    expect(store.getProposal(P)!.status).toBe('cancelled');
+    expect(sent).toEqual([]);
+  });
+
+  it('A RECORD THE CHAIN DOES NOT HOLD AND NO RAISE WAS RELAYED FOR IS WITHDRAWN ONLY BY ITS WRITER, ONLY ONCE NO RAISE OF IT CAN LAND, AND ONE STOPPED BY POLICY IS READ ON THE CHAIN', async () => {
+    /* A signer's wallet may send its raise straight to the chain, leaving nothing here; it lands only in a block before a day after it was written down. */
+    const DEADLINE = Date.parse('2026-10-08T00:00:00.000Z');
+    const byAda = { filedBy: { publicKey: FILER['ada'] as Hex, signature: '00'.repeat(64) as Hex } };
+    const cancel = (who: string) => post(who, `/api/proposals/${P}/cancel`, {});
+    store.putProposal(proposal(byAda));
+
+    /* Inside the deadline. RED WHEN it is closed here at once, or the refusal does not say until when. */
+    chainTime = DEADLINE - 1_000;
+    let r = await cancel('ada');
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatch(/sent straight from a signer's wallet may still arrive until 2026-10-08T00:00:00\.000Z, by the chain's time/u);
+    expect(store.getProposal(P)!.status).toBe('open');
+
+    /* Past the deadline, another seat. RED WHEN a seat that did not write it down closes it. */
+    chainTime = DEADLINE;
+    r = await cancel('bo');
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatch(/only the signer who wrote it down withdraws it/u);
+    expect(store.getProposal(P)!.status).toBe('open');
+
+    /* Past the deadline, its writer: no raise of it can land. */
+    r = await cancel('ada');
+    expect(r.body).toMatchObject({ status: 'cancelled' });
+    expect(sent).toEqual([]);
+
+    /* Stopped by the company's policy, and the chain holds it, past the deadline, with the history not yet showing it. RED WHEN it is closed with the chain unread. */
+    store.putProposal(proposal({ ...byAda, status: 'blocked' }));
+    open.set(CHAIN, 1);
+    historyBehind = true;
+    expect((await cancel('ada')).status).toBe(422);
+    expect(store.getProposal(P)!.status).toBe('blocked');
+    /* Stopped by policy, not on the chain, inside the deadline. RED WHEN it is closed while a raise of it may still land. */
+    open.clear();
+    historyBehind = false;
+    chainTime = DEADLINE - 1_000;
+    expect((await cancel('ada')).status).toBe(422);
+    expect(store.getProposal(P)!.status).toBe('blocked');
+    chainTime = DEADLINE;
+    expect((await cancel('ada')).body).toMatchObject({ status: 'cancelled' });
+    expect(sent).toEqual([]);
   });
 
   it('A GOVERNANCE CHANGE CARRIED OUT IS WRITTEN DOWN AS CARRIED OUT ONLY ONCE THE CHAIN CLOSED IT', async () => {
@@ -337,6 +443,83 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     });
   });
 
+  describe('A VAULT\'S FIRST SECRET RUN IS WRITTEN DOWN AS CARRIED OUT ONLY ONCE THE CHAIN SHOWS ITS SECRET SET', () => {
+    const V = 'ab'.repeat(32) as Hex;
+    const S = 'prp_secretRunAAA';
+    const run = firstSecretRunOf({ vault: vaultPure as never, account: pureCircuits as never }, {
+      vault: V, secret: `${'5e'.repeat(31)}00`, readers: [recordsKeypairFrom(new Uint8Array(32).fill(1)).publicKey],
+    });
+    const window = secretRunWindowFrom(1_800_000_000n);
+    /* The run's public parts, as the call that set its secret discloses them. */
+    const parts = {
+      root: run.root, opensAt: String(window.opensAt), closesAt: String(window.closesAt), salt: run.salt, nonce: run.nonce,
+      copiesRoot: run.copiesRoot, count: String(run.count),
+    };
+    const made = firstSecretRunCarriedOf({ vault: vaultPure as never, account: pureCircuits as never }, V, parts);
+    const raisedAt = '2026-10-20T18:03:50.963Z';
+    const secretRun = (over: Partial<SealedProposal> = {}) => proposal({ id: S, chainId: made.proposal, digest: made.payload, raisedAt, ...over });
+    const carried = (who: string, body: Record<string, unknown> = { vault: V, run: parts }, id = S) => post(who, `/api/proposals/${id}/carried`, body);
+
+    it('writes it down once the chain no longer holds the run open and the vault holds the very secret the run sets with every sealed copy written, sending nothing', async () => {
+      store.putProposal(secretRun());
+      open.set(made.proposal, 1);
+      secrets.set(V, run.commitment);
+      /* RED WHEN: a run the chain still holds open is written down as carried out on the device's word. */
+      const stillOpen = await carried('ada');
+      expect(stillOpen).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+      expect(stillOpen.body.error).toMatch(/still shows this first secret run open/u);
+      open.delete(made.proposal);
+      secrets.delete(V);
+      /* RED WHEN: a run closed on the chain is written down as carried out while the vault holds no secret: closed unpaid, never set. */
+      const notSet = await carried('ada');
+      expect(notSet.status).toBe(409);
+      expect(notSet.body.error).toMatch(/does not show this vault's secret set yet/u);
+      expect(notSet.body.error).toMatch(/The vault is not affected/u);
+      /* RED WHEN: a vault holding a secret is taken as holding this run's, so another run's secret closes this one. */
+      secrets.set(V, '77'.repeat(32));
+      expect((await carried('ada')).body.error).toMatch(/not the one this run sets/u);
+      expect(store.getProposal(S)!.status).toBe('open');
+      secrets.set(V, run.commitment);
+      /* RED WHEN: a run whose secret is set is written down as carried out while a sealed copy is still owed and the vault takes nothing. */
+      const notStarted = await carried('ada');
+      expect(notStarted.status).toBe(409);
+      expect(notStarted.body.error).toMatch(/not every signer's sealed copy of it written/u);
+      expect(store.getProposal(S)!.status).toBe('open');
+      started.add(V);
+      unreadable = true;
+      /* RED WHEN: a chain that did not answer is read as one that shows the secret set. */
+      expect((await carried('ada')).status).toBe(503);
+      unreadable = false;
+      /* RED WHEN: the first secret run, carried out on the chain, stays open on every screen. */
+      expect((await carried('ada')).body).toMatchObject({ status: 'executed' });
+      expect(store.getProposal(S)!.status).toBe('executed');
+      expect(sent).toEqual([]);
+    });
+
+    it('refuses parts that are not this proposal\'s run, a run of another vault, one withdrawn, and one the chain never showed raised', async () => {
+      secrets.set(V, run.commitment);
+      store.putProposal(secretRun());
+      /* RED WHEN: the device's parts are taken for the run whatever window they name, so a record is closed under another run. */
+      expect((await carried('ada', { vault: V, run: { ...parts, closesAt: String(window.closesAt + 1n) } })).body.error)
+        .toMatch(/not the first secret run of that vault/u);
+      /* RED WHEN: a run is written down for a vault it is not the run of. */
+      secrets.set('cd'.repeat(32), run.commitment);
+      expect((await carried('ada', { vault: 'cd'.repeat(32), run: parts })).status).toBe(409);
+      /* RED WHEN: a proposal with no run named is taken for an adoption and refused for that, or parts that are not parts are taken. */
+      expect((await carried('ada', { vault: V, run: { ...parts, count: 'two' } })).status).toBe(400);
+      store.putProposal(secretRun({ status: 'cancelled' }));
+      /* RED WHEN: a proposal withdrawn is written down again as carried out. */
+      expect((await carried('ada')).status).toBe(409);
+      store.putProposal(secretRun({ raisedAt: undefined }));
+      /* RED WHEN: a proposal the chain never showed raised is written down as carried out. */
+      expect((await carried('ada')).status).toBe(409);
+      /* RED WHEN: a member who holds no seat writes a first secret run down as carried out. */
+      store.putProposal(secretRun());
+      expect((await carried('cy')).status).toBe(403);
+      expect(store.getProposal(S)!.status).toBe('open');
+    });
+  });
+
   it('A RETIREMENT SIGNATURE IS KEPT BESIDE ITS PROPOSAL AS THE SEAT HANDED IT IN, WITH ITS APPROVAL OR SIGNED AGAIN, AND SERVED UNJUDGED', async () => {
     open.set(CHAIN, 0);
     const adas = { signedFor: 4, publicKey: FILER.ada, signature: 'a1'.repeat(64) };
@@ -390,6 +573,19 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       /* RED WHEN a policy carried out is not written down as carried out once the chain closed it. */
       expect(r.body, circuit).toMatchObject({ status: 'executed' });
     }
+  });
+
+  it('A SIGNER\'S REMOVAL IS CARRIED OUT BY THE SAME ROUTE, AS THE ONE REMOVAL CIRCUIT THE ACCOUNT HAS', async () => {
+    store.putProposal(proposal());
+    open.set(CHAIN, 2);
+    /* RED WHEN the route still takes a removal by a circuit the account no longer has. */
+    expect((await post('ada', `/api/proposals/${P}/carry`, { tx: tx('amendSigner', CHAIN), circuit: 'amendSigner' })).status).toBe(400);
+    expect(sent).toEqual([]);
+    const r = await post('bo', `/api/proposals/${P}/carry`, { tx: tx('removeSignerAndSetThreshold', CHAIN), circuit: 'removeSignerAndSetThreshold' });
+    /* RED WHEN the route refuses a removal, or relays it as another circuit: a removal approved on devices is never carried out. */
+    expect(r.status).toBe(200);
+    expect(sent).toEqual([{ accountId: CO, circuit: 'removeSignerAndSetThreshold', proposal: CHAIN }]);
+    expect(r.body).toMatchObject({ status: 'executed' });
   });
 
   it('AN APPROVED RUN CHARGED TO ITS PERIOD IS RELAYED AS clearRun, AND ITS PROPOSAL, STILL OPEN TO BE PAID, IS NOT WRITTEN DOWN AS CARRIED OUT', async () => {

@@ -49,6 +49,24 @@ export interface ProposalFiling {
   readonly pays?: Hex;
 }
 
+/**
+ * How long, in seconds, a written-down proposal may take to reach the chain: its raise carries the time it
+ * was written down plus this as its deadline, and the chain refuses the raise from then on.
+ */
+export const RAISE_WINDOW_SECONDS = 86_400;
+
+/**
+ * The last chain time, in whole seconds as digits, at which a proposal written down at `createdAt` may be
+ * raised: every send and every resend of one record carries this one deadline.
+ */
+export const raiseByOf = (createdAt: string): string => {
+  const at = Date.parse(createdAt);
+  if (typeof createdAt !== 'string' || Number.isNaN(at)) {
+    throw new Error('this proposal\'s record does not say when it was written down, so the time it may be sent to the chain by is not known');
+  }
+  return String(Math.floor(at / 1000) + RAISE_WINDOW_SECONDS);
+};
+
 /** The raising seat's signature over the filing, and the key it is checked against. */
 export interface ProposalFiledBy { readonly publicKey: Hex; readonly signature: Hex }
 
@@ -140,12 +158,15 @@ export type GovernancePayloadBody =
   | { readonly vault: Hex; readonly assetKey: Hex; readonly commitment: Hex }
   | { readonly newPolicyBar: number }
   /**
-   * A signer removed: the leaf the chain takes off, and the retirement of its seat in the company's directory that
-   * every approving device signs with its approval. None for a leaf the company's directory holds no entry for.
+   * A signer removed: the leaf the chain takes off, the threshold the company is left at (none or 0 keeps the one in
+   * force), and the retirement of its seat in the company's directory that every approving device signs with its
+   * approval. No retirement for a leaf the company's directory holds no entry for.
    */
-  | { readonly leaf: Hex; readonly retirement?: RetirementTerms }
+  | { readonly leaf: Hex; readonly newThreshold?: number; readonly retirement?: RetirementTerms }
   /** A new vault taken into the company's account, by its address. */
-  | { readonly vault: Hex };
+  | { readonly vault: Hex }
+  /** The company's account committed to its pay-record key: the key's commitment, never the key. */
+  | { readonly commitment: Hex };
 
 /**
  * **WHAT A REMOVAL'S RETIREMENT SAYS, AS ITS PROPOSAL CARRIES IT**: the last
@@ -168,12 +189,21 @@ export interface RetirementTerms {
 
 /**
  * The governance kinds a device seals. A vault's spending policy, the
- * approvals a policy change needs and a new vault's adoption are named here and
- * not yet among the kinds the company's proposal list says in words, which
- * reads each as a change to the company.
+ * approvals a policy change needs, a new vault's adoption and the pay-record
+ * key are named here and not yet among the kinds the company's proposal list
+ * says in words, which reads each as a change to the company.
  */
 type GovernanceKind = Extract<ProposalKind, 'add-signer' | 'remove-signer' | 'set-threshold' | 'set-vault-threshold'> | 'set-spending-policy'
-  | 'set-policy-bar' | typeof ADOPT_VAULT;
+  | 'set-policy-bar' | typeof ADOPT_VAULT | typeof PAY_KEY;
+
+/**
+ * The company's account committed to its pay-record key: raised by the founding seat's device when it finishes the
+ * company, and approved from the wallet's one approval. It is never withdrawn.
+ */
+export const PAY_KEY = 'pay-key';
+
+/** What the pay-record key's proposal says it does: sealed in its record and built into each of its calls. */
+export const PAY_KEY_SUMMARY = 'Commit the company to its pay-record key';
 
 /** A new vault's adoption into the company's account: a governance proposal, raised by the device setting the vault up. */
 export const ADOPT_VAULT = 'adopt-vault';
@@ -383,10 +413,46 @@ export const seatStillProposedFor = (
   return openOnTheChain.some((id) => id.toLowerCase() === String(x.rec.chainId).toLowerCase());
 });
 
+/** **THE PAY-RECORD KEY'S PROPOSAL, AS ITS RECORD HOLDS IT** (`payKeyProposalIn`). */
+export interface PayKeyProposal {
+  readonly chainId: Hex;
+  readonly digest: Hex;
+  readonly commitment: Hex;
+  readonly salt: Hex;
+  readonly vault: Hex;
+}
+
+/**
+ * **OPENS THE RECORD OF THE PAY-RECORD KEY'S PROPOSAL**: a filing signed as this company's, sealed under a key this
+ * device holds, of kind `pay-key`, with a commitment and a salt. Null for anything else. Who filed it, and whether its
+ * identity on the chain is the one its parts make, is the caller's to check.
+ */
+export const payKeyProposalIn = (
+  rec: ProposalOpened & Partial<Pick<SealedProposal, 'chainId' | 'digest'>>, accountId: string, viewingKey: KeysHeld,
+): PayKeyProposal | null => {
+  if (proposalFilingRefusal(accountId, rec) !== null || typeof rec.chainId !== 'string' || typeof rec.digest !== 'string') return null;
+  try {
+    const key = keyOf(viewingKey, rec.keyEpoch);
+    const envelope = openRecord<{ kind: string; vault?: unknown; sealedPayload: Sealed }>('proposals', accountId, rec.sealed, key);
+    if (envelope.kind !== PAY_KEY) return null;
+    const body = parseCanonical<{ commitment?: unknown; __change?: { salt?: unknown } | null }>(unseal(envelope.sealedPayload, key));
+    const commitment = typeof body.commitment === 'string' ? body.commitment.toLowerCase() : '';
+    const salt = typeof body.__change?.salt === 'string' ? body.__change.salt.toLowerCase() : '';
+    const vault = typeof envelope.vault === 'string' ? envelope.vault.toLowerCase() : '';
+    if (![commitment, salt, vault].every((h) => HEX64.test(h))) return null;
+    return {
+      chainId: rec.chainId.toLowerCase() as Hex, digest: rec.digest.toLowerCase() as Hex, commitment: commitment as Hex, salt: salt as Hex,
+      vault: vault as Hex,
+    };
+  } catch {
+    return null;
+  }
+};
+
 /** Whether a value names a proposal kind this file seals. */
 export const isGovernanceKind = (kind: unknown): kind is GovernanceKind =>
   kind === 'add-signer' || kind === 'remove-signer' || kind === 'set-threshold' || kind === 'set-vault-threshold'
-  || kind === 'set-spending-policy' || kind === 'set-policy-bar' || kind === ADOPT_VAULT;
+  || kind === 'set-spending-policy' || kind === 'set-policy-bar' || kind === ADOPT_VAULT || kind === PAY_KEY;
 
 /** What a round's entries commit to, folded into the change its proposal seals. */
 export const batchDigestOf = (entries: readonly ShieldedEntry[]): Hex => commit(canonical(entries), '');

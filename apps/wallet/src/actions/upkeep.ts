@@ -101,7 +101,8 @@ const rosterOrNone = (r: CompanyReach) => async () => {
 /**
  * The anchor's doors, every one on this wallet's own reads: the chain's anchors and the account's call state through its
  * own indexer, the directory as its judges believe it, and the seat from the saved keys. The service is asked only for
- * the records and headers the anchor then checks, and to send the proven transaction.
+ * the records and headers the anchor then checks, and to send the proven transaction unless the act sends its calls
+ * straight to the chain (`handOverFor`).
  */
 export async function anchorDoorsIn(r: CompanyReach, api: Api): Promise<AnchorDoors> {
   const found = await r.judges.keysFoundFor(r.accountId, r.sealed);
@@ -127,6 +128,7 @@ export async function anchorDoorsIn(r: CompanyReach, api: Api): Promise<AnchorDo
       },
     },
     builder: r.builder,
+    ...(r.handOver === undefined ? {} : { handOver: r.handOver }),
   };
 }
 
@@ -139,7 +141,9 @@ export async function rotationDoorsIn(r: CompanyReach, api: Api): Promise<Rotati
   const found = await r.judges.keysFoundFor(r.accountId, r.sealed);
   const records = {
     directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, found, rosterOrNone(r)),
-    roundsOnChain: async (chainIds: readonly string[]) => r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds }),
+    roundsOnChain: async (chainIds: readonly string[]) => r.builder.roundsOnChain({
+      account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret,
+    }),
   };
   const anchor = await anchorDoorsIn(r, api);
   return {

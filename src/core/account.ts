@@ -45,7 +45,7 @@ import type { CompanyRecordStore, SealedCompanyRecord } from '../midnight/sealed
 import { inviteKeyOf } from './store.js';
 import { refuseARunNoVaultCanPay } from './run-raising.js';
 import { evaluatePolicy } from './company-policy.js';
-import { batchDigestOf } from './proposal-filing.js';
+import { batchDigestOf, raiseByOf } from './proposal-filing.js';
 
 
 /** What a round that moves no money says when it is raised, so that saying nothing is not an option. */
@@ -1115,10 +1115,11 @@ export class AccountService {
    * threshold decorative. One stolen key could manufacture as many approvers as
    * it liked and then approve anything M times alone.
    *
-   * The proposal commits to `signerInvitePayload(address, scope)`, so a
+   * The proposal commits to `signerInvitePayload(address, scope, 0)`, so a
    * proposal approved to pay salaries cannot double as an invitation, and the
-   * invitee cannot take wider rights than the signers approved. The invitee
-   * carries it out from their own wallet once it is approved.
+   * invitee cannot take wider rights than the signers approved; 0 keeps the
+   * threshold in force once the seat is taken. The invitee carries it out from
+   * their own wallet once it is approved.
    *
    * Note this uses the ledger's `propose` directly rather than
    * `AccountService.propose`: there is no payment here, so there is no change to
@@ -1138,7 +1139,7 @@ export class AccountService {
     if (!signer) throw new Error('signer not found');
     const scope = invite.scope ?? this.commitments.allVaults();
 
-    const digest = this.commitments.signerInvitePayload(invite.address, scope);
+    const digest = this.commitments.signerInvitePayload(invite.address, scope, 0);
     // The change is built BEFORE the record, because its salt is what the
     // chain's id for this proposal is derived from.
     const change: StateChange = {
@@ -1198,7 +1199,7 @@ export class AccountService {
      */
     await this.raise(proposal, viewingKey, MOVES_NO_MONEY, opts.onDevice ? THE_DEVICE_SENDS : () => this.ledger.propose(
       accountId, digest, change,
-      this.refFor(account, proposedBy), this.commitments.noVault()));
+      this.refFor(account, proposedBy), this.commitments.noVault(), BigInt(raiseByOf(proposal.createdAt))));
     return proposal;
   }
 
@@ -1302,7 +1303,7 @@ export class AccountService {
      */
     await this.raise(proposal, viewingKey, MOVES_NO_MONEY, opts.onDevice ? THE_DEVICE_SENDS : () => this.ledger.propose(
       accountId, digest, change,
-      this.refFor(account, proposedBy), this.commitments.noVault()));
+      this.refFor(account, proposedBy), this.commitments.noVault(), BigInt(raiseByOf(proposal.createdAt))));
     return proposal;
   }
 
@@ -1484,7 +1485,7 @@ export class AccountService {
 
     await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
       accountId, digest, change,
-      this.refFor(account, proposedBy), this.commitments.noVault()));
+      this.refFor(account, proposedBy), this.commitments.noVault(), BigInt(raiseByOf(proposal.createdAt))));
     return proposal;
   }
 
@@ -1912,6 +1913,7 @@ export class AccountService {
         change,
         this.refFor(account, args.proposedBy),
         vault,
+        BigInt(raiseByOf(proposal.createdAt)),
       ));
     } else {
       this.putProposal(proposal, args.viewingKey);
@@ -2071,7 +2073,7 @@ export class AccountService {
         payments: args.payments,
       }, args.onDevice ? THE_DEVICE_SENDS : async () => {
         const raised = await this.ledger.proposeRun(
-          args.accountId, args.run, change, this.refFor(account, args.proposedBy));
+          args.accountId, args.run, change, this.refFor(account, args.proposedBy), BigInt(raiseByOf(proposal.createdAt)));
         if (raised.proposalId !== chainId) {
           throw new Error(
             'the ledger raised this run under an id this service cannot derive, so no approval '
@@ -2539,7 +2541,7 @@ export class AccountService {
    */
   async seatRound(accountId: string, viewingKey: Hex, signerId: string, by: string, invite: SignerInvite): Promise<Proposal> {
     const signer = this.waitingForASeat(accountId, viewingKey, signerId);
-    const digest = this.commitments.signerInvitePayload(invite.address, invite.scope ?? this.commitments.allVaults());
+    const digest = this.commitments.signerInvitePayload(invite.address, invite.scope ?? this.commitments.allVaults(), 0);
     const live = this.liveRoundFor(accountId, viewingKey, digest);
     if (await this.ledger.holdsSigner?.(accountId, signer.leafCommitment!) === true) {
       this.recordTheSeat(accountId, viewingKey, signerId, live, signer.leafCommitment!);
@@ -3828,12 +3830,19 @@ export class AccountService {
         + 'first), then raise the run with a window that ends in the future.');
     }
     const fresh = this.requireProposal(earlierId, args.viewingKey);
+    const raiseBy = BigInt(raiseByOf(fresh.createdAt));
+    if (raiseBy <= nowInSeconds) {
+      throw new Error(
+        `this payroll was written down more than a day ago and the earlier attempt to raise it is not on chain; `
+        + `the chain takes its raise only before ${new Date(Number(raiseBy) * 1000).toISOString()}, so it can never be raised `
+        + 'again. Withdraw that attempt, then raise the run again.');
+    }
     await this.raise(fresh, args.viewingKey, {
       vault: args.run.vault, asset: kept.asset, total: kept.amount, payees: args.paying ?? args.run.payees,
       payments: args.payments,
     }, args.onDevice ? THE_DEVICE_SENDS : async () => {
       const raised = await this.ledger.proposeRun(
-        args.accountId, args.run, kept, this.refFor(account, args.proposedBy));
+        args.accountId, args.run, kept, this.refFor(account, args.proposedBy), raiseBy);
       if (raised.proposalId !== fresh.chainId) {
         throw new Error(
           'the ledger raised this run under an id this service cannot derive, so no approval '

@@ -349,7 +349,7 @@ async function main() {
   await sim.as(sim.applying(ada, seating)).propose(seatPayload);
   const seatId = sim.proposalId(seatPayload, seating.salt);
   await measure('seatInvited', 'seats an invited signer: the coin-key check, the leaf rebuilt, and a tree insert',
-    accountOpts('seatInvited', [seatId, false], sim.invited(blake, seating)), accountZk);
+    accountOpts('seatInvited', [seatId, false, 0n], sim.invited(blake, seating)), accountZk);
   await sim.seatInvited(seatId, sim.invited(blake, seating));
 
   /*
@@ -435,16 +435,16 @@ async function main() {
     await sim.as(sim.applying(ada, c)).setVaultThreshold(vaultAddrBytes, 2n, id);
   }
 
-  /* removeSigner — clears one slot, through an approved round. */
+  /* A removal that keeps the threshold: clears one slot, through an approved round. */
   {
     const cleo = privateStateFor(3);
     const seat = await approvedRound(invitePayloadFor(cleo), change(0n, 56));
     await sim.seatInvited(seat.id, sim.invited(cleo, seat.c));
     const { id, c } = await approvedRound(
-      pureCircuits.removeSignerPayload(sim.leafOf(cleo)), change(0n, 57));
-    await measure('amendSigner (unseat)', 'clears one signer\'s slot, through an approved round',
-      accountOpts('amendSigner',
-        [sim.leafOf(cleo), id], sim.applying(ada, c)), accountZk);
+      pureCircuits.removeAndSetThresholdPayload(sim.leafOf(cleo), 0n), change(0n, 57));
+    await measure('removeSignerAndSetThreshold (unseat)', 'clears one signer\'s slot and keeps the threshold, through an approved round',
+      accountOpts('removeSignerAndSetThreshold',
+        [sim.leafOf(cleo), 0n, id], sim.applying(ada, c)), accountZk);
   }
 
   /*

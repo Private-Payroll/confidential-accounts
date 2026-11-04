@@ -2,20 +2,23 @@ import { useMemo } from 'react';
 import { CheckListIcon } from '@hugeicons/core-free-icons';
 import { EmptyState, PageHeader, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
-import type { ProposalRow } from '../adapters/company-records.js';
+import { ASKS_UNREAD, type ProposalRow } from '../adapters/company-records.js';
 import { Details } from '../records/details.js';
-import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, UnbuiltAction, WithRecords } from '../records/parts.js';
+import { Approvals, Day, ProposalStatus, ProposalsNotRead, ProposalWhat, ReadOf, WithRecords } from '../records/parts.js';
+import { Approve } from '../actions/approve.js';
+import { Withdraw } from '../actions/withdraw.js';
+import { canApprove, canWithdraw } from '../adapters/proposal-acts.js';
 import { usePanel } from '../shell/right-panel.js';
 
-/** The ids of the proposals table's columns and filters, compared by the code and never shown. Declined is Coming soon: nothing declines a proposal today. */
+/** The ids of the proposals table's columns and filters, compared by the code and never shown. */
 const COLUMN = { what: 'what', raisedBy: 'raised-by', approvals: 'approvals', raised: 'raised', status: 'status' } as const;
-const FILTER = { all: 'all', pending: 'pending', approved: 'approved', declined: 'declined' } as const;
+const FILTER = { all: 'all', pending: 'pending', approved: 'approved' } as const;
 
 /**
  * PROPOSALS: every proposal the signers raised, newest first, in the kit's
- * table, filtered by all of them, those waiting and those approved; declined
- * is not built yet and its tab is shown disabled. A row opens its panel.
- * Declining and approving are not built yet and are shown disabled.
+ * table, filtered by all of them, those waiting and those approved. A row
+ * opens its panel, where a signer approves it and the signer who raised it
+ * may withdraw it. Nothing here declines a proposal.
  */
 export function Proposals() {
   const t = useText();
@@ -45,24 +48,24 @@ function ProposalsTable({ rows }: { rows: readonly ProposalRow[] }) {
     { id: COLUMN.raised, header: t('proposals.column.raised'), cell: (r) => <Day at={r.raisedAt} /> },
     { id: COLUMN.status, header: t('proposals.column.status'), cell: (r) => <ProposalStatus row={r} /> },
   ];
-  const filters = useMemo(() => {
-    const built: DataTableFilter<ProposalRow>[] = [
-      { id: FILTER.all, label: t('proposals.tab.all'), keeps: () => true },
-      { id: FILTER.pending, label: t('proposals.tab.pending'), keeps: (r) => r.status === 'open' },
-      { id: FILTER.approved, label: t('proposals.tab.approved'), keeps: (r) => r.status === 'approved' || r.status === 'executed' },
-    ];
-    return [...built, { id: FILTER.declined, label: t('proposals.tab.declined'), soon: t('proposals.declined.soon') }];
-  }, [t]);
+  const filters = useMemo<DataTableFilter<ProposalRow>[]>(() => [
+    { id: FILTER.all, label: t('proposals.tab.all'), keeps: () => true },
+    { id: FILTER.pending, label: t('proposals.tab.pending'), keeps: (r) => r.status === 'open' },
+    { id: FILTER.approved, label: t('proposals.tab.approved'), keeps: (r) => r.status === 'approved' || r.status === 'executed' },
+  ], [t]);
   return (
+    <div className="flex flex-col gap-3">
+      <ProposalsNotRead rows={rows} />
     <DataTable
       label={t('page.proposals.name')}
       rows={newestFirst}
       rowId={(r) => r.id}
       columns={columns}
       filters={filters}
-      onRowOpen={(r) => panel.open({ title: t('proposals.panel.title'), body: <ProposalPanel row={r} /> })}
+      onRowOpen={(r) => panel.open({ title: t('proposals.panel.title'), body: <ProposalPanel key={r.id} row={r} /> })}
       empty={<EmptyState icon={CheckListIcon}>{t('proposals.none')}</EmptyState>}
     />
+    </div>
   );
 }
 
@@ -78,11 +81,12 @@ function RaisedBy({ row }: { row: ProposalRow }) {
   if (row.raisedBy === null) return <>{t('proposals.raisedBy.unknown')}</>;
   if (why === null) return <>{row.raisedBy}</>;
   /* A seat not held now, or a holder who has not opened the company yet. */
-  const says = why === 'no-entry-of-their-own' ? t('proposals.raisedBy.notOpened', { name: row.raisedBy }) : t('proposals.raisedBy.notSeated', { name: row.raisedBy });
+  const says = why === 'no-entry-of-their-own' ? t('proposals.raisedBy.notOpened', { name: row.raisedBy })
+    : why === 'seat-retired' ? t('proposals.raisedBy.retired', { name: row.raisedBy }) : t('proposals.raisedBy.notSeated', { name: row.raisedBy });
   return <span data-raiser-not-believed={why}>{says}</span>;
 }
 
-/** A proposal's panel: what it does, who raised it, how many have approved, and Approve and Decline, both not built yet and shown disabled. */
+/** A proposal's panel: what it does, who raised it, how many have approved, Approve, and Withdraw for the signer who raised it. */
 function ProposalPanel({ row }: { row: ProposalRow }) {
   const t = useText();
   return (
@@ -96,10 +100,22 @@ function ProposalPanel({ row }: { row: ProposalRow }) {
           [t('proposals.column.status'), <ProposalStatus row={row} />],
         ]}
       />
-      <div className="flex flex-wrap gap-3">
-        <UnbuiltAction data-action="approve">{t('proposals.approve')}</UnbuiltAction>
-        <UnbuiltAction data-action="decline">{t('proposals.decline')}</UnbuiltAction>
+      <div className="flex flex-wrap items-start gap-3">
+        <Approve row={row} />
+        {canWithdraw(row) ? <Withdraw row={row} /> : null}
       </div>
+      {row.status === 'open' && !canApprove(row) ? <NotApprovedHere row={row} /> : null}
     </div>
   );
+}
+
+/**
+ * Why a waiting proposal has no Approve here: its record, or what it pays, was not read or not believed on this device,
+ * so it is not to be approved until it reads; the network has never held it raised; or this page does not approve its kind.
+ */
+function NotApprovedHere({ row }: { row: ProposalRow }) {
+  const t = useText();
+  const why = row.asksUnread ?? null;
+  const says = why === ASKS_UNREAD.notRead ? t('proposals.approve.notRead') : why === ASKS_UNREAD.notRaised ? t('proposals.approve.notRaised') : t('proposals.approve.notHere');
+  return <p className="text-muted-foreground" data-approve-not-here={why ?? ''}>{says}</p>;
 }

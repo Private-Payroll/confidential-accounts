@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { useMemo, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +9,7 @@ import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
 import { untilPageShown } from '../page-shown.test-support.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE SETUP WIZARD AND ITS BUILT STEPS, DRAWN, with the adapters that act
@@ -159,7 +157,7 @@ const { STEP } = await import('./step-ids.js');
 const recordsModule = await import('../records/company-records.js');
 
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
@@ -250,11 +248,11 @@ describe('the wizard reads the one list', () => {
   });
 
   /*
-   * RED WHEN: the signers step does not draw the signers component and the committee change, once each, or is Coming
-   * soon as a whole; or it does not say that choosing how many must approve is Coming soon, in the words kept for it;
-   * or it says so for a step that is held back.
+   * RED WHEN: the signers step does not draw the signers component, the change of the approvals needed and the committee
+   * change, once each, or is Coming soon as a whole or in part; or the words once kept for saying that choosing how many
+   * must approve is Coming soon are still in the language.
    */
-  it('draws the signers and the committee change in the signers step, with choosing how many must approve Coming soon', async () => {
+  it('draws the signers, the change of the approvals needed and the committee change in the signers step, with nothing in it Coming soon', async () => {
     const { container } = await drawWizard(signing());
     await pick(container, STEP.signers);
     const step = q(container, '[data-current-step]')!;
@@ -262,10 +260,9 @@ describe('the wizard reads the one list', () => {
     expect(step.querySelectorAll('[data-action=signers]')).toHaveLength(1);
     expect(step.querySelectorAll('[data-action=committee-change]')).toHaveLength(1);
     expect(q(container, '[data-coming-soon-step]')).toBeNull();
-    expect(q(container, '[data-also-soon]')!.textContent).toBe(EN['setup.step.signers.soon']);
-    expect(EN['setup.step.signers.soon']).toMatch(/how many of the signers must approve/i);
-    expect(EN['setup.step.signers.soon']).not.toMatch(/invite/i);
-    expect(q(step, '[data-slot=coming-soon]')).not.toBeNull();
+    expect(step.querySelectorAll('[data-action=change-threshold]')).toHaveLength(1);
+    expect(q(step, '[data-slot=coming-soon]')).toBeNull();
+    expect(EN['setup.step.signers.soon']).toBeUndefined();
   });
 
   /* RED WHEN: a press in the signers step that changes who holds the company is not told to the wizard, which then reads the company again. */
@@ -383,7 +380,6 @@ describe('a step held back until the company is finished', () => {
     }
     await pick(container, STEP.signers);
     expect(q(container, '[data-coming-soon-step]'), 'a step not built shows the reason, not Coming soon').toBeNull();
-    expect(q(container, '[data-also-soon]'), 'nor the part of it not built').toBeNull();
     expect(q(container, '[data-current-step] [data-slot=coming-soon]'), 'nor the Coming soon mark').toBeNull();
   });
 
@@ -1128,6 +1124,8 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
       expect(EN[`createVault.stopped.${k}`], k).not.toMatch(/finish setting it up/i);
       expect(EN[`createVault.stopped.${k}`], k).toMatch(/new vault/);
     }
+    /* RED WHEN: a stale adoption sends the person to withdraw it, which the wallet refuses, or to propose it again, which no earlier approver could approve. */
+    expect(EN['createVault.stopped.adoptionStale']).not.toMatch(/can withdraw it|proposed again|raised again/u);
     const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
     await nameIt(container);
     for (const [stopped, key] of [

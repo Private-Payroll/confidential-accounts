@@ -29,12 +29,15 @@ export function AskOver({ framed }: { readonly framed: boolean }): ReactNode {
 
 /**
  * What pressing again on the page does, for an action where it differs from carrying on: Create vault starts a new
- * vault, and putting money in again makes a new deposit.
+ * vault, putting money in again makes a new deposit, and changing the approvals needed or removing a signer again finds
+ * the proposal raised.
  */
 const CONTINUE: Readonly<Record<string, string>> = Object.freeze({
   'create-vault': 'act.create-vault.over.continue',
   'private-deposit': 'act.private-deposit.over.continue',
   'one-off-payment': 'act.one-off-payment.over.continue',
+  'change-threshold': 'act.change-threshold.over.continue',
+  'remove-signer': 'act.remove-signer.over.continue',
 });
 
 /**
@@ -43,6 +46,7 @@ const CONTINUE: Readonly<Record<string, string>> = Object.freeze({
  */
 const AWAITING: Readonly<Record<string, string>> = Object.freeze({
   'one-off-payment': 'act.one-off-payment.over.awaiting',
+  'approve-proposal': 'act.one-off-payment.over.awaiting',
 });
 
 /** The awaiting words for an end that is done with what it proposed still short of its approvals, else null. */
@@ -56,8 +60,9 @@ export const awaitingOf = (ended: EndedHere['ended']): { readonly key: string; r
 
 /**
  * The stopped window's title. A check or step that did not hold is titled by what had left the wallet by then, from
- * the runner's own counts: no transaction handed to the page, transactions the page confirmed it handed over, or one
- * it did not confirm and may still send. Every other stop is titled by why it stopped.
+ * the runner's own counts: no transaction handed over, transactions the page confirmed it handed over, or one not
+ * confirmed that may still land, whether handed to the page or sent by this wallet itself. Every other stop is titled
+ * by why it stopped.
  */
 const titleOf = (ended: EndedHere['ended']): string => {
   if (ended.why !== 'check-failed') return `act.why.${ended.why ?? 'step-failed'}`;

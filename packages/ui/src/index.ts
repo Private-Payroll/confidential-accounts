@@ -10,7 +10,7 @@
  * the figure alone but where it is named.
  */
 export { KitProvider } from './kit-provider.js';
-export { LanguageProvider, useLanguage, useText, type LanguageProviderProps } from './i18n/provider.js';
+export { LanguageProvider, WithMessages, useLanguage, useText, type LanguageProviderProps, type MoreMessages } from './i18n/provider.js';
 export { FALLBACK, chooseLanguage, directionOf, languagesFrom, type Language, type Messages } from './i18n/languages.js';
 export { formatDate, formatNumber, formatTimeAgo } from './format/intl.js';
 export { privateAmount, publicAmount, type PrivateAmount, type PublicAmount, type TokenAmount, type Visibility } from './format/token-amount.js';

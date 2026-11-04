@@ -4,7 +4,8 @@ import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import { NETWORK } from 'midnight-identity/network';
 import { assets as theAssets, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { fromHex, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
-import { EMPLOYEE_CLASSIFICATIONS, invitationIdOf, type EmployeeClassification } from '../../../../src/core/invitation.js';
+import { EMPLOYEE_CLASSIFICATIONS, invitationIdOf, invitationThresholdRefusal, type EmployeeClassification } from '../../../../src/core/invitation.js';
+import { seatRightsOf, seatThresholdRefusal } from '../../../../src/core/vault-approvers.js';
 import type { Role } from '../../../../src/core/types.js';
 import type { VendorTerms } from '../../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
@@ -23,7 +24,9 @@ import type { Identity } from 'midnight-identity/keys/derivation';
 import { addressFor } from 'midnight-identity';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
-import { companyReachFor, enteredFor, governanceDoorsFor, keptReach, type CompanyChain, type CompanyReach, type Handed } from './company-reach.js';
+import {
+  approversHere, companyReachFor, enteredFor, governanceDoorsFor, keptReach, runsOutrunHere, type CompanyChain, type CompanyReach, type Handed,
+} from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -33,8 +36,10 @@ import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
  * details in its own words and the token for the link it will send; the wallet reads the company and its own seat
  * from its own reach, seals and signs the invitation, the offer and the first record with that seat, and files them.
  * A signer is invited only by a private address: the wallet refuses an address it holds itself, a wallet already
- * seated or invited here, and rights wider than its own seat's, keeps the invitation in the saved keys, and only then
- * raises the proposal to seat the address with this seat's approval. A press again under a token already used goes on
+ * seated or invited here, and rights wider than its own seat's, and a new threshold the seat would set once taken
+ * that the chain would refuse or that would leave a vault unable to pay; keeps the invitation in the saved keys, and
+ * only then raises the proposal to seat the address with this seat's approval, then tells the page the approvals the
+ * proposal holds and needs, read from the chain. A press again under a token already used goes on
  * only with the kind and details of the first press under it, kept or filed, and is otherwise refused before anything
  * is signed; a record the first press filed and did not enter is entered then, signed by this seat. Nothing secret comes back to the page: it makes the link from its own token.
  */
@@ -120,9 +125,15 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
       if (role === undefined || !ROLES.includes(role)) return why('no-role');
       const address = opt('address');
       if (address === undefined) return why('signer-by-address');
+      /* "0", like none, keeps the threshold in force; anything else is the approvals needed once the seat is taken. */
+      const threshold = opt('threshold') === '0' ? undefined : opt('threshold');
+      if (threshold !== undefined && invitationThresholdRefusal(threshold) !== null) return why('not-a-threshold');
       return {
         kind: 'signer',
-        spec: { name, role, person: 'by-address', address: address.trim(), ...(opt('scope') === undefined ? {} : { scope: f['scope']!.toLowerCase() as Hex }) },
+        spec: {
+          name, role, person: 'by-address', address: address.trim(), ...(opt('scope') === undefined ? {} : { scope: f['scope']!.toLowerCase() as Hex }),
+          ...(threshold === undefined ? {} : { threshold }),
+        },
       };
     }
     case 'super-admin': return why('super-admin');
@@ -170,8 +181,10 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
         ...(f['amount'] === undefined ? [] : [page('amount', { amount: f['amount'], asset: f['asset'] ?? '' })]),
         ...(f['termsAmount'] === undefined ? [] : [page('terms-amount', { amount: f['termsAmount'], asset: f['termsAsset'] ?? '' })]),
       ];
+      const threshold = f['threshold'] === undefined || f['threshold'] === '' || f['threshold'] === '0' ? null : f['threshold'];
       const signer: ShownLine[] = kind !== 'signer' ? [] : [
         f['scope'] === undefined ? { key: 'act.invite.shown.every-vault', from: 'action' } : page('scope', { scope: f['scope'] }),
+        ...(threshold === null ? [] : [page('threshold', { threshold })]),
         { key: 'act.invite.shown.signer-checks', from: 'action' },
         { key: 'act.invite.shown.kept', from: 'action' },
         { key: 'act.invite.shown.raise', from: 'action' },
@@ -248,6 +261,7 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
               if (no !== null) throw notTheFirstAsk(no);
             }
             ctx.tell({ state: INVITE_STATE.alreadyFiled });
+            if (asked.kind === 'signer') await tellTheBar(ctx, r, opened.filed.offer.for);
             return;
           }
           if (filedAlready.status === 410) throw notTheFirstAsk(INVITATION_UNDER_THIS_LINK_CLOSED);
@@ -279,6 +293,7 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
             throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? 'not-made' : 'may-be-sent', { says: said(e) }));
           }
           ctx.tell({ state: INVITE_STATE.filed });
+          if (asked.kind === 'signer') await tellTheBar(ctx, r, ctx.keyring.open().read().seatInvitationsKept?.[id]?.offer.offer.for);
         },
       };
       return [upkeep.first, seat, invite, upkeep.last];
@@ -327,6 +342,7 @@ async function inviteASigner(
   const own = String(r.seat.scope).toLowerCase();
   const offered = (spec.scope ?? all).toLowerCase();
   if (offered !== own && own !== all) throw new StepRefused(why('wider-scope'));
+  if (spec.threshold !== undefined) await refuseASeatThresholdInTheWallet(r, offered, all, Number(spec.threshold));
   const keep = async (kept: KeptSeatInvitation): Promise<void> => {
     if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
     await ctx.keyring.keep((k) => withSeatInvitationKept(k, kept, reach.now()));
@@ -339,3 +355,36 @@ async function inviteASigner(
   const opts: InviteOptions = { token, ...(resume === undefined ? {} : { resume }) };
   await inviteHere(company, inviting, 'signer', spec, ctx.asker.origin, send, signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep), opts);
 }
+
+/**
+ * **A SEAT OFFERED WITH A NEW THRESHOLD IS CHECKED BEFORE ANYTHING IS KEPT, SIGNED OR RAISED** (`seatThresholdRefusal`):
+ * the threshold no higher than the seats this wallet reads on the chain and the one the invitation adds, and no vault
+ * left with fewer signers who may approve its runs than they need, the new seat counted on the vaults `scope` reaches
+ * (`seatRightsOf` against `allVaults`) and the signers removed since an open run was raised counted against every
+ * vault. The shared code checks it again before every send (`refuseASeatThresholdHere`).
+ */
+export const refuseASeatThresholdInTheWallet = async (r: CompanyReach, scope: string, allVaults: string, threshold: number): Promise<void> => {
+  const [roster, held] = await Promise.all([approversHere(r, () => runsOutrunHere(r)), r.holders()]);
+  const no = seatThresholdRefusal(roster, { seats: held.seats.length }, { kind: 'seatAndThreshold', rights: seatRightsOf(scope, allVaults), threshold });
+  if (no !== null) throw new StepRefused(why('threshold-refused', { says: `${no.charAt(0).toUpperCase()}${no.slice(1)}` }));
+};
+
+/**
+ * Tells the page the approvals the seat's proposal holds and the approvals it needs before the invitee can take the
+ * seat, both read from the chain through this wallet's own indexer: the higher of what the proposal held when it was
+ * raised, the threshold and the seat bar, as the approval judges it. Tells nothing when the offer names no proposal,
+ * the chain does not show it open, or the read fails, so the page never shows a number nothing read.
+ */
+const tellTheBar = async (ctx: StepContext, r: CompanyReach, offered: unknown): Promise<void> => {
+  const proposal = (offered as { invited?: { terms?: { proposal?: unknown } } } | undefined)?.invited?.terms?.proposal;
+  if (typeof proposal !== 'string') return;
+  const chainId = proposal.toLowerCase();
+  try {
+    const round = (await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [chainId] }))[chainId];
+    if (round === undefined || (round.held !== 'open' && round.held !== 'cleared')) return;
+    const held = await r.holders();
+    ctx.tell({ approvals: round.approvals, needed: Math.max(round.needed ?? 0, held.approvals, held.seatBar) });
+  } catch {
+    /* The invitation is made and its proposal raised; a read of where it stands that fails is never told as a refusal. */
+  }
+};

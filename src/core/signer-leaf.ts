@@ -12,7 +12,7 @@
  * person only once the chain holds their stored leaf. The circuits that gate
  * acting then recompute the leaf IN-CIRCUIT from the caller's own witnesses and
  * assert a path to it — `requireSigner()`,
- * called by `amendSigner`, `setThreshold`, `propose`, `approve`, `cancel`,
+ * called by `removeSignerAndSetThreshold`, `setThreshold`, `propose`, `approve`, `cancel`,
  * `setVaultThreshold` and `adopt`. **Not by every circuit**: `recordPayment`,
  * `closeExpiredRun` and `retireVault` deliberately do not, and each says why in
  * its own comment.

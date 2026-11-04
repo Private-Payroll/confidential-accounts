@@ -163,6 +163,15 @@ describe('a call goes to the page that asked, numbered, and is answered only by 
     expect(await two).toBe('unanswered');
   });
 
+  it('a page that made the call and heard nothing from the service says so, and that is not taken as a refusal', async () => {
+    const { from, channel } = opened();
+    from(act());
+    const one = channel.call({ step: 1, steps: 1 }, 'GET', '/api/accounts/acc_1');
+    from(called(1, { outcome: 'unreached', status: undefined, body: undefined }));
+    /* RED WHEN: a service that gave no answer reaches the wallet as the page refusing the call, which stops the action. */
+    expect(await one).toBe('unreached');
+  });
+
   it('refuses to hand over a call that is not under /api/, or a read that carries a body', async () => {
     const { from, channel } = opened();
     from(act());

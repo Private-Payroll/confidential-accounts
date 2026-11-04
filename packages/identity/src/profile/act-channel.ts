@@ -90,6 +90,8 @@ const aTransaction = (t: unknown): t is string =>
 
 const OUTCOME_VAULT = /^[0-9a-f]{64}$/u;
 const OUTCOME_CODES = /^[a-z]+(?:-[a-z]+){0,7}(?:,[a-z]+(?:-[a-z]+){0,7}){0,7}$/u;
+/** The name of one of the company's records, as an action's fields name one. */
+const OUTCOME_RECORD = /^[A-Za-z0-9_-]{1,64}$/u;
 
 /** An action's outcome as its entry allows it, or undefined when there is none, or null when it carries anything else. */
 export function readOutcome(raw: unknown, intent: string): Readonly<Record<string, string | number>> | undefined | null {
@@ -103,6 +105,7 @@ export function readOutcome(raw: unknown, intent: string): Readonly<Record<strin
     if (kind === 'vault' && typeof v === 'string' && OUTCOME_VAULT.test(v)) out[k] = v;
     else if (kind === 'count' && typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000) out[k] = v;
     else if (kind === 'code' && typeof v === 'string' && OUTCOME_CODES.test(v)) out[k] = v;
+    else if (kind === 'record' && typeof v === 'string' && OUTCOME_RECORD.test(v)) out[k] = v;
     else return null;
   }
   return Object.freeze(out);

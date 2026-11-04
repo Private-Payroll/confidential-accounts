@@ -43,6 +43,7 @@ import {
   createCircuitContext,
 } from '@midnight-ntwrk/compact-runtime';
 import { Contract, type Ledger, ledger, pureCircuits } from '../managed/contract/index.js';
+import * as LedgerV9 from '@midnightntwrk/ledger-v9';
 import { createHash } from 'node:crypto';
 import {
   witnesses,
@@ -111,9 +112,18 @@ export const invitedAddressFor = (state: AccountPrivateState): InvitedAddress =>
 export const invitedAddressCommitmentOf = (invite: InvitedAddress): Uint8Array =>
   pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt);
 
-/** What the signers approve to seat `who` at their invited address, with `who`'s own rights. */
-export const invitePayloadFor = (who: AccountPrivateState, invite: InvitedAddress = invitedAddressFor(who)): Uint8Array =>
-  pureCircuits.signerInvitePayload(invitedAddressCommitmentOf(invite), who.scope);
+/**
+ * What the signers approve to seat `who` at their invited address, with `who`'s own rights, and the threshold
+ * the seat sets once it is taken: 0, the default, keeps the threshold in force.
+ */
+export const invitePayloadFor = (
+  who: AccountPrivateState, invite: InvitedAddress = invitedAddressFor(who), newThreshold = 0n,
+): Uint8Array =>
+  pureCircuits.signerInvitePayload(invitedAddressCommitmentOf(invite), who.scope, newThreshold);
+
+/** What the signers approve to remove the signer whose leaf is `leaf` and keep the threshold in force. */
+export const removalPayloadFor = (leaf: Uint8Array): Uint8Array =>
+  pureCircuits.removeAndSetThresholdPayload(leaf, 0n);
 
 /**
  * A token's 32 bytes, from the 64 lower-case hex characters the ledger and
@@ -501,6 +511,15 @@ export class AccountSimulator {
    */
   lastEffects: any = undefined;
 
+  /**
+   * The last call that succeeded, as the runtime recorded it for proving: the
+   * operations it ran on the account's state (`publicTranscript`), the state it
+   * started from, its inputs and outputs. A test builds the ledger's own
+   * transaction from it (`transactionOfCalls`) to read the call back out of its
+   * bytes.
+   */
+  lastCall: any = undefined;
+
   /** Moves the simulated clock. Returns `this`, so it reads inline in a test. */
   at(secondsSinceEpoch: number | bigint): this {
     this.blockTime = Number(secondsSinceEpoch);
@@ -664,6 +683,7 @@ export class AccountSimulator {
     const out = await fn(this.contextFor(circuitId));
     const call = out.context.callContext;
     this.lastEffects = call.currentQueryContext.effects;
+    this.lastCall = out.context.callProofDataTrace?.at(-1);
     this.contractState = call.currentQueryContext.state;
     if (call.currentPrivateState !== undefined) this.privateState = call.currentPrivateState;
     if (call.currentZswapLocalState !== undefined) this.zswap = call.currentZswapLocalState;
@@ -675,16 +695,19 @@ export class AccountSimulator {
    * invitation (`invite`) and the proposal's salt. The simulator is left acting
    * as the invitee.
    *
+   * `newThreshold` is the threshold the invitation names, which the seat sets
+   * once it is taken; 0, the default, keeps the threshold in force.
+   *
    * `intoVacatedSlot` defaults to false — append into a fresh slot — because
    * that is what an account does until somebody leaves. Pass true to take a
    * slot a removal freed. The two are separate operations because the signer
    * tree is sparse and a never-written slot has no path to prove anything
    * about.
    */
-  seatInvited(proposal: Uint8Array, invitee: AccountPrivateState, intoVacatedSlot = false) {
+  seatInvited(proposal: Uint8Array, invitee: AccountPrivateState, intoVacatedSlot = false, newThreshold = 0n) {
     this.as(invitee);
     return this.run('seatInvited',
-      (c) => this.contract.impureCircuits.seatInvited(c, proposal, intoVacatedSlot));
+      (c) => this.contract.impureCircuits.seatInvited(c, proposal, intoVacatedSlot, newThreshold));
   }
 
   /** What a vacated slot holds, from the contract's own definition. */
@@ -699,18 +722,15 @@ export class AccountSimulator {
   }
 
   /**
-   * Removes a signer by clearing their one slot.
-   *
-   * One argument, where the previous design took the departing leaf plus a
-   * sixteen-wide vector of survivors to re-seat. Nobody but the person leaving
-   * is touched, so there is nothing else to pass.
+   * Removes a signer by clearing their one slot and keeps the threshold in
+   * force: `removeSignerAndSetThreshold` naming 0, under a proposal raised on
+   * `removeAndSetThresholdPayload(removedLeaf, 0)` (`removalPayloadFor`).
    */
   removeSigner(removedLeaf: Uint8Array, proposal: Uint8Array) {
-    return this.run('amendSigner',
-      (c) => this.contract.impureCircuits.amendSigner(c, removedLeaf, proposal));
+    return this.removeSignerAndSetThreshold(removedLeaf, 0n, proposal);
   }
 
-  /** Removes one signer and sets the threshold, under one approved proposal. */
+  /** Removes one signer and sets the threshold (0 keeps the one in force), under one approved proposal. */
   removeSignerAndSetThreshold(removedLeaf: Uint8Array, newThreshold: bigint, proposal: Uint8Array) {
     return this.run('removeSignerAndSetThreshold',
       (c) => this.contract.impureCircuits.removeSignerAndSetThreshold(c, removedLeaf, newThreshold, proposal));
@@ -835,10 +855,19 @@ export class AccountSimulator {
       (c) => this.contract.impureCircuits.setThreshold(c, newThreshold, proposal));
   }
 
-  propose(payloadHash: Uint8Array, vault: Uint8Array = NO_VAULT) {
+  /**
+   * `deadline` is the last block time, in seconds, the raise may land at; omitted, it is a day after the
+   * simulator's clock when the raise is made, the window a device gives a raise it writes down.
+   */
+  propose(payloadHash: Uint8Array, vault: Uint8Array = NO_VAULT, deadline: bigint = this.aDayFromNow()) {
     /* The opaque path of the merged `propose`: `isRun` false, run parts zero. */
     return this.run('propose', (c) => this.contract.impureCircuits.propose(
-      c, payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, vault));
+      c, payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, vault, deadline));
+  }
+
+  /** A day after the simulated clock, in seconds: the default deadline of a raise. */
+  aDayFromNow(): bigint {
+    return BigInt(this.blockTime + 86_400);
   }
 
   /**
@@ -989,12 +1018,14 @@ export class AccountSimulator {
     until: bigint;
     vault?: Uint8Array;
     required?: bigint;
+    /** The last block time the raise may land at; omitted, a day after the simulated clock. */
+    deadline?: bigint;
   }) {
     /* The run path of the merged `propose`: `isRun` true, opaque hash zero. */
     return this.run('propose',
       (c) => this.contract.impureCircuits.propose(
         c, ZERO_32, args.root, args.payees, args.from, args.until, args.required ?? 0n, true,
-        args.vault ?? NO_VAULT));
+        args.vault ?? NO_VAULT, args.deadline ?? this.aDayFromNow()));
   }
 
   /** Sweeps a run whose window has closed. Permissionless by design. */
@@ -1123,3 +1154,30 @@ export class AccountSimulator {
     };
   }
 }
+
+/**
+ * **A TRANSACTION AS THE LEDGER BUILDS ONE**, holding each call given in one
+ * intent, in order: the call the simulator recorded (`lastCall`), its
+ * operations split into their guaranteed and fallible parts by the ledger
+ * itself, under `entryPoint`, at `address` (the call's own contract unless
+ * another is named), then bound and serialised. Unproven, since no proof is made
+ * here: it reads back with the `pre-proof` marker and the chain's `binding` one.
+ */
+export const transactionOfCalls = (
+  calls: ReadonlyArray<{ readonly call: any; readonly entryPoint: string; readonly address?: string }>,
+): Uint8Array => {
+  const L = LedgerV9 as any;
+  const params = L.LedgerParameters.initialParameters();
+  let intent = L.Intent.new(new Date(1_900_000_000_000));
+  for (const { call, entryPoint, address } of calls) {
+    const qc = call.initialQueryContext;
+    const context = new L.QueryContext(new L.ChargedState(L.StateValue.decode(qc.state.state.encode())), qc.address);
+    context.block = qc.block;
+    context.effects = qc.effects;
+    const [parts] = L.partitionTranscripts([new L.PreTranscript(context, call.publicTranscript, undefined)], params);
+    intent = intent.addCall(new L.ContractCallPrototype(
+      address ?? call.contractAddress, entryPoint, new L.ContractOperation(), parts[0], parts[1], call.privateTranscriptOutputs,
+      call.input, call.output, L.communicationCommitmentRandomness(), entryPoint));
+  }
+  return L.Transaction.fromParts('undeployed', undefined, undefined, intent).bind().serialize();
+};

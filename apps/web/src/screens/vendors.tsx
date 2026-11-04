@@ -1,15 +1,16 @@
 import { Store01Icon } from '@hugeicons/core-free-icons';
-import { Badge, EmptyState, PageHeader, useText } from 'vaults-ui';
+import { Badge, Button, EmptyState, PageHeader, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn } from 'vaults-ui/data-table';
 import { INVITE_KIND } from '../adapters/invite.js';
-import { READ, type VendorRow, type VendorsRead } from '../adapters/company-records.js';
+import { payableVendors, READ, type VendorRow, type VendorsRead } from '../adapters/company-records.js';
 import { InvitePeople } from '../actions/invite.js';
+import { OneOffPayment } from '../actions/one-off.js';
 import { VendorPanel } from '../actions/vendor-panel.js';
 import { BELIEF, BeliefLeftOut, CalendarDate, PaidWords, ReadOf, StandingBadge, TermsOf, WithRecords } from '../records/parts.js';
 import { usePanel } from '../shell/right-panel.js';
 
 /** The ids of the vendors table's columns. */
-const COLUMN = { name: 'name', standing: 'standing', terms: 'terms', paid: 'paid', started: 'started' } as const;
+const COLUMN = { name: 'name', standing: 'standing', terms: 'terms', paid: 'paid', started: 'started', pay: 'pay' } as const;
 
 /** What the vendors' belief check left out, said above the list: the records it does not believe, and the active vendors it will not pay, each with why. */
 function VendorsLeftOut({ belief }: { belief: VendorsRead }) {
@@ -23,7 +24,7 @@ function VendorsLeftOut({ belief }: { belief: VendorsRead }) {
   );
 }
 
-/** The company's vendors, each with how they stand and are paid, beside the records the belief check left out, and the way to invite one. */
+/** The company's vendors, each with how they stand and are paid, beside the records the belief check left out, the way to invite one, and Pay on each vendor this device would pay, which opens a one-off payment to them in the shell's panel. */
 export function Vendors() {
   const t = useText();
   const panel = usePanel();
@@ -36,6 +37,15 @@ export function Vendors() {
     { id: COLUMN.terms, header: t('vendors.column.terms'), cell: (v) => <TermsOf vendor={v} /> },
     { id: COLUMN.paid, header: t('people.column.paid'), cell: (v) => <span className="text-muted-foreground"><PaidWords paid={v.paid} /></span> },
     { id: COLUMN.started, header: t('vendors.column.started'), cell: (v) => <CalendarDate date={v.startedAt} /> },
+    {
+      id: COLUMN.pay, header: t('vendors.column.pay'),
+      cell: (v) => (payableVendors([v]).length === 0 ? null : (
+        <Button size="sm" variant="outline" data-action="pay-vendor" data-vendor={v.id}
+          onClick={(e) => { e.stopPropagation(); panel.open({ title: t('oneOff.title'), body: <OneOffPayment vendor={v.id} /> }); }}>
+          {t('vendors.pay')}
+        </Button>
+      )),
+    },
   ];
   return (
     <div className="flex flex-col gap-6" data-screen="vendors">

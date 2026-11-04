@@ -33,7 +33,8 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import * as accountModule from '../../contracts/managed/contract/index.js';
-import { newWrappingKeypair } from '../core/crypto.js';
+import { canonical, newSigningKeypair, newWrappingKeypair, seal } from '../core/crypto.js';
+import { signProposalFiling, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { NO_ASSET } from '../core/assets.js';
 import { readAccountDeploy } from '../wiring/vault-submission.js';
 import { openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf } from '../midnight/pay-key-commitment.js';
@@ -129,6 +130,11 @@ let readAs: unknown | undefined;
 let refuseWith: Error | null;
 let server: ReturnType<express.Express['listen']>;
 let base: string;
+/** The founding seat's signing key, as it signed the company's first state, and the company's records this service keeps. */
+const SEAT = newSigningKeypair();
+let records: Map<string, unknown>;
+/** The company's proposals this service held at each send, in the order sent. */
+let heldAtSend: string[][];
 
 beforeEach(async () => {
   store = new MemoryStore();
@@ -142,6 +148,8 @@ beforeEach(async () => {
   clock = () => new Date();
   readAs = undefined;
   refuseWith = null;
+  heldAtSend = [];
+  records = new Map([['acc_1/state/0', { company: 'acc_1', kind: 'state', id: '0', version: 1, filedBy: { publicKey: SEAT.publicKey, signature: '00'.repeat(64) } }]]);
   const app = express();
   app.use(accountCreationRoutes({
     signedIn: (req, res, next) => { if (req.headers['x-test-person'] === undefined) { res.status(401).end(); return; } (req as { userId?: string }).userId = String(req.headers['x-test-person']); next(); },
@@ -154,6 +162,7 @@ beforeEach(async () => {
         if (refuseWith !== null) throw refuseWith;
         if (holding !== null) await holding;
         sent.push(what);
+        heldAtSend.push(store.listProposals('acc_1').map((p) => p.id));
         if (landing) chain.apply(bytes);
         return { ref: 'r', at: 'now', transactionHash: 'h' };
       },
@@ -162,6 +171,8 @@ beforeEach(async () => {
     register: async (id, a) => { registered.push([id, a]); },
     readers: { proven: async (bytes: Uint8Array) => { try { return await readProvenTransaction(bytes); } catch { return deviceCallOrProven(bytes); } } },
     expected: accountCreationExpectationsIn(ROOT),
+    records: { get: async (company: string, kind: string, id: string) => (records.get(`${company}/${kind}/${id}`) ?? null) as never },
+    proposalIdOf: (payload, salt) => MidnightCommitments.proposalId(payload, salt),
     now: () => clock(),
   }));
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
@@ -174,6 +185,17 @@ const call = async (path: string, method = 'GET', body?: unknown) => {
   return { status: r.status, body: await r.json().catch(() => ({})) };
 };
 const create = (b: { deploy: string; insert: string }) => call('/api/accounts/acc_1/creation', 'POST', { deploy: b.deploy, insert: b.insert });
+
+/** The pay-record key's proposal as a founding seat's device files it: sealed under the company's key, signed by `signer`. */
+const payKeyFiling = (
+  round: { payload: string; proposal: string }, over: { signer?: string; id?: string; chainId?: string; createdAt?: string } = {},
+): SignedProposalFiling =>
+  signProposalFiling('acc_1', {
+    id: over.id ?? 'prp_PayKeyRecord', digest: round.payload as never, chainId: (over.chainId ?? round.proposal) as never, keyEpoch: 0,
+    createdAt: over.createdAt ?? new Date().toISOString(), sealed: seal(canonical({ kind: 'pay-key' }), '11'.repeat(32) as never),
+  }, (over.signer ?? SEAT.secret) as never);
+const filePayKey = (filing: unknown, salt: string, tx?: string) =>
+  call('/api/accounts/acc_1/creation/pay-key/proposal', 'POST', { proposal: filing, proposalSalt: salt, ...(tx === undefined ? {} : { tx }) });
 
 describe('THE SERVICE CREATES NO COMPANY\'S ACCOUNT ON A CHAIN', () => {
   it('REFUSES BY NAME A CREATION THAT DOES NOT NAME THE FOUNDING SIGNER\'S KEY, AND LEAVES THE SIMULATED LEDGER ITS OWN', () => {
@@ -711,7 +733,7 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     const payKey = { kind: 'pay-key', commitment: s0.round.commitment } as const;
     const opened: OpenedRound = {
       chainId: s0.round.proposal, digest: s0.round.payload, vault: s0.noVault, salt: s0.round.salt, summary: '', governance: payKey,
-      half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
+      half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) }, raiseBy: String(Math.floor(Date.now() / 1000) + 86_400),
     };
     const onTheDevice = async (order: GovernedCallOrder) => {
       const a = await answerVaultAsk(workerDeps, {
@@ -725,7 +747,8 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
       circuit: 'propose', payKey, proposal: s0.round.proposal,
       half: { assetId: NO_ASSET, assetBlinding: '77'.repeat(32), proposalSalt: s0.round.salt, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
     });
-    expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'propose', tx: raise })).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(await filePayKey(payKeyFiling(s0.round), s0.round.salt, raise)).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(store.listProposals('acc_1')).toEqual([]);
     await call('/api/accounts/acc_1/creation/finish', 'POST');
     /* RED WHEN: the proposal's identity is not the one the account itself makes from the key's commitment and its salt. */
     expect(s0.committed).toBeNull();
@@ -734,17 +757,19 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
       Buffer.from(payKeyPayloadOf(s0.round.commitment), 'hex'), (accountModule as any).pureCircuits.noVault(), Buffer.from(s0.round.salt, 'hex'))).toString('hex'));
     /* RED WHEN: a raise is sent as anything but itself. */
     expect((await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'approve', tx: raise })).body.error).toMatch(/exactly one 'approve' call/);
-    expect((await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'propose', tx: made.insert })).status).toBe(422);
+    /* One record, filed once: every later send under it carries its one deadline. */
+    const ours = payKeyFiling(s0.round);
+    expect((await filePayKey(ours, s0.round.salt, made.insert)).status).toBe(422);
     /* RED WHEN: a step already on its way is sent a second time by a second request, and paid for twice. */
     let release = () => {};
     holding = new Promise<void>((r) => { release = r; });
-    const first = call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'propose', tx: raise });
+    const first = filePayKey(ours, s0.round.salt, raise);
     await new Promise((r) => setTimeout(r, 200));
-    expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'propose', tx: raise }))
-      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/being sent right now/) } });
+    expect(await filePayKey(ours, s0.round.salt, raise))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/right now by another request/) } });
     release();
     holding = null;
-    expect(await first).toMatchObject({ status: 200 });
+    expect(await first).toMatchObject({ status: 200, body: { proposal: { id: 'prp_PayKeyRecord' } } });
     expect(sent.filter((w) => w.startsWith('raising'))).toHaveLength(1);
     const s1 = await standingOnTheDevice();
     /* RED WHEN: the raise is not counted as the raiser's own approval, so a company of one needs a second transaction before it can seal. */
@@ -774,6 +799,142 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     expect(await create(made)).toMatchObject({ status: 200, body: { account: made.address, state: 'finished' } });
     /* RED WHEN: a step is sent for an account already committed to its key. */
     expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'sealPayKey', tx: seal })).toMatchObject({ status: 409, body: { state: 'finished' } });
+  });
+
+  it('THE PAY-RECORD KEY\'S PROPOSAL IS WRITTEN DOWN, SEALED BY ITS FOUNDING SEAT, BEFORE ITS RAISE IS SENT, AND A RAISE WITH NO RECORD IS NOT SENT', async () => {
+    const made = await createdOnTheDevice();
+    await create(made);
+    await call('/api/accounts/acc_1/creation/finish', 'POST');
+    const P = (accountModule as any).pureCircuits;
+    const ledger = (accountModule as any).ledger((runtime as any).ContractState.deserialize((chain.contract(made.address) as any).serialize()).data);
+    const s0 = payKeyStandingOf(P, { address: made.address.toLowerCase(), account: ledger, key: '9a'.repeat(32) as never, secretKey: MATERIAL.signingSecret as never });
+    const payKey = { kind: 'pay-key', commitment: s0.round.commitment } as const;
+    const a = await answerVaultAsk(workerDeps, {
+      id: 2, network: NET, ask: 'governed-call', account: made.address, material: MATERIAL,
+      order: {
+        circuit: 'propose', payKey, proposal: s0.round.proposal,
+        half: { assetId: NO_ASSET, assetBlinding: '77'.repeat(32), proposalSalt: s0.round.salt, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
+      },
+      opened: {
+        chainId: s0.round.proposal, digest: s0.round.payload, vault: Buffer.from(P.noVault()).toString('hex'), salt: s0.round.salt, summary: '',
+        governance: payKey, half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
+        raiseBy: String(Math.floor(Date.now() / 1000) + 86_400),
+      },
+      chain: { blockHash: '00'.repeat(32), accountState: b64((chain.contract(made.address) as any).serialize()), parameters: b64(L.LedgerParameters.initialParameters().serialize()) },
+    });
+    if (!a.ok || a.ask !== 'governed-call') throw new Error(a.ok ? 'another answer' : a.error);
+    /* RED WHEN: a raise of the pay-record key is sent on its own, with no record this service holds, so no page lists it and no other signer can approve it. */
+    for (const [named, status] of [[{}, 409], [{ proposal: 'prp_NotWrittenDn' }, 400]] as const) {
+      expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'propose', tx: a.tx, ...named }))
+        .toMatchObject({ status, body: { nothingWasSent: true } });
+    }
+    expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'propose', tx: a.tx }))
+      .toMatchObject({ body: { code: 'raised-with-its-record', error: expect.stringMatching(/raised only together with its record/u) } });
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toEqual([]);
+    /* RED WHEN: a record signed by any seat but the founding one, a forged signature, or an identity its parts do not make is written down, or its raise sent. */
+    const stranger = newSigningKeypair();
+    expect((await filePayKey(payKeyFiling(s0.round, { signer: stranger.secret }), s0.round.salt, a.tx)).body.error).toMatch(/not signed by the seat that founded/u);
+    expect((await filePayKey({ ...payKeyFiling(s0.round), digest: 'ee'.repeat(32) }, s0.round.salt, a.tx)).body.error).toMatch(/signature does not cover/u);
+    expect((await filePayKey(payKeyFiling(s0.round, { chainId: 'ee'.repeat(32) }), s0.round.salt, a.tx)).body.error).toMatch(/identity on the chain is not the one/u);
+    /* RED WHEN: a secret sent beside the record is kept, in the clear. */
+    expect(await call('/api/accounts/acc_1/creation/pay-key/proposal', 'POST', { proposal: { ...payKeyFiling(s0.round), payRecordKey: '9a'.repeat(32) }, proposalSalt: s0.round.salt, tx: a.tx }))
+      .toMatchObject({ status: 400, body: { code: 'a-secret-was-sent' } });
+    expect(store.listProposals('acc_1')).toEqual([]);
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toEqual([]);
+    const filing = payKeyFiling(s0.round);
+    expect(await filePayKey(filing, s0.round.salt, a.tx)).toMatchObject({ status: 201, body: { proposal: { id: 'prp_PayKeyRecord' }, txRef: 'r' } });
+    /* RED WHEN: the raise is handed to the chain before its record is kept, so a raise can land that no page lists. */
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toEqual(['raising the proposal that commits the company to its pay-record key']);
+    expect(heldAtSend.at(-1)).toEqual(['prp_PayKeyRecord']);
+    /* RED WHEN: what is kept is anything but the sealed filing as the device signed it, or it is not listed as the company's open proposal. */
+    const kept = store.getProposal('prp_PayKeyRecord')!;
+    expect(kept).toMatchObject({
+      accountId: 'acc_1', status: 'open', digest: s0.round.payload, chainId: s0.round.proposal, keyEpoch: 0, sealed: filing.sealed, filedBy: filing.filedBy,
+    });
+    expect(JSON.stringify(kept)).not.toContain(s0.round.commitment);
+    /* RED WHEN: a device taken up again writes down a second record of the same proposal, beside the one pages list. */
+    expect(await filePayKey(payKeyFiling(s0.round, { id: 'prp_SecondRecord' }), s0.round.salt)).toMatchObject({ status: 200, body: { proposal: { id: 'prp_PayKeyRecord' } } });
+    expect(store.listProposals('acc_1').map((p) => p.id)).toEqual(['prp_PayKeyRecord']);
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toHaveLength(1);
+  });
+
+  it('THE PAY-RECORD KEY\'S RECORD IS REFUSED WHEN IT SAYS IT PAYS OR ANOTHER SEAT HOLDS ITS IDENTITY, AND A RAISE THAT FAILS AFTER IT IS KEPT IS SENT AGAIN ON THE SAME RECORD', async () => {
+    const made = await createdOnTheDevice();
+    await create(made);
+    await call('/api/accounts/acc_1/creation/finish', 'POST');
+    const P = (accountModule as any).pureCircuits;
+    const ledger = (accountModule as any).ledger((runtime as any).ContractState.deserialize((chain.contract(made.address) as any).serialize()).data);
+    const s0 = payKeyStandingOf(P, { address: made.address.toLowerCase(), account: ledger, key: '9a'.repeat(32) as never, secretKey: MATERIAL.signingSecret as never });
+    const payKey = { kind: 'pay-key', commitment: s0.round.commitment } as const;
+    const a = await answerVaultAsk(workerDeps, {
+      id: 2, network: NET, ask: 'governed-call', account: made.address, material: MATERIAL,
+      order: {
+        circuit: 'propose', payKey, proposal: s0.round.proposal,
+        half: { assetId: NO_ASSET, assetBlinding: '77'.repeat(32), proposalSalt: s0.round.salt, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
+      },
+      opened: {
+        chainId: s0.round.proposal, digest: s0.round.payload, vault: Buffer.from(P.noVault()).toString('hex'), salt: s0.round.salt, summary: '',
+        governance: payKey, half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
+        raiseBy: String(Math.floor(Date.now() / 1000) + 86_400),
+      },
+      chain: { blockHash: '00'.repeat(32), accountState: b64((chain.contract(made.address) as any).serialize()), parameters: b64(L.LedgerParameters.initialParameters().serialize()) },
+    });
+    if (!a.ok || a.ask !== 'governed-call') throw new Error(a.ok ? 'another answer' : a.error);
+    /* RED WHEN: a record that says it pays something is written down as the pay-record key's proposal. */
+    const paying = signProposalFiling('acc_1', { ...payKeyFiling(s0.round), pays: 'dd'.repeat(32) } as never, SEAT.secret as never);
+    expect(await filePayKey(paying, s0.round.salt, a.tx)).toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/pays nothing/u) } });
+    /* RED WHEN: a raise that failed after its record was kept is answered without saying the record is kept, or the record is lost. */
+    refuseWith = new NothingWasSent('the fee payer is busy.');
+    const kept = payKeyFiling(s0.round);
+    expect(await filePayKey(kept, s0.round.salt, a.tx)).toMatchObject({
+      status: 422, body: { nothingWasSent: true, error: 'the fee payer is busy. It is written down, and its raise was not sent.' },
+    });
+    expect(store.listProposals('acc_1').map((p) => p.id)).toEqual(['prp_PayKeyRecord']);
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toEqual([]);
+    refuseWith = null;
+    /* RED WHEN: a raise built from a later filing, so with a later deadline than the record kept, is sent under that record. */
+    const later = new Date(Date.parse(kept.createdAt) + 60_000).toISOString();
+    expect(await filePayKey(payKeyFiling(s0.round, { id: 'prp_SecondRecord', createdAt: later }), s0.round.salt, a.tx)).toMatchObject({
+      status: 409, body: { nothingWasSent: true, code: 'raise-under-its-record', record: { id: 'prp_PayKeyRecord', createdAt: kept.createdAt, filedBy: kept.filedBy } },
+    });
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toEqual([]);
+    /* RED WHEN: the next filing writes a second record, or does not send the raise on the one kept. */
+    expect(await filePayKey(payKeyFiling(s0.round, { id: 'prp_SecondRecord', createdAt: kept.createdAt }), s0.round.salt, a.tx))
+      .toMatchObject({ status: 200, body: { proposal: { id: 'prp_PayKeyRecord' }, txRef: 'r' } });
+    expect(store.listProposals('acc_1').map((p) => p.id)).toEqual(['prp_PayKeyRecord']);
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toEqual(['raising the proposal that commits the company to its pay-record key']);
+  });
+
+  it('A RECORD ANOTHER SEAT PUT UNDER THE PAY-RECORD KEY\'S IDENTITY ON THE CHAIN STOPS THE FOUNDING SEAT\'S RECORD AND ITS RAISE', async () => {
+    const made = await createdOnTheDevice();
+    await create(made);
+    await call('/api/accounts/acc_1/creation/finish', 'POST');
+    const P = (accountModule as any).pureCircuits;
+    const ledger = (accountModule as any).ledger((runtime as any).ContractState.deserialize((chain.contract(made.address) as any).serialize()).data);
+    const s0 = payKeyStandingOf(P, { address: made.address.toLowerCase(), account: ledger, key: '9a'.repeat(32) as never, secretKey: MATERIAL.signingSecret as never });
+    const payKey = { kind: 'pay-key', commitment: s0.round.commitment } as const;
+    const a = await answerVaultAsk(workerDeps, {
+      id: 2, network: NET, ask: 'governed-call', account: made.address, material: MATERIAL,
+      order: {
+        circuit: 'propose', payKey, proposal: s0.round.proposal,
+        half: { assetId: NO_ASSET, assetBlinding: '77'.repeat(32), proposalSalt: s0.round.salt, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
+      },
+      opened: {
+        chainId: s0.round.proposal, digest: s0.round.payload, vault: Buffer.from(P.noVault()).toString('hex'), salt: s0.round.salt, summary: '',
+        governance: payKey, half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) },
+        raiseBy: String(Math.floor(Date.now() / 1000) + 86_400),
+      },
+      chain: { blockHash: '00'.repeat(32), accountState: b64((chain.contract(made.address) as any).serialize()), parameters: b64(L.LedgerParameters.initialParameters().serialize()) },
+    });
+    if (!a.ok || a.ask !== 'governed-call') throw new Error(a.ok ? 'another answer' : a.error);
+    const stranger = newSigningKeypair();
+    const theirs = payKeyFiling(s0.round, { signer: stranger.secret, id: 'prp_TheirRecord1' });
+    store.putProposal({ ...theirs, accountId: 'acc_1', status: 'open', approvalCount: 0, wiring: null } as never);
+    /* RED WHEN: a second record is kept beside another seat's under the same identity, or the raise is sent on it. */
+    expect(await filePayKey(payKeyFiling(s0.round), s0.round.salt, a.tx))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/holds another record under this proposal's identity/u) } });
+    expect(store.listProposals('acc_1').map((p) => p.id)).toEqual(['prp_TheirRecord1']);
+    expect(sent.filter((w) => /pay-record key/u.test(w))).toEqual([]);
   });
 
   it('AN ACCOUNT\'S DEPLOY THAT WOULD START HOLDING MONEY IS REFUSED, WHATEVER ELSE IT GETS RIGHT', async () => {

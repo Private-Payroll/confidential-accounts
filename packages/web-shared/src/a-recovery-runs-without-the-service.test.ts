@@ -29,8 +29,10 @@ import {
   PROPOSAL_FILE_FORMAT, proposalFileRead, proposalFileText, sentFromHere, type ProposalFile,
 } from './governance-from-the-chain.js';
 import {
-  approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, RecoveryNotCarriedOut, recoveryRefusal, type OwnStanding, type RecoveryDoors,
+  approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, recoveryFileOf, RecoveryNotCarriedOut, recoveryPartsOf, recoveryRefusal,
+  type OwnStanding, type RecoveryDoors,
 } from './records-recovered-here.js';
+import { ApprovalNotOwed } from './governed-call-on-device.js';
 
 const COMPANY = 'acct_recovered';
 const ACCOUNT = ACCOUNT_IN_A_TEST;
@@ -147,14 +149,18 @@ const workerFor = (chain: ReturnType<typeof aChain>): RecoveryDoors['builder'] =
       accountCompiled: 'COMPILED', accountZkConfig: 'ZK', accountPure: pureCircuits,
       prove: async () => ({ serialize: () => new TextEncoder().encode('proved') }),
       random: (n: number) => new Uint8Array(n).fill(7),
+      /* The device's clock a raise's deadline is judged by: this test's chain time, which its devices keep. */
+      now: () => chain.time.now * 1000,
     } as unknown as GovernedCallDeps;
     await buildGovernedCall(deps, { ...input, chain: { accountState: new Uint8Array(0), parameters: new Uint8Array(0) } });
     return { tx: b64(JSON.stringify({ circuit, proposal: String(input.order.proposal).toLowerCase(), by: input.material.signingSecret })) };
   },
-  roundsOnChain: async ({ chainIds }: { chainIds: readonly string[] }) => Object.fromEntries(chainIds.map((id) => {
+  /* Asked with a seat, each also says whether the test's chain holds that seat's approval: its raise or its approve. */
+  roundsOnChain: async ({ chainIds, seat }: { chainIds: readonly string[]; seat?: string }) => Object.fromEntries(chainIds.map((id) => {
     const p = chain.proposals.get(id.toLowerCase());
-    return [id.toLowerCase(), p === undefined ? { held: 'never' as const, approvals: 0 }
-      : { held: p.held, approvals: p.approvals, ...(p.failed.length === 0 ? {} : { failedCalls: [...p.failed] }) }];
+    const mine = seat === undefined ? {} : { approvedHere: p?.by.has(seat) ?? false };
+    return [id.toLowerCase(), p === undefined ? { held: 'never' as const, approvals: 0, ...mine }
+      : { held: p.held, approvals: p.approvals, ...(p.failed.length === 0 ? {} : { failedCalls: [...p.failed] }), ...mine }];
   })),
   /* The account's state, only at the indexer the person's own wallet names. */
   accountCallChain: async (q: { account: string; indexer: typeof INDEXER }) => (q.account === ACCOUNT && q.indexer.indexerUri === INDEXER.indexerUri
@@ -214,7 +220,7 @@ const aDevice = (
 };
 
 /** The full check of a device that has read the records from the first header. */
-const readTo = async (d: ReturnType<typeof aDevice>) => d.doors.read();
+const readTo = async (d: ReturnType<typeof aDevice>) => d.doors.read!();
 
 describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A HEADER NOBODY KEPT: THE QUORUM RECOVERS PAST IT FROM A FILE AND THE CHAIN, AND EVERY DEVICE THEN READS TO THE HEAD', async () => {
@@ -300,6 +306,81 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     expect((await readTo(aDevice(c, chain, B))).reached.head).toBe(done.head);
   });
 
+  it('A DEVICE THAT ASKS THE SERVICE NOTHING STANDS ON WHAT IT KEPT AND THE CHAIN, GOES ON ONLY WHEN THE PERSON CHOOSES TO, AND RAISES, APPROVES AND CARRIES OUT', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    const a0 = aDevice(c, chain, A);
+    const b0 = aDevice(c, chain, B);
+    await readTo(a0);
+    await readTo(b0);
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const asked: string[] = [];
+    /* No read of the records at all, and nothing sent through the service: what each device kept, the chain and the person's own wallet. */
+    const alone = (d: typeof a0, who: typeof A) => {
+      const g = aDevice(c, chain, who, { serviceGone: true, asked });
+      const { read: _read, ...doors } = g.doors;
+      return { ...g, doors: { ...doors, checked: d.kept.checked, headers: d.kept.headers } as RecoveryDoors };
+    };
+    const a = alone(a0, A);
+    const b = alone(b0, B);
+    /* RED WHEN: a device that asks the service nothing goes on without the person choosing to give the batch up, or says the service could not be reached. */
+    await expect(raiseRecoveryHere(a.doors, { latest: LATEST })).rejects.toThrow(/asks the company's service nothing.*Choose to go on without the service/su);
+    expect(chain.sent).toEqual([]);
+    const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST, withoutTheService: true });
+    await approveRecoveryHere(b.doors, file, { withoutTheService: true });
+    const done = await carryOutRecoveryHere(a.doors, file, { withoutTheService: true });
+    /* RED WHEN: a device that asks the service nothing cannot raise, approve and carry out a recovery from the heads it kept and the chain. */
+    expect(chain.sent).toEqual(['propose', 'approve', 'recoverAnchor']);
+    expect(c.landed[c.landed.length - 1]!.head).toBe(done.head);
+    expect(asked.every((x) => x === 'own wallet sent' || x === 'the person chose their own wallet')).toBe(true);
+  });
+
+  it('A RECOVERY\'S FILE MADE AGAIN FROM ITS PARTS IS WORD FOR WORD THE FILE ITS RAISER SAVED, AND A PART CHANGED MAKES ANOTHER PROPOSAL, REFUSED', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const b = aDevice(c, chain, B);
+    await readTo(a);
+    await readTo(b);
+    const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
+    /* RED WHEN: a wallet handing a recovery back in parts gives the page another file than the one raised. */
+    expect(recoveryFileOf(recoveryPartsOf(file))).toEqual(file);
+    expect(proposalFileText(recoveryFileOf(recoveryPartsOf(file)))).toBe(proposalFileText(file));
+    /* RED WHEN: a file made from changed parts is approved as the proposal it names. */
+    const moved = recoveryFileOf({ ...recoveryPartsOf(file), latest: String(Number(LATEST_SECONDS) - 60) });
+    await expect(approveRecoveryHere(b.doors, moved)).rejects.toThrow(/make another proposal than the one it names/u);
+    expect(chain.sent).toEqual(['propose']);
+  });
+
+  it('AN APPROVAL FROM A FILE IS READ FROM THE CHAIN FOR THIS SEAT: ONE ALREADY COUNTED SENDS NOTHING, AND ANOTHER SEAT\'S LANDING DOES NOT END THE WAIT', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    await readTo(a);
+    const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
+    /* RED WHEN: the raiser's approval, already counted by its raise, is built and sent again, or not told as counted. */
+    const counted = await approveRecoveryHere(a.doors, file).catch((e: unknown) => e);
+    expect(counted instanceof ApprovalNotOwed ? counted.why : counted).toBe('counted');
+    expect(chain.sent).toEqual(['propose']);
+    /* C's approval is lost on the way, and B's lands in its place: the count rises, C's approval is not on the chain. */
+    const cDevice = aDevice(c, chain, C);
+    await readTo(cDevice);
+    const lost: RecoveryDoors = {
+      ...cDevice.doors,
+      send: {
+        service: async (tx: string) => {
+          const t = JSON.parse(Buffer.from(tx, 'base64').toString());
+          chain.takes(b64(JSON.stringify({ ...t, by: B.secret })));
+        },
+      },
+    };
+    /* RED WHEN: the wait ends on the count rising, so C is told its approval landed when only B's did. */
+    await expect(approveRecoveryHere(lost, file)).rejects.toThrow(/did not show it within/u);
+    expect(chain.proposals.get(file.chainId)?.approvals).toBe(2);
+  });
+
   it('A FALSE HEADER: A DEVICE STOPPED AT IT APPROVES; ONE THAT CHECKED THE BATCH IT WOULD GIVE UP DOES NOT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
@@ -329,7 +410,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const b = aDevice(c, chain, B);
     /* A device whose read reaches the head the chain holds: here, the same read with nothing stopped. */
     const reachesTheHead = (d: ReturnType<typeof aDevice>) => {
-      const read = d.doors.read;
+      const read = d.doors.read!;
       return { ...d.doors, read: async () => ({ ...(await read()), stop: null }) };
     };
     /* RED WHEN: a device raises a recovery without its own read holding to the rule - it would give up a batch it can check. */
@@ -775,7 +856,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
       + 'Your own wallet can send it instead, and pay its fee');
     went.length = 0; onChain = false;
     expect((await sentFromHere({ send: { ownWallet: wallet(true) }, watch }, 'tx', shows)).sentBy).toBe('own-wallet');
-    expect(went[0]).toBe('asked: the company\'s service is not reachable from this page. Your own wallet can send it instead, and pay its fee');
+    expect(went[0]).toBe('asked: the company\'s service is not asked to send this call. Your own wallet can send it instead, and pay its fee');
     went.length = 0; onChain = false;
     /* RED WHEN: the person's own wallet sends a call the person declined. */
     await expect(sentFromHere({ send: { service: drops, ownWallet: wallet(false) }, watch }, 'tx', shows)).rejects.toThrow(/you chose not to send it from your own wallet/u);

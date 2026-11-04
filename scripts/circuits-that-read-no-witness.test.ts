@@ -154,7 +154,7 @@ describe('the circuits that read no witness', () => {
         proposeRun: 'propose',
         approve: 'approve',
         cancel: 'cancel',
-        removeSigner: 'amendSigner',
+        removeSigner: 'removeSignerAndSetThreshold',
         setThreshold: 'setThreshold',
         setVaultThreshold: 'setVaultThreshold',
         closeExpiredRun: 'closeExpiredRun',

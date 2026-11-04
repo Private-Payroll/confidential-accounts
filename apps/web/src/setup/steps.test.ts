@@ -51,11 +51,26 @@ const ACTS_FOR: Record<string, string> = {
   'person-panel.tsx': 'adapters/person-acts.js',
   /* The Vendors page's panel acts through the same adapter, because a vendor's record is admitted and changed in the same wallet conversation as a person's. */
   'vendor-panel.tsx': 'adapters/person-acts.js',
+  /* The Approve control, on the proposals page, on home and on a run's page, acts through the proposals adapter. */
+  'approve.tsx': 'adapters/proposal-acts.js',
+  /* The Withdraw control, on the proposals page and on a run's page, acts through the same adapter, because taking a proposal back is asked of the same wallet conversation as approving it. */
+  'withdraw.tsx': 'adapters/proposal-acts.js',
+  /* The change-approvals control, on the signers page, in the signers step, in the Create menu's panel and in the panel a vault's page opens, acts through the same adapter, because raising a change of the approvals the company needs is asked of the same wallet conversation as approving it. */
+  'change-threshold.tsx': 'adapters/proposal-acts.js',
+  /* Paying an approved run's leg, from the vault's page and from the run's own, is asked of the same wallet conversation: the wallet opens the proposal it is named and pays what that proposal approved. */
+  'pay-run.tsx': 'adapters/proposal-acts.js',
+  /* Raising a run from the payroll page's New run asks the same wallet conversation: the wallet draws the run itself and raises it on the person's Confirm. */
+  'raise-run.tsx': 'adapters/proposal-acts.js',
+  /* Raising a retry of the people of a run's leg the chain shows unpaid, from the run's own page, asks the same wallet conversation as raising the run. */
+  'retry-run.tsx': 'adapters/proposal-acts.js',
+  /* Paying someone from a vault or from the vendor list, and approving a one-off payment the vault's signers raised, asks the same wallet conversation as raising and approving any proposal. */
+  'one-off.tsx': 'adapters/proposal-acts.js',
 };
-/** Files other than the action's own that may import its adapter, because they only read what it names: the vault adapter's `namedFor` is the one source of a company's record, label and account (the invite, signer and person acts all ask it), and the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
+/** Files other than the action's own that may import its adapter, because they only read what it names: the vault adapter's `namedFor` is the one source of a company's record, label and account (the invite, signer, person and proposal acts all ask it), and the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the proposals adapter's reason codes and result kinds are read by the shared proposal-act hook and display (`records/proposal-act.tsx`), and its can-approve and can-withdraw questions by the proposals page, which never calls its acts; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
 const ALSO_READ_BY: Record<string, string[]> = {
-  'adapters/create-vault.js': ['adapters/invite.ts', 'adapters/person-acts.ts', 'adapters/signer-acts.ts'],
+  'adapters/create-vault.js': ['adapters/invite.ts', 'adapters/person-acts.ts', 'adapters/proposal-acts.ts', 'adapters/signer-acts.ts'],
   'adapters/person-acts.js': ['records/parts.tsx'],
+  'adapters/proposal-acts.js': ['records/proposal-act.tsx', 'screens/proposals.tsx'],
   'adapters/invite.js': ['actions/signers.tsx', 'actions/vendor-panel.tsx', 'adapters/person-acts.ts', 'fields/form-fields.tsx', 'screens/vendors.tsx'],
 };
 /** The components in actions/ that are no step's: each with the only files that may show it, one component called from each, never a copy. */
@@ -67,6 +82,13 @@ const NO_STEP: Record<string, string[]> = {
   'admit.tsx': ['actions/person-panel', 'actions/vendor-panel', 'records/parts'],
   'person-panel.tsx': ['screens/people'],
   'vendor-panel.tsx': ['screens/vendors'],
+  'approve.tsx': ['actions/one-off', 'screens/home', 'screens/proposals', 'screens/run'],
+  'withdraw.tsx': ['screens/proposals', 'screens/run'],
+  'change-threshold.tsx': ['actions/signers', 'screens/vault', 'shell/create-menu'],
+  'pay-run.tsx': ['screens/run', 'screens/vault'],
+  'raise-run.tsx': ['screens/home', 'screens/payroll', 'shell/create-menu'],
+  'retry-run.tsx': ['screens/run'],
+  'one-off.tsx': ['screens/vault', 'screens/vendors', 'shell/create-menu'],
 };
 
 describe('every step is in the list, and every entry is a step', () => {
@@ -101,8 +123,8 @@ describe('every step is in the list, and every entry is a step', () => {
   /*
    * RED WHEN: the committee change is a step again, or is shown from any file but the vault panel's and the signers
    * component's (a copy of it, or a third place it is drawn); or the signers step and the signers page do not draw that one
-   * component, the page from its own screen and the step from the list; or the step stops saying that choosing how many
-   * must approve is Coming soon.
+   * component, the page from its own screen and the step from the list; or the step or the page is Coming soon, in whole or in
+   * part, for choosing how many must approve again.
    */
   it('shows the committee change from the vault panel and the signers component only, which the step and the page both draw', () => {
     /* Every one of them is a file in actions/, and no step shows it. */
@@ -115,13 +137,28 @@ describe('every step is in the list, and every entry is a step', () => {
     }
     const signersStep = SETUP_STEPS[STEP.signers] as SetupStep;
     expect(isBuiltStep(signersStep) && signersStep.shows.action.name).toBe('Signers');
-    expect(typeof signersStep.alsoSoon).toBe('function');
+    expect(Object.keys(signersStep)).not.toContain('alsoSoon');
     expect(SETUP_STEPS[STEP.signers].page).toBe('settingsSigners');
-    expect(PAGES.settingsSigners.shows).toHaveProperty('already');
-    expect(((PAGES.settingsSigners as Page).shows as unknown as { already: { screenName: string } }).already.screenName).toBe('SignersBuilt');
+    expect(PAGES.settingsSigners.shows).toHaveProperty('screen');
+    expect(PAGES.settingsSigners.shows).not.toHaveProperty('comingSoon');
+    expect(((PAGES.settingsSigners as Page).shows as unknown as { screen: { screenName: string } }).screen.screenName).toBe('SignersBuilt');
     expect(read('screens/settings-sections.tsx')).toMatch(/export function SignersBuilt\b[\s\S]*<Signers \/>/);
     expect(read('screens/settings-sections.tsx')).not.toMatch(/CommitteeChange/);
     expect(read(`${ACTIONS}/signers.tsx`).match(/<CommitteeChange\b/g)).toHaveLength(1);
+  });
+
+  /*
+   * RED WHEN: the control that changes the approvals is drawn anywhere but once in the signers component, once in the Create menu and
+   * once on the vault's page, or any draws a copy of it, or the step or the Create menu says Coming soon for it; or the vault's page draws
+   * it under the page's records instead of in the shell's panel, where a records reload would empty it and its result.
+   */
+  it('draws the change-approvals control once in the signers component, once in the Create menu and once on the vault page (in the panel), and nowhere says it is Coming soon', () => {
+    expect(read('screens/vault.tsx').match(/<ChangeThreshold\b/g)).toHaveLength(1);
+    expect(read('screens/vault.tsx')).toMatch(/inPanel\([^\n]*<ChangeThreshold vault=\{vault\.vault\} \/>/);
+    expect(read(`${ACTIONS}/signers.tsx`).match(/<ChangeThreshold\b/g)).toHaveLength(1);
+    expect(read('shell/create-menu.tsx').match(/<ChangeThreshold\b/g)).toHaveLength(1);
+    expect(read('shell/create-menu.tsx')).not.toMatch(/data-create="change-approvals"[^\n]*soon=/);
+    expect(everyFile().filter((p) => /function ThresholdStepper|function ChangeThreshold\b/.test(read(p)))).toEqual([`${ACTIONS}/change-threshold.tsx`]);
   });
 
   /* RED WHEN: a step that can be skipped cannot be, or finishing the company can be skipped. */
@@ -187,7 +224,7 @@ describe('a step and its page are one component', () => {
       checked.push(`${s.id} on ${s.page}`);
     }
     /* Each built step whose page is built, named here, so the check above is seen reading it. */
-    expect(checked).toEqual(['vault on vaults', 'people on people']);
+    expect(checked).toEqual(['signers on settingsSigners', 'vault on vaults', 'people on people']);
   });
 });
 

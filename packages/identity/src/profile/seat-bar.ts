@@ -4,8 +4,8 @@
  * needs as the account stores them, the threshold standing in while none is
  * stored. It is the number the account's own `requireSeatBar` holds a seating,
  * a removal or a re-seating to, the number a change to a spending policy is
- * carried out at, and the fewest signers a removal by `amendSigner` may leave
- * seated. (`removeSignerAndSetThreshold` instead checks the size against the
+ * carried out at, and the fewest signers a removal that keeps the threshold may
+ * leave seated. (A removal that sets the threshold checks the size against the
  * threshold it has just written and against the stored policy-bar row, when
  * there is one.) Pure, and loads nothing, so the service and every device
  * judge by this one rule.

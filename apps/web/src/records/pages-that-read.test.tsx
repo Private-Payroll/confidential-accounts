@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
-import type { Company, CompanyRecords, PersonRow, ProposalRow, RunRow, VaultRow, VendorRow } from '../adapters/company-records.js';
+import type { Company, CompanyRecords, PersonRow, ProposalRow, RunLeg, RunRow, VaultRow, VendorRow } from '../adapters/company-records.js';
 import { untilPageShown, untilShown } from '../page-shown.test-support.js';
+import { ENGLISH } from '../english.test-support.js';
+import { proposalsNotRead } from './counts.js';
 
 /*
  * THE COMPANY PAGES THAT READ, DRAWN IN THE FRAME at their own addresses,
@@ -24,6 +23,8 @@ const state = vi.hoisted(() => ({
   /* What the creation adapter says of the company: nothing known, so not confirmed finished; and a gate a test holds the read at. */
   creation: { company: 'c-1', standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null } as unknown,
   creationGate: null as Promise<void> | null,
+  /* Each press that reached the wallet's acts (the act, then what it was asked), and what the wallet's act came to. */
+  payActed: { of: 'done', state: 'paid', paid: 2, owed: 0, unseen: 0 } as unknown, retried: { of: 'done', state: 'raised', approvals: 1, needed: 2 } as unknown, acts: [] as unknown[][], acted: { of: 'done', state: 'approved', approvals: 2, needed: 2 } as unknown,
 }));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
@@ -36,6 +37,14 @@ vi.mock('../adapters/company-records.js', async (real) => ({
   companyPagesOpen: (id: string) => { state.pagesOpen.push(id); return () => { state.pagesOpen.splice(state.pagesOpen.lastIndexOf(id), 1); }; },
   readVaultPublicMoney: async () => state.publicMoney,
   readVaultName: async (_person: string, _company: string, vault: string) => { state.namesAsked.push(vault); return state.vaultName; },
+}));
+vi.mock('../adapters/proposal-acts.js', async (real) => ({
+  ...(await real<typeof import('../adapters/proposal-acts.js')>()),
+  approveProposal: async (...args: unknown[]) => { state.acts.push(['approve', ...args]); return state.acted; },
+  withdrawProposal: async (...args: unknown[]) => { state.acts.push(['withdraw', ...args]); return state.acted; },
+  changeThreshold: async (...args: unknown[]) => { state.acts.push(['change-threshold', ...args]); return state.acted; },
+  payRun: async (...args: unknown[]) => { state.acts.push(['pay-run', ...args]); return state.payActed; },
+  retryRun: async (...args: unknown[]) => { state.acts.push(['retry-run', ...args]); return state.retried; },
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
@@ -59,6 +68,7 @@ vi.mock('../adapters/session.js', async (real) => ({
 }));
 
 const { PageView } = await import('../app.js');
+const { PAID_STATE } = await import('../adapters/company-records.js');
 const { Shell } = await import('../shell/shell.js');
 const { SessionProvider } = await import('../session.js');
 const { DEFAULT_PREFERENCES } = await import('../preferences.js');
@@ -70,26 +80,32 @@ const { takeAsked } = await import('../setup/steps.js');
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
-const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const EN = JSON.parse(readFileSync(`${SRC}/locales/en.json`, 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const VAULT = 'ab'.repeat(32);
 
 /** The token a run's fixture pays: compared by the screens, and never shown. */
 const NIGHT_TOKEN = '00'.repeat(32);
 const NIGHT = (units: bigint, how: 'private' | 'public') => (how === 'private' ? privateAmount(units, 6, 'NIGHT') : publicAmount(units, 6, 'NIGHT'));
+/** What a leg carries beyond its token, vault and people: its proposal, how it is paid, whom it pays, and who is paid what. */
+const LEG_MORE = {
+  proposal: 'p1' as string | null, form: 'shielded' as 'shielded' | 'unshielded' | null, list: 'employees' as const, people: 2, total: 7_000_000n,
+  /* What the chain shows paid of the leg, as the adapter reads it on this device: none of it yet. */
+  paidOnChain: 0 as 0 | 1 | 2 | undefined,
+  pays: [{ name: 'Ana', address: 'mn_shield-addr_ana', amount: privateAmount(5_000_000n, 6, 'NIGHT') }, { name: 'Bo', address: 'mn_shield-addr_bo', amount: privateAmount(2_000_000n, 6, 'NIGHT') }],
+};
 const RUN: RunRow = {
-  id: 'r1', period: '2026-10', status: 'proposed', settledAt: null,
+  id: 'r1', period: '2026-10', paidOnChain: PAID_STATE.none,
   payees: [
     { id: 'e1', name: 'Ana', amount: NIGHT(5_000_000n, 'private'), paid: 'privately' },
     { id: 'e2', name: 'Bo', amount: NIGHT(2_000_000n, 'public'), paid: 'publicly' },
     { id: 'e3', name: 'Cy', amount: NIGHT(1_000_000n, 'public'), paid: 'not-known' },
   ],
   currencies: [{ code: NIGHT_TOKEN, symbol: 'NIGHT', privately: NIGHT(5_000_000n, 'private'), publicly: NIGHT(2_000_000n, 'public') }],
-  legs: [{ code: `${NIGHT_TOKEN}:shielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately', vault: VAULT, payees: 2 }], unrecognised: 0,
+  legs: [{ ...LEG_MORE, code: `${NIGHT_TOKEN}:shielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately', vault: VAULT, payees: 2 }], unrecognised: 0,
 };
 /* Paid out of another vault, so a vault's payouts are told apart from every run's. */
-const PAID_RUN: RunRow = { ...RUN, id: 'r0', period: '2026-09', status: 'settled', settledAt: '2026-09-30T12:00:00.000Z', legs: [{ code: `${NIGHT_TOKEN}:shielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately', vault: 'cd'.repeat(32), payees: 2 }] };
+const PAID_RUN: RunRow = { ...RUN, id: 'r0', period: '2026-09', paidOnChain: PAID_STATE.all, legs: [{ ...LEG_MORE, paidOnChain: PAID_STATE.all, code: `${NIGHT_TOKEN}:shielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately', vault: 'cd'.repeat(32), payees: 2 }] };
 const PROPOSALS: ProposalRow[] = [
   { id: 'p9', kind: 'something new' as ProposalRow['kind'], status: 'open', raisedBy: 'Sam', approvals: 0, needed: null, raisedAt: '2026-09-19T00:00:00.000Z', pays: null },
   { id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 1, needed: 2, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'r1', period: '2026-10', asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately' } },
@@ -104,7 +120,7 @@ const PEOPLE: PersonRow[] = [
   { id: 'e5', name: 'Eve', title: 'Writer', standing: 'waiting-for-check', pay: NIGHT(1n, 'public'), paid: 'not-set-up', startedAt: '2026-03-01', ...MORE },
 ];
 const VENDORS: VendorRow[] = [{
-  id: 'ven_aa', name: 'Vee', standing: 'active', handedOver: false, termsKind: 'monthly', asset: NIGHT_TOKEN, monthly: NIGHT(2_000_000n, 'public'), paid: 'publicly', startedAt: '2026-02-01',
+  id: 'ven_aa', name: 'Vee', address: null, standing: 'active', handedOver: false, termsKind: 'monthly', asset: NIGHT_TOKEN, monthly: NIGHT(2_000_000n, 'public'), paid: 'publicly', startedAt: '2026-02-01',
   endDate: null, admittedAt: null, admitBy: 'fingerprint', notPayable: null,
 }];
 const records = (over: Partial<CompanyRecords> = {}): Company => ({
@@ -146,6 +162,7 @@ const q = (c: ParentNode, sel: string) => c.querySelector(sel) as HTMLElement | 
 /** Let the reads a page starts come back. */
 const settle = async () => { await act(async () => { await new Promise((r) => setTimeout(r, 5)); }); };
 const all = (c: ParentNode, sel: string) => [...c.querySelectorAll(sel)] as HTMLElement[];
+const inFooter = (sel: string) => document.querySelector(`[data-panel] [data-slot=sheet-footer] ${sel}`) as HTMLElement | null;
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -167,8 +184,8 @@ describe('every page that reads is built, at its own address', () => {
   });
 
   /*
-   * RED WHEN: an action these pages do not do yet (starting a run, approving,
-   * declining, paying out, inviting, withdrawing, checking a
+   * RED WHEN: an action these pages do not do yet (starting a run,
+   * withdrawing an invitation, checking a
    * fingerprint, exporting) is hidden, or can be pressed, or has a Coming soon
    * pill beside it, or shows anything on hover; or a Coming soon pill sits
    * among a page's actions instead of in a heading, a tab or a line of text;
@@ -177,8 +194,8 @@ describe('every page that reads is built, at its own address', () => {
   it('shows every action not built yet, disabled, with nothing beside it or on hover', async () => {
     /* Each page's own actions not built yet, so one hidden on one page is not covered by the same action drawn on another. */
     const EACH: Record<string, string[]> = {
-      home: ['approve', 'create-proposal', 'decline'], proposals: ['approve', 'decline'], payroll: ['new-run'], run: ['approve', 'export-run'],
-      vault: ['pay-out'], people: ['payslips'], invitations: ['withdraw'],
+      home: [], proposals: [], payroll: [], run: ['export-run'],
+      vault: [], people: ['payslips'], invitations: ['withdraw'],
     };
     const seen = new Set<string>();
     for (const [id, params] of [['home', {}], ['proposals', {}], ['payroll', {}], ['run', { run: 'r1' }], ['vault', { vault: VAULT }], ['people', {}], ['invitations', {}]] as const) {
@@ -201,7 +218,7 @@ describe('every page that reads is built, at its own address', () => {
       }
       cleanup();
     }
-    expect([...seen].sort()).toEqual(['approve', 'create-proposal', 'decline', 'export-run', 'new-run', 'pay-out', 'payslips', 'withdraw']);
+    expect([...seen].sort()).toEqual(['export-run', 'payslips', 'withdraw']);
     const vaults = await draw('vaults');
     expect(all(vaults, '[data-soon]')).toEqual([]);
     state.creation = { company: 'c-1', standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null };
@@ -301,7 +318,7 @@ describe('home', () => {
   /*
    * RED WHEN: pending approval loses its proposals or its people section, a
    * section its count or its actions, or an action not built yet (creating
-   * approving and declining a proposal, inviting, letting a person in) is missing,
+   * inviting, letting a person in) is missing,
    * pressable, or has a Coming soon pill beside it; inviting is not called
    * Invite; or View all does not go to Proposals.
    */
@@ -311,12 +328,11 @@ describe('home', () => {
     expect(q(pending, 'h2')!.textContent).toBe(EN['home.pendingApproval']);
     const proposals = q(pending, '[data-part=proposals-waiting]')!;
     expect(q(proposals, '[data-slot=section-header] h2')!.textContent).toBe(EN['page.proposals.name']);
-    expect(q(proposals, '[data-slot=section-actions] button[data-action=create-proposal]')!.hasAttribute('disabled')).toBe(true);
+    expect(q(proposals, '[data-slot=section-actions] button[data-action=create-menu]')!.textContent).toBe(EN['home.proposals.create']);
     expect(q(proposals, '[data-slot=section-actions] [data-action=view-all-proposals]')!.getAttribute('href')).toBe(PAGES.proposals.path);
+    /* A payroll run and a kind this app does not know cannot be approved from the list, so no row offers Approve, and none offers Decline. */
     for (const row of all(proposals, '[data-proposal]')) {
-      for (const action of ['approve', 'decline']) {
-        expect(q(row, `button[data-action=${action}]`)!.hasAttribute('disabled'), action).toBe(true);
-      }
+      expect(all(row, 'button').map((b) => b.dataset.action), row.dataset.proposal).toEqual([]);
     }
     const people = q(pending, '[data-part=people-waiting]')!;
     expect(q(people, '[data-slot=count-pill]')!.textContent).toBe('1');
@@ -337,6 +353,17 @@ describe('home', () => {
     expect(q(c, '[data-part=vaults] [data-slot=empty-state] [data-action=create-vault]')).not.toBeNull();
     expect(q(c, '[data-part=next-run] [data-slot=empty-state] [data-action=new-run]')).not.toBeNull();
     expect(q(c, '[data-part=proposals-waiting] [data-slot=count-pill]')!.textContent).toBe('0');
+  });
+
+  /* RED WHEN: Home's New run, shown while there is no run, is disabled or does nothing, or opens anything but the run form in the panel. */
+  it('opens the run form in the panel from the New run on Home', async () => {
+    state.company = records({ runs: { of: 'read', value: [] } });
+    const c = await draw('home');
+    const button = q(c, '[data-part=next-run] [data-action=new-run]')!;
+    expect(button.hasAttribute('disabled')).toBe(false);
+    await act(async () => { fireEvent.click(button); await new Promise((r) => setTimeout(r, 5)); });
+    expect(all(document.body, '[data-panel] [data-action=raise-run-panel]')).toHaveLength(1);
+    expect(q(document.body, '[data-panel]')!.textContent).toContain(EN['raiseRun.title']);
   });
 
   /* RED WHEN: a vault's tile is not the kit's tile linking to its page, or shows a change it has nothing to compare with. */
@@ -405,7 +432,7 @@ describe('home', () => {
     expect(q(c, '[data-part=recent-activity] [data-slot=coming-soon]')).not.toBeNull();
     /* The latest run is the newest month, whatever the record says of it: the record does not say whether it was paid. */
     cleanup();
-    state.company = records({ runs: { of: 'read', value: [{ ...RUN, id: 'r2', period: '2026-11', status: 'draft' }, RUN] } });
+    state.company = records({ runs: { of: 'read', value: [{ ...RUN, id: 'r2', period: '2026-11' }, RUN] } });
     const later = await draw('home');
     expect(q(later, '[data-part=next-run] [data-run]')!.dataset.run).toBe('r2');
   });
@@ -497,12 +524,70 @@ describe('proposals', () => {
     expect(q(refused, '[data-row=p1] [data-raiser-not-believed]')?.textContent).toBe(EN['proposals.raisedBy.notAsSigned']);
   });
 
-  it('filters by the kit\'s table\'s tabs, with Declined shown disabled and Coming soon, and opens a proposal\'s panel', async () => {
+  /* RED WHEN: a raiser whose seat was retired is said the same as one whose seat the chain does not show, or either is said as seated. */
+  it('says a raiser whose seat was retired apart from one whose seat the chain does not show', async () => {
+    state.company = records({ proposals: { of: 'read', value: [{ ...PROPOSALS[1]!, raiserNotBelieved: 'seat-retired' }] } });
+    const retired = await draw('proposals');
+    expect(q(retired, '[data-row=p1] [data-raiser-not-believed]')?.textContent).toBe(EN['proposals.raisedBy.retired']!.replace('{name}', 'Sam'));
+    expect(EN['proposals.raisedBy.retired']).not.toBe(EN['proposals.raisedBy.notSeated']);
+  });
+
+  /* RED WHEN: a proposal left out of the list for its key is not said to be left out, or is counted as waiting, or a status the chain never gives still has a word. */
+  it('says how many proposals were not read, and has no word for a status the chain does not give', async () => {
+    const gone = (id: string): ProposalRow => ({ id, kind: 'unreadable', status: 'unreadable', raisedBy: null, approvals: 0, needed: null, raisedAt: '', pays: null });
+    const mixed = [PROPOSALS[1]!, gone('u1'), gone('u2')];
+    state.company = records({ proposals: { of: 'read', value: mixed } });
+    const c = await draw('proposals');
+    expect(q(c, '[data-proposals-not-read]')?.textContent).toBe(EN['proposals.someNotRead_other']!.replace('{count}', '2'));
+    expect(proposalsNotRead(mixed)).toBe(2);
+    cleanup();
+    state.company = records({ proposals: { of: 'read', value: [PROPOSALS[1]!] } });
+    expect(q(await draw('proposals'), '[data-proposals-not-read]')).toBeNull();
+    expect(EN['proposals.status.rejected']).toBeUndefined();
+    expect(EN['proposals.status.blocked']).toBeUndefined();
+  });
+
+  /* RED WHEN: a payment is called private from its address or its form alone, in a proposal, a run total or a payee's line. */
+  it('says a shielded payment as shielded, never as private', async () => {
+    for (const key of ['proposals.kind.payRunPrivately', 'proposals.kind.payRunPrivatelyUnknownToken', 'payroll.runTotal.privately', 'records.paid.privately']) {
+      expect(EN[key]!.toLowerCase()).not.toMatch(/private/u);
+    }
+  });
+
+  /* RED WHEN: a vault's adoption, its first secret or the pay-record key is said as a change to the company, or a proposal this device did not read is given a status or a count. */
+  it('says what each of the three proposals setting a company up does, and a proposal not read as not read', async () => {
+    const row = (id: string, kind: string, status: string): ProposalRow => ({ id, kind, status, raisedBy: 'Sam', approvals: 1, needed: 1, raisedAt: '2026-10-21T00:00:00.000Z', pays: null }) as ProposalRow;
+    state.company = records({ proposals: { of: 'read', value: [
+      row('k1', 'adopt-vault', 'executed'), row('k2', 'vault-secret', 'approved'), row('k3', 'pay-key', 'executed'),
+      { ...row('k4', 'unreadable', 'unreadable'), raisedBy: null, approvals: 0, needed: null },
+    ] } });
+    const c = await draw('proposals');
+    expect(['k1', 'k2', 'k3', 'k4'].map((id) => q(c, `[data-row=${id}] td [data-slot=data-table-value]`)?.textContent)).toEqual([
+      EN['proposals.kind.adoptVault'], EN['proposals.kind.vaultSecret'], EN['proposals.kind.payKey'], EN['proposals.kind.unreadable'],
+    ]);
+    expect(['k1', 'k2', 'k4'].map((id) => q(c, `[data-row=${id}] [data-status]`)?.textContent)).toEqual([
+      EN['proposals.status.executed'], EN['proposals.status.approved'], EN['proposals.status.unreadable'],
+    ]);
+    expect([q(c, '[data-row=k2] [data-approvals]')?.textContent, q(c, '[data-row=k4] [data-approvals]')?.textContent]).toEqual(['1 of 1', EN['proposals.approvals.notRead']]);
+  });
+
+  /* RED WHEN: a run closed past its window, or closed by calls not read, is said as withdrawn, or as not read. */
+  it('says a run nobody withdrew, closed past its window or closed in a way not read, in its own words, apart from one withdrawn', async () => {
+    const row = (id: string, status: string): ProposalRow => ({ id, kind: 'payroll', status, raisedBy: 'Sam', approvals: 1, needed: 2, raisedAt: '2026-10-21T00:00:00.000Z', pays: null }) as ProposalRow;
+    state.company = records({ proposals: { of: 'read', value: [row('w1', 'cancelled'), row('e1', 'expired'), row('c1', 'closed')] } });
+    const c = await draw('proposals');
+    expect(['w1', 'e1', 'c1'].map((id) => q(c, `[data-row=${id}] [data-status]`)?.textContent)).toEqual([
+      EN['proposals.status.cancelled'], EN['proposals.status.expired'], EN['proposals.status.closed'],
+    ]);
+    expect(new Set([EN['proposals.status.cancelled'], EN['proposals.status.expired'], EN['proposals.status.closed'], EN['proposals.status.unreadable']]).size).toBe(4);
+  });
+
+  it('filters by the kit\'s table\'s tabs, with no Declined tab, and opens a proposal\'s panel', async () => {
     const c = await draw('proposals');
     const rowsShown = () => all(c, '[data-screen=proposals] [data-slot=data-table] tbody tr').map((e) => e.dataset.row);
     expect(q(c, '[data-screen=proposals] [data-slot=data-table] [data-slot=tabs-list]')).not.toBeNull();
-    expect(all(c, '[data-slot=tabs-trigger]').map((e) => e.dataset.filter)).toEqual(['all', 'pending', 'approved', 'declined']);
-    expect(all(c, '[data-slot=tabs-trigger]').map((e) => e.hasAttribute('data-disabled'))).toEqual([false, false, false, true]);
+    expect(all(c, '[data-slot=tabs-trigger]').map((e) => e.dataset.filter)).toEqual(['all', 'pending', 'approved']);
+    expect(all(c, '[data-slot=tabs-trigger]').map((e) => e.hasAttribute('data-disabled'))).toEqual([false, false, false]);
     expect(rowsShown()).toEqual(['p1', 'p2', 'p9']);
     /* A kind this app does not know is said as a change to the company, never as nothing. */
     expect(q(c, '[data-row=p9] td [data-slot=data-table-value]')?.textContent).toBe(EN['proposals.kind.other']);
@@ -510,37 +595,153 @@ describe('proposals', () => {
     expect(rowsShown()).toEqual(['p1', 'p9']);
     await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=approved]')!, { button: 0 }); });
     expect(rowsShown()).toEqual(['p2']);
-    expect(q(c, '[data-filter=declined]')!.textContent).toBe(EN['proposals.tab.declined']);
-    const declinedPill = q(c, '[data-filter-soon=declined] > [data-slot=coming-soon]')!;
-    await act(async () => { fireEvent.click(declinedPill); });
-    expect(document.body.textContent).toContain(EN['proposals.declined.soon']);
-    await act(async () => { fireEvent.click(declinedPill); });
-    await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=declined]')!, { button: 0 }); });
-    expect(rowsShown()).toEqual(['p2']);
-    expect(q(c, '[data-filter=declined]')!.getAttribute('aria-selected')).toBe('false');
+    expect(q(c, '[data-filter=declined]')).toBeNull();
     expect(q(c, '[data-row=p2] [data-approvals]')?.textContent).toBe('2 approvals');
     expect(q(c, '[data-row=p2] td [data-slot=data-table-value]')?.textContent).toBe(EN['proposals.kind.addSigner']);
     await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=all]')!, { button: 0 }); });
     expect(q(c, '[data-row=p1] [data-approvals]')?.textContent).toBe('1 of 2');
     /* RED WHEN a private payment proposal is not said as the private payments of its run. */
-    expect(q(c, '[data-row=p1] td [data-slot=data-table-value]')?.textContent).toBe('Pay the private payments of the October 2026 run in NIGHT');
+    expect(q(c, '[data-row=p1] td [data-slot=data-table-value]')?.textContent).toBe('Pay the shielded payments of the October 2026 run in NIGHT');
     await act(async () => { fireEvent.click(q(c, '[data-row=p1] td:last-child')!); });
     const panel = document.querySelector('[data-proposal-panel=p1]') as HTMLElement;
-    expect(all(panel, '[data-soon]').map((e) => [e.dataset.action, e.hasAttribute('disabled')])).toEqual([['approve', true], ['decline', true]]);
+    /* A payroll run's proposal the list carries nothing of for the wallet cannot be approved from it, so the panel says so; it was raised by another signer, and a run may be withdrawn by any seated signer, so it offers Withdraw, and nothing is Decline. */
+    expect(all(document.body, '[data-panel] button[data-action]').map((e) => e.dataset.action)).toEqual(['withdraw']);
+    expect(q(panel, '[data-approve-not-here]')!.textContent).toBe(EN['proposals.approve.notHere']);
+    expect(q(panel, '[data-soon]')).toBeNull();
     expect(q(panel, '[data-slot=coming-soon]')).toBeNull();
+  });
+
+  const PAY_KEY: ProposalRow = { id: 'pk1', kind: 'pay-key', status: 'open', raisedBy: 'Priya', approvals: 0, needed: 2, raisedAt: '2026-10-22T00:00:00.000Z', pays: null };
+  const press = async (sel: string) => { await act(async () => { fireEvent.click(q(document.body, sel)!); await new Promise((r) => setTimeout(r, 5)); }); };
+
+  /* RED WHEN: Approve in the panel asks the wallet for anything but the proposal pressed, or a proposal that is not waiting is offered it. */
+  it('asks the wallet to approve the proposal pressed from its panel, and says what came of it', async () => {
+    state.company = records({ proposals: { of: 'read', value: [PAY_KEY, { ...PAY_KEY, id: 'pk0', status: 'executed' }] } });
+    state.acts = [];
+    const c = await draw('proposals');
+    await act(async () => { fireEvent.click(q(c, '[data-row=pk0] td:last-child')!); });
+    expect(q(document.body, '[data-panel] [data-action=approve]')).toBeNull();
+    await act(async () => { fireEvent.click(q(c, '[data-row=pk1] td:last-child')!); });
+    /* RED WHEN: in the panel, Approve or what came of it is in the panel's scrolling body instead of its footer. */
+    expect(inFooter('[data-action=approve]')).not.toBeNull();
+    expect(q(document.body, '[data-proposal-panel=pk1] [data-action=approve]')).toBeNull();
+    await press('[data-panel] [data-action=approve]');
+    expect(state.acts).toEqual([['approve', 'u1', 'c-1', PAY_KEY, expect.any(Function)]]);
+    expect(q(document.body, '[data-panel] [data-acted]')?.textContent).toContain(EN['proposal.act.approved']);
+    expect(inFooter('[data-act-outcome] [data-acted]')).not.toBeNull();
+  });
+
+  /* RED WHEN: Approve is offered on a kind of proposal the wallet can be told about and is left out, it asks the wallet for anything but the row pressed, with what the row carries, or a panel opened after an approval keeps that approval's answer and stays disabled. */
+  it('offers the same Approve on every kind, and asks the wallet to approve the row pressed with what it carries', async () => {
+    const kinds = ['transfer', 'payroll', 'add-signer', 'remove-signer', 'set-threshold', 'set-vault-threshold', 'adopt-vault', 'vault-secret'] as const;
+    const rows = kinds.map((kind, i): ProposalRow & { asks: Record<string, string> } => ({ ...PAY_KEY, id: `k${i}`, kind, asks: { vault: 'v1' } }));
+    state.company = records({ proposals: { of: 'read', value: rows } });
+    state.acts = []; state.acted = { of: 'done', state: 'approved', approvals: 1, needed: 2 };
+    const c = await draw('proposals');
+    for (const r of rows) {
+      await act(async () => { fireEvent.click(q(c, `[data-row=${r.id}] td:last-child`)!); });
+      await press('[data-panel] [data-action=approve]');
+    }
+    expect(state.acts).toEqual(rows.map((r) => ['approve', 'u1', 'c-1', r, expect.any(Function)]));
+  });
+
+  /*
+   * RED WHEN: Withdraw is offered to a signer whose seat did not file a change to the company, a signer who shares the
+   * name of the one who did included, or asks the wallet for anything but the proposal pressed.
+   */
+  it('offers Withdraw on a change to the company only to the seat that filed it, never by name, and asks the wallet to withdraw that proposal', async () => {
+    const add = (id: string, raisedByYou: boolean): ProposalRow => ({ ...PAY_KEY, id, kind: 'add-signer', raisedBy: 'Priya', raisedByYou });
+    state.company = records({ proposals: { of: 'read', value: [add('a1', true), add('a2', false)] } });
+    state.acts = []; state.acted = { of: 'done', state: 'withdrawn', approvals: null, needed: null };
+    const c = await draw('proposals');
+    await act(async () => { fireEvent.click(q(c, '[data-row=a2] td:last-child')!); });
+    expect(q(document.body, '[data-panel] [data-action=withdraw]')).toBeNull();
+    await act(async () => { fireEvent.click(q(c, '[data-row=a1] td:last-child')!); });
+    /* RED WHEN: in the panel, Withdraw is in the panel's scrolling body instead of its footer. */
+    expect(inFooter('[data-action=withdraw]')).not.toBeNull();
+    await press('[data-panel] [data-action=withdraw]');
+    expect(state.acts).toEqual([['withdraw', 'u1', 'c-1', add('a1', true), expect.any(Function)]]);
+    expect(q(document.body, '[data-panel] [data-acted]')?.textContent).toBe(EN['proposals.withdraw.done']);
+  });
+
+  /*
+   * RED WHEN: a waiting proposal whose record was not read or believed here, or that the network has never held, is
+   * told as a kind this page cannot approve, or is offered Approve.
+   */
+  it('says why a waiting proposal is not offered Approve: not read here, not raised, or a kind this page does not approve', async () => {
+    const t = (id: string, asksUnread?: 'not-read' | 'not-raised'): ProposalRow => ({ ...PAY_KEY, id, kind: 'transfer', ...(asksUnread === undefined ? {} : { asksUnread }) });
+    state.company = records({ proposals: { of: 'read', value: [t('u1', 'not-read'), t('u2', 'not-raised'), t('u3')] } });
+    const c = await draw('proposals');
+    for (const [id, key] of [['u1', 'proposals.approve.notRead'], ['u2', 'proposals.approve.notRaised'], ['u3', 'proposals.approve.notHere']] as const) {
+      await act(async () => { fireEvent.click(q(c, `[data-row=${id}] td:last-child`)!); });
+      const panel = document.querySelector(`[data-proposal-panel=${id}]`) as HTMLElement;
+      expect(q(document.body, '[data-panel] [data-action=approve]'), id).toBeNull();
+      expect(q(panel, '[data-approve-not-here]')!.textContent, id).toBe(EN[key]);
+    }
+    expect(EN['proposals.approve.notRead']).toMatch(/Do not approve it until it reads here/u);
+  });
+
+  /*
+   * RED WHEN: a refusal of the wallet that sent nothing (the proposal not as shown, or a reason this page does not know)
+   * is told as something that may have gone part of the way, or a stop the wallet says may have is not.
+   */
+  it('tells a refusal that sent nothing as one, and says part may have gone only where the wallet says so', async () => {
+    for (const [why, says, partly] of [
+      ['not-as-shown', 'proposal.act.why.not-as-shown', false], ['other', 'proposal.act.why.other', false], ['may-be-sent', 'proposal.act.why.may-be-sent', true],
+    ] as const) {
+      state.company = records({ proposals: { of: 'read', value: [PAY_KEY] } });
+      state.acts = []; state.acted = { of: 'stopped', act: 'approve-proposal', why, partial: partly, handedOver: false };
+      const c = await draw('proposals');
+      await act(async () => { fireEvent.click(q(c, '[data-row=pk1] td:last-child')!); });
+      await press('[data-panel] [data-action=approve]');
+      const stopped = q(document.body, '[data-panel] [data-proposal-stopped]')!;
+      expect(stopped.textContent, why).toContain(EN[says]);
+      expect(q(stopped, '[data-partial]') !== null, why).toBe(partly);
+      if (!partly) expect(stopped.textContent, why).toMatch(/nothing was sent/iu);
+    }
+  });
+
+  /* RED WHEN: Home offers Decline, or its Approve asks the wallet for anything but the row's proposal. */
+  it('has no Decline on Home or the list, approves a waiting proposal from Home, and has a Create menu of three entries', async () => {
+    state.company = records({ proposals: { of: 'read', value: [PAY_KEY] } });
+    state.acts = []; state.acted = { of: 'done', state: 'approved', approvals: 1, needed: 2 };
+    const c = await draw('home');
+    expect(document.body.innerHTML).not.toContain('decline');
+    await press('[data-part=proposals-waiting] [data-proposal=pk1] [data-action=approve]');
+    expect(state.acts).toEqual([['approve', 'u1', 'c-1', PAY_KEY, expect.any(Function)]]);
+    await act(async () => { fireEvent.pointerDown(q(c, '[data-action=create-menu]')!, { button: 0, ctrlKey: false }); fireEvent.click(q(c, '[data-action=create-menu]')!); });
+    expect(all(document.body, '[data-create-menu] [data-create]').map((e) => [e.dataset.create, e.textContent!.startsWith(EN[`home.create.${{ 'new-run': 'newRun', 'one-off-payment': 'oneOff', 'change-approvals': 'approvals' }[e.dataset.create!]}`]!)]))
+      .toEqual([['new-run', true], ['one-off-payment', true], ['change-approvals', true]]);
+    expect(all(document.body, '[data-create-menu] [data-slot=coming-soon]')).toHaveLength(0);
+    expect(all(document.body, '[data-create-menu] [data-create]').filter((e) => e.getAttribute('aria-disabled') !== null)).toHaveLength(0);
+    await press('[data-create=change-approvals]');
+    expect(all(document.body, '[data-panel] [data-action=change-threshold]')).toHaveLength(1);
+    /* RED WHEN: in the panel, the press to change the approvals needed is in the panel's scrolling body instead of its footer. */
+    expect(inFooter('[data-action=raise-threshold]')).not.toBeNull();
+    expect(q(document.body, '[data-panel]')!.textContent).toContain(EN['changeThreshold.title']);
+    /* RED WHEN: New run or One-off payment in the Create menu does nothing, or opens anything but the run form or the one-off form in the panel. */
+    for (const [entry, form, title, press1] of [['new-run', 'raise-run-panel', 'raiseRun.title', 'raise-run'], ['one-off-payment', 'one-off-panel', 'oneOff.title', 'raise-one-off']] as const) {
+      await act(async () => { fireEvent.pointerDown(q(c, '[data-action=create-menu]')!, { button: 0, ctrlKey: false }); fireEvent.click(q(c, '[data-action=create-menu]')!); });
+      await press(`[data-create=${entry}]`);
+      expect(all(document.body, `[data-panel] [data-action=${form}]`), entry).toHaveLength(1);
+      expect(q(document.body, '[data-panel]')!.textContent, entry).toContain(EN[title]);
+      /* RED WHEN: in the panel, the press that raises the run or the payment is in the panel's scrolling body instead of its footer. */
+      expect(inFooter(`[data-action=${press1}]`), entry).not.toBeNull();
+    }
   });
 });
 
 describe('payroll and a run', () => {
-  /* RED WHEN: a run's private and public money are shown as one figure, a public amount has no Public pill or a private one has one, or a paid run shows "Paid" without its day. */
-  it('lists the runs, their money on a line each for private and public, and a paid run\'s day', async () => {
+  /* RED WHEN: a run's private and public money are shown as one figure, a public amount has no Public pill or a private one has one, or a run the chain shows paid does not say Paid. */
+  it('lists the runs, their money on a line each for private and public, and a run the chain shows paid', async () => {
     const c = await draw('payroll');
     expect(all(c, '[data-screen=payroll] [data-slot=data-table] tbody tr').map((e) => e.dataset.row)).toEqual(['r1', 'r0']);
     const money = q(c, `[data-row=r1] [data-currency="${NIGHT_TOKEN}"]`)!;
     expect(all(money, '[data-slot=amount]').map((a) => a.dataset.visibility)).toEqual(['private', 'public']);
     expect(q(money, '[data-slot=amount][data-visibility=private] [data-slot=public-pill]')).toBeNull();
     expect(q(money, '[data-slot=amount][data-visibility=public]')!.textContent).toContain(EN['kit.public.label']);
-    expect(q(c, '[data-row=r0] [data-status=settled]')?.textContent).toBe('Paid on Sep 30, 2026');
+    /* A run reads Paid once the chain shows it paid. */
+    expect(q(c, '[data-row=r0] [data-status=paid]')?.textContent).toBe(EN['payroll.status.paid']);
   });
 
   /*
@@ -593,7 +794,177 @@ describe('payroll and a run', () => {
     expect(q(c, '[data-payee=e3] [data-paid]')?.textContent).toBe(EN['records.paid.notKnown']);
     cleanup();
     const none = await draw('run', { run: 'nope' });
-    expect(q(none, '[data-no-run]')).not.toBeNull();
+    expect(q(none, '[data-screen=run] [data-slot=empty-state-line]')?.textContent).toBe(EN['run.notFound']);
+    expect(q(none, '[data-screen=run] [data-slot=empty-state]')).not.toBeNull();
+    cleanup();
+    const noVault = await draw('vault', { vault: 'nope' });
+    expect(q(noVault, '[data-screen=vault] [data-slot=empty-state-line]')?.textContent).toBe(EN['vault.notFound']);
+  });
+
+  const ASKS = { kind: 'payroll', period: '2026-10', vault: VAULT, token: NIGHT_TOKEN, form: 'private', payees: '2', total: '7000000' };
+  const panelOf = () => document.querySelector('[data-panel]') as HTMLElement;
+  /*
+   * RED WHEN: a run's page cannot approve or withdraw the proposal of a leg, or does it anywhere but the shell's panel, or for another proposal than
+   * the one on the line pressed, or Withdraw is kept from a signer who did not raise the run, or an act's answer is lost once the records are read again.
+   */
+  it('approves and withdraws a leg\'s proposal from the shell\'s panel through the wallet\'s acts, Withdraw offered to a signer who did not raise it', async () => {
+    const row: ProposalRow = { ...PROPOSALS[1]!, asks: ASKS, raisedByYou: false };
+    state.company = records({ proposals: { of: 'read', value: [row] } });
+    state.acts = []; state.acted = { of: 'done', state: 'approved', approvals: 2, needed: 2 };
+    const c = await draw('run', { run: 'r1' });
+    const round = q(c, '[data-round=privately]')!;
+    expect(all(round, ':scope > div button[data-action]').map((b) => b.dataset.action)).toEqual(['approve', 'withdraw']);
+    expect(q(c, '[data-round=publicly] button[data-action]')).toBeNull();
+    expect(state.acts).toEqual([]);
+    await act(async () => { fireEvent.click(q(round, 'button[data-action=approve]')!); await new Promise((r) => setTimeout(r, 5)); });
+    expect(state.acts).toEqual([]);
+    await act(async () => { fireEvent.click(q(panelOf(), 'button[data-action=approve]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(state.acts).toEqual([['approve', 'u1', 'c-1', row, expect.any(Function)]]);
+    expect(q(panelOf(), '[data-acted]')!.textContent).toContain(EN['proposal.act.approved']);
+    state.acts = [];
+    await act(async () => { fireEvent.click(q(c, '[data-round=privately] button[data-action=withdraw]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await act(async () => { fireEvent.click(q(panelOf(), 'button[data-action=withdraw]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(state.acts).toEqual([['withdraw', 'u1', 'c-1', row, expect.any(Function)]]);
+    expect(q(panelOf(), '[data-acted]')!.textContent).toContain(EN['proposals.withdraw.done']);
+  });
+
+  /*
+   * RED WHEN: a run reads Paid, or its legs read paid, when the chain does not show it; a leg or a run the chain shows partly paid is not
+   * told apart from one it shows paid in full or not at all; a payment the chain could not be read for is called paid or unpaid; or a run whose
+   * record names a proposal for a leg reads as a draft, or one that names none reads as anything else.
+   */
+  it('says a run is paid only by what the chain shows, and a draft only while no leg of it is raised', async () => {
+    const leg = (paidOnChain: 0 | 1 | 2 | undefined, proposal: string | null): RunLeg => ({ ...RUN.legs[0]!, paidOnChain, proposal });
+    const run = (paidOnChain: 0 | 1 | 2 | undefined, proposal: string | null = 'p1'): RunRow => ({ ...RUN, paidOnChain, legs: [leg(paidOnChain, proposal)] });
+    const says = async (r: RunRow) => {
+      state.company = records({ runs: { of: 'read', value: [r] } });
+      const c = await draw('run', { run: 'r1' });
+      const out = [q(c, '[data-slot=page-header] [data-status]')!.textContent, q(c, '[data-round=privately] [data-leg-paid]')?.textContent ?? null, q(c, '[data-round=privately] [data-slot=amount]')?.dataset.kind ?? null];
+      cleanup();
+      return out;
+    };
+    /* Raised, and the chain shows none of it paid: it reads not paid, and its amounts are still to be paid. */
+    const none = await says(run(PAID_STATE.none));
+    expect(none.slice(0, 2)).toEqual([EN['payroll.status.notPaid'], EN['run.legPaid.notSeen']]);
+    expect((await says(run(PAID_STATE.some))).slice(0, 2)).toEqual([EN['payroll.status.partlyPaid'], EN['run.legPaid.inPart']]);
+    expect((await says(run(PAID_STATE.all))).slice(0, 2)).toEqual([EN['payroll.status.paid'], EN['run.legPaid.inFull']]);
+    expect((await says(run(undefined))).slice(0, 2)).toEqual([EN['payroll.status.paidUnread'], EN['run.legPaid.unread']]);
+    expect((await says(run(undefined, null))).slice(0, 1)).toEqual([EN['payroll.status.draft']]);
+  });
+
+  /*
+   * RED WHEN: a run's page offers Pay before the chain shows the leg's proposal approved, for a leg the chain shows paid in full, or in the
+   * shell's panel for anything but the leg on the line; or does not show a retry on a leg, with its own approvals and presses.
+   */
+  it('offers Pay on a leg once the chain shows its proposal approved, and shows a retry on it with its own presses', async () => {
+    const retry = { proposal: 'p3', vault: VAULT, people: 1, total: 2_000_000n, pays: [LEG_MORE.pays[1]!], leaves: ['bb'], paidOnChain: PAID_STATE.none };
+    const withRetry: RunRow = { ...RUN, legs: [{ ...RUN.legs[0]!, retries: [retry] }] };
+    const adopted: VaultRow = { vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true };
+    const p1 = (status: 'open' | 'approved'): ProposalRow => ({ ...PROPOSALS[1]!, status, asks: ASKS });
+    const p3 = (status: 'open' | 'approved'): ProposalRow => ({ ...PROPOSALS[1]!, id: 'p3', status, asks: { ...ASKS, payees: '1', total: '2000000' }, pays: PROPOSALS[1]!.pays });
+    const draws = async (run: RunRow, proposals: ProposalRow[]) => {
+      state.company = records({ vaults: { of: 'read', value: [adopted] }, runs: { of: 'read', value: [run] }, proposals: { of: 'read', value: proposals } });
+      const c = await draw('run', { run: 'r1' });
+      const out = all(c, '[data-round=privately] button[data-action=pay-run]').map((b) => b.closest('[data-retry]')?.getAttribute('data-retry') ?? 'leg');
+      return { c, out };
+    };
+    expect((await draws(withRetry, [p1('open'), p3('open')])).out).toEqual([]);
+    cleanup();
+    const { c, out } = await draws(withRetry, [p1('approved'), p3('open')]);
+    expect(out).toEqual(['leg']);
+    expect(q(c, '[data-retry=p3]')!.textContent).toContain(EN['run.retry_one']!.replace('{count}', '1'));
+    expect(all(c, '[data-retry=p3] button[data-action]').map((b) => b.dataset.action)).toEqual(['approve', 'withdraw']);
+    cleanup();
+    expect((await draws(withRetry, [p1('open'), p3('approved')])).out).toEqual(['p3']);
+    state.acts = []; state.payActed = { of: 'done', state: 'paid', paid: 1, owed: 0, unseen: 0 };
+    await act(async () => { fireEvent.click(q(document.body, '[data-retry=p3] button[data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 5)); });
+    /* RED WHEN: in the panel, Pay or what came of it is in the panel's scrolling body instead of its footer. */
+    expect(inFooter('button[data-action=pay-run]')).not.toBeNull();
+    expect(q(panelOf(), '[data-action=pay-run-panel] [data-action=pay-run]')).toBeNull();
+    await act(async () => { fireEvent.click(q(panelOf(), 'button[data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(inFooter('[data-act-outcome] [data-acted]')).not.toBeNull();
+    expect(state.acts).toEqual([['pay-run', 'u1', 'c-1', expect.objectContaining({ proposal: 'p3', run: 'r1', payees: 1, total: 2_000_000n, vault: VAULT }), expect.any(Function)]]);
+    cleanup();
+    /* A leg the chain shows paid in full is not offered, though its proposal is approved. */
+    const paid: RunRow = { ...RUN, legs: [{ ...RUN.legs[0]!, paidOnChain: PAID_STATE.all }] };
+    expect((await draws(paid, [p1('approved')])).out).toEqual([]);
+  });
+
+  /*
+   * RED WHEN: a run's page offers Retry for a leg the chain shows paid in full or has not been read for, with no people the chain shows unpaid, before the leg's
+   * window has closed (unless its proposal was stopped), or while the proposals are not read; or does not offer it once the window has closed, whether or not the
+   * proposal was approved, which is when the wallet accepts one.
+   */
+  it('offers Retry only for a leg the chain shows people unpaid on and that can no longer pay them', async () => {
+    const PAST = 1n;
+    const FUTURE = BigInt(Math.floor(Date.now() / 1000) + 86_400);
+    const leg = (over: Partial<RunLeg> = {}): RunLeg => ({
+      ...RUN.legs[0]!, paidOnChain: PAID_STATE.some, leaves: ['aa', 'bb'], amounts: [5_000_000n, 2_000_000n], unpaid: [1], closesAt: PAST, ...over,
+    });
+    const offered = async (l: RunLeg, status: ProposalRow['status'] = 'approved', proposals: 'read' | 'unreadable' = 'read') => {
+      state.company = records({
+        runs: { of: 'read', value: [{ ...RUN, legs: [l] }] },
+        proposals: proposals === 'read' ? { of: 'read', value: [{ ...PROPOSALS[1]!, status, asks: ASKS }] } : { of: 'unreadable' },
+      });
+      const c = await draw('run', { run: 'r1' });
+      const out = q(c, '[data-round=privately] button[data-action=retry-run]') !== null;
+      cleanup();
+      return out;
+    };
+    expect(await offered(leg())).toBe(true);
+    expect(await offered(leg(), 'open')).toBe(true);
+    expect(await offered(leg({ closesAt: FUTURE }))).toBe(false);
+    expect(await offered(leg({ closesAt: FUTURE }), 'cancelled')).toBe(true);
+    expect(await offered(leg({ paidOnChain: PAID_STATE.all, unpaid: [] }))).toBe(false);
+    expect(await offered(leg({ unpaid: [] }))).toBe(false);
+    expect(await offered(leg({ paidOnChain: undefined, unpaid: undefined }))).toBe(false);
+    expect(await offered(leg({ amounts: undefined }))).toBe(false);
+    expect(await offered(leg({ form: null }))).toBe(false);
+    expect(await offered(leg(), 'approved', 'unreadable')).toBe(false);
+  });
+
+  /*
+   * RED WHEN: the retry panel asks the wallet before Raise is pressed, names other people than those the chain shows unpaid, lets Raise through without both
+   * times, with an opening not in the future or a closing not after it, gives either time a default, or asks the wallet for other places, another total or
+   * another window than those shown and typed; or the answer is lost when the records are read again.
+   */
+  it('raises a retry of the people the chain shows unpaid over the window the person typed, and keeps the answer', async () => {
+    const leg: RunLeg = { ...RUN.legs[0]!, paidOnChain: PAID_STATE.some, leaves: ['aa', 'bb'], amounts: [5_000_000n, 2_000_000n], unpaid: [1], closesAt: 1n };
+    state.company = records({ runs: { of: 'read', value: [{ ...RUN, legs: [leg] }] }, proposals: { of: 'read', value: [{ ...PROPOSALS[1]!, status: 'approved', asks: ASKS }] } });
+    state.acts = []; state.retried = { of: 'done', state: 'raised', approvals: 1, needed: 2 };
+    const c = await draw('run', { run: 'r1' });
+    await act(async () => { fireEvent.click(q(c, '[data-round=privately] button[data-action=retry-run]')!); await new Promise((r) => setTimeout(r, 5)); });
+    const panel = panelOf();
+    const raise = () => q(panel, 'button[data-action=retry-run]') as HTMLButtonElement;
+    expect(all(panel, '[data-retry-person]').map((p) => p.textContent!.startsWith('Bo'))).toEqual([true]);
+    expect((q(panel, '[data-field=opens]') as HTMLInputElement).value).toBe('');
+    expect((q(panel, '[data-field=closes]') as HTMLInputElement).value).toBe('');
+    expect([raise().disabled, q(panel, '[data-window-problem]')!.dataset.windowProblem]).toEqual([true, 'missing']);
+    const local = (ms: number) => { const d = new Date(ms); const two = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}:${two(d.getMinutes())}`; };
+    const give = async (opens: string, closes: string) => {
+      await act(async () => { fireEvent.change(q(panel, '[data-field=opens]')!, { target: { value: opens } }); fireEvent.change(q(panel, '[data-field=closes]')!, { target: { value: closes } }); });
+    };
+    const DAY = 86_400_000;
+    await give(local(Date.now() - DAY), local(Date.now() + DAY));
+    expect([raise().disabled, q(panel, '[data-window-problem]')!.dataset.windowProblem]).toEqual([true, 'past']);
+    await give(local(Date.now() + 2 * DAY), local(Date.now() + DAY));
+    expect([raise().disabled, q(panel, '[data-window-problem]')!.dataset.windowProblem]).toEqual([true, 'order']);
+    const opens = local(Date.now() + 2 * DAY);
+    const closes = local(Date.now() + 9 * DAY);
+    await give(opens, closes);
+    expect(raise().disabled).toBe(false);
+    /* RED WHEN: in the panel, the press to raise the retry or what came of it is in the panel's scrolling body instead of its footer, or the press in the footer is not tied to the form it submits. */
+    expect(inFooter('[data-action=retry-run]')).toBe(raise());
+    expect(q(panel, 'form')!.contains(raise())).toBe(false);
+    expect(raise().getAttribute('form')).toBe(q(panel, 'form')!.id);
+    expect(state.acts).toEqual([]);
+    await act(async () => { fireEvent.click(raise()); await new Promise((r) => setTimeout(r, 20)); });
+    expect(inFooter('[data-act-outcome] [data-retry-state=raised]')).not.toBeNull();
+    expect(state.acts).toEqual([['retry-run', 'u1', 'c-1', {
+      run: 'r1', period: '2026-10', list: 'employees', vault: VAULT, token: NIGHT_TOKEN, form: 'shielded', indices: [1], total: 2_000_000n,
+      opensAt: BigInt(new Date(opens).getTime() / 1000), closesAt: BigInt(new Date(closes).getTime() / 1000),
+    }, expect.any(Function)]]);
+    expect(q(panel, '[data-retry-state=raised]')!.textContent).toBe(EN['retryRun.done.counted']!.replace('{approvals}', '1').replace('{needed}', '2'));
   });
 
   /* The private and public payments of one token, and how a run's page tells them apart. */
@@ -618,7 +989,7 @@ describe('payroll and a run', () => {
   it('shows a line for each leg a run was raised with, as well as for each way its people are paid', async () => {
     const privateOnly: RunRow = {
       ...RUN, payees: [RUN.payees[0]!], currencies: [{ ...RUN.currencies[0]!, publicly: null }],
-      legs: [...RUN.legs, { code: `${NIGHT_TOKEN}:unshielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'publicly', vault: VAULT, payees: 1 }],
+      legs: [...RUN.legs, { ...LEG_MORE, code: `${NIGHT_TOKEN}:unshielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'publicly', vault: VAULT, payees: 1, form: 'unshielded', people: 1 }],
     };
     state.company = records({ runs: { of: 'read', value: [privateOnly] }, proposals: { of: 'read', value: [PROPOSALS[1]!, legacy('publicly')] } });
     const c = await draw('run', { run: 'r1' });
@@ -645,7 +1016,7 @@ describe('payroll and a run', () => {
     const c = await draw('proposals');
     expect(rows.map((r) => q(c, `[data-row="${r.id}"] td [data-slot=data-table-value]`)?.textContent)).toEqual([
       'Pay the public payments of the October 2026 run in NIGHT. Anyone can see who is paid and how much.',
-      'Pay the private payments of the October 2026 run in a token this app does not know',
+      'Pay the shielded payments of the October 2026 run in a token this app does not know',
       'Pay the public payments of the October 2026 run in a token this app does not know. Anyone can see who is paid and how much.',
     ]);
   });
@@ -762,7 +1133,7 @@ describe('vaults and a vault', () => {
    * show its money in the kit's table with exactly the columns Asset, Balance,
    * State and Actions; the balance repeats the token's name; an asset held
    * both ways is not two rows, one per state; the state is not read from the
-   * amount; Send and Shield or Unshield are missing, enabled, without their
+   * amount; Send is missing or disabled, Shield or Unshield is missing or enabled, without their
    * hover text, or carry a Coming soon pill; the tabs do not keep the rows
    * held privately, or publicly; a side that could not be read is shown as
    * held; a currency the registry does not know is not counted; or checking
@@ -789,14 +1160,14 @@ describe('vaults and a vault', () => {
     expect(q(table, '[data-row="NIGHTpublic"] [data-slot=public-pill]')).not.toBeNull();
     expect(q(table, '[data-row="NIGHTprivate"] [data-slot=private-pill]')).not.toBeNull();
     const actions = (row: string) => all(table, `[data-row="${row}"] td:last-child [data-hover]`).map((a) => [a.dataset.hover, (q(a, 'button') as HTMLButtonElement).disabled]);
-    expect(actions('NIGHTprivate')).toEqual([[EN['vault.money.send'], true], [EN['vault.money.unshield'], true]]);
-    expect(actions('NIGHTpublic')).toEqual([[EN['vault.money.send'], true], [EN['vault.money.shield'], true]]);
+    expect(actions('NIGHTprivate')).toEqual([[EN['vault.money.send'], false], [EN['vault.money.unshield'], true]]);
+    expect(actions('NIGHTpublic')).toEqual([[EN['vault.money.send'], false], [EN['vault.money.shield'], true]]);
     expect(q(table, '[data-slot=coming-soon]')).toBeNull();
     /* Each icon is named by its hover text, reached with the keyboard although disabled, and says it is disabled. */
-    const send = q(table, '[data-row=NIGHTpublic] td:last-child [data-hover]')!;
-    expect([send.tabIndex, send.getAttribute('aria-label'), send.getAttribute('aria-disabled'), q(send, 'button')!.getAttribute('aria-label')]).toEqual([0, EN['vault.money.send'], 'true', EN['vault.money.send']]);
+    const send = all(table, '[data-row=NIGHTpublic] td:last-child [data-hover]')[1]!;
+    expect([send.tabIndex, send.getAttribute('aria-label'), send.getAttribute('aria-disabled'), q(send, 'button')!.getAttribute('aria-label')]).toEqual([0, EN['vault.money.shield'], 'true', EN['vault.money.shield']]);
     await act(async () => { fireEvent.focus(send); await new Promise((r) => setTimeout(r, 5)); });
-    expect(document.querySelector('[data-slot=tooltip-content]')?.textContent).toContain(EN['vault.money.send']);
+    expect(document.querySelector('[data-slot=tooltip-content]')?.textContent).toContain(EN['vault.money.shield']);
     await act(async () => { fireEvent.blur(send); await new Promise((r) => setTimeout(r, 5)); });
     /* The State column's Public pill explains a balance, not a payment. */
     await act(async () => { fireEvent.click(q(table, '[data-row=NIGHTpublic] [data-slot=public-pill]')!); await new Promise((r) => setTimeout(r, 5)); });
@@ -1037,9 +1408,10 @@ describe('vaults and a vault', () => {
 
   /*
    * RED WHEN: the signers page does not show the committee change - what holds the company, and for a change owed the
-   * signatures it has and needs - or shows it twice; or the page stops saying the rest of it is Coming soon.
+   * signatures it has and needs - or shows it twice; or the page shows the change of the approvals needed other than once;
+   * or the page carries a Coming soon pill again.
    */
-  it('shows the committee change on the signers page, once, with the page still Coming soon', async () => {
+  it('shows the committee change and the change of the approvals needed on the signers page, once each, with no Coming soon', async () => {
     state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
     const c = await draw('settingsSigners');
     await settle();
@@ -1047,7 +1419,9 @@ describe('vaults and a vault', () => {
     expect(q(c, '[data-public-facts]')!.textContent).toBe(EN['settingsSigners.publicFacts']);
     expect(all(c, '[data-change-owed] li').map((li) => li.textContent)).toEqual(['1 of 2 signed']);
     expect(q(c, '[data-action=sign-change]')).not.toBeNull();
-    expect(q(c, '[data-screen=coming-soon] [data-slot=page-header] [data-slot=coming-soon]')).not.toBeNull();
+    expect(all(c, '[data-action=change-threshold]')).toHaveLength(1);
+    expect(q(c, '[data-screen=coming-soon]')).toBeNull();
+    expect(q(c, '[data-screen=settings] [data-slot=coming-soon]')).toBeNull();
   });
 
   /*
@@ -1107,6 +1481,107 @@ describe('vaults and a vault', () => {
     await settle();
     expect(q(page, `[data-screen=vault] [data-vault="${VAULT}"]`)!.textContent).toBe(onTile);
     expect(onTile).toBe('Treasury');
+  });
+
+  /*
+   * RED WHEN: a vault's page does not say how many approvals the chain holds for that vault, or says it for one the account did not adopt or whose
+   * number was not read, or offers Change approvals anywhere but the shell's panel; or the control does not ask for this vault and the number chosen,
+   * or its result is not kept on screen once the records are read again.
+   */
+  it('tells a vault\'s approvals and changes them from the shell\'s panel, keeping the result on screen', async () => {
+    const adopted = { ...vaultOf('held-by-committee'), adopted: true as const };
+    state.company = records({
+      approvalsNeeded: { of: 'read', value: 1 }, approvalsForSigners: { of: 'read', value: { count: 1, raisedAboveTheAccount: false, vaultsAtThatNumber: [], seated: 3 } },
+      vaults: { of: 'read', value: [{ ...adopted, approvals: 2 }] },
+    });
+    state.acts = []; state.acted = { of: 'done', state: 'carried-out', approvals: 1, needed: 1 };
+    const page = await draw('vault', { vault: VAULT });
+    await settle();
+    expect(q(page, '[data-screen=vault] [data-vault-approvals]')!.textContent).toBe(EN['vault.approvals_other']!.replace('{count}', '2'));
+    expect(q(page, '[data-screen=vault] [data-action=change-approvals]')!.textContent).toBe(EN['vault.approvals.change']);
+    expect(q(page, '[data-action=change-threshold]')).toBeNull();
+    await act(async () => { fireEvent.click(q(page, '[data-action=change-approvals]')!); await new Promise((r) => setTimeout(r, 5)); });
+    const panel = () => document.querySelector('[data-panel]') as HTMLElement;
+    expect(q(panel(), '[data-action=change-threshold]')).not.toBeNull();
+    await act(async () => { fireEvent.click(q(panel(), '[data-action=threshold-more]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await act(async () => { fireEvent.click(q(panel(), '[data-action=raise-threshold]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(state.acts).toEqual([['change-threshold', 'u1', 'c-1', 3, { now: 2, seated: 3 }, expect.any(Function), VAULT]]);
+    expect(q(panel(), '[data-acted]')!.textContent).toContain(EN['changeThreshold.vault.done.carried_other']!.replace('{count}', '3').replace('{vault}', 'Vault 1'));
+    cleanup();
+    state.company = records({ vaults: { of: 'read', value: [adopted] } });
+    const unread = await draw('vault', { vault: VAULT });
+    await settle();
+    expect(q(unread, '[data-vault-approvals]')).toBeNull();
+    expect(q(unread, '[data-unreadable=approvals]')!.textContent).toBe(EN['vault.approvals.unread']);
+    expect((q(unread, '[data-action=change-approvals]') as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+    state.company = records({ vaults: { of: 'read', value: [{ ...vaultOf('held-by-committee'), approvals: 2 }] } });
+    const notAdopted = await draw('vault', { vault: VAULT });
+    await settle();
+    expect(q(notAdopted, '[data-part=approvals]')).toBeNull();
+  });
+
+  /*
+   * RED WHEN: a vault's page leaves a raised leg of a run whose proposal the chain shows approved without its Pay, offers Pay before the chain
+   * shows it approved, for a leg the chain shows paid in full, one with no proposal or one keyed before a run paid one form, or still shows a Coming soon pay out; or Pay is anywhere but the shell's panel, does not show what the payment makes
+   * public before it is pressed, does not ask the wallet for the leg shown, or loses the wallet's answer once the records are read again.
+   */
+  it('pays a raised leg from the shell\'s panel, with what it makes public shown first, and keeps the answer', async () => {
+    const adopted = { ...vaultOf('held-by-committee'), adopted: true as const };
+    const legs = [{ ...RUN.legs[0]!, proposal: null }, { ...RUN.legs[0]!, code: `${NIGHT_TOKEN}`, form: null }];
+    const approved = PROPOSALS.map((p) => (p.id === 'p1' ? { ...p, status: 'approved' as const } : p));
+    state.company = records({ vaults: { of: 'read', value: [adopted] }, runs: { of: 'read', value: [RUN, { ...RUN, id: 'r2', period: '2026-11', legs }, { ...PAID_RUN, legs: [{ ...PAID_RUN.legs[0]!, vault: VAULT }] }] } });
+    state.acts = []; state.payActed = { of: 'done', state: 'paid', paid: 2, owed: 0, unseen: 0 };
+    /* The chain shows the run's proposal still waiting for approvals: nothing is offered to pay yet. */
+    const waiting = await draw('vault', { vault: VAULT });
+    await settle();
+    expect(all(waiting, '[data-part=payouts] [data-action=pay-run]')).toEqual([]);
+    expect(all(waiting, '[data-part=payouts] [data-payout]')).toHaveLength(4);
+    cleanup();
+    state.company = records({ vaults: { of: 'read', value: [adopted] }, proposals: { of: 'read', value: approved }, runs: { of: 'read', value: [RUN, { ...RUN, id: 'r2', period: '2026-11', legs }, { ...PAID_RUN, legs: [{ ...PAID_RUN.legs[0]!, vault: VAULT }] }] } });
+    const page = await draw('vault', { vault: VAULT });
+    await settle();
+    expect(all(page, '[data-part=payouts] [data-action=pay-run]').map((b) => b.closest('[data-payout]')!.getAttribute('data-payout'))).toEqual(['r1']);
+    expect(all(page, '[data-part=payouts] [data-payout]')).toHaveLength(4);
+    expect(q(page, '[data-action=pay-out]')).toBeNull();
+    expect(q(page, '[data-part=payouts] [data-slot=coming-soon]')).toBeNull();
+    await act(async () => { fireEvent.click(q(page, '[data-part=payouts] [data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 5)); });
+    const panel = () => document.querySelector('[data-panel]') as HTMLElement;
+    expect(q(panel(), '[data-public-facts=private]')).not.toBeNull();
+    expect(q(panel(), '[data-fact=count]')!.textContent).toBe(EN['publicFacts.count_other']!.replace('{count}', '2'));
+    expect(q(page, '[data-pay-state]')).toBeNull();
+    expect(state.acts).toEqual([]);
+    await act(async () => { fireEvent.click(q(panel(), '[data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(state.acts).toEqual([['pay-run', 'u1', 'c-1', {
+      proposal: 'p1', run: 'r1', period: '2026-10', list: 'employees', vault: VAULT, token: NIGHT_TOKEN, form: 'shielded', payees: 2, total: 7_000_000n,
+    }, expect.any(Function)]]);
+    expect(q(panel(), '[data-pay-state=paid]')!.textContent).toBe(EN['payRun.done.paid_other']!.replace('{count}', '2'));
+  });
+
+  /* RED WHEN: a retry raised on a leg cannot be paid from the vault's page like a run, is offered before its own proposal is approved, or after the chain shows it paid. */
+  it('offers Pay on a retry once its own proposal is approved, and not once the chain shows it paid', async () => {
+    const adopted = { ...vaultOf('held-by-committee'), adopted: true as const };
+    const retry = { proposal: 'p3', vault: VAULT, people: 1, total: 2_000_000n, pays: [LEG_MORE.pays[1]!], leaves: ['bb'], paidOnChain: PAID_STATE.none };
+    const withRetry = (paidOnChain: 0 | 2): RunRow => ({ ...RUN, legs: [{ ...RUN.legs[0]!, paidOnChain: PAID_STATE.some, retries: [{ ...retry, paidOnChain }] }] });
+    const p3 = (status: 'open' | 'approved'): ProposalRow => ({ ...PROPOSALS[1]!, id: 'p3', status });
+    const opens = async (run: RunRow, proposals: ProposalRow[]) => {
+      state.company = records({ vaults: { of: 'read', value: [adopted] }, proposals: { of: 'read', value: proposals }, runs: { of: 'read', value: [run] } });
+      const page = await draw('vault', { vault: VAULT });
+      await settle();
+      return all(page, '[data-part=payouts] [data-action=pay-run]').map((b) => [b.dataset.payRetry ?? null, b.textContent]);
+    };
+    state.acts = []; state.payActed = { of: 'done', state: 'paid', paid: 1, owed: 0, unseen: 0 };
+    /* The leg's own proposal is still waiting, and the retry's is not yet approved: nothing to pay. */
+    expect(await opens(withRetry(PAID_STATE.none), [PROPOSALS[1]!, p3('open')])).toEqual([]);
+    cleanup();
+    expect(await opens(withRetry(PAID_STATE.none), [PROPOSALS[1]!, p3('approved')])).toEqual([['p3', EN['vault.payRetry']]]);
+    await act(async () => { fireEvent.click(q(document.body, '[data-part=payouts] [data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await act(async () => { fireEvent.click(q(document.querySelector('[data-panel]') as HTMLElement, '[data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(state.acts).toEqual([['pay-run', 'u1', 'c-1', {
+      proposal: 'p3', run: 'r1', period: '2026-10', list: 'employees', vault: VAULT, token: NIGHT_TOKEN, form: 'shielded', payees: 1, total: 2_000_000n,
+    }, expect.any(Function)]]);
+    cleanup();
+    expect(await opens(withRetry(PAID_STATE.all), [PROPOSALS[1]!, p3('approved')])).toEqual([]);
   });
 
   /* RED WHEN: a vault the account adopted whose set-up is not finished is named on its tile and by its number in the list of what is pending. */
@@ -1224,8 +1699,8 @@ describe('people, payroll, proposals, a run and invitations, drawn from the kit'
     expect(q(night, '[data-slot=section-header] h2')!.textContent).toBe('NIGHT');
     /* RED WHEN one Approve covers both ways a token is paid, rather than one on each way's own line. */
     expect(q(night, '[data-slot=section-actions] [data-action=approve]')).toBeNull();
-    expect(all(night, '[data-round]').map((r) => [r.dataset.round, all(r, 'button[data-action=approve]').map((b) => b.hasAttribute('disabled'))])).toEqual([
-      ['privately', [true]], ['publicly', [true]],
+    expect(all(night, '[data-round]').map((r) => [r.dataset.round, all(r, ':scope > div button[data-action]').map((b) => b.dataset.action)])).toEqual([
+      ['privately', ['withdraw']], ['publicly', []],
     ]);
     expect(q(night, '[data-approvals]')!.textContent).toBe('1 of 2');
     const payees = q(c, '[data-slot=section][data-part=payees]')!;

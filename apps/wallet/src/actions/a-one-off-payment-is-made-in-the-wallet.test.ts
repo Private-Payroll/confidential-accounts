@@ -16,6 +16,7 @@ import { StepRefused, type StepContext } from './definition.js';
  */
 
 const t = vi.hoisted(() => ({
+  standing: null as unknown,
   calls: [] as string[],
   raise: null as null | ((doors: any, input: any) => Promise<unknown>),
   toPay: null as null | ((...a: any[]) => Promise<unknown>),
@@ -66,10 +67,14 @@ vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (re
   spendingPolicyHere: (...a: any[]) => t.policy!(...a),
 }));
 
-const { oneOffPaymentAction, oneOffAskedOf, payDoorsFor, oneOffRecordsFor } = await import('./one-off-payment.js');
+const { oneOffPaymentAction, oneOffAskedOf, payDoorsFor } = await import('./one-off-payment.js');
+const { companyRecordsFor } = await import('./company-reach.js');
 const { OneOffRefused } = await import('../../../../src/midnight/one-off-kind.js');
 const op = await import('../../../../packages/web-shared/src/vault-operation.js');
 const { LegNotRaisedHere } = await import('../../../../packages/web-shared/src/run-raised-here.js');
+const { ApprovalNotOwed } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
+const { approveProposalAction } = await import('./approve-proposal.js');
+const { AFTER_A_REMOVAL } = await import('./after-a-removal.js');
 
 const secret = newSecret();
 const identity = identityFromSecret(secret);
@@ -113,7 +118,11 @@ const chainSays = { now: [] as Array<Record<string, unknown>> };
 const reachOf = (over: Record<string, unknown> = {}) => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
   stepTo: () => {},
-  api: async (path: string, init?: RequestInit) => { t.calls.push(`api ${init?.method ?? 'GET'} ${path}`); return []; },
+  api: async (path: string, init?: RequestInit) => {
+    t.calls.push(`api ${init?.method ?? 'GET'} ${path}`);
+    /* The service's answer of where the proposal stands names the proposal asked about, unless a case says otherwise. */
+    return path.endsWith('/standing') ? (t.standing ?? { id: 'prp_abcdefghijkl', chainId: CHAIN_ID, status: 'open' }) : [];
+  },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: ['aa'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [VAULT], account: ACCOUNT }),
   judges: {
@@ -162,6 +171,7 @@ const run = async (a: ReturnType<typeof action>, i: ActIntent = intent()) => {
 
 beforeEach(() => {
   t.calls = [];
+  t.standing = null;
   chainSays.now = [OPEN(1, 1)];
   t.raise = async () => ({ id: 'prp_abcdefghijkl', chainId: CHAIN_ID, status: 'open' });
   t.toPay = async () => ORDER('shielded');
@@ -324,27 +334,52 @@ describe('above one approval it stops after the proposal', () => {
 
 describe('a proposal raised on another device is approved here, then charged and paid', () => {
   it('approves it when the chain shows it short, then carries it out once the chain shows it at its bar', async () => {
-    chainSays.now = [OPEN(1, 2), OPEN(1, 2), OPEN(2, 2)];
+    chainSays.now = [OPEN(1, 2), OPEN(2, 2)];
     const { told } = await run(action(), PROPOSAL_WITH_ITS_PAYMENT);
     /* RED WHEN: a proposal raised elsewhere is not approved from this seat, or is paid without the chain showing its approvals. */
     expect(t.calls.filter((c) => !c.startsWith('api'))).toEqual(['vendor-checked', 'approve', 'to-pay', 'charge', 'to-pay', 'pay-privately']);
     expect(told).toEqual({ state: 'paid', approvals: 2, needed: 2, charge: 'none' });
   });
 
-  it('always offers this seat\'s approval, taking the account\'s "already approved" as done, and refuses what is no one-off', async () => {
+  it('approves nothing at its bar, takes the account\'s "already approved" as no approval owed, and refuses what is no one-off', async () => {
     chainSays.now = [OPEN(2, 2)];
-    t.approve = async () => { throw Object.assign(new Error('you have already approved this proposal'), { name: 'CallNotBuilt' }); };
+    const atItsBar = await run(action(), PROPOSAL_WITH_ITS_PAYMENT);
+    /* RED WHEN: a one-off the chain shows with the approvals the account needs, by its hold and its vault's bar now, is approved again. */
+    expect(t.calls).not.toContain('approve');
+    expect(atItsBar.told['state']).toBe('paid');
+    t.calls = [];
+    chainSays.now = [OPEN(1, 2)];
+    t.approve = async () => { throw new ApprovalNotOwed('counted'); };
     const { told } = await run(action(), PROPOSAL_WITH_ITS_PAYMENT);
-    /* RED WHEN: the approval is skipped on the hold's count alone, though the vault's bar may since have risen. */
     expect(t.calls).toContain('approve');
-    /* RED WHEN: a seat that approved already stops the action instead of carrying it out. */
-    expect(told['state']).toBe('paid');
+    /* RED WHEN: a seat that approved already stops the action instead of saying the others must approve. */
+    expect(told['state']).toBe('awaiting-approvals');
     t.found = async () => null;
     const steps = action().steps(PROPOSAL_WITH_ITS_PAYMENT);
     const { ctx } = ctxWith(PROPOSAL_WITH_ITS_PAYMENT);
     await steps[0]!.run(ctx);
     /* RED WHEN: a proposal the company's records do not hold as a one-off is approved or paid as one. */
     expect(((await steps[2]!.run(ctx).catch((x: unknown) => x)) as StepRefused).words.key).toBe('act.one-off-payment.why.not-a-one-off');
+  });
+});
+
+describe('a one-off is approved and paid through the one approval for every kind', () => {
+  it('approve-proposal of the one-off kind opens, checks, approves, charges and pays it exactly as the one-off\'s own approval does', async () => {
+    const one = approveProposalAction({
+      chain: () => ({}) as never, builder: () => ({}) as never, now: () => NOW_MS, pause: async () => {}, secrets: () => ({}) as never,
+      reachFor: async () => reachOf() as never, assets: registryWithTestPrivateForms(), network: NET, waitMs: 3, everyMs: 1,
+      kept: () => ({ payments: {} as never, charges: {} as never }), commitments: async () => ({}) as never, ...AFTER_A_REMOVAL,
+    });
+    const asked = { ...PROPOSAL_WITH_ITS_PAYMENT, name: 'approve-proposal', fields: { ...PROPOSAL_WITH_ITS_PAYMENT.fields, kind: 'one-off' } } as ActIntent;
+    expect(await one.check(asked, {} as never)).toBeNull();
+    chainSays.now = [OPEN(1, 2), OPEN(2, 2)];
+    const { told } = await run(one as never, asked);
+    /* RED WHEN: a one-off approved through the one approval is approved, charged or paid other than its own approval does it. */
+    expect(t.calls.filter((c) => !c.startsWith('api'))).toEqual(['vendor-checked', 'approve', 'to-pay', 'charge', 'to-pay', 'pay-privately']);
+    expect(told).toEqual({ state: 'paid', approvals: 2, needed: 2, charge: 'none' });
+    /* RED WHEN: the one approval accepts a kind no proposal of the company has, or a one-off with what it pays missing. */
+    expect((await one.check({ ...asked, fields: { ...asked.fields, kind: 'payroll' } } as ActIntent, {} as never))?.key).toBe('act.approve-proposal.why.not-a-proposal');
+    expect((await one.check({ ...asked, fields: { ...asked.fields, amount: undefined } } as unknown as ActIntent, {} as never))?.key).toBe('act.approve-proposal.why.not-a-proposal');
   });
 });
 
@@ -396,7 +431,7 @@ describe('the doors are the wallet\'s own reads and the action\'s listed calls',
     await doors.service.payout(VAULT as never, 'AAAA').catch(() => undefined);
     await doors.service.payoutPublicly(VAULT as never, 'AAAA').catch(() => undefined);
     await doors.charge!('prp_abcdefghijkl', { tx: 'AAAA', filer: 'ff' }).catch(() => undefined);
-    const records = oneOffRecordsFor(r as never, { assets: registryWithTestPrivateForms() }, { account: { paidMovementOf: (b: Uint8Array) => b, paidOnceOf: (b: Uint8Array) => b }, details: {} } as never);
+    const records = companyRecordsFor(r as never, { assets: registryWithTestPrivateForms() }, { account: { paidMovementOf: (b: Uint8Array) => b, paidOnceOf: (b: Uint8Array) => b }, details: {} } as never);
     await records.runs();
     await records.proposals!();
     const shape = intentShapeOf('one-off-payment')!;
@@ -411,6 +446,11 @@ describe('the doors are the wallet\'s own reads and the action\'s listed calls',
     expect(await doors.indexer()).toEqual(r.chain.indexer);
     /* RED WHEN: the account's record of payments is read from anything but this wallet's chain read. */
     expect((await records.payments.read(['e1'])).entries).toBe(1);
+    /* RED WHEN: where a proposal stands is read without this wallet's seat, so whether its approval is already counted is never said. */
+    const seats: Array<string | undefined> = [];
+    (r as any).builder = { ...r.builder, roundsOnChain: async (q: { seat?: string }) => { seats.push(q.seat); return {}; } };
+    await companyRecordsFor(r as never, { assets: registryWithTestPrivateForms() }, {} as never).roundsOnChain!(['ab'.repeat(32)]);
+    expect(seats).toEqual([SEAT.signingSecret]);
   });
 });
 
@@ -433,6 +473,7 @@ describe('a payment to a vendor entry is asked by the entry, and approved only f
 
   it('reads the one-off by the name its proposal gives, checks it against the vendor entry, and approves nothing it refuses', async () => {
     t.found = async () => ({ oneOff: VENDORS_RECORD });
+    chainSays.now = [OPEN(1, 2), OPEN(2, 2)];
     await run(action(), TO_THE_VENDOR);
     /* RED WHEN: approving one one-off opens every one-off the company ever made. */
     expect(t.calls).not.toContain('every-one-off');
@@ -482,7 +523,7 @@ describe('a payment to a vendor entry is asked by the entry, and approved only f
   });
 
   it('reads the company\'s vendors through its own records, with the calls the action lists', async () => {
-    const records = oneOffRecordsFor(reachOf() as never, { assets: registryWithTestPrivateForms(), network: NET }, {} as never);
+    const records = companyRecordsFor(reachOf() as never, { assets: registryWithTestPrivateForms(), network: NET }, {} as never);
     /* RED WHEN: the wallet has no way to read the vendor entry a payment names. */
     expect(typeof records.vendors).toBe('function');
   });
@@ -515,11 +556,35 @@ describe('approving names the payment, and the wallet approves nothing but what 
     }
   });
 
-  it('waits for the chain to show its own approval before it says others must approve', async () => {
-    chainSays.now = [OPEN(1, 2), OPEN(1, 2), OPEN(1, 2), OPEN(2, 2)];
+  it('reads the count from the chain once its approval is counted, and judges it at the bar the account applies now', async () => {
+    chainSays.now = [OPEN(1, 2), OPEN(2, 2)];
     const { told } = await run(action(), PROPOSAL_WITH_ITS_PAYMENT);
-    /* RED WHEN: an approval the indexer has not shown yet leaves a payment at its bar told as awaiting the others. */
+    /* RED WHEN: the count read after the approval is not the chain's, so a payment at its bar is told as awaiting the others. */
     expect(told).toEqual({ state: 'paid', approvals: 2, needed: 2, charge: 'none' });
+  });
+
+  it('a standing the service answers under another proposal is refused, and nothing is approved', async () => {
+    chainSays.now = [OPEN(1, 2)];
+    t.standing = { id: 'prp_other', chainId: 'ee'.repeat(32), status: 'open' };
+    const steps = action().steps(PROPOSAL_WITH_ITS_PAYMENT);
+    const { ctx } = ctxWith(PROPOSAL_WITH_ITS_PAYMENT);
+    await steps[0]!.run(ctx);
+    /* RED WHEN: the service's answer about another proposal is relabelled as this one's and handed to the approval. */
+    expect(((await steps[2]!.run(ctx).catch((x: unknown) => x)) as StepRefused).words.key).toBe('act.one-off-payment.why.not-approved');
+    expect(t.calls).not.toContain('approve');
+  });
+
+  it('a one-off raised before a signer was removed, or under a vault bar since raised, waits for the approvals the account needs now', async () => {
+    chainSays.now = [{ ...OPEN(2, 2), removals: 1 }];
+    const removed = await run(action(), PROPOSAL_WITH_ITS_PAYMENT);
+    /* RED WHEN: a one-off is judged at its hold's bar alone, though the account needs one more approval for each signer removed since it was raised. */
+    expect(removed.told).toMatchObject({ state: 'awaiting-approvals', approvals: 2, needed: 3 });
+    expect(t.calls).not.toContain('charge');
+    t.calls = [];
+    chainSays.now = [OPEN(2, 2)];
+    const raised = await run(action({ holders: async () => ({ seats: ['aa'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [{ vault: VAULT, threshold: 3 }], adoptedVaults: [VAULT], account: ACCOUNT }) }), PROPOSAL_WITH_ITS_PAYMENT);
+    /* RED WHEN: a one-off is judged at its hold's bar alone, though its vault's bar has risen since it was raised. */
+    expect(raised.told).toMatchObject({ state: 'awaiting-approvals', approvals: 2, needed: 3 });
   });
 });
 
@@ -534,6 +599,9 @@ describe('the window says only what the settlement gives', () => {
     expect(WORDS['act.one-off-payment.shown.record']).toMatch(/carry no amount, payee or name/u);
     /* RED WHEN: a private payment is said to hide its amount entirely, though a policy band's approvals can show its range. */
     expect(WORDS['act.one-off-payment.shown.private']).toMatch(/band/u);
+    /* RED WHEN: the private one-off window does not say a payment leaving the vault is public and countable, or the public one omits the currency. */
+    expect(WORDS['act.one-off-payment.shown.private']).toMatch(/a payment left this vault[\s\S]*count how many payments/u);
+    expect(WORDS['act.one-off-payment.shown.public']).toMatch(/the amount and the currency/u);
     /* RED WHEN: the window says a payment is made once others approve, though a signer must carry it out. */
     expect(WORDS['act.one-off-payment.shown.carry-out']).toMatch(/running this action again/u);
     /* RED WHEN: an outrun proposal is said never to be carried out, though more approvals carry out a payment. */
@@ -615,9 +683,11 @@ describe('a step that is not reached says so, and no stop after a send reads as 
     expect((await stopAt(3)).key).toBe('act.one-off-payment.why.charge-may-be-sent');
     t.charge = async () => ({ state: 'no-policy' });
     t.approve = async (doors) => { await doors.service.approve('prp_abcdefghijkl', { tx: 'AAAA', filer: 'ff' }).catch(() => undefined); throw new Error('the page lost the answer'); };
+    chainSays.now = [OPEN(1, 2)];
     /* RED WHEN: an approval handed to the page is told as not made. */
     expect((await stopAt(2, PROPOSAL_WITH_ITS_PAYMENT)).key).toBe('act.one-off-payment.why.approval-may-be-sent');
     t.approve = async () => ({});
+    chainSays.now = [OPEN(1, 1)];
     t.payPrivately = async () => { throw new Error('the chain refused it: not enough approvals yet'); };
     const short = await stopAt(4);
     /* RED WHEN: a payment the account refuses for want of approvals, with nothing handed over, is told as failed. */

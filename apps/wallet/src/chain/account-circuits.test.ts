@@ -5,7 +5,7 @@ import { Contract as Vault, pureCircuits as vaultPure } from '../../../../contra
 import { Contract as Account, pureCircuits as accountPure } from '../../../../contracts/managed/contract/index.js';
 import { witnesses as accountWitnesses } from '../../../../contracts/src/witnesses.js';
 import { AccountSimulator, change, payoutTreeOf, privateStateFor, vaultRunOf } from '../../../../contracts/test/simulator.js';
-import { noFurtherNote } from '../../../../src/midnight/vault-step-notes.js';
+import { noFurtherNote, notePlaces } from '../../../../src/midnight/vault-step-notes.js';
 import { startTheVault, TEST_VAULT_SECRET } from '../../../../contracts/test/start-a-vault.js';
 import { ACCOUNT_CIRCUITS_A_VAULT_CALLS } from '../../../../src/midnight/vault-contract.js';
 import { fromHex, toHex } from '../../../../src/core/crypto.js';
@@ -32,8 +32,8 @@ const witnesses = {
 };
 
 /**
- * Starts a vault, makes a deposit into it, and pays one payee of an approved run privately and one publicly, as the
- * wallet does, and says which account circuits each call reached.
+ * Starts a vault, makes a deposit into it, pays one payee of an approved run privately and one publicly, and merges
+ * two notes, as the wallet does, and says which account circuits each call reached.
  */
 const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]>> => {
   const sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -89,6 +89,9 @@ const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]
   const run = await approvedRun(night, vaultPure.unshieldedPayoutDetails, 0xc2);
   publicMoney = 500n;
   await call('payoutUnshielded', run, payee, night, 250n, blinding);
+  const merged = [0x81, 0x82].map((n, i) => ({ nonce: new Uint8Array(32).fill(n), color: note.color, value: BigInt(5 + i) }));
+  for (const m of merged) await call('deposit', m);
+  await call('mergeNotes', note.color, notePlaces(merged.map((m) => ({ ...m, mt_index: 0n })), 4));
   return reached;
 };
 
@@ -114,6 +117,12 @@ describe('the account circuits the wallet holds keys for', () => {
     const compiled = Object.keys(new Account(accountWitnesses as never).impureCircuits);
     /* RED WHEN: the wallet is given a key for, or asked to prove, a circuit the account no longer has under that name. */
     for (const c of ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR) expect(compiled, c).toContain(c);
+  });
+
+  it('prove a signer\'s removal, the one way the account removes a signer, and the seat an invited person takes', () => {
+    /* RED WHEN: a removal approved on a device cannot be carried out from the wallet, or an invited person cannot take their seat. */
+    expect(ACCOUNT_CIRCUITS_THE_WALLET_PROVES).toContain('removeSignerAndSetThreshold');
+    expect(ACCOUNT_CIRCUITS_THE_WALLET_PROVES).toContain('seatInvited');
   });
 
   it('are the circuits the wallet proves itself and the ones its vault circuits call, each once', () => {

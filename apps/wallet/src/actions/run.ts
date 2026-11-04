@@ -1,4 +1,4 @@
-import { ACT_ENDED_SCHEMA, ACT_REFUSED_CODE, ACT_REFUSED_KEY, MOST_ACT_STEPS, readOutcome } from 'midnight-identity/profile/channel';
+import { ACT_ENDED_SCHEMA, ACT_REFUSED_CODE, ACT_REFUSED_KEY, MOST_ACT_RELAYS, MOST_ACT_STEPS, readOutcome } from 'midnight-identity/profile/channel';
 import type { ActEnded, ActStop, ActingChannel, CalledOver, KeptOver, RelayLabel, StepAt } from 'midnight-identity/profile/channel';
 import { intentShapeOf, routeOf, sendsIn, type ActRequest } from 'midnight-identity/profile/request';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
@@ -6,6 +6,7 @@ import { keyringMarksFor, openHeldKeyring, SavedKeysRefused, type HeldKeyring, t
 import { readFor } from '../keyring/read-for-the-page.js';
 import { checkedChannel, SecretWouldCross } from '../keyring/nothing-secret-crosses.js';
 import { StepRefused, type ActKeyring, type ActionDefinition, type Held, type Words } from './definition.js';
+import { ServiceNotReached, serviceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
 
 /**
  * RUNS ONE ACTION, STEP BY STEP, OVER THE ONE CHANNEL ITS ASK CAME ON.
@@ -15,11 +16,15 @@ import { StepRefused, type ActKeyring, type ActionDefinition, type Held, type Wo
  * the most steps any action may have, and a wait for each transaction's
  * answer. It stops at any of them, at Stop, at a refused relay, at saved keys
  * it refuses to open or the page did not keep, at a call to the service the
- * action's route list does not name or the page would not make or answer, at
- * a check that does not hold and at a step that fails, and then sends exactly
+ * action's route list does not name or the page would not make, at a check
+ * that does not hold and at a step that fails, and then sends exactly
  * one terminal answer saying where it stopped, how many transactions the page
- * said it handed over and, when the action's entry lists one, what it got to.
- * A transaction is never handed over after Stop.
+ * said it handed over, how many may still land (those the page did not confirm,
+ * and those this wallet sent itself without the page) and, when the action's
+ * entry lists one, what it got to.
+ * A transaction is never handed over after Stop. A call the service gave no
+ * answer to does not stop the action: the step it was made for is told, as
+ * `ServiceNotReached`, and may go straight to the chain instead.
  *
  * **STOP STARTS NOTHING MORE.** It aborts the step running and refuses any
  * transaction that step would hand over next; a transaction already with the
@@ -86,6 +91,12 @@ export interface RunOf {
    * in a development build with the console report on (`actLogInDevelopment`), nowhere otherwise.
    */
   readonly log?: (line: string) => void;
+  /**
+   * Shows the person, in this window, what a step read with the seat's keys, and resolves true when they press Confirm
+   * and false when they press Stop. `cut` is aborted when the action ends or is stopped while it waits, and the window
+   * then takes the question down. Without it, a step that asks to confirm is stopped and nothing after it runs.
+   */
+  readonly confirm?: (lines: readonly Words[], cut: AbortSignal) => Promise<boolean>;
 }
 
 /**
@@ -122,6 +133,12 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   let total = 1;
   let relayed = 0;
   let unconfirmed = 0;
+  /* Transactions and writes handed over so far, answered or not: every relay, every call but a GET or a read, and every send this wallet made itself. */
+  let handedOver = 0;
+  /* Transactions this wallet handed to the chain or the company's own service itself; the page never sees them. */
+  let sentStraight = 0;
+  /* Calls carrying a transaction the page did not answer in time, counted in `unconfirmed` until the chain shows them. */
+  let lateUnconfirmed = 0;
   let current = 1;
   let says: Words | null = null;
   /* The kind of refusal the step that refused named, if it named one. */
@@ -130,7 +147,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   const told: Record<string, string | number> = {};
   /* Set once the action is ending: nothing is handed over after it. */
   let closed = false;
-  /* Set by a transaction the page refused or did not answer: the action stops at that step, whatever the step does. */
+  /* Set by a transaction or call the page refused, or a transaction it did not answer: the action stops at that step, whatever the step does. */
   let latched: ActStop | null = null;
   /* Every transaction handed over, in turn: the next waits for the page's answer to the one before. */
   let queue: Promise<unknown> = Promise.resolve();
@@ -188,9 +205,17 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     closed = true;
     released = true;
     cut.abort();
+    /*
+     * A stop after this wallet sent a transaction itself counts that transaction as not confirmed: it may be on the
+     * chain, and an end saying nothing was handed over would have the person raise it again. An action that ran to its
+     * end read back what it sent, or went around a call the service did not answer, so it ends with nothing
+     * unconfirmed, as the page reads a finished action. The total stays within what the page reads.
+     */
+    const mayLandOnAStop = Math.max(unconfirmed, Math.min(unconfirmed + sentStraight, MOST_ACT_RELAYS - relayed));
+    const mayLand = why === null ? 0 : mayLandOnAStop;
     const answer: ActEnded = Object.freeze({
       schema: ACT_ENDED_SCHEMA, nonce: request.nonce, intent: request.intent.name,
-      ended: why === null ? 'done' as const : 'stopped' as const, step, steps: total, relayed, unconfirmed,
+      ended: why === null ? 'done' as const : 'stopped' as const, step, steps: total, relayed, unconfirmed: mayLand,
       ...(why === null ? {} : { why }),
       ...refusalOf(why),
       ...((): { outcome?: Readonly<Record<string, string | number>> } => {
@@ -207,14 +232,14 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       /* The end answer held a secret: it is not sent, and the page is told the action stopped, with nothing else. */
       sent = Object.freeze({
         schema: ACT_ENDED_SCHEMA, nonce: request.nonce, intent: request.intent.name,
-        ended: 'stopped' as const, step, steps: total, relayed, unconfirmed, why: 'step-failed' as const,
+        ended: 'stopped' as const, step, steps: total, relayed, unconfirmed: mayLandOnAStop, why: 'step-failed' as const,
       });
       channel.answer(sent);
     }
     ended = Object.freeze({ ended: sent, says: sent.ended === 'done' ? shownAtTheEnd : says, abandoned: !stepSettled });
     log(sent.ended === 'done'
       ? `done, ${sent.steps} of ${sent.steps} steps (relayed ${relayed})`
-      : `stopped at step ${sent.step} of ${sent.steps}: ${sent.why ?? 'step-failed'} (relayed ${relayed}, unconfirmed ${unconfirmed})`
+      : `stopped at step ${sent.step} of ${sent.steps}: ${sent.why ?? 'step-failed'} (relayed ${relayed}, unconfirmed ${sent.unconfirmed})`
         + (sent.refused === undefined ? '' : ` (refused: ${sent.refused}${sent.code === undefined ? '' : ` ${sent.code}`})`));
     return ended;
   };
@@ -237,6 +262,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
     if (now() >= deadline) throw new ActionStopped('out-of-time');
+    handedOver += 1;
     const answered = sending(() => channel.relay(at, transaction, label));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const patience = new Promise<'late'>((resolve) => {
@@ -274,6 +300,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       watch();
       throw new ActionStopped(latched);
     }
+    const carries = sendsIn(route, body) || (method !== 'GET' && route.reads !== true);
+    if (carries) handedOver += 1;
     const answered = sending(() => channel.call(at, method, path, body));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const patience = new Promise<'late'>((resolve) => {
@@ -288,6 +316,18 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       return { status: outcome.status, body: outcome.body };
     }
     if (outcome === 'gone') throw new ActionStopped('stopped');
+    if (outcome === 'unreached' || outcome === 'late') {
+      /*
+       * The service gave no answer: the action is not stopped for it, so a step can go straight to the chain. A call
+       * that carried nothing handed nothing over; one that carried something may have reached the service, and the
+       * step reads the chain before it sends anything again. Past its patience the page may still make the call.
+       */
+      if (outcome === 'late' && sendsIn(route, body)) { unconfirmed += 1; lateUnconfirmed += 1; watch(); }
+      /* Once anything of this action was handed over, no unanswered call says nothing was sent. */
+      throw new ServiceNotReached(outcome === 'late'
+        ? 'the company\'s service did not answer in time'
+        : 'the company\'s service could not be reached', !carries && handedOver === 0);
+    }
     if (sendsIn(route, body)) unconfirmed += 1;
     latched = outcome === 'refused' ? 'call-refused' : 'no-call-answer';
     closed = true;
@@ -300,7 +340,38 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     return mine;
   };
   const tell = (outcome: Readonly<Record<string, string | number>>): void => { Object.assign(told, outcome); };
+  const sentByTheWallet = (): void => { handedOver += 1; sentStraight += 1; };
+  /* The chain shows the call the page did not answer in time for: it is on the chain, no longer unconfirmed. */
+  const seenOnTheChain = (): void => {
+    if (lateUnconfirmed === 0) return;
+    lateUnconfirmed -= 1;
+    unconfirmed -= 1;
+    watch();
+  };
   const show = (words: Words): void => { shownAtTheEnd = words; };
+  /*
+   * The person's Confirm of what a step read with the seat's keys. Refused once anything has been handed over to be
+   * sent or written (a relay, or any call that is not a GET or a read), or asked a second time, so the one Confirm
+   * always comes before the first thing that leaves for the chain or the service, and is the only one. A keep of the
+   * person's own saved keys, sealed, is not counted: it approves, signs and sends nothing to the network. Stop, the action's end, and its deadline all answer it as no.
+   */
+  let confirmAsked = false;
+  const confirm = async (lines: readonly Words[]): Promise<void> => {
+    if (latched !== null) throw new ActionStopped(latched);
+    if (closed || run.stop.aborted) throw new ActionStopped('stopped');
+    if (confirmAsked || handedOver > 0 || run.confirm === undefined) throw new ActionStopped('step-failed');
+    confirmAsked = true;
+    const asked = run.confirm;
+    const yes = await new Promise<boolean>((resolve) => {
+      if (cut.signal.aborted) { resolve(false); return; }
+      cut.signal.addEventListener('abort', () => resolve(false), { once: true });
+      Promise.resolve().then(() => asked(lines, cut.signal)).then((said) => resolve(said === true), () => resolve(false));
+    });
+    if (latched !== null) throw new ActionStopped(latched);
+    if (!yes || closed || run.stop.aborted) throw new ActionStopped('stopped');
+    if (now() >= deadline) throw new ActionStopped('out-of-time');
+    log(`step ${current} of ${total}: confirmed in the window`);
+  };
 
   /* The person's saved keys, opened once on a step's first use, and let go when the action ends. */
   let opened: HeldKeyring | null = null;
@@ -418,7 +489,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       const ran: Promise<Raced> = Promise.resolve()
         .then(() => step.run({
           intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
-          call: (method, path, body) => callInTurn(at, method, path, body), tell, show,
+          call: (method, path, body) => callInTurn(at, method, path, body), tell, show, confirm, sentByTheWallet, seenOnTheChain,
         }))
         .then(() => ({ of: 'ran' as const }), (error: unknown) => {
           log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);
@@ -455,7 +526,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
           refusedCode = raced.error.code;
           return finish('check-failed', current);
         }
-        const why = raced.error instanceof ActionStopped ? raced.error.why : 'step-failed';
+        /* A step that could not go around a service giving no answer stops as that, so the page says it may have been sent. */
+        const why = raced.error instanceof ActionStopped ? raced.error.why : serviceNotReached(raced.error) ? 'no-call-answer' : 'step-failed';
         return finish(why, current);
       }
     }

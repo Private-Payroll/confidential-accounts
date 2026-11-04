@@ -1,0 +1,20 @@
+{
+  "proposals.tab.all": "All",
+  "proposals.tab.pending": "Pending",
+  "proposals.tab.approved": "Approved",
+  "proposals.none": "No proposals here.",
+  "proposals.column.what": "What it does",
+  "proposals.column.raisedBy": "Raised by",
+  "proposals.column.approvals": "Approvals",
+  "proposals.column.raised": "Raised",
+  "proposals.column.status": "Status",
+  "proposals.raisedBy.unknown": "A signer no longer listed",
+  "proposals.raisedBy.notSeated": "{name} (seat not on the network)",
+  "proposals.raisedBy.retired": "{name} (seat retired)",
+  "proposals.raisedBy.notOpened": "{name} (not opened)",
+  "proposals.raisedBy.notAsSigned": "A signer not checked here",
+  "proposals.panel.title": "Proposal",
+  "proposals.approve.notHere": "This page cannot approve this kind of proposal yet.",
+  "proposals.approve.notRead": "This page could not read or check this proposal's record on this device, so it does not offer Approve. Do not approve it until it reads here: reload the page, and if it still does not read, tell the company's other signers.",
+  "proposals.approve.notRaised": "The network does not hold this proposal raised yet, so there is nothing to approve. Reload the page once the network shows it."
+}

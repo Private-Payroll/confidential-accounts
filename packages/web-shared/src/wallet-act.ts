@@ -6,6 +6,7 @@ import type { ActEnded, ActStop, StepAt } from 'midnight-identity/profile/channe
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 import { buildSetting } from 'midnight-identity/profile/origin';
 import { randomBytes, toHex } from '../../../src/core/crypto.js';
+import { serviceNotReached } from './hand-over.js';
 import {
   askWallet, openWalletDialog, UNREADABLE_SAYS, US_TO_A_WALLET, WalletClosed, type Openable, type WalletDialog,
 } from './wallet-sign-in.js';
@@ -74,7 +75,11 @@ export type ActOutcome = (
   | { readonly of: 'done'; readonly steps: number; readonly relayed: number }
   | {
     readonly of: 'stopped'; readonly step: number; readonly steps: number; readonly relayed: number;
-    /** Transactions this page was handed and did not hand to the service. Whether any landed is read from the chain. */
+    /**
+     * Transactions that may land and were not confirmed sent: those this page was handed and did not hand to the
+     * service, or, when the wallet's own end counts more, those the wallet sent itself without this page. Whether any
+     * landed is read from the chain.
+     */
     readonly unconfirmed: number;
     readonly why: ActStoppedWhy;
     /** On a refused check: the key of the words the wallet refused with, and the kind of refusal, never the words' values. */
@@ -230,9 +235,9 @@ export async function actInTheWallet(
   let handedOver = 0;
   let expectedCall = 1;
   const shape = intentShapeOf(intentName);
-  const acknowledgeCall = (n: number, answer: { status: number; body: unknown } | null): void => {
-    dialog.wallet?.postMessage(answer === null
-      ? { schema: ACT_CALLED_SCHEMA, nonce, n, outcome: 'refused' }
+  const acknowledgeCall = (n: number, answer: { status: number; body: unknown } | null | 'unreached'): void => {
+    dialog.wallet?.postMessage(answer === null || answer === 'unreached'
+      ? { schema: ACT_CALLED_SCHEMA, nonce, n, outcome: answer ?? 'refused' }
       : { schema: ACT_CALLED_SCHEMA, nonce, n, outcome: 'answered', status: answer.status, body: answer.body }, walletOrigin);
   };
   let expectedKeep = 1;
@@ -283,17 +288,18 @@ export async function actInTheWallet(
       at = { step: calling.step, steps: calling.steps };
       log(`${under(calling)}: ${called}`);
       relaying = relaying.then(async () => {
-        let answer: { status: number; body: unknown } | null = null;
+        let answer: { status: number; body: unknown } | null | 'unreached' = null;
         try {
           const got = await asked.call!({ method: calling.method, path: calling.path, ...(calling.body === undefined ? {} : { body: calling.body }) },
             { step: calling.step, steps: calling.steps, n: calling.n });
           answer = Number.isSafeInteger(got.status) && got.status >= 100 && got.status <= 599 ? { status: got.status, body: got.body ?? null } : null;
         } catch (e) {
           log(`${under(calling)}: ${called} failed: ${errorLine(e)}`);
-          answer = null;
+          /* No answer came back from the service at all: the wallet is told so, never that the call was refused, so it can go around it. */
+          answer = serviceNotReached(e) ? 'unreached' : null;
         }
-        if (answer !== null && sends && answer.status >= 200 && answer.status < 300) relayed += 1;
-        log(`${under(calling)}: ${called} ${answer === null ? 'refused' : `answered ${answer.status}`} (${counts()})`);
+        if (answer !== null && answer !== 'unreached' && sends && answer.status >= 200 && answer.status < 300) relayed += 1;
+        log(`${under(calling)}: ${called} ${answer === null ? 'refused' : answer === 'unreached' ? 'not answered by the service' : `answered ${answer.status}`} (${counts()})`);
         acknowledgeCall(calling.n, answer);
       });
       return;
@@ -349,8 +355,14 @@ export async function actInTheWallet(
     }
     const told = { ...(ended.outcome === undefined ? {} : { outcome: ended.outcome }), ...(ended.keys === undefined ? {} : { keys: ended.keys }) };
     if (ended.ended === 'done') return Object.freeze({ of: 'done' as const, steps: ended.steps, relayed, ...told });
+    /*
+     * The wallet's own end counts every transaction it handed over, to this page or to the chain itself; a send it made
+     * without this page shows only there. A wallet that counts more than this page relayed can only make the page more
+     * careful, never less.
+     */
+    const theWalletHandedOver = ended.relayed + ended.unconfirmed;
     return Object.freeze({
-      of: 'stopped' as const, step: ended.step, steps: ended.steps, relayed, unconfirmed: handedOver - relayed,
+      of: 'stopped' as const, step: ended.step, steps: ended.steps, relayed, unconfirmed: Math.max(handedOver - relayed, theWalletHandedOver - relayed),
       why: ended.why ?? 'step-failed',
       ...(ended.refused === undefined ? {} : { refused: ended.refused, ...(ended.code === undefined ? {} : { code: ended.code }) }),
       ...told,

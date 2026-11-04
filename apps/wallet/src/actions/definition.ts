@@ -136,6 +136,18 @@ export interface StepContext {
    * route carries a transaction is counted with the relays.
    */
   call(method: 'GET' | 'PUT' | 'POST', path: string, body?: string): Promise<{ readonly status: number; readonly body: unknown }>;
+  /**
+   * Says that this wallet has itself handed one transaction to the chain or to the company's own service, without the
+   * page (`sentFromTheOwnWallet`). The page cannot see such a send, so without this an action that stops after one
+   * would end saying nothing was handed over, and a person who believed it could raise the same payment twice. Each
+   * one counts as handed over and not confirmed when the action stops, and closes `confirm` like a relay does.
+   */
+  sentByTheWallet(): void;
+  /**
+   * Says that this wallet read the chain and found there the call it last handed the page that the page did not answer
+   * in time for (`provenOnTheChainAlready`). That call is then on the chain and no longer counted as unconfirmed.
+   */
+  seenOnTheChain(): void;
   /** Adds to what the action's end tells the page: only the parts the action's entry lists, all of them public. */
   tell(outcome: Readonly<Record<string, string | number>>): void;
   /**
@@ -143,6 +155,16 @@ export interface StepContext {
    * stay in the wallet: nothing of them is sent to the page. A later call replaces an earlier one.
    */
   show(words: Words): void;
+  /**
+   * Shows the person, in this window, what a step read with the seat's keys that the approval is about (a spending
+   * policy's terms, whose seat a removal takes), and resolves once they press Confirm. It is the one place an action
+   * waits on the person after the passkey: no second passkey, a button. It is asked at most once in an action, and
+   * only before anything is handed over to be sent or written; asked again, or after a hand-over, it throws
+   * `ActionStopped` and the action stops. Throws `ActionStopped` when the person presses Stop instead, or the action is stopped or runs out of
+   * time while it waits, so nothing after it is built, signed or sent. A step signs exactly the value it showed: it
+   * never reads that value again between showing it and signing it.
+   */
+  confirm(lines: readonly Words[]): Promise<void>;
   /** The person's saved keys, or null when the ask carried none. */
   readonly keyring: ActKeyring | null;
 }
@@ -161,6 +183,8 @@ export interface ActionDefinition {
   shown(intent: ActIntent): Promise<readonly ShownLine[]>;
   /** (b) What is checked after the passkey, as the window lists it before. */
   readonly checks: readonly Words[];
+  /** (b) The checks of this one ask, where they depend on what it names; absent, `checks`. */
+  checksFor?(intent: ActIntent): readonly Words[];
   /** (b) The checks themselves: `null` when every one holds, else what did not. */
   check(intent: ActIntent, held: Held): Promise<Words | null>;
   /** (c) The steps, in order. */

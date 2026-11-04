@@ -530,7 +530,7 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
   const approvedOnTheChain = async (r: Awaited<ReturnType<typeof recorded>>) => {
     const p = await accounts.seatRound(r.at, r.made.viewingKey, r.dana.id, r.adaHere.signerId, r.dana.invite);
     const salt = accounts.governanceAsked(p.id, r.made.viewingKey).proposalSalt;
-    await ledger.propose(r.at, MidnightCommitments.signerInvitePayload(r.dana.invite.address, r.dana.invite.scope),
+    await ledger.propose(r.at, MidnightCommitments.signerInvitePayload(r.dana.invite.address, r.dana.invite.scope, 0),
       { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt }, r.adaRef, MidnightCommitments.noVault());
     return p;
   };

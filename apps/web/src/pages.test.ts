@@ -7,6 +7,7 @@ import { MODE_NAMES, MODES } from './preferences.js';
 import { addressOf, pageAt, resolve, RESOLVED } from './router.js';
 import { EVERY_SHORTCUT, SHORTCUTS, type Chord } from './shortcuts.js';
 import { menuFor } from './shell/menu.js';
+import { ENGLISH } from './english.test-support.js';
 
 /*
  * THE ONE LIST OF PAGES, HELD TO WHAT IT PROMISES: every page is in it, every
@@ -77,7 +78,7 @@ describe('every page the design names is in the list', () => {
       ['apps', 'company', 'bottom'], ['settings', 'company', 'bottom'],
       ['settingsCompany', 'company', 'settings'], ['settingsSigners', 'company', 'settings'], ['settingsRoles', 'company', 'settings'],
       ['settingsAppearance', 'company', 'settings'], ['settingsLanguage', 'company', 'settings'], ['settingsAccount', 'company', 'settings'],
-      ['settingsNotifications', 'company', 'settings'], ['settingsBilling', 'company', 'settings'],
+      ['settingsNotifications', 'company', 'settings'], ['settingsBilling', 'company', 'settings'], ['settingsRecovery', 'company', 'settings'],
       ['payHome', 'employee', 'top'], ['payslips', 'employee', 'top'], ['paymentsReceived', 'employee', 'top'], ['myDetails', 'employee', 'top'],
       ['documents', 'employee', 'top'], ['paySettings', 'employee', 'bottom'],
       ['payAppearance', 'employee', 'paySettings'], ['payLanguage', 'employee', 'paySettings'], ['payAccount', 'employee', 'paySettings'],
@@ -89,7 +90,7 @@ describe('every page the design names is in the list', () => {
   it('builds the frame\'s pages and the company pages that read, and shows every other page Coming soon', () => {
     expect(EVERY_PAGE.filter(isBuilt).map((p) => p.id)).toEqual([
       'landing', 'join', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'apps',
-      'settings', 'settingsAppearance', 'settingsLanguage', 'paySettings', 'payAppearance', 'payLanguage',
+      'settings', 'settingsSigners', 'settingsAppearance', 'settingsLanguage', 'settingsRecovery', 'paySettings', 'payAppearance', 'payLanguage',
     ]);
   });
 
@@ -100,14 +101,14 @@ describe('every page the design names is in the list', () => {
    */
   it('loads every company page and the setup wizard when it is first opened', async () => {
     const onDemand = EVERY_PAGE.filter((p) => isBuilt(p) && typeof (p.shows.screen as { load?: unknown }).load === 'function').map((p) => p.id);
-    expect(onDemand).toEqual(['join', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'apps']);
+    expect(onDemand).toEqual(['join', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'apps', 'settingsSigners', 'settingsRecovery']);
     for (const id of onDemand) {
       const screen = PAGES[id].shows as { screen: { load: () => Promise<unknown>; screenName: string } };
       expect(typeof await screen.screen.load(), id).toBe('function');
     }
     /* The part already built of a page not built yet is loaded the same way. */
     const partsOnDemand = EVERY_PAGE.filter((p) => typeof (p.shows as { already?: { load?: unknown } }).already?.load === 'function').map((p) => p.id);
-    expect(partsOnDemand).toEqual(['settingsCompany', 'settingsSigners']);
+    expect(partsOnDemand).toEqual(['settingsCompany']);
     for (const id of partsOnDemand) expect(typeof await (PAGES[id].shows as { already: { load: () => Promise<unknown> } }).already.load(), id).toBe('function');
     const eager = read('pages.ts').match(/^import .* from '\.\/screens\/[^']+';$/gm) ?? [];
     expect(eager.map((l) => l.replace(/.*\/screens\/|';$/g, '')).sort()).toEqual(['appearance.js', 'landing.js', 'language.js', 'settings.js']);
@@ -185,7 +186,7 @@ describe('every entry is a page, and every page is an entry', () => {
    * asked for, marked, so anything else it returns was written in the code.
    */
   it('asks for every name and line by its key, and writes none itself', () => {
-    const en = JSON.parse(read('locales/en.json')) as Record<string, string>;
+    const en = ENGLISH;
     const asked: string[] = [];
     const stub = ((k: string) => { asked.push(k); return `\u0000${k}`; }) as Text;
     const marked = (v: string) => v.startsWith('\u0000') && v.slice(1) in en;

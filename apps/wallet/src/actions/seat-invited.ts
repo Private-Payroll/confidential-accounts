@@ -4,7 +4,9 @@
  * It derives its own seat for the company (the first whose leaf the company's account does not hold and whose pay-key
  * wrap slot no seat has filled), keeps it in the saved keys, proves `seatInvited` with the address's coin key as the
  * proof's witness, and hands the transaction to the invitation's relay. The account refuses it unless the
- * invitation's proposal names this address and these rights and is approved at the seat bar. It then asks to be
+ * invitation's proposal names this address, these rights and the threshold the seat sets (the signed invitation's,
+ * or 0, which keeps the threshold in force), and is approved at the seat bar; a threshold above the seats the account
+ * holds once this one is taken is refused here before anything is proved. It then asks to be
  * admitted with its seat's public halves sealed to the company's inbox key, and keeps the seat again under the id the
  * company gave the request. When the service has already taken the request or fails, it ends waiting for admission:
  * the seat is kept with what asking again needs, and the next act on the company keeps it under the id the company's
@@ -16,7 +18,7 @@ import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/
 import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
 import { withNewSeat, withPendingSeat, type Keyring, type PendingSeat } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { acceptanceProofOf, invitationIdOf, offerExpiredRefusal, openOffer, type SignerOffer } from '../../../../src/core/invitation.js';
+import { acceptanceProofOf, invitationIdOf, offerExpiredRefusal, openOffer, thresholdTheInvitationSets, type SignerOffer } from '../../../../src/core/invitation.js';
 import { fromHex, signingPublicKeyOf, toHex, type Hex, type Sealed } from '../../../../src/core/crypto.js';
 import { sealToInbox } from '../../../../src/core/sealed-records.js';
 import { proveSeatKeys } from '../../../../src/core/seat-invite-proof.js';
@@ -25,7 +27,8 @@ import { storedSignerLeaf } from '../../../../src/core/signer-leaf.js';
 import type { PendingSignerPayload } from '../../../../src/core/types.js';
 import { watchFor } from '../keyring/nothing-secret-crosses.js';
 import { heldAt } from './claim-by-address.js';
-import type { CompanyChain } from './company-reach.js';
+import { handOverFor, handOverMarked, type CompanyChain } from './company-reach.js';
+import { handedOver } from '../../../../packages/web-shared/src/hand-over.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type StepContext, type Words } from './definition.js';
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
@@ -237,6 +240,18 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
               if (took.toLowerCase() !== s.leaf) refuse('taken-by-another');
               return;
             }
+            /*
+             * The threshold the signed invitation sets once the seat is taken, which the proposal binds: refused here,
+             * before anything is proved, when it is above the seats the chain holds now and this one, as the chain
+             * would refuse it. This wallet holds no list of the company's signers, so it counts seats, never vaults.
+             */
+            const threshold = thresholdTheInvitationSets(o.offer.invited.terms.invite);
+            if (threshold !== '0') {
+              const holders = await reach.chain().holders(account, readCompanyLabel(ctx.intent.fields['company'])!);
+              if (!('seats' in holders)) throw new StepRefused(holders);
+              const seated = holders.seats.length + 1;
+              if (BigInt(threshold) > BigInt(seated)) refuse('threshold-above-the-seats', { threshold, seats: seated });
+            }
             const state = await reach.chain().callState(account);
             if (state === null) refuse('not-on-chain');
             const keys = ZswapSecretKeys.fromSeed(ctx.held.identity.moneyAt(at!.account).zswap);
@@ -248,7 +263,7 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
             let tx: string;
             try {
               tx = await reach.builder().seatInvited({
-                account, proposal, intoVacatedSlot: false, proposalSalt: o.offer.byAddress.proposalSalt,
+                account, proposal, intoVacatedSlot: false, newThreshold: threshold, proposalSalt: o.offer.byAddress.proposalSalt,
                 material: { signingSecret: s.signingSecret, blinding: s.blinding, scope: s.scope },
                 invite: { coinSecretKey, addressSalt: o.offer.invited.terms.invite!.salt },
                 chain: { accountState: state!.accountState, parameters: state!.parameters },
@@ -256,11 +271,29 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
             } catch (e) {
               return refuse('not-built', { says: String((e as Error)?.message ?? e) });
             }
-            const sent = await ctx.call('POST', `/api/invites/${o.invitation}/seat`,
-              JSON.stringify({ acceptance: o.acceptance, tx }));
-            if (sent.status !== 200) {
-              const said = (sent.body as { error?: unknown } | null)?.error;
-              refuse('not-sent', { says: typeof said === 'string' ? said : `the service answered ${sent.status}` });
+            const viaService = async (): Promise<void> => {
+              const sent = await ctx.call('POST', `/api/invites/${o.invitation}/seat`,
+                JSON.stringify({ acceptance: o.acceptance, tx }));
+              if (sent.status !== 200) {
+                const said = (sent.body as { error?: unknown } | null)?.error;
+                refuse('not-sent', { says: typeof said === 'string' ? said : `the service answered ${sent.status}` });
+              }
+            };
+            const handed = { over: false };
+            const over = handOverMarked(handOverFor(ctx, reach.chain()), handed);
+            try {
+              await handedOver(over, {
+                tx, call: { kind: 'account-call', contract: account, circuit: 'seatInvited' }, viaService, after: async () => undefined,
+              });
+            } catch (e) {
+              /*
+               * Once this wallet handed the seat to the chain itself, on any path, the seat may be taken, and the step
+               * says so. Otherwise, on the chain path, the person's own wallet's refusal, in this step's words.
+               */
+              if (e instanceof StepRefused) throw e;
+              if (handed.over) refuse('may-be-sent', { says: String((e as Error)?.message ?? e) });
+              if (over.path === 'service') throw e;
+              refuse('not-sent', { says: String((e as Error)?.message ?? e) });
             }
           },
         },

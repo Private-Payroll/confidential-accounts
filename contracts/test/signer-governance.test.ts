@@ -20,7 +20,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, ZERO_32, invitePayloadFor, invitedAddressFor, type Change,
+  AccountSimulator, privateStateFor, change, ZERO_32, invitePayloadFor, invitedAddressFor, type Change, removalPayloadFor,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 
@@ -475,17 +475,14 @@ describe('what the contract does when a signer is removed off chain', () => {
     }
   });
 
-  it('and that is exactly what removeSigner fixes — it exists now', async () => {
+  it('and that is exactly what a removal on the chain fixes: the account has a circuit for it', async () => {
     /*
-     * This test used to assert `removeSigner` was ABSENT, which is how the gap
-     * was recorded before there was a fix. It is inverted rather than deleted
-     * so the two facts stay attached: the behaviour above is what the contract
-     * does when a signer is dropped off chain only, and the circuit below is
-     * the thing that makes dropping them mean something. The circuit is
-     * `amendSigner`, which only removes.
+     * The behaviour above is what the contract does when a signer is dropped
+     * off chain only; the circuit below is what makes dropping them mean
+     * something. It is the account's one removal, `removeSignerAndSetThreshold`.
      */
     const sim = await removedSignerAccount();
-    expect(Object.keys(sim.contract.impureCircuits)).toContain('amendSigner');
+    expect(Object.keys(sim.contract.impureCircuits)).toContain('removeSignerAndSetThreshold');
   });
 });
 
@@ -581,7 +578,7 @@ describe('removing a signer by clearing one slot', () => {
    */
   const removalApproved = async (sim: AccountSimulator, leaf: Uint8Array, seed = 82) => {
     const c = govChange(seed);
-    const id = await proposeGov(sim, FA, c, pureCircuits.removeSignerPayload(leaf));
+    const id = await proposeGov(sim, FA, c, removalPayloadFor(leaf));
     await sim.as(FB).approve(id);
     return { id, c };
   };
@@ -715,7 +712,7 @@ describe('removing a signer by clearing one slot', () => {
     const sim = await threeSigners();
     const leafC = sim.leafOf(FC);
     const c = govChange(91);
-    const id = await proposeGov(sim, FA, c, pureCircuits.removeSignerPayload(leafC));
+    const id = await proposeGov(sim, FA, c, removalPayloadFor(leafC));
     await expect(sim.as(carrying(sim, FA, c)).removeSigner(leafC, id))
       .rejects.toThrow(/not enough approvals/);
   });
@@ -777,7 +774,7 @@ describe('removing a signer by clearing one slot', () => {
     // this is refused for want of approvals — and even with C's own approval it
     // would be refused for stranding the account. Either way the count holds.
     const c = govChange(93);
-    const id = await proposeGov(sim, FA, c, pureCircuits.removeSignerPayload(sim.leafOf(FC)));
+    const id = await proposeGov(sim, FA, c, removalPayloadFor(sim.leafOf(FC)));
     await sim.as(FB).approve(id);
     await sim.as(FC).approve(id);
     await expect(sim.as(carrying(sim, FA, c)).removeSigner(sim.leafOf(FC), id))

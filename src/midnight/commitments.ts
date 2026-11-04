@@ -239,7 +239,7 @@ export const MidnightCommitments: CommitmentScheme = {
    * (`src/core/ledger.ts:739`, `:758`, `:771`, `:789`) and `AccountService`
    * imported them directly, so on the Midnight wiring the round was raised
    * under a payload the contract has never computed. `propose` asserts nothing
-   * about the payload hash, so nothing refused until `amendSigner`,
+   * about the payload hash, so nothing refused until the removal,
    * `setThreshold` or `setVaultThreshold` recomputed it — after the approvals
    * were collected and the fees were spent.
    *
@@ -256,7 +256,7 @@ export const MidnightCommitments: CommitmentScheme = {
    * `src/core/ledger.ts`'s `CommitmentScheme` carries the long form.
    *
    * **THE NAMES: THREE DIFFER FROM THE CIRCUITS'.**
-   * `signerRemovePayload` → `removeSignerPayload`, `signerThresholdPayload` →
+   * `signerRemovePayload` → `removeAndSetThresholdPayload`, `signerThresholdPayload` →
    * `setThresholdPayload`, `vaultThresholdPayload` →
    * `setVaultThresholdPayload`; `signerInvitePayload`, `inviteAddressOf` and
    * `coinPublicKeyOf` match. A swap here is silent — every one of them returns
@@ -285,9 +285,12 @@ export const MidnightCommitments: CommitmentScheme = {
    * table. **The day either round is built it needs exactly this treatment**,
    * and `one-definition.test.ts` still says so beside each of them.
    */
-  /** What signers approve to seat whoever holds the invited address, with exactly `scope` as their rights. */
-  signerInvitePayload(address: Hex, scope: Hex): Hex {
-    return toHex(pureCircuits.signerInvitePayload(fromHex(address), fromHex(scope)));
+  /**
+   * What signers approve to seat whoever holds the invited address, with exactly `scope` as their rights, setting the
+   * threshold to `newThreshold` once the seat is taken (0 keeps the one in force).
+   */
+  signerInvitePayload(address: Hex, scope: Hex, newThreshold: number): Hex {
+    return toHex(pureCircuits.signerInvitePayload(fromHex(address), fromHex(scope), BigInt(newThreshold)));
   },
 
   /** The hiding commitment to an invited address's coin public key, under `salt`. */
@@ -300,8 +303,9 @@ export const MidnightCommitments: CommitmentScheme = {
     return toHex(pureCircuits.coinPublicKeyOf(fromHex(coinSecretKey)));
   },
 
-  signerRemovePayload(removedLeaf: Hex): Hex {
-    return toHex(pureCircuits.removeSignerPayload(fromHex(removedLeaf)));
+  /** What signers approve to remove `removedLeaf` and set the threshold to `newThreshold` (0 keeps the one in force). */
+  signerRemovePayload(removedLeaf: Hex, newThreshold: number): Hex {
+    return toHex(pureCircuits.removeAndSetThresholdPayload(fromHex(removedLeaf), BigInt(newThreshold)));
   },
 
   /*

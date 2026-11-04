@@ -15,7 +15,7 @@
  * about a real chain's timing; they say what this service writes whatever the
  * timing is.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -54,7 +54,7 @@ const until = async (test: () => boolean) => {
 
 type Ada = 0; type Blake = 1;
 
-async function aCompany(opts: { threshold: number }) {
+async function aCompany(opts: { threshold: number; closesIn?: number }) {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-one-writer-')), 'db.json'));
   const ledger = new SimulatedLedger(MidnightCommitments);
   /*
@@ -96,7 +96,7 @@ async function aCompany(opts: { threshold: number }) {
   const leafOf = (signerId: string) =>
     accounts.open(account, viewingKey).signers.find((x) => x.id === signerId)!.leafCommitment as Hex;
   const by = (signerId: string) => ({ signerId, leaf: leafOf(signerId) });
-  const window = { opensAt: BigInt(now() - 60), closesAt: BigInt(now() + 3_600) };
+  const window = { opensAt: BigInt(now() - 60), closesAt: BigInt(now() + (opts.closesIn ?? 3_600)) };
   const drawn = await payroll.createRunFromRoster(account, '2026-08', viewingKey);
   const runId = drawn.run.id;
   const materialFor = async () => {
@@ -670,6 +670,28 @@ describe('A RUN RAISED AGAIN FROM HERE', () => {
     expect(raised.id).toBe(written.id);
     expect(c.record(written.id).status).toBe('open');
     expect(await c.onChain(written.chainId)).toBeDefined();
+  });
+
+  it('A RECORD WRITTEN DOWN A DAY AGO OR MORE IS NOT RAISED AGAIN, AND ONE A SECOND SHORT OF A DAY IS', async () => {
+    /* A window open for three days, so only the raise's own deadline can refuse it a day on. */
+    const c = await aCompany({ threshold: 1, closesIn: 3 * 86_400 });
+    const written = await aRaiseThatDidNotLand(c);
+    const deadlineMs = Date.parse(written.createdAt) - (Date.parse(written.createdAt) % 1000) + 86_400_000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(deadlineMs);
+      /* RED WHEN: a raise the chain can never take any more, its deadline reached, is built and sent again. */
+      await expect(c.payroll.proposeRun(c.runId, c.viewingKey, c.seats[0]!.signerId, await c.materialFor()))
+        .rejects.toThrow(/written down more than a day ago.*so it can never be raised again/su);
+      expect(await c.onChain(written.chainId)).toBeUndefined();
+      vi.setSystemTime(deadlineMs - 1000);
+      /* RED WHEN: a raise a second inside its deadline is refused as too late. */
+      const raised = await c.payroll.proposeRun(c.runId, c.viewingKey, c.seats[0]!.signerId, await c.materialFor());
+      expect(raised.id).toBe(written.id);
+      expect(await c.onChain(written.chainId)).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('A RECORD WITHDRAWN BEFORE THE RAISE HELD IT IS NOT REOPENED', async () => {

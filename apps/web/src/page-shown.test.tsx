@@ -6,6 +6,7 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { untilPageShown, untilShown } from './page-shown.test-support.js';
+import { ENGLISH } from './english.test-support.js';
 
 /*
  * A TEST WAITS FOR A PAGE THROUGH THE ONE SHARED HELPER. A page's screen loads
@@ -28,7 +29,7 @@ const { VIEWS } = await import('./pages.js');
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 const SRC = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SRC, '../../..');
-const EN = JSON.parse(readFileSync(`${SRC}/locales/en.json`, 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const walk = (dir: string): { path: string; text: string }[] => readdirSync(`${ROOT}/${dir}`, { withFileTypes: true }).flatMap((e) =>
   e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.test\.tsx?$/.test(e.name) ? [{ path: `${dir}/${e.name}`, text: readFileSync(`${ROOT}/${dir}/${e.name}`, 'utf8') }] : []);
@@ -78,7 +79,7 @@ describe('a test waits for a page through the one helper', () => {
     const NAMED = ['apps/web/src/records/page-loading.test.tsx', HERE];
     const opening = TESTS.filter((f) => OPENS.test(f.text) && !NAMED.includes(f.path));
     expect(opening.map((f) => f.path).sort()).toEqual([
-      'apps/web/src/actions/person-panel.test.tsx', 'apps/web/src/actions/vendor-panel.test.tsx', 'apps/web/src/app.test.tsx', 'apps/web/src/foundation-look.test.tsx', 'apps/web/src/join-link.test.tsx', 'apps/web/src/one-menu.test.tsx', 'apps/web/src/records/pages-that-read.test.tsx', 'apps/web/src/screens/vault-deposit.test.tsx', 'apps/web/src/screens/waiting-admit.test.tsx', 'apps/web/src/setup/wizard.test.tsx',
+      'apps/web/src/actions/one-off.test.tsx', 'apps/web/src/actions/person-panel.test.tsx', 'apps/web/src/actions/raise-run.test.tsx', 'apps/web/src/actions/vendor-panel.test.tsx', 'apps/web/src/app.test.tsx', 'apps/web/src/foundation-look.test.tsx', 'apps/web/src/join-link.test.tsx', 'apps/web/src/one-menu.test.tsx', 'apps/web/src/records/pages-that-read.test.tsx', 'apps/web/src/screens/vault-deposit.test.tsx', 'apps/web/src/screens/waiting-admit.test.tsx', 'apps/web/src/setup/wizard.test.tsx',
       'apps/web/src/shell/shell.test.tsx',
     ]);
     for (const f of opening) {

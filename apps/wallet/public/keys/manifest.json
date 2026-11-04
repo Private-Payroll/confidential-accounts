@@ -1,13 +1,15 @@
 {
   "version": 9,
-  "generatedAt": "2026-08-20T15:02:55.766Z",
-  "lastVendoredAt": "2026-08-20T15:02:55.784Z",
+  "generatedAt": "2026-11-02T14:17:48.857Z",
+  "lastVendoredAt": "2026-11-04T09:28:36.633Z",
   "sources": {
     "circuits": "https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com",
     "parameters": [
       "https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com",
       "https://srs.midnight.network"
-    ]
+    ],
+    "account": "contracts/managed",
+    "vault": "contracts/managed-vault"
   },
   "artefacts": {
     "zswap/9/spend.prover": {
@@ -93,6 +95,290 @@
     "bls_midnight_2p18": {
       "bytes": 50332036,
       "sha256": "e8436dc5d8b598f169c127c745135d889744007e6d384ff126df8d1332522f86"
+    },
+    "account/propose.prover": {
+      "bytes": 19578462,
+      "sha256": "e7c9a840d8ad89f3b5dfa448fb911ee834a3b572048963ab3c03c1079b45fe02"
+    },
+    "account/propose.verifier": {
+      "bytes": 2119,
+      "sha256": "6566aead0911bc105cc39fc921bca497f29b4555047bbf2d3364327fb2dedd30"
+    },
+    "account/propose.bzkir": {
+      "bytes": 2838,
+      "sha256": "aa274c1cefde12c16b5523243feb6cd3eb32dc186caa660e7f836f18919c259d"
+    },
+    "account/approve.prover": {
+      "bytes": 19497893,
+      "sha256": "3429bde0c251ed496317d9a9fb209155947e66202c9130d3028cfee663959edf"
+    },
+    "account/approve.verifier": {
+      "bytes": 2119,
+      "sha256": "3d78bb8b8a545bb5f8533cb1d95093622854d11fa422c14ad38cd93b2344e2f9"
+    },
+    "account/approve.bzkir": {
+      "bytes": 1605,
+      "sha256": "6b75c0acaedfa3adc35294ddd082ead303067fbca58cc9440959169ec46944a5"
+    },
+    "account/setThreshold.prover": {
+      "bytes": 10007980,
+      "sha256": "6d47d25a982ba028f89ee639feed128ec9581d77ba1924d83179f9654c854261"
+    },
+    "account/setThreshold.verifier": {
+      "bytes": 2119,
+      "sha256": "47a861bd1d930c29b79220e73d24fa9aa2d051dd254a503b93eee5950b043192"
+    },
+    "account/setThreshold.bzkir": {
+      "bytes": 1610,
+      "sha256": "7b30061b26a99fb413fa71a6d86d1b305758cda338f08d0c3fd25771c531b481"
+    },
+    "account/adopt.prover": {
+      "bytes": 9996563,
+      "sha256": "5258aeba6a7e34818c425c7a3835e67f8138cee0a2fd5a42646fa35c7f58e63f"
+    },
+    "account/adopt.verifier": {
+      "bytes": 2119,
+      "sha256": "5f73fb03074f931d8b768bf3bc9d3cfe476c332dba4f65fbb7ab9fec882474a0"
+    },
+    "account/adopt.bzkir": {
+      "bytes": 1619,
+      "sha256": "47fd1aaad42e63650f4e87ce0131f253f6304648243574e50d979e12d5b67c63"
+    },
+    "account/sealPayKey.prover": {
+      "bytes": 19522204,
+      "sha256": "a77d9fd637c6da46fce2476634d1ccf01491aaa12c12269144e0d37f70514d96"
+    },
+    "account/sealPayKey.verifier": {
+      "bytes": 2119,
+      "sha256": "410ed2ecac2bb3276ba4e8ed78ffeed151d1c0456daa8b5c4fa59d93f2950233"
+    },
+    "account/sealPayKey.bzkir": {
+      "bytes": 3622,
+      "sha256": "9580560030b1829ed358511fc97b5776a45fffd2fd4bae85213bb7ec99a63fa0"
+    },
+    "account/cancel.prover": {
+      "bytes": 9983608,
+      "sha256": "0ad49d766df45dae24d24383eb314c24ad6c5bbbf409d5925e897f411d42ab96"
+    },
+    "account/cancel.verifier": {
+      "bytes": 2119,
+      "sha256": "6cbd2d7e15e91246042a2fe9e220c3642d2760fb16044592ddeea849bb4ada50"
+    },
+    "account/cancel.bzkir": {
+      "bytes": 1668,
+      "sha256": "a2c9face45783f73a5b5f8fab339a07349ed3053a0d022be2e1f53cc76c78def"
+    },
+    "account/setVaultThreshold.prover": {
+      "bytes": 19520017,
+      "sha256": "d7f6a3e7383540adaf88d2123c528e08435a270eff3f199c1d2214fa4f686c4c"
+    },
+    "account/setVaultThreshold.verifier": {
+      "bytes": 2119,
+      "sha256": "69cd258fc0a6a7f2db3a095274a15af01ac272683fe4cf3d99e78152de7ac533"
+    },
+    "account/setVaultThreshold.bzkir": {
+      "bytes": 4041,
+      "sha256": "533833700277a0159117225fd17b408003f407b7a48493b8935e0ba588a31ab0"
+    },
+    "account/setPolicy.prover": {
+      "bytes": 19552920,
+      "sha256": "2c6f23dffe872253afc462ffcd0b3c0b147e166174bc23e9bd5eb03365d742f3"
+    },
+    "account/setPolicy.verifier": {
+      "bytes": 2119,
+      "sha256": "1995aeb0ff596f75ad57c5c58188aa96e2bb45f286ff382a58d2d72105e3d036"
+    },
+    "account/setPolicy.bzkir": {
+      "bytes": 3141,
+      "sha256": "4b9d08196a4b36f9be280efc9d52476d386eae9b63d54d300ce1133a9270a3de"
+    },
+    "account/setPolicyBar.prover": {
+      "bytes": 10016158,
+      "sha256": "2c2cba0fef3c9e8a8de8c7f1235724ff2cb312c0109ec545f439e5c0534e0e88"
+    },
+    "account/setPolicyBar.verifier": {
+      "bytes": 2119,
+      "sha256": "76751943981b01f8688b02ed55da7641abe933e894c25b9828cc2694ac0a4148"
+    },
+    "account/setPolicyBar.bzkir": {
+      "bytes": 2014,
+      "sha256": "e6b0c07e8601e8e98372fdae16e45dcc6d5e2c6925e5bc7b17a07a1e550b12a5"
+    },
+    "account/anchor.prover": {
+      "bytes": 19499042,
+      "sha256": "9f5835c9dbf757803210383217b322e6a6984e737b5996b14db04e4007350a2e"
+    },
+    "account/anchor.verifier": {
+      "bytes": 2119,
+      "sha256": "56a9b56e86da9cf50f0447b27b8f255c5bc7fd60e7e370109e11156f866c6d8b"
+    },
+    "account/anchor.bzkir": {
+      "bytes": 1469,
+      "sha256": "d3a859373b48634735b3caf460f8f5888627d9cea4da1060c01075d491e546b8"
+    },
+    "account/recoverAnchor.prover": {
+      "bytes": 19570931,
+      "sha256": "45023ac2f6a93db0528dc6dea25d1f825a21fd3c93e82d5b328f51c4240c7184"
+    },
+    "account/recoverAnchor.verifier": {
+      "bytes": 2119,
+      "sha256": "b84fcc78eb4f866600cd945e90f33ce43d57282b6620a249a9ddba402f87b3ea"
+    },
+    "account/recoverAnchor.bzkir": {
+      "bytes": 3339,
+      "sha256": "9b35f4e2e96f63168bb95e065a290b061fcb9d064d138d4335791add6a7f868e"
+    },
+    "account/approveVaultChange.prover": {
+      "bytes": 19524886,
+      "sha256": "07b0e83fad020e7831b245233ed1431bc0156c88eb31752bc0601433311e72f8"
+    },
+    "account/approveVaultChange.verifier": {
+      "bytes": 2119,
+      "sha256": "21d6cb3d70f4f1313eda0a35c2c6ffb12791f58eb1eaf3d624020a5e767f0657"
+    },
+    "account/approveVaultChange.bzkir": {
+      "bytes": 4955,
+      "sha256": "6af97e5dc05d11fd235cf2ce1f82aad1d7448b327d7127ea2819a69bdc680cf3"
+    },
+    "vault/setNonceSecret.prover": {
+      "bytes": 19599876,
+      "sha256": "115a4eccb670bb45bd8944338760eabd6a02a11414abd15cc1b957799839809f"
+    },
+    "vault/setNonceSecret.verifier": {
+      "bytes": 2119,
+      "sha256": "d387bc1a2fa9d08687f8ec2af558252f18fdec5f1d0f91f84f332ab313dc01eb"
+    },
+    "vault/setNonceSecret.bzkir": {
+      "bytes": 4324,
+      "sha256": "1bde44c283ad6420ff226fdd1db89e44dfa1e5d24efbde79a5231dc091d0f0ae"
+    },
+    "vault/writeSecretCopy.prover": {
+      "bytes": 19515607,
+      "sha256": "c192cd01adac2a55f7739ec2310cfcb65a5b924ada51e4d3bf45bb01a26507c7"
+    },
+    "vault/writeSecretCopy.verifier": {
+      "bytes": 2119,
+      "sha256": "96ae85060b1b454b4426e1f47377910738c0f0294d2317812de5daa4b081bd1e"
+    },
+    "vault/writeSecretCopy.bzkir": {
+      "bytes": 1649,
+      "sha256": "25bc9ba66643c77da962328ec535ed005d0f31f608669cb8ec973db9c7c26160"
+    },
+    "vault/deposit.prover": {
+      "bytes": 5204583,
+      "sha256": "1e3267ba9599b3066823ae78834678628d9caa308cfe33ed41e0c8e0ce9fbf2c"
+    },
+    "vault/deposit.verifier": {
+      "bytes": 2119,
+      "sha256": "adf46d3546718eda7a1a963e5e91fba803e0612c6525230644e4db0d72c88e78"
+    },
+    "vault/deposit.bzkir": {
+      "bytes": 516,
+      "sha256": "e2dbe77a238c7ca16edd3ce521c6b004ab4ccefd46d2d5040fe33ed2251c3d54"
+    },
+    "vault/batchPayout.verifier": {
+      "bytes": 2119,
+      "sha256": "2e6d30c936efcd054cf6c50fb8f1c67237e7198a4271249ca45d7bb8f777944c"
+    },
+    "vault/depositUnshielded.verifier": {
+      "bytes": 1351,
+      "sha256": "74f3e3a82024d8c502e94263f7f0b3c195df03649c037b3439718a103b4b17ca"
+    },
+    "vault/forgetUnshielded.verifier": {
+      "bytes": 1351,
+      "sha256": "5c97e598125415da67a80cf0eb3fcc4f82f52d91c1318150d0e2bbab6ceb3805"
+    },
+    "vault/mergeNotes.verifier": {
+      "bytes": 2119,
+      "sha256": "4d5fd778a7e5039f4c506010290fe97ce85df2ebc7922414be053d90796a6230"
+    },
+    "vault/payout.verifier": {
+      "bytes": 2119,
+      "sha256": "723b42b7e884162ccbab64ac16c0484e52afffd9b96a031b1dd5a7267a60fd89"
+    },
+    "vault/payoutUnshielded.verifier": {
+      "bytes": 2119,
+      "sha256": "41f2819369d6bcc797763327e466449aa45e04b687e8cc1e7dea733a3be92a47"
+    },
+    "vault/retire.verifier": {
+      "bytes": 1351,
+      "sha256": "6862578d64365c6944c842fe1129987cbe94eb55857262fb427884fc06a30fa8"
+    },
+    "vault/splitNote.verifier": {
+      "bytes": 2119,
+      "sha256": "97e8a8c493482792b2f5c9c938446cd9cf0e95ba78dba85284b537eaef7d788c"
+    },
+    "account/clearRun.prover": {
+      "bytes": 19603436,
+      "sha256": "407b211bf8dfc5f74639608d3b244cc08802f40e6d9d3155f23b66eb80300316"
+    },
+    "account/clearRun.verifier": {
+      "bytes": 2119,
+      "sha256": "4b57f7385150f7b12e845421f19f8e079b3b2302a9dffd6421880313803c709a"
+    },
+    "account/clearRun.bzkir": {
+      "bytes": 3445,
+      "sha256": "4f4169a0b09473ee51fb1e169d319cdc9a13a1ef1df7f25aa87eee94a406a8a2"
+    },
+    "account/recordPaymentFromVault.prover": {
+      "bytes": 19522727,
+      "sha256": "e7e7f74f368eb16d5cf15ef9f70e0c4ba215c0098f86082d9200921336b84531"
+    },
+    "account/recordPaymentFromVault.verifier": {
+      "bytes": 2119,
+      "sha256": "d12db6e5519c257ca43274e723b14f4eed3cc6764517f5eefa51a50b4b69e94e"
+    },
+    "account/recordPaymentFromVault.bzkir": {
+      "bytes": 4688,
+      "sha256": "827f6e245bf31aa861412c861a6ba4e6cf94584adafa445d8d27499494013461"
+    },
+    "vault/payout.prover": {
+      "bytes": 19533214,
+      "sha256": "816eeb9de72d6792dcd6890695646c3d2072868633d874598ca87a25ab38d85d"
+    },
+    "vault/payout.bzkir": {
+      "bytes": 3789,
+      "sha256": "1fb7a319f13c699bf2a062f68a25ba7a419a687801ef15c1f380b011a27b82d8"
+    },
+    "vault/payoutUnshielded.prover": {
+      "bytes": 5221171,
+      "sha256": "258429ffab8bc14d4f73e6052d3465e64c670d7abecbba70ec8277d05990726f"
+    },
+    "vault/payoutUnshielded.bzkir": {
+      "bytes": 2162,
+      "sha256": "1d78d034d4067dfa3863eb4c4fa4fc0493f33d87322e99156be63479936486cf"
+    },
+    "account/seatInvited.prover": {
+      "bytes": 19530876,
+      "sha256": "dcfeb9f97b98a8952e343190639a2864b455fdef95c9b595ad8ca4c4fcdd9307"
+    },
+    "account/seatInvited.verifier": {
+      "bytes": 2119,
+      "sha256": "996df8dbf3c7afe4dbdbded682445497c7b1e53dbbc1c26499cd48e20348e90a"
+    },
+    "account/seatInvited.bzkir": {
+      "bytes": 3239,
+      "sha256": "cc7e98deefb629ac4b63ed46ceb60b4e6cec1874d169ca510ad6db5dd019a341"
+    },
+    "account/removeSignerAndSetThreshold.prover": {
+      "bytes": 19517669,
+      "sha256": "87a0baf9248018e85845edf8ed18e5bd0d5fa4f199efe52ce89bfd98ff6e5e77"
+    },
+    "account/removeSignerAndSetThreshold.verifier": {
+      "bytes": 2119,
+      "sha256": "0602ac71aee4e93c58ae358a8b2362112813f05a5166227bfbd9752582606357"
+    },
+    "account/removeSignerAndSetThreshold.bzkir": {
+      "bytes": 3584,
+      "sha256": "8b1f3417ad1f1203201da864c84dc50cff0d8ab93a95e510618ec6a6b4f3f966"
+    },
+    "vault/mergeNotes.prover": {
+      "bytes": 19515208,
+      "sha256": "f5bdb409172cc2ccd5f3d2bbc0d02f3207afceeddb58b2cd15c11a39d77cf438"
+    },
+    "vault/mergeNotes.bzkir": {
+      "bytes": 3142,
+      "sha256": "8fe21d2e9aa84ffc7deda7bb3a98377e1d487f145839df462f29bd4f4e135f34"
     }
   }
 }

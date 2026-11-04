@@ -6,14 +6,15 @@
  * believes and would pay. It checks the leg may be raised, builds the leg's
  * payout tree itself, checks the vault's money (private and public), writes
  * the proposal and the run as raised, signs both with this seat's filing key,
- * and proves the raise. The service files the two and relays the proven call;
- * it is given no key, builds nothing, and is told no payment's amount, payee or
- * currency.
+ * and proves the raise. The service files the two and relays the proven call,
+ * or, on the chain path, files the two and the person's own wallet sends it;
+ * the service is given no key, builds nothing, and is told no payment's amount,
+ * payee or currency.
  */
 import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { assetIdBytes, assets as theAssets, sumChangeAmount, type AssetId, type LedgerForm } from '../../../src/core/assets.js';
 import { randomBytes, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
-import { batchDigestOf, paysCommitmentOf, sealPayrollProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
+import { batchDigestOf, paysCommitmentOf, raiseByOf, sealPayrollProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
 import { proposalEntry } from '../../../src/midnight/record-manifest.js';
 import type { Filed, RecordsEntered } from './record-entered-here.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
@@ -34,7 +35,8 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
 import type { RunMadeHere, VouchedHere } from './what-this-device-made.js';
 import { vouchedFreshOf, vouchedRefusal } from '../../../src/midnight/record-tree.js';
-import type { RaiseDoors, RoundOnThePage } from './governed-call-on-device.js';
+import { theRoundAsked, type RaiseDoors, type RoundOnThePage } from './governed-call-on-device.js';
+import { handedOver } from './hand-over.js';
 import {
   checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere,
 } from './run-rebuilt-here.js';
@@ -317,7 +319,7 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
   const opened: OpenedRound = {
     chainId, digest, vault: r.vault, salt, vouched: r.vouched, summary: r.summary,
     half: { assetId: hex(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest },
-    made: r.made,
+    made: r.made, raiseBy: raiseByOf(createdAt),
   };
   const order: RaiseRunOrder = {
     circuit: 'propose',
@@ -338,7 +340,13 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
   const filed: readonly Filed[] = [{ store: 'run', run: runFiling }, proposalEntry(accountId, proposal)];
   let round: RoundOnThePage;
   try {
-    round = await service.file!(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling });
+    const file = service.file!;
+    round = theRoundAsked(await handedOver(doors.handOver, {
+      tx, call: { kind: 'account-call', contract: chain.account, circuit: order.circuit },
+      viaService: () => file(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling }),
+      before: () => file(accountId, { proposal, salt, run: runFiling }),
+      after: () => service.standing(proposal.id),
+    }), proposal.id, chainId);
   } catch (e) {
     /*
      * **WRITTEN DOWN AND NOT SENT IS STILL WRITTEN DOWN.** A send that failed

@@ -32,7 +32,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, change, privateStateFor, ZERO_32 } from './simulator.js';
+import { AccountSimulator, change, privateStateFor, ZERO_32, removalPayloadFor } from './simulator.js';
 import type { AccountPrivateState } from '../src/witnesses.js';
 
 const A = privateStateFor(1);
@@ -345,7 +345,7 @@ describe('a recovery of the record anchor', () => {
     const { id, c, latest } = await sim.approvedRecovery(resumes, [A, B], 493);
     /* D is removed after A and B approved; C then approves, so the approvals cover the threshold and the removal. */
     const r = change(0n, 494);
-    const payload = pureCircuits.removeSignerPayload(sim.leafOf(D));
+    const payload = removalPayloadFor(sim.leafOf(D));
     await sim.as(sim.applying(A, r)).propose(payload);
     const rid = sim.proposalId(payload, r.salt);
     for (const d of [B]) await sim.as(d).approve(rid);

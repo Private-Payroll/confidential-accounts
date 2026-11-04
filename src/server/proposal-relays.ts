@@ -20,8 +20,11 @@
  * one approval per signer - and decides. What is written here afterwards is
  * only what the chain was read to say: that it holds the proposal, how many
  * approvals it counts for it, that it withdrew it, or, for a vault's adoption
- * that the vault's own start step carried out, that the chain no longer holds
- * it open and lists the vault adopted. Whether that count meets
+ * or first secret run that the vault's own start step carried out, that the
+ * chain no longer holds it open and shows the vault adopted or holding the
+ * very secret that run sets; and, for a proposal a signer's own wallet carried
+ * out or withdrew straight on the chain, which of the two the account's history
+ * shows. Whether that count meets
  * the bar of the vault the proposal names is worked out on a signer's device,
  * which opens the record; the vault is sealed in it and this server does not
  * read it. No raise hands this server a payment's amount, payee or currency.
@@ -33,11 +36,12 @@
  * which may have landed.
  */
 import express from 'express';
+import type { ClosedOnChain } from './proposal-closed-on-chain.js';
 import { z } from 'zod';
 import type { Ledger, LedgerStatus } from '../core/ledger.js';
 import type { Invite, SealedAccount, SealedProposal, SealedRun } from '../core/types.js';
 import { runFilingRefusal, type SignedRunFiling } from '../core/run-filing.js';
-import { proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
+import { proposalFilingRefusal, raiseByOf, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION, reloadThePage } from '../core/device-raise.js';
@@ -49,6 +53,7 @@ import { ACTING_REFUSAL, actingSeatOf, type DirectorySeat } from '../midnight/se
 import { CHAIN_UNREAD, type DirectoryNow } from './seat-directory-route.js';
 import type { Hex } from '../core/crypto.js';
 import { acceptsTheInvitation } from '../core/invitation.js';
+import type { FirstSecretRunParts } from '../midnight/vault-start.js';
 
 /** What these routes need of the service's store: the plain half of each proposal, and nothing sealed is read. */
 export interface RelayStore {
@@ -95,12 +100,40 @@ export interface ProposalRelayDeps {
   readonly adoptionOf?: (vault: Hex) => { readonly proposal: string; readonly payload: string };
   /** The vaults the company's account lists on the chain now: the ones it adopted. Null when the chain did not answer. */
   readonly vaultsAdopted?: (accountId: string) => Promise<readonly string[] | null>;
+  /**
+   * A vault's first secret run made again from its public parts, as the account's and the vault's own functions make
+   * it (`firstSecretRunCarriedOf`): its identity and payload, and the root such a run has under a secret's commitment.
+   */
+  readonly firstSecretRunOf?: (vault: Hex, parts: FirstSecretRunParts) => {
+    readonly proposal: string; readonly payload: string; rootUnder(commitment: string): string;
+  };
+  /**
+   * The commitment of the secret a vault holds on the chain now, 64 hex digits, all zero while it holds none, and whether
+   * the vault is started: every signer's sealed copy of that secret written. Null when the chain did not answer.
+   */
+  readonly vaultSecretOf?: (vault: Hex) => Promise<{ readonly commitment: string; readonly started: boolean } | null>;
+  /**
+   * How the chain closed a company's proposal, read by this service from the account's own history (`closedOnChain`).
+   * Absent, no record is closed from the chain.
+   */
+  readonly closedOnChain?: (accountId: string, chainId: string) => Promise<ClosedOnChain>;
+  /**
+   * The chain's own time: the time of the newest block this deployment's indexer names, in milliseconds, read for a
+   * company's account. Never this service's clock and never a time a request names. Absent, a proposal sent and never
+   * seen is not withdrawn here, whatever its deadline.
+   */
+  readonly chainTimeOf?: (accountId: string) => Promise<number>;
 }
 
 /** A vault, an asset or a token: thirty-two bytes as sixty-four lower-case hexadecimal characters. */
 const HEX64 = /^[0-9a-f]{64}$/u;
 /** The filing key of the seat a device acts from, which it sends with every relay: the seat is found by its person and this key. */
 const FILER = z.string().regex(HEX64);
+/** A first secret run's public parts, as the call that set its secret disclosed them. */
+const SECRET_RUN_PARTS = z.object({
+  root: z.string().regex(HEX64), opensAt: z.string().regex(/^[0-9]{1,20}$/u), closesAt: z.string().regex(/^[0-9]{1,20}$/u),
+  salt: z.string().regex(HEX64), nonce: z.string().regex(HEX64), copiesRoot: z.string().regex(HEX64), count: z.string().regex(/^[0-9]{1,20}$/u),
+}).strict();
 
 /** One proven transaction, as base64, held under the body limit. */
 const TX = z.string().min(1).max(1_000_000);
@@ -306,13 +339,61 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     res.json(answer);
   });
 
+  /**
+   * Returns only when no raise of a proposal the chain does not hold and was never seen holding (no `raisedAt`) can ever
+   * land, whether this service relayed a raise of it (`txRef`) or a signer's wallet may have sent one straight to the
+   * chain, which leaves nothing here: the chain refuses a raise in a block whose time is not before the deadline its
+   * signed record fixes (`raiseByOf`), so once the time of the newest block is past it, and the account's history, read
+   * after that time, shows the chain never held the proposal, none of it ever will. The time is read before the
+   * history, so a raise that landed in time is in it. Otherwise a refusal saying why, and inside the deadline until
+   * when a raise of it may still arrive.
+   */
+  const noRaiseCanLand = async (p: SealedProposal): Promise<void> => {
+    const mayStillArrive = p.txRef
+      ? `this proposal was sent from a device, as ${p.txRef}, and the chain does not show it yet, so it may still arrive`
+      : 'the chain does not show this proposal, and a raise of it sent straight from a signer\'s wallet may still arrive';
+    const sendItAgain = p.txRef
+      ? 'Send it to the chain again from a signer\'s device - it is the same proposal, and the chain takes it once - '
+        + 'or withdraw it once the chain shows it'
+      : 'If it was sent, withdraw it once the chain shows it';
+    let raiseByMs: number;
+    try {
+      raiseByMs = Number(raiseByOf(p.createdAt)) * 1000;
+    } catch (e) {
+      throw new Error(`${mayStillArrive}. ${(e as Error).message}, so it is not withdrawn here. ${sendItAgain}`);
+    }
+    const until = new Date(raiseByMs).toISOString();
+    if (deps.chainTimeOf === undefined || deps.closedOnChain === undefined) {
+      throw new Error(`${mayStillArrive} until ${until}, by the chain's time, and this service cannot read the chain's time and `
+        + `history to tell when that has passed, so it is not withdrawn here. ${sendItAgain}. Tell whoever runs this service`);
+    }
+    const chainNow = await deps.chainTimeOf(p.accountId).catch(() => undefined);
+    if (typeof chainNow !== 'number' || !Number.isSafeInteger(chainNow) || chainNow <= 0) {
+      throw new Error(`${mayStillArrive} until ${until}, by the chain's time, and the chain's time could not be read just now, so `
+        + 'it is not withdrawn here. Try again in a minute');
+    }
+    if (chainNow < raiseByMs) throw new Error(`${mayStillArrive} until ${until}, by the chain's time. ${sendItAgain}, or after that time`);
+    const read = await deps.closedOnChain(p.accountId, p.chainId).catch((): ClosedOnChain => 'unknown');
+    if (read === 'unknown') {
+      throw new Error('the chain\'s history could not be read to show whether this proposal ever reached it, so it is not '
+        + 'withdrawn here. Try again in a minute');
+    }
+    if (read !== 'never') {
+      throw new Error('the chain shows this proposal reached it, so it is not withdrawn here. Read where it stands again');
+    }
+  };
+
   /*
    * **A PROPOSAL WITHDRAWN.** One the chain holds is withdrawn by the call a
    * signer's device proved, and written down as withdrawn once the chain no
-   * longer holds it. One only written down, never sent, is withdrawn here with
-   * no call. One a device sent that the chain does not show yet is not: it may
-   * still land, and a record closed here would sit beside an open proposal on
-   * the chain nothing here can withdraw.
+   * longer holds it. One the chain does not hold and was never seen holding,
+   * whether this service relayed a raise of it or none (a signer's wallet may
+   * have sent one straight to the chain), is withdrawn here with no call, only by
+   * the seat that wrote it down and only once the chain's own time is past its
+   * deadline and the chain never held it (`noRaiseCanLand`): before then a raise
+   * of it may still land, and a record closed here would sit beside an open
+   * proposal on the chain nothing here can withdraw. One the company's policy
+   * stopped is read on the chain the same way.
    */
   router.post('/api/proposals/:id/cancel', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
     const b = parsed(res, z.object({ tx: TX.optional(), filer: FILER }).strict(), req.body, 'a withdrawal');
@@ -324,13 +405,14 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
         if (p.status === 'executed') throw new Error('this proposal has been carried out, so there is nothing to withdraw');
         if (p.status === 'cancelled') throw new Error('this proposal is already withdrawn');
-        const status = p.status === 'blocked' ? null : await readTheChain(p.accountId);
-        const h = p.status === 'blocked' ? 'absent' : chainHoldsIt(p, status);
+        const h = chainHoldsIt(p, await readTheChain(p.accountId));
         if (h === 'unknown') throw new Error(CANNOT_ASK_THE_CHAIN);
-        if (h === 'absent' && p.txRef && !p.raisedAt) {
-          throw new Error(`this proposal was sent from a device, as ${p.txRef}, and the chain does not show it yet, so it may `
-            + 'still arrive. Send it to the chain again from a signer\'s device - it is the same proposal, and the chain takes '
-            + 'it once - or withdraw it once the chain shows it');
+        if (h === 'absent' && !p.raisedAt) {
+          if (p.filedBy !== undefined && p.filedBy.publicKey.toLowerCase() !== b.filer.toLowerCase()) {
+            throw new Error('another signer wrote this proposal down and the chain does not hold it, so only the signer who wrote '
+              + 'it down withdraws it: ask them');
+          }
+          await noRaiseCanLand(p);
         }
         if (h === 'absent' && sending.has(`send ${id}`)) throw new Error(RAISE_ON_ITS_WAY.replace(/\.\s*$/u, ''));
         if (h === 'present' && b.tx === undefined) {
@@ -358,7 +440,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         deps.store.putProposal(closed);
         return standingOf(closed);
       }
-      /* Only written down: read again with nothing awaited, so a send that started meanwhile is not closed over. */
+      /* Not on the chain: read again with nothing awaited, so a send that started meanwhile is not closed over. */
       const latest = requireProposal(id);
       if (latest.txRef !== proposal.txRef || latest.raisedAt || sending.has(`send ${id}`)) {
         throw new NothingWasSent('this proposal was sent to the chain while it was being withdrawn, so it is not withdrawn here. '
@@ -421,7 +503,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
 
   /*
    * **AN APPROVED GOVERNANCE PROPOSAL CARRIED OUT**, by the call a signer's
-   * device proved: a seat given, the company's threshold changed, one vault's
+   * device proved: a signer removed, the company's threshold changed, one vault's
    * own approvals needed changed, a vault's spending policy set, or the approvals
    * a change to a spending policy needs changed. The chain checks the proposal is approved and
    * is for exactly that change, and closes it; it is written down as carried out
@@ -431,7 +513,8 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * THE INVITEE'S OWN CALL TAKING THE SEAT AN INVITATION BY ADDRESS OFFERED, relayed for whoever holds the invitation's
    * acceptance. Not behind a seated signer: the invitee holds no seat until the chain carries this call, and is no member
    * of the company. The chain is what decides: `seatInvited` is refused there unless the proposal invites the address
-   * the invitee's own coin key makes, with the seat's rights, approved at the seat bar. Only that circuit is relayed.
+   * the invitee's own coin key makes, with the seat's rights and the threshold it sets, approved at the seat bar. Only
+   * that circuit is relayed.
    */
   router.post('/api/invites/:id/seat', deps.signedIn, json, async (req, res) => {
     const b = parsed(res, z.object({ acceptance: z.string().regex(HEX64), tx: TX }).strict(), req.body, 'a seat taken by invitation');
@@ -456,7 +539,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
   });
 
   router.post('/api/proposals/:id/carry', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX, circuit: z.enum(['amendSigner', 'setThreshold', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']), filer: FILER }).strict(),
+    const b = parsed(res, z.object({ tx: TX, circuit: z.enum(['removeSignerAndSetThreshold', 'setThreshold', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']), filer: FILER }).strict(),
       req.body, 'a change to carry out');
     if (b === null) return;
     await answerASend(req, res, async () => {
@@ -496,19 +579,29 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * where the chain was read to hold it.
    */
   /*
-   * **A VAULT'S ADOPTION THE CHAIN CARRIED OUT IS WRITTEN DOWN AS CARRIED OUT**,
-   * the one proposal another call - the vault's own start step - carries out.
-   * Kept only for a seat that may act, for the adoption of the vault named, as
-   * the account's own functions make its identity and payload (`adoptionOf`),
-   * once this server's own read of the chain no longer holds it open and lists
-   * that vault adopted by the company's account. A proposal the chain no longer
-   * holds may have been carried out, withdrawn, or left to run out, so absence
-   * alone writes nothing down: the vault must also be listed as adopted. Nothing
-   * is sent. A device asks it once its own read shows the vault adopted, so each
-   * refusal says the vault is not affected and what resolves it.
+   * **A VAULT'S ADOPTION OR FIRST SECRET RUN THE CHAIN CARRIED OUT IS WRITTEN
+   * DOWN AS CARRIED OUT**, the two proposals another call - the vault's own
+   * start step - carries out. Kept only for a seat that may act, and only once
+   * this server's own read of the chain no longer holds the proposal open: one
+   * the chain no longer holds may have been carried out, withdrawn, or left to
+   * run out, so absence alone writes nothing down.
+   *   · An adoption, named by its vault: its identity and payload are the ones
+   *     the account's own functions make for that vault (`adoptionOf`), and the
+   *     chain lists that vault adopted by the company's account.
+   *   · A first secret run, named by its vault and the run's public parts, which
+   *     the call that set its secret disclosed: its identity and payload are
+   *     the ones the contracts' own functions make of them for that vault
+   *     (`firstSecretRunOf`), and the vault holds, on this server's own read of
+   *     the chain, the very secret that run sets - the run's root is the one
+   *     made under the commitment the vault holds - with every signer's sealed
+   *     copy of it written, so a vault that takes nothing yet is never shown
+   *     done. A device's word that the secret is set is never taken.
+   * Nothing is sent. A device asks it once its own read shows the proposal done,
+   * so each refusal says the vault is not affected and what resolves it.
    */
   router.post('/api/proposals/:id/carried', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ vault: z.string().regex(HEX64), filer: FILER }).strict(), req.body, 'a vault\'s adoption carried out on the chain');
+    const b = parsed(res, z.object({ vault: z.string().regex(HEX64), filer: FILER, run: SECRET_RUN_PARTS.optional() }).strict(), req.body,
+      'a vault\'s adoption or first secret run carried out on the chain');
     if (b === null) return;
     const p = deps.store.getProposal(String(req.params.id))!;
     const refuse = (status: number, error: string) => { res.status(status).json({ nothingWasSent: true, error }); };
@@ -519,38 +612,127 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
       return;
     }
     if (p.status === 'executed') { res.json(standingOf(p)); return; }
-    if (deps.adoptionOf === undefined || deps.vaultsAdopted === undefined) {
-      refuse(409, 'this service cannot check which vaults the company adopted, so it does not mark the adoption done. The vault is not affected. '
-        + 'Tell whoever runs this service');
-      return;
-    }
-    const round = deps.adoptionOf(b.vault.toLowerCase() as Hex);
-    if (round.proposal.toLowerCase() !== p.chainId.toLowerCase() || round.payload.toLowerCase() !== p.digest.toLowerCase()) {
-      refuse(409, 'this proposal is not the adoption of that vault, so it is not marked done here. The vault is not affected');
-      return;
+    const vault = b.vault.toLowerCase() as Hex;
+    const what = b.run === undefined ? 'adoption' : 'first secret run';
+    let shown: () => Promise<string | null>;
+    if (b.run === undefined) {
+      if (deps.adoptionOf === undefined || deps.vaultsAdopted === undefined) {
+        refuse(409, 'this service cannot check which vaults the company adopted, so it does not mark the adoption done. The vault is not affected. '
+          + 'Tell whoever runs this service');
+        return;
+      }
+      const round = deps.adoptionOf(vault);
+      if (round.proposal.toLowerCase() !== p.chainId.toLowerCase() || round.payload.toLowerCase() !== p.digest.toLowerCase()) {
+        refuse(409, 'this proposal is not the adoption of that vault, so it is not marked done here. The vault is not affected');
+        return;
+      }
+      const vaultsAdopted = deps.vaultsAdopted;
+      shown = async () => {
+        const adopted = await vaultsAdopted(p.accountId).catch(() => null);
+        if (adopted === null) return null;
+        return adopted.some((v) => v.toLowerCase() === vault) ? 'shown'
+          : 'the service\'s read of the chain does not show this vault adopted yet, so it does not mark the adoption done. The vault is not affected. '
+            + 'Press again in a minute';
+      };
+    } else {
+      if (deps.firstSecretRunOf === undefined || deps.vaultSecretOf === undefined) {
+        refuse(409, 'this service cannot check which secret a vault holds, so it does not mark the first secret run done. The vault is not affected. '
+          + 'Tell whoever runs this service');
+        return;
+      }
+      const made = deps.firstSecretRunOf(vault, b.run);
+      if (made.proposal.toLowerCase() !== p.chainId.toLowerCase() || made.payload.toLowerCase() !== p.digest.toLowerCase()) {
+        refuse(409, 'this proposal is not the first secret run of that vault with those parts, so it is not marked done here. The vault is not affected');
+        return;
+      }
+      const vaultSecretOf = deps.vaultSecretOf;
+      const root = b.run.root.toLowerCase();
+      shown = async () => {
+        const read = await vaultSecretOf(vault).catch(() => null);
+        if (read === null) return null;
+        const held = read.commitment;
+        if (!/[1-9a-f]/u.test(held.toLowerCase())) {
+          return 'the service\'s read of the chain does not show this vault\'s secret set yet, so it does not mark the first secret run done. '
+            + 'The vault is not affected. Press again in a minute';
+        }
+        if (made.rootUnder(held.toLowerCase()).toLowerCase() !== root) {
+          return 'the secret this vault holds on the chain is not the one this run sets, so the run is not marked done. The vault is not affected';
+        }
+        return read.started ? 'shown'
+          : 'the service\'s read of the chain shows this vault\'s secret set and not every signer\'s sealed copy of it written, so the first '
+            + 'secret run is not marked done until it is. The vault is not affected. Approving it again from the wallet writes the copies';
+      };
     }
     if ((p.status !== 'open' && p.status !== 'approved') || !p.raisedAt) {
-      refuse(409, p.raisedAt ? `this adoption is ${p.status} in the company's proposals, so it is not marked done. The vault is not affected`
-        : 'the service has no record of this adoption being raised, so it does not mark it done. The vault is not affected. Tell whoever runs this service');
+      refuse(409, p.raisedAt ? `this ${what} is ${p.status} in the company's proposals, so it is not marked done. The vault is not affected`
+        : `the service has no record of this ${what} being raised, so it does not mark it done. The vault is not affected. Tell whoever runs this service`);
       return;
     }
-    const [status, adopted] = await Promise.all([readTheChain(p.accountId), deps.vaultsAdopted(p.accountId).catch(() => null)]);
-    if (status === null || adopted === null) {
-      refuse(503, 'the service could not read the chain, so it does not mark the adoption done yet. The vault is not affected. Press again in a minute');
+    const [status, seen] = await Promise.all([readTheChain(p.accountId), shown()]);
+    if (status === null || seen === null) {
+      refuse(503, `the service could not read the chain, so it does not mark the ${what} done yet. The vault is not affected. Press again in a minute`);
       return;
     }
     if (chainHoldsIt({ chainId: p.chainId }, status) !== 'absent') {
-      refuse(409, 'the service\'s read of the chain still shows this adoption open, so it does not mark it done yet. The vault is not affected. Press again in a minute');
+      refuse(409, `the service's read of the chain still shows this ${what} open, so it does not mark it done yet. The vault is not affected. Press again in a minute`);
       return;
     }
-    if (!adopted.some((v) => v.toLowerCase() === b.vault.toLowerCase())) {
-      refuse(409, 'the service\'s read of the chain does not show this vault adopted yet, so it does not mark the adoption done. The vault is not affected. '
-        + 'Press again in a minute');
+    if (seen !== 'shown') {
+      refuse(409, seen);
       return;
     }
     const carried: SealedProposal = { ...p, status: 'executed', executedAt: now() };
     deps.store.putProposal(carried);
     res.json(standingOf(carried));
+  });
+
+  /*
+   * A proposal a signer's wallet carried out or withdrawn straight on the chain, closed in this record. Nothing is
+   * sent, and nothing is taken on the device's word: whether it was carried out or withdrawn is this service's own
+   * read of the account's history (`closedOnChain`), as `/carried` reads the vault. A device may name which it
+   * believes; a name the chain does not bear out is refused. While the chain still holds the proposal, or its history
+   * cannot be read, the record is answered as it stands and the device asks again.
+   */
+  router.post('/api/proposals/:id/closed', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
+    const b = parsed(res, z.object({ filer: FILER, how: z.enum(['carried', 'withdrawn']).optional() }).strict(), req.body,
+      'a proposal closed on the chain');
+    if (b === null) return;
+    const p = deps.store.getProposal(String(req.params.id))!;
+    const refuse = (status: number, error: string) => { res.status(status).json({ nothingWasSent: true, error }); };
+    try {
+      await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
+    } catch (e) {
+      refuse(403, (e as Error).message);
+      return;
+    }
+    if (p.status === 'executed' || p.status === 'cancelled') { res.json(standingOf(p)); return; }
+    if (p.status !== 'open' && p.status !== 'approved') {
+      refuse(409, `this proposal is ${p.status}, so it is not closed here. Nothing was closed.`);
+      return;
+    }
+    if (deps.closedOnChain === undefined) {
+      refuse(409, 'this service cannot read how the chain closed a proposal, so it does not close it. Nothing was closed. '
+        + 'Tell whoever runs this service');
+      return;
+    }
+    const read = await deps.closedOnChain(p.accountId, p.chainId);
+    if (read === 'open') { res.json(standingOf(written(p.id, await readTheChain(p.accountId)))); return; }
+    if (read === 'unknown') { res.json(standingOf(p)); return; }
+    if (read === 'never') {
+      refuse(409, 'the chain never held this proposal, so it is not closed here. Nothing was closed.');
+      return;
+    }
+    if (b.how !== undefined && b.how !== read) {
+      refuse(409, `the chain shows this proposal ${read === 'carried' ? 'carried out' : 'withdrawn'}, not as this request says, `
+        + 'so it is not closed here. Nothing was closed. Read where it stands again');
+      return;
+    }
+    const latest = requireProposal(p.id);
+    const closed: SealedProposal = read === 'carried'
+      ? { ...latest, status: 'executed', executedAt: now() }
+      : { ...latest, status: 'cancelled' };
+    deps.store.putProposal(closed);
+    res.json(standingOf(closed));
   });
 
   router.post('/api/proposals/:id/charge', deps.signedIn, json, deps.ownsProposal, async (req, res) => {

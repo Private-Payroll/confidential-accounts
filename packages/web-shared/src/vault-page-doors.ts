@@ -39,13 +39,19 @@ import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wi
 import { ROSTER_ID } from '../../../src/core/roster-record.js';
 import { FOUNDING_KEY_EPOCH, stateRecordId } from '../../../src/core/founding-state.js';
 
+import { serviceNotReached } from './hand-over.js';
+
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
-/** A refusal from the service keeps the service's own mark of whether anything was sent. */
+/**
+ * A refusal from the service keeps the service's own mark of whether anything was sent. A service that gave no answer
+ * at all is passed on as it is, so a hand-over can read the chain and go around it.
+ */
 export const marked = async <T>(call: () => Promise<T>): Promise<T> => {
   try {
     return await call();
   } catch (e) {
+    if (serviceNotReached(e)) throw e;
     const message = (e as Error)?.message ?? String(e);
     throw Object.assign(new Error(message), { nothingWasSent: /Nothing was sent/u.test(message) });
   }

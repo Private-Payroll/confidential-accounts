@@ -24,14 +24,19 @@ export type InviteAsk = { readonly record: string; readonly company: CompanyLabe
     readonly kind: 'vendor'; readonly name: string; readonly email?: string; readonly startDate: string; readonly endDate?: string;
     readonly address?: string; readonly terms: { readonly kind: 'one-off' } | { readonly kind: 'monthly'; readonly asset: string; readonly units: bigint };
   }
-  | { readonly kind: 'signer'; readonly name: string; readonly role: string; readonly address: string; readonly scope?: string }
+  | {
+    readonly kind: 'signer'; readonly name: string; readonly role: string; readonly address: string; readonly scope?: string;
+    /** The approvals the company needs once the seat is taken; left out, the number in force is kept. */
+    readonly threshold?: number;
+  }
 );
 
 /**
  * **INVITES SOMEBODY TO THE COMPANY FROM THE PERSON'S WALLET**: the invite action, run over one window as every action
  * on a company is (`actOnACompanyInTheWallet`). This page makes the invitation's token and so the link itself; the
  * wallet seals, signs and files the invitation with its own seat, and for a signer raises the proposal to seat the
- * address, keeping the invitation in the saved keys first. The person's details go to the wallet only, as the
+ * address (with the approvals the company needs once the seat is taken, where `threshold` is given), keeping the
+ * invitation in the saved keys first. The person's details go to the wallet only, as the
  * action's words. Resolves with how the action ended and the link to give the person, which is theirs only once the
  * action says the invitation was filed (or, raised and not filed, to give them by hand).
  * `opts.token`, when given, is used as it is (and the link is made from it), so a press again of an invitation the wallet
@@ -57,6 +62,7 @@ export async function inviteInTheWallet(
     if (ask.terms.kind === 'monthly') { put('termsAsset', ask.terms.asset); put('termsAmount', ask.terms.units.toString()); }
   } else {
     put('role', ask.role); put('address', ask.address); put('scope', ask.scope);
+    put('threshold', ask.threshold === undefined ? undefined : String(ask.threshold));
   }
   const ended = await actOnACompanyInTheWallet({ name: 'invite', ...fields }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
   return { ended, link: invitationLink(opts.origin ?? window.location.origin, token), id: invitationIdOf(token) };

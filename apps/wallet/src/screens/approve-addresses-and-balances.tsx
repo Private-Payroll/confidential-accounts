@@ -6,7 +6,7 @@ import type { Channel } from 'midnight-identity/profile/channel';
 import {
   AddressesAndBalancesRefused, addressesAndBalancesAnswerFor, type AddressesAndBalancesShown, type HeldAmount, type Visibility,
 } from 'midnight-identity/profile/addresses-and-balances';
-import { Button, Section } from 'vaults-ui';
+import { Button, Section, useText } from 'vaults-ui';
 import { BalanceEnginesContext } from '../chain/balance-context.js';
 import type { BalanceState } from '../chain/balance.js';
 import { GIVE_UP_AFTER_MS, NIGHT_RAW } from '../chain/balance.js';
@@ -127,6 +127,7 @@ const moment = (ms: number): string => new Date(ms).toLocaleString();
 function SideShown({ visibility, address, side, shown }: {
   readonly visibility: Visibility; readonly address: string | null; readonly side: Side; readonly shown: AddressesAndBalancesShown | null;
 }): ReactNode {
+  const t = useText();
   const title = visibility === 'private' ? 'Private' : 'Public';
   /* What is listed is what the press sends: once both sides are read it is read from the very value the press hands over. */
   const amounts = shown === null
@@ -141,6 +142,9 @@ function SideShown({ visibility, address, side, shown }: {
         </>
       )}
       <p className="m-0 text-sm text-muted-foreground">{`${title} balance`}</p>
+      {visibility === 'public' && (
+        <p className="m-0 text-sm text-muted-foreground" data-public-record>{t('ask.addresses.public-record')}</p>
+      )}
       {side.of === 'reading' && (
         <p className="m-0 text-sm text-muted-foreground" data-side-reading>Reading this from the network.</p>
       )}

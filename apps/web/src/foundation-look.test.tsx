@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { classWordsOf, KIT_ENTRIES, utilityOf } from 'vaults-ui/rules/source-rules.test-support';
 import { untilPageShown } from './page-shown.test-support.js';
+import { ENGLISH } from './english.test-support.js';
 
 /*
  * THE FOUNDATION'S LOOK, HELD ON EVERY PAGE. Every page a signed-in person
@@ -53,7 +54,7 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
 const SRC = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SRC, '../../..');
-const EN = JSON.parse(readFileSync(`${SRC}/locales/en.json`, 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 
 const SIGNER: Viewer = { signedIn: true, view: VIEWS.company, signs: true };

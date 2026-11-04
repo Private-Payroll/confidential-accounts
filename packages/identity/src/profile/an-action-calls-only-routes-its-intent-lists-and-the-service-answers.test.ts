@@ -140,9 +140,9 @@ describe('an action asks the service only for the routes its intent lists', () =
     const sites = [...code.matchAll(/\bctx\.call\(\s*['"`](GET|PUT|POST)['"`]\s*,\s*`([^`]*)`/gu)];
     if (sites.length > 0) CALLED.set(file, sites.map((m) => key(m[1]!, asked(m[2]!))));
   }
-  const NAMED_IN_THE_ACTION = ['claim-by-address', 'join-by-code', 'seat-invited'];
+  const NAMED_IN_THE_ACTION = ['claim-by-address', 'join-by-code', 'seat-invited', 'finish-company'];
 
-  it('claims, joins and seats by invitation ask for exactly the routes they list, no more and no fewer', () => {
+  it('claims, joins, seats by invitation and finishing a company ask for exactly the routes they list, no more and no fewer', () => {
     /* RED WHEN: a wallet action asks the service for a route its list does not name, or its list names one it never asks. */
     for (const name of NAMED_IN_THE_ACTION) {
       const listed = [...listedBy(name).keys()].sort();
@@ -225,7 +225,6 @@ const FINISH_ROUTE: Readonly<Record<string, string>> = {
   creation: '/api/accounts/:/creation',
   'creation-again': '/api/accounts/:/creation/again',
   'creation-finish': '/api/accounts/:/creation/finish',
-  'pay-key-propose': '/api/accounts/:/creation/pay-key',
   'pay-key-approve': '/api/accounts/:/creation/pay-key',
   'pay-key-seal': '/api/accounts/:/creation/pay-key',
 };

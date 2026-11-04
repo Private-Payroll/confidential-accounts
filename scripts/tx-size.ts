@@ -232,12 +232,9 @@ export function limitsFromLedger(LedgerParameters: any): BlockLimits {
  * artefacts. Every one of those is read behind a `try`, because the question
  * "how much of this is verifier keys" must not be able to stop a deploy.
  *
- * The account deploys ELEVEN circuits — adopt, amendSigner, approve, cancel,
- * closeExpiredRun, execute, propose, recordPayment, retireVault, setThreshold,
- * setVaultThreshold — so "is this dominated by per-circuit artefacts" is the
- * question the breakdown exists to answer with numbers. It was fifteen before
- * the S11 merges, thirteen before S23 shed `credit` and `attestSolvency`, and
- * eleven of thirteen deployed before S25 emptied the deferred list.
+ * The account deploys every circuit the compiled contract exports (the names
+ * in contracts/managed/keys), so "is this dominated by per-circuit artefacts"
+ * is the question the breakdown exists to answer with numbers.
  */
 export function measureTransaction(tx: any, stage: string, LedgerParameters?: any): TxMeasurement {
   const m: TxMeasurement = { stage, bytes: null, ledgerBytes: null, parts: [] };

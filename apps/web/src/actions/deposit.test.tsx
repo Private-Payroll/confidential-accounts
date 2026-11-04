@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
@@ -13,6 +10,7 @@ import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { PanelProvider, RightPanel, usePanel } from '../shell/right-panel.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE DEPOSIT PANEL, DRAWN WITH ITS REAL PARTS: the account's tokens, the adapter's amount check and its steps. Only what
@@ -63,8 +61,7 @@ const { Deposit } = await import('./deposit.js');
 const { accountBalancesFrom } = await import('../adapters/account-balances.js');
 const { depositSteps } = await import('../adapters/deposit.js');
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const EN = JSON.parse(readFileSync(resolve(HERE, '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 

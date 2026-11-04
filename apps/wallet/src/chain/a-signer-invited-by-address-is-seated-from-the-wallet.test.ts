@@ -129,7 +129,7 @@ describe.skipIf(!KEYS_HERE)('A SIGNER INVITED BY ADDRESS IS SEATED FROM THEIR OW
   };
   const chainNow = () => ({ accountState: b64(chain.state.index(company).serialize()), parameters: b64(L.LedgerParameters.initialParameters().serialize()) });
   const seatAsked = (id: number, coinSecretKey: Hex) => answerVaultAsk(deps as never, {
-    id, network: NET, ask: 'seat-invited', account: company, proposal, intoVacatedSlot: false, proposalSalt: toHex(c.salt),
+    id, network: NET, ask: 'seat-invited', account: company, proposal, intoVacatedSlot: false, newThreshold: '0', proposalSalt: toHex(c.salt),
     material: { signingSecret: seatOf(0).signingSecret, blinding: seatOf(0).blinding, scope }, invite: { coinSecretKey, addressSalt }, chain: chainNow(),
   } as never) as Promise<{ ok: boolean; tx?: string; error?: string }>;
 
@@ -139,7 +139,7 @@ describe.skipIf(!KEYS_HERE)('A SIGNER INVITED BY ADDRESS IS SEATED FROM THEIR OW
     /* The company's two signers raise the invitation of Dee's private address with every right, and approve it to the seat bar. */
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const address = MidnightCommitments.inviteAddressOf(coinOf(dee).public, addressSalt);
-    const payload = pureCircuits.signerInvitePayload(Buffer.from(address, 'hex'), Buffer.from(scope, 'hex'));
+    const payload = pureCircuits.signerInvitePayload(Buffer.from(address, 'hex'), Buffer.from(scope, 'hex'), 0n);
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
     await sim.as(B).approve(id);
@@ -165,7 +165,7 @@ describe.skipIf(!KEYS_HERE)('A SIGNER INVITED BY ADDRESS IS SEATED FROM THEIR OW
     const unproven: unknown[] = [];
     const building = async () => ({ ...(await deps()), prove: async (u: unknown) => { unproven.push(u); return u; } });
     const answer = await answerVaultAsk(building as never, {
-      id: 3, network: NET, ask: 'seat-invited', account: company, proposal, intoVacatedSlot: false, proposalSalt: toHex(c.salt),
+      id: 3, network: NET, ask: 'seat-invited', account: company, proposal, intoVacatedSlot: false, newThreshold: '0', proposalSalt: toHex(c.salt),
       material: { signingSecret: seatOf(0).signingSecret, blinding: seatOf(0).blinding, scope }, invite: { coinSecretKey: coinOf(dee).secret, addressSalt }, chain: chainNow(),
     } as never) as { tx?: string; error?: string };
     expect(answer.error ?? null).toBeNull();

@@ -497,16 +497,16 @@ export interface AccountOpening {
    * **AND THE TWO IMPLEMENTATIONS DO DIFFERENT THINGS WITH THE REST, WHICH IS
    * WRITTEN HERE RATHER THAN LEFT TO BE DISCOVERED.** `SimulatedLedger.open`
    * seats every leaf. `MidnightLedger.open` can seat exactly one — the
-   * constructor's — because every seat after it is `amendSigner`, which
-   * requires an existing signer to call it, and the deploy holds no signer's
-   * material any more. **So it REFUSES an opening naming more than one** rather
+   * constructor's — because every seat after it is taken by `seatInvited`, from
+   * the invitee's own wallet on an invitation an existing signer raised, and the
+   * deploy holds no signer's material any more. **So it REFUSES an opening naming more than one** rather
    * than seating the first and dropping the rest, which would leave a roster
    * saying three signers and a chain holding one. The screen that seats the
    * others from the founder's own device is a separate piece of work.
    *
    * **AN EMPTY ARRAY IS AN ACCOUNT THAT IS DEAD ON ARRIVAL**, because
-   * `amendSigner` requires an existing signer and there would be none to add
-   * the first. Both implementations refuse it: `SimulatedLedger.open` through
+   * an invitation needs an existing signer to raise it and there would be none
+   * to add the first. Both implementations refuse it: `SimulatedLedger.open` through
    * its threshold check, `MidnightLedger.open` by name.
    */
   signerLeaves: Hex[];
@@ -760,9 +760,14 @@ export interface Ledger {
    * A caller that concerns no vault passes `CommitmentScheme.noVault()` and
    * says so. It is not defaulted, because a default is a value nobody chose
    * arriving in the field that decides how many approvals the round needs.
+   *
+   * `raiseBy` is the circuit's `deadline`: the last block time, in seconds, the
+   * raise may land at (`raiseByOf` in `proposal-filing.ts`, from the time the
+   * proposal was written down). A ledger on the chain refuses a raise without
+   * one; this interface's simulated ledger has no block time and only carries it.
    */
   propose(
-    accountId: string, payloadHash: Hex, change: StateChange, by: SignerRef, vault: Hex,
+    accountId: string, payloadHash: Hex, change: StateChange, by: SignerRef, vault: Hex, raiseBy?: bigint,
   ): Promise<TxRef>;
 
   /**
@@ -799,7 +804,7 @@ export interface Ledger {
    * is a shape this project has already been caught by twice.
    */
   proposeRun(
-    accountId: string, run: RunProposal, change: StateChange, by: SignerRef,
+    accountId: string, run: RunProposal, change: StateChange, by: SignerRef, raiseBy?: bigint,
   ): Promise<TxRef & { proposalId: Hex }>;
 
   /**
@@ -955,6 +960,26 @@ export interface Ledger {
   ): Promise<VaultTxSent>;
 
   /**
+   * **ADDS ONLY THE NETWORK FEE TO A TRANSACTION A SIGNER'S DEVICE PROVED, AND
+   * HANDS IT BACK FINISHED** instead of submitting it, for a company whose calls
+   * go through its own service or straight from a person's wallet: that service
+   * or that wallet submits it. `check` refuses with a sentence before anything
+   * is booked, exactly as for `sendVault`. The fee payer's booking stays until
+   * the chain shows the transaction, or its deadline passes with the chain not
+   * showing it.
+   *
+   * Optional, because only an implementation that can pay fees can add one.
+   */
+  feeAddedTo?(
+    accountId: string,
+    what: string,
+    arrival: VaultTxArrival,
+    bytes: Uint8Array,
+    check: (tx: unknown) => string | null | Promise<string | null>,
+    read: (bytes: Uint8Array) => Promise<unknown>,
+  ): Promise<FeeAdded>;
+
+  /**
    * **WHICH IMPLEMENTATION OF THIS BOUNDARY IS ANSWERING, AS A WORD.**
    *
    * `describe()` above is prose for a person and it is free to change; this is
@@ -1030,7 +1055,8 @@ export const viewDigestOf = (assets: ReadonlyArray<{ key: string; commitment: He
  */
 /**
  * What a proposal must commit to for `seatInvited` to accept it: the invited
- * address's commitment and the rights the seat will carry.
+ * address's commitment, the rights the seat will carry, and the threshold the
+ * seat sets once it is taken (0 keeps the one in force).
  *
  * Domain separated from an ordinary payment payload on purpose, and the
  * separator is load bearing: without it, a proposal approved to pay salaries
@@ -1038,8 +1064,8 @@ export const viewDigestOf = (assets: ReadonlyArray<{ key: string; commitment: He
  * commitment the signers approved". The SIMULATED half of the contract's
  * `signerInvitePayload`.
  */
-const simulatedSignerInvitePayload = (address: Hex, scope: Hex): Hex =>
-  toHex(sha256(utf8('midnight-accounts:invite-signer:' + address + ':' + scope)));
+const simulatedSignerInvitePayload = (address: Hex, scope: Hex, newThreshold: number): Hex =>
+  toHex(sha256(utf8('midnight-accounts:invite-signer:' + address + ':' + scope + ':' + newThreshold)));
 
 /** The SIMULATED half of the contract's `inviteAddressOf`: a commitment to a coin public key under a salt. */
 const simulatedInviteAddressOf = (coinPublicKey: Hex, salt: Hex): Hex =>
@@ -1050,7 +1076,8 @@ const simulatedCoinPublicKeyOf = (coinSecretKey: Hex): Hex =>
   toHex(sha256(utf8('simulated-coin-pk:' + coinSecretKey)));
 
 /**
- * What a proposal must commit to for `removeSigner` to accept it.
+ * What a proposal must commit to for `removeSigner` to accept it: the leaf
+ * removed and the threshold the removal sets (0 keeps the one in force).
  *
  * Separately domain separated from `signerInvitePayload`, for the same reason
  * that one is separated from a payment: an approval to seat somebody must not
@@ -1063,10 +1090,10 @@ const simulatedCoinPublicKeyOf = (coinSecretKey: Hex): Hex =>
  * removal. Committing to the list was the guard. Nothing is supplied any more,
  * so the whole failure mode is gone rather than guarded.
  *
- * The SIMULATED half of the contract's `removeSignerPayload`, not equal to it.
+ * The SIMULATED half of the contract's `removeAndSetThresholdPayload`, not equal to it.
  */
-const simulatedSignerRemovePayload = (removedLeaf: Hex): Hex =>
-  toHex(sha256(utf8('midnight-accounts:remove-signer:' + removedLeaf)));
+const simulatedSignerRemovePayload = (removedLeaf: Hex, newThreshold: number): Hex =>
+  toHex(sha256(utf8('midnight-accounts:remove-thresh:' + removedLeaf + ':' + newThreshold)));
 
 /**
  * What a proposal must commit to for `setThreshold` to accept it.
@@ -1276,6 +1303,8 @@ export interface InvitedSeat {
   readonly signerPublicKey: Hex;
   readonly blinding: Hex;
   readonly scope: Hex;
+  /** The threshold the invitation sets once the seat is taken; 0 keeps the one in force. */
+  readonly newThreshold: number;
 }
 
 export class SimulatedLedger implements Ledger {
@@ -1488,6 +1517,7 @@ export class SimulatedLedger implements Ledger {
     change: StateChange,
     by: SignerRef,
     vault: Hex,
+    _raiseBy?: bigint,
   ): Promise<TxRef> {
     const a = this.requireSigner(accountId, by);
     /*
@@ -1600,7 +1630,7 @@ export class SimulatedLedger implements Ledger {
    * is for, and this project paid to learn the difference.
    */
   async proposeRun(
-    accountId: string, run: RunProposal, change: StateChange, by: SignerRef,
+    accountId: string, run: RunProposal, change: StateChange, by: SignerRef, _raiseBy?: bigint,
   ): Promise<TxRef & { proposalId: Hex }> {
     const a = this.requireSigner(accountId, by);
 
@@ -1746,22 +1776,33 @@ export class SimulatedLedger implements Ledger {
   /**
    * The invitee takes the seat an approved invitation names, as the contract's
    * `seatInvited` does: the invitation must commit to the address worked out
-   * from `seat.coinSecretKey` and `seat.addressSalt`, and to `seat.scope`; the
-   * leaf is built here from the seat's public key, blinding and that scope,
-   * never handed in. Refuses a leaf already seated and an invitation not yet
-   * approved. The invitee need not be a signer.
+   * from `seat.coinSecretKey` and `seat.addressSalt`, to `seat.scope`, and to
+   * `seat.newThreshold`; the leaf is built here from the seat's public key,
+   * blinding and that scope, never handed in. Refuses a leaf already seated, an
+   * invitation not yet approved, a threshold that is not a whole number from 0
+   * up (the range the contract's `Uint<64>` keeps; every safe integer is in it),
+   * and a threshold above the signers seated once the seat is taken; a threshold
+   * other than 0 is then written. The invitee need not be a signer.
    */
   async seatInvited(accountId: string, seat: InvitedSeat): Promise<TxRef> {
     const a = this.accounts.get(accountId);
     if (!a) throw new Error('account is not open on this ledger');
     const address = this.commitments.inviteAddressOf(this.commitments.coinPublicKeyOf(seat.coinSecretKey), seat.addressSalt);
     const approved = this.requireApproved(a, seat.proposalId);
-    if (approved.payloadHash !== this.commitments.signerInvitePayload(address, seat.scope)) {
+    if (approved.payloadHash !== this.commitments.signerInvitePayload(address, seat.scope, seat.newThreshold)) {
       throw new Error('that proposal does not invite this wallet with these rights');
     }
     const leaf = this.commitments.signerLeaf(seat.signerPublicKey, seat.blinding, seat.scope);
     if (a.signerLeaves.has(leaf)) throw new Error('that signer is already on this account');
+    /* The contract's `Uint<64>` keeps the range its type holds; a `number` here keeps it by this check. */
+    if (!Number.isSafeInteger(seat.newThreshold) || seat.newThreshold < 0) {
+      throw new Error('the threshold an invitation sets must be a whole number; 0 keeps the one in force');
+    }
+    if (seat.newThreshold !== 0 && a.signerLeaves.size + 1 < seat.newThreshold) {
+      throw new Error('the threshold an invitation sets cannot exceed the signers seated once it is taken');
+    }
     a.signerLeaves.add(leaf);
+    if (seat.newThreshold !== 0) a.threshold = seat.newThreshold;
     a.openProposals.delete(seat.proposalId);
     return this.touch(a);
   }
@@ -1771,7 +1812,7 @@ export class SimulatedLedger implements Ledger {
   ): Promise<TxRef> {
     const a = this.requireSigner(accountId, by);
     const approved = this.requireApproved(a, proposalId);
-    if (approved.payloadHash !== this.commitments.signerRemovePayload(removedLeaf)) {
+    if (approved.payloadHash !== this.commitments.signerRemovePayload(removedLeaf, 0)) {
       throw new Error('that proposal is not for this removal');
     }
     if (!a.signerLeaves.has(removedLeaf)) throw new Error('that leaf is not on this account');
@@ -1980,7 +2021,7 @@ export class SimulatedLedger implements Ledger {
      * (`contracts/src/ConfidentialAccount.compact:1407`), which reads
      * `threshold` directly with NO map lookup — and every governance circuit on
      * chain lands there. Read at source: every governance circuit calls
-     * `requireApproved`, among them `amendSigner`, `setThreshold`,
+     * `requireApproved`, among them `removeSignerAndSetThreshold`, `setThreshold`,
      * `setVaultThreshold`, `adopt`, `retireVault` and `setPolicy`;
      * `requireApprovedForVault` has two callers, `recordPaymentFromVault` and
      * `clearRun`.
@@ -2032,7 +2073,7 @@ export class SimulatedLedger implements Ledger {
      * **this layer now has ONE of the contract's THREE defences where it had
      * none.** The other two are still to be mirrored, and one of them is
      * smaller than it looks: **the boundary models FOUR of those six sites
-     * (`amendSigner` twice, `setThreshold`, `setVaultThreshold`) and has no
+     * (`seatInvited`, `removeSignerAndSetThreshold`, `setThreshold`, `setVaultThreshold`) and has no
      * method at all for `adopt` or `retireVault`.**
      */
     const bar = a.threshold;
@@ -2329,7 +2370,7 @@ export interface CommitmentScheme {
    * **They can never agree, and nothing found out until the end:** `propose`
    * takes the payload hash as an OPAQUE argument and asserts nothing about it,
    * so the round is raised, collects its approvals and burns its fees, and
-   * `amendSigner`, `setThreshold` and `setVaultThreshold` refuse at `:1926`,
+   * `removeSignerAndSetThreshold`, `setThreshold` and `setVaultThreshold` refuse at `:1926`,
    * `:1758`, `:2016` and `:2708`, each recomputing the payload with its own
    * circuit and comparing the id. The mis-wiring threw before anything was
    * signed; this threw after.
@@ -2359,7 +2400,7 @@ export interface CommitmentScheme {
    *
    * **THREE OF THE FOUR NAMES DIFFER FROM THE CIRCUITS' AND THAT IS WHERE A
    * MIS-WIRE LANDS.** `signerRemovePayload` is the circuit's
-   * `removeSignerPayload`; `signerThresholdPayload` is its
+   * `removeAndSetThresholdPayload`; `signerThresholdPayload` is its
    * `setThresholdPayload`; `vaultThresholdPayload` is its
    * `setVaultThresholdPayload`. `signerInvitePayload` matches. The names are
    * kept as they were rather than renamed to the circuits' — a rename is churn
@@ -2372,12 +2413,12 @@ export interface CommitmentScheme {
    * measured: *"type error: setThresholdPayload argument 1 ... expected value
    * of type Uint<0..18446744073709551616> but received 2"*.
    */
-  signerInvitePayload(address: Hex, scope: Hex): Hex;
+  signerInvitePayload(address: Hex, scope: Hex, newThreshold: number): Hex;
   /** A hiding commitment to an invited address's coin public key under `salt`. */
   inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex;
   /** The coin public key a wallet's coin secret key makes. */
   coinPublicKeyOf(coinSecretKey: Hex): Hex;
-  signerRemovePayload(removedLeaf: Hex): Hex;
+  signerRemovePayload(removedLeaf: Hex, newThreshold: number): Hex;
   signerThresholdPayload(newThreshold: number): Hex;
   vaultThresholdPayload(vault: Hex, newThreshold: number): Hex;
   describe(): string;
@@ -2498,8 +2539,8 @@ export const SimulatedCommitments: CommitmentScheme = {
    * stay apart. The two schemes never mix: a commitment is only ever checked
    * against the scheme that made it, which is now true of these four as well.
    */
-  signerInvitePayload(address, scope) {
-    return simulatedSignerInvitePayload(address, scope);
+  signerInvitePayload(address, scope, newThreshold) {
+    return simulatedSignerInvitePayload(address, scope, newThreshold);
   },
   inviteAddressOf(coinPublicKey, salt) {
     return simulatedInviteAddressOf(coinPublicKey, salt);
@@ -2507,8 +2548,8 @@ export const SimulatedCommitments: CommitmentScheme = {
   coinPublicKeyOf(coinSecretKey) {
     return simulatedCoinPublicKeyOf(coinSecretKey);
   },
-  signerRemovePayload(removedLeaf) {
-    return simulatedSignerRemovePayload(removedLeaf);
+  signerRemovePayload(removedLeaf, newThreshold) {
+    return simulatedSignerRemovePayload(removedLeaf, newThreshold);
   },
   signerThresholdPayload(newThreshold) {
     return simulatedSignerThresholdPayload(newThreshold);
@@ -2528,6 +2569,17 @@ export const SimulatedCommitments: CommitmentScheme = {
  */
 export interface VaultTxSent extends TxRef {
   readonly transactionHash: string | null;
+}
+
+/**
+ * A device's transaction with only the network fee added, finished and ready
+ * for whoever submits it, and the hash it will land under.
+ */
+export interface FeeAdded {
+  readonly tx: Uint8Array;
+  readonly transactionHash: string | null;
+  /** Tells the fee payer whoever was handed it is done with it, submitted or not; nothing is released. */
+  readonly done?: () => Promise<void>;
 }
 
 /** How a transaction a device sends for a vault arrives. */

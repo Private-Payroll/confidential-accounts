@@ -15,6 +15,7 @@ vi.mock('midnight-identity/profile/act-channel', async (importOriginal) => {
 
 import { ACT_CALLED_SCHEMA, ACT_CALL_SCHEMA, ACT_ENDED_SCHEMA, ACT_RELAY_SCHEMA, READY_PING } from 'midnight-identity/profile/channel';
 import { actInTheWallet } from './wallet-act.js';
+import { ServiceNotReached } from './hand-over.js';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
 /*
@@ -107,6 +108,18 @@ describe('the page makes a call for an action only where its route list names on
     page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'stopped', why: 'step-failed', step: 1, steps: 1, relayed: 2, unconfirmed: 2 });
     /* RED WHEN: a read or a refused transaction is counted as handed over, or one handed over and not taken is not unconfirmed. */
     expect(await run).toMatchObject({ of: 'stopped', relayed: 2, unconfirmed: 2 });
+  });
+
+  it('a call the service gave no answer to is told to the wallet as that, never as a refusal, and is not counted as handed over', async () => {
+    const page = new APage();
+    const { run } = start(page, async () => { throw new ServiceNotReached('the company\'s service could not be reached', false); });
+    page.say(callOf(1, 'POST', '/api/accounts/acc_1/vaults', '{"tx":"AAAA"}'));
+    await settle();
+    /* RED WHEN: a service that gave no answer is told to the wallet as the page refusing the call. */
+    expect(page.sent(ACT_CALLED_SCHEMA)[0]).toMatchObject({ n: 1, outcome: 'unreached' });
+    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'done', step: 1, steps: 1, relayed: 0, unconfirmed: 0 });
+    /* RED WHEN: a call nobody answered is counted as relayed. */
+    expect(await run).toMatchObject({ of: 'done', relayed: 0 });
   });
 
   it('a proposal written down with no transaction is never counted as handed over, and one raised with its transaction is', async () => {

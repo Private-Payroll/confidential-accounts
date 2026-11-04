@@ -23,8 +23,8 @@
  * importer is its own test. **`scripts/run-preview.ts` still carries
  * `const CIRCUITS = 13` behind four `.command` doors, and that is not a missed
  * wiring:** its thirteen counts a fixed scripted walk — two governance rounds
- * with an `amendSigner` each, a payment round, and a job section ending in a
- * `cancel` — and this function has no term for an `amendSigner` or a `cancel`.
+ * with a `seatInvited` each, a payment round, and a job section ending in a
+ * `cancel` — and this function has no term for a seat or a `cancel`.
  * **They take different inputs and model different things, so substituting one
  * for the other would produce a wrong number, not a derived one.**
  *

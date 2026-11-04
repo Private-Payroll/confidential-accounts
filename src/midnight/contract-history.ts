@@ -5,7 +5,8 @@
  * A contract's rules may be changed any number of times, and the chain keeps
  * only the latest; what each change left behind is in the contract's history.
  * This reads that history in full and hands back, for every step, what kind of
- * step it was, which transaction made it, and the contract's state after it.
+ * step it was, which transaction made it, and the contract's state after it;
+ * for a call, that transaction's bytes too.
  * Whether that history vouches for the contract is decided elsewhere, over
  * what this returns.
  *
@@ -43,6 +44,13 @@ export interface ContractHistoryEntry {
    * does not give.
    */
   readonly succeeded: boolean;
+  /**
+   * For a call, its whole transaction as its bytes, as the indexer serves them:
+   * the same for every step of that transaction. Which proposal each call
+   * raised or closed is read from the operations they carry, which a state,
+   * one per block, cannot say. Absent for a deploy or an update.
+   */
+  readonly raw?: Uint8Array;
 }
 
 export interface ContractHistory {
@@ -161,7 +169,7 @@ export function indexerContractHistory(
               type: 'subscribe',
               payload: {
                 query: 'subscription ($a: HexEncoded!, $o: BlockOffset) { contractActions(address: $a, offset: $o) '
-                  + '{ __typename state transaction { hash block { height timestamp } ... on RegularTransaction { transactionResult { status } } } '
+                  + '{ __typename state transaction { hash raw block { height timestamp } ... on RegularTransaction { transactionResult { status } } } '
                   + '... on ContractCall { entryPoint } } }',
                 /* From the first block: a contract is not acted on before it is created. */
                 variables: { a: bare(address), o: { height: 0 } },
@@ -195,8 +203,12 @@ export function indexerContractHistory(
             }
             const entryPoint = action?.entryPoint;
             if (kind === 'call' && (typeof entryPoint !== 'string' || entryPoint === '')) { short('a call whose entry point is not named'); return; }
+            const raw = typeof action?.transaction?.raw === 'string' ? bare(action.transaction.raw) : '';
+            if (kind === 'call' && (raw === '' || !HEX.test(raw))) { short('a call whose transaction\'s bytes are not hex'); return; }
             const succeeded = action?.transaction?.transactionResult?.status === 'SUCCESS';
-            seen.push({ kind, transaction: hash, state: fromHex(state), block: { height, at }, ...(kind === 'call' ? { entryPoint } : {}), succeeded });
+            seen.push({
+              kind, transaction: hash, state: fromHex(state), block: { height, at }, ...(kind === 'call' ? { entryPoint, raw: fromHex(raw) } : {}), succeeded,
+            });
             /*
              * One transaction can act on a contract more than once, and the
              * latest may be such a one, so the list is closed a moment after the

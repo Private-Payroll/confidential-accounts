@@ -386,7 +386,7 @@ describe('THE FOUNDING SEAT, READ FROM THE ACCOUNT\'S DEPLOY AND NEVER FROM WHO 
   /** The founding signer removed by two of three, and D put into the slot the founding signer left - the first slot - by the two left. */
   const founderReplaced = async (): Promise<AccountSimulator> => {
     const sim = await AccountSimulator.liveAccount([F, B, C], 2n);
-    const removal = await approved(sim, F, pureCircuits.removeSignerPayload(sim.leafOf(F)), 611, [F, B]);
+    const removal = await approved(sim, F, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(F), 0n), 611, [F, B]);
     await sim.as(removal.by).removeSigner(sim.leafOf(F), removal.id);
     /* D, invited by B and approved by C, takes the first slot from its own wallet. */
     await sim.seatSigner(D, [B, C], 612, true);

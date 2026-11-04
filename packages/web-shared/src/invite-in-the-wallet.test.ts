@@ -49,4 +49,12 @@ describe('inviting from the page with a token of its own', () => {
     expect(one.link).toBe(invitationLink(US, a as never));
     expect(two.id).toBe(invitationIdOf(b as never));
   });
+
+  /* RED WHEN: the approvals needed once the seat is taken do not reach the wallet's intent as digits, or one is sent when none is asked. */
+  it('hands the wallet a signer\'s new threshold as digits, and none when none is asked', async () => {
+    await inviteInTheWallet({ ...ask, threshold: 2 }, 'https://wallet.example', { origin: US }, VIEW);
+    await inviteInTheWallet(ask, 'https://wallet.example', { origin: US }, VIEW);
+    expect(keyring.intents[0]!['threshold']).toBe('2');
+    expect('threshold' in keyring.intents[1]!).toBe(false);
+  });
 });

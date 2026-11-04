@@ -267,7 +267,7 @@ function pastDraftFor(
   return async () => periodsPastDraftHere({
     runs: async () => r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/runs`) as Promise<readonly SealedRun[]>,
     proposals: async () => governedCallServiceFor(r.api).sealedProposals!(r.accountId) as Promise<readonly SealedProposal[]>,
-    roundsOnChain: (chainIds) => r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds }),
+    roundsOnChain: (chainIds) => r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret }),
     directory: d.directory,
     roundIdentity: await reach.roundIdentity(),
   }, r.accountId, r.companyKeys, new Date(reach.now()), list);

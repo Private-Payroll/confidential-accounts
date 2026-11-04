@@ -22,6 +22,7 @@ import { seatInvitedAction } from './seat-invited.js';
 import { carriesASecret, forgetWatched } from '../keyring/nothing-secret-crosses.js';
 import { pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { ServiceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
 
 /* A signer invited by address takes the seat from their own wallet: it opens the offer with the link's token, checks
  * the address is its own, proves the seat with its own seat and the address's coin key, and asks to be admitted. The
@@ -49,12 +50,14 @@ const inviterFor = (label: string, account: string) => ({
 /* `made` varies what the offer says about the company it is for, which the link the person pressed must agree with. */
 const anOffer = (
   address = DEES_ADDRESS, scope = MidnightCommitments.allVaults().toLowerCase() as Hex, proposal = '77'.repeat(32) as Hex,
-  made: { label?: string; account?: string; company?: string; expiresAt?: number } = {},
+  made: { label?: string; account?: string; company?: string; expiresAt?: number; threshold?: string } = {},
 ) => {
   const token = newInvitationToken();
   const coinKey = String(ZswapSecretKeys.fromSeed(dee.moneyAt(0).zswap).coinPublicKey).toLowerCase() as Hex;
   const salt = toHex(new Uint8Array(randomBytes(32))) as Hex;
-  const invite = { address: MidnightCommitments.inviteAddressOf(coinKey, salt).toLowerCase() as Hex, salt, scope };
+  const invite = {
+    address: MidnightCommitments.inviteAddressOf(coinKey, salt).toLowerCase() as Hex, salt, scope, ...(made.threshold === undefined ? {} : { threshold: made.threshold }),
+  };
   const proposalSalt = '88'.repeat(32) as Hex;
   const invited = signSeatInvitation({ company: made.company ?? COMPANY, invitation: invitationIdOf(token), person: 'adr_00000000000000000000', name: 'dee', role: 'approver', invite, proposal }, INVITER_SECRET);
   const offer: InvitationOffer = {
@@ -78,6 +81,8 @@ const deesSeat = (n: number, scope: Hex) => {
 interface ChainNow {
   seats?: string[]; took?: string | null; slots?: string[]; tookFromSecondRead?: string; reads?: number; noRoles?: boolean; rolesUnread?: boolean;
   founding?: string; foundingCommittee?: Array<{ tag: string; value: string }>;
+  /* Our service cannot be reached for the seat, and the person's own wallet sends it instead and then loses its answer. */
+  goneAround?: boolean;
 }
 
 interface Seen {
@@ -92,6 +97,24 @@ interface Opts {
   /* The action made once for the wallet's lifetime, as the registry makes it, shared by the runs given it. */
   action?: ReturnType<typeof seatInvitedAction>;
 }
+
+/* The person's own wallet: reads the proven seat as the one call to `seatInvited`, pays its fee in DUST, hands it to the network and loses the answer. */
+const anIntent = (actions: readonly unknown[], dust?: unknown) => ({ actions, guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: dust });
+const ownWalletLosingItsAnswer = () => ({
+  ledger: async () => ({ Transaction: { deserialize: () => ({
+    guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, anIntent([{ address: ACCOUNT, entryPoint: 'seatInvited' }])]]), imbalances: () => new Map(),
+  }) } }),
+  keys: () => ({}), signSegment: () => ({}),
+  facade: async () => ({
+    dust: { state: { subscribe: (w: { next: (s: unknown) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
+    balanceUnboundTransaction: async (call: unknown) => ({
+      baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, anIntent([], { spends: [1], registrations: [] })]]) },
+    }),
+    signRecipe: async (r: unknown) => r, finalizeRecipe: async (r: unknown) => r,
+    submitTransaction: async () => { now().seen.order.push('own wallet sent'); throw new Error('the node dropped the connection'); },
+    revert: async () => undefined,
+  }),
+});
 
 /* What the stood-in chain, builder and service answer for the run going on now. */
 let live: { o: ReturnType<typeof anOffer>; chain: ChainNow; seen: Seen } | null = null;
@@ -114,6 +137,7 @@ const reachNow = () => ({
     }),
     callState: async () => ({ blockHash: '00', accountState: 'AA==', parameters: 'BB==' }),
     indexer: { indexerUri: 'https://i.example', indexerWsUri: 'wss://i.example' },
+    ...(now().chain.goneAround === true ? { ownWallet: ownWalletLosingItsAnswer } : {}),
   }),
   builder: () => ({
     invitedSeats: async () => {
@@ -143,6 +167,7 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
         if (opts.offerGone === true) return { status: 410, body: { refused: 'used', error: 'this invitation has already been accepted' } };
         return { status: 200, body: { offer: o.sealed, kind: 'signer', expiresAt: new Date(Date.now() + 1e6).toISOString() } };
       }
+      if (path.endsWith('/seat') && chain.goneAround === true) throw new ServiceNotReached('the company\'s service could not be reached', true);
       if (path.endsWith('/seat')) { order.push('relay'); relayed.push(JSON.parse(body!)); return { status: 200, body: { sent: true } }; }
       order.push('accept-signer');
       asked.push(JSON.parse(body!));
@@ -187,6 +212,30 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ accountId: COMPANY, signingSecret: toHex(own.signingSecret), scope: o.invite.scope, seat: 0, invited: { terms: { proposal: o.proposal } } });
     expect(pending[0].opening).toEqual(kept.accounts[COMPANY].opening);
+  });
+
+  it('the seat is proved with the threshold the signed invitation sets once it is taken, and 0 where it sets none', async () => {
+    const one = 'a1'.repeat(32);
+    /* RED WHEN: the wallet proves the seat with another threshold than the one the signers approved, which the chain refuses. */
+    expect((await run(anOffer(undefined, undefined, undefined, { threshold: '2' }), { seats: [one] })).built[0]!.newThreshold).toBe('2');
+    /* RED WHEN: an invitation that sets no threshold is proved with one. */
+    expect((await run(anOffer(), { seats: [one] })).built[0]!.newThreshold).toBe('0');
+  });
+
+  it('RED WHEN: a threshold above the seats held once this one is taken is proved and relayed, which the chain refuses', async () => {
+    const seen = newSeen();
+    await expect(run(anOffer(undefined, undefined, undefined, { threshold: '3' }), { seats: ['a1'.repeat(32)] }, { into: seen }))
+      .rejects.toMatchObject({ words: { key: 'act.seat-invited.why.threshold-above-the-seats', values: { threshold: '3', seats: 2 } } });
+    expect(seen.built).toEqual([]);
+    expect(seen.relayed).toEqual([]);
+  });
+
+  it('a seat the wallet sent to the chain itself, whose answer was then lost, is said as perhaps taken, never as not taken', async () => {
+    const seen = newSeen();
+    await expect(run(anOffer(), { goneAround: true }, { into: seen }))
+      .rejects.toMatchObject({ words: { key: 'act.seat-invited.why.may-be-sent' } });
+    /* RED WHEN: after the person's own wallet handed the seat to the network, the step says it was not taken, so it is taken again. */
+    expect(seen.order).toContain('own wallet sent');
   });
 
   it('RED WHEN: the wallet takes a seat offered to an address it does not hold', async () => {

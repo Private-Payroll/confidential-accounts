@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
@@ -9,6 +6,7 @@ import { CurrentPageProvider } from '../router.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE COMMITTEE CHANGE, DRAWN: the one component the vault panel and the
@@ -34,7 +32,7 @@ const { CommitteeChange } = await import('./committee-change.js');
 const { HANDOVER } = await import('../adapters/handover-state.js');
 
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const settle = () => new Promise((r) => setTimeout(r, 0));
 

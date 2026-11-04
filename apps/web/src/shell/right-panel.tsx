@@ -53,18 +53,12 @@ export function usePanel(): Panel {
   return panel;
 }
 
-/** The panel itself, drawn by the frame once. */
-/** A press in the wallet's window, which opens over the panel, is not a press outside the panel: it leaves the panel open. */
-const keepOpenForTheWalletWindow = (e: { target: EventTarget | null; preventDefault: () => void }): void => {
-  if (e.target instanceof Element && e.target.closest('[data-account-frame]') !== null) e.preventDefault();
-};
-
 /** The names of the browser events the panel hears before its own library does. */
 const HEARD = ['focusin', 'focusout'] as const;
 
 const inTheWalletWindow = (where: EventTarget | null): boolean => where instanceof Element && where.closest('[data-account-frame]') !== null;
 
-/** Esc pressed in the wallet's window, which opens over the panel, is not Esc for the panel: it leaves the panel open. */
+/** A press or Esc in the wallet's window, which opens over the panel, is not a press outside the panel or Esc for it: it leaves the panel open. */
 const keepOpenForEscInTheWalletWindow = (e: { target: EventTarget | null; preventDefault: () => void }): void => {
   if (inTheWalletWindow(e.target)) e.preventDefault();
 };
@@ -86,13 +80,14 @@ function useLeaveTheWalletWindowItsOwn(): void {
   }, []);
 }
 
+/** The panel itself, drawn by the frame once. */
 export function RightPanel() {
   const { shown, close } = usePanel();
   const [footer, setFooter] = useState<HTMLElement | null>(null);
   useLeaveTheWalletWindowItsOwn();
   return (
     <Sheet open={shown !== null} onOpenChange={(open) => { if (!open) close(); }}>
-      <SheetContent side="end" data-panel onInteractOutside={keepOpenForTheWalletWindow} onEscapeKeyDown={keepOpenForEscInTheWalletWindow}>
+      <SheetContent side="end" data-panel onInteractOutside={keepOpenForEscInTheWalletWindow} onEscapeKeyDown={keepOpenForEscInTheWalletWindow}>
         {shown === null ? null : (
           <>
             <SheetHeader>

@@ -26,8 +26,8 @@ import {
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
 import {
-  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, buildSeatInvitedCall, identityOfAChange, roundsOnChainIn, seatsInvitedIn, vouchingRunsIn, vouchedRunIdentityOf,
-  spendingPolicyKeysOf, type AnchorsOnChain, type GovernedCallDeps, type InvitedSeatInput, type RoundOnChain,
+  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, buildSeatInvitedCall, identityOfAChange, roundsOnChainIn, runsOutrunIn, seatsInvitedIn, vouchingRunsIn, vouchedRunIdentityOf,
+  spendingPolicyKeysOf, approvalMarkerOf, type AnchorsOnChain, type GovernedCallDeps, type InvitedSeatInput, type RoundOnChain,
 } from './governed-call-builder.js';
 import { buildClearRun, periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
 import { detailsOfKind } from '../../../src/midnight/vault-details.js';
@@ -241,16 +241,71 @@ async function anchorsOnChainHere(
 /**
  * **WHERE EACH OF THE COMPANY'S PROPOSALS STANDS ON THE CHAIN, READ HERE** from
  * the account's history at the indexer the person's own wallet names
- * (`roundsOnChainIn`), never from the company's service.
+ * (`roundsOnChainIn`), never from the company's service; which call raised or
+ * closed each is read from its transaction's bytes with the ledger this worker
+ * holds, only the calls to the account asked about counting. With `seat`, the
+ * signing secret of the seat this device holds, each also says whether that
+ * seat's approval marker is in the latest state and, while held, whether that
+ * seat raised it; the secret stays in this worker.
  */
 async function roundsOnChainHere(
-  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
-  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly chainIds: readonly string[] },
+  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt' | 'ledger'>,
+  ask: {
+    readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly chainIds: readonly string[];
+    readonly seat?: string;
+  },
 ): Promise<Record<string, RoundOnChain>> {
   const { steps } = await historyHere(d, ask, 'where the company\'s proposals stand on the chain was');
-  return Object.fromEntries(roundsOnChainIn(d, steps, ask.chainIds));
+  return Object.fromEntries(roundsOnChainIn(d, steps, ask.chainIds,
+    ask.seat === undefined ? undefined : { account: ask.account, signingSecret: ask.seat }, ask.account));
 }
+/**
+ * **WHICH OF THE LEAVES ASKED ABOUT THE ACCOUNT RECORDS PAID, READ HERE** from
+ * the latest state of the account's history at the indexer the person's own
+ * wallet names, never from the company's service: a leaf is paid once the
+ * account's `movements` hold the entry its own `paidMovementOf` makes of it
+ * (`recordedAt`). Keyed by each leaf, as 64 lower-case hex digits. A state that
+ * cannot be read is refused, never an answer of "not paid". `false` means only
+ * "not seen in the newest state this indexer holds": an indexer behind the
+ * chain gives it for a leaf just paid, so it is never read as owed, and a
+ * caller treats it as not yet seen.
+ */
+async function paidLeavesHere(
+  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly leaves: readonly string[] },
+): Promise<Record<string, boolean>> {
+  const movementOf = d.accountPure.paidMovementOf;
+  if (d.accountLedger === undefined || typeof movementOf !== 'function') {
+    throw new Error('this device was not given the account\'s reader, so which payments the account records was not read. Reload the page');
+  }
+  const leaves = ask.leaves.map((l) => String(l).toLowerCase());
+  if (leaves.some((l) => !/^[0-9a-f]{64}$/u.test(l))) throw new Error('a payment was asked about by a leaf that is not thirty-two bytes');
+  const { steps } = await historyHere(d, ask, 'which payments the account records was');
+  const { recordedAt } = await import('./recorded-payments.js');
+  const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const bytes = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
+  const latest = steps[steps.length - 1]!.state;
+  const paid = await recordedAt(
+    { queryContractState: async () => d.runtimeState.deserialize(latest) }, d.accountLedger, String(ask.account),
+    leaves.map((l) => hex(movementOf.call(d.accountPure, bytes(l))) as Hex),
+  );
+  if (paid === null) throw new Error('which payments the account records was not read: its latest state at the indexer your wallet names could not be read. Read again.');
+  return Object.fromEntries(leaves.map((l, i) => [l, paid[i]!]));
+}
+
 /** The seat each invitation's proposal took, read from the account's own history in this worker (`seatsInvitedIn`). */
+/**
+ * **EVERY RUN OPEN NOW, WITH THE SIGNERS REMOVED SINCE ITS RAISE, READ HERE** from the account's history at the indexer the person's own
+ * wallet names (`runsOutrunIn`), never from a list the company's service gives.
+ */
+async function runsOutrunHere(
+  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } },
+): Promise<Record<string, number>> {
+  const { steps } = await historyHere(d, ask, 'which runs open on the chain a removal has outrun was');
+  return runsOutrunIn(d, steps);
+}
+
 async function invitedSeatsHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
   ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly proposals: readonly string[] },
@@ -948,6 +1003,22 @@ export const answerVaultAsk = async (
       const { signedClaimRefusal } = await import('./signed-claim-refusal.js');
       return { id: ask.id, ok: true, ask: 'address-claim-refusal', refusal: await signedClaimRefusal(ask.claim, ask.for) };
     }
+    case 'one-off-opened': {
+      const [{ openOneOff }, { oneOffBuiltHere }, { buildOneOffRun }] = await Promise.all([
+        import('../../../src/midnight/one-off-record.js'), import('./one-off-here.js'), import('../../../src/midnight/payout-tree.js'),
+      ]);
+      const o = openOneOff(ask.rec, ask.key as Hex);
+      const leaf = d.vaultDetails === undefined ? null
+        : oneOffBuiltHere(o, { detailsOf: d.vaultDetails, treeOf: buildOneOffRun }).tree.tree.leaves[0]?.toLowerCase() ?? null;
+      return {
+        id: ask.id, ok: true, ask: 'one-off-opened',
+        oneOff: {
+          vault: o.vault, asset: o.asset, token: o.token, amount: o.amount.toString(), reason: o.reason,
+          payee: { ref: o.payee.ref, name: o.payee.name, address: o.payee.address }, proposal: { id: o.proposal.id, chainId: o.proposal.chainId },
+          leaf,
+        },
+      };
+    }
     case 'spending-policy-keys':
       return {
         id: ask.id, ok: true, ask: 'spending-policy-keys',
@@ -994,12 +1065,17 @@ export const answerVaultAsk = async (
       return { id: ask.id, ok: true, ask: 'anchors-on-chain', ...(await anchorsOnChainHere(d, ask)) };
     case 'rounds-on-chain':
       return { id: ask.id, ok: true, ask: 'rounds-on-chain', rounds: await roundsOnChainHere(d, ask) };
+    case 'paid-leaves':
+      return { id: ask.id, ok: true, ask: 'paid-leaves', paid: await paidLeavesHere(d, ask) };
+    case 'runs-outrun':
+      return { id: ask.id, ok: true, ask: 'runs-outrun', runs: await runsOutrunHere(d, ask) };
     case 'invited-seats':
       return { id: ask.id, ok: true, ask: 'invited-seats', seats: await invitedSeatsHere(d, ask) };
     case 'seat-invited': {
       const built = await buildSeatInvitedCall(d, {
         account: ask.account, proposal: ask.proposal, material: ask.material as InvitedSeatInput['material'], invite: ask.invite as InvitedSeatInput['invite'],
         proposalSalt: ask.proposalSalt as InvitedSeatInput['proposalSalt'], intoVacatedSlot: ask.intoVacatedSlot,
+        newThreshold: ask.newThreshold,
         chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
       });
       return { id: ask.id, ok: true, ask: 'seat-invited', tx: toBase64(built.proven) };
@@ -1053,13 +1129,17 @@ export const answerVaultAsk = async (
         : firstSecretRunOf(circuits, { vault: ask.vault, secret: ask.secret, readers: ask.readers ?? [] });
       const ledgerOf = (b64: string, read: (data: unknown) => unknown) =>
         read((d.runtimeState.deserialize(fromBase64(b64)) as { data: unknown }).data);
+      const account = ledgerOf(ask.accountState, d.accountLedger) as AccountLedgerForAStart & { readonly approvals: { member(m: Uint8Array): boolean } };
+      /* This seat's approval marker, made with the account's own derivation; the signing secret stays in this worker. */
+      const markerOf = ask.seat === undefined ? undefined : approvalMarkerOf(d, { account: ask.account, signingSecret: ask.seat });
       const standing = startStandingOf(circuits, {
         vault: ask.vault,
-        account: ledgerOf(ask.accountState, d.accountLedger) as AccountLedgerForAStart,
+        account,
         vaultLedger: ledgerOf(ask.vaultState, d.vault.ledger) as VaultLedgerForAStart,
         ...(run === undefined ? {} : { run }),
         now: BigInt(ask.now),
         ...(ask.window === undefined ? {} : { window: { opensAt: BigInt(ask.window.opensAt), closesAt: BigInt(ask.window.closesAt) } }),
+        ...(markerOf === undefined ? {} : { approvedHere: (id: Uint8Array) => account.approvals.member(markerOf(id)) }),
       });
       return {
         id: ask.id, ok: true, ask: 'start-standing', standing: standingToWire(standing),

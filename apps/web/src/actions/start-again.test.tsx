@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { useState } from 'react';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +6,7 @@ import { KitProvider, languagesFrom } from 'vaults-ui';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * EVERY PRESS OF START IT AGAIN ENDS IN WORDS ON THE SCREEN, drawn with the real control and the real lane that
@@ -23,7 +21,7 @@ vi.mock('../adapters/start-again.js', async (real) => ({
 const { StartAgain, StartAgainWords, forgetWhatStartAgainSaid } = await import('./start-again.js');
 const { lane } = await import('../adapters/sends.js');
 
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const sessionWith = (): Session => ({
   person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(),

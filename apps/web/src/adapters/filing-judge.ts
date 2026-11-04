@@ -72,6 +72,10 @@ export const filingJudgeFor: (
 export const directoryHereFor: (
   companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
 ) => DirectoryRead = judges.directoryHereFor;
+/** The company's directory with every record it names read beside it, which gives a stop in the records as a state and does not refuse the read. */
+export const directoryWithItsRecordsFor: (
+  companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
+) => DirectoryRead = judges.directoryWithItsRecordsFor;
 /** The company's key of each epoch this page can use, every one found in the directory's filings and believed there. */
 export const companyKeysFor: (
   companyId: string, sealed: SealedAccount, keys: { readonly signingPublicKey: Hex },

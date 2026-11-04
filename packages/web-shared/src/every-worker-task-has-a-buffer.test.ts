@@ -81,6 +81,8 @@ const BARE: Record<string, Record<string, unknown>> = {
   'anchor-tag': { account: 'cd'.repeat(32), material: { signingSecret: 'ef'.repeat(32), blinding: '01'.repeat(32) } },
   'anchors-on-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' } },
   'rounds-on-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, chainIds: [] },
+  'paid-leaves': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, leaves: [] },
+  'runs-outrun': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' } },
   'invited-seats': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, proposals: [] },
   'seat-invited': {
     account: 'cd'.repeat(32), proposal: '2b'.repeat(32), proposalSalt: '3c'.repeat(32), intoVacatedSlot: false,
@@ -96,6 +98,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   'vouched-run-identity': { run: { root: 'ab'.repeat(32), payees: '1', opensAt: '1', closesAt: '2', required: '0', vault: 'cd'.repeat(32), head: '1a'.repeat(32), r: '2b'.repeat(32) } },
   'company-wide': {},
   'policy-bar-key': {},
+  'one-off-opened': { rec: { company: 'c1', kind: 'transfer', id: 'one_' + '00'.repeat(16), version: 1, keyEpoch: 0, sealed: {}, wrapped: [] }, key: '11'.repeat(32) },
   'address-claim-refusal': { claim: { kind: 'unshielded', address: 'mn_addr_undeployed1', verifyingKey: 'ab'.repeat(32), signature: 'cd'.repeat(64) }, for: {} },
   'spending-policy-keys': { vault: 'ab'.repeat(32), asset: 'cd'.repeat(32), assetBlinding: 'ef'.repeat(32) },
   'start-standing': { vault: 'ab'.repeat(32), accountState: '', vaultState: '', now: '0' },

@@ -18,6 +18,7 @@ import { watchedStore } from '../testing/settled-store.js';
 import { watchedOpener } from '../testing/settled-channel.js';
 import { ApproveAddressesAndBalances } from './approve-addresses-and-balances.js';
 import { Approve } from './approve.js';
+import WORDS from '../locales/en.json';
 
 /*
  * The screen a person sees when a page asks where one of their wallets
@@ -124,6 +125,16 @@ describe('A PAGE ASKING WHERE A WALLET RECEIVES AND WHAT IT HOLDS', () => {
       },
     });
     expect(s.container.querySelector('[data-shown-heading]')).not.toBeNull();
+  });
+
+  /* RED WHEN: the public side of the row is drawn without saying that every payment to the public receiving address, and its amount, is on a record anyone can read, or the private side says it. */
+  it('THE PUBLIC SIDE SAYS EVERY PAYMENT TO THE PUBLIC ADDRESS AND ITS AMOUNT IS ON A RECORD ANYONE CAN READ, AND THE PRIVATE SIDE DOES NOT', async () => {
+    const s = draw();
+    await settle();
+    const sentence = WORDS['ask.addresses.public-record'];
+    expect(sentence).toMatch(/payment to your public address and its amount .* on a record anyone can read/u);
+    expect(s.container.querySelector('[data-side="public"] [data-public-record]')?.textContent).toBe(sentence);
+    expect(s.container.querySelector('[data-side="private"] [data-public-record]')).toBeNull();
   });
 
   it('A SIDE THE WALLET COULD NOT READ IS SAID AS NOT KNOWN, AND HANDED OVER AS NOT KNOWN, NEVER AS ZERO', async () => {

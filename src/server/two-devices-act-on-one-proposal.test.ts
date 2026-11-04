@@ -88,6 +88,9 @@ const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const ledger = new SimulatedLedger(MidnightCommitments);
 const leaves = new Map<string, Hex>();
 const sent: Array<{ circuit: string; signer: string }> = [];
+
+const waiters = new Set<() => void>();
+const stir = () => { for (const w of [...waiters]) w(); };
 /** The circuit of the call this file's chain took that closed each proposal, by its identity on chain. */
 const closedWith = new Map<string, string>();
 /** What the door does with a call it was handed; `land` carries it out on the chain. */
@@ -101,14 +104,23 @@ type Built = {
     half: { changeAmount: string; changeBatchDigest: Hex; proposalSalt: Hex };
   };
 };
+/* Each seat's approval this file's chain holds, as `proposal signer`: its raise of the proposal or its approval of it. */
+const approvedOnChain = new Set<string>();
+/* Each seat's raise this file's chain holds, as `proposal signer`: the seat whose withdraw key the proposal's hold carries. */
+const raisedOnChain = new Set<string>();
 Object.assign(ledger, {
   submitProvenCall: async (accountId: string, bytes: Uint8Array, circuit: string) => {
     const built = JSON.parse(Buffer.from(bytes).toString('utf8')) as Built;
     sent.push({ circuit, signer: built.signer });
+    stir();
     const by = { signerId: built.signer, leaf: leaves.get(`${accountId} ${built.signer}`)! };
     const land = async () => {
       const o = built.order;
-      if (o.circuit === 'approve') return ledger.approve(accountId, o.proposal, by);
+      if (o.circuit === 'approve') {
+        const done = await ledger.approve(accountId, o.proposal, by);
+        approvedOnChain.add(`${String(o.proposal).toLowerCase()} ${built.signer}`);
+        return done;
+      }
       if (o.circuit === 'cancel') {
         const done = await ledger.cancel(accountId, o.proposal, by);
         closedWith.set(String(o.proposal).toLowerCase(), 'cancel');
@@ -121,6 +133,8 @@ Object.assign(ledger, {
         asset: TEST_TOKEN, amount: BigInt(o.half.changeAmount), batchDigest: o.half.changeBatchDigest,
         salt: o.half.proposalSalt,
       }, by);
+      approvedOnChain.add(`${String(r.proposalId).toLowerCase()} ${built.signer}`);
+      raisedOnChain.add(`${String(r.proposalId).toLowerCase()} ${built.signer}`);
       return { ref: `tx_${r.proposalId.slice(0, 8)}`, at: r.at };
     };
     return door(circuit, land);
@@ -334,7 +348,18 @@ const aDevice = (who: keyof typeof USERS, company: { account: string; records: i
     /* The device's read of the vault is a stand-in too: every send asks it first, and here it can pay. */
     holdings: aVaultHolding(), assets: registryWithTestPrivateForms(),
     accountId: company.account,
-    records: company.records,
+    /*
+     * This seat's wallet reads its own approval marker too: each raise and approval this file's chain holds for it; and,
+     * while the chain holds a proposal, whether this seat raised it.
+     */
+    records: {
+      ...company.records,
+      roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(Object.entries(await company.records.roundsOnChain!(ids))
+        .map(([id, r]) => [id, {
+          ...r, approvedHere: approvedOnChain.has(`${id.toLowerCase()} ${signer}`),
+          ...(r.held === 'open' ? { raisedHere: raisedOnChain.has(`${id.toLowerCase()} ${signer}`) } : {}),
+        }])),
+    },
     progress: (s) => stages.push(s),
     sleep: async () => {}, waitMs: 40, everyMs: 1,
   };
@@ -352,13 +377,22 @@ const aGate = () => {
   const opened = new Promise<void>((r) => { open = r; });
   return { opened, open };
 };
-const until = async (test: () => boolean) => {
-  for (let i = 0; i < 2_000 && !test(); i++) await new Promise((r) => setTimeout(r, 1));
-  if (!test()) throw new Error('what the test was waiting for never happened');
+const until = async (what: string, test: () => boolean) => {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const never = new Promise<never>((_, reject) => {
+    deadline = setTimeout(() => reject(new Error(`${what} never happened`)), 20_000);
+  });
+  try {
+    while (!test()) {
+      await Promise.race([new Promise<void>((resolve) => { waiters.add(function w() { waiters.delete(w); resolve(); }); }), never]);
+    }
+  } finally {
+    clearTimeout(deadline);
+  }
 };
 const settle = <T>(p: Promise<T>) => {
   const s: { done: boolean; value?: T; error?: any } = { done: false };
-  p.then((v) => { s.done = true; s.value = v; }, (e) => { s.done = true; s.error = e; });
+  p.then((v) => { s.done = true; s.value = v; stir(); }, (e) => { s.done = true; s.error = e; stir(); });
   return s;
 };
 
@@ -377,9 +411,9 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const two = aDevice('ada', c, c.ada.signerId, c.ada.signingSecret);
     const first = settle(device.sendRaiseFromDevice(one.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: TEST_TOKEN }));
     const second = settle(device.sendRaiseFromDevice(two.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: TEST_TOKEN }));
-    await until(() => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
+    await until('the second request being answered while the first holds the lock', () => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
     gate.open();
-    await until(() => first.done && second.done);
+    await until('both requests being answered', () => first.done && second.done);
     const [won, lost] = first.error === undefined ? [first, second] : [second, first];
     /* RED WHEN: both tabs pass the service's check before either is written - both are handed to the chain. */
     expect(sent.filter((s) => s.circuit === 'propose')).toHaveLength(1);
@@ -402,7 +436,7 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
       device.approveOnDevice(blake.doors, { round, viewingKey: c.viewingKey }),
       device.approveOnDevice(cleo.doors, { round, viewingKey: c.viewingKey }),
     ]);
-    await until(() => sent.length === 2);
+    await until('both approvals reaching the chain', () => sent.length === 2);
     gate.open();
     const [a, b] = await both;
     /* RED WHEN: an approval relay writes back the count it read before its send, or a lower count after a higher one - one approval is dropped. */
@@ -420,9 +454,9 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     door = async (_c, land) => { await gate.opened; return land(); };
     const first = settle(device.approveOnDevice(aDevice('blake', c, c.blake.signerId, c.blake.signingSecret).doors, { round, viewingKey: c.viewingKey }));
     const second = settle(device.approveOnDevice(aDevice('blake', c, c.blake.signerId, c.blake.signingSecret).doors, { round, viewingKey: c.viewingKey }));
-    await until(() => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
+    await until('the second request being answered while the first holds the lock', () => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
     gate.open();
-    await until(() => first.done && second.done);
+    await until('both requests being answered', () => first.done && second.done);
     const [won, lost] = first.error === undefined ? [first, second] : [second, first];
     /* RED WHEN: both tabs' approvals pass the check before either is sent, and both are handed to the chain. */
     expect(sent.filter((s) => s.circuit === 'approve')).toHaveLength(1);
@@ -438,7 +472,7 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const gate = aGate();
     door = async (circuit, land) => { const r = await land(); if (circuit === 'approve') await gate.opened; return r; };
     const approving = settle(device.approveOnDevice(aDevice('blake', c, c.blake.signerId, c.blake.signingSecret).doors, { round, viewingKey: c.viewingKey }));
-    await until(() => sent.length === 1);
+    await until('the approval reaching the chain', () => sent.length === 1);
     /* Ada raised it; the chain lets the signer who raised a proposal withdraw it, from any device of theirs. */
     const withdrawn = await device.withdrawOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey });
     expect(withdrawn.status).toBe('cancelled');
@@ -448,7 +482,7 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     expect((await standingOnChainHere(c.records, await c.records.proposals!()).then((all) => all.filter((p) => p.id === round.id)))[0]!.status).toBe('cancelled');
     new FileStore(process.env.DATA_PATH!).putProposal(kept);
     gate.open();
-    await until(() => approving.done);
+    await until('the approval being answered', () => approving.done);
     /* RED WHEN: the approval relay's write puts back the open record it read before the withdrawal. */
     const after = await standing('ada', c);
     expect(after.status).toBe('cancelled');

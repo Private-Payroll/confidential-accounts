@@ -93,7 +93,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     expect(bo.state).toBe('waiting-for-the-invitee');
     /* RED WHEN: an invitation's proposal salt is not the one the raise was made under. */
     await expect(raiseSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, invited: offer.invited, proposalSalt: '00'.repeat(32), name: 'dee' }))
-      .rejects.toThrow(/not the one its address, rights and salt make/u);
+      .rejects.toThrow(/not the one its address, rights, threshold and salt make/u);
 
     /* Dee's wallet takes the seat: its own seat 0, which the account does not hold. The chain checks the address. */
     const dee = deesSeat(0, terms.invite!.scope as Hex);

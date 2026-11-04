@@ -289,7 +289,7 @@ describe('the reserved signer scope', () => {
     /* RED WHEN another reader of the witness appears: the declaration, the seat's one read, and the
        invitee's, which binds the scope it reads into both the invitation it takes and the leaf it seats. */
     expect(code.match(/signerScope/g) ?? []).toHaveLength(3);
-    expect(code).toContain('signerInvitePayload(address, scope), noVault(), proposalSalt())');
+    expect(code).toContain('signerInvitePayload(address, scope, newThreshold), noVault(), proposalSalt())');
     expect(code).toContain('const newSignerLeaf = signerLeaf(signerPublicKey(localSecretKey()), signerBlinding(), scope);');
     expect(code).toMatch(/witness signerScope\(\)\s*:\s*Bytes<32>;/);
     expect(code).toContain('const scope = signerScope();');

@@ -22,7 +22,10 @@
  * are governance changes like any other (`governOnDevice`): raised, approved
  * and carried out from signers' devices. Before a policy is raised its opening
  * is filed, sealed to the signers, so every approving device opens the policy
- * it approves, and refuses one it cannot.
+ * it approves, and refuses one it cannot. Another signer approves and carries
+ * out the policy the proposal opens to, and files nothing. Every device counts
+ * a policy's highest band against the signers who may approve its vault's runs,
+ * with every policy in force it opens (`bandsInForceHere`).
  */
 import { epochInForce, type KeysHeld } from '../../../src/core/company-key.js';
 import { assetIdHex, type AssetId } from '../../../src/core/assets.js';
@@ -37,11 +40,13 @@ import { companyRecordEntry, recordKeyOf } from '../../../src/midnight/record-ma
 import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
 import type { AccountGovernance, AccountRoleEntry } from 'midnight-identity/profile/records-key';
 import { MOST_ROLES_ASKED } from 'midnight-identity/profile/request';
+import type { BandInForce } from '../../../src/core/vault-approvers.js';
 import type { SpendingPolicyKeys } from './governed-call-builder.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import {
   judgeIn, kindAsked, namedHere, readersIn, readersOf, sealedToARetiredSeat, seatNotBelievedHere, type DirectoryHere,
 } from './vault-page-doors.js';
+import { openTheRoundHere } from './round-opened-here.js';
 import { signedStateHere, type CompanyRecordsHere, type SpendingPoliciesHere } from './run-rebuilt-here.js';
 import { governOnDevice, type GovernanceDoors, type GovernedOutcome } from './governed-call-on-device.js';
 
@@ -385,58 +390,254 @@ export async function refusePolicyChangeHere(
 const policyBarFrom = (held: AccountGovernance): number => held.seatBar;
 
 /**
- * **ONE VAULT'S SPENDING POLICY FOR ONE CURRENCY, SET AS FAR AS THIS DEVICE
- * CAN.** The same call raises it, approves it from another signer's device,
- * and carries it out once the chain counts the approvals any policy change
- * needs: the opening is the one filed for exactly these terms, or a new one
- * filed now. Every device that approves or carries it out first opens, from
- * the company's records, the policy whose commitment the proposal names, and
- * refuses one it cannot open.
+ * **EVERY SPENDING POLICY IN FORCE THAT THIS DEVICE OPENS, AND ITS HIGHEST
+ * BAND**: for each policy the company's records name, the commitment the chain
+ * holds under its key, read through the person's own wallet, and the believed
+ * version whose opening makes that commitment. A policy the chain holds none for
+ * is not in force. For a policy change, one no believed version opens is left
+ * out, which can only make the count of a vault's approvers refuse more, never
+ * less (`policyChangeRefusal`). With `strict`, for a change that takes approvers
+ * away, such a policy is refused instead: leaving its band out could let the
+ * change through.
+ */
+export async function bandsInForceHere(here: SpendingPolicyDoors, o: { readonly strict?: boolean } = {}): Promise<readonly BandInForce[]> {
+  const policies = policiesOf(here.records);
+  const ids = namedHere(await here.records.directory(kindAsked('company', SPENDING_POLICY_KIND)), 'company', SPENDING_POLICY_KIND);
+  const held = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += MOST_ROLES_ASKED) {
+    for (const [k, v] of await policies.onChain(ids.slice(i, i + MOST_ROLES_ASKED))) held.set(k.toLowerCase(), v);
+  }
+  const out: BandInForce[] = [];
+  for (const id of ids) {
+    const commitment = held.get(id.toLowerCase()) ?? null;
+    if (commitment === null) continue;
+    const before = out.length;
+    for (const rec of [...await believedVersions(here, id)].sort((a, b) => b.version - a.version)) {
+      let secrets: SpendingPolicySecrets;
+      try {
+        secrets = openSpendingPolicy(rec, policies.me).secrets;
+      } catch {
+        continue;
+      }
+      const made = await keysHere(here, secrets.vault, secrets.asset, secrets.opening);
+      if (made.policyKey.toLowerCase() !== id.toLowerCase() || String(made.commitment).toLowerCase() !== commitment.toLowerCase()) continue;
+      out.push({ vault: secrets.vault.toLowerCase(), band: highestBandOf(secrets.opening.terms) });
+      break;
+    }
+    if (o.strict === true && out.length === before) {
+      throw new PolicyNotOpenedHere('This device cannot open a spending policy one of the company\'s vaults holds now, so it cannot '
+        + 'count who approves that vault\'s runs at its bands once this change is carried out. A signer who may set spending '
+        + 'policies and can read it re-seals it from their own device; then try again.');
+    }
+  }
+  return out;
+}
+
+/**
+ * The steps another signer's device takes on a policy, or the approvals a policy
+ * change needs, that another seat raised: `approveOnly` names the proposal on the
+ * chain; `stopBeforeCarry` ends at its bar; `carryOnly` carries out one at its bar
+ * and approves nothing. `before` is a check of the caller's, run before every send.
+ */
+export interface PolicySteps {
+  readonly approveOnly?: string;
+  readonly stopBeforeCarry?: boolean;
+  readonly carryOnly?: boolean;
+  readonly before?: () => Promise<void>;
+}
+
+const stepsOf = (o: PolicySteps) => ({
+  ...(o.approveOnly === undefined ? {} : { approveOnly: o.approveOnly }),
+  ...(o.stopBeforeCarry === undefined ? {} : { stopBeforeCarry: o.stopBeforeCarry }),
+  ...(o.carryOnly === undefined ? {} : { carryOnly: o.carryOnly }),
+});
+
+/**
+ * One policy for one vault and currency, under `opening`, taken through
+ * `governOnDevice`: every device that raises, approves or carries it out opens
+ * the policy it names and the policy in force (`refusePolicyChangeHere`), and
+ * counts its highest band against the vault's approvers with every policy in
+ * force, before every send.
+ */
+async function policyGoverned(
+  doors: PolicyGovernanceDoors, here: SpendingPolicyDoors, at: { readonly vault: string; readonly asset: Hex; readonly keys: SpendingPolicyKeys },
+  opening: PolicyOpeningOnTheWire, commitment: string, steps: PolicySteps,
+): Promise<GovernedOutcome> {
+  const { vault, asset, keys } = at;
+  const blinding = await blindingHere(here);
+  return governOnDevice(doors, {
+    viewingKey: here.viewingKey,
+    change: { kind: 'spending-policy', vault, assetKey: keys.assetKey, commitment },
+    summary: 'Set this vault\'s spending policy for one currency',
+    body: { vault: vault as Hex, assetKey: keys.assetKey as Hex, commitment: commitment as Hex },
+    before: async () => {
+      await refusePolicyChangeHere(here, vault, asset, keys, { commitment, ...(doors.leaving === undefined ? {} : { leaving: doors.leaving }) });
+      await steps.before?.();
+    },
+    bar: policyBarFrom,
+    highestBand: highestBandOf(opening.terms),
+    bandsInForce: () => bandsInForceHere(here),
+    carry: (opened) => ({
+      circuit: 'setPolicy', vault, commitment, proposal: opened.chainId, proposalSalt: opened.salt,
+      asset, assetBlinding: blinding, policy: opening,
+    }),
+    ...stepsOf(steps),
+  });
+}
+
+/** What this device reads a spending policy from: the company's records, under the company's key in force. */
+const policyDoorsOf = (doors: PolicyGovernanceDoors, viewingKey: KeysHeld, what: string): SpendingPolicyDoors & { keyEpoch: number } => {
+  if (doors.records === undefined) {
+    throw new PolicyNotOpenedHere(`This page cannot read the company's records, so it cannot ${what} a spending policy. Reload the page.`);
+  }
+  return { records: doors.records, accountId: doors.accountId, viewingKey, keyEpoch: doors.filing.keyEpoch };
+};
+
+/**
+ * **ONE VAULT'S SPENDING POLICY FOR ONE CURRENCY, RAISED AS FAR AS THIS DEVICE
+ * CAN.** The opening is the one filed for exactly these terms, or a new one
+ * filed now, before the proposal is raised; the same call approves the same
+ * policy already raised, and carries it out once the chain counts the approvals
+ * any policy change needs. Another signer approving a policy they did not raise
+ * takes `approveSpendingPolicyOnDevice`, which files nothing.
  */
 export async function setSpendingPolicyOnDevice(
   doors: PolicyGovernanceDoors,
   input: { viewingKey: KeysHeld; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire },
 ): Promise<GovernedOutcome> {
-  if (doors.records === undefined) {
-    throw new PolicyNotOpenedHere('This page cannot read the company\'s records, so it cannot set a spending policy. Reload the page.');
-  }
+  const here = policyDoorsOf(doors, input.viewingKey, 'set');
   if (!/^[0-9a-f]{64}$/iu.test(input.vault)) throw new PolicyNotOpenedHere('That is not a vault\'s address.');
-  const here: SpendingPolicyDoors & { keyEpoch: number } = {
-    records: doors.records, accountId: doors.accountId, viewingKey: input.viewingKey, keyEpoch: doors.filing.keyEpoch,
-  };
   const vault = input.vault.toLowerCase();
   const asset = assetIdHex(input.asset) as Hex;
   const terms = termsChecked(input.terms);
   const keys = await keysHere(here, vault, asset);
   /* Before anything is filed: a device that cannot open the policy in force changes nothing. */
   await refusePolicyChangeHere(here, vault, asset, keys);
-  const onChain = (await policiesOf(doors.records).onChain([keys.policyKey])).get(keys.policyKey.toLowerCase()) ?? null;
+  const onChain = (await policiesOf(here.records).onChain([keys.policyKey])).get(keys.policyKey.toLowerCase()) ?? null;
   const opening = await openingToRaise(here, vault, asset, terms, keys, onChain);
   const commitment = await commitmentHere(here, vault, asset)(opening);
-  const blinding = await blindingHere(here);
-  return governOnDevice(doors, {
-    viewingKey: input.viewingKey,
-    change: { kind: 'spending-policy', vault, assetKey: keys.assetKey, commitment },
-    summary: 'Set this vault\'s spending policy for one currency',
-    body: { vault: vault as Hex, assetKey: keys.assetKey as Hex, commitment: commitment as Hex },
-    /* Every device that raises, approves or carries it out opens the policy it names, and the policy in force. */
-    before: () => refusePolicyChangeHere(here, vault, asset, keys, { commitment, ...(doors.leaving === undefined ? {} : { leaving: doors.leaving }) }),
-    bar: policyBarFrom,
-    highestBand: highestBandOf(opening.terms),
-    carry: (opened) => ({
-      circuit: 'setPolicy', vault, commitment, proposal: opened.chainId, proposalSalt: opened.salt,
-      asset, assetBlinding: blinding, policy: opening,
-    }),
-  });
+  return policyGoverned(doors, here, { vault, asset, keys }, opening, commitment, {});
+}
+
+/** A spending policy another seat raised, as this device opened it from the proposal and the company's records. */
+interface PolicyProposed {
+  /** The proposal's identity on the chain. */
+  readonly chainId: string;
+  /** What the proposal commits the vault's policy for the currency to. */
+  readonly commitment: string;
+  /** The policy that commitment opens to: the believed version that makes it. */
+  readonly opening: PolicyOpeningOnTheWire;
+}
+
+/** A spending policy another seat raised, as this device read it: the currency it is for, beside what `PolicyProposed` holds. */
+export interface PolicyRead extends PolicyProposed {
+  /** The currency the proposal sets the policy for, found among those this device was asked to try by the key the proposal commits to. */
+  readonly asset: AssetId;
+}
+
+/**
+ * The proposal named `proposal`, opened from the company's records: it must set a policy on `vault`, for the one of
+ * `among` whose key it commits to, and its commitment must open to a version of the policy's record this device
+ * believes. `named` says what was named, for the words of a refusal. Refuses otherwise, with nothing filed or sent.
+ */
+async function proposedHere(
+  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; proposal: string; vault: string; among: readonly AssetId[] }, named: string,
+): Promise<PolicyRead> {
+  const here = policyDoorsOf(doors, input.viewingKey, 'approve');
+  if (!/^[0-9a-f]{64}$/iu.test(input.vault)) throw new PolicyNotOpenedHere('That is not a vault\'s address.');
+  const vault = input.vault.toLowerCase();
+  const opened = await openTheRoundHere(doors.service, doors.accountId, input.proposal, input.viewingKey, false, doors.records, doors.leaves, false,
+    'set-spending-policy');
+  const g = opened.governance as { kind?: string; vault?: string; assetKey?: string; commitment?: string } | undefined;
+  if (g?.kind !== 'spending-policy' || String(g.vault).toLowerCase() !== vault || typeof g.assetKey !== 'string' || typeof g.commitment !== 'string') {
+    throw new PolicyNotOpenedHere(`This proposal does not set a spending policy on ${named}, so it was not approved.`);
+  }
+  let found: { readonly asset: Hex; readonly policyKey: string } | null = null;
+  for (const candidate of input.among) {
+    const asset = assetIdHex(candidate) as Hex;
+    const keys = await keysHere(here, vault, asset);
+    if (keys.assetKey.toLowerCase() === g.assetKey.toLowerCase()) {
+      found = { asset, policyKey: keys.policyKey };
+      break;
+    }
+  }
+  if (found === null) throw new PolicyNotOpenedHere(`This proposal does not set a spending policy on ${named}, so it was not approved.`);
+  let opening: PolicyOpeningOnTheWire;
+  try {
+    opening = (await policyOpeningFor(await believedVersions(here, found.policyKey), policiesOf(here.records).me,
+      { vault: vault as Hex, asset: found.asset, commitment: g.commitment as Hex }, commitmentHere(here, vault, found.asset))).secrets.opening;
+  } catch (e) {
+    if (!(e instanceof PolicyNotOpenedHere)) throw e;
+    throw new PolicyNotOpenedHere('None of the company\'s records of this vault\'s spending policy opens the policy this proposal '
+      + 'sets, so this device cannot say what it would approve. The signer who raised it re-seals it from their own device.', { cause: e });
+  }
+  return { chainId: String(opened.chainId).toLowerCase(), commitment: g.commitment.toLowerCase(), opening, asset: found.asset as AssetId };
+}
+
+/**
+ * **THE SPENDING POLICY A PROPOSAL SETS, READ ON THIS DEVICE**, for a device
+ * that shows the terms itself rather than being told them: the proposal named
+ * `proposal` must set a policy on `vault` for one of the currencies `among`,
+ * found by the key the proposal commits to, and its commitment must open to a
+ * version of the policy's record this device believes, with this seat's own
+ * key. Its terms are that version's. Refuses otherwise, with nothing filed or
+ * sent. Reads and files nothing else.
+ */
+export function policyReadHere(
+  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; proposal: string; vault: string; among: readonly AssetId[] },
+): Promise<PolicyRead> {
+  return proposedHere(doors, input, 'the vault shown in a currency this device knows');
+}
+
+/**
+ * **THE SPENDING POLICY A PROPOSAL SETS, OPENED ON THIS DEVICE**: the proposal
+ * named `proposal`, opened from the company's records, must set a policy on
+ * `vault` for `asset`; its commitment must open to a version of the policy's
+ * record this device believes; and that version's terms must be exactly the
+ * `terms` the person was shown. Refuses otherwise, with nothing filed or sent.
+ * Reads and files nothing else.
+ */
+export async function policyProposedHere(
+  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; proposal: string; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire },
+): Promise<PolicyProposed> {
+  const terms = termsChecked(input.terms);
+  const { chainId, commitment, opening } = await proposedHere(doors, { ...input, among: [input.asset] }, 'the vault and currency shown');
+  if (!sameTerms(opening.terms, terms)) {
+    throw new PolicyNotOpenedHere('The spending policy this proposal sets is not the one shown, so it was not approved. Reload the page.');
+  }
+  return { chainId, commitment, opening };
+}
+
+/**
+ * **A SPENDING POLICY ANOTHER SEAT RAISED, APPROVED OR CARRIED OUT FROM THIS
+ * DEVICE**, as the proposal opens (`policyProposedHere`), and only the one the
+ * chain holds under `approveOnly`. Nothing is filed: the opening is the version
+ * the raising seat filed, and a device that cannot open it approves nothing.
+ */
+export async function approveSpendingPolicyOnDevice(
+  doors: PolicyGovernanceDoors,
+  input: { viewingKey: KeysHeld; proposal: string; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire } & PolicySteps & { readonly approveOnly: string },
+): Promise<GovernedOutcome> {
+  const proposed = await policyProposedHere(doors, input);
+  if (proposed.chainId !== input.approveOnly.toLowerCase()) {
+    throw new PolicyNotOpenedHere('The proposal under that name is not the one the chain holds for this change, so it was not approved.');
+  }
+  const here = policyDoorsOf(doors, input.viewingKey, 'approve');
+  const vault = input.vault.toLowerCase();
+  const asset = assetIdHex(input.asset) as Hex;
+  const keys = await keysHere(here, vault, asset);
+  return policyGoverned(doors, here, { vault, asset, keys }, proposed.opening, proposed.commitment, input);
 }
 
 /**
  * **THE APPROVALS ANY CHANGE TO A SPENDING POLICY NEEDS, CHANGED AS FAR AS THIS
  * DEVICE CAN**, at the bar that stands today. It may be lowered below a band or
  * a vault's own approvals; a policy set later raises it again to its highest band.
+ * With `approveOnly` it approves or carries out the change another seat raised,
+ * and raises nothing; `seated` is the seats the chain holds, read by the caller.
  */
 export function setPolicyBarOnDevice(
-  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; newBar: number; seated: number },
+  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; newBar: number; seated: number } & PolicySteps,
 ): Promise<GovernedOutcome> {
   if (!Number.isInteger(input.newBar) || input.newBar < 1) {
     return Promise.reject(new Error('a change to a spending policy needs at least one approval. Nothing was sent.'));
@@ -451,6 +652,8 @@ export function setPolicyBarOnDevice(
     summary: `Make any change to a spending policy need ${input.newBar} of ${input.seated} approvals`,
     body: { newPolicyBar: input.newBar },
     bar: policyBarFrom,
+    ...(input.before === undefined ? {} : { before: () => input.before!() }),
+    ...stepsOf(input),
   });
 }
 

@@ -123,7 +123,7 @@ export {
  * it into a call.
  */
 export type PreparedStep =
-  | { kind: 'propose'; payloadHash: Hex; change: StateChange; vault: Hex }
+  | { kind: 'propose'; payloadHash: Hex; change: StateChange; vault: Hex; raiseBy?: bigint }
   /**
    * `opening` is what a run's id opens to. A seat given rights needs it to show
    * the run's vault is one it may approve on; a seat with every right on every
@@ -175,7 +175,7 @@ export type PreparedStep =
    */
   | {
     kind: 'proposeRun'; root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex;
-    required?: bigint; change: StateChange;
+    required?: bigint; change: StateChange; raiseBy?: bigint;
   }
   /**
    * Sweeping a run whose window has closed. V-67.
@@ -330,6 +330,28 @@ export interface FeeSponsor {
    * would carry on as though there were one.
    */
   release(booking: unknown): Promise<void>;
+
+  /**
+   * Whether the chain shows a transaction this sponsor finalised: true when it
+   * does; false only when it can no longer land - the sponsor's view is up to
+   * date, does not show it, and the newest finalized block's time is past
+   * `deadline`; null when it cannot tell. A transaction handed back to be
+   * submitted elsewhere may land without this sponsor submitting it, so a
+   * booking is released only on false: DUST the chain shows spent, or may yet
+   * spend, is never booked as free again. Absent, the sponsor cannot read the
+   * chain.
+   */
+  landed?(finalisedTransaction: unknown, deadline: Date): Promise<boolean | null>;
+
+  /**
+   * Adds the fee to a transaction that will be handed back for someone else to
+   * submit, under the shorter rules such a booking is held to, with a name for
+   * the booking. Absent, `addFeeAndFinalise` serves and nothing names it.
+   */
+  addFeeToHandBack?(customerFinalised: unknown, ttl: Date): Promise<{ finalised: unknown; booking: string | null }>;
+
+  /** Tells the fee payer the holder of a handed-back booking is done with it; nothing is released. */
+  done?(booking: string): Promise<void>;
 
   /**
    * Which company the transaction about to be handed over belongs to.
@@ -493,8 +515,8 @@ export const CIRCUIT_FOR_STEP: Record<PreparedStep['kind'], string> = {
   proposeRun: 'propose',
   approve: 'approve',
   cancel: 'cancel',
-  /* Seating and unseating are one circuit, and have been since the rename. */
-  removeSigner: 'amendSigner',
+  /* A removal that keeps the threshold in force: the removal circuit, naming 0 as the threshold. */
+  removeSigner: 'removeSignerAndSetThreshold',
   setThreshold: 'setThreshold',
   setVaultThreshold: 'setVaultThreshold',
   closeExpiredRun: 'closeExpiredRun',
@@ -513,6 +535,21 @@ export interface RunOpeningHex {
   vault: Hex;
   salt: Hex;
 }
+
+/**
+ * The `deadline` a raise carries: the last block time, in seconds, it may land at. Refused before
+ * anything is staged when it is missing or is not a time in seconds, since the chain would refuse
+ * the raise at once or never bound it.
+ */
+const raiseByRequired = (raiseBy: bigint | undefined): bigint => {
+  if (raiseBy === undefined) {
+    throw new Error('this raise does not carry the time it must reach the chain by, so it was not built. Nothing was sent.');
+  }
+  if (raiseBy <= 0n || raiseBy > 32_503_680_000n) {
+    throw new Error(`${raiseBy} is not a time in seconds the raise could reach the chain by, so it was not built. Nothing was sent.`);
+  }
+  return raiseBy;
+};
 
 export class MidnightLedger implements Ledger {
   /** Everything this class writes goes to a chain, or it does not get written. */
@@ -1173,8 +1210,9 @@ export class MidnightLedger implements Ledger {
     change: StateChange,
     by: SignerRef,
     vault: Hex,
+    raiseBy?: bigint,
   ): Promise<TxRef> {
-    const call = await this.prepare(accountId, { kind: 'propose', payloadHash, change, vault });
+    const call = await this.prepare(accountId, { kind: 'propose', payloadHash, change, vault, raiseBy });
     const result = await this.buildCall(call.address, call.circuit, call.args, call.privateStateId);
 
     const after = await this.readContractState(call.address);
@@ -1257,6 +1295,7 @@ export class MidnightLedger implements Ledger {
     run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint },
     change: StateChange,
     by: SignerRef,
+    raiseBy?: bigint,
   ): Promise<TxRef & { proposalId: Hex }> {
     /*
      * **A RUN MUST NAME A REAL VAULT, AND THIS GUARD WAS MISSING WHILE THE
@@ -1282,7 +1321,7 @@ export class MidnightLedger implements Ledger {
           'run raised at the no-vault sentinel is one no vault can ever present.',
       );
     }
-    const call = await this.prepare(accountId, { kind: 'proposeRun', ...run, change });
+    const call = await this.prepare(accountId, { kind: 'proposeRun', ...run, change, raiseBy });
     const result = await this.buildCall(call.address, call.circuit, call.args, call.privateStateId);
 
     const payloadHash = MidnightCommitments.runPayload(
@@ -1647,6 +1686,7 @@ export class MidnightLedger implements Ledger {
          * wrong value does not fail loudly — it produces an id nobody can claim.
          */
         if (step.vault !== MidnightCommitments.noVault()) throw new Error('a governance round cannot name a vault');
+        const raiseBy = raiseByRequired(step.raiseBy);
         await this.stageChange(accountId, step.change);
         /*
          * The MERGED `propose`: the opaque path. `isRun` false, the run
@@ -1655,7 +1695,7 @@ export class MidnightLedger implements Ledger {
         return {
           address, privateStateId, circuit,
           args: [
-            fromHex(step.payloadHash), fromHex(ZERO_32), 0n, 0n, 0n, 0n, false, fromHex(step.vault),
+            fromHex(step.payloadHash), fromHex(ZERO_32), 0n, 0n, 0n, 0n, false, fromHex(step.vault), raiseBy,
           ],
         };
       }
@@ -1694,13 +1734,14 @@ export class MidnightLedger implements Ledger {
               new Date(Number(step.closesAt) * 1000).getUTCFullYear()}. ` +
               'Block time is seconds since the Unix epoch, not milliseconds.');
         }
+        const raiseBy = raiseByRequired(step.raiseBy);
         await this.stageChange(accountId, step.change);
         /* The MERGED `propose`: the run path. `isRun` true, opaque hash zero. */
         return {
           address, privateStateId, circuit,
           args: [
             fromHex(ZERO_32), fromHex(step.root), step.payees, step.opensAt, step.closesAt,
-            step.required ?? 0n, true, fromHex(step.vault),
+            step.required ?? 0n, true, fromHex(step.vault), raiseBy,
           ],
         };
       }
@@ -1999,10 +2040,10 @@ export class MidnightLedger implements Ledger {
               'seat another signer first, or lower the approvals policy changes need.',
           );
         }
-        /* `amendSigner` only removes: the leaf leaving and the approved removal. */
+        /* The leaf leaving, 0 to keep the threshold in force, and the approved removal. */
         return {
           address, privateStateId, circuit,
-          args: [fromHex(step.removedLeaf), fromHex(step.proposalId)],
+          args: [fromHex(step.removedLeaf), 0n, fromHex(step.proposalId)],
         };
       }
     }

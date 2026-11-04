@@ -450,7 +450,17 @@ describe('the real sources', () => {
     // seat by invitation discloses the proposal it carries out and whether the
     // invitation it makes again is that proposal's, as seating a leaf did, and
     // the leaf it seats; never the address, its salt or the wallet's key.
-    expect(sites(account)).toBe(187);
+    // 187 -> 183. Every removal is the one circuit that also sets the
+    // threshold (-6: the removal circuit that only removed, and its proposal,
+    // its id check, its leaf twice, its path's root and its slot). A seat by
+    // invitation sets the threshold its invitation names (+3: whether it names
+    // one, the bound against the seats, and the threshold written), which the
+    // approval already binds into the proposal's id. A removal that names 0
+    // keeps the threshold in force (-1: one comparison where there were two).
+    // 183 -> 184. A raise names the last block time at which it may land (+1):
+    // the deadline is public because the chain compares it with its own block
+    // time to refuse a raise held back past it. It is a time and carries no id.
+    expect(sites(account)).toBe(184);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the
@@ -490,7 +500,7 @@ describe('the real sources', () => {
     expect(own(account, 'openedSeat')).toHaveLength(1);
     const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('openedSeat')));
     expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'amendSigner', 'anchor', 'approve', 'cancel', 'holdRun', 'propose', 'recoverAnchor', 'releaseHold', 'removeSignerAndSetThreshold',
+      ['adopt', 'anchor', 'approve', 'cancel', 'holdRun', 'propose', 'recoverAnchor', 'releaseHold', 'removeSignerAndSetThreshold',
         'reseatSigner', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold'],
     );
   });

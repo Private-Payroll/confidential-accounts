@@ -446,6 +446,165 @@ describe('the fee payer service', () => {
     expect(next, 'a released booking still held the wallet').not.toBeInstanceOf(Error);
   });
 
+  /*
+   * A wallet whose view can say whether the chain shows a transaction. The
+   * transaction this fee payer finishes carries a hash, so the chain can be
+   * asked about it after someone else submitted it.
+   */
+  const chainView = (chain: { shows: Set<string>; applied: bigint; tip: bigint; time?: number }) => ({
+    finalizeRecipe: async (r: any) => ({
+      paid: r.recipe, transactionHash: () => `hash-${r.recipe.n}`,
+      intents: new Map([[1, { dustActions: { spends: [{ vFee: 10n }] } }]]),
+    }),
+    view: {
+      applied: () => chain.applied, tip: async () => chain.tip, shows: async (h: string) => chain.shows.has(h),
+      numbers: () => 'n', note: () => undefined, lastAccepted: null as string | null,
+      chainTime: async () => chain.time ?? 0,
+    },
+  });
+
+  /*
+   * RED WHEN: a transaction handed back and submitted elsewhere keeps the
+   * fee payer busy after the chain shows it, or its spent DUST is released.
+   */
+  it('a finished transaction submitted elsewhere frees the fee payer once the chain shows it, and nothing is released', async () => {
+    const chain = { shows: new Set<string>(), applied: 5n, tip: 5n };
+    const r = await rig(chainView(chain));
+    r.client.payingFor('acc_one');
+    await r.client.addFeeAndFinalise({ n: 1 }, soon());
+    chain.shows.add('hash-1');
+    r.client.payingFor('acc_two');
+    const next: any = await r.client.addFeeAndFinalise({ n: 2 }, soon()).catch((e) => e);
+    expect(next, 'a transaction the chain shows still held the fee payer').not.toBeInstanceOf(Error);
+    expect(r.calls.some(c => c.method === 'revert'), 'DUST the chain shows spent was released').toBe(false);
+  });
+
+  /* RED WHEN: the deadline releases a booking whose transaction the chain shows, marking spent DUST free. */
+  it('at its deadline, a booking the chain shows landed is dropped and never released', async () => {
+    const chain = { shows: new Set<string>(['hash-1']), applied: 5n, tip: 5n };
+    const r = await rig(chainView(chain));
+    r.client.payingFor('acc_one');
+    await r.client.addFeeAndFinalise({ n: 1 }, soon());
+    r.fire();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.calls.some(c => c.method === 'revert'), 'DUST the chain shows spent was released at the deadline').toBe(false);
+  });
+
+  /*
+   * RED WHEN: a booking is released at its deadline while the chain read is
+   * behind, so a transaction that landed in the blocks not yet read has its
+   * DUST marked free.
+   */
+  it('at its deadline, a booking is released only once a chain read up to date does not show it', async () => {
+    const chain = { shows: new Set<string>(), applied: 5n, tip: 5n, time: Date.now() + 120_000 };
+    const r = await rig(chainView(chain));
+    r.client.payingFor('acc_one');
+    const paid = await r.client.addFeeAndFinalise({ n: 1 }, soon());
+    chain.tip = 6n;
+    r.fire();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.calls.some(c => c.method === 'revert'), 'released while the chain read was behind').toBe(false);
+    chain.applied = 6n;
+    r.fire();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.calls.filter(c => c.method === 'revert').map(c => c.args[0])).toEqual([paid]);
+  });
+
+  /*
+   * RED WHEN: a booking is released by the server's clock while the newest finalized block is still before the
+   * transaction's deadline, so a transaction still in the pool can land on DUST booked again.
+   */
+  it('a booking is released only once the newest finalized block is past its deadline, never by the clock alone', async () => {
+    const deadline = soon();
+    const chain = { shows: new Set<string>(), applied: 5n, tip: 5n, time: deadline.getTime() - 1 };
+    const r = await rig(chainView(chain));
+    r.client.payingFor('acc_one');
+    const paid = await r.client.addFeeAndFinalise({ n: 1 }, deadline);
+    r.fire();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.calls.some(c => c.method === 'revert'), 'released while the chain had not reached the deadline').toBe(false);
+    chain.time = deadline.getTime() + 1;
+    r.fire();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.calls.filter(c => c.method === 'revert').map(c => c.args[0])).toEqual([paid]);
+  });
+
+  /* RED WHEN: a transaction handed back for one company stops the fee payer paying for another's, or for itself. */
+  it('a transaction handed back holds up no fee this service pays and submits, nor another company\'s', async () => {
+    const chain = { shows: new Set<string>(), applied: 5n, tip: 5n };
+    const r = await rig(chainView(chain));
+    r.client.payingFor('acc_one');
+    await r.client.addFeeToHandBack({ n: 1 }, soon());
+    const ordinary = new RemoteFeeSponsor(new URL(r.base), SECRET, r.codec);
+    ordinary.payingFor('acc_two');
+    const paid = await ordinary.addFeeAndFinalise({ n: 2 }, soon()).catch((e) => e);
+    expect(paid, 'a handed-back booking blocked a fee this service submits').not.toBeInstanceOf(Error);
+    expect(await ordinary.submit(paid).catch((e) => e)).not.toBeInstanceOf(Error);
+    chain.shows.add('hash-2');
+    const another = new RemoteFeeSponsor(new URL(r.base), SECRET, r.codec);
+    another.payingFor('acc_three');
+    expect(await another.addFeeToHandBack({ n: 3 }, soon()).catch((e) => e), 'one company\'s handed-back booking blocked another\'s').not.toBeInstanceOf(Error);
+  });
+
+  /* RED WHEN: one company holds more than one handed-back booking at once, or its holder saying done does not free its turn. */
+  it('one handed-back booking per company at a time, freed when its holder is done with it, and nothing released', async () => {
+    const r = await rig(chainView({ shows: new Set(), applied: 5n, tip: 5n }));
+    r.client.payingFor('acc_one');
+    const first = await r.client.addFeeToHandBack({ n: 1 }, soon());
+    const second: any = await r.client.addFeeToHandBack({ n: 2 }, soon()).catch((e) => e);
+    expect(second).toBeInstanceOf(Error);
+    expect(second.message).toMatch(/already holding a transaction it handed back for this company/u);
+    await r.client.done(first.booking!);
+    expect(await r.client.addFeeToHandBack({ n: 3 }, soon()).catch((e) => e)).not.toBeInstanceOf(Error);
+    expect(r.calls.some(c => c.method === 'revert'), 'saying done released DUST the transaction may still spend').toBe(false);
+  });
+
+  /* RED WHEN: a release asked for by name lets go of a handed-back booking whose transaction may still land. */
+  it('a handed-back booking is never released on request, only by the chain', async () => {
+    const r = await rig(chainView({ shows: new Set(), applied: 5n, tip: 5n }));
+    r.client.payingFor('acc_one');
+    const { booking } = await r.client.addFeeToHandBack({ n: 1 }, soon());
+    const res = await fetch(`${r.base}release`, {
+      method: 'POST', headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' }, body: JSON.stringify({ booking }),
+    });
+    expect(await res.json()).toMatchObject({ released: false });
+    expect(r.calls.some(c => c.method === 'revert')).toBe(false);
+  });
+
+  /* RED WHEN: a handed-back booking may hold DUST for longer than a submission takes. */
+  it('a transaction handed back may have a deadline at most five minutes away', async () => {
+    const r = await rig(chainView({ shows: new Set(), applied: 5n, tip: 5n }));
+    r.client.payingFor('acc_one');
+    const far: any = await r.client.addFeeToHandBack({ n: 1 }, new Date(Date.now() + 6 * 60_000)).catch((e) => e);
+    expect(far).toBeInstanceOf(Error);
+    expect(far.message).toMatch(/at most five minutes away/u);
+  });
+
+  /* RED WHEN: a fee added and handed back is spent when the transaction lands elsewhere and is missing from the record. */
+  it('a fee handed back is in the sponsored-fee record once its transaction lands, once', async () => {
+    const chain = { shows: new Set<string>(), applied: 5n, tip: 5n };
+    const r = await rig(chainView(chain));
+    r.client.payingFor('acc_one');
+    await r.client.addFeeToHandBack({ n: 1 }, soon());
+    chain.shows.add('hash-1');
+    r.fire();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    r.fire();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.records).toEqual([expect.objectContaining({ company: 'acc_one', estimated: 10n, actual: 9n, ref: 'hash-1' })]);
+  });
+
+  /* RED WHEN: a release asked for by name lets go of DUST the chain already shows spent. */
+  it('a release asked for after the chain shows the transaction lets nothing go', async () => {
+    const chain = { shows: new Set<string>(), applied: 5n, tip: 5n };
+    const r = await rig(chainView(chain));
+    r.client.payingFor('acc_one');
+    const paid = await r.client.addFeeAndFinalise({ n: 1 }, soon());
+    chain.shows.add('hash-1');
+    await r.client.release(paid);
+    expect(r.calls.some(c => c.method === 'revert'), 'DUST the chain shows spent was released on request').toBe(false);
+  });
+
   /* RED WHEN: the capacity route or its parsing stops carrying whole numbers. */
   it('reports what it holds', async () => {
     const r = await rig();

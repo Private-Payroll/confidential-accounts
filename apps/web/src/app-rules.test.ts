@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../src/core/assets.js';
@@ -10,6 +10,7 @@ import {
   secondCn, THE_WAY_THROUGH, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode, type Source,
 } from 'vaults-ui/rules/source-rules.test-support';
 import { WORKERS } from '../vite.config.js';
+import { LOCALES, wordsOf } from './english.test-support.js';
 
 /*
  * THE APPLICATION HELD TO THE KIT'S RULES, AND ITS LANGUAGE FILES TO EACH
@@ -40,9 +41,9 @@ const OWN = filesUnder(ROOT, 'apps/web/src', isShippingCode).map(read);
 const CONFIG = read('apps/web/vite.config.ts');
 const STYLE = filesUnder(ROOT, 'apps/web', (p) => /\.(css|html)$/.test(p) && !p.includes('/dist/')).map(read);
 const CODES = new Set(SEED_ASSETS.map((a) => a.symbol));
-const LOCALES = 'apps/web/src/locales';
-const languageFiles = () => readdirSync(ROOT + LOCALES).filter((n) => n.endsWith('.json')).sort();
-const messagesOf = (name: string) => JSON.parse(readFileSync(`${ROOT}${LOCALES}/${name}`, 'utf8')) as Record<string, string>;
+/* A language is one name, `en.json`, however many files under `locales/` carry it: its words are all of them together. */
+const languageFiles = () => [...new Set((readdirSync(LOCALES, { recursive: true }) as string[]).filter((p) => p.endsWith('.json')).map((p) => basename(p)))].sort();
+const messagesOf = (name: string) => wordsOf(name.replace(/\.json$/, ''));
 
 /*
  * The walk is loaded by its address rather than imported by name, so that it

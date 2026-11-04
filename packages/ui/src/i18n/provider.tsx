@@ -1,17 +1,18 @@
 import { createInstance, type i18n as I18n } from 'i18next';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { I18nextProvider, useTranslation } from 'react-i18next';
-import { FALLBACK, chooseLanguage, directionOf, type Language } from 'vaults-ui/i18n/languages';
+import { FALLBACK, chooseLanguage, directionOf, type Language, type Messages } from 'vaults-ui/i18n/languages';
 
 /**
  * A translator for these languages, showing `language`, with English for
- * anything missing. Keys are flat: the dots in `kit.public.label` are part of
+ * anything missing. Each language's words are copied in, so words added to
+ * the translator later never reach the caller's `Language` objects. Keys are flat: the dots in `kit.public.label` are part of
  * the key, not a path.
  */
 export function createTranslator(languages: readonly Language[], language: string): I18n {
   const i18n = createInstance();
   void i18n.init({
-    resources: Object.fromEntries(languages.map((l) => [l.tag, { translation: l.messages }])),
+    resources: Object.fromEntries(languages.map((l) => [l.tag, { translation: { ...l.messages } }])),
     lng: language,
     fallbackLng: FALLBACK,
     supportedLngs: languages.map((l) => l.tag),
@@ -36,7 +37,7 @@ export interface LanguageProviderProps {
 /**
  * THE ONE LANGUAGE PROVIDER. Every word a screen shows is asked for by its key
  * through `useText`, and comes from the language files the application passes
- * in. A phrase missing from a language falls back to English; a phrase with a
+ * in, and from the words `WithMessages` adds later. A phrase missing from a language falls back to English; a phrase with a
  * count takes the plural form its language needs; a placeholder is written
  * `{name}`. The page's `lang` and `dir` follow the language shown.
  */
@@ -61,4 +62,28 @@ export function useText(): (key: string, values?: Record<string, unknown>) => st
 /** The tag of the language shown. */
 export function useLanguage(): string {
   return useTranslation().i18n.language;
+}
+
+/** Words a screen needs and the first download does not carry: each language's, by its tag. */
+export type MoreMessages = Readonly<Record<string, Messages>>;
+
+const ADDED = new WeakMap<I18n['store'], Set<MoreMessages>>();
+
+/**
+ * Puts `more`, words that came after the provider was made, into the
+ * provider's translator before `children` are drawn, so a screen is never
+ * drawn showing keys. A set of words is put in once per provider however
+ * often this draws, and a provider's words reach no other provider. The
+ * translator is found by its store, which is the one thing every hook hands
+ * back the same.
+ */
+export function WithMessages({ more, children }: { more: MoreMessages; children?: ReactNode }) {
+  const { i18n } = useTranslation();
+  const added = ADDED.get(i18n.store) ?? new Set<MoreMessages>();
+  ADDED.set(i18n.store, added);
+  if (!added.has(more)) {
+    for (const [tag, messages] of Object.entries(more)) i18n.addResourceBundle(tag, [i18n.options.defaultNS].flat().find((n) => typeof n === 'string') as string, messages, true, true);
+    added.add(more);
+  }
+  return <>{children}</>;
 }

@@ -374,7 +374,7 @@ describe('a batch of up to four payees, approved together', () => {
       .rejects.toThrow(/that payment has already been made/);
     /* RED WHEN a batch's places do not write the person-and-month mark a payee nonce stands for. */
     await expect(w.call('batchPayout', batchRun(r, 1), TOKEN, fill4(sameNonce), notePlaces([change], 3)))
-      .rejects.toThrow(/a payment is already recorded for this person/);
+      .rejects.toThrow(/this payee has already been paid this payment/);
   });
 
   it("A BATCH LEAF IS NOT A PAYEE'S LEAF: NEITHER CAN BE PAID AS THE OTHER", async () => {

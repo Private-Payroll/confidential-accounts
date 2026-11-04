@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE SIGNERS PAGE'S COMPONENT, DRAWN over the real adapters and the real wallet wrappers, with only the call to the wallet and the
@@ -68,7 +66,7 @@ const { WHY } = await import('../adapters/signer-acts.js');
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const en = (key: string): string => EN[key] ?? key;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const PRIVATE = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
@@ -85,7 +83,7 @@ const invited = (over: Record<string, unknown> = {}) => ({
 const read = (value: unknown) => ({ of: 'read', value });
 const records = (over: Record<string, unknown> = {}) => ({
   of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }, { id: 's2', name: 'Raj' }, { id: 's3', name: 'Tia' }, { id: 's4', name: 'Uma' }, { id: 's5', name: 'Vik' }],
-  approvalsNeeded: read(2),
+  approvalsNeeded: read(2), proposals: read([]),
   approvalsForSigners: read({ count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: [] }),
   signerStandings: read([standing('s1', 'Priya', false, true), standing('s2', 'Raj', true, true), standing('s3', 'Tia', true, false), standing('s4', 'Uma', false, false)]),
   signersInvited: read([invited()]),
@@ -303,16 +301,84 @@ describe('the invitations waiting for approvals', () => {
   });
 });
 
+describe('the approvals the company asks for, and a change waiting', () => {
+  const change = (over: Record<string, unknown> = {}) => ({
+    id: 'prop_t1', kind: 'set-threshold', status: 'open', raisedBy: 'Priya', approvals: 1, needed: 2, raisedAt: '', rows: [], pays: null, asks: { threshold: 3 }, ...over,
+  });
+
+  /* RED WHEN: the number the company asks for now is not on the page, or is guessed when it could not be read. */
+  it('shows the approvals the company asks for now, and says so when that could not be read', async () => {
+    await draw();
+    expect(q('[data-threshold-now]')!.textContent).toBe(en('signers.threshold.now_other').replace('{count}', '2'));
+    cleanup();
+    kr.company = records({ approvalsNeeded: { of: 'unreadable' } });
+    await draw();
+    expect(q('[data-threshold-now]')).toBeNull();
+    expect(q('[data-threshold-unread]')!.textContent).toBe(en('signers.threshold.unread'));
+  });
+
+  /* RED WHEN: an open change of the approvals is not shown beside the number now, or shows another number than the proposal holds. */
+  it('shows an open change of the approvals beside the number now', async () => {
+    kr.company = records({ proposals: read([change()]) });
+    await draw();
+    const pending = qa('[data-threshold-pending=change]');
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.textContent).toBe(en('signers.threshold.pending.change_other').replace('{count}', '3'));
+  });
+
+  /* RED WHEN: a change that is carried out, withdrawn or of another kind is shown as waiting, or a vault's own threshold is taken for the company's. */
+  it('shows no change that is not waiting, and none of another kind', async () => {
+    kr.company = records({ proposals: read([change({ status: 'executed' }), change({ id: 'p2', status: 'cancelled' }), change({ id: 'p3', kind: 'set-vault-threshold' }), change({ id: 'p4', kind: 'transfer', asks: {} }), change({ id: 'p5', asks: undefined })]) });
+    await draw();
+    expect(qa('[data-threshold-pending]')).toHaveLength(0);
+  });
+
+  /* RED WHEN: an invitation that sets the approvals once its seat is taken does not show that number, or an invitation that sets none shows one. */
+  it('shows the approvals an open invitation sets once its seat is taken, and nothing for one that sets none', async () => {
+    kr.company = records({ signersInvited: read([invited({ threshold: '4' }), invited({ proposal: 'prop_2', name: 'Tia', threshold: null }), invited({ proposal: 'prop_3', name: 'Old', threshold: '5', status: 'executed' })]) });
+    await draw();
+    const pending = qa('[data-threshold-pending=invite]');
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.textContent).toBe(en('signers.threshold.pending.invite').replace('{name}', 'Sam').replace('{threshold}', '4'));
+  });
+});
+
+describe('removing a signer', () => {
+  /* RED WHEN: a seated signer's row has no Remove, the Remove can be pressed, or pressing it asks the wallet for anything. */
+  it('shows Remove on a seated signer as Coming soon, not pressable, and asks the wallet for nothing', async () => {
+    await draw();
+    const soon = qa('[data-signer=s1] [data-slot="soon-action"]');
+    expect(soon).toHaveLength(1);
+    expect(soon[0]!.getAttribute('data-action')).toBe('remove-signer');
+    const button = soon[0]!.querySelector('button')!;
+    expect(button.textContent).toBe(en('signers.remove'));
+    expect(button.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(button);
+    await settle();
+    expect(kr.acts).toEqual([]);
+    fireEvent.click(soon[0]!.querySelector('[data-slot=coming-soon]')!);
+    await settle();
+    expect(document.body.textContent).toContain(en('signers.remove.soon'));
+  });
+
+  /* RED WHEN: Remove is offered on a signer whose seat the chain does not hold. */
+  it('offers it on no signer whose seat the chain does not hold', async () => {
+    await draw();
+    expect(q('[data-signer=s3] [data-action=remove-signer]')).toBeNull();
+    expect(q('[data-signer=s4] [data-action=remove-signer]')).toBeNull();
+  });
+});
+
 describe('approving an invitation', () => {
   /* RED WHEN: Approve asks the wallet about another invitation, name, role, address, rights or coin key than the one pressed, or the records are not read again after it is done. */
   it('asks the wallet to approve exactly the invitation pressed, says so, and reads the records again', async () => {
     await draw();
     await press('[data-invited=prop_1] [data-action=approve-signer]');
     expect(kr.acts).toEqual([{
-      name: 'approve-signer', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_1', personName: 'Sam', role: 'approver',
+      name: 'approve-proposal', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_1', kind: 'add-signer', personName: 'Sam', role: 'approver',
       address: HEX(1), scope: HEX(2), coinKey: HEX(3),
     }]);
-    expect(q('[data-acted=approve-signer]')!.textContent).toBe(en('signers.done.approved').replace('{name}', 'Sam'));
+    expect(q('[data-acted=approve-proposal]')!.textContent).toBe(en('signers.done.approved').replace('{name}', 'Sam'));
     expect(kr.reads).toBe(2);
   });
 
@@ -391,7 +457,7 @@ describe('approving an invitation', () => {
   /* RED WHEN: Approve stays live after this device's approval was sent (a second press costs a window and a passkey and is refused), or gives no reason, or goes off for another invitation, or after a stop that sent nothing. */
   it('turns Approve off for the invitation this device approved, says why, and leaves the others and a refused press alone', async () => {
     kr.company = records({ signersInvited: read([invited(), invited({ proposal: 'prop_2', name: 'Tia' })]) });
-    kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.approve-signer.why.not-approved' };
+    kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.approve-proposal.why.not-approved' };
     await draw();
     await press('[data-invited=prop_1] [data-action=approve-signer]');
     expect((q('[data-invited=prop_1] [data-action=approve-signer]') as HTMLButtonElement).disabled).toBe(false);
@@ -439,7 +505,7 @@ describe('approving an invitation', () => {
     for (const [key, code] of Object.entries(WHY)) {
       if (giving.has(code)) continue;
       cleanup(); kr.acts = [];
-      const refused = code === WHY.stopped ? undefined : `act.approve-signer.why.${code}`;
+      const refused = code === WHY.stopped ? undefined : `act.approve-proposal.why.${code}`;
       kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', ...(refused === undefined ? {} : { refused }) };
       const asked = code === WHY.notASigner || code === WHY.notTheInvited || code === WHY.notAdmitted || code === WHY.filedNotEntered
         || code === WHY.idTaken || code === WHY.chainUnread;
@@ -492,15 +558,15 @@ describe('approving an invitation', () => {
       return kr.reads - before;
     };
     const approve = '[data-invited=prop_1] [data-action=approve-signer]';
-    expect(await reads('act.approve-signer.why.withdrawn', approve)).toBe(1);
+    expect(await reads('act.approve-proposal.why.withdrawn', approve)).toBe(1);
     expect(await reads('act.admit-signer.why.filed-not-entered', '[data-action=finish-adding]')).toBe(1);
-    expect(await reads('act.approve-signer.why.seat-not-held', approve)).toBe(0);
+    expect(await reads('act.approve-proposal.why.seat-not-held', approve)).toBe(0);
   });
 
   /* RED WHEN: a stop whose words say nothing was sent is shown after the wallet handed over transactions (sent or unconfirmed), the page does not say they may have been sent, or the records are not read again; or a stop that handed over none loses its own words. */
   it.each([[1, 0], [0, 1], [0, 0]])('says transactions may have been sent, in place of "nothing was sent", and reads the records again, only when they were: %i sent, %i unconfirmed', async (relayed, unconfirmed) => {
     kr.acts = []; kr.reads = 0;
-    kr.ended = { of: 'stopped', step: 2, steps: 4, relayed, unconfirmed, why: 'check-failed', refused: 'act.approve-signer.why.not-approved' };
+    kr.ended = { of: 'stopped', step: 2, steps: 4, relayed, unconfirmed, why: 'check-failed', refused: 'act.approve-proposal.why.not-approved' };
     await draw(); const before = kr.reads;
     await press('[data-invited=prop_1] [data-action=approve-signer]');
     const shown = q('[data-signer-stopped=not-approved]')!.textContent!;
@@ -519,19 +585,24 @@ describe('approving an invitation', () => {
     expect(q('[data-refusal=not-signed-in]')!.textContent).toContain(en('act.refused.notSignedIn'));
   });
 
-  /* RED WHEN: while the wallet works no status is spoken, a second press can start another act, or the step is not shown. */
+  /* RED WHEN: while the wallet works no status is spoken, a second press can start another act, the step is not shown, or the status region is not on the page before the act starts and still the same one when its outcome arrives. */
   it('says it is working with a status, with the step, and lets nothing else be pressed meanwhile', async () => {
     let release = () => {};
     kr.hold = new Promise<void>((r) => { release = r; });
     kr.steps = [{ step: 2, steps: 4 }];
     await draw();
+    const region = q('[data-invited=prop_1] [data-act-outcome]')!;
+    expect(region.getAttribute('role')).toBe('status');
+    expect(region.textContent).toBe('');
     await press('[data-invited=prop_1] [data-action=approve-signer]');
-    const status = q('[role=status][data-working]')!;
+    const status = q('[data-invited=prop_1] [data-act-outcome] [data-working]')!;
     expect(status.textContent).toBe(en('signers.working.step').replace('{step}', '2').replace('{steps}', '4'));
+    expect(q('[data-invited=prop_1] [data-act-outcome]')).toBe(region);
     expect(qa('[data-action=approve-signer], [data-action=finish-adding]').every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
     release();
     await settle();
     expect(q('[data-working]')).toBeNull();
+    expect(q('[role=status][data-act-outcome] [data-acted]')).not.toBeNull();
   });
 });
 

@@ -750,7 +750,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
    * circuits reads `localSecretKey` itself: all three signer witnesses and a
    * `signerPath` are read inside `_requireSigner_0`, which seven circuits call,
    * and `signerPath` is reached again through `_takeVacatedSlot_0` from
-   * `_amendSigner_0`. A direct-only scan reports that no circuit on this
+   * `_seatInvited_0`. A direct-only scan reports that no circuit on this
    * contract checks who is calling it.
    *
    * `via` is carried rather than flattened because "approve writes `approvals`"

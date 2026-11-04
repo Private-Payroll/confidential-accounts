@@ -1,0 +1,7 @@
+{
+  "payroll.none": "No payroll runs yet.",
+  "payroll.column.month": "Month",
+  "payroll.column.people": "People",
+  "payroll.column.total": "Run total",
+  "payroll.column.status": "Status"
+}

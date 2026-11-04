@@ -118,6 +118,30 @@ describe('the page relays each transaction an action hands it, and is told how t
     expect(run.value).toEqual({ of: 'stopped', step: 2, steps: 3, relayed: 1, unconfirmed: 1, why: 'relay-refused' });
   });
 
+  it('a call the wallet sent to the chain itself, never through this page, is held as perhaps sent when the action stops', async () => {
+    const page = new APage();
+    const run = start(page, async () => true);
+    page.say({ schema: READY_PING });
+    page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 2 });
+    await settle();
+    page.say(endOf({ ended: 'stopped', step: 1, steps: 2, relayed: 0, unconfirmed: 1, why: 'check-failed', refused: 'act.remove-signer.why.may-be-sent' }));
+    await settle();
+    /* RED WHEN: a stop after the wallet sent a call itself is held as nothing handed over, so the page offers the same payment again. */
+    expect(run.value).toMatchObject({ of: 'stopped', relayed: 0, unconfirmed: 1, why: 'check-failed' });
+  });
+
+  it('a transaction this page relayed is not counted twice when the wallet also counts it as not answered in time', async () => {
+    const page = new APage();
+    const run = start(page, async () => true);
+    page.say({ schema: READY_PING });
+    page.say(relayOf(1, 1));
+    await settle();
+    page.say(endOf({ ended: 'stopped', step: 1, steps: 3, relayed: 0, unconfirmed: 1, why: 'no-relay-answer' }));
+    await settle();
+    /* RED WHEN: a transaction the page relayed is also held as one that may still be sent. */
+    expect(run.value).toMatchObject({ of: 'stopped', relayed: 1, unconfirmed: 0 });
+  });
+
   it('a transaction out of turn is refused and never sent', async () => {
     const page = new APage();
     const handed: string[] = [];

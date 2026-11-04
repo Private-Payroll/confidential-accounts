@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount } from 'vaults-ui';
 import type { Company } from '../adapters/company-records.js';
 import { untilPageShown, untilShown } from '../page-shown.test-support.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE VAULT PAGE'S DEPOSIT AND CHECK MY LAST DEPOSIT, drawn in the frame over a company's records. The deposit the
@@ -65,7 +63,7 @@ const { depositSteps } = await import('../adapters/deposit.js');
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const VAULT = 'ab'.repeat(32);
 const company = (): Company => ({

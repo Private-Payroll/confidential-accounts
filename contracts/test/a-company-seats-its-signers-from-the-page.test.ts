@@ -150,14 +150,15 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
   const opened = new Map<string, OpenedRound>();
   const openedFor = (order: GovernedCallOrder): OpenedRound => {
     const { half, ...record } = opened.get(order.proposal)!;
-    return order.circuit === 'propose' ? { ...record, half: half! } : record;
+    /* A raise carries the deadline its record would: a day after it is written down. */
+    return order.circuit === 'propose' ? { ...record, half: half!, raiseBy: String(Math.floor(Date.now() / 1000) + 86_400) } : record;
   };
 
   /** A governance round as the service would write it down: its change, a fresh salt, and the identity they make. */
   const aRound = (governance: GovernedCallOrder & { circuit: 'propose' } extends never ? never : any, seed: number) => {
     const c = change(0n, seed);
     const payload = governance.kind === 'add-signer'
-      ? circuits.signerInvitePayload(Buffer.from(governance.address, 'hex'), Buffer.from(governance.scope, 'hex'))
+      ? circuits.signerInvitePayload(Buffer.from(governance.address, 'hex'), Buffer.from(governance.scope, 'hex'), 0n)
       : circuits.setThresholdPayload(BigInt(governance.threshold));
     const id = hex(circuits.proposalIdOf(payload, circuits.noVault(), c.salt));
     const raise: GovernedCallOrder = {
@@ -276,7 +277,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
     expect(await onDevice(founder, invited.raise)).toEqual({ ok: true, error: '' });
     /* RED WHEN: a signer's device builds a seat for an invitation instead of leaving it to the invitee's wallet. */
     await expect(onDevice(founder, {
-      circuit: 'amendSigner', leaf: hex(leafOfDevice(blake)), proposal: invited.id, proposalSalt: invited.salt, removing: true,
+      circuit: 'removeSignerAndSetThreshold', leaf: hex(leafOfDevice(blake)), threshold: '0', proposal: invited.id, proposalSalt: invited.salt,
+      removing: true,
     })).rejects.toThrow(/does not match the company's own record/u);
     expect(seated(leafOfDevice(blake))).toBe(false);
   });

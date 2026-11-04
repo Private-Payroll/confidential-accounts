@@ -84,6 +84,8 @@ const aDevice = (o: {
   /* Each proposal as it was written down, signed by the seat that wrote it: what the company serves back. */
   const filings = new Map<string, SignedProposalFiling>();
   let refusals = o.refuseEntries ?? 0;
+  /* The proposals the test's chain holds this seat's approval of: each it raised or approved, and with `alreadyApproved` each held one. */
+  const mine = new Set<string>(o.alreadyApproved ? (o.held ?? []).map((h) => h.id) : []);
   for (const h of o.held ?? []) {
     rounds.set(h.id, { id: h.id, chainId: h.opened.chainId, status: h.served ?? 'open', approvalCount: h.count ?? 0, opened: h.opened,
       ...(h.raised ? { raisedAt: 'then' } : {}) });
@@ -113,13 +115,20 @@ const aDevice = (o: {
         log.push(`file ${body.proposal.chainId === ID ? 'ID' : body.proposal.chainId}`);
         filings.set(body.proposal.id, body.proposal);
         /* The raise counts as its raiser's approval, as the account's `propose` counts it. */
+        mine.add(body.proposal.id);
         rounds.set(body.proposal.id, { id: body.proposal.id, chainId: body.proposal.chainId, status: 'open', approvalCount: 1, raisedAt: 'now',
           opened: { chainId: ID, digest: '', vault: '', salt: SALT, summary: '', governance: THREE } });
         return page(body.proposal.id);
       },
-      send: async (id) => { log.push(`send ${id}`); rounds.set(id, { ...rounds.get(id)!, raisedAt: 'now', approvalCount: Math.max(rounds.get(id)!.approvalCount ?? 0, 1) }); return page(id); },
+      send: async (id) => {
+        log.push(`send ${id}`);
+        mine.add(id);
+        rounds.set(id, { ...rounds.get(id)!, raisedAt: 'now', approvalCount: Math.max(rounds.get(id)!.approvalCount ?? 0, 1) });
+        return page(id);
+      },
       approve: async (id) => {
         log.push(`approve ${id}`);
+        mine.add(id);
         const r = rounds.get(id)!;
         rounds.set(id, { ...r, approvalCount: (r.approvalCount ?? 0) + 1 });
         return page(id);
@@ -130,9 +139,6 @@ const aDevice = (o: {
     builder: {
       governedCall: async ({ order }) => {
         log.push(`build ${describe_(order)}`);
-        if (order.circuit === 'approve' && o.alreadyApproved) {
-          throw Object.assign(new Error('you have already approved this proposal'), { name: 'CallNotBuilt' });
-        }
         return { tx: `TX-${order.circuit}` };
       },
       proposalIdentity: async () => ({ digest: 'dd'.repeat(32), chainId: ID, noVault: '00'.repeat(32) }),
@@ -165,12 +171,16 @@ const aDevice = (o: {
       roundIdentity: pureCircuits,
       payments: { paidOnceOf: () => { throw new Error('no payment here'); }, paidMovementOf: () => { throw new Error('no payment here'); }, read: async () => { throw new Error('no payment here'); } },
       policy: async () => { throw new Error('no payroll here'); },
-      /* The test's chain, as the person's own wallet reads it: a round this double sent is held, with the approvals it counted, until carried out. */
+      /*
+       * The test's chain, as the person's own wallet reads it: a round this double sent is held, with the approvals it
+       * counted, until carried out, and with whether it holds this seat's approval.
+       */
       roundsOnChain: async (ids) => Object.fromEntries(ids.map((id) => {
         const r = [...rounds.values()].find((x) => x.chainId.toLowerCase() === id.toLowerCase());
-        const round: RoundOnChain = r?.raisedAt === undefined ? { held: 'never', approvals: 0 }
-          : r.status === 'executed' ? { held: 'closed', approvals: 0, raisedAt: 1, txRef: id, closedBy: ['setThreshold'] }
-            : { held: 'open', approvals: r.approvalCount ?? 0, raisedAt: 1, txRef: id };
+        const approvedHere = r !== undefined && mine.has(r.id);
+        const round: RoundOnChain = r?.raisedAt === undefined ? { held: 'never', approvals: 0, approvedHere }
+          : r.status === 'executed' ? { held: 'closed', approvals: 0, raisedAt: 1, txRef: id, closedBy: ['setThreshold'], approvedHere }
+            : { held: 'open', approvals: r.approvalCount ?? 0, raisedAt: 1, txRef: id, approvedHere };
         return [id.toLowerCase(), round];
       })),
     },
@@ -264,9 +274,9 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
   it('A PROPOSAL STILL SHORT OF APPROVALS IS LEFT FOR THE OTHERS, AND ONE THIS SIGNER APPROVED ALREADY IS NOT APPROVED AGAIN', async () => {
     const same: OpenedRound = { chainId: ID, digest: '', vault: '', salt: SALT, summary: '', governance: THREE };
     const short = aDevice({ held: [{ id: 'prp_same', opened: same, raised: true, count: 1 }], bar: 3, alreadyApproved: true });
-    /* RED WHEN: "you have already approved this" is said as a failure, or a proposal short of approvals is carried out. */
+    /* RED WHEN: an approval the chain already holds is built again or said as a failure, or a proposal short of approvals is carried out. */
     expect((await changeThresholdOnDevice(short.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 })).state).toBe('waiting-for-approvals');
-    expect(short.log.filter((l) => /^(approve|carry|send|file)/u.test(l))).toEqual([]);
+    expect(short.log.filter((l) => /^(build approve|approve|carry|send|file)/u.test(l))).toEqual([]);
     /* And one the chain counts enough approvals for is carried out without another. */
     const met = aDevice({ held: [{ id: 'prp_same', opened: same, raised: true, count: 2 }], bar: 2 });
     expect((await changeThresholdOnDevice(met.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 })).state).toBe('done');

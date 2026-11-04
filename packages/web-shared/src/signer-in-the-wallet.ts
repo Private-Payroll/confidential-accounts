@@ -1,5 +1,5 @@
 /*
- * APPROVING AND FINISHING ADDING A SIGNER FROM THE PAGE: the approve-signer and admit-signer actions asked of the
+ * APPROVING AND FINISHING ADDING A SIGNER FROM THE PAGE: the approve-proposal action, for a signer invited by address, and the admit-signer action asked of the
  * person's wallet, as every action on a company is (`actOnACompanyInTheWallet`). Kept out of the page's first download:
  * the page loads it when a signer is approved or admitted.
  */
@@ -23,7 +23,7 @@ type ApproveSignerAsk = CompanyAsked & {
 };
 
 /**
- * **APPROVES A SIGNER INVITED BY ADDRESS FROM THE PERSON'S WALLET**: the approve-signer action, run over one window.
+ * **APPROVES A SIGNER INVITED BY ADDRESS FROM THE PERSON'S WALLET**: the approve-proposal action of the add-signer kind, run over one window.
  * The wallet approves the proposal only when it invites exactly what this page showed, and raises nothing. Resolves
  * with how the action ended.
  */
@@ -31,7 +31,7 @@ export function approveSignerInTheWallet(
   ask: ApproveSignerAsk, walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
 ): Promise<ActOutcome> {
   return actOnACompanyInTheWallet({
-    name: 'approve-signer', record: ask.record, company: ask.company, account: ask.account, proposal: ask.proposal,
+    name: 'approve-proposal', record: ask.record, company: ask.company, account: ask.account, proposal: ask.proposal, kind: 'add-signer',
     personName: ask.name, role: ask.role, address: ask.address.toLowerCase(), scope: ask.scope.toLowerCase(), coinKey: ask.coinKey.toLowerCase(),
   }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
 }

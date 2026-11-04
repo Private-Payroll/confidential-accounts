@@ -11,8 +11,9 @@
  *   - a removal voids every governance proposal raised before it, and a run
  *     raised before it needs one approval more than its bar for every removal
  *     since;
- *   - removing a signer and setting the threshold is one proposal, and neither
- *     removal can "remove" a leaf that is not seated;
+ *   - removing a signer and setting the threshold is one proposal, a removal
+ *     naming 0 keeps the threshold in force, and no removal can "remove" a
+ *     leaf that is not seated;
  *   - the company-wide marker can never be given a vault threshold;
  *   - the account is born holding its company label and a removal count of zero.
  *
@@ -22,7 +23,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, invitePayloadFor, privateStateFor, change, COMPANY_LABEL, type Change, payoutTreeOf, sumArgsOf,
+  AccountSimulator, invitePayloadFor, removalPayloadFor, privateStateFor, change, COMPANY_LABEL, type Change, payoutTreeOf,
+  sumArgsOf,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
@@ -315,13 +317,13 @@ describe('a removal voids the governance proposals raised before it, and a run r
     await expect(run.pay()).resolves.toBeDefined();
   });
 
-  it('the older removal circuit counts too', async () => {
+  it('a removal that keeps the threshold counts too', async () => {
     const sim = await live([A, B, C], 2n);
     const c = govChange(46);
-    const id = await raise(sim, B, c, pureCircuits.removeSignerPayload(sim.leafOf(A)));
+    const id = await raise(sim, B, c, removalPayloadFor(sim.leafOf(A)));
     await sim.as(C).approve(id);
     await sim.as(carrying(sim, B, c)).removeSigner(sim.leafOf(A), id);
-    /* RED WHEN: amendSigner's removal branch stops calling countRemoval(). */
+    /* RED WHEN: removeSignerAndSetThreshold stops calling countRemoval() for a removal naming 0. */
     expect(sim.removals()).toBe(1n);
   });
 
@@ -373,41 +375,57 @@ describe('removing a signer and setting the threshold is one proposal', () => {
       .rejects.toThrow(/that proposal is not for this removal and threshold/);
   });
 
-  it('refuses a threshold of zero, or above the signers left', async () => {
+  it('refuses a threshold above the signers left', async () => {
     const sim = await live([A, B, C], 2n);
-    for (const [to, why, seed] of [
-      [0n, /the threshold must be at least one/, 54],
-      [3n, /fewer signers than the threshold/, 55],
-    ] as const) {
-      const c = govChange(seed);
-      const id = await raise(sim, A, c, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(C), to));
-      await sim.as(B).approve(id);
-      /* RED WHEN: the `newThreshold > 0` or the signers-left assert is removed from the combined circuit. */
-      await expect(sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(sim.leafOf(C), to, id))
-        .rejects.toThrow(why);
-    }
+    const c = govChange(55);
+    const id = await raise(sim, A, c, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(C), 3n));
+    await sim.as(B).approve(id);
+    /* RED WHEN: the signers-left assert is removed from the removal, or checks the threshold before the new one is written. */
+    await expect(sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(sim.leafOf(C), 3n, id))
+      .rejects.toThrow(/fewer signers than the threshold/);
+    expect(sim.ledger.signerLeaves.member(sim.leafOf(C))).toBe(true);
+    expect(sim.ledger.threshold).toBe(2n);
   });
 
-  it('N4: neither removal circuit removes the vacancy marker or a leaf that was never seated', async () => {
+  it('a removal naming 0 removes the signer and keeps the threshold in force', async () => {
+    const sim = await live([A, B, C], 2n);
+    const c = govChange(54);
+    const id = await raise(sim, A, c, removalPayloadFor(sim.leafOf(C)));
+    await sim.as(B).approve(id);
+    await sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(sim.leafOf(C), 0n, id);
+    expect(sim.ledger.signerLeaves.member(sim.leafOf(C))).toBe(false);
+    expect(sim.ledger.signerLeaves.size()).toBe(2n);
+    /* RED WHEN: a removal naming 0 writes 0, or anything but the threshold in force, as the threshold. */
+    expect(sim.ledger.threshold).toBe(2n);
+    expect(sim.removals()).toBe(1n);
+    expect(sim.isOpen(id)).toBe(false);
+  });
+
+  it('a removal naming 0 is refused when it would leave fewer signers than the threshold in force', async () => {
+    const sim = await live([A, B], 2n);
+    const c = govChange(59);
+    const id = await raise(sim, A, c, removalPayloadFor(sim.leafOf(B)));
+    await sim.as(B).approve(id);
+    /* RED WHEN: a removal naming 0 is not held to the threshold in force: two of two would leave one signer at two. */
+    await expect(sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(sim.leafOf(B), 0n, id))
+      .rejects.toThrow(/fewer signers than the threshold/);
+    expect(sim.ledger.signerLeaves.member(sim.leafOf(B))).toBe(true);
+  });
+
+  it('N4: a removal never removes the vacancy marker or a leaf that was never seated, whatever threshold it names', async () => {
     const sim = await live([A, B, C], 2n);
     await removeAndSet(sim, C, 2n, A, [A, B], 56);
     const vacant = pureCircuits.vacantSlot();
     for (const leaf of [vacant, sim.leafOf(D)]) {
-      const c1 = govChange(57);
-      const combined = await raise(sim, A, c1, pureCircuits.removeAndSetThresholdPayload(leaf, 1n));
-      await sim.as(B).approve(combined);
-      /* RED WHEN: removeSignerAndSetThreshold's `signerLeaves.member(removedLeaf)` assert is removed. */
-      await expect(sim.as(carrying(sim, A, c1)).removeSignerAndSetThreshold(leaf, 1n, combined))
-        .rejects.toThrow(/that signer is not seated on this account/);
-      await sim.as(A).cancel(combined);
-
-      const c2 = govChange(58);
-      const single = await raise(sim, A, c2, pureCircuits.removeSignerPayload(leaf));
-      await sim.as(B).approve(single);
-      /* RED WHEN: amendSigner's removal branch loses its `signerLeaves.member(removedLeaf)` assert. */
-      await expect(sim.as(carrying(sim, A, c2)).removeSigner(leaf, single))
-        .rejects.toThrow(/that signer is not seated on this account/);
-      await sim.as(A).cancel(single);
+      for (const [to, seed] of [[1n, 57], [0n, 58]] as const) {
+        const c = govChange(seed);
+        const id = await raise(sim, A, c, pureCircuits.removeAndSetThresholdPayload(leaf, to));
+        await sim.as(B).approve(id);
+        /* RED WHEN: removeSignerAndSetThreshold's `signerLeaves.member(removedLeaf)` assert is removed. */
+        await expect(sim.as(carrying(sim, A, c)).removeSignerAndSetThreshold(leaf, to, id))
+          .rejects.toThrow(/that signer is not seated on this account/);
+        await sim.as(A).cancel(id);
+      }
     }
   });
 });

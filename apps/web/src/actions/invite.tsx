@@ -7,7 +7,7 @@ import {
   addressIsPrivate, APPROVALS, approvalsSentence, CLASSIFICATIONS, emptyDraft, FIELD, FORM, INVITE_KIND, INVITE_WAY, INVITED, PROBLEM, payAssets, ROLE, SIGNER_ROLES, SIGNER_ROLES_LATER, sendInvite, SCOPE,
   TERMS, WHY, WORDS_OF_SENT, type InviteDraft, type InviteKind, type InviteProblem, type InviteWhy, type Invited,
 } from '../adapters/invite.js';
-import { OPENED } from '../adapters/reads.js';
+import { OPENED, READ } from '../adapters/reads.js';
 import { ActRefused } from '../act-refused.js';
 import { PayField, TermsChoice } from '../fields/form-fields.js';
 import { useCalendarDay } from '../records/parts.js';
@@ -44,6 +44,8 @@ function useWhySays(): Record<InviteWhy, string> {
     [WHY.noOpening]: t('invite.why.no-opening'),
     [WHY.ownAddress]: t('invite.why.own-address'),
     [WHY.widerScope]: t('invite.why.wider-scope'),
+    [WHY.notAThreshold]: t('invite.why.not-a-threshold'),
+    [WHY.thresholdRefused]: t('invite.why.threshold-refused'),
     [WHY.notMade]: t('invite.why.not-made'),
     [WHY.notFiled]: t('invite.why.not-filed'),
     [WHY.raisedNotFiled]: t('invite.why.raised-not-filed'),
@@ -55,7 +57,7 @@ function useWhySays(): Record<InviteWhy, string> {
   };
 }
 
-function useProblemSays(): Record<InviteProblem, string> {
+function useProblemSays(most: number): Record<InviteProblem, string> {
   const t = useText();
   return {
     [PROBLEM.noName]: t('invite.problem.no-name'),
@@ -75,6 +77,8 @@ function useProblemSays(): Record<InviteProblem, string> {
     [PROBLEM.noRole]: t('invite.problem.no-role'),
     [PROBLEM.roleLater]: t('invite.problem.role-later'),
     [PROBLEM.superAdmin]: t('invite.problem.super-admin'),
+    [PROBLEM.badThreshold]: t('invite.problem.bad-threshold'),
+    [PROBLEM.thresholdTooHigh]: t('invite.problem.threshold-too-high', { count: most }),
   };
 }
 
@@ -142,18 +146,19 @@ const atAddressOf = (d: InviteDraft): boolean => d.kind === INVITE_KIND.signer |
 function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly InviteKind[]; onInvited: () => void; onHandedOver: () => void }) {
   const t = useText();
   const whySays = useWhySays();
-  const problemSays = useProblemSays();
   const kindSays = useKindSays();
   const roleSays = useRoleSays();
   const roleDoes = useRoleDoes();
   const classSays = useClassSays();
   const day = useCalendarDay();
   const { person, company } = useSession();
-  const ids = { wayLink: useId(), wayAddress: useId(), scopeAll: useId(), scopeChosen: useId(), name: useId(), email: useId(), title: useId(), start: useId(), end: useId(), amount: useId(), termsAmount: useId(), address: useId(), asset: useId(), termsAsset: useId() };
+  const ids = { wayLink: useId(), wayAddress: useId(), scopeAll: useId(), scopeChosen: useId(), name: useId(), email: useId(), title: useId(), start: useId(), end: useId(), amount: useId(), termsAmount: useId(), address: useId(), asset: useId(), termsAsset: useId(), threshold: useId() };
   const first = kinds.find((k) => k !== INVITE_KIND.superAdmin) ?? INVITE_KIND.employee;
   const [draft, setDraft] = useState<InviteDraft>(() => emptyDraft(first));
   const [phase, setPhase] = useState<Phase>({ of: FORM.edit });
-  const [wrong, setWrong] = useState<{ field: keyof InviteDraft; problem: InviteProblem } | null>(null);
+  const [wrong, setWrong] = useState<{ field: keyof InviteDraft; problem: InviteProblem; most: number } | null>(null);
+  const [seated, setSeated] = useState<number | null>(null);
+  const problemSays = useProblemSays(wrong?.most ?? 0);
   const [stopped, setStopped] = useState<Extract<Invited, { of: 'stopped' }> | null>(null);
   const [refused, setRefused] = useState<Extract<Invited, { of: 'refused' }>['why'] | null>(null);
   /* The token of an invitation that may already be part made: the same press again carries on that one, and the form is held still. */
@@ -171,7 +176,7 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
 
   const idOfField: Partial<Record<keyof InviteDraft, string>> = {
     [FIELD.name]: ids.name, [FIELD.email]: ids.email, [FIELD.startDate]: ids.start, [FIELD.endDate]: ids.end, [FIELD.amount]: ids.amount,
-    [FIELD.termsAmount]: ids.termsAmount, [FIELD.address]: ids.address, [FIELD.asset]: ids.asset,
+    [FIELD.termsAmount]: ids.termsAmount, [FIELD.address]: ids.address, [FIELD.asset]: ids.asset, [FIELD.threshold]: ids.threshold,
   };
   useEffect(() => { if (wrong !== null) document.getElementById(idOfField[wrong.field] ?? '')?.focus(); }, [wrong]);
 
@@ -179,7 +184,7 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
     if (company === null || busy) return;
     setWrong(null); setStopped(null); setRefused(null);
     setPhase({ of: FORM.busy, step: 0, steps: 0 });
-    const ended = await sendInvite(person.id, company, draft, token, (step, steps) => setPhase({ of: FORM.busy, step, steps }));
+    const ended = await sendInvite(person.id, company, draft, token, (step, steps) => setPhase({ of: FORM.busy, step, steps }), seated);
     if (ended.of === INVITED.done) {
       setToken(undefined);
       setPhase({ of: FORM.sent, link: ended.link, already: ended.already, draft });
@@ -187,7 +192,7 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
       return;
     }
     setPhase({ of: FORM.edit });
-    if (ended.of === INVITED.problem) setWrong({ field: ended.field, problem: ended.problem });
+    if (ended.of === INVITED.problem) setWrong({ field: ended.field, problem: ended.problem, most: ended.most ?? 0 });
     else if (ended.of === INVITED.refused) setRefused(ended.why);
     else {
       setStopped(ended); setToken(ended.keeps ? ended.token : undefined);
@@ -215,6 +220,7 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
         {d.kind === INVITE_KIND.signer ? (
           <>
             <SignerSent name={name} />
+            {d.threshold === null ? null : <p className="text-muted-foreground" data-invite-threshold>{t('invite.done.threshold', { name, count: d.threshold })}</p>}
             <SignerApprovals />
           </>
         ) : null}
@@ -352,6 +358,7 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
               </RadioGroup>
               <FieldDescription data-invite-later="scope">{t('invite.scope.chosen.why')}</FieldDescription>
             </FieldSet>
+            <ThresholdField id={ids.threshold} value={draft.threshold} locked={locked} problem={problemOf(FIELD.threshold)} onValue={(threshold) => set({ threshold })} onSeated={setSeated} />
             <SignerApprovals />
           </>
         ) : null}
@@ -380,6 +387,43 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
 }
 
 /** What a sent signer invitation leaves to do: at a bar of 1 the raise is the approval, so the person takes the seat next; above 1 the proposal waits for the other signers. */
+/**
+ * The approvals the company will need once the invited signer has a seat: by default the number it asks for now, or a number chosen
+ * from one up to the signers it would then have. It tells the form how many seats the chain holds, as this page read them, so the
+ * choice stops at what the company could meet; where that was not read, the number cannot be changed from here.
+ */
+function ThresholdField({ id, value, locked, problem, onValue, onSeated }: {
+  id: string; value: number | null; locked: boolean; problem: string | null; onValue: (v: number | null) => void; onSeated: (seated: number | null) => void;
+}) {
+  const t = useText();
+  const { company } = useCompanyRecords();
+  const open = company?.of === OPENED.open ? company : null;
+  const nowRead = open?.approvalsNeeded;
+  const now = nowRead?.of === READ.read ? nowRead.value : null;
+  const seatsRead = open?.approvalsForSigners;
+  const seated = seatsRead?.of === READ.read ? seatsRead.value.seated : null;
+  useEffect(() => { onSeated(seated); }, [seated, onSeated]);
+  const most = seated === null ? null : seated + 1;
+  const from = value ?? now ?? 1;
+  const canMore = most !== null && from < most;
+  const canFewer = most !== null && from > 1;
+  const shown = value !== null ? t('invite.threshold.value', { count: value }) : now === null ? t('invite.threshold.keeps.unknown') : t('invite.threshold.keeps', { count: now });
+  return (
+    <FieldSet disabled={locked} data-invalid={problem !== null || undefined}>
+      <FieldLegend variant="label">{t('invite.threshold.label')}</FieldLegend>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" variant="outline" disabled={locked || !canFewer} aria-label={t('invite.threshold.fewer')} data-action="threshold-fewer" onClick={() => onValue(Math.max(from - 1, 1))}>-</Button>
+        <span id={id} tabIndex={-1} className="min-w-32 text-center" data-threshold-value>{shown}</span>
+        <Button type="button" size="sm" variant="outline" disabled={locked || !canMore} aria-label={t('invite.threshold.more')} data-action="threshold-more" onClick={() => onValue(Math.min(from + 1, most ?? from))}>+</Button>
+        {value === null ? null : <Button type="button" size="sm" variant="ghost" disabled={locked} data-action="threshold-keep" onClick={() => onValue(null)}>{t('invite.threshold.keep')}</Button>}
+      </div>
+      <FieldDescription data-threshold-hint>{most === null ? t('invite.threshold.unread') : t('invite.threshold.hint')}</FieldDescription>
+      {problem === null ? null : <FieldError data-problem="threshold">{problem}</FieldError>}
+    </FieldSet>
+  );
+}
+
+
 function SignerSent({ name }: { name: string }) {
   const t = useText();
   const { company } = useCompanyRecords();

@@ -87,12 +87,14 @@ let more: readonly Seat[] = [];
 /* ── the chain's account, stood in ────────────────────────────────────────── */
 
 /** Every proposal the chain holds open, by its identity on chain: what it changes, the leaf it takes off or the address it invites, and who approved it. */
-const open = new Map<string, { change: 'add' | 'remove' | 'run' | 'other'; leaf: string | null; approvedBy: Set<string> }>();
+const open = new Map<string, {
+  change: 'add' | 'remove' | 'run' | 'other'; leaf: string | null; approvedBy: Set<string>; raisedBy: string; opensAt?: number;
+}>();
 /** The call that closed each proposal the chain no longer holds open. */
 const closedWith = new Map<string, string>();
 /**
  * What reached the service and the chain, in order: each directory version filed (`directory 5 retire`), each anchor
- * that landed (`anchored`), and each call the chain took, with the leaf it takes off (`chain amendSigner removing
+ * that landed (`anchored`), and each call the chain took, with the leaf it takes off (`chain removeSignerAndSetThreshold removing
  * <leaf>`) or the leaf an invited person seated (`chain seatInvited <leaf>`).
  */
 export const events: string[] = [];
@@ -141,17 +143,17 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
     /* The raise counts as its raiser's approval, as the account's `propose` counts it. */
     open.set(proposal, {
       change: g.kind === 'add-signer' ? 'add' : g.kind === 'remove-signer' ? 'remove' : 'other',
-      leaf: (g.kind === 'add-signer' ? g.address : g.leaf)?.toLowerCase() ?? null, approvedBy: new Set([signer]),
+      leaf: (g.kind === 'add-signer' ? g.address : g.leaf)?.toLowerCase() ?? null, approvedBy: new Set([signer]), raisedBy: signer,
     });
   } else if (order.circuit === 'propose' && 'run' in order) {
     /* A run, a one-off payment's included: raised as the account raises it, counting its raiser, who may approve here. */
-    open.set(proposal, { change: 'run', leaf: null, approvedBy: new Set([signer]) });
+    open.set(proposal, { change: 'run', leaf: null, approvedBy: new Set([signer]), raisedBy: signer, opensAt: Number(order.run.opensAt) });
   } else if (order.circuit === 'approve') {
     const o = open.get(proposal);
     if (o === undefined) throw new Error('there is no open proposal with that id');
     if (o.approvedBy.has(signer)) throw new Error('you have already approved this proposal');
     o.approvedBy.add(signer);
-  } else if (order.circuit === 'amendSigner') {
+  } else if (order.circuit === 'removeSignerAndSetThreshold') {
     const o = open.get(proposal);
     if (o === undefined) throw new Error('there is no open proposal with that id');
     if (o.approvedBy.size < h.seatBar) throw new Error('not enough approvals');
@@ -162,7 +164,7 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
     const at = h.seats.seats.indexOf(leaf);
     chains.set(CO, { ...h, seats: { ...h.seats, seats: h.seats.seats.filter((_, i) => i !== at), committee: h.seats.committee.filter((_, i) => i !== at) } });
     open.delete(proposal);
-    closedWith.set(proposal, 'amendSigner');
+    closedWith.set(proposal, 'removeSignerAndSetThreshold');
   } else if (order.circuit === 'setThreshold') {
     const o = open.get(proposal);
     if (o === undefined) throw new Error('there is no open proposal with that id');
@@ -180,7 +182,7 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
   } else {
     throw new Error(`this test's chain does not take ${order.circuit}`);
   }
-  events.push(order.circuit === 'amendSigner' ? `chain amendSigner removing ${order.leaf.toLowerCase()}` : `chain ${order.circuit}`);
+  events.push(order.circuit === 'removeSignerAndSetThreshold' ? `chain removeSignerAndSetThreshold removing ${order.leaf.toLowerCase()}` : `chain ${order.circuit}`);
   return { ref: `ref-${events.length}`, at: new Date().toISOString() };
 };
 
@@ -208,7 +210,9 @@ export const theInviteeTakesTheSeatHere = (proposal: string, address: string, le
   events.push(`chain seatInvited ${seat}`);
 };
 
-export const theChain = roundsOnATestChain(async () => [...open].map(([id, o]) => ({ id, approvals: o.approvedBy.size })),
+export const theChain = roundsOnATestChain(async () => [...open].map(([id, o]) => ({
+  id, approvals: o.approvedBy.size, approvedBy: o.approvedBy, raisedBy: o.raisedBy, ...(o.opensAt === undefined ? {} : { opensAt: o.opensAt }),
+})),
   (id) => { const c = closedWith.get(id); return c === undefined ? [] : [c]; });
 
 /* ── the company: three seats, every wallet's statement in the roster ─────── */
@@ -336,7 +340,10 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
       people: async () => { throw new Error('no person is read in this test'); },
       runs: async () => [],
       proposals: async () => store.listProposals(CO),
-      roundsOnChain: theChain,
+      /* This seat's wallet reads the chain for its own approval marker too. */
+      roundsOnChain: (ids: readonly string[]) => theChain(ids, s.seat),
+      /* The vault's spending policies, read as this seat: a removal counts each vault's approvers at its top band. */
+      spendingPolicies: policiesReadBy(s),
     } as never,
     filing: { seat: s.seat, keyEpoch: 0, salt: () => newBlinding(), newId: () => newProposalId(), entered: s.entered },
     approvers: async () => approverRosterFrom({
@@ -444,15 +451,18 @@ const policyKeys = async (records: CompanyRecordsHere, opening?: { terms: typeof
   { vault: VAULT, asset: assetIdHex(asset), assetBlinding: (await signedStateHere(records, CO, KEY)).assetBlinding, ...(opening === undefined ? {} : { policy: opening as never }) },
 );
 /** `s`'s device's company records, with the vault's spending policies read as its own seat. */
-const policyRecordsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>): CompanyRecordsHere => ({
-  ...(deviceOf(s).records as CompanyRecordsHere),
-  spendingPolicies: {
+function policiesReadBy(s: Pick<Seat, 'n' | 'seat'>): NonNullable<CompanyRecordsHere['spendingPolicies']> {
+  return {
     versions: (id) => peopleRecords.versions(CO, 'spending-policy', id),
     file: async () => { throw new Error('no policy is filed through this read'); },
     me: { signerId: s.seat, wrappingSecret: recordsSecretOf(s) },
     keys: async (i) => spendingPolicyKeysOf({ accountPure: pureCircuits as never }, i),
     onChain: async (keys) => new Map(keys.map((k) => [k.toLowerCase(), policyOnChain.get(k.toLowerCase()) ?? null])),
-  },
+  };
+}
+const policyRecordsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>): CompanyRecordsHere => ({
+  ...(deviceOf(s).records as CompanyRecordsHere),
+  spendingPolicies: policiesReadBy(s),
 });
 /**
  * **THE VAULT'S SPENDING POLICY, FILED BY `by`** sealed to the records key of each seat in `to` as the directory holds

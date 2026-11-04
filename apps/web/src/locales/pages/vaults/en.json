@@ -1,0 +1,4 @@
+{
+  "vaults.unreadable": "This company's vaults could not be loaded. Details for support: {reasons}.",
+  "vaults.unreadable.reason": "the service's list of the company's vaults, or what your wallet read of the company's account, could not be read or did not agree"
+}

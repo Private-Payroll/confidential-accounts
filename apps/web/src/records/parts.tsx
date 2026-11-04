@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountFigureOnly, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, useLanguage, useText, type AmountKind, type TokenAmount } from 'vaults-ui';
+import { proposalsNotRead } from './counts.js';
 import { isPending, PendingPill, useStandingSays, VaultName } from './vault-pending.js';
-import { ADMIT_BY, companyPagesOpen, INVITED, OPENED, PAID, READ, readVaultPublicMoney, STANDING, visibilityKnown, type AdmitBy, type CompanyRecords, type InvitationRow, type Paid, type PersonRow, type PersonStanding, type ProposalRow, type Read, type RunRow, type VaultRow, type VendorRow } from '../adapters/company-records.js';
+import { ADMIT_BY, companyPagesOpen, INVITED, OPENED, PAID, PAID_STATE, READ, readVaultPublicMoney, STANDING, visibilityKnown, type AdmitBy, type CompanyRecords, type InvitationRow, type Paid, type PersonRow, type PersonStanding, type ProposalRow, type Read, type RunRow, type VaultRow, type VendorRow } from '../adapters/company-records.js';
 import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, watchPrivateMoneyReadable, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import { PERSON_KIND, type PersonKind } from '../adapters/person-acts.js';
@@ -289,7 +290,7 @@ export function BeliefLeftOut({ mark, title, notBelieved, refused = [], notPayab
   );
 }
 
-/** What each kind of proposal does, by the kind the service's record names, in plain words. */
+/** What each kind of proposal does, by the kind its opened record names, in plain words; one not read says so. */
 const KIND_SAYS: Readonly<Record<ProposalRow['kind'], (t: ReturnType<typeof useText>) => string>> = {
   transfer: (t) => t('proposals.kind.transfer'),
   payroll: (t) => t('proposals.kind.payroll'),
@@ -298,6 +299,10 @@ const KIND_SAYS: Readonly<Record<ProposalRow['kind'], (t: ReturnType<typeof useT
   'set-threshold': (t) => t('proposals.kind.setThreshold'),
   'set-vault-threshold': (t) => t('proposals.kind.setVaultThreshold'),
   'change-policy': (t) => t('proposals.kind.changePolicy'),
+  'adopt-vault': (t) => t('proposals.kind.adoptVault'),
+  'vault-secret': (t) => t('proposals.kind.vaultSecret'),
+  'pay-key': (t) => t('proposals.kind.payKey'),
+  unreadable: (t) => t('proposals.kind.unreadable'),
 };
 
 /** What a proposal does, in plain words; a kind this does not know is said as a change to the company, never as nothing. */
@@ -317,42 +322,58 @@ export function ProposalWhat({ row }: { row: ProposalRow }) {
   return <>{says === undefined ? t('proposals.kind.other') : says(t)}</>;
 }
 
-/** How many have approved a proposal, and of how many when the record says. */
+/** How many have approved a proposal, and of how many, as the chain counts them; nothing for a proposal not read. */
 export function Approvals({ row }: { row: ProposalRow }) {
   const t = useText();
+  if (row.status === 'unreadable') return <span data-approvals>{t('proposals.approvals.notRead')}</span>;
   return <span data-approvals>{row.needed === null ? t('proposals.approvals', { count: row.approvals }) : t('proposals.approvalsOf', { have: row.approvals, count: row.needed })}</span>;
 }
 
 /** Where a proposal stands, in words. */
 export function ProposalStatus({ row }: { row: ProposalRow }) {
   const t = useText();
-  const says: Record<ProposalRow['status'], string> = {
+  /* The words for the statuses the chain gives; anything else is said as not read. */
+  const says: Partial<Record<ProposalRow['status'], string>> = {
     open: t('proposals.status.open'),
     approved: t('proposals.status.approved'),
     executed: t('proposals.status.executed'),
-    rejected: t('proposals.status.rejected'),
-    blocked: t('proposals.status.blocked'),
     cancelled: t('proposals.status.cancelled'),
+    expired: t('proposals.status.expired'),
+    closed: t('proposals.status.closed'),
+    unreadable: t('proposals.status.unreadable'),
   };
-  return <Badge variant={row.status === 'open' ? 'default' : 'outline'} data-status={row.status}>{says[row.status]}</Badge>;
+  return <Badge variant={row.status === 'open' ? 'default' : 'outline'} data-status={row.status}>{says[row.status] ?? t('proposals.status.unreadable')}</Badge>;
 }
 
-/** Where a run stands, in words; a paid run says the day it was paid. */
+
+/** Says that some proposals were left out of the list's details for want of a key this device believes; nothing when none were. */
+export function ProposalsNotRead({ rows }: { rows: readonly ProposalRow[] }) {
+  const t = useText();
+  const count = proposalsNotRead(rows);
+  if (count === 0) return null;
+  return <p className="text-sm text-muted-foreground" data-proposals-not-read={count}>{t('proposals.someNotRead', { count })}</p>;
+}
+
+
+/** A run's standing in words: paid, partly paid or not paid as the chain shows it, not read where the chain was not read, and a draft while the company's record of it names no proposal for any leg. Nothing the service says of the run is read. */
 export function RunStatus({ run }: { run: RunRow }) {
   const t = useText();
-  const day = useDay();
-  if (run.status === 'settled') {
-    return <span data-status={run.status}>{run.settledAt === null ? t('payroll.status.paid') : t('payroll.status.paidOn', { date: day(run.settledAt) })}</span>;
-  }
-  return <span data-status={run.status}>{run.status === 'draft' ? t('payroll.status.draft') : t('payroll.status.proposed')}</span>;
+  const paid = run.paidOnChain;
+  const draft = run.legs.every((l) => l.proposal === null);
+  return (
+    <span
+      data-status={paid === PAID_STATE.all ? 'paid' : paid === PAID_STATE.some ? 'partly-paid' : draft ? 'draft' : paid === PAID_STATE.none ? 'not-paid' : 'not-read'}
+      data-paid-on-chain={paid ?? ''}
+    >
+      {paid === PAID_STATE.all ? t('payroll.status.paid') : paid === PAID_STATE.some ? t('payroll.status.partlyPaid') : draft ? t('payroll.status.draft')
+        : paid === PAID_STATE.none ? t('payroll.status.notPaid') : t('payroll.status.paidUnread')}
+    </span>
+  );
 }
 
-/**
- * What a run's amounts are for the Public pill: payments made once the run is
- * paid, and before that payments to be made, so the pill never says anyone
- * received what has not been paid.
- */
-export const paymentKindOf = (run: RunRow): AmountKind => (run.status === 'settled' ? AMOUNT_KIND.paid : AMOUNT_KIND.toBePaid);
+
+/** Whether a run's amounts read as paid: only once the chain shows every payment of it paid, whatever the service says of the run. */
+export const paymentKindOf = (run: RunRow): AmountKind => (run.paidOnChain === PAID_STATE.all ? AMOUNT_KIND.paid : AMOUNT_KIND.toBePaid);
 
 /** A run's money, one token to a line and each split by how it is paid, never added into one figure. */
 export function RunMoney({ run }: { run: RunRow }) {

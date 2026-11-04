@@ -48,7 +48,7 @@ import {
 import { Contract as Vault, ledger as vaultLedger } from '../managed-vault/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits, ledger as accountLedger } from '../managed/contract/index.js';
-import { AccountSimulator, invitePayloadFor, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
+import { AccountSimulator, invitePayloadFor, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf, removalPayloadFor } from './simulator.js';
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
@@ -211,7 +211,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     const bid = await governedRound(pureCircuits.setPolicyBarPayload(2n), lowerBar, [A, B, C]);
     await sim.as(carrying(sim, A, lowerBar)).setPolicyBar(2n, bid);
     const out = govChange(76);
-    const oid = await governedRound(pureCircuits.removeSignerPayload(sim.leafOf(C)), out);
+    const oid = await governedRound(removalPayloadFor(sim.leafOf(C)), out);
     await sim.as(carrying(sim, A, out)).removeSigner(sim.leafOf(C), oid);
     expect(sim.ledger.thresholds.lookup(vaultAddrBytes()))
       .toBeGreaterThan(sim.ledger.signerLeaves.size());
@@ -337,8 +337,8 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
  * from being a door that can itself be locked:
  *
  *   - `setThreshold` refuses `newThreshold > signerLeaves.size()`
- *   - `removeSigner` refuses to leave fewer signers than the threshold
- *     (`:1471-1472`)
+ *   - `removeSignerAndSetThreshold` refuses to leave fewer signers than the
+ *     threshold in force once it is carried out
  *
  * Together: there is no sequence of governed acts that strands the ACCOUNT, so
  * there is none that strands a VAULT permanently.
@@ -386,7 +386,7 @@ describe('the account\'s own threshold is always reachable, so no vault is stran
     const sim = await liveAccount();
     const leafB = sim.leafOf(B);
     const c = govChange(76);
-    const id = await governedRound(sim, pureCircuits.removeSignerPayload(leafB), c);
+    const id = await governedRound(sim, removalPayloadFor(leafB), c);
 
     await expect(sim.as(carrying(sim, A, c)).removeSigner(leafB, id))
       .rejects.toThrow(/fewer signers than the threshold/i);
@@ -426,7 +426,7 @@ describe('the account\'s own threshold is always reachable, so no vault is stran
     /* With every signer approving, neither removal may leave three seats against a vault of four. */
     const leaf = sim.leafOf(C);
     const one = govChange(80);
-    const id1 = await governedRound(sim, pureCircuits.removeSignerPayload(leaf), one, [A, B, C, D]);
+    const id1 = await governedRound(sim, removalPayloadFor(leaf), one, [A, B, C, D]);
     /* RED WHEN a vault threshold no longer raises the bar: the removal then passes at the account's own floor. */
     await expect(sim.as(carrying(sim, A, one)).removeSigner(leaf, id1))
       .rejects.toThrow(/that would leave fewer signers than a policy change needs/);
@@ -490,14 +490,14 @@ describe("a vault's own threshold guards who is seated", () => {
     await expect(sim.as(carrying(sim, A, swap)).reseatSigner(sim.leafOf(C), sim.leafOf(D), wid))
       .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
     const out = govChange(104);
-    const oid = await round(sim, pureCircuits.removeSignerPayload(sim.leafOf(C)), out, [A, B]);
+    const oid = await round(sim, removalPayloadFor(sim.leafOf(C)), out, [A, B]);
     /* RED WHEN the removal's seat bar is the account's threshold alone: two of three remove the third. */
     await expect(sim.as(carrying(sim, A, out)).removeSigner(sim.leafOf(C), oid))
       .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
   });
 
-  it('THE SEAT BAR seatBarOf WORKS OUT IS THE ONE THE ACCOUNT HOLDS A SEATING AND A REMOVAL BY amendSigner TO', async () => {
+  it('THE SEAT BAR seatBarOf WORKS OUT IS THE ONE THE ACCOUNT HOLDS A SEATING AND A REMOVAL TO', async () => {
     const SEAT_BAR = /seating, removing or re-seating a signer needs as many approvals as a policy change needs/;
     const THRESHOLD_GATE = /not enough approvals yet/;
     /* The number `seatBarOf` makes of the account's threshold and its stored bar. */
@@ -509,7 +509,7 @@ describe("a vault's own threshold guards who is seated", () => {
     };
     const remove = async (sim: AccountSimulator, who: Who, by: Who[], seed: number) => {
       const c = govChange(seed);
-      const id = await round(sim, pureCircuits.removeSignerPayload(sim.leafOf(who)), c, by);
+      const id = await round(sim, removalPayloadFor(sim.leafOf(who)), c, by);
       return sim.as(carrying(sim, A, c)).removeSigner(sim.leafOf(who), id);
     };
     const holds = (sim: AccountSimulator, who: Who) => sim.ledger.signerLeaves.member(sim.leafOf(who));
@@ -525,11 +525,11 @@ describe("a vault's own threshold guards who is seated", () => {
     await expect(seat(above, D, [A, B], 164)).rejects.toThrow(SEAT_BAR);
     await seat(above, D, [A, B, C].slice(0, neededOf(above)), 165);
     expect(holds(above, D)).toBe(true);
-    /* RED WHEN: the account holds a removal by amendSigner to its threshold alone, below the stored bar: two of four remove one. */
+    /* RED WHEN: the account holds a removal to its threshold alone, below the stored bar: two of four remove one. */
     await expect(remove(above, D, [A, B], 166)).rejects.toThrow(SEAT_BAR);
     await remove(above, D, [A, B, C].slice(0, neededOf(above)), 167);
     expect(holds(above, D)).toBe(false);
-    /* RED WHEN: a removal by amendSigner may leave fewer seated than the stored bar: three of three leave two under a bar of three. */
+    /* RED WHEN: a removal may leave fewer seated than the stored bar: three of three leave two under a bar of three. */
     await expect(remove(above, C, [A, B, C], 168)).rejects.toThrow(/that would leave fewer signers than a policy change needs/);
     expect(holds(above, C)).toBe(true);
 

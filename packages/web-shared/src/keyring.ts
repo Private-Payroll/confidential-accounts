@@ -1752,8 +1752,10 @@ export async function forgetAFinishedCreation(
  * proposal, approval and seal, each from its own reads of the chain and with
  * the founding seat it makes again from its words. This page hands the wallet
  * the saved keys as the service holds them, keeps those the wallet seals
- * again, and sends each transaction the wallet hands it where the wallet says
- * it goes (`relayForTheCreation`). It proves and signs nothing itself.
+ * again, sends each transaction the wallet hands it where the wallet says
+ * it goes (`relayForTheCreation`), and makes the one call the wallet asks, the
+ * pay-record key's proposal written down with its raise beside it, for this
+ * company alone. It proves and signs nothing itself.
  *
  * It resolves with where the action ended: done, or stopped at a step, which
  * the person carries on from with one more press (the wallet works out from
@@ -1777,6 +1779,8 @@ export async function finishCompanyInTheWallet(
   if (saved !== undefined) refuseWhenNotTheStarter(saved);
   const person = me.id;
   const dialog = openTheWallet(view, walletOrigin);
+  const send = pageWireSend(() => (me === null ? null : me.id));
+  const creationAt = `/api/accounts/${accountId}/creation/`;
   try {
     const label = saved !== undefined ? saved.label : (await companyNamedFor(accountId)).label;
     const handedIn = await savedKeysForTheWallet();
@@ -1784,6 +1788,12 @@ export async function finishCompanyInTheWallet(
     const ended = await actInTheWallet(view, walletOrigin, {
       intent: { name: 'finish-company', company: label },
       relay: (transaction, at) => relayForTheCreation(accountId, transaction, at),
+      call: async (request) => {
+        if (me === null || me.id !== person) throw new Error('the person signed in changed, so nothing more is sent for this action.');
+        /* Only for the company this press finishes: the wallet names the company by its label, this page by its record. */
+        if (!request.path.startsWith(creationAt)) throw new Error('finishing this company calls the service for this company alone.');
+        return send(request.path, request as never);
+      },
       savedKeys: {
         person, keyring: handedIn as unknown as KeyringHandedIn, served,
         /* Kept only for the person the action runs for: somebody else signed in on this tab since is never written over. */
@@ -1921,7 +1931,6 @@ export async function relayForTheCreation(
       if (SECOND_STEP_HANDED.has((await companyCreationStanding(accountId)).state)) return true;
       return post(`${at$}/finish`, { insert: transaction });
     }
-    case 'pay-key-propose': return post(`${at$}/pay-key`, { call: 'propose', tx: transaction });
     case 'pay-key-approve': return post(`${at$}/pay-key`, { call: 'approve', tx: transaction });
     case 'pay-key-seal': return post(`${at$}/pay-key`, { call: 'sealPayKey', tx: transaction });
     default: return false;

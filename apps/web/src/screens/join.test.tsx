@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { anInvitation, offerAnswer, PUBLIC_ADDRESS, refusedAnswer, type Invitation } from '../adapters/join-offers.test-support.js';
 import { untilShown } from '../page-shown.test-support.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE JOIN PAGE, /join/:id. The invitation the link carried is held in memory (the router's own store) and real sealed
@@ -37,7 +35,7 @@ const { DEFAULT_PREFERENCES } = await import('../preferences.js');
 const { VIEWS } = await import('../pages.js');
 
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
-const EN = JSON.parse(readFileSync(`${dirname(fileURLToPath(import.meta.url))}/../locales/en.json`, 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 
 const asked: string[] = [];

@@ -12,10 +12,10 @@
  * could make their WASM spin. This test tells the two apart.
  *
  *   attestSolvency   2.2K zkir, 2.7M prover key, no Merkle path, no tree insert
- *   amendSigner      membership proof plus a tree write
+ *   removeSignerAndSetThreshold   membership proof plus a tree write
  *
  * If the small one proves and the big one hangs, the problem is specific to
- * `amendSigner` or to the transaction we build for it, and it is ours.
+ * `removeSignerAndSetThreshold` or to the transaction we build for it, and it is ours.
  * If both hang, it is environmental or in the SDK.
  *
  * NO WALLET, NO DUST, NO SUBMITTING. It builds and proves, nothing else, so it
@@ -286,12 +286,12 @@ async function main() {
   const leafB = pureCircuits.signerLeaf(
     pureCircuits.signerPublicKey(bBytes.secretKey), bBytes.blinding, pureCircuits.allVaults());
   /*
-   * `amendSigner` only removes now: the leaf leaving and the proposal that
-   * approved it. A 32-byte zero names no proposal, so the call is refused in
+   * The removal takes the leaf leaving, the threshold it sets (0 keeps the one
+   * in force) and the proposal that approved it. A 32-byte zero names no proposal, so the call is refused in
    * the proof; what this script asks is whether proving hangs, not whether the
    * call would land.
    */
-  const big = await tryCircuit('amendSigner', [leafB, new Uint8Array(32)]);
+  const big = await tryCircuit('removeSignerAndSetThreshold', [leafB, 0n, new Uint8Array(32)]);
 
   console.log();
   console.log('\x1b[1m  Result\x1b[0m');
@@ -303,7 +303,7 @@ async function main() {
   console.log();
   if (small.prove !== null && big.prove === null) {
     console.log('  \x1b[1mThe small circuit proves and the big one does not.\x1b[0m');
-    console.log('  The problem is specific to amendSigner or to the transaction we');
+    console.log('  The problem is specific to removeSignerAndSetThreshold or to the transaction we');
     console.log('  build for it. That is ours to find, not the Foundation\'s.');
   } else if (small.prove === null && big.prove === null) {
     console.log('  \x1b[1mNeither proves.\x1b[0m');

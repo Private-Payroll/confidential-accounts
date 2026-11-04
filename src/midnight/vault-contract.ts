@@ -172,7 +172,7 @@ export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze([
  * circuit shares a name with any of them.
  */
 export const ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS: readonly string[] = Object.freeze([
-  'propose', 'approve', 'amendSigner', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold',
+  'propose', 'approve', 'removeSignerAndSetThreshold', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold',
   'setPolicy', 'setPolicyBar',
 ]);
 

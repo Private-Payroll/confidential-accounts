@@ -7,12 +7,13 @@ import { createElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { DocumentTitle } from './document-title.js';
+import { ENGLISH } from './english.test-support.js';
 
 afterEach(cleanup);
 
 /* Paths, not URL objects: under jsdom the global `URL` is jsdom's, and Node's file reader refuses a URL object it did not make. */
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const EN = JSON.parse(readFileSync(resolve(APP, 'src/locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 /* A second language, so following the language shown is seen and not assumed. */
 const LANGUAGES = languagesFrom({ './locales/en.json': EN, './locales/de.json': { ...EN, 'app.title': 'Private Tresore' } });
 const page = (pick: string) => createElement(KitProvider, { languages: LANGUAGES, pick }, createElement(DocumentTitle));
