@@ -133,7 +133,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     /* A run is raised as this device made it again, with every round the company's records hold to check the chain against. */
     const raising = { period: '2026-09', knownRounds: [...opened.keys()], knownLeaves: [], knownNonces: [] };
     return order.circuit === 'propose'
-      ? { ...record, half: half!, ...(made?.kind !== 'payroll' ? {} : { made: walletRead({ ...made, raising }) }) }
+      /* A raise carries the deadline its record would: a day after it is written down. */
+      ? { ...record, half: half!, raiseBy: String(Math.floor(Date.now() / 1000) + 86_400), ...(made?.kind !== 'payroll' ? {} : { made: walletRead({ ...made, raising }) }) }
       : { ...record, ...(made === undefined ? {} : { made: made.kind === 'payroll' ? walletRead(made) : made }) };
   };
   /* Who is already paid and the pay-record key, as the signer's own wallet reads them: the wallet's own parser, over the chain's bytes. */

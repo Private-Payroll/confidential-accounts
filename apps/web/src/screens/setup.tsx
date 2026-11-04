@@ -122,7 +122,6 @@ function SetupSteps() {
 
   const Action = isBuiltStep(step) && !closed[index] ? step.shows.action : null;
   const soon = isBuiltStep(step) ? null : (step.shows as { comingSoon: (x: typeof t) => string }).comingSoon(t);
-  const alsoSoon = isBuiltStep(step) && step.alsoSoon !== undefined ? step.alsoSoon(t) : null;
 
   return (
     /* Marked as reading, as every page that reads is, so nothing waits on a step drawn before the company is read. */
@@ -146,7 +145,6 @@ function SetupSteps() {
             <HugeiconsIcon icon={step.icon} strokeWidth={2} className="size-5 text-muted-foreground" />
             <h1 className="text-xl font-semibold">{step.name(t)}</h1>
             {soon === null || blocker !== null ? null : <ComingSoon explanation={soon} />}
-            {alsoSoon === null || blocker !== null || Action === null ? null : <ComingSoon explanation={alsoSoon} />}
           </div>
           <p className="max-w-prose text-sm text-muted-foreground">{step.line(t)}</p>
           {forGood[index]
@@ -165,7 +163,6 @@ function SetupSteps() {
                 : (
                   <>
                     <SessionProvider session={{ ...session, company }}><Action leadTo={choose} onChanged={(startedCompany) => { if (startedCompany !== undefined) setStarted(startedCompany); reloadRecords(); void read(); void reread(startedCompany); }} creation={creationCompany} startNewCompany={startNewCompany} /></SessionProvider>
-                    {alsoSoon === null ? null : <p className="max-w-prose text-sm text-muted-foreground" data-also-soon>{alsoSoon}</p>}
                   </>
                 )}
         </TabsContent>

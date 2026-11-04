@@ -33,6 +33,8 @@ export interface PayKeyPure {
   proposalIdOf(payload: Uint8Array, vault: Uint8Array, salt: Uint8Array): Uint8Array;
   noVault(): Uint8Array;
   removalCountKey(): Uint8Array;
+  /** One seat's approval marker for one proposal in one account, as the account writes it into `approvals`. */
+  approvalNullifierOf(sk: Uint8Array, account: Uint8Array, proposal: Uint8Array): Uint8Array;
 }
 
 /** How many 32-byte entries one signer's sealed copy takes on the account. */
@@ -99,13 +101,17 @@ export interface PayKeyStanding {
   readonly isThisKey: boolean;
   /** Whether the signer asking has sealed their own copy. */
   readonly sealedMine: boolean;
-  /** The proposal that commits the account to this key. */
-  readonly round: PayKeyRound & RoundStanding;
+  /** The proposal that commits the account to this key, with whether the account holds the asking seat's approval of it. */
+  readonly round: PayKeyRound & RoundStanding & { readonly approvedHere: boolean };
 }
 
 /** The parts of the account's ledger the pay-record key's standing reads. */
 export type AccountLedgerForThePayKey =
-  Pick<AccountLedgerForAStart, 'threshold' | 'openProposals' | 'approvalCounts' | 'proposalHolds'> & { readonly signerRoles: PayKeyRoles };
+  Pick<AccountLedgerForAStart, 'threshold' | 'openProposals' | 'approvalCounts' | 'proposalHolds'> & {
+    readonly signerRoles: PayKeyRoles;
+    /** Every approval ever given, as the account's approval markers. */
+    readonly approvals: { member(marker: Uint8Array): boolean };
+  };
 
 export function payKeyStandingOf(
   P: PayKeyPure,
@@ -113,10 +119,16 @@ export function payKeyStandingOf(
 ): PayKeyStanding {
   const round = payKeyRoundOf(P, input.key);
   const committed = payKeyCommitmentIn(P, input.account.signerRoles);
+  const self = fromHex(String(input.address).toLowerCase().replace(/^0x/u, ''));
+  if (self.length !== 32) throw new Error(`this account's address is not 32 bytes: ${input.address}`);
+  const sk = bytes32('signer\'s secret key', input.secretKey);
+  /* The asking seat's approval marker, made with the account's own derivation over this account. */
+  const mine = (id: Uint8Array): boolean => input.account.approvals.member(P.approvalNullifierOf(sk, self, id));
+  const standing = standingOf(P, input.account, round.proposal, input.account.threshold, false, mine);
   return {
     committed,
     isThisKey: committed !== null && committed === round.commitment,
     sealedMine: sealedPayKeyIn(P, input.account.signerRoles, input.address, input.secretKey) !== null,
-    round: { ...round, ...standingOf(P, input.account, round.proposal, input.account.threshold, false) },
+    round: { ...round, ...standing, approvedHere: standing.approvedHere === true },
   };
 }

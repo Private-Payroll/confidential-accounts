@@ -144,7 +144,7 @@ const founderReplaced = async (): Promise<AccountSimulator> => {
   const round = await approved(sim, F, fromHex(payKeyPayloadOf(toHex(commitment))), 601, [F, B]);
   await sim.as(round.by).sealPayKey(sealPayKeyTo(PAY_KEY, newWrappingKeypair().publicKey).map(fromHex), commitment, round.id);
   await sim.adoptVault(VAULT, [F, B], 602);
-  const removal = await approved(sim, F, pureCircuits.removeSignerPayload(sim.leafOf(F)), 611, [F, B]);
+  const removal = await approved(sim, F, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(F), 0n), 611, [F, B]);
   await sim.as(removal.by).removeSigner(sim.leafOf(F), removal.id);
   await sim.seatSigner(D, [B, C], 612, true);
   return sim;

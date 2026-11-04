@@ -25,7 +25,10 @@
  * faster and is needed for none: the account's state, the proposal's standing
  * and who holds the account are read at the wallet's indexer, and a call the
  * service will not send, or says it sent and the chain does not show, is sent
- * and paid for by the person's own wallet when the person chooses it.
+ * and paid for by the person's own wallet when the person chooses it. A device
+ * that asks the service nothing at all leaves out `read`: its standing is then
+ * the last head it kept and the chain, and the person chooses to go on without
+ * the service before any step.
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { EMPTY_HEAD } from '../../../src/midnight/record-manifest.js';
@@ -37,16 +40,19 @@ import type { TreeService } from './record-entered-here.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { keptWith, type CheckedHeadsStore, type HeadersKeptStore } from './tree-kept-here.js';
 import {
-  approveFromAFile, callStateHere, fileCheckedAgainstTheChain, raiseFromTheChain, sentFromHere, standingNow,
+  approveFromAFile, callStateHere, fileCheckedAgainstTheChain, PROPOSAL_FILE_FORMAT, raiseFromTheChain, sentFromHere, standingNow,
   type FromTheChainDoors, type ProposalFile, type SentBy,
 } from './governance-from-the-chain.js';
 
 /** What a recovery asks of this device, beside what any proposal read from the chain and a file does. */
 export interface RecoveryDoors extends FromTheChainDoors {
   readonly builder: FromTheChainDoors['builder'] & Pick<VaultBuilderClient, 'recoverAnchor' | 'anchorTag' | 'anchorHeads' | 'lastRecovery'>;
-  /** This device's own read of the company's records: the last head it checked, and where and why it stopped. */
-  readonly read: () => Promise<{ readonly reached: CheckedHead; readonly stop: TransitionStop | null }>;
-  /** The heads this device checked, kept on it: where its read stands when the service cannot be reached. */
+  /**
+   * This device's own read of the company's records: the last head it checked, and where and why it stopped. Absent
+   * on a device that asks the company's service nothing: its standing is then read from `checked` and the chain.
+   */
+  readonly read?: () => Promise<{ readonly reached: CheckedHead; readonly stop: TransitionStop | null }>;
+  /** The heads this device checked, kept on it: where its read stands when the service cannot be reached, or is not asked. */
   readonly checked?: CheckedHeadsStore;
   /** The account's history and who holds the account now, at the indexer the person's own wallet names. */
   readonly onChain: () => Promise<AnchorsOnChain>;
@@ -61,33 +67,38 @@ export interface RecoveryDoors extends FromTheChainDoors {
 export interface OwnStanding {
   readonly reached: CheckedHead;
   readonly stop: TransitionStop | null;
-  /** The service could not be reached: the read stands at the last head this device kept, stopped at the batch after it. */
+  /** The service was not read from, or could not be: the read stands at the last head this device kept, stopped at the batch after it. */
   readonly serviceUnreached: boolean;
 }
 
 /**
  * **THIS DEVICE'S OWN READ, WITH THE SERVICE OR WITHOUT IT**: the read the page
- * makes; where the service cannot be reached for it, the last head this device
- * checked and kept, stopped at the batch after it whenever the chain holds
- * another head - no device can be given that batch's header then.
+ * makes; where the service cannot be reached for it, or this device asks it
+ * nothing (`read` absent), the last head this device checked and kept, stopped
+ * at the batch after it whenever the chain holds another head - no device can
+ * be given that batch's header then.
  */
 async function ownStandingHere(doors: Pick<RecoveryDoors, 'accountId' | 'read' | 'checked' | 'onChain'>): Promise<OwnStanding> {
-  try {
-    return { ...(await doors.read()), serviceUnreached: false };
-  } catch (e) {
-    const kept = await doors.checked?.read(doors.accountId);
-    if (kept === undefined || kept === null) {
-      throw new Error(`this device could not read the company's records (${(e as Error)?.message ?? String(e)}) and keeps no head of them it checked, `
-        + 'so it cannot say where they stopped. Open the company on a device that has read its records before');
+  let unread: string;
+  if (doors.read === undefined) {
+    unread = 'this device asks the company\'s service nothing for a recovery';
+  } else {
+    try {
+      return { ...(await doors.read()), serviceUnreached: false };
+    } catch (e) {
+      unread = `this device could not read the company's records (${(e as Error)?.message ?? String(e)})`;
     }
-    const { landed } = await doors.onChain();
-    const head = landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head.toLowerCase();
-    const reached = kept.latest;
-    return {
-      reached, serviceUnreached: true,
-      stop: head === reached.head ? null : { stop: 'not-given', seq: reached.seq + 1, what: 'the company\'s service could not be reached' },
-    };
   }
+  const kept = await doors.checked?.read(doors.accountId);
+  if (kept === undefined || kept === null) {
+    throw new Error(`${unread} and keeps no head of them it checked, `
+      + 'so it cannot say where they stopped. Open the company on a device that has read its records before');
+  }
+  const { landed } = await doors.onChain();
+  const head = landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head.toLowerCase();
+  const reached = kept.latest;
+  const what = doors.read === undefined ? 'the company\'s service was not asked' : 'the company\'s service could not be reached';
+  return { reached, serviceUnreached: true, stop: head === reached.head ? null : { stop: 'not-given', seq: reached.seq + 1, what } };
 }
 
 /**
@@ -124,12 +135,19 @@ export function recoveryRefusal(own: OwnStanding, resumesFrom: ResumesFrom): str
 const WITHOUT_THE_SERVICE = 'the company\'s service could not be reached, so this device could not ask it for the batch after the last one it checked; '
   + 'going on gives that batch up as one no device here can check. Choose to go on without the service only if it stays unreachable';
 
+/** The same choice for a device that asks the service nothing: it has the batch after the last one it checked from nobody. */
+const NOT_ASKING_THE_SERVICE = 'this device asks the company\'s service nothing for a recovery, so it has checked no batch after the last one it kept; '
+  + 'going on gives up every batch the chain anchored after that one, unchecked by this device, whether or not another signer\'s device could check it. '
+  + 'Choose to go on without the service only if you mean to';
+
 /** The device's own read, held to the rule (`recoveryRefusal`) and, without the service, to the person's choice to go on. */
 async function standingFor(doors: RecoveryDoors, resumesFrom: ResumesFrom, withoutTheService: boolean): Promise<OwnStanding> {
   const own = await ownStandingHere(doors);
   const why = recoveryRefusal(own, resumesFrom);
   if (why !== null) throw new Error(`${why}. Nothing was built or sent`);
-  if (own.serviceUnreached && !withoutTheService) throw new Error(`${WITHOUT_THE_SERVICE}. Nothing was built or sent`);
+  if (own.serviceUnreached && !withoutTheService) {
+    throw new Error(`${doors.read === undefined ? NOT_ASKING_THE_SERVICE : WITHOUT_THE_SERVICE}. Nothing was built or sent`);
+  }
   return own;
 }
 
@@ -237,11 +255,46 @@ export async function raiseRecoveryHere(
   const { head: lastRecovery } = await latestRecoveryHere(doors);
   return raiseFromTheChain(doors, {
     change: { kind: 'recover-anchor', resumesFrom: resumesFrom.head, latest: String(latest), lastRecovery },
-    summary: `Recover the company's records from batch ${resumesFrom.seq}, giving up every batch after it, which no signer's device can check, `
-      + `if it is carried out before ${new Date(latest * 1000).toISOString()}`,
+    summary: recoverySummary(resumesFrom.seq, latest),
     resumesFrom,
   });
 }
+
+/** What a recovery's file says it does, in the same words on every device that makes the file. */
+const recoverySummary = (seq: number, latest: number): string =>
+  `Recover the company's records from batch ${seq}, giving up every batch after it, which the raising device could not check, `
+  + `if it is carried out before ${new Date(latest * 1000).toISOString()}`;
+
+/** A recovery's file in parts, each a fact the chain or the raise fixed: what a wallet hands back, and is handed, in place of the file. */
+export interface RecoveryParts {
+  readonly company: string;
+  readonly account: string;
+  readonly chainId: string;
+  readonly salt: string;
+  /** The last time it may be carried out, in seconds. */
+  readonly latest: string;
+  readonly lastRecovery: string;
+  readonly resumesFrom: ResumesFrom;
+}
+
+/** A recovery's parts, as its file carries them; the inverse of `recoveryFileOf`. */
+export const recoveryPartsOf = (file: ProposalFile): RecoveryParts => {
+  const { resumesFrom, latest, lastRecovery } = recoveryOf(file);
+  return { company: file.company, account: file.account, chainId: file.chainId, salt: file.salt, latest: String(latest), lastRecovery, resumesFrom };
+};
+
+/**
+ * **A RECOVERY'S FILE MADE AGAIN FROM ITS PARTS**, word for word the file its
+ * raiser saved. It is believed in nothing: every step that takes it checks it
+ * against the chain (`fileCheckedAgainstTheChain`), where a part changed makes
+ * another proposal than the one it names, and is refused.
+ */
+export const recoveryFileOf = (p: RecoveryParts): ProposalFile => ({
+  format: PROPOSAL_FILE_FORMAT, company: p.company, account: p.account.toLowerCase(),
+  change: { kind: 'recover-anchor', resumesFrom: p.resumesFrom.head.toLowerCase(), latest: p.latest, lastRecovery: p.lastRecovery.toLowerCase() },
+  salt: p.salt.toLowerCase(), chainId: p.chainId.toLowerCase(), summary: recoverySummary(p.resumesFrom.seq, Number(p.latest)),
+  resumesFrom: { seq: p.resumesFrom.seq, head: p.resumesFrom.head.toLowerCase(), root: p.resumesFrom.root.toLowerCase() },
+});
 
 /**
  * **A RECOVERY APPROVED FROM THIS DEVICE**, from its file, only where this

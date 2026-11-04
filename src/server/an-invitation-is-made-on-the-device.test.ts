@@ -29,7 +29,7 @@ import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 import type { PendingSignerPayload } from '../core/types.js';
 import {
   acceptanceHashOf, acceptanceProofOf, invitationIdOf, invitationLink, InvitationNotOpened, isUtcMoment, newInvitationToken, whyThisOfferCannotBeMade, offerKeyOf, openOffer, sealOffer, signInvitationFiling, signOffer,
-  signSeatInvitation, tokenOfLink,
+  seatInvitationRefusal, signSeatInvitation, thresholdTheInvitationSets, tokenOfLink,
   type InvitationFiling,
 } from '../core/invitation.js';
 import {
@@ -179,6 +179,29 @@ describe('THE INVITEE OPENS THE OFFER WITH THE LINK, AND ACCEPTS WITH WHAT ONLY 
     expect(() => signOffer(offer, BO.signingSecret)).toThrow(/not the one its directory entry names/);
     /* RED WHEN: another token's key opens the offer. */
     expect(() => openOffer(sealOffer(signed, token), '6'.repeat(64))).toThrow(InvitationNotOpened);
+  });
+
+  it('A SEAT OFFERED BY ADDRESS MAY NAME THE THRESHOLD IT SETS ONCE TAKEN, A WHOLE NUMBER THE ACCOUNT CAN STORE, AND NOTHING ELSE BESIDE ITS ADDRESS', () => {
+    const terms = {
+      company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'adr_00000000000000000000', name: 'Kit', role: 'approver' as const,
+      invite: { address: '0a'.repeat(32) as Hex, salt: '0b'.repeat(32) as Hex, scope: '0c'.repeat(32) as Hex }, proposal: '0d'.repeat(32) as Hex,
+    };
+    const at = (threshold: string) => ({ ...terms, invite: { ...terms.invite, threshold } });
+    /* RED WHEN: an invitation by address cannot carry the threshold its seat sets, or carries it unsigned. */
+    const signed = signSeatInvitation(at('18446744073709551615'), ADA.signingSecret as Hex);
+    expect(signed.terms.invite!.threshold).toBe('18446744073709551615');
+    expect(seatInvitationRefusal(signed)).toBeNull();
+    expect(seatInvitationRefusal({ ...signed, terms: { ...signed.terms, invite: { ...signed.terms.invite!, threshold: '2' } } })).toMatch(/did not sign it/u);
+    /* RED WHEN: an invitation that names none is read as setting one, rather than keeping the threshold in force. */
+    expect(thresholdTheInvitationSets(signSeatInvitation(terms, ADA.signingSecret as Hex).terms.invite)).toBe('0');
+    expect(thresholdTheInvitationSets(signed.terms.invite)).toBe('18446744073709551615');
+    /* RED WHEN: a threshold no account could set is signed: zero (written only by leaving it out), a padded, negative or fractional number, or one above 64 bits. */
+    for (const bad of ['0', '01', '-1', '1.5', '18446744073709551616', '']) {
+      expect(() => signSeatInvitation(at(bad), ADA.signingSecret as Hex), bad).toThrow(/not a seat invitation this device can sign/u);
+    }
+    /* RED WHEN: anything else rides beside the address the seat is invited at. */
+    expect(seatInvitationRefusal({ ...signed, terms: { ...signed.terms, invite: { ...signed.terms.invite!, extra: '1' } } }))
+      .toMatch(/not named by its commitment, its salt and the rights it carries/u);
   });
 
   it('A SEAT OFFERED IS FOR THE INVITATION ITS LINK NAMES, SIGNED BY THE SEAT THAT SIGNED THE OFFER', () => {

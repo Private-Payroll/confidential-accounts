@@ -20,7 +20,9 @@
  *
  * The run is sealed under the company's key in force and signed with this
  * seat's filing key; the service keeps it only for a seat its directory
- * believes may file a run, and opens none of it.
+ * believes may file a run, and opens none of it. A run a person confirms before
+ * it is filed is drawn by `runDrawnHere`, which only reads, and filed by
+ * `fileRunDrawnHere`, which reads the month's runs and rounds again first.
  */
 import { keyOf, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { randomBytes, type Hex } from '../../../src/core/crypto.js';
@@ -29,7 +31,7 @@ import { isLiveRound } from '../../../src/core/retry-cover.js';
 import type { PayrollRound } from '../../../src/core/account.js';
 import type { PayrollRun, RunList, RunRepeatRecord, RunSkip, SealedProposal } from '../../../src/core/types.js';
 import { datesOfTheRecordRefusal, earliestStopOf, outsideTheirDates } from '../../../src/core/payable-days.js';
-import { canonicalPeriod, openSealedRun, runsOfList, sealedRunOf } from '../../../src/core/run-legs.js';
+import { canonicalPeriod, listOfRun, openSealedRun, runsOfList, sealedRunOf } from '../../../src/core/run-legs.js';
 import {
   amountOnTheRun, assembledRun, peopleDrawn, peopleOnTheRun, recordSkipsEach, refuseAPayrollThatMayBeOnChain,
   refuseAPeriodAlreadyRaised, samePeriod, withNumberedExtras,
@@ -220,24 +222,34 @@ const specOf = (p: ListPayee, period: string) => ('terms' in p
   ? { name: p.name, asset: p.terms.kind === 'monthly' ? p.terms.asset : '', amount: vendorAmountOnTheRun(p, period) }
   : { name: p.name, asset: p.asset, amount: amountOnTheRun(p, period) });
 
+/** The list's runs this device can open, and the payroll rounds the company wrote down, as read at `at`. */
+const runsAndRoundsHere = async (doors: RunDrawDoors, list: RunList, at: string): Promise<{ runs: PayrollRun[]; rounds: PayrollRound[] }> => {
+  const [sealedRuns, proposals] = await Promise.all([runsListedHere(doors.records), proposalsListedHere(doors.records)]);
+  const runs = runsOfList(sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keyOf(doors.viewingKey, r.keyEpoch))), list);
+  const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey, {
+    identity: doors.records.roundIdentity, nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000)),
+  });
+  return { runs, rounds };
+};
+
 /**
- * **DRAWS A RUN FOR `asked.period` OVER ONE LIST ON THIS DEVICE, AND FILES IT.** Refused,
- * with nothing filed, when anybody it would leave out is not named in the
- * confirmation, when an active person is not payable at what their own wallet
- * signed, when a run for the month on the same list has already been raised and
- * this is not a confirmed repeat, and when nobody is left to pay. Only runs on
- * the same list count: the payroll and a vendor run for one month never refuse
- * each other. Somebody outside their
- * dates is left out and recorded so, signed by `doors.by`. Returns the run as filed.
+ * **DRAWS A RUN FOR `asked.period` OVER ONE LIST ON THIS DEVICE, AND FILES NOTHING.** Every
+ * call it makes is a read. Refused when anybody it would leave out is not named
+ * in the confirmation, when an active person is not payable at what their own
+ * wallet signed, when a run for the month on the same list has already been
+ * raised and this is not a confirmed repeat, and when nobody is left to pay. Only
+ * runs on the same list count: the payroll and a vendor run for one month never
+ * refuse each other. Somebody outside their dates is left out and recorded so,
+ * signed by `doors.by`. Returns the run as it would be filed.
  */
-export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise<PayrollRun> {
+export async function runDrawnHere(doors: RunDrawDoors, asked: RunAsked): Promise<PayrollRun> {
   const period = drawn(() => canonicalPeriod(asked.period));
   const at = (doors.now ?? (() => new Date().toISOString()))();
   const assets = doors.registry ?? theAssets;
   const list: RunList = asked.list ?? 'employees';
-  const [read, sealedRuns, proposals] = await Promise.all([
+  const [read, { runs, rounds }] = await Promise.all([
     payeesHere(doors.records, list).catch((e: unknown) => { throw new RunNotDrawnHere(String((e as Error)?.message ?? e).replace(/\s*Nothing was built or sent\.\s*$/u, '')); }),
-    runsListedHere(doors.records), proposalsListedHere(doors.records)]);
+    runsAndRoundsHere(doors, list, at)]);
   const here = list === 'vendors' ? paidMonthly(read) : read;
   const { all, handedOver, datedOut } = peopleToDrawOver(here, asked, period);
   const skip = asked.skipPending === undefined ? undefined
@@ -247,10 +259,6 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
     const twice = twoEntriesAtOneAddress(roster as VendorRecord[]);
     if (twice !== null) throw new RunNotDrawnHere(`${twice}. Mark one of them a leaver, and draw the run again.`);
   }
-  const runs = runsOfList(sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keyOf(doors.viewingKey, r.keyEpoch))), list);
-  const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey, {
-    identity: doors.records.roundIdentity, nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000)),
-  });
   const repeated = asked.repeats === undefined ? undefined
     : confirmedRepeatHere(period, runs, rounds, asked.repeats, doors.by, at);
   if (repeated === undefined) {
@@ -269,13 +277,62 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
   }));
   const repeats = drawn(() => withNumberedExtras(period, employees, repeated, [...(asked.repeats?.extra ?? [])], runs,
     (id) => all.find((p) => p.id === id)?.name ?? null));
-  const run = assembledRun({
+  return assembledRun({
     runId, accountId: doors.accountId, period, employees, payslips,
     ...(skips ? { skips } : {}), ...(repeats ? { repeats } : {}), list,
   });
+}
+
+/**
+ * **FILES A RUN `runDrawnHere` DREW EARLIER, ONCE ITS MONTH IS STILL OPEN.** Between the draw and the
+ * filing time passes (a person reads the run and confirms it), so the runs and rounds are read
+ * again and the filing is refused, with nothing filed, when a run for the month on the same list
+ * has been raised or a round for it may be on the chain since. A repeat is not filed this way:
+ * its confirmation names the runs read at the draw. Returns the run as filed; filed by `drawRunHere`.
+ */
+export async function fileRunDrawnHere(doors: RunDrawDoors, run: PayrollRun): Promise<PayrollRun> {
+  return drawRunHere(doors, { period: run.period, list: listOfRun(run) }, run);
+}
+
+/** The run drawn earlier, once its month is read again and is still open for it; refused, with nothing filed, otherwise. */
+const stillOpenFor = async (doors: RunDrawDoors, run: PayrollRun): Promise<PayrollRun> => {
+  if (run.repeats !== undefined) throw new RunNotDrawnHere('a repeated run is filed only where it was drawn.');
+  const at = (doors.now ?? (() => new Date().toISOString()))();
+  const { runs, rounds } = await runsAndRoundsHere(doors, listOfRun(run), at);
+  drawn(() => refuseAPeriodAlreadyRaised(run.period, runs));
+  drawn(() => refuseAPayrollThatMayBeOnChain(run.period, runs, rounds));
+  return run;
+};
+
+/**
+ * **DRAWS A RUN FOR `asked.period` OVER ONE LIST ON THIS DEVICE, AND FILES IT**, refused as
+ * `runDrawnHere` refuses, with nothing filed. With `confirmed`, a run `runDrawnHere` drew earlier,
+ * it draws nothing and files that run, once `stillOpenFor` reads its month still open. The run is
+ * sealed under the company's key in force, signed with this seat's filing key, filed and entered.
+ * Returns the run as filed.
+ */
+export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked, confirmed?: PayrollRun): Promise<PayrollRun> {
+  const run = confirmed === undefined ? await runDrawnHere(doors, asked) : await stillOpenFor(doors, confirmed);
   const sealing = sealingWith(doors.viewingKey, doors.keyEpoch);
   const filing = signRunFiling(doors.accountId, sealedRunOf(run, sealing.key, sealing.epoch), doors.signingSecret);
   await doors.api(`/api/accounts/${encodeURIComponent(doors.accountId)}/runs`, { method: 'POST', body: JSON.stringify({ run: filing }) });
   await doors.entered.enter([{ store: 'run', run: filing }]);
   return run;
 }
+
+/** What a run pays and to whom, in order: each person's id, name, payslip key, slip, currency, amount, form and where they are paid. */
+const peopleOf = (run: PayrollRun): string => JSON.stringify(run.employees.map((e) => [
+  e.id, e.name, e.wrappingPublicKey ?? null, e.slip ?? null, e.asset, e.amount.toString(), e.form ?? null, e.paidTo ?? null,
+]));
+
+/** Who a run sets aside, in order, and why. */
+const setAsideOf = (run: PayrollRun): string => JSON.stringify((run.skips?.people ?? []).map((p) => [p.employeeId, p.name, p.waiting]));
+
+/**
+ * Whether `kept`, a run read back from the company's records, pays the same people as `drawn`, the run a person
+ * confirmed: the same people, in the same order, each at the same amount and currency and paid the same way, and the
+ * same people set aside.
+ */
+export const samePeopleAsDrawn = (kept: PayrollRun, drawn: PayrollRun): boolean =>
+  kept.id === drawn.id && kept.period === drawn.period && listOfRun(kept) === listOfRun(drawn) && peopleOf(kept) === peopleOf(drawn)
+  && setAsideOf(kept) === setAsideOf(drawn);

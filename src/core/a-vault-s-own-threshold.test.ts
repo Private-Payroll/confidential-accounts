@@ -413,7 +413,7 @@ describe('a vault threshold nobody can meet is refused before anybody signs', ()
  * `requireApprovedForVault` (`contracts/src/ConfidentialAccount.compact:1384`)
  * takes the lookup and has exactly ONE caller, `recordPayment` (`:2697`);
  * `requireApproved` (`:1407`) has none, and every governance circuit lands
- * there — `amendSigner` (`:1756`, `:1921`), `setThreshold` (`:2014`),
+ * there — `removeSignerAndSetThreshold`, `seatInvited`, `setThreshold` (`:2014`),
  * `setVaultThreshold` (`:2775`), `adopt` (`:2810`), `retireVault` (`:2869`).
  * All six measured at source.
  *

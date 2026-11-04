@@ -31,3 +31,42 @@ export declare function vendorAccountKeys(input: {
   /** Copy the verifier key alone. */
   verifierOnly?: boolean;
 }): number;
+
+/** The served paths under `folders` that a pin or a file on disk holds but `expected` (every path the run walked) does not. */
+export declare function staleKeysOf(input: {
+  keysDir: string;
+  artefacts: Record<string, { bytes: number; sha256: string }>;
+  folders: readonly string[];
+  expected: readonly string[];
+}): string[];
+
+/** Moves each stale file into `graveyard` (never deletes) and drops its pin; returns how many files moved. */
+export declare function pruneStale(input: {
+  keysDir: string;
+  artefacts: Record<string, { bytes: number; sha256: string }>;
+  stale: readonly string[];
+  graveyard: string;
+  stamp: string;
+}): number;
+
+/** Refuses stale keys by name (returns 1) unless `prune`, which moves them and returns 0; returns 0 when none are stale. */
+export declare function pruneOrRefuse(input: {
+  keysDir: string;
+  artefacts: Record<string, { bytes: number; sha256: string }>;
+  folders: readonly string[];
+  expected: readonly string[];
+  prune: boolean;
+  graveyard: string;
+  stamp: string;
+  log?: (line: string) => void;
+}): number;
+
+/** Refuses (returns 1) when the keys folder is missing, naming it and what restores it; never creates it. Returns 0 when it is there. */
+export declare function keysFolderOrRefuse(input: {
+  keysDir: string;
+  repoRoot: string;
+  log?: (line: string) => void;
+}): number;
+
+/** The closing line of a run, naming the manifest path it was given relative to the repository's root. */
+export declare function wroteLine(input: { repoRoot: string; manifestPath: string; pins: number }): string;

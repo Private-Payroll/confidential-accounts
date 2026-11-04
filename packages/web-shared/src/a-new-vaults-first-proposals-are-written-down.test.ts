@@ -44,7 +44,9 @@ describe('A NEW VAULT\'S TWO PROPOSALS, AS EVERY DEVICE OPENS THEM', () => {
       /* RED WHEN: either kind opens as a governance change, or is refused as a kind no device knows. */
       expect(e).toBeInstanceOf(NotOpenedOnThisDevice);
       expect((e as NotOpenedOnThisDevice).kind).toBe(kind);
-      expect((e as Error).message).toMatch(/sets up one of the company's vaults, and it is raised and approved only from setting that vault up/);
+      /* RED WHEN: the words send the person to the vault's own setup as the only place it is approved, though another signer approves it in the wallet. */
+      expect((e as Error).message).toMatch(/sets up one of the company's vaults, and it is approved only in the wallet, by the approval of a vault's set-up step/);
+      expect((e as Error).message).not.toMatch(/withdraw it/u);
     }
   });
 });

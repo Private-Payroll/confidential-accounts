@@ -10,7 +10,7 @@ import { pureCircuits as P } from '../../contracts/managed/contract/index.js';
 import { pureCircuits as V } from '../../contracts/managed-vault/contract/index.js';
 import { fromHex, toHex } from '../core/crypto.js';
 import {
-  adoptionRoundOf, firstSecretRunOf, secretRunProposalOf, startStandingOf, secretRunWindowFrom,
+  adoptionRoundOf, firstSecretRunCarriedOf, firstSecretRunOf, secretRunProposalOf, startStandingOf, secretRunWindowFrom,
   type AccountLedgerForAStart, type VaultLedgerForAStart,
 } from './vault-start.js';
 import { openSecretCopy } from './sealed-secret-copy.js';
@@ -93,6 +93,24 @@ describe('A VAULT\'S START', () => {
     expect(startStandingOf(circuits, { vault: VAULT, now, vaultLedger: vaultLedger(), account: accountLedger({ vaults: [VAULT] }) }).adopted).toBe(true);
   });
 
+  it("SAYS WHETHER THIS SEAT'S APPROVAL IS ON THE CHAIN FOR EACH ROUND OF THE START, ASKED BY THAT ROUND'S OWN IDENTITY", () => {
+    const round = adoptionRoundOf(P as never, VAULT);
+    const window = secretRunWindowFrom(10_000n);
+    const id = secretRunProposalOf(P as never, run, window);
+    const read = (approved: string[]) => startStandingOf(circuits, {
+      vault: VAULT, now: 10_000n, vaultLedger: vaultLedger(), run, approvedHere: (asked) => approved.includes(key(asked)),
+      account: accountLedger({
+        threshold: 2n, vaultBars: { [VAULT]: 2n },
+        open: { [round.proposal]: { approvals: 1n, needed: 2n }, [id]: { approvals: 1n, needed: 2n } }, windows: [[id, window]],
+      }),
+    });
+    /* RED WHEN: a round is asked about by another round's identity - this seat's raise of the adoption then reads as its approval of the run. */
+    expect([read([round.proposal]).adoption.approvedHere, read([round.proposal]).secret?.run?.approvedHere]).toEqual([true, false]);
+    expect([read([id]).adoption.approvedHere, read([id]).secret?.run?.approvedHere]).toEqual([false, true]);
+    /* Read with no seat, nothing is said of any seat's approval. */
+    expect('approvedHere' in startStandingOf(circuits, { vault: VAULT, now: 1n, vaultLedger: vaultLedger(), account: accountLedger() }).adoption).toBe(false);
+  });
+
   it('FINDS THE SECRET RUN BY THE WINDOWS THE ACCOUNT HOLDS, AND SAYS WHETHER ITS WINDOW IS OPEN NOW', () => {
     const window = secretRunWindowFrom(10_000n);
     const id = secretRunProposalOf(P as never, run, window);
@@ -108,6 +126,26 @@ describe('A VAULT\'S START', () => {
     expect(startStandingOf(circuits, { vault: VAULT, account, vaultLedger: vaultLedger(), run, now: window.closesAt }).secret?.run?.inWindow).toBe(false);
     expect(other).not.toBe(id);
     expect(read.secret).toMatchObject({ set: false, another: false, started: false, written: [false, false] });
+  });
+
+  it('IS FOUND AGAIN FROM ITS PUBLIC PARTS ONCE ITS SECRET IS SET, AND ITS ROOT IS MADE AGAIN ONLY UNDER THE SECRET IT SETS', () => {
+    const window = secretRunWindowFrom(10_000n);
+    const parts = {
+      root: run.root, opensAt: String(window.opensAt), closesAt: String(window.closesAt), salt: run.salt, nonce: run.nonce,
+      copiesRoot: run.copiesRoot, count: String(run.count),
+    };
+    const found = firstSecretRunCarriedOf(circuits, VAULT, parts);
+    /* RED WHEN: the run made again from its parts is not the run the chain holds, so a service could not tell which run set the secret. */
+    expect(found.proposal).toBe(secretRunProposalOf(P as never, run, window));
+    expect(found.payload).toBe(toHex(P.runPayload(fromHex(run.root), 1n, window.opensAt, window.closesAt, 0n)));
+    /* RED WHEN: the root is made without the commitment of the secret the run sets, so any run of the vault would pass for this one. */
+    expect(found.rootUnder(run.commitment)).toBe(run.root);
+    expect(found.rootUnder('77'.repeat(32))).not.toBe(run.root);
+    /* RED WHEN: the run's identity leaves out the vault it is for, so another vault's run passes for it. */
+    expect(firstSecretRunCarriedOf(circuits, 'cd'.repeat(32), parts).proposal).not.toBe(found.proposal);
+    /* RED WHEN: a part that is not one is taken, and a run is made from it. */
+    expect(() => firstSecretRunCarriedOf(circuits, VAULT, { ...parts, count: '-1' })).toThrow(/not the public parts/u);
+    expect(() => firstSecretRunCarriedOf(circuits, VAULT, { ...parts, nonce: 'zz' })).toThrow(/not the public parts/u);
   });
 
   it('READS THE SECRET SET, EACH COPY WRITTEN, AND THE VAULT STARTED ONLY WHEN THE LAST COPY CLOSED ITS LIST', () => {

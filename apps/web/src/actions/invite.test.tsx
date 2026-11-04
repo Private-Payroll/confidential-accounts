@@ -8,6 +8,7 @@ import { KitProvider, languagesFrom } from 'vaults-ui';
 import { invitationLink } from '../../../../src/core/invitation.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE INVITE PANEL, DRAWN as the side panel opens it from a page and as the setup wizard's People step draws it, over the real
@@ -51,13 +52,13 @@ const { whyOf, WHY } = await import('../adapters/invite.js');
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
 const HERE = dirname(fileURLToPath(import.meta.url));
-const EN = JSON.parse(readFileSync(resolve(HERE, '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const WALLET_EN = JSON.parse(readFileSync(resolve(HERE, '../../../wallet/src/locales/en.json'), 'utf8')) as Record<string, string>;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const PUBLIC = 'mn_addr_stagenet1egv3hww6lmsahjy3gldaqn778hcpwvhhw8udud6k859906yynmmq8wsdsd';
 const PRIVATE = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
 const SIGNERS_APPROVALS = (over: Record<string, unknown> = {}) => ({ of: 'read', value: { count: 2, raisedAboveTheAccount: false, vaultsAtThatNumber: [], ...over } });
-const company = (approvalsForSigners: unknown = SIGNERS_APPROVALS()) => ({ of: 'open', id: 'c-1', name: 'Northwind', approvalsForSigners });
+const company = (approvalsForSigners: unknown = SIGNERS_APPROVALS()) => ({ of: 'open', id: 'c-1', name: 'Northwind', approvalsNeeded: { of: 'read', value: 2 }, approvalsForSigners });
 
 const session = () => ({
   person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true },
@@ -456,6 +457,84 @@ describe('the panel words, controls and sent state', () => {
     expect(q('[data-invite-signer-pending]')!.textContent).toMatch(/waits for approvals/);
   });
 
+  /* RED WHEN: the approvals chosen for after the seat is taken do not reach the act as the threshold, or the sent panel does not say what the company will then ask for. */
+  it('sends the approvals chosen for after the seat is taken, and says so once sent', async () => {
+    kr.company = company(SIGNERS_APPROVALS({ count: 2, seated: 3 }));
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer'); type('name', 'Sam'); type('address', PRIVATE);
+    pick('data-action=threshold-more');
+    expect(q('[data-threshold-value]')!.textContent).toBe(EN['invite.threshold.value_other']!.replace('{count}', '3'));
+    await press();
+    expect(kr.acts).toHaveLength(1);
+    expect(kr.acts[0]).toMatchObject({ kind: 'signer', threshold: '3' });
+    expect(q('[data-invite-threshold]')!.textContent).toBe(EN['invite.done.threshold_other']!.replace('{name}', 'Sam').replace('{count}', '3'));
+  });
+
+  /* RED WHEN: a signer invited with nothing chosen carries a threshold to the wallet (the company's number would change with every invitation), the default is not the number now, or the sent panel promises a change. */
+  it('leaves the company\'s number as it is when nothing is chosen', async () => {
+    kr.company = company(SIGNERS_APPROVALS({ count: 2, seated: 3 }));
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer'); type('name', 'Sam'); type('address', PRIVATE);
+    expect(q('[data-threshold-value]')!.textContent).toBe(EN['invite.threshold.keeps_other']!.replace('{count}', '2'));
+    await press();
+    expect(kr.acts).toHaveLength(1);
+    expect(kr.acts[0]).not.toHaveProperty('threshold');
+    expect(q('[data-invite-threshold]')).toBeNull();
+  });
+
+  /* RED WHEN: choosing then keeping the number now still sends the number chosen. */
+  it('sends nothing for a choice taken back with Keep the number now', async () => {
+    kr.company = company(SIGNERS_APPROVALS({ count: 2, seated: 3 }));
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer'); type('name', 'Sam'); type('address', PRIVATE);
+    pick('data-action=threshold-fewer');
+    expect(q('[data-threshold-value]')!.textContent).toBe(EN['invite.threshold.value_one']!.replace('{count}', '1'));
+    pick('data-action=threshold-keep');
+    await press();
+    expect(kr.acts[0]).not.toHaveProperty('threshold');
+  });
+
+  /* RED WHEN: the control is drawn for an employee or a vendor, or is missing for a signer. */
+  it('offers the approvals to a signer only', async () => {
+    kr.company = company(SIGNERS_APPROVALS({ count: 2, seated: 3 }));
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    expect(q('[data-threshold-value]')).toBeNull();
+    pick('data-kind=signer');
+    expect(q('[data-threshold-value]')).not.toBeNull();
+    expect(q('[data-threshold-hint]')!.textContent).toBe(EN['invite.threshold.hint']);
+  });
+
+  /* RED WHEN: the control lets the number rise above the signers the company would have once the seat is taken, or below one: the wallet would refuse it after a passkey. */
+  it('stops the choice at the signers the company would have, and at one', async () => {
+    kr.company = company(SIGNERS_APPROVALS({ count: 2, seated: 2 }));
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer'); type('name', 'Sam'); type('address', PRIVATE);
+    pick('data-action=threshold-more');
+    expect(q('[data-threshold-value]')!.textContent).toBe(EN['invite.threshold.value_other']!.replace('{count}', '3'));
+    expect((q('[data-action=threshold-more]') as HTMLButtonElement).disabled).toBe(true);
+    pick('data-action=threshold-fewer'); pick('data-action=threshold-fewer');
+    expect(q('[data-threshold-value]')!.textContent).toBe(EN['invite.threshold.value_one']!.replace('{count}', '1'));
+    expect((q('[data-action=threshold-fewer]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /* RED WHEN: with the signers not read, the control offers numbers it cannot check, or does not say why it cannot change the number. */
+  it('offers no change of the number when the signers could not be read, and says why', async () => {
+    kr.company = company({ of: 'unreadable' });
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer'); type('name', 'Sam'); type('address', PRIVATE);
+    expect((q('[data-action=threshold-more]') as HTMLButtonElement).disabled).toBe(true);
+    expect((q('[data-action=threshold-fewer]') as HTMLButtonElement).disabled).toBe(true);
+    expect(q('[data-threshold-hint]')!.textContent).toBe(EN['invite.threshold.unread']);
+    await press();
+    expect(kr.acts[0]).not.toHaveProperty('threshold');
+  });
+
   /* RED WHEN: the address hint or the join page for a claim leaves out that payments to a public address, and their amounts, can be looked up by anyone. */
   it('says at the choice of an address, and at the join, that a public address shows each payment and its amount', () => {
     expect(EN['invite.address.person.hint']).toMatch(/If you give a public address, anyone can look up each payment to it, with the amount/);
@@ -589,7 +668,7 @@ describe('the panel words, controls and sent state', () => {
 describe('the wallet\'s checks on a signer\'s address, in the words it shows', () => {
   /* RED WHEN: a window claims it refuses any wallet already seated on this company, or that no wallet at the address holds a seat, when it recognises only a seat made by an invitation and an open proposal; or it leaves out that it cannot tell the founding seat's address. */
   it('claims only the seats made by an invitation and the open proposals, and says the founding seat is not told', () => {
-    for (const key of ['act.invite.shown.signer-checks', 'act.approve-signer.shown.checks', 'act.approve-signer.check.one-seat']) {
+    for (const key of ['act.invite.shown.signer-checks', 'act.approve-proposal.shown.checks', 'act.approve-proposal.check.one-seat']) {
       expect(WALLET_EN[key], key).not.toMatch(/already seated on this company|holds no seat on this company/);
       expect(WALLET_EN[key], key).toMatch(/seat made by an invitation|seated by an earlier invitation/);
       expect(WALLET_EN[key], key).toMatch(/founding seat/);

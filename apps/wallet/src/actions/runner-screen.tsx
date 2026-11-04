@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 import { Button, Section, useText } from 'vaults-ui';
 import type { Identity, Secret } from 'midnight-identity/keys/derivation';
 import type { ActRequest } from 'midnight-identity/profile/request';
-import type { ActingChannel } from 'midnight-identity/profile/channel';
+import type { ActingChannel, Framing } from 'midnight-identity/profile/channel';
 import { StatusAlert } from '../components/status.js';
 import { useSession } from '../session.js';
-import type { Consent } from '../framing.js';
+import { FRAMING, useConsent, type Consent } from '../framing.js';
 import type { ActionDefinition, ActionStep, ShownLine, WalletRecord, Words } from './definition.js';
 import { keepTheEnd } from './ended-here.js';
 import { runAction } from './run.js';
@@ -17,12 +17,16 @@ import type { RunState } from './run.js';
  *
  * Before: what the action acts on, each line marked as this wallet's own read
  * or only the page's words, and the action's own account of what it does left
- * unmarked; its steps; and what is checked after the passkey.
+ * unmarked - with, when the act sends its calls straight to the chain, the line
+ * that says so and that the person's own wallet pays their fees; its steps; and
+ * what is checked after the passkey.
  * While it runs: the steps, the one running, how many transactions the page
  * has handed over, and Stop, there at every step and held by no check on what
- * can be seen. Nothing waits for another press once it runs. When it ends, the
- * wallet locks itself, so the keys the passkey opened are held no longer than
- * the action.
+ * can be seen. The one press it may wait for is a Confirm: when a step reads
+ * with the seat's keys what the approval is about, before anything is handed
+ * over, this window shows what it read and waits for Confirm or Stop, with no
+ * second passkey; that Confirm is held by the same guard as Approve. When it ends, the wallet locks itself, so the keys the
+ * passkey opened are held no longer than the action.
  */
 
 /** How the running window lists step `n`: passed steps are done, or not needed when the step says nothing was owed of it. */
@@ -67,6 +71,7 @@ export function ActWhatItDoes({ request, action, shown }: {
 }): ReactNode {
   const t = useText();
   const steps = stepsOf(action, request);
+  const checks = action.checksFor?.(request.intent) ?? action.checks;
   return (
     <>
       <p className="lede" data-what-it-does>{t('ask.act.lede')}</p>
@@ -95,13 +100,13 @@ export function ActWhatItDoes({ request, action, shown }: {
           {steps.map((step, i) => <li key={i} className="text-sm">{say(t, step.title)}</li>)}
         </ol>
       </Section>
-      {action.checks.length > 0 && (
+      {checks.length > 0 && (
         <Section
           list={false} box={false} aria-label={t('ask.act.checks-title')} title={t('ask.act.checks-title')}
           description={t('ask.act.checks-why')}
         >
           <ul className="m-0 ps-6" data-checked-after-the-passkey>
-            {action.checks.map((check, i) => <li key={i} className="text-sm">{say(t, check)}</li>)}
+            {checks.map((check, i) => <li key={i} className="text-sm">{say(t, check)}</li>)}
           </ul>
         </Section>
       )}
@@ -112,12 +117,14 @@ export function ActWhatItDoes({ request, action, shown }: {
 /**
  * RUNS AN APPROVED ACTION. `atOnce` is the Approve pressed in the window before
  * the passkey: the action starts as soon as the wallet is open, with no second
- * press. Without it (the wallet was already open when the ask came) this shows
+ * press and no second passkey; the one press it may still ask for is the
+ * Confirm of what a step read with the seat's keys, before anything is sent.
+ * Without it (the wallet was already open when the ask came) this shows
  * what the action does and an Approve of its own, held by the same check on
  * what can be seen as every Approve.
  */
 export function ActionRunner({
-  request, action, channel, identity, secret, consent, atOnce, onDecline, now = Date.now, wallet, account, payingFrom,
+  request, action, channel, identity, secret, consent, atOnce, onDecline, now = Date.now, wallet, account, payingFrom, framing = FRAMING,
 }: {
   readonly request: ActRequest;
   readonly action: ActionDefinition;
@@ -134,6 +141,8 @@ export function ActionRunner({
   readonly account?: number;
   /** For an action that pays: where the person chooses which of their accounts pays, shown before they approve. */
   readonly payingFrom?: ReactNode;
+  /** Where this wallet is drawn, the same as the window's own: what the Confirm's guard measures. */
+  readonly framing?: Framing;
 }): ReactNode {
   const t = useText();
   const { lock } = useSession();
@@ -141,6 +150,8 @@ export function ActionRunner({
   const [pressed, setPressed] = useState(false);
   const [state, setState] = useState<RunState | null>(null);
   const [stopping, setStopping] = useState(false);
+  /* What a step read with the seat's keys and waits on the person to confirm, with how to answer it. */
+  const [asked, setAsked] = useState<{ readonly lines: readonly Words[]; readonly answer: (yes: boolean) => void } | null>(null);
   const stop = useRef<AbortController | null>(null);
   const started = useRef(false);
   const mounted = useRef(true);
@@ -165,6 +176,18 @@ export function ActionRunner({
     void runAction({
       definition: action, request, channel, held: { identity, secret, ...(wallet === undefined ? {} : { wallet }), ...(account === undefined ? {} : { account }) }, stop: halt.signal, now,
       watch: (next) => { if (mounted.current) setState(next); },
+      confirm: (lines, cut) => new Promise<boolean>((resolve) => {
+        let answered = false;
+        const answer = (yes: boolean): void => {
+          if (answered) return;
+          answered = true;
+          if (mounted.current) setAsked(null);
+          resolve(yes);
+        };
+        cut.addEventListener('abort', () => answer(false), { once: true });
+        if (cut.aborted || !mounted.current) answer(false);
+        else setAsked({ lines, answer });
+      }),
     }).then((end) => {
       keepTheEnd(end);
       lock();
@@ -194,6 +217,11 @@ export function ActionRunner({
     );
   }
 
+  if (asked !== null) {
+    const at = state ?? { step: 1, steps: Math.max(1, stepsOf(action, request).length) };
+    return <ConfirmWhatWasRead lines={asked.lines} answer={asked.answer} framing={framing} step={at.step} steps={at.steps} />;
+  }
+
   const steps = stepsOf(action, request);
   const at = state ?? { step: 1, steps: Math.max(1, steps.length), relayed: 0, unconfirmed: 0 };
   return (
@@ -221,6 +249,37 @@ export function ActionRunner({
           {t('act.stop')}
         </Button>
         <p className="m-0 text-sm text-muted-foreground">{t(stopping ? 'act.stopping' : 'act.stop-why')}</p>
+      </div>
+    </>
+  );
+}
+
+/**
+ * **THE CONFIRM OF WHAT A STEP READ WITH THE SEAT'S KEYS.** Its Confirm is held by the same guard as every Approve
+ * (`useConsent`), measured afresh from the moment this question appears, so a framed wallet shown too small, hidden or
+ * only just drawn cannot be confirmed unread. Stop stands where the running window's Stop stood, and Confirm below it,
+ * so a press meant for Stop never lands on Confirm. Focus moves to the heading, never to a button, so a key pressed as
+ * the question appears answers nothing.
+ */
+function ConfirmWhatWasRead({ lines, answer, framing, step, steps }: {
+  readonly lines: readonly Words[]; readonly answer: (yes: boolean) => void; readonly framing: Framing; readonly step: number; readonly steps: number;
+}): ReactNode {
+  const t = useText();
+  const consent = useConsent(framing, lines);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { heading.current?.focus(); }, []);
+  return (
+    <>
+      <h1 ref={heading} tabIndex={-1} data-act-confirm data-headline>{t('act.confirm.title')}</h1>
+      <p className="lede" data-act-confirm-lede>{t('act.confirm.lede', { step, steps })}</p>
+      <ul className="m-0 ps-6" data-act-read>
+        {lines.map((line, i) => <li key={i} className="text-sm break-all" data-shown-from="wallet">{say(t, line)}</li>)}
+      </ul>
+      <div className="sticky bottom-0 z-10 -mx-1 flex flex-col gap-2 border-t border-border bg-background px-1 py-3" data-ask-actions>
+        <Button size="lg" type="button" variant="outline" onClick={() => answer(false)} data-act-stop>{t('act.stop')}</Button>
+        <Button size="lg" type="button" onClick={() => answer(true)} disabled={!consent.ok} data-act-confirm-button>{t('act.confirm.button')}</Button>
+        <p className="m-0 text-sm text-muted-foreground">{t('act.confirm.stop-why')}</p>
+        {!consent.ok && <p className="m-0 w-full text-sm text-muted-foreground" data-consent-refused>{consent.says}</p>}
       </div>
     </>
   );

@@ -30,6 +30,8 @@ export interface InviteeSeat {
   readonly invite?: InvitedAddress;
   /** Take a slot a removal freed rather than a fresh one. */
   readonly intoVacatedSlot?: boolean;
+  /** The company's threshold once the seat is taken, as the invitation's proposal binds it; 0 leaves it as it is. */
+  readonly newThreshold?: bigint;
 }
 
 /** The invitee's `seatInvited` call, unproven, base64 - or a refusal from the account's own circuit. */
@@ -46,7 +48,7 @@ export async function inviteeSeatCall(i: InviteeSeat): Promise<string> {
     initialPrivateState: {
       ...i.who, invite: i.invite ?? invitedAddressFor(i.who), proposalSalt: Buffer.from(i.salt, 'hex'), pinnedPath: null,
     },
-    args: [Buffer.from(i.proposal, 'hex'), i.intoVacatedSlot === true],
+    args: [Buffer.from(i.proposal, 'hex'), i.intoVacatedSlot === true, i.newThreshold ?? 0n],
   }, keys.encryptionPublicKey);
   return Buffer.from(built.private.unprovenTx.serialize()).toString('base64');
 }

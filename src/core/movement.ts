@@ -87,7 +87,7 @@ export type Privacy = 'private' | 'public';
  * them can drift apart.
  */
 export const PUBLIC_PAYMENT_SAYS =
-  'A public payment puts the address and the amount on a record anyone can read.';
+  'A public payment puts the address, the amount and the currency on a record anyone can read.';
 
 export const privacyOf = (p: Payee): Privacy =>
   p.kind === 'shielded' ? 'private' : 'public';

@@ -25,6 +25,9 @@
  *   GET  /api/accounts/:id/vaults/:vault/events/:tx     what one transaction created, for a note's place to be read
  *   GET  /api/accounts/:id/vaults/:vault/created/:out   which of the vault's transactions created one output
  *   POST /api/accounts/:id/vaults/:vault/payout         a private payment out of the vault
+ *   POST /api/accounts/:id/fee                          only the network fee added to one call a device proved, handed back
+ *                                                       finished for the company's own service or the person's wallet to submit
+ *   POST /api/accounts/:id/fee/done                     the member handed that call is done with it, which frees their turn
  *   GET  /api/accounts/:id/authority                    who holds the account's and every vault's rules
  *   GET  /api/accounts/:id/call-state                   the account as one block saw it, for a raise or an approval to be built on
  *   GET  /api/accounts/:id/committee-change             the contracts not holding the committee the account holds on the chain
@@ -49,6 +52,7 @@
  * the one holding the company's account on the chain.
  */
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Hex } from '../core/crypto.js';
 import type { SealedAccount, CompanyVault, AccountDeploy } from '../core/types.js';
@@ -56,6 +60,7 @@ import type { CompanyVaultKeyIndex } from '../core/vault-keys.js';
 import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
+import { refusalForProven, refusalUnlessOnlyACallTo } from '../wiring/proven-submission.js';
 import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
 import { sameCommittee, type Committee } from '../midnight/vault-committee.js';
 import { publicHoldingsOf, PublicBalanceUnreadable } from '../midnight/public-balance.js';
@@ -75,6 +80,9 @@ const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
 
 /** A proven transaction on this wire: base64, and never more than the product's proven limit. */
 export const VAULT_TX_LIMIT = 1_000_000;
+
+/** How long a call handed back with only its fee holds its company's and its member's turn, unless said done sooner. */
+export const HANDED_BACK_HELD_MS = 4 * 60_000;
 
 /** What these routes read about one vault from the chain. */
 export interface VaultChain {
@@ -175,7 +183,7 @@ export interface CompanyVaultDeps {
   readonly company: (accountId: string) => Promise<{
     address: Hex; threshold: number; seats: number; vaultThresholds: ReadonlyArray<{ vault: Hex; threshold: number }>;
   } | null>;
-  readonly ledger: Pick<Ledger, 'sendVault'>;
+  readonly ledger: Pick<Ledger, 'sendVault' | 'feeAddedTo'>;
   readonly chain: VaultChain;
   /** Every vault circuit's verifying key, as this build compiled it. */
   readonly verifierKeys: () => Promise<ReadonlyMap<string, Uint8Array>>;
@@ -726,6 +734,35 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    * stand behind it.
    */
   const startSent = new Map<string, number>();
+  /*
+   * The calls handed back with only their fee, by name: one at a time per company and per member, held until
+   * whoever was handed it says it is done, or for as long as it could still be submitted.
+   */
+  const handedBack = new Map<string, { company: string; member: string; expires: number; done: () => Promise<void> }>();
+  /*
+   * A vault's first secret, or a sealed copy of it, is paid for only when the start route would send it: the
+   * vault is the company's and fundable from here, no secret is set yet (or the copies are not all written), and
+   * no secret just sent is still on its way.
+   */
+  const startStepMayGo = async (record: CompanyVault, account: SealedAccount, kind: 'vault-secret' | 'vault-copy', res: express.Response): Promise<boolean> => {
+    if (await startableFor(record, account, res) === null) return false;
+    let start: VaultStartingLedger;
+    try {
+      start = deps.chain.startingLedgerOf(await deps.chain.contractState(record.vault));
+    } catch (e) {
+      res.status(503).json({ nothingWasSent: true, error: `the chain could not be read for this vault (${(e as Error)?.message ?? e}). Nothing was sent.` });
+      return false;
+    }
+    if (kind === 'vault-secret' && (!/^0+$/u.test(start.nonceCommitment) || startStillPending(`${record.vault}:secret`))) {
+      res.status(409).json({ nothingWasSent: true, error: 'this vault already holds a secret, or one is on its way, so a first one is not paid for again. Nothing was sent.' });
+      return false;
+    }
+    if (kind === 'vault-copy' && start.started) {
+      res.status(409).json({ nothingWasSent: true, error: 'every sealed copy of this vault\'s secret is already written. Nothing was sent.' });
+      return false;
+    }
+    return true;
+  };
   const startStillPending = (key: string): boolean => {
     const at = startSent.get(key);
     return at !== undefined && now().getTime() - at < HANDOVER_LIFETIME_MS;
@@ -735,7 +772,9 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
   const startable = async (req: express.Request, res: express.Response) => {
     const record = theVault(req, res);
     if (record === null) return null;
-    const account = accountOf(req);
+    return startableFor(record, accountOf(req), res);
+  };
+  const startableFor = async (record: CompanyVault, account: SealedAccount, res: express.Response) => {
     const company = await deps.company(account.id);
     if (company === null) {
       res.status(409).json({ nothingWasSent: true, error: `${NO_COMPANY} Nothing was sent.` });
@@ -947,6 +986,120 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     } catch (e) {
       res.status(503).json({ error: (e as Error)?.message ?? String(e), kind: (e as Error)?.name ?? 'Error' });
     }
+  });
+
+  /*
+   * **ONLY THE NETWORK FEE, ADDED TO ONE CALL A SEAT'S DEVICE PROVED, AND
+   * HANDED BACK FINISHED** for whoever submits it: the company's own service,
+   * or the person's wallet straight to the chain. This service pays only for a
+   * call of this company's: one call to the company's own account, or one of
+   * the vault calls its own routes pay for, to a vault of this company's, held
+   * to the same check that route holds it to. The contract checks that the
+   * seat that proved it may make it; this service checks the call's shape, as
+   * the routes that send it do, and a vault's first secret or sealed copy only
+   * when its start route would send it (`startStepMayGo`). Nothing is
+   * submitted here, so every refusal says nothing was sent; the fee payer's
+   * booking is settled by what the chain later shows. One call at a time is
+   * held per company and per member, until the member says done
+   * (`/fee/done`) or it could no longer be submitted; a second is answered as
+   * sponsorship unavailable, never held up behind it.
+   */
+  r.post('/api/accounts/:id/fee', ...guard, async (req, res) => {
+    const body = z.object({
+      tx: z.string().min(1).max(VAULT_TX_LIMIT),
+      kind: z.enum(['account-call', 'vault-secret', 'vault-copy', 'payout', 'merge', 'public-payout']),
+      contract: z.string().min(1).max(130),
+      circuit: z.string().min(1).max(128),
+    }).strict().safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ nothingWasSent: true, error: 'this is not one call to pay the fee for: a transaction, its kind, its contract and its circuit. Nothing was sent.' });
+      return;
+    }
+    if (typeof deps.ledger.feeAddedTo !== 'function') {
+      res.status(503).json({ nothingWasSent: true, error: 'this deployment pays no fees, so no fee was added. Nothing was sent.' });
+      return;
+    }
+    const account = accountOf(req);
+    const company = await deps.company(account.id);
+    if (company === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${NO_COMPANY} Nothing was sent.` });
+      return;
+    }
+    const { kind, circuit } = body.data;
+    const contract = fold(body.data.contract);
+    let check: (tx: unknown) => string | null;
+    let arrival: VaultTxArrival;
+    if (kind === 'account-call') {
+      if (contract !== fold(company.address)) {
+        res.status(409).json({ nothingWasSent: true, error: 'this call is not to this company\'s account, and only the company\'s own calls are paid for. Nothing was sent.' });
+        return;
+      }
+      check = (tx) => refusalForProven(tx, company.address) ?? refusalUnlessOnlyACallTo(tx, circuit);
+      arrival = 'proven-moving-nothing';
+    } else {
+      const record = HEX64.test(contract) ? deps.store.getCompanyVault(contract) : null;
+      if (!record || record.accountId !== account.id) {
+        res.status(404).json({ nothingWasSent: true, error: 'this company has no vault at that address. Nothing was sent.' });
+        return;
+      }
+      if ((kind === 'vault-secret' || kind === 'vault-copy') && !await startStepMayGo(record, account, kind, res)) return;
+      if (kind === 'payout' || kind === 'merge' || kind === 'public-payout') {
+        const unvouched = await whyNotFunded(record.vault, company.address, undefined, undefined,
+          'this service pays no fee for a payment out of this vault');
+        if (unvouched !== null) {
+          res.status(409).json({ nothingWasSent: true, error: unvouched.why });
+          return;
+        }
+      }
+      const vault = record.vault;
+      const checks: Record<'vault-secret' | 'vault-copy' | 'payout' | 'merge' | 'public-payout', (tx: unknown) => string | null> = {
+        'vault-secret': (tx) => refusalForSetNonceSecret(tx, { vault, account: company.address }),
+        'vault-copy': (tx) => refusalForSecretCopy(tx, { vault }),
+        payout: (tx) => refusalForPayout(tx, { vault, account: company.address }),
+        merge: (tx) => refusalForMerge(tx, { vault }),
+        'public-payout': (tx) => refusalForPublicPayout(tx, { vault, account: company.address }),
+      };
+      check = checks[kind];
+      arrival = kind === 'vault-secret' || kind === 'vault-copy' ? 'proven-moving-nothing' : 'proven-moving-the-vaults-own-coins';
+    }
+    const member = personOf(req);
+    const busy = [...handedBack.values()].find((h) => h.expires > now().getTime() && (h.company === account.id || h.member === member));
+    if (busy !== undefined) {
+      res.status(503).json({
+        nothingWasSent: true,
+        error: `fee sponsorship is already holding a call handed back ${busy.member === member ? 'to you' : 'for this company'}, and holds one at a time. `
+          + 'Nothing was sent. Send this once that call has gone.',
+      });
+      return;
+    }
+    const handle = randomUUID();
+    handedBack.set(handle, { company: account.id, member, expires: now().getTime() + HANDED_BACK_HELD_MS, done: async () => undefined });
+    try {
+      const added = await deps.ledger.feeAddedTo(account.id, 'a call whose fee alone is paid here', arrival,
+        new Uint8Array(Buffer.from(body.data.tx, 'base64')), check, deps.readers.proven);
+      handedBack.set(handle, { company: account.id, member, expires: now().getTime() + HANDED_BACK_HELD_MS, done: added.done ?? (async () => undefined) });
+      res.json({ tx: toBase64(added.tx), transactionHash: added.transactionHash, booking: handle });
+    } catch (e: unknown) {
+      handedBack.delete(handle);
+      const code = feeAnswerCodeOf(e);
+      res.status(422).json({ nothingWasSent: true, error: (e as { message?: string })?.message ?? 'unknown error', ...(code ? { code } : {}) });
+    }
+  });
+
+  /*
+   * **WHOEVER WAS HANDED A CALL SAYS IT IS DONE WITH IT**, submitted or not, which frees its company's and its
+   * member's turn. Nothing is released: the call may still land, and its DUST waits for the chain.
+   */
+  r.post('/api/accounts/:id/fee/done', ...guard, async (req, res) => {
+    const booking = (req.body as { booking?: unknown } | null)?.booking;
+    const held = typeof booking === 'string' ? handedBack.get(booking) : undefined;
+    if (held === undefined || held.company !== String(req.params.id) || held.member !== personOf(req)) {
+      res.json({ done: false });
+      return;
+    }
+    handedBack.delete(booking as string);
+    await held.done().catch(() => undefined);
+    res.json({ done: true });
   });
 
   /*

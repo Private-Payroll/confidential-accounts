@@ -148,6 +148,11 @@ export interface FeePayerView {
   note(line: string): void;
   /** The hash of the last payment the network accepted from this wallet and the view has not shown yet. */
   lastAccepted: string | null;
+  /**
+   * The time of the newest finalized block, in milliseconds, read now: what a transaction's deadline is held to.
+   * Absent, this view cannot say whether a deadline has passed on the chain.
+   */
+  chainTime?(): Promise<number>;
 }
 
 /** How long a fee waits for the view, how long one write may run, and the clock it waits by. */
@@ -364,6 +369,10 @@ export class WalletFeeSponsor implements FeeSponsor {
   private readonly madeFrom = new WeakMap<object, { customerFinalised: unknown; ttl: Date }>();
   /** Every transaction already handed to the network: a refusal of a second copy says nothing about the first. */
   private readonly handedIn = new WeakSet<object>();
+  /** Which company each finalised transaction's fee was paid for, and its estimate, for the record when it lands. */
+  private readonly paidFor = new WeakMap<object, { company: string | null; estimated: bigint | null }>();
+  /** Every transaction whose fee is already in the sponsored-fee record. */
+  private readonly recorded = new WeakSet<object>();
   /** When the write this fee payer is paying for began: the lane names the company at the start of every write. */
   private writeStartedAt: number | null = null;
 
@@ -401,6 +410,8 @@ export class WalletFeeSponsor implements FeeSponsor {
         'a fee payer was about to be built with no ceiling on what one transaction may spend, '
         + 'so it was not built. Without one it pays whatever it is handed.');
     }
+    const view = wallet.view;
+    if (view) this.landed = (tx, deadline) => this.landedOnTheChain(view, tx, deadline);
   }
 
   /**
@@ -556,7 +567,10 @@ export class WalletFeeSponsor implements FeeSponsor {
       try { await this.release(finalised); } catch { /* the refusal is the error that matters */ }
       throw new FeeRefused(overCeiling);
     }
-    if (isObject(finalised)) this.madeFrom.set(finalised, { customerFinalised, ttl });
+    if (isObject(finalised)) {
+      this.madeFrom.set(finalised, { customerFinalised, ttl });
+      this.paidFor.set(finalised, { company: this.company, estimated: this.estimated });
+    }
     return finalised;
   }
 
@@ -671,6 +685,7 @@ export class WalletFeeSponsor implements FeeSponsor {
      */
     const at = new Date().toISOString();
     const actual = await this.wallet.paidFee(String(ref)).catch(() => null);
+    if (isObject(landed)) this.recorded.add(landed);
     if (this.fees) {
       try {
         this.fees.record({
@@ -713,6 +728,54 @@ export class WalletFeeSponsor implements FeeSponsor {
    */
   async release(booking: unknown): Promise<void> {
     await this.wallet.revert(booking);
+  }
+
+  /**
+   * Whether the chain shows a transaction this sponsor finalised, read through
+   * the wallet's view: true when the wallet's history shows it; false only when
+   * it can no longer land - the view has applied the indexer's tip, the history
+   * does not show it, and the newest finalized block's time is past `deadline`,
+   * the transaction's own deadline, which the chain holds to block time; null
+   * otherwise, or when a read fails. Shown, it is the last payment the next fee
+   * waits for, and its fee goes in the sponsored-fee record once, as a fee this
+   * sponsor submitted does. Set only for a wallet with a view.
+   */
+  readonly landed?: (finalisedTransaction: unknown, deadline: Date) => Promise<boolean | null>;
+
+  private async landedOnTheChain(view: FeePayerView, finalisedTransaction: unknown, deadline: Date): Promise<boolean | null> {
+    const hash = hashOf(finalisedTransaction);
+    if (hash === null) return null;
+    try {
+      if (await view.shows(hash)) {
+        view.lastAccepted = hash;
+        await this.recordLanded(finalisedTransaction, hash);
+        return true;
+      }
+      const tip = await view.tip();
+      const applied = view.applied();
+      if (applied === null || applied < tip) return null;
+      if (view.chainTime === undefined || await view.chainTime() <= deadline.getTime()) return null;
+      if (await view.shows(hash)) {
+        await this.recordLanded(finalisedTransaction, hash);
+        return true;
+      }
+      return false;
+    } catch {
+      return null;
+    }
+  }
+
+  /* A fee added and handed back is in the record once its transaction lands, as a fee submitted here is. */
+  private async recordLanded(finalised: unknown, hash: string): Promise<void> {
+    if (!isObject(finalised) || this.recorded.has(finalised) || !this.fees) return;
+    this.recorded.add(finalised);
+    const paid = this.paidFor.get(finalised);
+    const actual = await this.wallet.paidFee(hash).catch(() => null);
+    try {
+      this.fees.record({
+        at: new Date().toISOString(), company: paid?.company ?? this.company, estimated: paid?.estimated ?? null, actual, ref: hash,
+      });
+    } catch { /* a record must never turn a payment that landed into a failure */ }
   }
 
   /**

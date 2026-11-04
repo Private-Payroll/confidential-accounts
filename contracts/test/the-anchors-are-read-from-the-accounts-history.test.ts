@@ -18,7 +18,7 @@ import * as runtime from '@midnight-ntwrk/compact-runtime';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as accountModule from '../managed/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, leafOfDevice, privateStateFor, ZERO_32 } from './simulator.js';
+import { AccountSimulator, leafOfDevice, privateStateFor, ZERO_32, removalPayloadFor } from './simulator.js';
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { signerRootOf } from 'vaults-web-shared/governed-call-builder.js';
 import type { ContractHistory, ContractHistoryEntry } from '../../src/midnight/contract-history.js';
@@ -90,7 +90,7 @@ describe('THE ACCOUNT\'S ANCHORS, READ FROM ITS HISTORY IN THE WORKER', () => {
     /* The deploy's state, before the removal: the history's first step. */
     const before = stateOf(sim);
     const c = { asset: new Uint8Array(32), amount: 0n, batch: new Uint8Array(32), salt: new Uint8Array(32).fill(77) };
-    const payload = pureCircuits.removeSignerPayload(sim.leafOf(A));
+    const payload = removalPayloadFor(sim.leafOf(A));
     await sim.as(sim.applying(B, c as never)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
     await sim.as(C).approve(id);

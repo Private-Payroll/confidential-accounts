@@ -86,7 +86,7 @@ const JOINER = 'bb'.repeat(32);
 const SEAT = { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) };
 const CHAIN_STATE = { blockHash: 'b1', accountState: 'AAAA', parameters: 'BBBB' };
 
-const ctxWith = (name: 'create-vault' | 'give-vault-keys' | 'private-deposit' | 'admit-signer' | 'approve-signer', over: Record<string, unknown> = {}) => {
+const ctxWith = (name: 'create-vault' | 'give-vault-keys' | 'private-deposit' | 'admit-signer' | 'approve-proposal', over: Record<string, unknown> = {}) => {
   const calls: string[] = [];
   const told: Record<string, unknown> = {};
   let keys = { accounts: { acc_1: SEAT }, counter: 1, ...(over['owed'] === undefined ? {} : { directoryEntriesOwed: { acc_1: over['owed'] } }) } as Record<string, any>;
@@ -246,9 +246,15 @@ describe('the head changes the company\'s key first, then follows the roster, al
     const { ctx, calls } = ctxWith('give-vault-keys', {
       answer: (_m: string, p: string) => (p === '/api/accounts/acc_1/people' ? { status: 200, body: { people: [] } } : p === '/api/accounts/acc_1' ? { status: 200, body: { id: 'acc_1', pendingSigners: [{ sealed: { box: 1 } }] } } : undefined),
     });
-    const doors = await rotationDoorsIn(reachWith(), apiOver(ctx));
+    const seats: Array<string | undefined> = [];
+    const reach = reachWith();
+    (reach as any).builder = { ...(reach as any).builder, roundsOnChain: async (q: { seat?: string }) => { seats.push(q.seat); return {}; } };
+    const doors = await rotationDoorsIn(reach, apiOver(ctx));
     /* RED WHEN: the change is signed with material the page handed over rather than the seat the saved keys hold. */
     expect(doors.material).toEqual({ signingSecret: SEAT.signingSecret });
+    /* RED WHEN: where a proposal stands is read without this wallet's seat, so whether its approval is already counted is never said. */
+    await (doors as any).records.roundsOnChain(['ab'.repeat(32)]);
+    expect(seats).toEqual([SEAT.signingSecret]);
     /* RED WHEN: the company key the change is made under is one the page released rather than the one this wallet derives. */
     expect(doors.released()).toBe('11'.repeat(32));
     expect(await doors.askTheWallet()).toBe('11'.repeat(32));
@@ -389,7 +395,7 @@ describe('the tail files each vault again with this seat, then anchors what the 
       if (input['vaultIds'][0] === VAULTS[0]) throw new Error('no copy is wrapped to this signer\'s records key');
       return { given: input['vaultIds'], had: [] };
     };
-    const { ctx, told } = ctxWith('approve-signer');
+    const { ctx, told } = ctxWith('approve-proposal');
     await upkeepSteps(company([r]).doors, {}).last.run(ctx);
     /* RED WHEN: the vaults are given as one batch that stops at the first it cannot give. */
     expect(t.gives.map((g) => g['vaultIds'])).toEqual([[VAULTS[0]], [VAULTS[1]]]);

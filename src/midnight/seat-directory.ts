@@ -32,7 +32,7 @@
  *     read from the chain, signed it. The seat a demotion or a retirement is
  *     about counts like any other, seated still or already removed, and
  *     neither may leave fewer seated signers than that bar, as the chain's
- *     removal by `amendSigner` never does.
+ *     removal never does.
  *   · **a change of the company's key**, filed by one seat once a seat is
  *     retired, names the key's next epoch and a check of the new key
  *     (`keyCheckOf`), wraps the key to every seat not retired, and carries the
@@ -845,7 +845,7 @@ export const applyFiling = (
   const against = anchored ?? now;
   /*
    * The approvals a change of who is seated needs, from the chain's read, the account as the change was anchored, or the
-   * account now, in that order: the same bar the chain holds a removal by `amendSigner` to. A read without it is
+   * account now, in that order: the same bar the chain holds a removal to. A read without it is
    * refused, never taken as no bar, since a change judged against none would pass below the chain's.
    */
   const heldBy = ctx.chain ?? against;
@@ -885,7 +885,7 @@ export const applyFiling = (
     : anchored !== undefined ? anchored.seats.includes(x.seat)
       : now === undefined || now.seats.includes(x.seat));
   /*
-   * The chain's removal by `amendSigner` never leaves fewer seated than the
+   * The chain's removal never leaves fewer seated than the
    * approvals a change of who is seated needs, since the account could then
    * never approve again; a directory that retired the seat anyway would hold a
    * company the chain does not. The bar, not the threshold the change was
@@ -926,7 +926,7 @@ export interface AccountHeld {
    * The approvals a change of who is seated needed on the account then: the
    * higher of its threshold and the approvals a policy change needs
    * (`seatBarOf`). A demotion or retirement is held to it, as the chain holds a
-   * removal by `amendSigner` to it.
+   * removal to it.
    */
   readonly seatBar: number;
 }

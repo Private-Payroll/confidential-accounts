@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bigintJsonReplacer, newSigningKeypair, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
+import { bigintJsonReplacer, canonical, newSigningKeypair, seal, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { inboxPublicKey, sealRecord, sealToInbox } from '../../../../src/core/sealed-records.js';
 import { sealPerson } from '../../../../src/core/person-record.js';
 import { identityFromSecret } from 'midnight-identity';
@@ -8,7 +8,9 @@ import { signJoinCode } from 'midnight-identity/profile/join-code';
 import { signCompanyFiling, toCompanyWire } from '../../../../src/midnight/sealed-record-wire.js';
 import { sealVendor, type VendorRecord } from '../../../../src/core/vendor-record.js';
 import { SEED_ASSETS, StaticAssetRegistry } from '../../../../src/core/assets.js';
+import { newProposalId, signProposalFiling } from '../../../../src/core/proposal-filing.js';
 import { publicAmount } from 'vaults-ui';
+import { newOneOffId } from '../../../../src/midnight/one-off-record.js';
 
 /*
  * A COMPANY'S RECORDS, OPENED AND READ THROUGH THE ADAPTER. The keyring and
@@ -26,6 +28,8 @@ const PRIVATE_ADDRESS = 'mn_shield-addr_preview1qqqq';
 const PUBLIC_ADDRESS = 'mn_addr_preview1qqqq';
 const kr = vi.hoisted(() => ({
   answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0,
+  /* The signing key of the seat this device holds, as the wallet read it for the tab. */
+  ownKey: 'a1'.repeat(32),
   /* The company each opening of the saved keys named, as the company opened with them. */
   openedWith: [] as Array<string | undefined>,
   account: { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }, { id: 's2', name: 'Sam' }] } as unknown,
@@ -44,14 +48,37 @@ const kr = vi.hoisted(() => ({
   /* The seats the account holds on the chain, its stored bar and its vaults' own thresholds, as the wallet reads them. */
   seats: [] as string[], policyBar: null as number | null, vaultThresholds: [] as Array<{ vault: string; threshold: number }>,
   /* The record ids this device's directory names, by kind, and the ones whose filer its judge refuses. */
-  named: {} as Record<string, string[]>, unbelieved: [] as string[],
+  named: {} as Record<string, string[]>, unbelieved: [] as string[], leftOut: [] as string[],
+  /* The records the list was checked against, by key, as the directory handed to that check named them. */
+  listedFrom: [] as string[],
   /* What the vault builder was asked to check of an address claim, what it answers, and whether it can check one at all. */
   claims: [] as Array<{ claim: unknown; f: unknown }>, claimAnswer: null as string | null, claimCheck: true,
   /* The seats whose directory entry this device's directory read holds; null when that read gives no directory. */
   entries: null as string[] | null,
 }));
+/*
+ * Where each proposal stands as the page's vault worker reads it off the chain (`roundsOnChain`), by its identity on the
+ * chain, and each read it was asked for: the account, the indexer and the identities.
+ */
+const chain = vi.hoisted(() => ({
+  rounds: {} as Record<string, unknown>, asked: [] as Array<{ account: string; indexer: unknown; chainIds: readonly string[]; seat?: unknown }>,
+  /* Which payments the account records as paid, as the page's vault worker reads them off the chain (`paidLeaves`), by leaf; and each read it was asked for. */
+  paid: {} as Record<string, boolean>, paidAsked: [] as Array<{ account: string; indexer: unknown; leaves: readonly string[] }>, paidFails: false,
+  /* An answer the worker gives as it is, whatever leaves it was asked about; null to answer each leaf asked from `paid`. */
+  paidAnswer: null as Record<string, boolean> | null,
+}));
 vi.mock('./vault-builder.js', () => ({
   theVaultBuilder: async () => ({
+    roundsOnChain: async (i: { account: string; indexer: unknown; chainIds: readonly string[] }) => {
+      chain.asked.push(i);
+      return Object.fromEntries(i.chainIds.map((id) => [id, chain.rounds[id] ?? { held: 'never', approvals: 0 }]));
+    },
+    paidLeaves: async (i: { account: string; indexer: unknown; leaves: readonly string[] }) => {
+      chain.paidAsked.push(i);
+      if (chain.paidFails) throw new Error('the indexer did not answer');
+      if (chain.paidAnswer !== null) return chain.paidAnswer;
+      return Object.fromEntries(i.leaves.map((l) => [l, chain.paid[l] ?? false]));
+    },
     vaultOnChain: async (i: { vault: string; indexer: { indexerUri: string } }) => {
       kr.readHere.push(`${i.vault} at ${i.indexer.indexerUri}`);
       const v = kr.vaults[i.vault];
@@ -59,6 +86,11 @@ vi.mock('./vault-builder.js', () => ({
       return v;
     },
     ...(kr.claimCheck ? { addressClaimRefusal: async (claim: unknown, f: unknown) => { kr.claims.push({ claim, f }); return kr.claimAnswer; } } : {}),
+    /* A one-off's record, opened in the page's worker: it opens, under the company's key alone, to what `oneOffs.opened` holds for its id. */
+    openOneOff: async (rec: { id: string }, key: string) => {
+      if (key !== '11'.repeat(32) || !(rec.id in oneOffs.opened)) throw new Error('this record does not open with that key');
+      return oneOffs.opened[rec.id];
+    },
   }),
 }));
 /* Any anchor started on this page, recorded: entering a company starts none. */
@@ -75,9 +107,12 @@ vi.mock('./filing-judge.js', async (real) => ({
     invitedSeats: async (proposals: string[]) => { chainSeats.asked.push(proposals); if (chainSeats.fails) throw new Error('the indexer did not answer'); return chainSeats.took; },
   }),
   /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
-  filingJudgeFor: () => async () => null,
+  filingJudgeFor: () => async () => Object.assign(() => null, {}),
   /* The directory this device believes, stood in for: the judge below reads `kr.named` and `kr.unbelieved` off it. */
-  directoryHereFor: () => async () => (kr.entries === null ? {} : { dir: { seats: kr.entries.map((seat) => ({ seat })) } }),
+  directoryHereFor: () => async () => ({
+    records: { history: new Map(kr.named.proposal?.map((id) => [`proposal:proposal:${id}`, []]) ?? []), notYetAnchored: [] },
+    ...(kr.entries === null ? {} : { dir: { seats: kr.entries.map((seat) => ({ seat })) } }),
+  }),
   companyKeysFor: async () => ({ epoch: 0, newest: 0, key: VK, keyAt: () => VK, sealing: () => ({ key: VK, epoch: 0 }) }),
 }));
 /* What this device reads of the people: the real read, unless a test hands it an answer the real read never gives (a refused record named nowhere else). */
@@ -96,6 +131,11 @@ vi.mock('../../../../src/core/proposal-filing.js', async (real) => ({
     return bya.bodies[rec.id] ?? null;
   },
 }));
+/*
+ * A one-off payment's record, as the page's worker opens it (`openOneOff` on the vault builder above): the record is
+ * fetched, judged and matched as it is, and only its opening, which decodes the payee's address, is stood in for.
+ */
+const oneOffs = vi.hoisted(() => ({ opened: {} as Record<string, unknown> }));
 /* The name a vault was filed under, as this device reads it: what the read answers, and what it was asked with. */
 const info = vi.hoisted(() => ({ answer: { state: 'none' } as unknown, asked: [] as Array<{ vault: string; keys: unknown; account: string }>, fails: false }));
 vi.mock('vaults-web-shared/vault-info-here.js', async (real) => ({
@@ -111,7 +151,20 @@ vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
   judgeIn: () => Object.assign((_filer: unknown, _kind: unknown, key: string) => (kr.unbelieved.some((id) => key.includes(id)) ? 'a seat this device does not believe filed it' : null), {}),
   namedHere: (_here: unknown, _store: string, kind: string) => kr.named[kind] ?? [],
+  /* The list as this device believes it, stood in for: the records named in `kr.leftOut` are left out as sealed under an older key. */
+  listedHere: <T extends { id: string }>(here: { records?: { history?: Map<string, unknown> } }, _store: string, listed: readonly T[]) => Object.assign((() => {
+    kr.listedFrom = [...(here.records?.history?.keys() ?? [])];
+    return listed.filter((x) => !kr.leftOut.includes(x.id));
+  })(), {
+    leftOut: new Map(kr.leftOut.map((id) => [id, 'sealed under an older key'])), setAside: listed.filter((x) => kr.leftOut.includes(x.id)),
+  }),
 }));
+/*
+ * The chain read and the filing check, as they are: taken through the module mocks so that, after each load's module
+ * reset, they read the directory stand-in above, as every other import of it does.
+ */
+vi.mock('vaults-web-shared/run-rebuilt-here.js', async (real) => ({ ...(await real<typeof import('vaults-web-shared/run-rebuilt-here.js')>()) }));
+vi.mock('vaults-web-shared/round-opened-here.js', async (real) => ({ ...(await real<typeof import('vaults-web-shared/round-opened-here.js')>()) }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => ({ id: kr.user }),
@@ -120,7 +173,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   forgetLocally: () => {},
   resumeSession: async () => null,
   /* This seat as the wallet read it for the tab: its public halves only. */
-  seatHeldHere: () => (kr.keys ? { signerId: 's1', signingPublicKey: 'a1'.repeat(32), wrappingPublicKey: 'a2'.repeat(32), scope: 'a3'.repeat(32) } : null),
+  seatHeldHere: () => (kr.keys ? { signerId: 's1', signingPublicKey: kr.ownKey, wrappingPublicKey: 'a2'.repeat(32), scope: 'a3'.repeat(32) } : null),
   canOpenCompanies: () => kr.canOpen,
   openAccount: () => {
     if (kr.account instanceof Error) throw kr.account;
@@ -141,10 +194,14 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 }));
 
 const ROUTE = (r = '') => `/api/accounts/c1${r}`;
-const sealedRun = (id: string, period: string, status: string, employees: unknown[], extra: Record<string, unknown> = {}, key = VK) => ({
-  id, accountId: 'c1', period, status, payslips: [], keyEpoch: 1, proposalIds: ['p1'],
-  sealed: sealRecord('payroll', 'c1', { employees, totals: {}, proposalIds: { [NIGHT_PUBLICLY]: 'p1' } }, key), ...extra,
-});
+/* A run as a device seals it: its payout sealed with its people, and what else `extra` gives served beside the seal. */
+const sealedRun = (id: string, period: string, status: string, employees: unknown[], extra: Record<string, unknown> = {}, key = VK) => {
+  const { payout, ...served } = extra;
+  return {
+    id, accountId: 'c1', period, status, payslips: [], keyEpoch: 1, proposalIds: ['p1'],
+    sealed: sealRecord('payroll', 'c1', { employees, totals: {}, proposalIds: { [NIGHT_PUBLICLY]: 'p1' }, ...(payout === undefined ? {} : { payout }) }, key), ...served,
+  };
+};
 /** The company's label, as its record names it: every payee's code is signed for it. */
 const LABEL = `co_${'c1'.repeat(32)}`;
 /** What makes a person payable: an address of `kind` their own wallet (numbered `n`) signed in a code, with their payslip key, kept in their record. */
@@ -177,15 +234,21 @@ const sealedProposal = (id: string, status: string, secrets: Record<string, unkn
 
 function everything() {
   kr.answers[ROUTE()] = { id: 'c1', threshold: 2, signerCount: 2, wrappedKeys: [], companyLabel: LABEL, contractAddress: 'c0'.repeat(32) };
+  kr.indexer = { indexerUri: 'https://indexer.wallet.example/api/v4/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v4/graphql/ws' };
+  /* Both proposals carry the one identity on the chain; the chain holds it open at 1 of the 2 it was raised needing. */
+  kr.named = { proposal: ['p1', 'p2'] };
+  chain.rounds = { cc: { held: 'open', approvals: 1, needed: 2, raisedAt: Date.parse('2026-09-21T10:00:00.000Z') } };
+  chain.asked = [];
+  chain.paid = {}; chain.paidAsked = []; chain.paidFails = false; chain.paidAnswer = null;
   kr.adopted = ['ab'.repeat(32), 'cd'.repeat(32)];
   kr.approvals = 2;
   kr.answers[ROUTE('/runs')] = [
     sealedRun('r1', '2026-10', 'draft', [
       { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5_000_000n, paidTo: PRIVATE_ADDRESS },
-      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 2_000_000n, paidTo: PUBLIC_ADDRESS },
-      { id: 'e3', name: 'Cy', asset: NIGHT.code, amount: 1_000_000n },
+      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 2_000_000n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+      { id: 'e3', name: 'Cy', asset: NIGHT.code, amount: 1_000_000n, form: 'unshielded' },
       { id: 'e4', name: 'Di', asset: 'f0'.repeat(32), amount: 7n, paidTo: PRIVATE_ADDRESS },
-      { id: 'e5', name: 'Ed', asset: NIGHT.code, amount: 500_000n, paidTo: 'not an address' },
+      { id: 'e5', name: 'Ed', asset: NIGHT.code, amount: 500_000n, form: 'unshielded', paidTo: 'not an address' },
     ], { payout: { [NIGHT_PUBLICLY]: { vault: 'ab'.repeat(32), payees: 3n, leaves: ['01', '02', '03'] } } }),
     sealedRun('r0', '2026-09', 'settled', [{ id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5n, paidTo: PRIVATE_ADDRESS }], { settledAt: '2026-09-30T12:00:00.000Z' }),
   ];
@@ -238,7 +301,7 @@ function strings(value: unknown, at = 'answer'): string[] {
   return [];
 }
 
-beforeEach(() => { info.answer = { state: 'none' }; info.asked = []; info.fails = false; kr.anchoring = []; kr.seats = []; kr.policyBar = null; kr.vaultThresholds = []; kr.named = {}; kr.unbelieved = []; kr.claims = []; kr.claimAnswer = null; kr.claimCheck = true; kr.entries = null; kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
+beforeEach(() => { info.answer = { state: 'none' }; info.asked = []; info.fails = false; kr.anchoring = []; kr.seats = []; kr.policyBar = null; kr.vaultThresholds = []; kr.named = {}; kr.unbelieved = []; kr.leftOut = []; kr.listedFrom = []; kr.claims = []; kr.claimAnswer = null; kr.claimCheck = true; kr.entries = null; kr.ownKey = 'a1'.repeat(32); kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('opening a company', () => {
@@ -506,7 +569,7 @@ describe('each read, on its own', () => {
       { id: 's1', name: 'Priya', accepted: false, seatOnChain: true, you: false, entryFiled: null },
       { id: 's2', name: 'Sam', accepted: true, seatOnChain: true, you: false, entryFiled: null },
     ] });
-    expect(c.approvalsForSigners).toEqual({ of: 'read', value: { count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: ['ab'.repeat(32)] } });
+    expect(c.approvalsForSigners).toEqual({ of: 'read', value: { count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: ['ab'.repeat(32)], seated: 2 } });
     expect(c.approvalsNeeded).toEqual({ of: 'read', value: 2 });
   });
 
@@ -695,6 +758,8 @@ describe('each read, on its own', () => {
     const d = await readCompany('u1', 'c1');
     if (d.of !== 'open' || d.vendorsBelief?.of !== 'read') throw new Error('not read');
     expect([d.vendors?.of, d.vendorsBelief.value.notPayable, d.vendorsBelief.value.rows.map((v) => v.notPayable)]).toEqual(['read', [], [null, null, null]]);
+    /* RED WHEN: a vendor's row loses the address their entry holds, or invents one for a vendor whose entry holds none, so the payee list would offer an address nobody gave. */
+    expect(d.vendorsBelief.value.rows.map((v) => [v.name, v.address])).toEqual([['Di', null], ['Lee', payable(1, 'shielded').address.bech32], ['Wes', payable(2, 'shielded').address.bech32]]);
   });
 
   /* RED WHEN: a vendor with no payment address yet is taken to be paid publicly or privately (a screen would then draw the Public pill, or promise privacy, before an address decides it), or one with an address is not. */
@@ -728,7 +793,7 @@ describe('each read, on its own', () => {
     const all = strings(c);
     expect(all.filter((s) => /sentence|wrote/.test(s))).toEqual([]);
     expect(all.filter((s) => /\.(standing|paid|kind|status|of)=/.test(s)).map((s) => s.replace(/^.*=/, '')).sort().filter((v, i, a) => a.indexOf(v) === i)).toEqual([
-      'active', 'add-signer', 'draft', 'employee', 'executed', 'held-by-committee', 'invited', 'leaver', 'not-known', 'not-set-up', 'open', 'payroll', 'privately', 'publicly', 'read', 'settled', 'signer', 'unknown', 'vendor', 'waiting-for-check',
+      'active', 'add-signer', 'employee', 'held-by-committee', 'invited', 'leaver', 'not-known', 'not-set-up', 'open', 'payroll', 'privately', 'publicly', 'read', 'signer', 'unknown', 'vendor', 'waiting-for-check',
     ]);
   });
 });
@@ -759,9 +824,124 @@ describe('amounts, marked by how they are paid', () => {
     expect(next!.unrecognised).toBe(1);
     /* RED WHEN a leg is named to a screen by its token rather than its symbol, or is not said to pay the form its key names. */
     /* RED WHEN a leg's token is not the token its key names, so a run's page would hang one token's approvals on another. */
-    expect(next!.legs).toEqual([{ code: NIGHT_PUBLICLY, asset: NIGHT.code, symbol: 'NIGHT', paid: 'publicly', vault: 'ab'.repeat(32), payees: 3 }]);
-    expect([paid!.status, paid!.settledAt]).toEqual(['settled', '2026-09-30T12:00:00.000Z']);
+    expect(next!.legs.map(({ pays: _pays, ...leg }) => leg)).toEqual([{
+      code: NIGHT_PUBLICLY, asset: NIGHT.code, symbol: 'NIGHT', paid: 'publicly', vault: 'ab'.repeat(32), payees: 3,
+      proposal: 'p1', form: 'unshielded', list: 'employees', people: 3, total: 3_500_000n, leaves: ['01', '02', '03'], paidOnChain: 0,
+      amounts: [2_000_000n, 1_000_000n, 500_000n], unpaid: [0, 1, 2],
+    }]);
+    /* RED WHEN a leg's people are counted from its recorded leaves rather than the run's people on that leg as the wallet counts them, its total is not their sum, or its payments lose a person, their address or their amount. */
+    expect(next!.legs[0]!.pays.map((x) => [x.name, x.address, x.amount === null ? null : visibilityOf(x.amount)])).toEqual([
+      ['Bo', PUBLIC_ADDRESS, 'public'], ['Cy', null, 'public'], ['Ed', 'not an address', 'public'],
+    ]);
+    /* RED WHEN: a run carries what the service says of it, its status or its settled day, for a screen to read as paid. */
+    expect(['status' in paid!, 'settledAt' in paid!, 'status' in next!, 'settledAt' in next!]).toEqual([false, false, false, false]);
     expect(paid!.currencies[0]!.publicly).toBeNull();
+    /* The service says r0 settled, and its record names no payment the chain could be asked about, so what is paid of it is not read. */
+    expect(paid!.paidOnChain).toBeUndefined();
+  });
+
+  /*
+   * RED WHEN: a run, a leg or a retry reads as paid from the service's status or its settled day, or from anything but what this device's own
+   * worker reads of the account's chain; a payment the chain does not show is read as paid, or one it cannot read as not paid; or all, some and
+   * none of a leg's payments are not told apart.
+   */
+  it('reads what is paid of a run from the chain, and never from the service\'s word that it settled', async () => {
+    const { readCompany } = await load();
+    const run = (id: string, leaves: string[]) => sealedRun(id, '2026-11', 'settled', [
+      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 2n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+      { id: 'e3', name: 'Cy', asset: NIGHT.code, amount: 1n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+    ], { settledAt: '2026-11-30T12:00:00.000Z', payout: { [NIGHT_PUBLICLY]: { vault: 'ab'.repeat(32), payees: 2n, leaves } } });
+    kr.answers[ROUTE('/runs')] = [run('r5', ['aa', 'bb'])];
+    const stateOf = async () => {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.runs.of !== 'read') throw new Error('not read');
+      const [r] = c.runs.value;
+      return ['status' in r! || 'settledAt' in r!, r!.paidOnChain, r!.legs[0]!.paidOnChain];
+    };
+    /* Settled by the service's word, and none of its payments on the chain: not paid, and the service's word is not carried. */
+    expect(await stateOf()).toEqual([false, 0, 0]);
+    expect(chain.paidAsked).toEqual([{ account: 'c0'.repeat(32), indexer: kr.indexer, leaves: ['aa', 'bb'] }]);
+    chain.paid = { aa: true };
+    expect(await stateOf()).toEqual([false, 1, 1]);
+    chain.paid = { aa: true, bb: true };
+    expect(await stateOf()).toEqual([false, 2, 2]);
+    /* A chain that cannot be read says nothing of it: neither paid nor unpaid. */
+    chain.paidFails = true;
+    expect(await stateOf()).toEqual([false, undefined, undefined]);
+    chain.paidFails = false;
+    kr.indexer = null;
+    expect(await stateOf()).toEqual([false, undefined, undefined]);
+  });
+
+  /*
+   * RED WHEN: the people a leg names are not the wallet's own for it (`legEmployees`: the run's people of that token and form, in the run's order, a person
+   * with no form on the shielded leg), in the same order as the leaves the leg was raised over, so a place the page names for a retry is another person's
+   * for the wallet; or the places the chain shows unpaid, the people's amounts or the leg's closing time are not read off the leg's own record.
+   */
+  it('names the people of a leg in the wallet\'s order, and the places the chain shows unpaid among them', async () => {
+    const { readCompany } = await load();
+    const { legEmployees } = await import('../../../../src/core/run-legs.js');
+    const other = 'f0'.repeat(32);
+    const employees = [
+      { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5n, paidTo: PRIVATE_ADDRESS },
+      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 2n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+      { id: 'e4', name: 'Di', asset: other, amount: 7n, paidTo: PRIVATE_ADDRESS },
+      { id: 'e3', name: 'Cy', asset: NIGHT.code, amount: 1n, form: 'shielded', paidTo: PRIVATE_ADDRESS },
+      { id: 'e5', name: 'Ed', asset: NIGHT.code, amount: 4n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+      { id: 'e6', name: 'Flo', asset: NIGHT.code, amount: 8n, paidTo: PRIVATE_ADDRESS },
+    ];
+    const SHIELDED = `${NIGHT.code}:shielded`;
+    kr.answers[ROUTE('/runs')] = [sealedRun('r5', '2026-11', 'proposed', employees, { payout: {
+      [SHIELDED]: { vault: 'ab'.repeat(32), payees: 3n, leaves: ['a1', 'a2', 'a3'], closesAt: 1_800_000_000n },
+      [NIGHT_PUBLICLY]: { vault: 'ab'.repeat(32), payees: 2n, leaves: ['b1', 'b2'], closesAt: 1_800_000_000n },
+    } })];
+    chain.paid = { a1: true, a3: true, b1: true, b2: true };
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.runs.of !== 'read') throw new Error('not read');
+    const run = c.runs.value[0]!;
+    const wallet = (leg: string) => legEmployees({ employees } as never, leg as never).map((e) => [e.name, e.amount]);
+    const shielded = run.legs.find((l) => l.code === SHIELDED)!;
+    const publicly = run.legs.find((l) => l.code === NIGHT_PUBLICLY)!;
+    expect(wallet(SHIELDED)).toEqual([['Ana', 5n], ['Cy', 1n], ['Flo', 8n]]);
+    expect(shielded.pays.map((x) => x.name)).toEqual(wallet(SHIELDED).map(([n]) => n));
+    expect(shielded.amounts).toEqual(wallet(SHIELDED).map(([, a]) => a));
+    expect(publicly.pays.map((x) => x.name)).toEqual(wallet(NIGHT_PUBLICLY).map(([n]) => n));
+    expect(publicly.amounts).toEqual(wallet(NIGHT_PUBLICLY).map(([, a]) => a));
+    /* The chain shows the first and third of the shielded leg paid: the second, Cy, is who a retry names. */
+    expect([shielded.unpaid, shielded.paidOnChain, shielded.closesAt]).toEqual([[1], 1, 1_800_000_000n]);
+    expect([publicly.unpaid, publicly.paidOnChain]).toEqual([[], 2]);
+    /* A leg that lists other people than it was raised over names no amounts, so no place can be named for it. */
+    kr.answers[ROUTE('/runs')] = [sealedRun('r5', '2026-11', 'proposed', employees, { payout: { [SHIELDED]: { vault: 'ab'.repeat(32), payees: 2n, leaves: ['a1', 'a2'], closesAt: 1n } } })];
+    const d = await readCompany('u1', 'c1');
+    if (d.of !== 'open' || d.runs.of !== 'read') throw new Error('not read');
+    expect(d.runs.value[0]!.legs[0]!.amounts).toBeUndefined();
+  });
+
+  /* RED WHEN: a retry raised on a leg is not read with its proposal, its people and total, and only their payments, or its proposal is not said to pay its run. */
+  it('reads a retry on a leg as a proposal of the run paying only the people it names, and what the chain shows of those', async () => {
+    const { readCompany } = await load();
+    kr.named = { proposal: ['p1', 'p2', 'p3'] };
+    chain.rounds = { cc: { held: 'open', approvals: 2, needed: 2, raisedAt: Date.parse('2026-09-21T10:00:00.000Z') } };
+    kr.answers[ROUTE('/proposals')] = [sealedProposal('p1', 'open', {}), sealedProposal('p3', 'open', {})];
+    kr.answers[ROUTE('/runs')] = [sealedRun('r5', '2026-11', 'proposed', [
+      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 2_000_000n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+      { id: 'e3', name: 'Cy', asset: NIGHT.code, amount: 1_000_000n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+      { id: 'e5', name: 'Ed', asset: NIGHT.code, amount: 500_000n, form: 'unshielded', paidTo: PUBLIC_ADDRESS },
+    ], {
+      payout: { [NIGHT_PUBLICLY]: {
+        vault: 'ab'.repeat(32), payees: 3n, leaves: ['aa', 'bb', 'cc'],
+        retries: [{ originalIndices: [1, 2], root: 'dd', payees: 2n, opensAt: 5n, closesAt: 9n, vault: 'cd'.repeat(32), proposalId: 'p3', proposedBy: 's1', at: '2026-11-02T00:00:00.000Z' }],
+      } },
+    })];
+    chain.paid = { aa: true, bb: true };
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.runs.of !== 'read' || c.proposals.of !== 'read') throw new Error('not read');
+    const leg = c.runs.value[0]!.legs[0]!;
+    expect(leg.paidOnChain).toBe(1);
+    expect(leg.retries!.map(({ pays, ...r }) => [r, pays.map((x) => x.name)])).toEqual([[
+      { proposal: 'p3', vault: 'cd'.repeat(32), people: 2, total: 1_500_000n, leaves: ['bb', 'cc'], paidOnChain: 1 }, ['Cy', 'Ed'],
+    ]]);
+    expect(c.proposals.value.find((p) => p.id === 'p3')!.pays).toMatchObject({ run: 'r5', period: '2026-11', asset: NIGHT.code, paid: 'publicly' });
   });
 
   /* RED WHEN: a person's pay is marked private without a private address, where each stands is not their record's (waiting on us, waiting on them, active, left), or they are not listed by name. */
@@ -860,21 +1040,151 @@ describe('amounts, marked by how they are paid', () => {
 
 describe('proposals, vaults and invitations', () => {
   /*
-   * RED WHEN: how many must approve is guessed when the record does not say
-   * (the company's count is not a vault's), the approvals are the service's
-   * outer count instead of the opened record's, a payment of a run is not tied
-   * to its run, token and form, or a proposal raised by a seat the record no
-   * longer names is put on somebody else.
+   * RED WHEN: where a proposal stands, its count or its bar is the service's or the sealed record's rather than the
+   * chain's, a payment of a run is not tied to its run, token and form, or a filing that carries no signature is put on
+   * the signer its sealed body names.
    */
-  it('reads each proposal from its opened record', async () => {
+  it('reads each proposal from its opened record, where the chain holds it', async () => {
     const { readCompany } = await load();
     const c = await readCompany('u1', 'c1');
     if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
     expect(c.proposals.value.map((p) => [p.id, p.kind, p.status, p.raisedBy, p.approvals, p.needed, p.pays])).toEqual([
       /* RED WHEN a payroll round is not tied to the token and the form its leg pays, or names its token to a screen by anything but its symbol. */
-      ['p1', 'payroll', 'open', 'Sam', 1, 2, { run: 'r1', period: '2026-10', asset: NIGHT.code, symbol: 'NIGHT', paid: 'publicly' }],
-      ['p2', 'add-signer', 'executed', null, 1, null, null],
+      ['p1', 'payroll', 'open', null, 1, 2, { run: 'r1', period: '2026-10', asset: NIGHT.code, symbol: 'NIGHT', paid: 'publicly' }],
+      ['p2', 'add-signer', 'open', null, 1, 2, null],
     ]);
+    /* RED WHEN: the chain is read at any account or indexer but the company's own and the one the person's wallet names, or with a seat's secret. */
+    expect(chain.asked).toEqual([{ account: 'c0'.repeat(32), indexer: kr.indexer, chainIds: ['cc'] }]);
+  });
+
+  /*
+   * The company of 21 Oct: its founding signer alone at one approval, and the three proposals that set it up, raised by
+   * that signer's device and filed signed by that signer's seat - its pay-record key, a vault's adoption and that vault's
+   * first secret. The sealed bodies name a signer id the roster does not hold, and the service says each was withdrawn.
+   */
+  it("READS THE 21 OCT COMPANY'S THREE PROPOSALS AS THE CHAIN HOLDS THEM, 1 OF 1, RAISED BY ITS FOUNDER, EACH SAID FOR WHAT IT DOES", async () => {
+    const { readCompany } = await load();
+    const founder = newSigningKeypair().secret;
+    const was = kr.account;
+    kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 'sgn_founder01', name: 'Priya', signingPublicKey: signingPublicKeyOf(founder).toUpperCase() }] };
+    const filed = (n: number, kind: string) => ({
+      ...signProposalFiling('c1', {
+        id: newProposalId(), digest: `${n}d`.repeat(32) as Hex, chainId: `${n}c`.repeat(32) as Hex, keyEpoch: 1, createdAt: '2026-10-21T09:00:00.000Z',
+        sealed: sealRecord('proposals', 'c1', { kind, summary: '', proposedBy: 'sgn_notonroster', approvals: [] }, VK),
+      }, founder),
+      accountId: 'c1', status: 'cancelled', approvalCount: 0,
+    });
+    const [payKey, adopt, secret] = [filed(1, 'pay-key'), filed(2, 'adopt-vault'), filed(3, 'vault-secret')];
+    kr.answers[ROUTE('/proposals')] = [payKey, adopt, secret];
+    kr.named = { proposal: [payKey.id, adopt.id, secret.id] };
+    const at = Date.parse('2026-10-21T09:00:30.000Z');
+    chain.rounds = {
+      [payKey.chainId]: { held: 'closed', approvals: 1, needed: 1, raisedAt: at, closedBy: ['sealPayKey'] },
+      [adopt.chainId]: { held: 'closed', approvals: 1, needed: 1, raisedAt: at, closedBy: ['adopt'] },
+      [secret.chainId]: { held: 'open', approvals: 1, needed: 1, raisedAt: at },
+    };
+    try {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+      /* RED WHEN: a proposal's status is the service's, its count the sealed list's, its bar not the chain's, its raiser matched by the sealed signer id, or any of the three kinds said as a change to the company. */
+      expect(c.proposals.value.map((p) => [p.kind, p.status, p.approvals, p.needed, p.raisedBy, p.raisedAt])).toEqual([
+        ['pay-key', 'executed', 1, 1, 'Priya', new Date(at).toISOString()],
+        ['adopt-vault', 'executed', 1, 1, 'Priya', new Date(at).toISOString()],
+        ['vault-secret', 'approved', 1, 1, 'Priya', new Date(at).toISOString()],
+      ]);
+    } finally {
+      kr.account = was;
+    }
+  });
+
+  /* RED WHEN: a run the chain holds charged to its period, or a proposal at the bar it was raised needing, reads as waiting; or one short of it, or with no bar read, reads approved. */
+  it('reads a proposal held cleared, or held at its bar, as approved, and one short of it, or with no bar read, as waiting', async () => {
+    const { readCompany } = await load();
+    const statusWhen = async (round: unknown) => {
+      chain.rounds = { cc: round };
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+      return c.proposals.value[0]!.status;
+    };
+    expect(await statusWhen({ held: 'cleared', approvals: 1, needed: 2 })).toBe('approved');
+    expect(await statusWhen({ held: 'open', approvals: 2, needed: 2 })).toBe('approved');
+    expect(await statusWhen({ held: 'open', approvals: 1, needed: 2 })).toBe('open');
+    expect(await statusWhen({ held: 'open', approvals: 5 })).toBe('open');
+    expect(await statusWhen({ held: 'closed', approvals: 2, needed: 2, closedBy: ['cancel'] })).toBe('cancelled');
+    /* RED WHEN: a run the chain closed past its window, or closed by calls not read, is said as withdrawn when nobody withdrew it. */
+    expect(await statusWhen({ held: 'closed', approvals: 2, needed: 2, closedBy: ['closeExpiredRun'] })).toBe('expired');
+    expect(await statusWhen({ held: 'closed', approvals: 2, needed: 2, closedBy: [] })).toBe('closed');
+    expect(await statusWhen({ held: 'closed', approvals: 2, needed: 2 })).toBe('closed');
+    expect(await statusWhen({ held: 'closed', approvals: 2, needed: 2, closedBy: ['cancel', 'closeExpiredRun'] })).toBe('closed');
+    expect(await statusWhen({ held: 'closed', approvals: 2, needed: 2, closedBy: ['execute'] })).toBe('executed');
+  });
+
+  /* RED WHEN: a status the service lists, and not the chain's, decides whether Pay or Retry is offered. */
+  it('offers Pay only on the chain\'s approval, whatever the service lists, and Retry on a run closed past its window or closed unread', async () => {
+    const m = await load();
+    const listing = (status: string) => {
+      kr.answers[ROUTE('/proposals')] = [sealedProposal('p1', status, { approvalRound: { state: 'short', approvals: 2, threshold: 2 } })];
+      kr.named = { proposal: ['p1'] };
+    };
+    const read = async () => {
+      const c = await m.readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+      return c.proposals;
+    };
+    const leg = { proposal: 'p1', form: 'shielded', paidOnChain: 'none' } as const;
+    listing('approved');
+    chain.rounds = { cc: { held: 'open', approvals: 1, needed: 2 } };
+    const short = await read();
+    expect(short.of === 'read' && short.value[0]!.status).toBe('open');
+    expect(m.canPay(leg as never, short)).toBe(false);
+    chain.rounds = { cc: { held: 'open', approvals: 2, needed: 2 } };
+    expect(m.canPay(leg as never, await read())).toBe(true);
+    const unpaid = { ...leg, unpaid: [0], amounts: [1n], leaves: ['01'], closesAt: BigInt(Math.floor(Date.now() / 1000) + 3600) };
+    for (const closedBy of [['closeExpiredRun'], [], ['cancel']]) {
+      listing('cancelled');
+      chain.rounds = { cc: { held: 'closed', approvals: 2, needed: 2, closedBy } };
+      /* RED WHEN: a leg whose run closed unpaid, however it closed, is not offered Retry before its window would have closed. */
+      expect(m.canRetry(unpaid as never, await read(), Date.now()), JSON.stringify(closedBy)).toBe(true);
+    }
+  });
+
+  /*
+   * RED WHEN: a proposal the company's records do not name, one sealed under an older key, or one whose filing this
+   * device does not believe is read as the service gave it, or takes every other proposal down with it; or one the
+   * records name and the service did not give is not listed.
+   */
+  it('LISTS A PROPOSAL THE COMPANY\'S RECORDS NAME AND THE SERVICE WITHHELD, OR LEAVE OUT, OR WHOSE FILING IS NOT BELIEVED, AS UNREADABLE BY ITS ID, AND READS THE REST', async () => {
+    const { readCompany } = await load();
+    const founder = newSigningKeypair().secret;
+    const was = kr.account;
+    kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 'sgn_founder01', name: 'Priya', signingPublicKey: signingPublicKeyOf(founder) }] };
+    const filed = (n: number) => ({
+      ...signProposalFiling('c1', {
+        id: newProposalId(), digest: `${n}d`.repeat(32) as Hex, chainId: `${n}c`.repeat(32) as Hex, keyEpoch: 1, createdAt: new Date(Date.UTC(2026, 9, 20 + n)).toISOString(),
+        sealed: sealRecord('proposals', 'c1', { kind: 'set-threshold', summary: '', proposedBy: 'x', approvals: [] }, VK),
+      }, founder),
+      accountId: 'c1', status: 'open', approvalCount: 0,
+    });
+    const [kept, unnamed, older, unbelieved] = [filed(1), filed(2), filed(3), filed(4)];
+    kr.answers[ROUTE('/proposals')] = [kept, unnamed, older, unbelieved];
+    /* `prp_withheld01` the records name and the service does not give. */
+    kr.named = { proposal: [kept.id, older.id, unbelieved.id, 'prp_withheld01'] };
+    kr.leftOut = [older.id];
+    kr.unbelieved = [unbelieved.id];
+    try {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+      expect(c.proposals.value.map((p) => [p.id, p.kind, p.status, p.raisedBy])).toEqual([
+        [kept.id, 'set-threshold', 'open', 'Priya'],
+        ['prp_withheld01', 'unreadable', 'unreadable', null],
+        [older.id, 'unreadable', 'unreadable', null], [unnamed.id, 'unreadable', 'unreadable', null], [unbelieved.id, 'unreadable', 'unreadable', null],
+      ]);
+      /* RED WHEN: a proposal the records name and the service withheld is left off the list, or takes the proposals it did give down with it. */
+      expect(kr.listedFrom).not.toContain('proposal:proposal:prp_withheld01');
+      expect(kr.listedFrom).toContain(`proposal:proposal:${kept.id}`);
+    } finally {
+      kr.account = was;
+    }
   });
 
   /*
@@ -927,9 +1237,27 @@ describe('proposals, vaults and invitations', () => {
     const c = await readCompany('u1', 'c1');
     if (c.of !== 'open' || c.vaults.of !== 'read') throw new Error('not read');
     expect(c.vaults.value).toEqual([
-      { vault: 'ab'.repeat(32), createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true },
-      { vault: 'cd'.repeat(32), createdAt: '2026-09-02T00:00:00.000Z', standing: 'unknown', adopted: true },
+      { vault: 'ab'.repeat(32), createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true, approvals: 2 },
+      { vault: 'cd'.repeat(32), createdAt: '2026-09-02T00:00:00.000Z', standing: 'unknown', adopted: true, approvals: 2 },
     ]);
+  });
+
+  /* RED WHEN: a vault's row does not carry the approvals the chain holds for that vault (its own number where it has one, whatever the case of its address, else the company's), or carries a number the chain did not give (a vault number below one, or no company number to fall back on). */
+  it('reads the approvals each vault asks for: its own number, else the company\'s, and none where the chain gave none', async () => {
+    const { readCompany } = await load();
+    const numbers = async () => {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.vaults.of !== 'read') throw new Error('not read');
+      return c.vaults.value.map((v) => [v.vault.slice(0, 2), v.approvals]);
+    };
+    kr.approvals = 2;
+    kr.vaultThresholds = [{ vault: 'AB'.repeat(32), threshold: 3 }];
+    expect(await numbers()).toEqual([['ab', 3], ['cd', 2]]);
+    kr.vaultThresholds = [{ vault: 'ab'.repeat(32), threshold: 0 }];
+    expect(await numbers()).toEqual([['ab', undefined], ['cd', 2]]);
+    kr.approvals = undefined;
+    kr.vaultThresholds = [{ vault: 'ab'.repeat(32), threshold: 3 }];
+    expect(await numbers()).toEqual([['ab', 3], ['cd', undefined]]);
   });
 
   /*
@@ -1146,6 +1474,268 @@ describe('the names in the one list of companies', () => {
   });
 });
 
+describe('what an open proposal carries for the wallet to approve it', () => {
+  const V = 'ab'.repeat(32);
+  const W = 'cd'.repeat(32);
+  const LEAF = '4e'.repeat(32);
+  /* A proposal raised on the chain as 'cc', its body sealed under the company's key as a device seals it. */
+  const proposal = (id: string, kind: string, body: Record<string, unknown>) => sealedProposal(id, 'open', {
+    kind, vault: V, sealedPayload: seal(canonical({ ...body, __change: { salt: '5a'.repeat(32) } }), VK),
+  });
+  const ONE = newOneOffId();
+  /* Written out, as the payees above are: the address encoder in this page's window reads another window's bytes. */
+  const PAYEE = REAL_ADDRESSES['2 unshielded']!.bech32;
+  const oneOffAt = ROUTE(`/records/transfer/${ONE}/1`);
+  const fileTheOneOff = (proposalId: string) => {
+    oneOffs.opened = { [ONE]: {
+      vault: V, asset: NIGHT.code, token: NIGHT.ledger.unshielded, amount: '250',
+      payee: { ref: null, name: 'Northwind Paper', address: PAYEE }, reason: 'Invoice 118, office paper',
+      proposal: { id: proposalId, chainId: 'cc' },
+    } };
+    const rec = { company: 'c1', kind: 'transfer' as const, id: ONE, version: 1, keyEpoch: 1, sealed: seal('{}', VK), wrapped: [] };
+    kr.answers[oneOffAt] = { kind: 'transfer', id: ONE, version: 1, filed: toCompanyWire(signCompanyFiling(rec, SEAT)) };
+  };
+  /* An invitation by address, as its sealed body carries it: signed terms naming the address it seats. */
+  const BY_ADDRESS = { invited: { terms: { invite: { address: 'a7'.repeat(32) } } } };
+  const invited = (coinPublicKey: string | null) => ({
+    chainId: 'cc', summary: '', proposalSalt: 'aa', coinPublicKey,
+    invited: { terms: { name: 'Sam', role: 'approver', invite: { address: 'a7'.repeat(32), salt: 'cd'.repeat(32), scope: 'ef'.repeat(32), threshold: '2' } } },
+  });
+  /* The run the payroll proposal pays one leg of: two people paid publicly in NIGHT, and one privately the proposal does not pay. */
+  const theRun = () => sealedRun('r9', '2026-11', 'proposed', [
+    { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5n, paidTo: PUBLIC_ADDRESS, form: 'unshielded' },
+    { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 7n, paidTo: PUBLIC_ADDRESS, form: 'unshielded' },
+    { id: 'e3', name: 'Cy', asset: NIGHT.code, amount: 11n, paidTo: PRIVATE_ADDRESS },
+  ], { payout: { [NIGHT_PUBLICLY]: { vault: 'ee'.repeat(32), payees: 9n, leaves: [] } } });
+  const rowsOf = async (proposals: Array<{ id: string }>) => {
+    kr.answers[ROUTE('/proposals')] = proposals;
+    kr.named = { proposal: proposals.map((p) => p.id) };
+    const { readCompany } = await load();
+    const { canApprove } = await import('./proposal-acts.js');
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+    return Object.fromEntries(c.proposals.value.map((r) => [r.id, { kind: r.kind, asks: r.asks, approvable: canApprove(r), ...(r.asksUnread === undefined ? {} : { unread: r.asksUnread }) }]));
+  };
+  beforeEach(() => { bya.bodies = {}; bya.asked = []; bya.throws = false; oneOffs.opened = {}; });
+
+  /*
+   * RED WHEN: a kind's row does not carry every field its approval in the wallet checks, a field is read from anything
+   * but the company's sealed records (the proposal's own body, its run, its one-off, its invitation), a policy proposal
+   * reaches the screen under the kind it is sealed as rather than as a change of policy, or a kind whose fields are all
+   * read is not offered Approve.
+   */
+  it('carries, for every kind, what the wallet checks before it approves, read from the company\'s sealed records', async () => {
+    kr.answers[ROUTE('/runs')] = [theRun()];
+    fileTheOneOff('q-one');
+    bya.bodies['q-add'] = invited('0c'.repeat(32));
+    const rows = await rowsOf([
+      proposal('p1', 'payroll', { runId: 'r9' }),
+      proposal('q-one', 'transfer', { oneOff: { id: ONE, version: 1 } }),
+      proposal('q-add', 'add-signer', BY_ADDRESS),
+      proposal('q-out', 'remove-signer', { leaf: LEAF, newThreshold: 1 }),
+      proposal('q-out0', 'remove-signer', { leaf: LEAF }),
+      proposal('q-bar', 'set-threshold', { newThreshold: 2 }),
+      proposal('q-vbar', 'set-vault-threshold', { vault: W, newThreshold: 3 }),
+      proposal('q-pbar', 'set-policy-bar', { newPolicyBar: 2 }),
+      proposal('q-pol', 'set-spending-policy', { vault: W, assetKey: '11'.repeat(32), commitment: '22'.repeat(32) }),
+      proposal('q-adopt', 'adopt-vault', { vault: W }),
+      proposal('q-secret', 'vault-secret', { vault: W, root: '00'.repeat(32), payees: '0', opensAt: '1', closesAt: '2' }),
+      proposal('q-key', 'pay-key', { commitment: '77'.repeat(32) }),
+    ]);
+    expect(rows).toEqual({
+      /* The vault is the one the sealed proposal names, never the run's served payout. */
+      p1: { kind: 'payroll', approvable: true, asks: { run: 'r9', period: '2026-11', list: 'employees', vault: V, token: NIGHT.code, form: 'public', payees: 2, total: 12n } },
+      'q-one': { kind: 'transfer', approvable: true, asks: { vault: V, token: NIGHT.code, amount: '250', payee: PAYEE, reason: 'Invoice 118, office paper', payeeName: 'Northwind Paper' } },
+      'q-add': { kind: 'add-signer', approvable: true, asks: { personName: 'Sam', role: 'approver', address: 'a7'.repeat(32), scope: 'ef'.repeat(32), coinKey: '0c'.repeat(32), threshold: '2' } },
+      'q-out': { kind: 'remove-signer', approvable: true, asks: { leaf: LEAF, threshold: 1 } },
+      'q-out0': { kind: 'remove-signer', approvable: true, asks: { leaf: LEAF } },
+      'q-bar': { kind: 'set-threshold', approvable: true, asks: { threshold: 2 } },
+      'q-vbar': { kind: 'set-vault-threshold', approvable: true, asks: { threshold: 3, vault: W } },
+      'q-pbar': { kind: 'change-policy', approvable: true, asks: { kind: 'policy-bar', bar: 2 } },
+      /* RED WHEN: a spending policy is not offered Approve, or its row names anything of the policy but its vault: the terms open only in the signer's wallet. */
+      'q-pol': { kind: 'change-policy', approvable: true, asks: { kind: 'spending-policy', vault: W } },
+      'q-adopt': { kind: 'adopt-vault', approvable: true, asks: { vault: W } },
+      'q-secret': { kind: 'vault-secret', approvable: true, asks: { vault: W } },
+      'q-key': { kind: 'pay-key', approvable: true, asks: {} },
+    });
+    /* RED WHEN: reading what a proposal asks sends the service anything but the one-off's own record name, or a person, amount, payee or name. */
+    expect(kr.asked.filter((p) => p.includes('/records/'))).toEqual([oneOffAt]);
+    /* Read by whole parts of each path, so a random one-off id that happens to hold the same letters is not taken for a leak. */
+    const parts = (p: string): readonly string[] => decodeURIComponent(p).split(/[/?&=]/u);
+    const told = ['250', 'e1', 'Sam', 'Ana', 'Northwind Paper', 'Invoice 118, office paper'];
+    expect(kr.asked.filter((p) => parts(p).some((x) => told.includes(x) || /Northwind|Invoice|Sam|Ana/u.test(x)))).toEqual([]);
+  });
+
+  /*
+   * RED WHEN: a row missing a field its approval checks is offered Approve: an invitation with no coin key, a one-off
+   * whose record the service does not give or that another proposal raised, a payroll proposal no run names, a removal
+   * naming no seat, a spending policy whose record names no vault, or a proposal no longer waiting.
+   */
+  it('offers no Approve on a row missing a field its approval needs, and reads nothing for one not waiting', async () => {
+    bya.bodies['q-add'] = invited(null);
+    chain.rounds = { ...chain.rounds, dd: { held: 'closed', approvals: 2, needed: 2, closedBy: ['changeThreshold'] } };
+    const rows = await rowsOf([
+      proposal('q-add', 'add-signer', BY_ADDRESS),
+      proposal('q-one', 'transfer', { oneOff: { id: ONE, version: 1 } }),
+      proposal('q-run', 'payroll', { runId: 'r-none' }),
+      proposal('q-out', 'remove-signer', { newThreshold: 1 }),
+      proposal('q-pol', 'set-spending-policy', { assetKey: '11'.repeat(32), commitment: '22'.repeat(32) }),
+      /* Carried out: the chain holds its round closed. */
+      { ...proposal('q-done', 'set-threshold', { newThreshold: 2 }), chainId: 'dd' },
+    ]);
+    expect(Object.values(rows).map((r) => r.approvable)).toEqual([false, false, false, false, false, false]);
+    expect(rows['q-done']!.kind).toBe('set-threshold');
+    expect(rows['q-pol']).toEqual({ kind: 'change-policy', approvable: false, asks: undefined, unread: 'not-read' });
+    expect([rows['q-add']!.asks, rows['q-one']!.asks, rows['q-run']!.asks, rows['q-out']!.asks, rows['q-done']!.asks]).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    /*
+     * RED WHEN: a waiting proposal of a kind this page approves whose record, run or one-off was not read or believed here
+     * is not marked so (and would be told as a kind this page cannot approve), or a kind this page does not approve, or a
+     * proposal no longer waiting, is marked as not read.
+     */
+    expect(Object.fromEntries(Object.entries(rows).map(([id, r]) => [id, r.unread ?? null]))).toEqual({
+      'q-add': 'not-read', 'q-one': 'not-read', 'q-run': 'not-read', 'q-out': 'not-read', 'q-pol': 'not-read', 'q-done': null,
+    });
+    /* RED WHEN: a one-off raised by another proposal is carried as this one's. */
+    fileTheOneOff('q-other');
+    expect((await rowsOf([proposal('q-one', 'transfer', { oneOff: { id: ONE, version: 1 } })]))['q-one']).toEqual({ kind: 'transfer', approvable: false, asks: undefined, unread: 'not-read' });
+  });
+
+  /*
+   * A one-off payment the chain holds approved stays on the chain once it is paid, so whether to offer its press is read
+   * off the chain by the payment leaf the worker built from its record (`leaf` on what the worker opened), through the
+   * same paid-leaves read the runs use.
+   */
+  describe('a one-off payment the chain holds approved', () => {
+    const PAID_LEAF = '6d'.repeat(32);
+    const OTHER_LEAF = '7e'.repeat(32);
+    const ASKS = { vault: V, token: NIGHT.code, amount: '250', payee: PAYEE, reason: 'Invoice 118, office paper', payeeName: 'Northwind Paper' };
+    const approvedOneOff = async (leaf: string | null) => {
+      fileTheOneOff('q-one');
+      (oneOffs.opened[ONE] as Record<string, unknown>).leaf = leaf;
+      chain.rounds = { cc: { held: 'open', approvals: 2, needed: 2 } };
+      kr.answers[ROUTE('/proposals')] = [proposal('q-one', 'transfer', { oneOff: { id: ONE, version: 1 } })];
+      kr.named = { proposal: ['q-one'] };
+      const { readCompany, openOneOffsOf } = await load();
+      const { canApprove } = await import('./proposal-acts.js');
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+      const row = c.proposals.value.find((r) => r.id === 'q-one')!;
+      return { status: row.status, paidOnChain: row.paidOnChain, asks: row.asks, press: canApprove(row), listed: openOneOffsOf(c.proposals.value, V).map((o) => o.id) };
+    };
+
+    /* RED WHEN: a one-off the chain holds approved and shows not paid is not offered its press on the vault's page, or is offered it without what the wallet checks. */
+    it('offers its press while the chain shows its payment not made', async () => {
+      chain.paid = {};
+      expect(await approvedOneOff(PAID_LEAF)).toEqual({ status: 'approved', paidOnChain: false, asks: ASKS, press: true, listed: ['q-one'] });
+      /* RED WHEN: the payment is asked about by anything but the leaf the worker built from the one-off's record. */
+      expect(chain.paidAsked.map((a) => a.leaves)).toContainEqual([PAID_LEAF]);
+    });
+
+    /* RED WHEN: a one-off the chain shows paid is offered a press, which would send a signer to pay it again. */
+    it('offers no press once the chain shows it paid', async () => {
+      chain.paid = { [PAID_LEAF]: true };
+      expect(await approvedOneOff(PAID_LEAF)).toEqual({ status: 'approved', paidOnChain: true, asks: ASKS, press: false, listed: [] });
+    });
+
+    /*
+     * RED WHEN: a payment leaf the chain shows paid is taken as this one-off's when the worker built this one-off another
+     * leaf, or an answer that does not name this one-off's leaf is read as paid or as unpaid.
+     */
+    it('does not take another payment the chain shows paid as this one\'s', async () => {
+      chain.paidAnswer = { [OTHER_LEAF]: true, [PAID_LEAF]: false };
+      expect(await approvedOneOff(PAID_LEAF)).toMatchObject({ paidOnChain: false, press: true });
+      chain.paidAnswer = { [OTHER_LEAF]: true };
+      expect(await approvedOneOff(PAID_LEAF)).toMatchObject({ paidOnChain: undefined, press: false });
+    });
+
+    /* RED WHEN: a one-off whose payment was not read, for the worker built no leaf or the chain could not be read, is offered a press or said to be paid or unpaid. */
+    it('offers no press and says nothing of its payment when that was not read', async () => {
+      expect(await approvedOneOff(null)).toEqual({ status: 'approved', paidOnChain: undefined, asks: ASKS, press: false, listed: [] });
+      chain.paidFails = true;
+      expect(await approvedOneOff(PAID_LEAF)).toEqual({ status: 'approved', paidOnChain: undefined, asks: ASKS, press: false, listed: [] });
+    });
+
+    /* RED WHEN: a one-off the chain no longer holds, withdrawn or closed, is offered a press or has its payment asked about. */
+    it('offers no press on one the chain holds closed', async () => {
+      fileTheOneOff('q-one');
+      (oneOffs.opened[ONE] as Record<string, unknown>).leaf = PAID_LEAF;
+      chain.rounds = { cc: { held: 'closed', approvals: 2, needed: 2, closedBy: ['cancel'] } };
+      const rows = await rowsOf([proposal('q-one', 'transfer', { oneOff: { id: ONE, version: 1 } })]);
+      expect(rows['q-one']).toEqual({ kind: 'transfer', approvable: false, asks: undefined });
+      expect(chain.paidAsked.flatMap((a) => a.leaves)).not.toContain(PAID_LEAF);
+    });
+  });
+
+  /*
+   * RED WHEN: a retry of some of a leg's people carries no asks, or asks other than the people at the positions it names
+   * on that leg, as the run's seal holds them; or a retry the seal does not hold, served beside it, is read as one.
+   */
+  it('carries a retry\'s people from the run\'s seal, at the positions the retry names on its leg, and no retry served beside the seal', async () => {
+    const retry = { originalIndices: [1], root: '9a'.repeat(32), payees: 1n, opensAt: 1n, closesAt: 2n, vault: V, proposalId: 'q-retry' };
+    const run = sealedRun('r9', '2026-11', 'proposed', [
+      { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5n, paidTo: PUBLIC_ADDRESS, form: 'unshielded' },
+      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 7n, paidTo: PUBLIC_ADDRESS, form: 'unshielded' },
+    ], { payout: { [NIGHT_PUBLICLY]: { vault: V, payees: 2n, leaves: [], retries: [retry] } } });
+    kr.answers[ROUTE('/runs')] = [run];
+    expect((await rowsOf([proposal('q-retry', 'payroll', { runId: 'r9' })]))['q-retry']).toEqual({
+      kind: 'payroll', approvable: true, asks: { run: 'r9', period: '2026-11', list: 'employees', vault: V, token: NIGHT.code, form: 'public', payees: 1, total: 7n },
+    });
+    /* The same retry served beside a seal that holds none. */
+    const bare = sealedRun('r9', '2026-11', 'proposed', [
+      { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5n, paidTo: PUBLIC_ADDRESS, form: 'unshielded' },
+      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 7n, paidTo: PUBLIC_ADDRESS, form: 'unshielded' },
+    ]);
+    kr.answers[ROUTE('/runs')] = [{ ...bare, payout: { [NIGHT_PUBLICLY]: { vault: V, payees: 2n, leaves: [], retries: [retry] } } }];
+    expect((await rowsOf([proposal('q-retry', 'payroll', { runId: 'r9' })]))['q-retry']).toEqual({ kind: 'payroll', approvable: false, asks: undefined, unread: 'not-read' });
+  });
+
+  /* RED WHEN: Approve is offered on a proposal the network has never held raised, or it is not marked as not raised. */
+  it('offers no Approve on a proposal the network has never held, and says it is not raised yet', async () => {
+    chain.rounds = { cc: { held: 'never', approvals: 0 } };
+    expect((await rowsOf([proposal('q-bar', 'set-threshold', { newThreshold: 2 })]))['q-bar']).toEqual({ kind: 'set-threshold', approvable: false, asks: undefined, unread: 'not-raised' });
+    /* RED WHEN: an invitation naming no address, which this page does not approve, is marked as one whose record was not read. */
+    chain.rounds = { cc: { held: 'open', approvals: 1, needed: 2 } };
+    expect((await rowsOf([proposal('q-seat', 'add-signer', {})]))['q-seat']).toEqual({ kind: 'add-signer', approvable: false, asks: undefined });
+  });
+});
+
+describe('who may withdraw a proposal, and its count', () => {
+  /*
+   * RED WHEN: a proposal is marked as raised by this device's seat because its raiser bears the person's name, or one
+   * filed with this seat's own key is not; or a row's count is the service's, not the chain's round.
+   */
+  it('marks a proposal as raised here only when its believed filing is signed with this seat\'s key, never by a name, and counts as the chain does', async () => {
+    const { readCompany } = await load();
+    const mine = newSigningKeypair().secret;
+    const namesake = newSigningKeypair().secret;
+    const was = kr.account;
+    kr.ownKey = signingPublicKeyOf(mine);
+    kr.account = { id: 'c1', name: 'Northwind', signers: [
+      { id: 's1', name: 'Priya', signingPublicKey: signingPublicKeyOf(mine) }, { id: 's2', name: 'Priya', signingPublicKey: signingPublicKeyOf(namesake) },
+    ] };
+    const filed = (n: number, by: Uint8Array | string) => ({
+      ...signProposalFiling('c1', {
+        id: newProposalId(), digest: `${n}d`.repeat(32) as Hex, chainId: `${n}c`.repeat(32) as Hex, keyEpoch: 1, createdAt: '2026-10-21T09:00:00.000Z',
+        sealed: sealRecord('proposals', 'c1', { kind: 'set-threshold', summary: '', proposedBy: 'x', approvals: [] }, VK),
+      }, by as never),
+      accountId: 'c1', status: 'executed', approvalCount: 9,
+    });
+    const [ours, theirs] = [filed(1, mine), filed(2, namesake)];
+    kr.answers[ROUTE('/proposals')] = [ours, theirs];
+    kr.named = { proposal: [ours.id, theirs.id] };
+    chain.rounds = { [ours.chainId]: { held: 'open', approvals: 1, needed: 2, raisedAt: 1 }, [theirs.chainId]: { held: 'open', approvals: 1, needed: 2, raisedAt: 1 } };
+    try {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+      expect(c.proposals.value.map((p) => [p.id, p.raisedBy, p.raisedByYou, p.status, p.approvals])).toEqual([
+        [ours.id, 'Priya', true, 'open', 1], [theirs.id, 'Priya', false, 'open', 1],
+      ]);
+    } finally {
+      kr.account = was;
+    }
+  });
+});
+
 describe('the signers invited by address', () => {
   const body = (name: string) => ({ chainId: 'cc', summary: '', proposalSalt: 'aa', coinPublicKey: '0c'.repeat(32), invited: { terms: { name, role: 'approver', invite: { address: 'ab'.repeat(32), salt: 'cd'.repeat(32), scope: 'ef'.repeat(32) } } } });
   const open = async () => {
@@ -1161,10 +1751,11 @@ describe('the signers invited by address', () => {
     bya.bodies['p1'] = body('Sam');
     const c = await open();
     expect(c.signersInvited).toEqual({ of: 'read', value: [{
-      proposal: 'p1', name: 'Sam', role: 'approver', address: 'ab'.repeat(32), scope: 'ef'.repeat(32), coinKey: '0c'.repeat(32), status: 'open', approvals: null,
-      seat: null,
+      proposal: 'p1', name: 'Sam', role: 'approver', address: 'ab'.repeat(32), scope: 'ef'.repeat(32), coinKey: '0c'.repeat(32), status: 'open', approvals: 1,
+      seat: null, threshold: null,
     }] });
-    expect(bya.asked.map((a) => [a.id, a.account])).toEqual([['p1', 'c1'], ['p2', 'c1']]);
+    /* Each proposal is opened once, whether for this list or for what its row asks the wallet to check. */
+    expect(bya.asked.map((a) => [a.id, a.account]).sort()).toEqual([['p1', 'c1'], ['p2', 'c1']]);
     expect((bya.asked[0]!.keys as { key: string }).key).toBe(VK);
     expect(kr.asked.filter((p) => p.endsWith('/proposals'))).toHaveLength(1);
   });
@@ -1212,5 +1803,48 @@ describe('the signers invited by address', () => {
     bya.throws = true;
     const broke = await open();
     expect([broke.proposals.of, broke.signersInvited?.of]).toEqual(['read', 'unreadable']);
+  });
+});
+
+describe('the vendors and the one-off payments a vault\'s page offers', () => {
+  const row = (over: Record<string, unknown>) => ({
+    id: 'ven_aa', name: 'Vee', address: PUBLIC_ADDRESS, standing: 'active', handedOver: false, termsKind: 'one-off', asset: null, monthly: null, paid: 'publicly',
+    startedAt: '2026-02-01', endDate: null, admittedAt: null, admitBy: 'fingerprint', notPayable: null, ...over,
+  }) as never;
+
+  /* RED WHEN: the payee list offers a vendor with no address, one who has left or has not joined, or one this device will not pay, or leaves out one who can be paid. */
+  it('offers as payees only the active vendors with an address that this device would pay', async () => {
+    const { payableVendors } = await load();
+    expect(payableVendors([
+      row({}), row({ id: 'ven_bb', name: 'Bo', standing: 'leaver' }), row({ id: 'ven_cc', name: 'Cy', address: null }), row({ id: 'ven_dd', name: 'Di', notPayable: 'no keys' }),
+      row({ id: 'ven_ee', name: 'Ed', standing: 'waiting-for-check' }), row({ id: 'ven_ff', name: 'Fay', address: PRIVATE_ADDRESS }),
+    ])).toEqual([{ id: 'ven_aa', name: 'Vee', address: PUBLIC_ADDRESS }, { id: 'ven_ff', name: 'Fay', address: PRIVATE_ADDRESS }]);
+  });
+
+  const proposal = (over: Record<string, unknown> = {}, asks: Record<string, unknown> = {}) => ({
+    id: 'prop_0001', kind: 'transfer', status: 'open', raisedBy: 'Sam', approvals: 1, needed: 2, raisedAt: '2026-10-21T00:00:00.000Z', pays: null,
+    asks: { vault: V1, token: NIGHT.code, amount: '2500000', payee: PUBLIC_ADDRESS, reason: 'Invoice 118', ...asks }, ...over,
+  }) as never;
+  const V1 = 'ab'.repeat(32);
+
+  /* RED WHEN: a vault's list shows a payment of another vault, one the chain no longer holds open, another kind of proposal, or one that carries nothing to approve, or loses the figure, the name or the approvals. */
+  it('lists the open one-off payments of one vault, each with its amount made from the units it pays, its payee by name else address, and its approvals', async () => {
+    const { openOneOffsOf } = await load();
+    const rows = openOneOffsOf([
+      proposal(), proposal({ id: 'prop_0002' }, { vault: 'cd'.repeat(32) }), proposal({ id: 'prop_0003', status: 'approved' }), proposal({ id: 'prop_0004', kind: 'payroll' }),
+      proposal({ id: 'prop_0005', asks: undefined }), proposal({ id: 'prop_0006' }, { payeeName: 'Northwind Paper', amount: '1', token: 'ef'.repeat(32) }),
+      proposal({ id: 'prop_0007' }, { amount: 'many', payee: PRIVATE_ADDRESS }),
+    ], V1.toUpperCase());
+    expect(rows.map((r) => [r.id, r.payee, r.leg?.pays[0]?.address ?? null, r.reason, r.approvals, r.needed])).toEqual([
+      ['prop_0001', PUBLIC_ADDRESS, PUBLIC_ADDRESS, 'Invoice 118', 1, 2], ['prop_0006', 'Northwind Paper', PUBLIC_ADDRESS, 'Invoice 118', 1, 2],
+      ['prop_0007', PRIVATE_ADDRESS, null, 'Invoice 118', 1, 2],
+    ]);
+    expect(rows.map((r) => r.amount)).toEqual([publicAmount(2_500_000n, NIGHT.decimals, NIGHT.symbol), null, null]);
+    expect(rows[0]!.proposal.id).toBe('prop_0001');
+    /* RED WHEN: the payment's facts are described for an address the page cannot place, or a public payment is described as private. */
+    expect(rows.map((r) => r.leg?.form ?? null)).toEqual(['unshielded', 'unshielded', null]);
+    expect(openOneOffsOf([proposal({}, { payee: PRIVATE_ADDRESS })], V1)[0]!.leg).toMatchObject({ form: 'shielded', paid: 'privately' });
+    expect(rows[0]!.leg).toMatchObject({ people: 1, total: 2_500_000n, vault: V1, symbol: 'NIGHT', pays: [{ name: '', address: PUBLIC_ADDRESS, amount: publicAmount(2_500_000n, NIGHT.decimals, NIGHT.symbol) }] });
+    expect(openOneOffsOf([proposal({}, { payee: 'not an address' })], V1)[0]!.leg).toBeNull();
   });
 });

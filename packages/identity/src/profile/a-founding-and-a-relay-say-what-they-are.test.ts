@@ -60,7 +60,11 @@ describe('A TRANSACTION AN ACTION HANDS BACK SAYS WHAT IT IS FOR', () => {
 
   /* RED WHEN: finishing a company hands back a transaction under a name its page does not route. */
   it('names every relay finishing a company makes, and the action takes the company\'s label alone', () => {
-    expect(ACT_INTENTS['finish-company']).toEqual({ fields: { company: 'company' }, relays: FINISH_COMPANY_RELAYS });
+    /* RED WHEN: finishing a company may ask the service for anything but its pay-record key's proposal written down, raised beside it. */
+    expect(ACT_INTENTS['finish-company']).toEqual({
+      fields: { company: 'company' }, relays: FINISH_COMPANY_RELAYS,
+      calls: [{ method: 'POST', path: '/api/accounts/:record/creation/pay-key/proposal', sends: true, sendsWith: 'tx' }],
+    });
     for (const what of FINISH_COMPANY_RELAYS) expect(readActRelay(relay({ what }), 'n')?.what).toBe(what);
   });
 });

@@ -56,7 +56,7 @@ import {
 } from './proven-submission.js';
 import type {
   Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong,
-  AccountOpening, TxRef, SignerRef, WriteInFlight, VaultTxArrival, VaultTxSent,
+  AccountOpening, TxRef, SignerRef, WriteInFlight, VaultTxArrival, VaultTxSent, FeeAdded,
 } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
 import type { Deployment } from './deployment.js';
@@ -214,6 +214,37 @@ const laneOf = (payer: FeeSponsor): Lane => {
     lanes.set(payer, lane);
   }
   return lane;
+};
+
+/** How long a handed-back transaction's booking waits, after its deadline, before the chain is asked again. */
+const ASK_THE_CHAIN_AGAIN_MS = 30_000;
+
+/** How far ahead a transaction handed back to be submitted elsewhere may land: whoever is handed it submits at once. */
+const HANDED_BACK_FOR_MS = 4 * 60_000;
+
+/*
+ * A booking handed back with its transaction is settled by the chain, never by
+ * the clock: it is released only when the fee payer's chain read says it can
+ * no longer land (`landed` false: up to date, not shown, and the newest
+ * finalized block's time past its deadline), and dropped when it shows. Spent
+ * DUST, or DUST a transaction may yet spend, is never marked free.
+ */
+const settledByTheChain = (payer: FeeSponsor, finalised: unknown, deadline: Date): void => {
+  const landed = payer.landed;
+  if (landed === undefined) return;
+  const ask = (wait: number): void => {
+    const t = setTimeout(() => {
+      void landed.call(payer, finalised, deadline).catch(() => null).then(async (shown) => {
+        if (shown === true) return;
+        if (shown === false) {
+          try { await payer.release(finalised); return; } catch { /* asked again below */ }
+        }
+        ask(ASK_THE_CHAIN_AGAIN_MS);
+      });
+    }, Math.max(0, wait));
+    t.unref?.();
+  };
+  ask(deadline.getTime() - Date.now());
 };
 
 const isOverdue = (r: Running): boolean =>
@@ -548,35 +579,7 @@ export class ChainLedger implements Ledger {
   ): Promise<VaultTxSent> {
     let submitting = false;
     return this.write(accountId, what, async () => {
-      let tx: unknown;
-      try {
-        tx = await read(bytes);
-      } catch {
-        throw new NothingWasSent(`this is not a transaction this service can read, so ${what} was not paid for. Nothing was sent.`);
-      }
-      const refusal = await check(tx);
-      if (refusal !== null) throw new NothingWasSent(refusal);
-      /* Only a depositor's wallet binds and signs what it finished; everything else a device sends is bound here. */
-      const bound = arrival === 'finished-by-the-depositor'
-        ? tx
-        : (tx as { bind(): unknown }).bind();
-      const deadline = new Date(Date.now() + 20 * 60_000);
-      const payer = this.payer!;
-      let finalised: unknown;
-      try {
-        finalised = await payer.addFeeAndFinalise(bound, deadline);
-      } catch (e) {
-        /*
-         * Whatever stopped the fee, nothing was booked and nothing was sent. A fee over the ceiling keeps its own
-         * words and no code: trying again would be refused again. Anything else says the fee was not paid.
-         */
-        throw feeAnswerCodeOf(e) !== null || e instanceof FeeRefused
-          ? e : new FeeNotPaid(String((e as { message?: unknown })?.message ?? e));
-      }
-      let transactionHash: string | null = null;
-      try {
-        transactionHash = String((finalised as { transactionHash(): unknown }).transactionHash());
-      } catch { /* the reference below still names it */ }
+      const { payer, finalised, transactionHash } = await this.paidFor(what, arrival, bytes, check, read);
       submitting = true;
       const ref = await payer.submit(finalised);
       /* The fee payer answers the hash of what it sent when that is not what it was given. */
@@ -585,6 +588,96 @@ export class ChainLedger implements Ledger {
       if (submitting || saysNothingWasSent(e)) throw e;
       throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
     });
+  }
+
+  /**
+   * **THE SAME TRANSACTION, PAID FOR AND HANDED BACK FINISHED INSTEAD OF
+   * SUBMITTED**, for whoever submits it: the company's own service, or the
+   * person's wallet straight to the chain. The same reading, refusal, binding
+   * and capped fee as `sendVault`, in the same lane, and nothing is submitted
+   * here, so every failure carries the mark that nothing was sent.
+   *
+   * The booking is not released when this answers: the transaction may land
+   * wherever it is submitted, and its deadline is a few minutes away, since it
+   * is submitted at once. A fee payer that can read the chain (`landed`) is
+   * asked after the deadline and released only when the chain says it can no
+   * longer land; one that cannot is left to settle its own bookings, as the fee
+   * payer service does. `done` tells that service the holder is finished with it.
+   */
+  feeAddedTo(
+    accountId: string,
+    what: string,
+    arrival: VaultTxArrival,
+    bytes: Uint8Array,
+    check: (tx: unknown) => string | null | Promise<string | null>,
+    read: (bytes: Uint8Array) => Promise<unknown>,
+  ): Promise<FeeAdded> {
+    return this.write(accountId, what, async () => {
+      const { payer, finalised, transactionHash, deadline, booking } = await this.paidFor(what, arrival, bytes, check, read, true);
+      let tx: Uint8Array;
+      try {
+        tx = (finalised as { serialize(): Uint8Array }).serialize();
+      } catch (e) {
+        try { await payer.release(finalised); } catch { /* the unreadable transaction is the error */ }
+        throw new NothingWasSent(`the paid transaction could not be written out (${String((e as Error)?.message ?? e)}). Nothing was sent.`);
+      }
+      settledByTheChain(payer, finalised, deadline);
+      const done = payer.done;
+      return { tx, transactionHash, ...(done === undefined || booking === null ? {} : { done: () => done.call(payer, booking) }) };
+    }).catch((e: unknown) => {
+      if (saysNothingWasSent(e)) throw e;
+      throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
+    });
+  }
+
+  /*
+   * Reads a device's transaction, refuses it with `check`'s sentence, binds it
+   * unless a depositor's wallet already did, and has the fee payer add the
+   * capped fee. Every failure here is before anything was sent.
+   */
+  private async paidFor(
+    what: string,
+    arrival: VaultTxArrival,
+    bytes: Uint8Array,
+    check: (tx: unknown) => string | null | Promise<string | null>,
+    read: (bytes: Uint8Array) => Promise<unknown>,
+    handBack = false,
+  ): Promise<{ payer: FeeSponsor; finalised: unknown; transactionHash: string | null; deadline: Date; booking: string | null }> {
+    let tx: unknown;
+    try {
+      tx = await read(bytes);
+    } catch {
+      throw new NothingWasSent(`this is not a transaction this service can read, so ${what} was not paid for. Nothing was sent.`);
+    }
+    const refusal = await check(tx);
+    if (refusal !== null) throw new NothingWasSent(refusal);
+    /* Only a depositor's wallet binds and signs what it finished; everything else a device sends is bound here. */
+    const bound = arrival === 'finished-by-the-depositor'
+      ? tx
+      : (tx as { bind(): unknown }).bind();
+    const deadline = new Date(Date.now() + (handBack ? HANDED_BACK_FOR_MS : 20 * 60_000));
+    const payer = this.payer!;
+    let finalised: unknown;
+    let booking: string | null = null;
+    try {
+      if (handBack && payer.addFeeToHandBack !== undefined) {
+        ({ finalised, booking } = await payer.addFeeToHandBack(bound, deadline));
+      } else {
+        finalised = await payer.addFeeAndFinalise(bound, deadline);
+      }
+    } catch (e) {
+      /*
+       * Whatever stopped the fee, nothing was booked and nothing was sent. A fee over the ceiling keeps its own
+       * words and no code: trying again would be refused again. Anything else says the fee was not paid.
+       */
+      throw feeAnswerCodeOf(e) !== null || e instanceof FeeRefused
+        ? e : new FeeNotPaid(String((e as { message?: unknown })?.message ?? e));
+    }
+    let transactionHash: string | null = null;
+    try {
+      transactionHash = String((finalised as { transactionHash(): unknown }).transactionHash());
+    } catch { /* the reference the submission answers still names it */ }
+    return { payer, finalised, transactionHash, deadline, booking };
   }
 
   /**

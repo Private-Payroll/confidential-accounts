@@ -278,9 +278,9 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
     /* RED WHEN: a round closed past its window by anyone's call reads carried out - its month would read raised for good. */
     expect((await standingOnChainHere(closedBy(['closeExpiredRun']), [legRound]))[0]!.status).toBe('cancelled');
     /* RED WHEN: a proposal closed in a block whose calls that succeeded carried a change out and withdrew none does not read carried out. */
-    expect((await standingOnChainHere(closedBy(['amendSigner']), [legRound]))[0]!.status).toBe('executed');
+    expect((await standingOnChainHere(closedBy(['removeSignerAndSetThreshold']), [legRound]))[0]!.status).toBe('executed');
     /* RED WHEN: a proposal closed in a block where a withdrawal succeeded reads carried out - it may be the one withdrawn. */
-    expect((await standingOnChainHere(closedBy(['amendSigner', 'cancel']), [legRound]))[0]!.status).toBe('cancelled');
+    expect((await standingOnChainHere(closedBy(['removeSignerAndSetThreshold', 'cancel']), [legRound]))[0]!.status).toBe('cancelled');
     /* RED WHEN: a proposal closed in a block where no call succeeded in full reads carried out - nothing says it was. */
     expect((await standingOnChainHere(closedBy([]), [legRound]))[0]!.status).toBe('cancelled');
     /* A block whose calls name no withdrawal: the history cannot say which closed it. */

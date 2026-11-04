@@ -110,8 +110,10 @@ export const chooseLeg = (
  * by their roster entry, the run's month, the run's kind of pay, and which
  * payment of that kind for that month it is - the first, unless the run was
  * drawn to pay them a numbered extra. Each payee's nonce is derived from it,
- * and the account refuses a second payment carrying a nonce it has recorded, so
- * nobody is paid twice for one month by this run or any other.
+ * and the account refuses a second payment carrying a nonce it has recorded.
+ * The account knows no person or month: it is this one nonce per person,
+ * month, kind and occurrence, derived here by the wallet, that stops anybody
+ * being paid twice for one month by this run or any other.
  */
 export const payRecordsOf = (run: PayrollRun, people: Employee[]): PayRecord[] =>
   people.map(e => ({

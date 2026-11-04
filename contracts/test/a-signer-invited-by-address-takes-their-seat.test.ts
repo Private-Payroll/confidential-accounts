@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   AccountSimulator, privateStateFor, change, ZERO_32, invitePayloadFor, invitedAddressFor,
-  invitedAddressCommitmentOf, type Change,
+  invitedAddressCommitmentOf, removalPayloadFor, type Change,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { Transcript } from './transcript.js';
@@ -37,7 +37,16 @@ const invitation = async (sim: AccountSimulator, who: Device, approvers: Device[
   return { id, c };
 };
 
+/** An invitation of `who` that sets the threshold to `to` once the seat is taken, raised by A and approved by every other device in `approvers`. */
+const invitationSetting = async (sim: AccountSimulator, who: Device, to: bigint, approvers: Device[], seed: number) => {
+  const c = change(0n, seed);
+  const id = await raise(sim, A, c, invitePayloadFor(who, invitedAddressFor(who), to));
+  for (const d of approvers.filter((a) => a !== A)) await sim.as(d).approve(id);
+  return { id, c };
+};
+
 const NOT_THIS_WALLET = /that proposal does not invite this wallet with these rights/;
+const ABOVE_THE_SEATS = /the threshold an invitation sets cannot exceed the signers seated once it is taken/;
 
 describe('a signer invited by address takes their own seat', () => {
   it('a signer invited by address is seated at threshold by the invitee, and can approve at once', async () => {
@@ -174,7 +183,7 @@ describe('a seat the signers did not approve is refused', () => {
     const { id, c } = await invitation(sim, D, [A, B], 30);
 
     const out = change(0n, 31);
-    const outId = await raise(sim, A, out, pureCircuits.removeSignerPayload(sim.leafOf(C)));
+    const outId = await raise(sim, A, out, removalPayloadFor(sim.leafOf(C)));
     await sim.as(B).approve(outId);
     await sim.as(sim.applying(A, out)).removeSigner(sim.leafOf(C), outId);
 
@@ -201,15 +210,67 @@ describe('a seat the signers did not approve is refused', () => {
   });
 });
 
+describe('an invitation may set the threshold, written when the invitee takes the seat', () => {
+  it('a signer seated by an invitation that names a threshold is seated, and the threshold becomes it', async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    const { id, c } = await invitationSetting(sim, C, 3n, [A, B], 41);
+
+    await sim.seatInvited(id, sim.invited(C, c), false, 3n);
+
+    expect(sim.ledger.signerLeaves.member(sim.leafOf(C))).toBe(true);
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
+    /* RED WHEN: seatInvited stops writing the threshold the invitation names, or bounds it by the seats before the new one. */
+    expect(sim.ledger.threshold).toBe(3n);
+    expect(sim.isOpen(id)).toBe(false);
+  });
+
+  it('an invitation that names no threshold keeps the one in force', async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    const { id, c } = await invitation(sim, C, [A, B], 42);
+
+    await sim.seatInvited(id, sim.invited(C, c));
+
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
+    /* RED WHEN: seatInvited writes the threshold when the invitation names 0. */
+    expect(sim.ledger.threshold).toBe(2n);
+  });
+
+  it('a threshold above the signers seated once the seat is taken is refused, and nobody is seated', async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    const { id, c } = await invitationSetting(sim, C, 4n, [A, B], 43);
+
+    /* RED WHEN: seatInvited stops refusing a threshold above the seats it leaves. */
+    await expect(sim.seatInvited(id, sim.invited(C, c), false, 4n)).rejects.toThrow(ABOVE_THE_SEATS);
+    expect(sim.ledger.signerLeaves.size()).toBe(2n);
+    expect(sim.ledger.threshold).toBe(2n);
+    expect(sim.isOpen(id)).toBe(true);
+  });
+
+  it('an invitee cannot take the seat with a threshold other than the one the invitation fixed', async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    const set = await invitationSetting(sim, C, 3n, [A, B], 44);
+    /* RED WHEN: the invitation's proposal id does not bind the threshold it names. */
+    await expect(sim.seatInvited(set.id, sim.invited(C, set.c), false, 2n)).rejects.toThrow(NOT_THIS_WALLET);
+    await expect(sim.seatInvited(set.id, sim.invited(C, set.c), false, 0n)).rejects.toThrow(NOT_THIS_WALLET);
+
+    const kept = await invitation(sim, D, [A, B], 45);
+    await expect(sim.seatInvited(kept.id, sim.invited(D, kept.c), false, 3n)).rejects.toThrow(NOT_THIS_WALLET);
+    expect(sim.ledger.signerLeaves.size()).toBe(2n);
+    expect(sim.ledger.threshold).toBe(2n);
+  });
+});
+
 describe('a signer is added only by invitation', () => {
-  it('the account has no circuit that seats a leaf it is handed, and amendSigner only removes', async () => {
+  it('the account has no circuit that seats a leaf it is handed, and every removal is removeSignerAndSetThreshold', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const circuits = Object.keys(sim.contract.impureCircuits);
     expect(circuits).toContain('seatInvited');
-    expect(circuits).toContain('amendSigner');
+    /* RED WHEN: amendSigner is still a circuit of the account, so a removal can skip the combined removal's checks. */
+    expect(circuits).not.toContain('amendSigner');
+    expect(circuits).toContain('removeSignerAndSetThreshold');
     expect(Object.keys(pureCircuits)).not.toContain('signerAddPayload');
-    /* The generated circuit takes the call context, the leaf being removed and the proposal: nothing that could seat. */
-    const amend = sim.contract.impureCircuits.amendSigner as unknown as (...args: unknown[]) => Promise<unknown>;
-    await expect(amend({}, sim.leafOf(B), ZERO_32, false, false)).rejects.toThrow(/amendSigner: expected 3 arguments/);
+    /* The generated circuit takes the call context, the leaf being removed, the threshold and the proposal: nothing that could seat. */
+    const remove = sim.contract.impureCircuits.removeSignerAndSetThreshold as unknown as (...args: unknown[]) => Promise<unknown>;
+    await expect(remove({}, sim.leafOf(B), 0n, ZERO_32, false)).rejects.toThrow(/removeSignerAndSetThreshold: expected 4 arguments/);
   });
 });

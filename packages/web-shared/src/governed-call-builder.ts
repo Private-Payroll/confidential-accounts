@@ -67,6 +67,13 @@
  *                         the company, made from public data for a vault's
  *                         adoption and the pay-record key, and in the file the
  *                         signers approved for a recovery of the record anchor.
+ *   the deadline          for a raise only: the last chain time it may land at,
+ *                         `raiseBy`, never from the service's order. It is the
+ *                         time the proposal's signed record says it was written
+ *                         down plus a day, or for a recovery raised from the
+ *                         chain its own last time to be carried out. Past it
+ *                         by this device's clock the raise is refused before
+ *                         it is built (`RaiseTooLate`).
  *   the chain             the account's contract state and the ledger
  *                         parameters, both as one block saw them.
  *
@@ -132,12 +139,17 @@ export interface RunOnTheWire {
 export type GovernanceOnTheWire =
   /**
    * An invitation to seat whoever holds an address: the hiding commitment to
-   * the address (`inviteAddressOf`) and the rights the seat will carry. The
-   * invitee takes the seat from their own wallet once it is approved.
+   * the address (`inviteAddressOf`), the rights the seat will carry, and the
+   * threshold the account needs once the seat is taken, as digits, where none
+   * or 0 keeps the threshold in force. The invitee takes the seat from their own
+   * wallet once it is approved.
    */
-  | { readonly kind: 'add-signer'; readonly address: string; readonly scope: string }
-  /** A seated signer's leaf, taken off the account. */
-  | { readonly kind: 'remove-signer'; readonly leaf: string }
+  | { readonly kind: 'add-signer'; readonly address: string; readonly scope: string; readonly threshold?: string }
+  /**
+   * A seated signer's leaf, taken off the account, and the threshold the account needs once they are gone: a whole number
+   * as digits, where none or 0 keeps the threshold in force.
+   */
+  | { readonly kind: 'remove-signer'; readonly leaf: string; readonly threshold?: string }
   | { readonly kind: 'threshold'; readonly threshold: string }
   /** One vault's own approvals needed: the vault's address, and the number. */
   | { readonly kind: 'vault-threshold'; readonly vault: string; readonly threshold: string }
@@ -222,8 +234,14 @@ export type GovernedCallOrder =
      */
     readonly of?: { readonly governance: RoundChangeOnTheWire; readonly proposalSalt: string };
   }
-  /** Taking a seated signer's leaf off the account, on an approved removal. A seat is never carried out here: the invitee takes it. */
-  | { readonly circuit: 'amendSigner'; readonly leaf: string; readonly proposal: string; readonly proposalSalt: string; readonly removing: true }
+  /**
+   * Taking a seated signer's leaf off the account, on an approved removal, and setting the threshold to `threshold`, or
+   * keeping the one in force when it is "0". A seat is never carried out here: the invitee takes it.
+   */
+  | {
+    readonly circuit: 'removeSignerAndSetThreshold'; readonly leaf: string; readonly threshold: string;
+    readonly proposal: string; readonly proposalSalt: string; readonly removing: true;
+  }
   | { readonly circuit: 'setThreshold'; readonly threshold: string; readonly proposal: string; readonly proposalSalt: string }
   /** Carrying out an approved change of one vault's own approvals needed. */
   | {
@@ -302,6 +320,19 @@ export interface OpenedRound {
    * this device made it again from the company's records (`refuseWhatThisDeviceDidNotMake`).
    */
   readonly made?: MadeHere;
+  /**
+   * Opened to be withdrawn: the kind the proposal's sealed record names, so the person's own wallet can refuse a
+   * withdrawal of a kind other than the one shown, or of a kind it never withdraws.
+   */
+  readonly kind?: string;
+  /** Opened to be withdrawn, a signer's removal: the leaf it would take off, as its sealed record names it. */
+  readonly removes?: string;
+  /**
+   * For a raise, and for a withdrawal of a proposal written down: the last chain time, in whole seconds as digits,
+   * at which its raise may land (`raiseByOf`), from the time its signed record says it was written down. A raise
+   * carries it as the circuit's `deadline`, so every send of one record carries the one deadline.
+   */
+  readonly raiseBy?: string;
 }
 
 /** Each value, as the person reading a refusal would name it. */
@@ -316,7 +347,7 @@ const SAID: Readonly<Record<string, string>> = {
 };
 /** What not to do if the refusal comes back, for each call a device makes. */
 const IF_AGAIN: Readonly<Record<string, string>> = {
-  approve: 'do not approve it', propose: 'do not send it', amendSigner: 'do not remove this signer',
+  approve: 'do not approve it', propose: 'do not send it', removeSignerAndSetThreshold: 'do not remove this signer',
   setThreshold: 'do not make this change', adopt: 'do not adopt this vault', sealPayKey: 'do not seal this key',
   setVaultThreshold: 'do not make this change', cancel: 'do not withdraw it',
   setPolicy: 'do not set this policy', setPolicyBar: 'do not make this change',
@@ -385,9 +416,9 @@ export interface GovernedCallDeps {
     proposalIdOf(payload: Uint8Array, vault: Uint8Array, salt: Uint8Array): Uint8Array;
     /** A run's salt, `retrySaltOf(leg, fresh)`: asked for where a payroll run is raised, approved or charged. */
     retrySaltOf?(legRoot: Uint8Array, fresh: Uint8Array): Uint8Array;
-    signerInvitePayload(address: Uint8Array, scope: Uint8Array): Uint8Array;
+    signerInvitePayload(address: Uint8Array, scope: Uint8Array, threshold: bigint): Uint8Array;
     /** Present where a signer's removal is built; asked for only then. */
-    removeSignerPayload?(leaf: Uint8Array): Uint8Array;
+    removeAndSetThresholdPayload?(leaf: Uint8Array, threshold: bigint): Uint8Array;
     setThresholdPayload(threshold: bigint): Uint8Array;
     /** Present where a vault's own approvals needed are changed; asked for only then. */
     setVaultThresholdPayload?(vault: Uint8Array, threshold: bigint): Uint8Array;
@@ -438,8 +469,18 @@ export interface GovernedCallDeps {
     clearedMark?(): Uint8Array;
     /** The mark a run's hold carries once a payment or a change from it has landed (`markPaidFrom`). */
     paidFromMark?(): Uint8Array;
+    /** The entry the account records among its `movements` once the payment of one leaf has landed. */
+    paidMovementOf?(leaf: Uint8Array): Uint8Array;
     /** The key the account's count of signers removed is held under, among its proposals' holds. */
     removalCountKey?(): Uint8Array;
+    /** One seat's approval marker for one proposal in one account, as the account writes it into `approvals`. */
+    approvalNullifierOf?(sk: Uint8Array, account: Uint8Array, proposal: Uint8Array): Uint8Array;
+    /**
+     * One seat's withdraw secret for one proposal in one account, and the key made from it that a proposal's hold
+     * carries from its raise: the account lets only the seat whose secret makes that key withdraw a change to the company.
+     */
+    withdrawSecretOf?(sk: Uint8Array, account: Uint8Array, proposal: Uint8Array): Uint8Array;
+    withdrawKeyOf?(secret: Uint8Array): Uint8Array;
     /**
      * The approvals a run needs before a vault pays or charges it: the higher of its bar when raised
      * and the vault's bar now, plus one for every signer removed since it was raised. This is the
@@ -465,6 +506,8 @@ export interface GovernedCallDeps {
   /** The vault's own pure circuits, which a vault's first secret run is made again with. */
   readonly vaultPure?: VaultStartPure;
   readonly random?: (n: number) => Uint8Array;
+  /** This device's clock, in milliseconds; a raise past its `raiseBy` by it is refused before it is built. */
+  readonly now?: () => number;
 }
 
 /**
@@ -568,7 +611,7 @@ export function recordForOneCall(order: GovernedCallOrder, material: SignerMater
     });
   }
   const record = withNoInvitation({ ...signer, pinnedPath: null } as AccountPrivateState);
-  const salt = order.circuit === 'amendSigner' || order.circuit === 'setThreshold' || order.circuit === 'adopt'
+  const salt = order.circuit === 'removeSignerAndSetThreshold' || order.circuit === 'setThreshold' || order.circuit === 'adopt'
     || order.circuit === 'sealPayKey' || order.circuit === 'setVaultThreshold' || order.circuit === 'setPolicy'
     || order.circuit === 'setPolicyBar'
     ? bytesOf('proposal\'s salt', opened?.salt ?? order.proposalSalt) : null;
@@ -603,6 +646,28 @@ const thresholdOf = (value: string): bigint => {
   return t;
 };
 
+/**
+ * The threshold a removal sets, as the digits it travels as: a whole number, where 0 keeps the threshold in force. Whether
+ * the signers left can meet it is the chain's to refuse.
+ */
+const removalThresholdOf = (value: string): bigint => digitsOf('threshold', value);
+
+/** The largest number the account stores as a threshold (`Uint<64>`). */
+const MOST_A_THRESHOLD_CAN_BE = 2n ** 64n - 1n;
+
+/**
+ * What an invitation sets the threshold to once its seat is taken, as the digits it travels as: none or 0 keeps the
+ * threshold in force. The account binds it into the invitation's payload, so the invitee carries out the same number
+ * the signers approved. Refused above the largest number the account stores; whether the seats can meet it is the
+ * chain's to refuse when the seat is taken.
+ */
+const invitationThresholdOf = (value: string | undefined): bigint => {
+  if (value === undefined) return 0n;
+  const t = digitsOf('threshold', value);
+  if (t > MOST_A_THRESHOLD_CAN_BE) throw new Error('the threshold this invitation sets is larger than the account can store, so nothing was built.');
+  return t;
+};
+
 /** The approvals a change to a spending policy needs, refused unless it is a whole number of at least one. */
 const policyBarOf = (value: string): bigint => {
   const t = digitsOf('number of approvals a policy change needs', value);
@@ -610,12 +675,31 @@ const policyBarOf = (value: string): bigint => {
   return t;
 };
 
-/** The circuit's arguments, from the order and from nothing else. */
-export function argumentsFor(order: GovernedCallOrder): unknown[] {
+/**
+ * The circuit's arguments, from the order and, for a raise, the `raiseBy` the device read from the
+ * proposal's own record, which is the circuit's last argument, its `deadline`.
+ */
+export function argumentsFor(order: GovernedCallOrder, raiseBy?: string): unknown[] {
+  const parts = partsFor(order);
+  return order.circuit === 'propose' ? [...parts, deadlineOf(raiseBy)] : parts;
+}
+
+/** The last chain time a raise may land at, refused unless this device read it from the proposal's record. */
+const deadlineOf = (raiseBy: string | undefined): bigint => {
+  if (raiseBy === undefined) {
+    throw new Error('this proposal\'s record does not carry a signed time of writing, so the time the chain takes its raise by is '
+      + 'not known and it can never be raised. Nothing was built or sent. Write the change down again from a signer\'s device, '
+      + 'which signs its record, and raise that one.');
+  }
+  return digitsOf('time to send it by', raiseBy);
+};
+
+/** The circuit's arguments but a raise's deadline, from the order and from nothing else. */
+function partsFor(order: GovernedCallOrder): unknown[] {
   if (order.circuit === 'approve' || order.circuit === 'cancel') return [bytesOf('proposal\'s identity', order.proposal)];
-  if (order.circuit === 'amendSigner') {
+  if (order.circuit === 'removeSignerAndSetThreshold') {
     /* A removal marks the leaf's own slot vacant. */
-    return [bytesOf('signer\'s leaf', order.leaf), bytesOf('proposal\'s identity', order.proposal)];
+    return [bytesOf('signer\'s leaf', order.leaf), removalThresholdOf(order.threshold), bytesOf('proposal\'s identity', order.proposal)];
   }
   if (order.circuit === 'setThreshold') {
     return [thresholdOf(order.threshold), bytesOf('proposal\'s identity', order.proposal)];
@@ -659,12 +743,15 @@ export function argumentsFor(order: GovernedCallOrder): unknown[] {
   return [ZERO_32, bytesOf('payout root', r.root), payees, opensAt, closesAt, required, true, bytesOf('vault', r.vault)];
 }
 
-/** The contract's own payload for taking `leaf` off the account, refused by name where this device was not given the function. */
-const removalPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, leaf: string): Uint8Array => {
-  if (typeof deps.accountPure.removeSignerPayload !== 'function') {
+/**
+ * The contract's own payload for taking `leaf` off the account and setting the threshold to `threshold` (0 keeps the one in
+ * force), refused by name where this device was not given the function.
+ */
+const removalPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, leaf: string, threshold: bigint): Uint8Array => {
+  if (typeof deps.accountPure.removeAndSetThresholdPayload !== 'function') {
     throw new Error('this device was not given the account\'s function for removing a signer, so nothing was built. Reload the page to use the current build.');
   }
-  return deps.accountPure.removeSignerPayload(bytesOf('signer\'s leaf', leaf));
+  return deps.accountPure.removeAndSetThresholdPayload(bytesOf('signer\'s leaf', leaf), threshold);
 };
 
 /** The contract's own payload for adopting `vault`, refused by name where this device was not given the function. */
@@ -738,9 +825,10 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
     throw new Error('a change of the super admins is never raised, approved or counted on the company\'s account as a signers\' proposal, so nothing was built.');
   }
   if (g.kind === 'add-signer') {
-    return deps.accountPure.signerInvitePayload(bytesOf('invited address', g.address), bytesOf('seat\'s rights', g.scope));
+    return deps.accountPure.signerInvitePayload(
+      bytesOf('invited address', g.address), bytesOf('seat\'s rights', g.scope), invitationThresholdOf(g.threshold));
   }
-  if (g.kind === 'remove-signer') return removalPayloadOf(deps, g.leaf);
+  if (g.kind === 'remove-signer') return removalPayloadOf(deps, g.leaf, removalThresholdOf(g.threshold ?? '0'));
   if (g.kind === 'threshold') return deps.accountPure.setThresholdPayload(thresholdOf(g.threshold));
   if (g.kind === 'vault-threshold') return vaultThresholdPayloadOf(deps, g.vault, g.threshold);
   if (g.kind === 'adopt-vault') return adoptionPayloadOf(deps, g.vault);
@@ -846,7 +934,7 @@ const bandApprovalsMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, poli
 
 /** The arguments as the circuit is handed them, with the contract's own payload and no-vault in place. */
 const argumentsBuilt = (deps: Pick<GovernedCallDeps, 'accountPure'>, order: GovernedCallOrder): unknown[] => {
-  const args = argumentsFor(order);
+  const args = partsFor(order);
   if (order.circuit !== 'propose' || raisesARun(order)) return args;
   return args.map((a) => (a === GOVERNANCE_PAYLOAD ? governancePayloadOf(deps, raisedChange(order))
     : a === NO_VAULT ? deps.accountPure.noVault() : a));
@@ -854,7 +942,7 @@ const argumentsBuilt = (deps: Pick<GovernedCallDeps, 'accountPure'>, order: Gove
 
 /** What each call is called in a sentence a person reads. */
 const CALLED: Readonly<Record<string, string>> = {
-  approve: 'approval', propose: 'proposal', amendSigner: 'removal', setThreshold: 'threshold change',
+  approve: 'approval', propose: 'proposal', removeSignerAndSetThreshold: 'removal', setThreshold: 'threshold change',
   adopt: 'adoption of the vault', sealPayKey: 'sealing of the pay-record key',
   setVaultThreshold: 'change of a vault\'s approvals needed', cancel: 'withdrawal',
   setPolicy: 'spending policy', setPolicyBar: 'change of the approvals a policy change needs',
@@ -902,12 +990,13 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
   if (order.circuit === 'approve') {
     made = P.proposalIdOf(governancePayloadOf(deps, order.of!.governance), P.noVault(), bytesOf('proposal\'s salt', order.of!.proposalSalt));
   } else if (order.circuit === 'propose' && raisesARun(order)) {
-    const [, root, payees, opensAt, closesAt, required, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
+    const [, root, payees, opensAt, closesAt, required, , vault] = partsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
     made = P.proposalIdOf(P.runPayload(root, payees, opensAt, closesAt, required), vault, bytesOf('proposal\'s salt', order.half.proposalSalt));
   } else if (order.circuit === 'propose') {
     made = P.proposalIdOf(governancePayloadOf(deps, raisedChange(order)), P.noVault(), bytesOf('proposal\'s salt', order.half.proposalSalt));
-  } else if (order.circuit === 'amendSigner') {
-    made = P.proposalIdOf(removalPayloadOf(deps, order.leaf), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
+  } else if (order.circuit === 'removeSignerAndSetThreshold') {
+    made = P.proposalIdOf(removalPayloadOf(deps, order.leaf, removalThresholdOf(order.threshold)), P.noVault(),
+      bytesOf('proposal\'s salt', order.proposalSalt));
   } else if (order.circuit === 'adopt') {
     made = P.proposalIdOf(adoptionPayloadOf(deps, order.vault), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
   } else if (order.circuit === 'sealPayKey') {
@@ -993,8 +1082,11 @@ export function refuseWhatThisDeviceDidNotOpen(
   }
   /* A withdrawal names only the proposal, and the proposal is the one this device opened. */
   if (order.circuit === 'cancel') return;
-  if (order.circuit === 'amendSigner') {
+  if (order.circuit === 'removeSignerAndSetThreshold') {
     if (g?.kind !== 'remove-signer' || order.removing !== true || !same(order.leaf, g.leaf)) refuse('leaf');
+    /* The threshold carried out is the one the removal was raised with: none or 0 keeps the threshold in force. */
+    const raised = g?.kind === 'remove-signer' ? g.threshold ?? '0' : '0';
+    if (removalThresholdOf(order.threshold) !== removalThresholdOf(raised)) refuse('threshold');
     return;
   }
   if (order.circuit === 'setThreshold') {
@@ -1036,7 +1128,7 @@ export function refuseWhatThisDeviceDidNotOpen(
   }
   if (raisesARun(order)) {
     if (g !== undefined) refuse('change');
-    const [, root, payees, opensAt, closesAt, required, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
+    const [, root, payees, opensAt, closesAt, required, , vault] = partsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
     if (!same(hexOf(P.runPayload(root, payees, opensAt, closesAt, required)), opened.digest)) refuse('run');
     if (!same(hexOf(vault), opened.vault)) refuse('run vault');
   } else if (g === undefined || !sameGovernance(raisedChange(order), g)) {
@@ -1053,6 +1145,22 @@ export function refuseWhatThisDeviceDidNotOpen(
 }
 
 /** Overwrites the signer's three in a record that is finished with. */
+/** A raise refused before it is built: by this device's clock the chain no longer takes it, and never will. */
+export class RaiseTooLate extends Error {
+  readonly nothingWasSent = true;
+  constructor(readonly raiseBy: string) {
+    super(`the chain takes this proposal's raise only before ${new Date(Number(raiseBy) * 1000).toISOString()}, and by this `
+      + 'device\'s clock that time has passed, so it can never be raised. Nothing was built or sent. Withdraw it if it is '
+      + 'written down, and raise it again.');
+    this.name = 'RaiseTooLate';
+  }
+}
+
+/** Refuses a raise once this device's clock has reached the deadline it would carry. */
+const refuseARaisePastItsTime = (deps: Pick<GovernedCallDeps, 'now'>, raiseBy: string): void => {
+  if ((deps.now ?? Date.now)() >= Number(raiseBy) * 1000) throw new RaiseTooLate(raiseBy);
+};
+
 const wipe = (record: AccountPrivateState): void => {
   for (const field of ['secretKey', 'blinding', 'scope'] as const) {
     const value = (record as unknown as Record<string, unknown>)[field];
@@ -1086,7 +1194,7 @@ export async function buildGovernedCall(
   if (!ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS.includes(circuit) || CIRCUITS_THAT_READ_NO_WITNESS.has(circuit)) {
     throw new Error(`a device here raises, approves and withdraws proposals, seats signers, changes the company's or a vault's threshold, adopts a vault, seals the pay-record key and sets a vault's spending policy and the approvals a policy change needs, and "${String(circuit)}" is none of those. Nothing was built.`);
   }
-  const args = argumentsBuilt(deps, input.order);
+  const parts = argumentsBuilt(deps, input.order);
   /* What this device opened first, so a value the service handed over that is not in the company's records is named. */
   refuseWhatThisDeviceDidNotOpen(deps, input.order, input.opened);
   /* An approval of a run or a vault's first secret is proved only for what this device made again itself. */
@@ -1110,6 +1218,9 @@ export async function buildGovernedCall(
     }, input.opened, view, raisingARun ? 'raise' : 'approve');
   }
   refuseARaiseThatIsNotTheRecordedOne(deps, input.order);
+  /* A raise's deadline is the one read from its record; past it by this device's clock, nothing is built. */
+  const args = circuit === 'propose' ? [...parts, deadlineOf(input.opened.raiseBy)] : parts;
+  if (circuit === 'propose') refuseARaisePastItsTime(deps, input.opened.raiseBy!);
   /*
    * Frozen, so a circuit that tried to write into the record it was handed
    * fails there rather than changing what the next check compares.
@@ -1154,6 +1265,8 @@ export interface InvitedSeatInput {
   readonly proposalSalt: Hex;
   /** Whether the seat goes into a slot a removal left vacant. */
   readonly intoVacatedSlot: boolean;
+  /** The threshold the invitation sets once the seat is taken, as digits; "0" keeps the one in force. */
+  readonly newThreshold: string;
   readonly chain: AccountCallChain;
 }
 
@@ -1161,7 +1274,8 @@ export interface InvitedSeatInput {
  * **THE INVITEE'S OWN CALL THAT TAKES THE SEAT AN INVITATION BY ADDRESS OFFERED** (`seatInvited`), built and proved
  * where it is called, which is only ever the invitee's own wallet: the coin secret key it proves the address with is
  * a witness to the proof and is in nothing returned. The account refuses it unless the proposal invites the address
- * this key makes, with the rights this seat carries, and the proposal is approved at the seat bar.
+ * this key makes, with the rights this seat carries and the threshold it sets, and the proposal is approved at the seat
+ * bar; it refuses a threshold above the signers seated once the seat is taken.
  */
 export async function buildSeatInvitedCall(deps: GovernedCallDeps, input: InvitedSeatInput): Promise<{ proven: Uint8Array }> {
   const account = String(input.account).toLowerCase();
@@ -1187,7 +1301,7 @@ export async function buildSeatInvitedCall(deps: GovernedCallDeps, input: Invite
         initialZswapChainState: new L.ZswapChainState(),
         ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
         initialPrivateState: record,
-        args: [bytesOf('proposal', String(input.proposal).toLowerCase()), input.intoVacatedSlot],
+        args: [bytesOf('proposal', String(input.proposal).toLowerCase()), input.intoVacatedSlot, invitationThresholdOf(input.newThreshold)],
       }, keys.encryptionPublicKey).catch((e: unknown) => { throw theWitnessSaid('seatInvited', e); });
       const proven = await deps.prove(built.private.unprovenTx, 'seatInvited');
       return { proven: proven.serialize() };
@@ -1591,6 +1705,113 @@ export function anchorsLandedIn(
 }
 
 /**
+ * Where the account's map of open proposals sits among the fields of its public state: the slot the compiled account's
+ * own reader of `openProposals` reads, which a test asks of that reader for every slot.
+ */
+export const OPEN_PROPOSALS_FIELD = 2;
+
+/**
+ * One call to the account, as its transaction carries it: the circuit called,
+ * and the proposals, as 64 hex digits, it raised (`opened`: found not open by
+ * its own check, then written into the account's open proposals) and took out
+ * of them (`closed`). A call that writes over a proposal already open, as
+ * charging a run to its period writes its cleared mark, raises nothing.
+ */
+export interface CallOnTheAccount {
+  readonly entryPoint: string;
+  readonly opened: ReadonlySet<string>;
+  readonly closed: ReadonlySet<string>;
+}
+
+type AlignedHere = { readonly value?: unknown };
+/* The bytes of an aligned value of one atom, or null for any other shape. The ledger drops an atom's trailing zero bytes. */
+const atomOf = (v: AlignedHere | undefined): Uint8Array | null => {
+  const parts = v?.value;
+  return Array.isArray(parts) && parts.length === 1 && parts[0] instanceof Uint8Array ? parts[0] : null;
+};
+/* Whether `op` indexes the account's open proposals: to write them (`pushPath`), or to read them. */
+const isOpenProposalsField = (op: unknown, writing: boolean): boolean => {
+  const idx = (op as { idx?: { pushPath?: unknown; path?: unknown } } | null)?.idx;
+  if (idx === undefined || idx.pushPath !== writing || !Array.isArray(idx.path) || idx.path.length !== 1) return false;
+  const key = idx.path[0] as { tag?: unknown; value?: AlignedHere };
+  const field = key.tag === 'value' ? atomOf(key.value) : null;
+  return field !== null && field.length <= 1 && (field[0] ?? 0) === OPEN_PROPOSALS_FIELD;
+};
+const proposalKeyOf = (op: unknown): string | null => {
+  const push = (op as { push?: { storage?: unknown; value?: { tag?: unknown; content?: AlignedHere } } } | null)?.push;
+  if (push === undefined || push.storage !== false || push.value?.tag !== 'cell') return null;
+  const bytes = atomOf(push.value.content);
+  if (bytes === null || bytes.length > 32) return null;
+  const whole = new Uint8Array(32);
+  whole.set(bytes);
+  return hexOf(whole);
+};
+const opIs = (op: unknown, name: string): boolean => typeof op === 'object' && op !== null && name in op;
+/* The answer a call's `member` check took from the chain, as the transaction carries it: true, false, or null when not one. */
+const memberAnswerOf = (op: unknown): boolean | null => {
+  const popeq = (op as { popeq?: { result?: AlignedHere } } | null)?.popeq;
+  const bytes = popeq === undefined ? null : atomOf(popeq.result);
+  return bytes === null || bytes.length > 1 ? null : (bytes[0] ?? 0) === 1;
+};
+
+/**
+ * **THE CALLS TO THE ACCOUNT IN ONE TRANSACTION, READ FROM ITS BYTES** as the
+ * chain holds them (signed, proved, bound), in the order its segments run.
+ * Each call's operations, guaranteed and fallible, are what the chain ran on the
+ * account's state, so a proposal's identity is read where a call indexes the
+ * account's open proposals and then pushes that identity: removed (`rem`)
+ * closes it; a value pushed and inserted (`ins`) raises it only where the same
+ * call first checked that identity's membership and the chain answered that it
+ * was not open (`member`, then the answer carried by `popeq`), as `propose`
+ * does. Calls to any other contract, and deploys, are left out. Refused when
+ * the bytes are not such a transaction or its parts cannot be read.
+ */
+export function callsOnTheAccountIn(
+  deps: Partial<Pick<GovernedCallDeps, 'ledger'>>, raw: Uint8Array, account: string,
+): CallOnTheAccount[] {
+  const here = String(account).toLowerCase().replace(/^0x/u, '');
+  if (deps.ledger === undefined) throw new Error('this device was not given the ledger, so which call raised or closed a proposal was not read. Reload the page');
+  let tx: { intents?: unknown };
+  try {
+    tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'binding', raw);
+  } catch (cause) {
+    throw new Error('a transaction in the account\'s history could not be read, so which call raised or closed a proposal is not known. Read again', { cause });
+  }
+  if (!(tx.intents instanceof Map)) throw new Error('a transaction in the account\'s history holds no parts this device can read. Read again');
+  const out: CallOnTheAccount[] = [];
+  for (const [, intent] of [...tx.intents].sort(([a], [b]) => Number(a) - Number(b))) {
+    const actions = (intent as { actions?: unknown } | null)?.actions;
+    if (!Array.isArray(actions)) throw new Error('a transaction in the account\'s history holds a part whose calls this device cannot read. Read again');
+    for (const a of actions as Array<Record<string, unknown>>) {
+      if (!('entryPoint' in a) || String(a['address'] ?? '').toLowerCase() !== here) continue;
+      const entry = a['entryPoint'];
+      const entryPoint = entry instanceof Uint8Array ? new TextDecoder().decode(entry) : String(entry);
+      const opened = new Set<string>();
+      const closed = new Set<string>();
+      /* The identities this call found not open, by its own membership check; the guaranteed part runs before the fallible. */
+      const notOpen = new Set<string>();
+      for (const part of [a['guaranteedTranscript'], a['fallibleTranscript']]) {
+        const program = (part as { program?: unknown } | undefined)?.program;
+        if (part === undefined) continue;
+        if (!Array.isArray(program)) throw new Error('a call in the account\'s history carries operations this device cannot read. Read again');
+        program.forEach((op, i) => {
+          const reading = isOpenProposalsField(op, false);
+          if (!reading && !isOpenProposalsField(op, true)) return;
+          const id = proposalKeyOf(program[i + 1]);
+          if (id === null) return;
+          if (reading) {
+            if (program[i + 2] === 'member' && memberAnswerOf(program[i + 3]) === false) notOpen.add(id);
+          } else if (opIs(program[i + 2], 'rem')) closed.add(id);
+          else if (opIs(program[i + 2], 'push') && opIs(program[i + 3], 'ins') && notOpen.has(id)) opened.add(id);
+        });
+      }
+      out.push({ entryPoint, opened, closed });
+    }
+  }
+  return out;
+}
+
+/**
  * **WHERE ONE PROPOSAL STANDS ON THE CHAIN**, as the account's history at the
  * indexer the person's own wallet names shows it:
  *
@@ -1601,25 +1822,52 @@ export function anchorsLandedIn(
  *     by the service, sent and not yet seen, or opened and closed within one
  *     block, which no block's state shows: the chain cannot tell them apart.
  *     An identity held again after it closed is read from its latest time held;
- *   - `approvals`: the account's count of approvals for it now, 0 when not held;
+ *   - `approvals`: the account's count of approvals for it now; once closed,
+ *     its count in the last state that held it, so an approval given in the
+ *     very block that closed it is not counted - shown, never a count it is
+ *     approved or carried out at, which it no longer can be; 0 when never held;
  *   - `raisedAt`: the time, in milliseconds, the author of the first block of
  *     that time whose state held it set for that block;
- *   - `txRef`: the transaction of the one call to `propose` in that block whose
- *     transaction succeeded in full - absent when the block holds more than
- *     one, since a state is a whole block's;
- *   - `closedBy`: the circuits called by every call of a transaction that
- *     succeeded in full in the first block whose state no longer held it -
- *     the call that closed it among them, beside any other proposal's calls of
- *     that block; a failed call closes nothing, so none is named;
+ *   - `txRef`: the transaction of the call, in that block and in a
+ *     transaction that succeeded in full, that raised it - found it not open
+ *     and wrote it into the account's open proposals (`callsOnTheAccountIn`),
+ *     never a call writing over it once open - read from the call's own
+ *     operations in its transaction's bytes, so two raised in one block each
+ *     name their own;
+ *     the first such call where one block holds more. A step whose bytes the
+ *     history does not carry is read as before: the one call to `propose` of
+ *     the block's unread calls, absent where they hold more than one, since
+ *     every step of a block carries the state after the whole block;
+ *   - `closedBy`: the circuit of the call, in a transaction that succeeded in
+ *     full in the first block whose state no longer held it, that took it out
+ *     of the account's open proposals, read the same way - never another
+ *     proposal's call of that block. Where no read call of that block took it
+ *     out, the circuits of every unread call of that block; a failed call
+ *     closes nothing, so none is named. Where every call of that block was read
+ *     and none took it out, the read is refused, never answered with no call;
  *   - `failedCalls`: while it is held, the circuits called by every call whose
  *     transaction landed without succeeding in full in a block since it was
  *     raised - a call in its transaction's fallible section that the account
  *     refused, its fee paid and nothing of it written. A state names no
  *     proposal a call was for, so a failed call is any proposal's of those
  *     blocks;
- *   - `needed`: while it is held, the approvals the account recorded it as
- *     needing when it was raised (its hold) - for a change to the company, the
- *     account's threshold then. Absent where the state holds no hold for it.
+ *   - `needed`: the approvals the account recorded it as needing when it was
+ *     raised (its hold) - for a change to the company, the account's threshold
+ *     then - read from the latest state while held and from the last state
+ *     that held it once closed. Absent where that state holds no hold for it;
+ *   - `opensAt`: while it is held, for a run, the time in seconds its window
+ *     opens, as the account holds it (`runWindow`); absent for a governance
+ *     proposal, which has no window;
+ *   - `approvedHere`: asked with a seat, whether the account's latest state
+ *     holds that seat's approval marker for it (`approvalNullifierOf`), so the
+ *     seat has approved it or raised it counted. Absent when no seat was given;
+ *   - `raisedHere`: asked with a seat, while it is held, whether its hold in the
+ *     latest state carries the withdraw key that seat makes for it
+ *     (`withdrawKeyOf(withdrawSecretOf(...))`), the key its raise wrote: so that
+ *     seat raised it, and only that seat may withdraw a change to the company.
+ *     Absent when no seat was given, once it is no longer held, where the
+ *     state holds no withdraw key for it, and where this device was not given
+ *     the account's withdraw derivation.
  */
 export interface RoundOnChain {
   readonly held: 'open' | 'cleared' | 'closed' | 'never';
@@ -1630,84 +1878,200 @@ export interface RoundOnChain {
   readonly failedCalls?: readonly string[];
   /** The approvals its hold says it needed when it was raised; the account carries it out only at least at this many. */
   readonly needed?: number;
+  /** A run's: the time, in seconds, from which the account lets it be paid; before it, any signer may still withdraw it. */
+  readonly opensAt?: number;
   /**
    * Open, and a signer was removed or replaced since it was raised: the account's count of removals is no longer the
-   * one its hold took at the raise, so the account will never carry it out (`requireApproved`). It is raised again.
+   * one its hold took at the raise. A change to the company is then never carried out (`requireApproved`) and is raised
+   * again; a run still is, at one more approval for each removal (`removals`).
    */
   readonly outrun?: true;
+  /**
+   * How many signers were removed or replaced since it was raised, when any were: a run is charged or paid only at its
+   * hold's `needed` (or its vault's bar now, if higher) plus this many (`requireApprovedForVault`).
+   */
+  readonly removals?: number;
+  /** Asked with a seat: the account's latest state holds that seat's approval marker for it. The account then refuses the seat's approve. */
+  readonly approvedHere?: boolean;
+  /** Asked with a seat, while held: its hold carries the withdraw key that seat makes, so that seat raised it. */
+  readonly raisedHere?: boolean;
 }
 
 /**
  * **WHERE EACH PROPOSAL ASKED ABOUT STANDS, FROM THE ACCOUNT'S HISTORY**: every
- * block's state read once with the account's own ledger reader, oldest first.
- * `chainIds` are the proposals' identities on chain, as 64 hex digits.
+ * block's state read once with the account's own ledger reader, oldest first,
+ * from the last step of that block - the state after the whole block, which
+ * the indexer gives every step of the block alike. Which call raised or closed
+ * a proposal is read from each transaction's bytes (`raw`), a transaction read
+ * once however many of its calls the history lists (`callsOnTheAccountIn`):
+ * only the calls to `account` count. `chainIds` are the proposals' identities
+ * on chain, as 64 hex digits. With `seat`, each also says whether that seat's
+ * approval marker is in the latest state, and, while held, whether that seat
+ * raised it, both computed with the account's own derivations over
+ * `seat.account`. Refused when a transaction's bytes cannot be read, or a step
+ * carries them and no `account` was given.
  */
 export function roundsOnChainIn(
-  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'> & Partial<Pick<GovernedCallDeps, 'ledger'>>,
   steps: ReadonlyArray<{
     readonly kind: string; readonly transaction: string; readonly state: Uint8Array; readonly entryPoint?: string;
-    readonly block: { readonly height: number; readonly at: number }; readonly succeeded: boolean;
+    readonly block: { readonly height: number; readonly at: number }; readonly succeeded: boolean; readonly raw?: Uint8Array;
   }>,
   chainIds: readonly string[],
+  seat?: { readonly account: string; readonly signingSecret: string },
+  account?: string,
 ): ReadonlyMap<string, RoundOnChain> {
   const cleared = deps.accountPure.clearedMark;
   if (deps.accountLedger === undefined || typeof cleared !== 'function') {
     throw new Error('this device was not given the account\'s reader, so where its proposals stand on the chain was not read. Reload the page');
   }
+  const markerOf = seat === undefined ? undefined : approvalMarkerOf(deps, seat);
+  const withdrawKeyHere = seat === undefined ? undefined : withdrawKeyMadeBy(deps, seat);
   type View = {
+    approvals: { member(marker: Uint8Array): boolean };
     openProposals: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): Uint8Array };
     approvalCounts: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): bigint };
-    proposalHolds?: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): { readonly removals: bigint; readonly needed?: bigint } };
+    proposalHolds?: {
+      member(id: Uint8Array): boolean;
+      lookup(id: Uint8Array): { readonly removals: bigint; readonly needed?: bigint; readonly withdrawKey?: Uint8Array };
+    };
+    runWindow?: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): { readonly opensAt: bigint } };
   };
   /* The account's own count of signers removed, where this device was given where it keeps it. */
   const removalKey = deps.accountPure.removalCountKey?.();
   const removalsIn = (v: View, id: Uint8Array): bigint | null =>
     (v.proposalHolds !== undefined && v.proposalHolds.member(id) ? BigInt(v.proposalHolds.lookup(id).removals) : null);
   const viewOf = (state: Uint8Array) => deps.accountLedger!((deps.runtimeState.deserialize(state) as { data: unknown }).data) as View;
-  /* One state per block: every step of a block shows the state after the whole block. */
-  const blocks: Array<{ readonly at: number; readonly steps: typeof steps[number][]; readonly view: View }> = [];
+  /*
+   * One state per block: the indexer gives every step of a block the state after the whole block, so a block is read
+   * once, from its last step, and a state never says which of a block's calls moved a proposal. The calls' own
+   * operations, in their transactions' bytes, do.
+   */
+  const blocks: Array<{ readonly at: number; readonly steps: typeof steps[number][] }> = [];
   for (const step of steps) {
     const last = blocks[blocks.length - 1];
     if (last !== undefined && last.steps[0]!.block.height === step.block.height) last.steps.push(step);
-    else blocks.push({ at: step.block.at, steps: [step], view: viewOf(step.state) });
+    else blocks.push({ at: step.block.at, steps: [step] });
   }
+  const views = blocks.map((b) => viewOf(b.steps[b.steps.length - 1]!.state));
   const callsIn = (b: (typeof blocks)[number]) => b.steps.filter((x) => x.kind === 'call');
+  type Call = { readonly entryPoint: string; readonly transaction: string; readonly opened?: ReadonlySet<string>; readonly closed?: ReadonlySet<string> };
+  /* The calls of a block's transactions that succeeded in full: each transaction read once, its calls to the account alone. */
+  const succeededIn = (b: (typeof blocks)[number]): Call[] => {
+    const read = new Set<string>();
+    return callsIn(b).filter((x) => x.succeeded).flatMap((x): Call[] => {
+      if (x.raw === undefined) return [{ entryPoint: x.entryPoint ?? '', transaction: x.transaction }];
+      if (read.has(x.transaction)) return [];
+      read.add(x.transaction);
+      if (account === undefined) throw new Error('which call raised or closed a proposal was not read: this device was not told whose calls to read. Reload the page');
+      return callsOnTheAccountIn(deps, x.raw, account).map((c) => ({ ...c, transaction: x.transaction }));
+    });
+  };
+  const bySucceeded = new Map<(typeof blocks)[number], Call[]>();
+  const succeeded = (b: (typeof blocks)[number]): Call[] => {
+    const known = bySucceeded.get(b);
+    if (known !== undefined) return known;
+    const calls = succeededIn(b);
+    bySucceeded.set(b, calls);
+    return calls;
+  };
+  const latest = views[views.length - 1];
   const out = new Map<string, RoundOnChain>();
   for (const asked of chainIds) {
     const hex = String(asked).toLowerCase();
     if (!HEX64.test(hex)) throw new Error('a proposal was asked about by an identity that is not thirty-two bytes');
     const id = bytesOf('proposal', hex);
+    const mine = markerOf === undefined ? {} : { approvedHere: latest !== undefined && latest.approvals.member(markerOf(id)) };
     let first = -1;
     let gone = -1;
     /* The latest time it was held: an identity proposed again after it closed is read from that second time on. */
-    blocks.forEach((b, i) => {
-      const held = b.view.openProposals.member(id);
+    views.forEach((v, i) => {
+      const held = v.openProposals.member(id);
       if (held && (first < 0 || gone >= 0)) { first = i; gone = -1; }
       if (!held && first >= 0 && gone < 0) gone = i;
     });
-    if (first < 0) { out.set(hex, { held: 'never', approvals: 0 }); continue; }
+    if (first < 0) { out.set(hex, { held: 'never', approvals: 0, ...mine }); continue; }
     const raised = blocks[first]!;
-    const proposes = callsIn(raised).filter((x) => x.entryPoint === 'propose' && x.succeeded);
-    const base = { raisedAt: raised.at, ...(proposes.length === 1 ? { txRef: proposes[0]!.transaction } : {}) };
+    const raisedBy = succeeded(raised);
+    const opener = raisedBy.find((c) => c.opened?.has(hex));
+    const proposes = raisedBy.filter((c) => c.opened === undefined && c.entryPoint === 'propose');
+    const txRef = opener?.transaction ?? (proposes.length === 1 ? proposes[0]!.transaction : undefined);
+    const base = { raisedAt: raised.at, ...(txRef === undefined ? {} : { txRef }) };
+    /* Held: the latest state. Closed: the last state that held it, the one before the block that closed it. */
+    const now = views[gone >= 0 ? gone - 1 : views.length - 1]!;
+    const approvals = now.approvalCounts.member(id) ? Number(now.approvalCounts.lookup(id)) : 0;
+    const bar = now.proposalHolds !== undefined && now.proposalHolds.member(id) ? now.proposalHolds.lookup(id).needed : undefined;
+    const needed = bar === undefined || bar === null ? undefined : Number(bar);
+    const neededRead = needed === undefined || !Number.isSafeInteger(needed) ? {} : { needed };
     if (gone >= 0) {
-      const closing = callsIn(blocks[gone]!).filter((x) => x.succeeded);
-      out.set(hex, { held: 'closed', approvals: 0, ...base, closedBy: [...new Set(closing.map((x) => x.entryPoint ?? ''))] });
+      const closing = succeeded(blocks[gone]!);
+      const closers = closing.filter((c) => c.closed?.has(hex));
+      const named = closers.length > 0 ? closers : closing.filter((c) => c.closed === undefined);
+      /* Every call of that block read from its bytes and none took it out: the history and its transactions disagree. */
+      if (named.length === 0 && callsIn(blocks[gone]!).every((x) => x.raw !== undefined)) {
+        throw new Error('where a proposal stands was not read: the account\'s history shows it closed in a block where no call read '
+          + 'from that block\'s transactions closed it, so how it closed is not known. Read again; if it happens again, the indexer '
+          + 'your wallet names is serving a history its transactions do not explain');
+      }
+      out.set(hex, { held: 'closed', approvals, ...neededRead, ...base, closedBy: [...new Set(named.map((c) => c.entryPoint))], ...mine });
       continue;
     }
-    const now = blocks[blocks.length - 1]!.view;
-    const approvals = now.approvalCounts.member(id) ? Number(now.approvalCounts.lookup(id)) : 0;
     const failedCalls = blocks.slice(first).flatMap(callsIn).filter((x) => !x.succeeded).map((x) => x.entryPoint ?? '');
     const atRaise = removalKey === undefined ? null : removalsIn(now, id);
-    const outrun = atRaise !== null && removalKey !== undefined && atRaise !== (removalsIn(now, removalKey) ?? 0n);
-    const held = now.proposalHolds !== undefined && now.proposalHolds.member(id) ? now.proposalHolds.lookup(id).needed : undefined;
-    const needed = held === undefined || held === null ? undefined : Number(held);
+    const removalsNow = removalKey === undefined ? null : (removalsIn(now, removalKey) ?? 0n);
+    const outrun = atRaise !== null && removalsNow !== null && atRaise !== removalsNow;
+    const since = outrun && removalsNow! > atRaise! ? Number(removalsNow! - atRaise!) : 0;
+    const window = now.runWindow !== undefined && now.runWindow.member(id) ? Number(now.runWindow.lookup(id).opensAt) : undefined;
+    const heldKey = now.proposalHolds !== undefined && now.proposalHolds.member(id) ? now.proposalHolds.lookup(id).withdrawKey : undefined;
+    /* A hold read with no withdraw key says nothing of who raised it: absent, never read as another seat's. */
+    const raisedHere = withdrawKeyHere === undefined || !(heldKey instanceof Uint8Array) ? {}
+      : { raisedHere: hexOf(heldKey) === hexOf(withdrawKeyHere(id)) };
     out.set(hex, {
       held: hexOf(now.openProposals.lookup(id)) === hexOf(cleared()) ? 'cleared' : 'open', approvals, ...base,
-      ...(failedCalls.length === 0 ? {} : { failedCalls }), ...(needed === undefined || !Number.isSafeInteger(needed) ? {} : { needed }),
-      ...(outrun ? { outrun: true as const } : {}),
+      ...(failedCalls.length === 0 ? {} : { failedCalls }), ...neededRead,
+      ...(window === undefined || !Number.isSafeInteger(window) ? {} : { opensAt: window }),
+      ...(outrun ? { outrun: true as const } : {}), ...(since > 0 && Number.isSafeInteger(since) ? { removals: since } : {}), ...mine,
+      ...raisedHere,
     });
   }
   return out;
+}
+
+/**
+ * **ONE SEAT'S APPROVAL MARKER IN ONE ACCOUNT**, made with the account's own derivation (`approvalNullifierOf`), the
+ * value the account writes into `approvals` when that seat approves a proposal or raises it counted. Only the holder of
+ * the signing secret can make it. Refused, saying what resolves it, when this build of the account has no derivation.
+ */
+export function approvalMarkerOf(
+  deps: Pick<GovernedCallDeps, 'accountPure'>, seat: { readonly account: string; readonly signingSecret: string },
+): (proposal: Uint8Array) => Uint8Array {
+  const derive = deps.accountPure.approvalNullifierOf;
+  if (typeof derive !== 'function') {
+    throw new Error('this device was not given the account\'s function for an approval, so whether your approval is already counted was not read. Reload the page');
+  }
+  const account = String(seat.account).toLowerCase();
+  if (!HEX64.test(account)) throw new Error('whether your approval is already counted was asked about an account this device cannot name');
+  const a = bytesOf('account', account);
+  const sk = bytesOf('signing secret', String(seat.signingSecret).toLowerCase());
+  return (proposal) => derive.call(deps.accountPure, sk, a, proposal);
+}
+
+/**
+ * **THE WITHDRAW KEY ONE SEAT MAKES FOR A PROPOSAL IN ONE ACCOUNT**, with the account's own derivations
+ * (`withdrawSecretOf`, then `withdrawKeyOf`): the key the account writes into a proposal's hold when that seat raises
+ * it. Only the holder of the signing secret can make it. Undefined where this device was not given the derivations, so
+ * whether the seat raised a proposal is then not said, never guessed.
+ */
+function withdrawKeyMadeBy(
+  deps: Pick<GovernedCallDeps, 'accountPure'>, seat: { readonly account: string; readonly signingSecret: string },
+): ((proposal: Uint8Array) => Uint8Array) | undefined {
+  const { withdrawSecretOf, withdrawKeyOf } = deps.accountPure;
+  if (typeof withdrawSecretOf !== 'function' || typeof withdrawKeyOf !== 'function') return undefined;
+  const account = String(seat.account).toLowerCase();
+  if (!HEX64.test(account)) throw new Error('who raised a proposal was asked about an account this device cannot name');
+  const a = bytesOf('account', account);
+  const sk = bytesOf('signing secret', String(seat.signingSecret).toLowerCase());
+  return (proposal) => withdrawKeyOf.call(deps.accountPure, withdrawSecretOf.call(deps.accountPure, sk, a, proposal));
 }
 
 /**
@@ -1716,7 +2080,7 @@ export function roundsOnChainIn(
  * source by every-circuit-that-closes-a-proposal-is-known.test.ts.
  */
 export const PROPOSAL_CLOSING_CIRCUITS: readonly string[] = Object.freeze([
-  'adopt', 'amendSigner', 'approveVaultChange', 'cancel', 'closeExpiredRun', 'recoverAnchor', 'removeSignerAndSetThreshold',
+  'adopt', 'approveVaultChange', 'cancel', 'closeExpiredRun', 'recoverAnchor', 'removeSignerAndSetThreshold',
   'reseatSigner', 'retireVault', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold',
 ]);
 
@@ -1859,6 +2223,39 @@ export function vouchingRunsIn(
   }
   return [...last].filter(([, l]) => l.vouches).map(([chainId, l]) => ({ chainId, height: l.height, at: l.at }))
     .sort((a, b) => a.height - b.height);
+}
+
+/**
+ * **EVERY RUN OPEN NOW**, by its identity on the chain, with the signers removed or replaced since it was raised (0 for
+ * one no removal has outrun): each needs one approval more for each (`runApprovalsNeeded`), and one more for the next. Read from the newest state of the
+ * account's history at the indexer the person's own wallet names, never from a list the service or the records give,
+ * so a run nobody listed is still counted. A run is an open proposal the account keeps a window for (`runWindow`).
+ * Which vault it pays from is sealed in its record and is not read here.
+ */
+export function runsOutrunIn(
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  steps: ReadonlyArray<{ readonly state: Uint8Array }>,
+): Record<string, number> {
+  const removalKey = deps.accountPure.removalCountKey?.();
+  if (deps.accountLedger === undefined || removalKey === undefined) {
+    throw new Error('this device was not given the account\'s reader, so the runs open on the chain were not read. Reload the page');
+  }
+  const newest = steps[steps.length - 1];
+  if (newest === undefined) return {};
+  type View = {
+    readonly openProposals: Iterable<[Uint8Array, Uint8Array]>;
+    readonly runWindow: { member(id: Uint8Array): boolean };
+    readonly proposalHolds: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): { readonly removals: bigint } };
+  };
+  const view = deps.accountLedger((deps.runtimeState.deserialize(newest.state) as { data: unknown }).data) as View;
+  const now = view.proposalHolds.member(removalKey) ? BigInt(view.proposalHolds.lookup(removalKey).removals) : 0n;
+  const out: Record<string, number> = {};
+  for (const [id] of view.openProposals) {
+    if (!view.runWindow.member(id) || !view.proposalHolds.member(id)) continue;
+    const since = now - BigInt(view.proposalHolds.lookup(id).removals);
+    if (since >= 0n && since <= BigInt(Number.MAX_SAFE_INTEGER)) out[hexOf(id)] = Number(since);
+  }
+  return out;
 }
 
 /**

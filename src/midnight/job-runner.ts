@@ -124,7 +124,7 @@ export interface Expectation {
    *              the same id
    *   cancel     `assert(openProposals.member(id), "there is no open proposal
    *              with that id")`
-   *   addSigner  `amendSigner` calls `closeProposal` on the approved path, so a
+   *   addSigner  `seatInvited` calls `closeProposal` on the approved path, so a
    *              replay finds no open proposal
    *
    * `execute` WAS THE FOURTH LINE OF THIS LIST — "the staleness assert, a

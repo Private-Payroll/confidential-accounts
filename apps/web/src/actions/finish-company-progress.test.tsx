@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE FINISHING STEP SAYS WHAT IS HAPPENING during its long waits: the stage in plain words, how long that stage has run
@@ -40,7 +38,7 @@ const { builderIsUp } = await import('../adapters/proofs-running.js');
 const { lane } = await import('../adapters/sends.js');
 const { COMPANY_USUAL_SECONDS, COMPANY_PHASE } = await import('../adapters/usual-times.js');
 
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 
 const session: Session = {

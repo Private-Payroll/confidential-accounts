@@ -39,7 +39,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * page's characters need. A build whose first download is larger than the
  * budget stops, and so does one with any file other than a font over the
  * size at which the bundler warns. The budget is the first download as it
- * was measured when it was set (797,578 bytes, from the built application); a
+ * was last measured (725,700 bytes, from the built application, on 3 Nov IST); a
  * test holds it within a kilobyte of what is built, so when the download falls
  * the budget is lowered with it.
  *
@@ -47,8 +47,21 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * the first page loads whole, carries every page's words, and the sign-in path
  * loads the curve library that checks a committee key is a point on its curve,
  * 36,633 bytes that sign-in itself never uses.
+ *
+ * The budget is the measured 725,700 bytes (3 Nov). It grew by 266 bytes from 725,434 when the recovery page's entry
+ * in the page list and its
+ * name in the first download's words were added; the page's screen and its words load only when it is opened. Earlier: it grew by 148 bytes
+ * from 725,286 when the company's proposals began to be read with what the wallet is asked to check before it approves each one: for a one-off
+ * payment, that read opens the payment's own record, as this device believes it. The code that fetches, judges and opens that record comes
+ * with the rest of the company's records, and the first download holds the same files by name as before. Imported with those records is what
+ * measured smallest: loaded only once a one-off is read, the first download measured 726,133 and 726,580 bytes. Earlier: it grew by 311 bytes
+ * from 724,975 when Home began to offer the Create menu, which makes the kit's dropdown menu a module shared by the entry and a page: the
+ * bundler then builds it as a chunk of its own (22,157 bytes, no longer inside the entry script, which fell from 246,577 to 224,658) and the
+ * shell's right panel grew by 73 bytes. None of the Approve, Withdraw or wallet-act code is in the first download, and neither are the words
+ * they use. Earlier: it grew by 46 bytes from 724,929 when apps/web/src/records/parts.tsx, records/counts.ts and screens/proposals.tsx
+ * changed.
  */
-export const FIRST_DOWNLOAD_BUDGET = 797_578;
+export const FIRST_DOWNLOAD_BUDGET = 725_700;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

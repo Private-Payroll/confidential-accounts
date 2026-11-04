@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { ActRefused } from './act-refused.js';
 import { ACT_REFUSAL, type ActRefusal } from './adapters/refusals.js';
-import en from './locales/en.json';
+import { ENGLISH as en } from './english.test-support.js';
 
 /*
  * Why an action on a company did not happen, said in the person's language:

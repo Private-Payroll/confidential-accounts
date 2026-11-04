@@ -58,14 +58,14 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
     /* RED WHEN: the served list is not exactly the lists above, or a vault circuit is named like one of them. */
     /* A vault's creation adopts it on the account from the device that made it; a company's creation seals its pay-record key from its founding signer's. */
     /* A withdrawal, a change of one vault's own approvals needed, a vault's spending policy and the approvals a policy change needs are proved on a signer's device too. */
-    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']);
+    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'removeSignerAndSetThreshold', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']);
     /* Charging an approved run to its vault's period is proved on the paying signer's device. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_CHARGES).toEqual(['clearRun']);
     /* The company's record anchor and its recovery are proved on a signer's device. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS).toEqual(['anchor', 'recoverAnchor']);
     /* The seat a person invited takes is proved on their own device, by their own wallet. */
     expect(ACCOUNT_CIRCUITS_AN_INVITEE_PROVES).toEqual(['seatInvited']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'removeSignerAndSetThreshold', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 

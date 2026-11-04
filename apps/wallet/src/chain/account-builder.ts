@@ -88,6 +88,8 @@ export interface PayKeyStandingAnswered {
   readonly round: {
     readonly commitment: string; readonly payload: string; readonly salt: string; readonly proposal: string;
     readonly open: boolean; readonly approvals: string; readonly needed: string; readonly stale: boolean;
+    /** The account holds this seat's approval of it: its raise counted as its approval, or its approve. */
+    readonly approvedHere: boolean;
   };
   readonly noVault: string;
   readonly wrap: readonly string[];
@@ -273,6 +275,7 @@ export const answerAccountAsk = async (
             round: {
               commitment: s.round.commitment, payload: s.round.payload, salt: s.round.salt, proposal: s.round.proposal,
               open: s.round.open, approvals: String(s.round.approvals), needed: String(s.round.needed), stale: s.round.stale,
+              approvedHere: s.round.approvedHere,
             },
             noVault: hexOf(P.noVault()),
             wrap: sealPayKeyTo(ask.key.toLowerCase() as never, ask.wrappingPublicKey.toLowerCase() as never),

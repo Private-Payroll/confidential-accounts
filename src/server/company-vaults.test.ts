@@ -84,6 +84,10 @@ let store: MemoryStore;
 let sent: string[];
 let authority: unknown;
 let sendVault: CompanyVaultDeps['ledger']['sendVault'];
+/* Adds only the fee and hands the call back; absent for a deployment that pays no fees. */
+let feeAddedTo: CompanyVaultDeps['ledger']['feeAddedTo'];
+/* What a call to the company's own account reads as. */
+let accountCallShape: unknown;
 let deployShape = false;
 /* The verifying keys the chain shows for the vault; a test changes one to stand for a vault whose proofs were swapped. */
 let circuitKeys: (c: string) => Uint8Array;
@@ -205,6 +209,13 @@ beforeEach(async () => {
   vaultBalance = undefined;
   finishedShape = {};
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
+  accountCallShape = {};
+  feeAddedTo = async (_a, what, _arrival, bytes, check, read) => {
+    const refused = await check(await read(bytes));
+    if (refused !== null) throw new NothingWasSent(refused);
+    sent.push(`fee for ${what}`);
+    return { tx: new Uint8Array([7, 7]), transactionHash: 'h7' };
+  };
   const app = express();
   app.use(companyVaultRoutes(routeDeps = {
     signedIn: (req, res, next) => {
@@ -221,7 +232,7 @@ beforeEach(async () => {
     company: async (id) => (id === 'acc_1' && acc1Seats === null ? null : id === 'acc_1'
       ? { address: hex(0xc0), threshold: acc1Threshold, seats: acc1Seats!, vaultThresholds: acc1VaultThresholds }
       : { address: hex(0xc1), threshold: 1, seats: 1, vaultThresholds: [] }),
-    ledger: { get sendVault() { return sendVault; } },
+    ledger: { get sendVault() { return sendVault; }, get feeAddedTo() { return feeAddedTo; } },
     chain: {
       contractState: async (address) => {
         if (ACCOUNTS.has(address)) {
@@ -263,7 +274,7 @@ beforeEach(async () => {
       get temporaryKey() { return serviceKey; },
     },
     readers: {
-      proven: async (b) => (b[0] === 0xdd ? payoutShape : b[0] === 0xcc ? startShape : deployShape ? aDeploy() : {}),
+      proven: async (b) => (b[0] === 0xdd ? payoutShape : b[0] === 0xcc ? startShape : b[0] === 0xee ? accountCallShape : deployShape ? aDeploy() : {}),
       finished: async () => finishedShape,
     },
     get committeeChange() { return assembleDep; },
@@ -1590,5 +1601,166 @@ describe('A VAULT\'S START', () => {
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([expect.objectContaining({ vault: VAULT, state: 'start-owed' })]);
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' }))
       .toMatchObject({ status: 409, body: { nothingWasSent: true } });
+  });
+});
+
+describe('ONLY THE FEE, ADDED TO A DEVICE\'S CALL AND HANDED BACK', () => {
+  /* One call to `circuit` on `address`, moving nothing, as the reader hands it to the route. */
+  const oneCall = (address: string, circuit: string, more: unknown[] = []) => ({
+    intents: new Map([[1, {
+      actions: [{ address, entryPoint: circuit }, ...more],
+      guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined,
+    }]]),
+  });
+  const CALL = Buffer.from([0xee]).toString('base64');
+
+  /* RED WHEN: the route stops handing the paid call back, or submits it. */
+  it('a call to the company\'s own account gets only its fee, and comes back finished, unsent', async () => {
+    accountCallShape = oneCall(hex(0xc0), 'approve');
+    const r = await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve' });
+    expect(r).toEqual({ status: 200, body: { tx: Buffer.from([7, 7]).toString('base64'), transactionHash: 'h7', booking: expect.any(String) } });
+    expect(sent).toEqual(['fee for a call whose fee alone is paid here']);
+  });
+
+  /* RED WHEN: the fee is paid for a call to a contract that is not the company's. */
+  it('a call to any other contract is refused before any fee', async () => {
+    accountCallShape = oneCall(hex(0xc1), 'approve');
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc1), circuit: 'approve' }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/not this company's/u) } });
+    expect(sent).toEqual([]);
+  });
+
+  /* RED WHEN: the fee is paid for a transaction that does more than the one call it was asked for. */
+  it('a call that is not the one call it names, or carries a second, is refused before any fee', async () => {
+    accountCallShape = oneCall(hex(0xc0), 'propose');
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    accountCallShape = oneCall(hex(0xc0), 'approve', [{ address: hex(0xc0), entryPoint: 'propose' }]);
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    expect(sent).toEqual([]);
+  });
+
+  /* RED WHEN: the fee is paid for a vault call to a vault that is not this company's. */
+  it('a vault call to a vault the company does not have is refused before any fee', async () => {
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'payout', contract: hex(0x99), circuit: 'payout' }))
+      .toMatchObject({ status: 404, body: { nothingWasSent: true } });
+    expect(sent).toEqual([]);
+  });
+
+  /* RED WHEN: a request carrying more than the call and what it is, or one from someone not of the company, is paid for. */
+  it('pays for nothing a member of the company did not ask, and nothing beyond the call', async () => {
+    accountCallShape = oneCall(hex(0xc0), 'approve');
+    expect((await call('/api/accounts/acc_1/fee', 'carol', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve' })).status).toBe(404);
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve', pays: '1' }))
+      .toMatchObject({ status: 400, body: { nothingWasSent: true } });
+    expect(sent).toEqual([]);
+  });
+
+  /* RED WHEN: a deployment that pays no fees answers as though it might have. */
+  it('a deployment that pays no fees says so, with nothing sent', async () => {
+    feeAddedTo = undefined;
+    accountCallShape = oneCall(hex(0xc0), 'approve');
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve' }))
+      .toMatchObject({ status: 503, body: { nothingWasSent: true } });
+  });
+});
+
+describe('A CALL HANDED BACK WITH ITS FEE HOLDS ITS COMPANY\'S AND ITS MEMBER\'S TURN, AND NOBODY ELSE\'S', () => {
+  const CALL = Buffer.from([0xee]).toString('base64');
+  const approve = { tx: CALL, kind: 'account-call', contract: hex(0xc0), circuit: 'approve' };
+  beforeEach(() => {
+    accountCallShape = { intents: new Map([[1, { actions: [{ address: hex(0xc0), entryPoint: 'approve' }], guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined }]]) };
+  });
+
+  /* RED WHEN: a company or a member holds more than one handed-back call at once, or saying done does not free the turn. */
+  it('one at a time per company and per member, freed when the member who was handed it says done, and nothing released', async () => {
+    const done: string[] = [];
+    feeAddedTo = async () => ({ tx: new Uint8Array([7]), transactionHash: 'h', done: async () => { done.push('done'); } });
+    const first = await call('/api/accounts/acc_1/fee', 'ada', 'POST', approve);
+    expect(first.status).toBe(200);
+    /* RED WHEN: a second call for the same company is booked while the first is still held, stalling the fee payer. */
+    expect(await call('/api/accounts/acc_1/fee', 'bo', 'POST', approve)).toMatchObject({ status: 503, body: { nothingWasSent: true } });
+    /* RED WHEN: another company's call is held up by this one. */
+    expect((await call('/api/accounts/acc_2/fee', 'carol', 'POST', { ...approve, contract: hex(0xc1) })).status).not.toBe(503);
+    /* RED WHEN: anyone but the member who was handed it can free its turn. */
+    expect((await call('/api/accounts/acc_1/fee/done', 'bo', 'POST', { booking: first.body.booking })).body).toEqual({ done: false });
+    expect((await call('/api/accounts/acc_1/fee/done', 'ada', 'POST', { booking: first.body.booking })).body).toEqual({ done: true });
+    expect(done).toEqual(['done']);
+    expect((await call('/api/accounts/acc_1/fee', 'bo', 'POST', approve)).status).toBe(200);
+  });
+
+  /* RED WHEN: a refused fee leaves its company's turn held. */
+  it('a call refused before any fee holds nobody\'s turn', async () => {
+    accountCallShape = { intents: new Map([[1, { actions: [{ address: hex(0xc0), entryPoint: 'propose' }] }]]) };
+    expect((await call('/api/accounts/acc_1/fee', 'ada', 'POST', approve)).status).toBe(422);
+    accountCallShape = { intents: new Map([[1, { actions: [{ address: hex(0xc0), entryPoint: 'approve' }], guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined }]]) };
+    expect((await call('/api/accounts/acc_1/fee', 'ada', 'POST', approve)).status).toBe(200);
+  });
+});
+
+describe('A VAULT\'S START IS PAID FOR ON ITS FEE ALONE ONLY WHEN ITS OWN ROUTE WOULD SEND IT', () => {
+  const START = Buffer.from([0xcc]).toString('base64');
+  const heldVault = async () => {
+    await give('ada', 1); await give('bo', 2);
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [], threshold: 2 }, bornHeld: true });
+    startedNow = false;
+    startShape = { intents: new Map([[1, { actions: [] }]]) };
+  };
+  const secret = { tx: START, kind: 'vault-secret', contract: VAULT, circuit: 'setNonceSecret' };
+  const copy = { tx: START, kind: 'vault-copy', contract: VAULT, circuit: 'writeSecretCopy' };
+
+  /* RED WHEN: a first secret is paid for on a vault that already holds one. */
+  it('a first secret for a vault that holds one is refused before any fee', async () => {
+    await heldVault();
+    secretNow = '5e'.repeat(32);
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', secret)).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already holds a secret/u) } });
+    expect(sent).toEqual([]);
+  });
+
+  /* RED WHEN: a sealed copy is paid for once every copy is written. */
+  it('a sealed copy for a vault already started is refused before any fee', async () => {
+    await heldVault();
+    startedNow = true;
+    expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', copy)).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already written/u) } });
+    expect(sent).toEqual([]);
+  });
+
+  /* RED WHEN: a start step is paid for on a vault pinned to another account. */
+  it('a start step for a vault pinned to another account is refused before any fee', async () => {
+    await heldVault();
+    pinnedNow = hex(0xc1);
+    expect((await call('/api/accounts/acc_1/fee', 'ada', 'POST', secret)).status).toBe(409);
+    expect(sent).toEqual([]);
+  });
+});
+
+describe('THE FEE PAYER ADDS THE FEE AND HANDS THE CALL BACK UNSENT', () => {
+  /* RED WHEN: the ledger submits a call it was asked only to pay for, or releases the booking as it hands it back. */
+  it('only the fee is added, nothing is submitted, and the booking stands', async () => {
+    const asked: string[] = [];
+    const payer = new WalletFeeSponsor({
+      shieldedSecretKeys: 's', dustSecretKey: 'd',
+      balanceFinalizedTransaction: async (tx: unknown) => ({ tx }),
+      finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1', serialize: () => new Uint8Array([1, 2, 3]) }),
+      submitTransaction: async () => { asked.push('submit'); return 'h1'; },
+      revert: async () => { asked.push('revert'); },
+      estimateFee: async () => 1n,
+      paidFee: async () => null,
+      balances: async () => ({ dust: 1n, night: 1n }),
+    }, { perTransaction: 1_000n });
+    const ledger = new ChainLedger({} as never, { network: 'stagenet', indexerUrl: 'x', indexerWsUrl: 'x' } as never, {
+      maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
+      customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+      sponsor: payer as never, storagePassword: async () => 'x',
+    });
+    const added = await ledger.feeAddedTo('acc_1', 'a call', 'finished-by-the-depositor', new Uint8Array([1]), () => null, async () => ({ n: 1 }));
+    expect(added).toEqual({ tx: new Uint8Array([1, 2, 3]), transactionHash: 'h1' });
+    expect(asked).toEqual([]);
+    await expect(ledger.feeAddedTo('acc_1', 'a call', 'finished-by-the-depositor', new Uint8Array([1]), () => 'not this one', async () => ({ n: 1 })))
+      .rejects.toMatchObject({ nothingWasSent: true, message: 'not this one' });
   });
 });

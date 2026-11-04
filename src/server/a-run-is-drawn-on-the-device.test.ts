@@ -27,7 +27,7 @@ import { payeeFor } from '../testing/payees.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
-import { drawRunHere, RunNotDrawnHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
+import { drawRunHere, fileRunDrawnHere, runDrawnHere, RunNotDrawnHere, samePeopleAsDrawn, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { runRoutes } from './run-routes.js';
 import {
   aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, aVersionNoSeatSigned, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, OTHER, personVersions,
@@ -197,6 +197,39 @@ describe('A RUN IS DRAWN ON A SIGNER\'S DEVICE', () => {
     expect(runsKept()).toBe(before);
     const again = await drawRunHere(drawingOn(ADA), { period: '2027-02', repeats: { runIds: [first.id], reason: 'back pay' } });
     expect(again.repeats).toMatchObject({ of: [first.id], reason: 'back pay', by: 'ada' });
+  });
+
+  it('A RUN DRAWN FOR A PERSON TO CONFIRM SENDS NOTHING UNTIL IT IS FILED, AND IS NOT FILED OVER A RUN FOR ITS MONTH RAISED MEANWHILE', async () => {
+    const written: string[] = [];
+    const doors = drawingOn(ADA);
+    const watched: RunDrawDoors = { ...doors, api: (path, init) => { if ((init?.method ?? 'GET') !== 'GET') written.push(path); return doors.api(path, init); } };
+    const before = runsKept();
+    const shown = await runDrawnHere(watched, { period: '2027-07' });
+    /* RED WHEN: drawing a run to show a person sends, files or enters anything before they confirm it. */
+    expect(written).toEqual([]);
+    expect(runsKept()).toBe(before);
+    expect(shown.employees.length).toBeGreaterThan(0);
+    const meanwhile = await fileRunDrawnHere(watched, await runDrawnHere(watched, { period: '2027-07' }));
+    expect(written).toEqual([`/api/accounts/${CO}/runs`]);
+    await raisedAsARaiseLeavesIt(meanwhile.id);
+    /* RED WHEN: a run confirmed after another run for its month was raised is filed beside it. */
+    await expect(fileRunDrawnHere(watched, shown)).rejects.toThrow(/a run for 2027-07 already exists/u);
+    await expect(fileRunDrawnHere(watched, shown)).rejects.toBeInstanceOf(RunNotDrawnHere);
+    expect(store.getRun(shown.id)).toBeFalsy();
+    expect(written).toHaveLength(1);
+  });
+
+  it('A RUN FILED AND OPENED AGAIN PAYS THE SAME PEOPLE AS THE RUN DRAWN, AND ONE WITH A PERSON SWAPPED DOES NOT', async () => {
+    const drawn = await runDrawnHere(drawingOn(ADA), { period: '2027-08' });
+    await fileRunDrawnHere(drawingOn(ADA), drawn);
+    const kept = openSealedRun(store.getRun(drawn.id)!, KEY);
+    /* RED WHEN: the run as the company's records hold it, sealed and opened again, is not taken for the run confirmed. */
+    expect(samePeopleAsDrawn(kept, drawn)).toBe(true);
+    const [first, ...rest] = kept.employees;
+    /* RED WHEN: a run paying another person at the same pay, or the same people at other pay, is taken for the run confirmed. */
+    expect(samePeopleAsDrawn({ ...kept, employees: [{ ...first!, id: 'emp_someoneelse' }, ...rest] }, drawn)).toBe(false);
+    expect(samePeopleAsDrawn({ ...kept, employees: [{ ...first!, amount: first!.amount + 1n }, ...rest] }, drawn)).toBe(false);
+    expect(samePeopleAsDrawn({ ...kept, employees: [...rest, first!] }, drawn)).toBe(rest.length === 0);
   });
 });
 

@@ -3,7 +3,9 @@
  *
  * An `act` ask names one of these and the ids and amounts it acts on, and
  * nothing else: the wallet reads the chain itself, builds every transaction
- * itself and hands each back for the page to send. So every field an action
+ * itself and hands each back for the page to send - or, for a recovery of the
+ * company's records, sends it from the person's own wallet, which pays its fee
+ * and nothing else. So every field an action
  * takes is one of the kinds below: an id or an amount the wallet can check on
  * its own, or a short text the wallet shows as the page's words, and none of
  * them is bytes the page built. An action not named here is refused before
@@ -40,12 +42,20 @@ export interface CallRoute {
   readonly sends?: boolean;
   /** A call to it sends only when its body carries a transaction under this name. */
   readonly sendsWith?: 'tx';
+  /**
+   * A POST that only reads: the service answers it and keeps nothing of it. Every other call that is not a GET writes,
+   * and the wallet counts it as something that left it.
+   */
+  readonly reads?: true;
   /** The only query parameters a call to it may carry, each once with a plain value; none unless named. */
   readonly query?: readonly string[];
 }
 
-/** What one part of an action's outcome may be: sixty-four hex characters (a vault's address, or a transaction the chain names), a whole number, or a short code. */
-export type OutcomeKind = 'vault' | 'count' | 'code';
+/**
+ * What one part of an action's outcome may be: sixty-four hex characters (a vault's address, or a transaction the chain
+ * names), a whole number, a short code, or the name of one of the company's records (a run or a proposal it raised).
+ */
+export type OutcomeKind = 'vault' | 'count' | 'code' | 'record';
 
 /**
  * The fields one action takes, each required unless `optional` names it, and
@@ -116,12 +126,22 @@ export function sendsIn(route: CallRoute, body: string | undefined): boolean {
  * What a relay of `finish-company` is for. `creation` and `creation-again`
  * carry the account's deploy with its signed second step beside it, which the
  * service takes together; `creation-finish` carries the second step alone; the
- * three `pay-key-*` relays carry one call each of committing the account to its
- * pay-record key.
+ * two `pay-key-*` relays carry one call each of committing the account to its
+ * pay-record key, an approval and the seal. Its raise is never a relay: it is
+ * handed over beside its record (`FINISH_COMPANY_CALLS`).
  */
 export const FINISH_COMPANY_RELAYS = Object.freeze([
-  'creation', 'creation-again', 'creation-finish', 'pay-key-propose', 'pay-key-approve', 'pay-key-seal',
+  'creation', 'creation-again', 'creation-finish', 'pay-key-approve', 'pay-key-seal',
 ] as const);
+
+/**
+ * The one service call finishing a company makes through the page: the record of the pay-record key's proposal,
+ * sealed and signed on the device, written down, and with `tx` its raise, which the service sends only once the record
+ * is kept. A call with no `tx` sends nothing.
+ */
+const FINISH_COMPANY_CALLS: readonly CallRoute[] = Object.freeze([
+  { method: 'POST', path: '/api/accounts/:record/creation/pay-key/proposal', sends: true, sendsWith: 'tx' },
+].map((r) => Object.freeze(r)) as CallRoute[]);
 
 /**
  * The service calls an action on a company's records makes through the page:
@@ -138,8 +158,8 @@ const COMPANY_RECORD_CALLS: readonly CallRoute[] = Object.freeze([
   { method: 'PUT', path: '/api/accounts/:record/vault-keys' },
   { method: 'POST', path: '/api/accounts/:record/roster' },
   { method: 'POST', path: '/api/accounts/:record/manifest/entries' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/newest' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs' },
+  { method: 'POST', path: '/api/accounts/:record/manifest/newest', reads: true },
+  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs', reads: true },
   { method: 'GET', path: '/api/accounts/:record/manifest/tree/pending', query: ['root'] },
   { method: 'GET', path: '/api/accounts/:record/manifest/tree/headers', query: ['after', 'limit'] },
   { method: 'GET', path: '/api/accounts/:record/records/:kind/:id' },
@@ -152,9 +172,12 @@ const COMPANY_RECORD_CALLS: readonly CallRoute[] = Object.freeze([
  * company's people and the answers waiting in their handovers, read to carry
  * them across a change of the company's key; that change, a roster followed and
  * each vault's records filed again; the header of the records anchored, and the
- * one call that sends the anchor.
+ * one call that sends the anchor; and the fee sponsorship for a call the
+ * company's own service or the person's wallet submits.
  */
 const UPKEEP_CALLS: readonly CallRoute[] = Object.freeze([
+  { method: 'POST', path: '/api/accounts/:record/fee' },
+  { method: 'POST', path: '/api/accounts/:record/fee/done' },
   { method: 'GET', path: '/api/accounts/:record/proposals' },
   { method: 'GET', path: '/api/accounts/:record/people' },
   { method: 'GET', path: '/api/employees/:employee/handover' },
@@ -202,8 +225,8 @@ const PRIVATE_DEPOSIT_CALLS: readonly CallRoute[] = Object.freeze([
   { method: 'GET', path: '/api/accounts/:record' },
   { method: 'GET', path: '/api/accounts/:record/directory' },
   { method: 'POST', path: '/api/accounts/:record/manifest/entries' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/newest' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs' },
+  { method: 'POST', path: '/api/accounts/:record/manifest/newest', reads: true },
+  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs', reads: true },
   { method: 'GET', path: '/api/accounts/:record/manifest/tree/pending', query: ['root'] },
   { method: 'GET', path: '/api/accounts/:record/manifest/tree/headers', query: ['after', 'limit'] },
   { method: 'GET', path: '/api/accounts/:record/records/:kind/:id' },
@@ -230,8 +253,8 @@ const ONE_OFF_PAYMENT_CALLS: readonly CallRoute[] = Object.freeze([
   { method: 'GET', path: '/api/accounts/:record/proposals' },
   { method: 'GET', path: '/api/accounts/:record/runs' },
   { method: 'POST', path: '/api/accounts/:record/manifest/entries' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/newest' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs' },
+  { method: 'POST', path: '/api/accounts/:record/manifest/newest', reads: true },
+  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs', reads: true },
   { method: 'GET', path: '/api/accounts/:record/manifest/tree/pending', query: ['root'] },
   { method: 'GET', path: '/api/accounts/:record/manifest/tree/headers', query: ['after', 'limit'] },
   { method: 'GET', path: '/api/accounts/:record/records/:kind/:id' },
@@ -269,16 +292,116 @@ const INVITE_CALLS: readonly CallRoute[] = Object.freeze([
 ].map((r) => Object.freeze(r)) as CallRoute[]);
 
 /*
- * What approving a signer invited by address reads and writes: the company's records the seat, the directory, the
- * roster and the proposal are read from, the proposal's standing, and the one approval sent, plus the upkeep's
- * routes. No route that files or raises a proposal is listed: the wallet approves only one the chain has raised.
+ * What approving a proposal reads and writes, for every kind: the company's records the seat, the directory, the
+ * roster and the proposal are read from (a spending policy's versions among them), the proposal's standing, the one
+ * approval sent, and the call that carries a change of the approvals needed, a spending policy, the approvals a policy
+ * change needs or a removal out once the chain counts its bar; a removal's retirement signature,
+ * handed on its own; for a one-off payment, its vault's records, the runs, its charge and its payment; for a payroll
+ * run, the vendors' handovers its list is read with; for a new vault's adoption or first secret run, the call each
+ * step of the vault's start is sent by and the one that writes the proposal down as carried out once the chain shows it;
+ * for the pay-record key, the creation's own route its approval and its carrying out are sent by;
+ * plus the upkeep's routes. No route that files or raises a proposal is listed: the wallet approves only one the chain
+ * has raised.
  */
-const APPROVE_SIGNER_CALLS: readonly CallRoute[] = Object.freeze([
+const APPROVE_PROPOSAL_CALLS: readonly CallRoute[] = Object.freeze([
   ...COMPANY_RECORD_CALLS,
-  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  ...ONE_OFF_PAYMENT_CALLS.filter((o) => !(o.method === 'POST' && o.path === '/api/accounts/:record/proposals')),
+  { method: 'POST', path: '/api/proposals/:proposal/carry', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/retirement' },
+  { method: 'GET', path: '/api/accounts/:record/vendors/:vendor/handover' },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/account', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/secret', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/copy', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/carried' },
+  { method: 'POST', path: '/api/accounts/:record/creation/pay-key', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/closed' },
+  ...UPKEEP_CALLS,
+].filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
+  .map((r) => Object.freeze({ ...r })) as CallRoute[]);
+
+/*
+ * What changing the approvals needed reads and writes: the company's records the seat, the directory, the roster and
+ * the proposals are read from, the proposal filed with its raise or a raise written down sent again, an approval of the
+ * same change already raised, its standing, and the call that carries it out at its bar; plus the upkeep's routes.
+ */
+const CHANGE_THRESHOLD_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  { method: 'POST', path: '/api/proposals/:proposal/carry', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/closed' },
   ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
 ].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/**
+ * What raising a payroll run asks of the page: the company's records, its runs (read, and filed when the run is
+ * drawn here), its people and vendors, the vaults' records the vault's money is read from, the proposal filed with
+ * its transaction or a filed one sent again, where it stands, and the upkeep every seat action does.
+ */
+const RAISE_RUN_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'GET', path: '/api/accounts/:record/runs' },
+  { method: 'POST', path: '/api/accounts/:record/runs' },
+  { method: 'GET', path: '/api/accounts/:record/vendors/:vendor/handover' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind/versions' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
+  { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  ...UPKEEP_CALLS,
+].filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
+  .map((r) => Object.freeze({ ...r })) as CallRoute[]);
+
+/**
+ * What paying an approved payroll run asks of the page: the company's records and its runs, read; the vaults' records
+ * the vault's money is read from and filed to; where the proposal stands; and the charge, the payments and the merges
+ * the run's plan sends, each a send, then the upkeep every seat action does.
+ */
+const PAY_RUN_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'GET', path: '/api/accounts/:record/runs' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind/versions' },
+  { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
+  { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  { method: 'POST', path: '/api/proposals/:proposal/charge', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/payout', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/merge', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/public-payout', sends: true },
+  ...UPKEEP_CALLS,
+].filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
+  .map((r) => Object.freeze({ ...r })) as CallRoute[]);
+
+/**
+ * What withdrawing a proposal reads and sends: the company's records, where the proposal stands as the service keeps it,
+ * and the withdrawal, which reaches the chain only when it carries a proven call; one without a call marks a proposal
+ * the chain does not hold withdrawn in the company's records, and nothing more. A withdrawal the person's wallet sent
+ * straight to the chain closes the service's record afterwards, which sends nothing; the fee sponsorship for a
+ * withdrawal the company's own service or the person's wallet submits.
+ */
+const WITHDRAW_PROPOSAL_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/accounts/:record/fee' },
+  { method: 'POST', path: '/api/accounts/:record/fee/done' },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  { method: 'POST', path: '/api/proposals/:proposal/cancel', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/closed' },
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/**
+ * Removing a signer (the wallet's `remove-signer` action): what changing the approvals needed calls, and the route that
+ * takes this seat's signature over the leaving seat's retirement on its own (kept beside the proposal; it relays
+ * nothing, so it does not send).
+ */
+const REMOVE_SIGNER_CALLS: readonly CallRoute[] = Object.freeze([
+  ...CHANGE_THRESHOLD_CALLS,
+  { method: 'POST', path: '/api/proposals/:proposal/retirement' },
+].map((r) => Object.freeze({ ...r })) as CallRoute[]);
 
 /*
  * What admitting a signer seated by address reads and writes: the company, its roster and its proposals read, the
@@ -318,10 +441,25 @@ const CHANGE_PERSON_CALLS: readonly CallRoute[] = Object.freeze([
   ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
 ].map((r) => Object.freeze(r)) as CallRoute[]);
 
+/*
+ * What filing the company's choice of service reads and writes: the company's records (the versions of the choice
+ * already filed, read as every act reads them), the next version filed in one call and entered, plus the upkeep's routes.
+ */
+const CHOOSE_COMPANY_SERVICE_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
 /** Every action a wallet runs, by name. */
 export const ACT_INTENTS = Object.freeze({
-  /** Finish creating the company this wallet drew the label for: its account sent and finished, its pay-record key committed and sealed. */
-  'finish-company': Object.freeze({ fields: Object.freeze({ company: 'company' as const }), relays: FINISH_COMPANY_RELAYS }),
+  /**
+   * Finish creating the company this wallet drew the label for: its account sent and finished, its pay-record key's
+   * proposal written down in the company's records, raised, and the key committed and sealed.
+   */
+  'finish-company': Object.freeze({
+    fields: Object.freeze({ company: 'company' as const }), relays: FINISH_COMPANY_RELAYS, calls: FINISH_COMPANY_CALLS,
+  }),
   /**
    * Give this seat's vault keys to the company it holds a seat on: its directory entry, its vault keys offered and
    * folded, with the upkeep every seat action does. It tells the page whether the upkeep was all done and how many
@@ -422,10 +560,11 @@ export const ACT_INTENTS = Object.freeze({
    * Invite an employee, a vendor or a signer (`kind`) to the company, with the seat this wallet holds there: the
    * invitation, the offer and the first record are sealed and signed in the wallet and filed, and a signer, invited
    * only by a private address, gets the proposal to seat that address raised with this seat's approval, the
-   * invitation kept in the saved keys before the raise. `token` is the page's own token for the link, so the page
+   * invitation kept in the saved keys before the raise; `threshold`, where given, is the approvals the account needs
+   * once the seat is taken, bound in the proposal. `token` is the page's own token for the link, so the page
    * makes the link itself and nothing secret comes back. The person's details are the page's words, and never reach
-   * the service but sealed. It tells the page where the invitation got to, whether the upkeep was all done and how
-   * many records it anchored.
+   * the service but sealed. It tells the page where the invitation got to, for a signer the approvals the proposal
+   * holds and needs as the chain shows them, whether the upkeep was all done and how many records it anchored.
    */
   invite: Object.freeze({
     fields: Object.freeze({
@@ -433,12 +572,14 @@ export const ACT_INTENTS = Object.freeze({
       personName: 'words' as const, email: 'words' as const, title: 'words' as const, startDate: 'words' as const, endDate: 'words' as const,
       classification: 'words' as const, address: 'words' as const, asset: 'token' as const, amount: 'amount' as const,
       terms: 'words' as const, termsAsset: 'token' as const, termsAmount: 'amount' as const, role: 'words' as const, scope: 'seat' as const,
+      threshold: 'amount' as const,
     }),
     optional: Object.freeze([
       'email', 'title', 'startDate', 'endDate', 'classification', 'address', 'asset', 'amount', 'terms', 'termsAsset', 'termsAmount', 'role', 'scope',
+      'threshold',
     ]),
     calls: INVITE_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
    * A signer invited by address takes the seat from their own wallet: the wallet opens the offer with the link's
@@ -454,20 +595,166 @@ export const ACT_INTENTS = Object.freeze({
     ]),
   }),
   /*
-   * Approve, with the seat this wallet holds, the proposal (`proposal`, its name in the company's records) another
-   * seat raised to seat a private address. `personName`, `role` (one of the four a signer may hold), `address` (the
-   * commitment to the address), `scope` and `coinKey` are what the page showed: the wallet opens the proposal itself and approves it only when it invites
-   * exactly those, the coin key makes the commitment, and that wallet holds no seat here and no other open invitation.
-   * It raises nothing. It tells the page where the proposal got to, the approvals the chain shows, whether the upkeep
-   * was all done and how many records it anchored.
+   * Approve, with the seat this wallet holds, the proposal (`proposal`, its name in the company's records) another seat
+   * raised, of the kind `kind` names. For `add-signer`: `personName`, `role` (one of the four a signer may hold),
+   * `address` (the commitment to the address), `scope` and `coinKey`, and the wallet approves only when the proposal
+   * invites exactly those, the coin key makes the commitment, and that wallet holds no seat here and no other open
+   * invitation. For `one-off`: `vault`, `token`, `amount`, `payee`, `payeeName`, `reason` and `vendor`, and the wallet
+   * approves only when the one-off's record pays exactly those, then charges and pays it once the chain shows the
+   * approvals it needs. For `threshold`: `threshold`, the account's new threshold; for `vault-threshold`: `vault` and
+   * `threshold`; the wallet approves only when the proposal changes exactly that, checks every vault first, and carries it
+   * out once the chain shows the approvals it needs. For `removal`: `leaf`, the seat removed, and `threshold` where the
+   * removal changes it; the wallet approves only when the proposal removes exactly that seat at exactly that threshold,
+   * checks every vault first, signs the leaving seat's retirement, and carries it out once the chain shows the approvals
+   * it needs. For `payroll`: `period`, `vault`, `token`, `form`, `payees`, `total` and `run`, and the wallet approves
+   * only when the run the proposal raises, or the retry of some of its people, pays exactly those; it pays nothing.
+   * For `recovery`: the parts of the recovery's file (`proposal` its identity on the chain, `salt`, `latest`,
+   * `lastRecovery`, `resumesFrom`, `root`, `seq`), and the wallet makes the file again, checks it against the chain,
+   * approves and carries it out on the chain and the person's own wallet alone, asking the service nothing.
+   * For `spending-policy`: `vault`, `token`, `periodLimit`, `periodStart`, `periodLength` and `bands` (four bands, each
+   * `ceiling:approvals`, comma-separated); the wallet approves only when the policy the proposal commits to opens, from
+   * the company's records, to exactly those terms, checks every vault's approvers at its bands first, files nothing, and
+   * carries it out once the chain shows the approvals it needs. For `policy-bar`: `bar`, the approvals any policy change
+   * needs; the wallet approves only when the proposal sets exactly that and the chain seats at least that many signers,
+   * and carries it out once the chain shows the approvals it needs.
+   * For `adopt-vault`: `vault`; the wallet approves only the adoption of exactly that vault, as it makes it from the
+   * vault, checks every vault first, and adopts it once the chain shows the approvals it needs. For `vault-secret`:
+   * `vault`, and `readers`, the signers as the page names them; the wallet approves only the first secret run it makes
+   * from the secret the company's records hold for that vault, sealed to exactly the seats the account holds, and once
+   * the chain shows the approvals it needs sets the secret and writes each signer's sealed copy. Either is written down
+   * as carried out once the chain shows it done, and `said` says when it could not be. For `pay-key`: nothing more; the
+   * wallet approves only the proposal whose record commits the account to the pay-record key the company's signed first
+   * state holds, and once the chain shows the approvals it needs commits it by sealing this seat's own copy.
+   * Every field is what the page showed; the wallet opens the proposal itself. It raises nothing. It
+   * tells the page where the proposal got to, the approvals the chain shows and the approvals it needs, the charge of a
+   * one-off, whether the upkeep was all done and how many records it anchored.
    */
-  'approve-signer': Object.freeze({
+  'approve-proposal': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const,
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const, kind: 'words' as const,
       personName: 'words' as const, role: 'words' as const, address: 'seat' as const, scope: 'seat' as const, coinKey: 'seat' as const,
+      vault: 'vault' as const, token: 'token' as const, amount: 'amount' as const, payee: 'words' as const, payeeName: 'words' as const,
+      reason: 'words' as const, vendor: 'record' as const, threshold: 'amount' as const, leaf: 'seat' as const,
+      run: 'record' as const, period: 'words' as const, form: 'words' as const, payees: 'amount' as const, total: 'amount' as const,
+      salt: 'seat' as const, latest: 'amount' as const, lastRecovery: 'seat' as const, resumesFrom: 'seat' as const, root: 'seat' as const,
+      seq: 'amount' as const, periodLimit: 'amount' as const, periodStart: 'amount' as const, periodLength: 'amount' as const,
+      bands: 'words' as const, bar: 'amount' as const, readers: 'words' as const,
     }),
-    calls: APPROVE_SIGNER_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, ...UPKEEP_OUTCOME }),
+    optional: Object.freeze([
+      'personName', 'role', 'address', 'scope', 'coinKey', 'vault', 'token', 'amount', 'payee', 'payeeName', 'reason', 'vendor', 'threshold', 'leaf',
+      'run', 'period', 'form', 'payees', 'total', 'salt', 'latest', 'lastRecovery', 'resumesFrom', 'root', 'seq',
+      'periodLimit', 'periodStart', 'periodLength', 'bands', 'bar', 'readers',
+    ]),
+    calls: APPROVE_PROPOSAL_CALLS,
+    outcome: Object.freeze({
+      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, charge: 'code' as const, said: 'code' as const,
+      ...UPKEEP_OUTCOME,
+    }),
+  }),
+  /*
+   * Change, with the seat this wallet holds, the approvals the company's account needs to `threshold`, or with `vault`
+   * the approvals that vault's runs need. The wallet checks first, from the chain and the company's records, that the
+   * chain would carry it out and that every vault keeps enough signers who may approve its runs, and again before every
+   * send; then raises the proposal, or approves the same change already raised, and carries it out when the chain
+   * counts its bar. It tells the page where the proposal got to, the approvals the chain shows and the approvals it
+   * needs, whether the upkeep was all done and how many records it anchored.
+   */
+  'change-threshold': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, threshold: 'amount' as const, vault: 'vault' as const,
+    }),
+    optional: Object.freeze(['vault']),
+    calls: CHANGE_THRESHOLD_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /**
+   * Raises a payroll run's leg, or a retry of some of its people, from a vault, in the wallet: opens the run and refuses
+   * it unless it pays what the page shows, and refuses a window that is missing or already open. With no run named the
+   * page names no people or total: the wallet draws the run, shows the leg's people and total with its month, list,
+   * vault, currency and form, and files and raises it only on the person's Confirm. With `proposal` it sends again a raise or a retry the company wrote down and the chain never held,
+   * over the window it was written down with. It tells the page the run's name and the proposal's, as soon as each is known.
+   */
+  'raise-run': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, run: 'record' as const, period: 'words' as const,
+      list: 'words' as const, vault: 'vault' as const, token: 'token' as const, form: 'words' as const, payees: 'amount' as const,
+      total: 'amount' as const, opensAt: 'amount' as const, closesAt: 'amount' as const, indices: 'words' as const, proposal: 'record' as const,
+    }),
+    optional: Object.freeze(['run', 'list', 'payees', 'total', 'opensAt', 'closesAt', 'indices', 'proposal']),
+    calls: RAISE_RUN_CALLS,
+    outcome: Object.freeze({
+      state: 'code' as const, run: 'record' as const, proposal: 'record' as const, approvals: 'count' as const, needed: 'count' as const,
+      ...UPKEEP_OUTCOME,
+    }),
+  }),
+  /**
+   * Pays an approved payroll run's leg, or a retry raised on it, from its vault, in the wallet: opens the proposal and
+   * its run and refuses them unless they pay what the page shows, from the vault the proposal names; pays nothing
+   * unless the chain holds the proposal open at its approvals and its window is open now; then charges the run to the
+   * vault's period when the vault has a spending policy and pays each person still owed, privately or publicly as the
+   * leg is. It tells the page where it got to, how many it paid, how many may still be landing and how many are still
+   * owed, whether it charged the
+   * run, the approvals the chain shows and the approvals it needs, whether the upkeep was all done and how many records
+   * it anchored.
+   */
+  'pay-run': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const, run: 'record' as const,
+      period: 'words' as const, list: 'words' as const, vault: 'vault' as const, token: 'token' as const, form: 'words' as const,
+      payees: 'amount' as const, total: 'amount' as const,
+    }),
+    optional: Object.freeze(['run', 'list']),
+    calls: PAY_RUN_CALLS,
+    outcome: Object.freeze({
+      state: 'code' as const, paid: 'count' as const, owed: 'count' as const, unseen: 'count' as const, charge: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const, ...UPKEEP_OUTCOME,
+    }),
+  }),
+  /**
+   * A recovery of the company's records, run on the chain and the person's own wallet alone: `step` `raise` raises one
+   * to be carried out before `latest` (seconds), resuming from the last head this device checked; `carry` carries one
+   * out from the parts of its file (as `approve-proposal` takes them). Each call goes from the person's own wallet,
+   * which pays its fee and nothing else, so the page is asked for no call and no relay. It tells the page where the
+   * chain says the recovery stands, its approvals and the approvals it needs, and the parts of its file.
+   */
+  recovery: Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, step: 'words' as const, latest: 'amount' as const,
+      proposal: 'record' as const, salt: 'seat' as const, lastRecovery: 'seat' as const, resumesFrom: 'seat' as const, root: 'seat' as const,
+      seq: 'amount' as const,
+    }),
+    optional: Object.freeze(['proposal', 'salt', 'lastRecovery', 'resumesFrom', 'root', 'seq']),
+    calls: Object.freeze([]) as readonly CallRoute[],
+    outcome: Object.freeze({
+      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, proposal: 'record' as const, salt: 'record' as const,
+      latest: 'record' as const, lastRecovery: 'record' as const, resumesFrom: 'record' as const, root: 'record' as const, seq: 'count' as const,
+    }),
+  }),
+  /**
+   * Withdraw a proposal of any kind the wallet withdraws, named by its record and the kind the page shows: a run before
+   * its time to be paid begins, any other proposal by the signer who raised it. `state` is where the chain shows it
+   * after; `proposal` is the one withdrawn.
+   */
+  'withdraw-proposal': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const, kind: 'words' as const,
+    }),
+    calls: WITHDRAW_PROPOSAL_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, proposal: 'record' as const }),
+  }),
+  /**
+   * Removing a signer, from the wallet: the leaf the chain takes off and, where it changes, the approvals the account
+   * needs once they are gone (none or 0 keeps the number in force). Raised, and carried out at a bar of one; the others
+   * approve it through `approve-proposal` (kind `removal`). No page asks for it yet.
+   */
+  'remove-signer': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const, threshold: 'amount' as const,
+    }),
+    optional: Object.freeze(['threshold']),
+    calls: REMOVE_SIGNER_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
    * Admit, with the seat this wallet holds, the signer waiting under `signer` whose own wallet took their seat by
@@ -523,6 +810,20 @@ export const ACT_INTENTS = Object.freeze({
     ]),
     calls: CHANGE_PERSON_CALLS,
     outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * File, with the seat this wallet holds, the company's choice of the service its calls go through (`service`: ours,
+   * own or none; `at`, the secure site address of its own service, only with own), sealed to every signer seated now.
+   * It tells the page whether the choice is in force, how many seats have filed it in a row (`filed`) and how many it
+   * needs, and how the upkeep went.
+   */
+  'choose-company-service': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, service: 'words' as const, at: 'words' as const,
+    }),
+    optional: Object.freeze(['at']),
+    calls: CHOOSE_COMPANY_SERVICE_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, filed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
 }) satisfies Readonly<Record<string, IntentShape>>;
 

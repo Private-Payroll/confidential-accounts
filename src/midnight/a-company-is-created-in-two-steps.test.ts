@@ -54,10 +54,10 @@ const recording = (): CreationInsertPrimitives & { built: any[] } => {
 };
 
 describe('the two steps, as lists', () => {
-  it('the first step is the nine a company governs itself with, the seat an invited person takes among them, and pays with none of them', () => {
+  it('the first step is the eight a company governs itself with, the seat an invited person takes among them, and pays with none of them', () => {
     /* A product decision, written out: a change to it should have to change this line. */
     expect([...FIRST_STEP_CIRCUITS]).toEqual([
-      'adopt', 'amendSigner', 'approve', 'cancel', 'closeExpiredRun', 'propose',
+      'adopt', 'approve', 'cancel', 'closeExpiredRun', 'propose',
       'removeSignerAndSetThreshold', 'seatInvited', 'setThreshold',
     ]);
     /* RED WHEN the payment step is moved into the deploy, so an unfinished company could pay. */

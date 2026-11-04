@@ -21,7 +21,7 @@ vi.mock('../../../src/core/crypto.js', async (original) => {
 import { foundingStateRefusal } from '../../../src/core/founding-state.js';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
-import { ACT_ENDED_SCHEMA, READY_PING } from 'midnight-identity/profile/channel';
+import { ACT_CALLED_SCHEMA, ACT_CALL_SCHEMA, ACT_ENDED_SCHEMA, READY_PING } from 'midnight-identity/profile/channel';
 import { parseAsk, type ActRequest, type HoldersRequest, type KeyringRequest } from 'midnight-identity/profile/request';
 import { holdersAnswerFor, PAY_KEY_COMMITMENT_ENTRY, seatBarOf } from 'midnight-identity/profile/records-key';
 import { keyringReleaseFor, type KeyringHandedIn } from 'midnight-identity/profile/unlock';
@@ -92,6 +92,10 @@ class Wallet implements Openable {
   whileFounding: (() => Promise<void>) | null = null;
   /** How an action the page asks for ends. */
   actEnds: Record<string, unknown> = { ended: 'done', step: 5, steps: 5, relayed: 0, unconfirmed: 0 };
+  /** The calls to the service the wallet asks the page to make during an action, before it ends. */
+  actCalls: Array<{ method: string; path: string; body?: string }> = [];
+  /** The page's answer to each of those calls, in order. */
+  readonly called: Array<Record<string, unknown>> = [];
   private handler: ((event: MessageEvent) => void) | null = null;
   private readonly tab = { postMessage: (m: unknown) => { void this.onAsk(m); } };
   open(): Window | null { return this.tab as unknown as Window; }
@@ -107,6 +111,10 @@ class Wallet implements Openable {
   private deliver(data: unknown): void { this.answered.push(data); this.handler?.({ origin: WALLET, source: this.tab, data } as unknown as MessageEvent); }
   private async onAsk(message: unknown): Promise<void> {
     let answer: unknown;
+    if ((message as { schema?: unknown } | null)?.schema === ACT_CALLED_SCHEMA) {
+      this.called.push(message as Record<string, unknown>);
+      return;
+    }
     try {
       const ask = parseAsk(message, US, Date.now());
       this.asks.push({ kind: ask.kind, body: ask });
@@ -122,6 +130,10 @@ class Wallet implements Openable {
         }
       } else if (ask.kind === 'act') {
         const a = ask as ActRequest;
+        for (const [i, c] of this.actCalls.entries()) {
+          queueMicrotask(() => this.deliver({ schema: ACT_CALL_SCHEMA, nonce: a.nonce, n: i + 1, step: 3, steps: 5, ...c }));
+          while (this.called.length <= i) await new Promise((r) => setTimeout(r, 1));
+        }
         answer = { schema: ACT_ENDED_SCHEMA, nonce: a.nonce, intent: a.intent.name, ...this.actEnds };
       } else if (ask.kind === 'holders' && this.refusesHolders !== null) {
         answer = { schema: 'midnight-identity/disclosure-refused/v1', reason: this.refusesHolders };
@@ -190,6 +202,7 @@ function aService(opts: {
       case 'POST /api/accounts/acc_X/creation/again': return json(200, { account: ACCOUNT, state: 'deploy-sent' });
       case 'GET /api/accounts/acc_X/call-state': return json(200, { account: ACCOUNT, blockHash: '00'.repeat(32), accountState: 'U1RBVEU=', parameters: 'UEFSQU1T' });
       case 'POST /api/accounts/acc_X/creation/pay-key': return json(200, { txRef: 'tx' });
+      case 'POST /api/accounts/acc_X/creation/pay-key/proposal': return json(201, { proposal: { id: 'prp_PayKeyRecord' }, txRef: 'tx' });
       case 'GET /api/accounts/acc_X/directory': return json(200, { filings: [] });
       default: return json(404, { error: `no route for ${route}` });
     }
@@ -397,6 +410,26 @@ describe('THE SECOND PRESS IS ONE ACTION THE WALLET RUNS WHOLE', () => {
     expect(service.sent('POST /api/accounts/acc_X/creation')).toEqual([]);
   });
 
+  it('MAKES THE ONE CALL THE WALLET ASKS, THE PAY-RECORD KEY\'S PROPOSAL WRITTEN DOWN WITH ITS RAISE, FOR THIS COMPANY ALONE', async () => {
+    const service = aService();
+    signIn();
+    const wallet = new Wallet();
+    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const body = JSON.stringify({ proposal: {}, proposalSalt: 'ab'.repeat(32), tx: 'VFgtAAAA' });
+    wallet.actCalls = [
+      { method: 'POST', path: `/api/accounts/${accountId}/creation/pay-key/proposal`, body },
+      { method: 'POST', path: '/api/accounts/acc_BBBBBBBBBBBB/creation/pay-key/proposal', body },
+      { method: 'POST', path: `/api/accounts/${accountId}/creation/pay-key`, body: '{"call":"approve","tx":"VFgtAAAA"}' },
+    ];
+    await keyring.finishCompanyInTheWallet(accountId, WALLET, {}, wallet, US);
+    /* RED WHEN: the record and its raise are not handed to the service as the wallet sealed and built them. */
+    expect(service.sent('POST /api/accounts/acc_X/creation/pay-key/proposal').map((p) => p.body)).toEqual([JSON.parse(body)]);
+    expect(wallet.called.map((c) => [c['n'], c['outcome'], c['status']])).toEqual([[1, 'answered', 201], [2, 'refused', undefined], [3, 'refused', undefined]]);
+    /* RED WHEN: finishing one company has the page write down or send anything for another, or reach a route the action does not list. */
+    expect(service.sent('POST /api/accounts/acc_X/creation/pay-key')).toEqual([]);
+    expect(service.sent('POST /api/accounts/acc_X/creation/pay-key/proposal')).toHaveLength(1);
+  });
+
   it('HANDS BACK WHERE THE WALLET STOPPED, FOR THE NEXT PRESS TO CARRY ON FROM', async () => {
     aService();
     signIn();
@@ -444,12 +477,15 @@ describe('EACH TRANSACTION THE WALLET HANDS BACK GOES WHERE THE WALLET SAYS IT G
     expect(service.sent('POST /api/accounts/acc_X/creation/again').map((p) => p.body)).toEqual([{ deploy: 'QUdBSU4=', insert: 'SU5BR0FJTg==' }]);
     expect(await relay(INSERT, 'creation-finish')).toBe(true);
     expect(service.sent('POST /api/accounts/acc_X/creation/finish').map((p) => p.body)).toEqual([{ insert: INSERT }]);
-    const payKeySteps: Array<[what: string, call: string]> = [['pay-key-propose', 'propose'], ['pay-key-approve', 'approve'], ['pay-key-seal', 'sealPayKey']];
+    const payKeySteps: Array<[what: string, call: string]> = [['pay-key-approve', 'approve'], ['pay-key-seal', 'sealPayKey']];
     for (const [what, call] of payKeySteps) {
       expect(await relay(`VFgt${call.length}`.padEnd(8, 'A'), what)).toBe(true);
     }
     /* RED WHEN: a pay-record key step is sent as another call than the wallet named. */
-    expect(service.sent('POST /api/accounts/acc_X/creation/pay-key').map((p) => p.body.call)).toEqual(['propose', 'approve', 'sealPayKey']);
+    expect(service.sent('POST /api/accounts/acc_X/creation/pay-key').map((p) => p.body.call)).toEqual(['approve', 'sealPayKey']);
+    /* RED WHEN: the key's raise is sent by a relay, apart from the record the service keeps before it sends one. */
+    expect(await relay('VFgtAAAA', 'pay-key-propose')).toBe(false);
+    expect(service.sent('POST /api/accounts/acc_X/creation/pay-key')).toHaveLength(2);
   });
 
   it('A CREATION GOES WHERE THE SERVICE HOLDS IT, WHATEVER THE WALLET CALLS IT: A DEPLOY CARRIED AGAIN AFTER A RELAY ANSWERED LATE IS NEVER REFUSED AS ANOTHER ACCOUNT', async () => {

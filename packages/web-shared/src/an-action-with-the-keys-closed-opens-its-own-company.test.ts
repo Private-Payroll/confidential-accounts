@@ -233,8 +233,8 @@ describe('A SIGNER IS APPROVED AND ADMITTED BY ASKING THE WALLET ONE ACTION EACH
       ...at, proposal: 'prp_abcdefghijkl', name: 'Dee', role: 'viewer', address: 'AA'.repeat(32), scope: 'BB'.repeat(32), coinKey: 'CC'.repeat(32),
     }, WALLET, {}, w));
     /* RED WHEN: what the page showed does not reach the wallet that holds the proposal to it, or reaches it in another case. */
-    expect(intent).toEqual({ name: 'approve-signer', fields: {
-      ...at, proposal: 'prp_abcdefghijkl', personName: 'Dee', role: 'viewer', address: 'aa'.repeat(32), scope: 'bb'.repeat(32), coinKey: 'cc'.repeat(32),
+    expect(intent).toEqual({ name: 'approve-proposal', fields: {
+      ...at, proposal: 'prp_abcdefghijkl', kind: 'add-signer', personName: 'Dee', role: 'viewer', address: 'aa'.repeat(32), scope: 'bb'.repeat(32), coinKey: 'cc'.repeat(32),
     } });
   });
 

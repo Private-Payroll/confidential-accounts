@@ -1429,7 +1429,7 @@ export function Approve({
     }
     return (
       <ActionRunner
-        request={request} action={action} channel={channel} identity={identity} secret={secret} consent={consent}
+        request={request} action={action} channel={channel} identity={identity} secret={secret} consent={consent} framing={framing}
         atOnce={atOnce && (!PAYING_ACTIONS.has(request.intent.name) || slotQuiet)} now={now} wallet={walletRecord} account={subwallet}
         {...(PAYING_ACTIONS.has(request.intent.name) ? {
           payingFrom: whichWallet('Which of your wallets pays', 'The coins come from this wallet, and only from it.', walletLocked),

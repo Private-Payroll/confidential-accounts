@@ -1,0 +1,11 @@
+{
+  "setup.skip": "Skip for now",
+  "setup.continue": "Continue",
+  "setup.done": "Done",
+  "setup.doneForGood": "Done. You cannot undo this.",
+  "setup.skip.cannot": "This step cannot be skipped. It has to be finished.",
+  "setup.skip.done": "This step is already done.",
+  "setup.skip.reading": "Reading where this company stands.",
+  "setup.continue.notDone": "Finish this step to continue.",
+  "setup.continue.last": "This is the last step."
+}

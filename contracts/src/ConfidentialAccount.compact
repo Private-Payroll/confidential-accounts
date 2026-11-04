@@ -288,11 +288,18 @@ export circuit proposalIdOf(
     [pad(32, "midnight-accounts:proposal-id:"), payloadHash, vault], salt);
 }
 
-// One signer's approval of one proposal here. Unlinkable across proposals and accounts.
-circuit approvalNullifier(sk: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
+// One signer's approval of one proposal in one account. Unlinkable across proposals and accounts,
+// and only the holder of `sk` can compute it. Exported so a device can read whether its own seat's
+// approval is already in `approvals`.
+export circuit approvalNullifierOf(sk: Bytes<32>, account: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<4, Bytes<32>>>([
-    pad(32, "midnight-accounts:approval:"), kernel.self().bytes, proposal, sk
+    pad(32, "midnight-accounts:approval:"), account, proposal, sk
   ]);
+}
+
+// One signer's approval of one proposal here.
+circuit approvalNullifier(sk: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
+  return approvalNullifierOf(sk, kernel.self().bytes, proposal);
 }
 
 // One signer's agreement to release one held run, given while the removal count is `removals`.
@@ -331,17 +338,11 @@ export circuit inviteAddressOf(coinPublicKey: Bytes<32>, salt: Bytes<32>): Bytes
 }
 
 // What signers approve to seat whoever holds the invited address, with exactly `scope` as
-// their rights.
-export circuit signerInvitePayload(address: Bytes<32>, scope: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([
-    pad(32, "midnight-accounts:invite-signer:"), address, scope
-  ]);
-}
-
-// What signers approve to unseat a leaf.
-export circuit removeSignerPayload(removedLeaf: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([
-    pad(32, "midnight-accounts:remove-signer:"), removedLeaf
+// their rights, and to set the threshold to `newThreshold` once the seat is taken (0 keeps the
+// threshold in force), so the invitee can change neither.
+export circuit signerInvitePayload(address: Bytes<32>, scope: Bytes<32>, newThreshold: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:invite-signer:"), address, scope, newThreshold as Field as Bytes<32>
   ]);
 }
 
@@ -1047,54 +1048,20 @@ constructor(foundingLeaf: Bytes<32>, companyLabel: Bytes<32>) {
   });
 }
 
-// Unseats a signer under an approved removal. Needs a signer as caller.
-export circuit amendSigner(removedLeaf: Bytes<32>, proposal: Bytes<32>): [] {
-  requireSigner();
-
-  const id = disclose(proposal);
-  requireApproved(id);
-  requireSeatBar(id);
-  assert(
-    disclose(proposalIdOf(removeSignerPayload(removedLeaf), noVault(), proposalSalt()) == proposal),
-    "that proposal is not for this removal"
-  );
-
-  // Only a seated leaf can be removed: never the vacancy marker, never a stranger.
-  assert(signerLeaves.member(disclose(removedLeaf)), "that signer is not seated on this account");
-
-  // The departing leaf must be in the tree; its path gives its slot.
-  const path = signerPath(removedLeaf);
-  assert(path.leaf == removedLeaf, "that path is not for the leaf being removed");
-  assert(signers.checkRoot(disclose(merkleTreePathRoot<10, Bytes<32>>(path))),
-    "that signer is not on this account");
-
-  // Stamped vacant rather than cleared, so the slot can be reused.
-  signers.insertIndex(vacantSlot(), disclose(slotOf(path)));
-  signerLeaves.remove(disclose(removedLeaf));
-
-  // Refuses a removal that leaves fewer signers than the threshold.
-  assert(!(signerLeaves.size() < threshold),
-    "that would leave fewer signers than the threshold, and the account could never approve again");
-  // Or fewer than the approvals a policy change needs, which could then never be changed.
-  assert(!(signerLeaves.size() < thresholdFor(policyBarKey())),
-    "that would leave fewer signers than a policy change needs; seat another signer first, or lower the approvals policy changes need");
-
-  countRemoval();
-  closeProposal(id);
-}
-
 // Seats an invited signer, carried out by the invitee, who need not be a signer yet. The
 // invitee's device proves it holds the coin secret key of the address the proposal commits to,
 // and the new leaf is rebuilt here from the invitee's seat key and blinding with the rights the
 // proposal fixed, so nobody else can take the seat and the invitee cannot widen their rights.
 // It discloses only the new leaf, as every seat does; never the address, its salt or the key.
-export circuit seatInvited(proposal: Bytes<32>, intoVacatedSlot: Boolean): [] {
+// The proposal also fixes the threshold the seat sets, so a signer and the approvals the company
+// needs change together under one approval.
+export circuit seatInvited(proposal: Bytes<32>, intoVacatedSlot: Boolean, newThreshold: Uint<64>): [] {
   const scope = signerScope();
   const address = inviteAddressOf(coinPublicKeyOf(inviteeCoinSecretKey()), inviteAddressSalt());
 
   const id = disclose(proposal);
   assert(
-    disclose(proposalIdOf(signerInvitePayload(address, scope), noVault(), proposalSalt()) == proposal),
+    disclose(proposalIdOf(signerInvitePayload(address, scope, newThreshold), noVault(), proposalSalt()) == proposal),
     "that proposal does not invite this wallet with these rights"
   );
 
@@ -1118,6 +1085,14 @@ export circuit seatInvited(proposal: Bytes<32>, intoVacatedSlot: Boolean): [] {
     signers.insert(disclose(newSignerLeaf));
   }
   signerLeaves.insert(disclose(newSignerLeaf));
+
+  // A threshold the invitation names is checked against the seats with the new one counted; 0
+  // keeps the threshold in force, and is never a threshold itself.
+  if (disclose(newThreshold) != 0) {
+    assert(!(signerLeaves.size() < disclose(newThreshold)),
+      "the threshold an invitation sets cannot exceed the signers seated once it is taken");
+    threshold = disclose(newThreshold);
+  }
 }
 
 // Changes the threshold under an approved proposal. Refuses zero, or more than the signers.
@@ -1141,7 +1116,8 @@ export circuit setThreshold(newThreshold: Uint<64>, proposal: Bytes<32>): [] {
   closeProposal(disclose(proposal));
 }
 
-// Removes one signer and sets the threshold under one approved proposal.
+// Removes one signer under one approved proposal, and sets the threshold to `newThreshold`, or
+// keeps the one in force when it is 0. The only way a signer is removed. Needs a signer as caller.
 export circuit removeSignerAndSetThreshold(
   removedLeaf: Bytes<32>,
   newThreshold: Uint<64>,
@@ -1172,10 +1148,12 @@ export circuit removeSignerAndSetThreshold(
   signers.insertIndex(vacantSlot(), disclose(slotOf(path)));
   signerLeaves.remove(disclose(removedLeaf));
 
-  assert(disclose(newThreshold) > 0, "the threshold must be at least one");
-  assert(!(signerLeaves.size() < disclose(newThreshold)),
+  if (disclose(newThreshold) != 0) {
+    threshold = disclose(newThreshold);
+  }
+  // Refuses a removal that leaves fewer signers than the threshold in force once it is carried out.
+  assert(!(signerLeaves.size() < threshold),
     "that would leave fewer signers than the threshold, and the account could never approve again");
-  threshold = disclose(newThreshold);
   // Or fewer than the approvals a policy change needs, which could then never be changed.
   assert(!(signerLeaves.size() < thresholdFor(policyBarKey())),
     "that would leave fewer signers than a policy change needs; seat another signer first, or lower the approvals policy changes need");
@@ -1219,6 +1197,8 @@ export circuit reseatSigner(oldLeaf: Bytes<32>, newLeaf: Bytes<32>, proposal: By
 
 // Opens a proposal, a run built from its parts or a governance payload, counting the raiser's
 // approval: always for a governance payload, and for a run only when the raiser may approve on its vault.
+// `deadline` is the last block time, in seconds, at which this raise may land; the raiser's device
+// fixes it and its proof carries it, so a raise held back past it can never open the proposal.
 export circuit propose(
   payloadHash: Bytes<32>,
   root: Bytes<32>,
@@ -1228,8 +1208,11 @@ export circuit propose(
   required: Uint<64>,
   isRun: Boolean,
   vault: Bytes<32>,
+  deadline: Uint<64>,
 ): [] {
   const caller = seat();
+  assert(blockTimeLt(disclose(deadline)),
+    "the time to send this proposal to the chain has passed, so it can never be raised; write it down and raise it again");
   // A run's raiser has its rights opened once, for the raise right and the approve right.
   const raiser = disclose(isRun) ? raisesAndApproves(caller.scope, disclose(vault)) : [true, true];
   // The change and the id are computed once, for a run and a governance proposal alike.
@@ -1244,17 +1227,17 @@ export circuit propose(
 
   if (disclose(isRun)) {
   // A run needs payees, a window that opens before it closes, and a vault other than `noVault()`.
-  assert(disclose(payees) > 0, "a run with no payees");
-  assert(disclose(opensAt) < disclose(closesAt), "a run window ends before it opens");
-  assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
+  assert(disclose(payees) > 0, "this proposal names nobody to pay and nothing to set up");
+  assert(disclose(opensAt) < disclose(closesAt), "the time to carry out this proposal ends before it starts");
+  assert(disclose(vault) != noVault(), "this proposal must name the vault it is for");
   // Only a signer who may raise runs on that vault. A governance proposal needs a seat alone.
   assert(raiser[0],
-    "your seat does not let you raise runs on that vault; ask a signer who may, or ask the company to change your rights");
+    "your seat does not let you propose payments from that vault or finish setting it up; ask a signer who may, or ask the company to change your rights");
   // The only place a window is written.
   runWindow.insert(id, Window { opensAt: disclose(opensAt), closesAt: disclose(closesAt) });
   } else {
   // A governance proposal names no vault, so no vault can ever be paid against it.
-  assert(disclose(vault) == noVault(), "a governance proposal cannot name a vault");
+  assert(disclose(vault) == noVault(), "a change to the company cannot name a vault");
   }
 
   openProposals.insert(id, change);
@@ -1286,7 +1269,7 @@ export circuit approve(proposal: Bytes<32>): [] {
   if (runWindow.member(id)) {
     const opened = runOpening(id);
     assert(grants(caller.scope, 1, opened.vault, proposalIdOf(opened.payload, opened.vault, opened.salt) == id),
-      "your seat does not let you approve runs on that vault, or this device does not hold the run's details; open the run again, and if it still refuses, ask a signer who may approve there, or ask the company to change your rights");
+      "your seat does not let you approve payments from that vault or finish setting it up, or this device does not hold this proposal's details; open it again, and if it still refuses, ask a signer who may approve there, or ask the company to change your rights");
   }
 
   const nul = disclose(approvalNullifier(caller.sk, id));
@@ -1519,7 +1502,7 @@ export circuit recordPaymentFromVault(
   // amount, address or form. A real second payment is raised as a later occurrence.
   const once = disclose(paidOnceOf(nonce));
   assert(!movements.member(once),
-         "a payment is already recorded for this person, kind of pay and month. Pay a real second payment as a numbered extra");
+         "this payee has already been paid this payment; to pay them again, make a new payment, or on a pay run a numbered extra");
   movements.insert(once);
 
   return kernel.self();
@@ -1567,7 +1550,7 @@ circuit markBatchPayee(slot: BatchSlot, leaf: Bytes<32>): [] {
     movements.insert(movement);
     const once = disclose(paidOnceOf(slot.nonce));
     assert(!movements.member(once),
-           "a payment is already recorded for this person, kind of pay and month. Pay a real second payment as a numbered extra");
+           "this payee has already been paid this payment; to pay them again, make a new payment, or on a pay run a numbered extra");
     movements.insert(once);
   }
 }

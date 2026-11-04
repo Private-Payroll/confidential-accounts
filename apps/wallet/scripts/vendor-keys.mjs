@@ -52,6 +52,10 @@
  * of pins IS committed: it is small, and it is the thing that makes the
  * re-download trustworthy.
  *
+ * THE KEYS FOLDER MUST ALREADY EXIST. It holds the committed manifest, so a checkout has
+ * it; a run without it is refused before anything is downloaded or written, naming
+ * what restores it, and the closing line names the manifest path the run wrote.
+ *
  * Usage:  node scripts/vendor-keys.mjs [--k 14,16] [--repin]
  *         node --import tsx scripts/vendor-keys.mjs --account [--repin]
  *   --k        vendor only these parameter sizes (default: all, 2p10-2p18 -
@@ -59,12 +63,15 @@
  *   --account  copy the company account's circuits from contracts/managed,
  *              and the vault's from contracts/managed-vault, instead of
  *              downloading the network's; nothing is downloaded.
+ *   --prune    with --account: move the key files and drop the pins of circuits the compile
+ *              no longer builds into _to_delete/ (nothing is deleted). Without it such a
+ *              file or pin is refused by name.
  *   --repin    accept changed source bytes and take new pins. Read the
  *              refusal first.
  */
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -173,17 +180,80 @@ export function vendorAccountKeys({ repoRoot, keysDir, circuits, folder, expecte
   return refused;
 }
 
-const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+/* The served paths under the given folders that a pin or a file on disk still holds
+ * but the compile no longer builds: `expected` is every path the run just walked. */
+export function staleKeysOf({ keysDir, artefacts, folders, expected }) {
+  const wanted = new Set(expected);
+  const held = new Set();
+  for (const folder of folders) {
+    for (const served of Object.keys(artefacts)) if (served.startsWith(`${folder}/`)) held.add(served);
+    const dir = path.join(keysDir, folder);
+    if (existsSync(dir)) for (const name of readdirSync(dir)) held.add(`${folder}/${name}`);
+  }
+  return [...held].filter((served) => !wanted.has(served)).sort();
+}
+
+/* Moves each stale file into `graveyard` under a name that says where it came from, and
+ * drops its pin. Nothing is deleted: the person who ran it empties the graveyard by hand. */
+export function pruneStale({ keysDir, artefacts, stale, graveyard, stamp }) {
+  mkdirSync(graveyard, { recursive: true });
+  let moved = 0;
+  for (const served of stale) {
+    const from = path.join(keysDir, served);
+    if (existsSync(from)) {
+      renameSync(from, path.join(graveyard, `vendor-keys-pruned-${stamp}-${served.replaceAll('/', '-')}`));
+      moved += 1;
+    }
+    delete artefacts[served];
+  }
+  return moved;
+}
+
+/* A stale key is refused unless the run was told to prune; returns how many refusals to add. */
+export function pruneOrRefuse({ keysDir, artefacts, folders, expected, prune, graveyard, stamp, log = console.log }) {
+  const stale = staleKeysOf({ keysDir, artefacts, folders, expected });
+  if (stale.length === 0) return 0;
+  if (!prune) {
+    log(`  !! REFUSED ${stale.length} key file(s) or pin(s) of circuits the compile no longer builds:`);
+    for (const served of stale) log(`     ${served}`);
+    log('     The wallet would keep serving them. `--prune` moves the files into _to_delete/ and drops');
+    log('     their pins; run `npm run vendor-keys:account -- --prune` once you have read the names above.');
+    return 1;
+  }
+  const moved = pruneStale({ keysDir, artefacts, stale, graveyard, stamp });
+  log(`  PRUNED ${stale.length} pin(s), moved ${moved} file(s) into ${path.basename(graveyard)}/ (--prune, deliberate)`);
+  return 0;
+}
+
+/** The path as the report names it: from the repository's root, with forward slashes. */
+const fromRoot = (repoRoot, target) => path.relative(repoRoot, target).split(path.sep).join('/');
+
+/** Refuses (returns 1) when the keys folder is not there: the run never makes the folder it writes into, so it cannot report success at a place nothing serves. Subfolders under it are made as files land. */
+export function keysFolderOrRefuse({ keysDir, repoRoot, log = console.log }) {
+  if (existsSync(keysDir) && statSync(keysDir).isDirectory()) return 0;
+  log(`  !! REFUSED: ${fromRoot(repoRoot, keysDir)} is not there, and this script does not make it.`);
+  log('     The folder ships with manifest.json inside it, so a full checkout of the repository has it.');
+  log(`     Restore it by checking out ${fromRoot(repoRoot, path.join(keysDir, 'manifest.json'))}, or run this from a full checkout, then run again.`);
+  return 1;
+}
+
+/** The closing line of a run: where the manifest of pins was written, read from that path. */
+export const wroteLine = ({ repoRoot, manifestPath, pins }) => `  Wrote ${pins} pins to ${fromRoot(repoRoot, manifestPath)}`;
+
+/** Node reports this file's URL by its real path, so the path it was started by is resolved the same way: a symlinked folder (macOS /var -> /private/var) must not make the script think it was imported. */
+const isMain = process.argv[1] !== undefined && realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
 
 if (isMain) {
   const args = process.argv.slice(2);
   const repin = args.includes('--repin');
+  const prune = args.includes('--prune');
   const kArg = args.includes('--k') ? args[args.indexOf('--k') + 1] : null;
   const sizes = kArg ? kArg.split(',').map((s) => Number(s.trim())) : ALL_K;
   if (sizes.some((k) => !ALL_K.includes(k))) {
     console.log(`  --k must name sizes that exist: ${ALL_K.join(', ')}`);
     process.exit(1);
   }
+  if (keysFolderOrRefuse({ keysDir: KEYS_DIR, repoRoot: REPO_ROOT }) !== 0) process.exit(1);
 
   async function download(url) {
     const started = Date.now();
@@ -277,6 +347,8 @@ if (isMain) {
     const { expectedVk } = await import(pathToFileURL(compiled).href);
     console.log(`  The company account's circuits this wallet proves, itself or as a vault's call (${circuits.length}), copied from contracts/managed:`);
     refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits, folder, expectedVk, artefacts, repin });
+    const walked = [folder];
+    const expected = accountFilesOf(circuits, folder).map((f) => f.served);
 
     /* The vault's: the circuits the wallet proves whole, and every other one's verifier key, which a deploy installs. */
     const { VAULT_CIRCUITS_THE_WALLET_PROVES: vaultProved, VAULT_CIRCUITS_THE_WALLET_DEPLOYS: vaultAll } = await import(
@@ -291,10 +363,20 @@ if (isMain) {
       const { expectedVk: vaultVk } = await import(pathToFileURL(compiledVault).href);
       const verifiersOnly = vaultAll.filter((c) => !vaultProved.includes(c));
       console.log(`  The vault's circuits this wallet proves (${vaultProved.length}) and the verifier keys of the rest (${verifiersOnly.length}), copied from contracts/managed-vault:`);
+      walked.push(vaultFolder);
+      expected.push(
+        ...accountFilesOf(vaultProved, vaultFolder, 'managed-vault').map((f) => f.served),
+        ...accountFilesOf(verifiersOnly, vaultFolder, 'managed-vault', true).map((f) => f.served),
+      );
       refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: vaultProved, folder: vaultFolder, expectedVk: vaultVk, artefacts, repin, compiled: 'managed-vault' });
       refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: verifiersOnly, folder: vaultFolder, expectedVk: vaultVk, artefacts, repin, compiled: 'managed-vault', verifierOnly: true });
     }
+    refused += pruneOrRefuse({ keysDir: KEYS_DIR, artefacts, folders: walked, expected, prune, graveyard: path.join(REPO_ROOT, '_to_delete'), stamp: new Date().toISOString().slice(0, 10) });
   } else {
+    if (prune) {
+      console.log('  --prune applies to the company account\'s keys: run `npm run vendor-keys:account -- --prune`.');
+      process.exit(1);
+    }
     console.log('  Circuit key material (prover, verifier, IR per circuit):');
     for (const circuit of CIRCUITS) {
       for (const suffix of SUFFIXES) await vendor(`${circuit}${suffix}`);
@@ -321,11 +403,10 @@ if (isMain) {
     sources: { ...existing?.sources, ...(accountOnly ? { account: 'contracts/managed', vault: 'contracts/managed-vault' } : { circuits: S3, parameters: [S3, SRS] }) },
     artefacts,
   };
-  mkdirSync(KEYS_DIR, { recursive: true });
   writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
 
   console.log('');
-  console.log(`  Wrote ${Object.keys(artefacts).length} pins to apps/wallet/public/keys/manifest.json`);
+  console.log(wroteLine({ repoRoot: REPO_ROOT, manifestPath: MANIFEST, pins: Object.keys(artefacts).length }));
   if (accountOnly) process.exit(refused > 0 ? 1 : 0);
   console.log(`  (${(downloadedBytes / 1024 / 1024).toFixed(2)} MB downloaded this run). The app now`);
   console.log('  serves and verifies key material from its own origin at /keys/ — the');

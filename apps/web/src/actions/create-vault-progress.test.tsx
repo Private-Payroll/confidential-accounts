@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
@@ -10,6 +7,7 @@ import { PanelProvider } from '../shell/right-panel.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE VAULT STEP SAYS WHAT IS HAPPENING while the vault is built and set up: each stage in plain words, how long it has
@@ -34,7 +32,7 @@ const { CREATING } = await import('../adapters/create-vault.js');
 const { builderIsUp } = await import('../adapters/proofs-running.js');
 const { VAULT_USUAL_SECONDS } = await import('../adapters/usual-times.js');
 
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const session = {
   person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(),

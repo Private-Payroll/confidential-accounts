@@ -34,6 +34,7 @@ import {
   assertWireVault, fromWire, signFiling, toWire, verifiedFiler, wirePaths, type WireRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
 import type { Hex } from '../../../src/core/crypto.js';
+import { ServiceNotReached } from './hand-over.js';
 import { companyRecordKey, vaultRecordKey, type FiledKind } from '../../../src/midnight/seat-directory.js';
 import {
   companyWirePaths, fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler,
@@ -325,7 +326,9 @@ export class HttpSealedPoolStore implements SealedPoolStore {
 /**
  * **HOW THE PAGE SENDS ONE REQUEST**: to its own origin only, with the sign-in
  * cookie, and saying which person this tab was prepared for, so a sign-in
- * changed in another tab is refused rather than written under.
+ * changed in another tab is refused rather than written under. A request that
+ * got no answer at all is `ServiceNotReached`, never an answer: the browser
+ * cannot tell whether what it carried arrived, so whoever sent it decides.
  */
 export const pageWireSend = (
   signedInAs: () => string | null,
@@ -333,12 +336,17 @@ export const pageWireSend = (
 ): WireSend => async (path, init) => {
   if (!path.startsWith('/api/')) throw new Error('a sealed record is sent to this product\x27s own server and nowhere else');
   const who = signedInAs();
-  const r = await doFetch(path, {
-    method: init.method,
-    ...(init.body === undefined ? {} : { body: init.body }),
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', ...(who ? { 'x-signed-in-as': who } : {}) },
-  });
+  let r: Response;
+  try {
+    r = await doFetch(path, {
+      method: init.method,
+      ...(init.body === undefined ? {} : { body: init.body }),
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', ...(who ? { 'x-signed-in-as': who } : {}) },
+    });
+  } catch (e) {
+    throw new ServiceNotReached(`the company's service could not be reached (${String((e as Error)?.message ?? e).replace(/\.\s*$/u, '')})`, false);
+  }
   const body = await r.json().catch(() => ({}));
   return { status: r.status, body };
 };

@@ -85,6 +85,8 @@ const SEALED_BYTES = { iv: '00', ct: '11', tag: '22' } as unknown as Sealed;
  */
 const OTHER = 'bb'.repeat(32) as Hex;
 const PAYLOAD_HASH = 'cc'.repeat(32) as Hex;
+/* The deadline every raise here carries: the last block time, in seconds, it may land at. */
+const RAISE_BY = 1_800_086_400n;
 
 /**
  * ONE ASSET, NAMED EVERYWHERE.
@@ -774,7 +776,7 @@ describe('MidnightLedger: the rules the transition half was the only carrier of'
      * `stageChange` — the same line, from the door that is still open.
      */
     const { ledger, calls } = harness({ openProposals: [], privateState: null });
-    await expect(ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault()))
+    await expect(ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY))
       .rejects.toThrow(/no private state/);
     // And nothing reached the chain, which is the half that costs a fee.
     expect(calls).toHaveLength(0);
@@ -826,10 +828,10 @@ describe('MidnightLedger: the rest of the round', () => {
      * the ledger passed: the point is which scope, not that some scope arrived.
      */
     const { ledger, calls } = harness({ openProposals: [] });
-    await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
+    await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.circuit).toBe('propose');
-    expect(calls[0]!.args).toHaveLength(8);
+    expect(calls[0]!.args).toHaveLength(9);
     expect(argHex(calls[0]!.args[0])).toBe(PAYLOAD_HASH);
     /*
      * S11: one merged circuit, so the run's four slots and the discriminator
@@ -845,6 +847,8 @@ describe('MidnightLedger: the rest of the round', () => {
     expect(calls[0]!.args[5]).toBe(0n);
     expect(calls[0]!.args[6]).toBe(false);
     expect(argHex(calls[0]!.args[7])).toBe(toHex(pureCircuits.noVault()));
+    /* RED WHEN: the raise is sent without the deadline it was handed, or with another. */
+    expect(calls[0]!.args[8]).toBe(RAISE_BY);
   });
 
   /*
@@ -860,7 +864,7 @@ describe('MidnightLedger: the rest of the round', () => {
   it('X20: says the state could not be read back when the post-check read returns nothing', async () => {
     const { ledger } = harness({ openProposals: [], stateGoneAfterCall: true });
     const failed = await ledger
-      .propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault())
+      .propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY)
       .then(() => null, (e: Error) => e);
     expect(failed?.message).toMatch(/could not be read back/);
     // And NOT the other branch's words: naming the wrong fault is the defect.
@@ -879,7 +883,7 @@ describe('MidnightLedger: the rest of the round', () => {
       proposeLands: false,
     });
     const failed = await ledger
-      .propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault())
+      .propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY)
       .then(() => null, (e: Error) => e);
     expect(failed?.message).toMatch(/has no open proposal with this id/);
     expect(failed?.message).not.toMatch(/could not be read back/);
@@ -891,7 +895,7 @@ describe('MidnightLedger: the rest of the round', () => {
   it('X20: says how many ids were held when the chain holds none at all', async () => {
     const { ledger } = harness({ openProposals: [], proposeLands: false });
     const failed = await ledger
-      .propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault())
+      .propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY)
       .then(() => null, (e: Error) => e);
     expect(failed?.message).toContain('ids on chain (0): none');
   });
@@ -901,7 +905,7 @@ describe('MidnightLedger: the rest of the round', () => {
     // staging, the round reaches its threshold and can then never settle —
     // with the fees already paid.
     const { ledger, staged } = harness({ openProposals: [] });
-    await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
+    await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY);
     expect(staged).toHaveLength(1);
     expect(staged[0]!.value.changeAmount).toBe(20_000n);
     // Which asset leaves, because since M-125 that is part of what the signers
@@ -925,7 +929,7 @@ describe('MidnightLedger: the rest of the round', () => {
   it('M-128: a second proposal may be raised while the first is still collecting approvals', async () => {
     const { ledger, calls } = harness({});
     const invoice = 'dd'.repeat(32) as Hex;
-    await ledger.propose('acct', invoice, CHANGE, BY, MidnightCommitments.noVault());
+    await ledger.propose('acct', invoice, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY);
     expect(calls.map(c => c.circuit)).toEqual(['propose']);
   });
 
@@ -938,7 +942,7 @@ describe('MidnightLedger: the rest of the round', () => {
      * against whichever was written last.
      */
     const { ledger } = harness({ openProposals: [], changeOnPropose: OTHER });
-    await expect(ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault()))
+    await expect(ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY))
       .rejects.toThrow(/recorded a different change/);
   });
 
@@ -1117,7 +1121,7 @@ describe('M-38: buildCall arity, against the real wrapper shape', () => {
     const { ledger } = harness({});
     /*
      * S11 merged `proposeRun` into `propose`, and a run's required approvals
-     * joined it: EIGHT declared arguments, and the real `contract-info.json`
+     * joined it, and then the deadline a raise may land by: NINE declared arguments, and the real `contract-info.json`
      * is what says so. An old five-argument call must be refused by the guard with the arity named —
      * not discovered by the runtime as an undefined halfway into
      * `runPayload`, which is exactly how this test failed when it still
@@ -1125,11 +1129,11 @@ describe('M-38: buildCall arity, against the real wrapper shape', () => {
      */
     await expect((ledger as any).buildCall('addr_1', 'propose', [
       fromHex('00'.repeat(32)), fromHex('aa'.repeat(32)), 50n, 1_800_000_000n, 1_800_604_800n,
-      0n, true, fromHex('bb'.repeat(32)),
+      0n, true, fromHex('bb'.repeat(32)), RAISE_BY,
     ], 'a-key:acct')).resolves.toBeDefined();
     await expect((ledger as any).buildCall('addr_1', 'propose', [
       fromHex('aa'.repeat(32)), 50n, 1_800_000_000n, 1_800_604_800n, fromHex('bb'.repeat(32)),
-    ], 'a-key:acct')).rejects.toThrow(/takes 8 argument/);
+    ], 'a-key:acct')).rejects.toThrow(/takes 9 argument/);
     // The sibling entry point is GONE from the contract, and a call to it
     // must fail BY NAME, not by a guess about its arguments.
     await expect((ledger as any).buildCall('addr_1', 'proposeRun', [
@@ -1236,12 +1240,12 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
      * any vault can ever make.
      */
     const { ledger, calls } = harness({ openProposals: [] });
-    await ledger.proposeRun('acct', RUN, CHANGE, BY);
+    await ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY);
 
     expect(calls).toHaveLength(1);
     /* S11: the run travels through the MERGED `propose`, `isRun` true. */
     expect(calls[0]!.circuit).toBe('propose');
-    expect(calls[0]!.args).toHaveLength(8);
+    expect(calls[0]!.args).toHaveLength(9);
     /* The opaque payload slot is a filler the run branch never reads. */
     expect(argHex(calls[0]!.args[0])).toBe('00'.repeat(32));
     expect(argHex(calls[0]!.args[1])).toBe(RUN.root);
@@ -1253,6 +1257,8 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
     expect(calls[0]!.args[6]).toBe(true);
     expect(argHex(calls[0]!.args[7])).toBe(RUN.vault);
     expect(argHex(calls[0]!.args[7])).not.toBe(toHex(pureCircuits.noVault()));
+    /* RED WHEN: a run is raised without the deadline it was handed, or with another. */
+    expect(calls[0]!.args[8]).toBe(RAISE_BY);
   });
 
   /*
@@ -1344,10 +1350,10 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
         if (i < 0) throw new Error(`the compiled contract declares no argument "${name}" on propose`);
         return i;
       };
-      expect(declared).toHaveLength(8);
+      expect(declared).toHaveLength(9);
 
       const { ledger, calls } = harness({ openProposals: [] });
-      await ledger.proposeRun('acct', RUN, CHANGE, BY);
+      await ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY);
       const args = calls[0]!.args;
 
       expect(argHex(args[slot('root')])).toBe(RUN.root);
@@ -1387,13 +1393,13 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
    */
   it('hands back the id every approval and every payment will be made against', async () => {
     const { ledger } = harness({ openProposals: [] });
-    const r = await ledger.proposeRun('acct', RUN, CHANGE, BY);
+    const r = await ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY);
     expect(r.proposalId).toBe(runId());
   });
 
   it('stages the change, because the circuit reads it from private state', async () => {
     const { ledger, staged } = harness({ openProposals: [] });
-    await ledger.proposeRun('acct', RUN, CHANGE, BY);
+    await ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY);
     expect(staged).toHaveLength(1);
     expect(staged[0]!.value.proposalSalt).toBeInstanceOf(Uint8Array);
   });
@@ -1407,7 +1413,7 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
      */
     const { ledger, calls } = harness({ openProposals: [] });
     await expect(ledger.proposeRun(
-      'acct', { ...RUN, opensAt: 1_800_000_000_000n, closesAt: 1_800_604_800_000n }, CHANGE, BY))
+      'acct', { ...RUN, opensAt: 1_800_000_000_000n, closesAt: 1_800_604_800_000n }, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/not a time in seconds|year 5/i);
     expect(calls).toEqual([]);
   });
@@ -1415,28 +1421,28 @@ describe('V-73: a payroll run, raised and swept through the client', () => {
   it('refuses a backwards window and an empty run before spending a fee', async () => {
     const { ledger, calls } = harness({ openProposals: [] });
     await expect(ledger.proposeRun(
-      'acct', { ...RUN, opensAt: RUN.closesAt, closesAt: RUN.opensAt }, CHANGE, BY))
+      'acct', { ...RUN, opensAt: RUN.closesAt, closesAt: RUN.opensAt }, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/no payment could ever fall inside it/i);
-    await expect(ledger.proposeRun('acct', { ...RUN, payees: 0n }, CHANGE, BY))
+    await expect(ledger.proposeRun('acct', { ...RUN, payees: 0n }, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/at least one payee/i);
     expect(calls).toEqual([]);
   });
 
   it('SAYS SO when the run did not land, rather than returning an id nobody can pay', async () => {
     const { ledger } = harness({ openProposals: [], proposeLands: false });
-    await expect(ledger.proposeRun('acct', RUN, CHANGE, BY))
+    await expect(ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/no open proposal with this run's id/i);
   });
 
   it('SAYS SO when the chain recorded a different change', async () => {
     const { ledger } = harness({ openProposals: [], changeOnPropose: 'cd'.repeat(32) as Hex });
-    await expect(ledger.proposeRun('acct', RUN, CHANGE, BY))
+    await expect(ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/different change/i);
   });
 
   it('sweeps an expired run by id, and takes it out of the open set', async () => {
     const { ledger, calls } = harness({ openProposals: [] });
-    const r = await ledger.proposeRun('acct', RUN, CHANGE, BY);
+    const r = await ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY);
     await ledger.closeExpiredRun('acct', r.proposalId, BY);
 
     const sweep = calls.find(c => c.circuit === 'closeExpiredRun');
@@ -1491,6 +1497,7 @@ describe('prepare: the same round, stopped before the chain', () => {
     payloadHash: PAYLOAD_HASH,
     change: CHANGE,
     vault: MidnightCommitments.noVault(),
+    raiseBy: RAISE_BY,
   };
 
   it('touches nothing on chain', async () => {
@@ -1528,7 +1535,7 @@ describe('prepare: the same round, stopped before the chain', () => {
     const call = await ledger.prepare('acct', step);
     expect(call.circuit).toBe('propose');
     // Eight since the run's required approvals joined it, and the guard reads that off the compiled ABI.
-    expect(call.args).toHaveLength(8);
+    expect(call.args).toHaveLength(9);
     expect(argHex(call.args[0])).toBe(PAYLOAD_HASH);
     expect(call.address).toBe('addr_1');
   });
@@ -1821,7 +1828,7 @@ describe('C222: a ledger is bound to the harness it was built with', () => {
      */
     const second = harness({});
 
-    await first.ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
+    await first.ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY);
 
     // The call landed in the first harness, and the first harness read it back.
     expect(first.calls.map(c => c.circuit)).toEqual(['propose']);
@@ -1839,8 +1846,8 @@ describe('C222: a ledger is bound to the harness it was built with', () => {
     const a = harness({ openProposals: [] });
     const b = harness({ openProposals: [] });
 
-    await b.ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
-    await a.ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
+    await b.ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY);
+    await a.ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY);
 
     expect(a.calls).toHaveLength(1);
     expect(b.calls).toHaveLength(1);
@@ -1952,7 +1959,7 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
   it('refuses an opening that names no founding signer', async () => {
     /*
      * The account's only seat is the constructor's argument. Deployed without
-     * one, `amendSigner`'s `requireSigner()` means nobody can ever add the
+     * one, nobody can ever raise the invitation that adds the
      * first — the account is dead, permanently, along with every vault that
      * named it. There is no on-chain guard for an argument never supplied.
      */
@@ -2314,7 +2321,7 @@ describe('C367: a governance round may not name a vault, and the boundary says s
      * refusal of one value and not of the door — and `proposeRun`, which is the
      * branch that DOES carry a vault, is untouched and pinned above (`V-73`).
      */
-    await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault());
+    await ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault(), RAISE_BY);
     expect(calls).toHaveLength(1);
   });
 });
@@ -2356,8 +2363,20 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
   it('refuses a window in milliseconds without staging a salt', async () => {
     const { ledger, calls, staged } = harness({ openProposals: [] });
     await expect(ledger.proposeRun(
-      'acct', { ...RUN, opensAt: 1_800_000_000_000n, closesAt: 1_800_604_800_000n }, CHANGE, BY))
+      'acct', { ...RUN, opensAt: 1_800_000_000_000n, closesAt: 1_800_604_800_000n }, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/not a time in seconds|year 5/i);
+    expect(calls).toEqual([]);
+    expect(staged).toEqual([]);
+  });
+
+  it('refuses a raise with no deadline, or one in milliseconds, without staging a salt or spending a fee', async () => {
+    const { ledger, calls, staged } = harness({ openProposals: [] });
+    /* RED WHEN: a raise is built with no deadline, which the chain would refuse only after the proving and the fee. */
+    await expect(ledger.proposeRun('acct', RUN, CHANGE, BY)).rejects.toThrow(/does not carry the time it must reach the chain by/u);
+    await expect(ledger.propose('acct', PAYLOAD_HASH, CHANGE, BY, MidnightCommitments.noVault()))
+      .rejects.toThrow(/does not carry the time it must reach the chain by/u);
+    /* RED WHEN: a deadline in milliseconds is sent, one the chain would never reach. */
+    await expect(ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY * 1000n)).rejects.toThrow(/is not a time in seconds/u);
     expect(calls).toEqual([]);
     expect(staged).toEqual([]);
   });
@@ -2365,7 +2384,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
   it('refuses a backwards window without staging a salt', async () => {
     const { ledger, calls, staged } = harness({ openProposals: [] });
     await expect(ledger.proposeRun(
-      'acct', { ...RUN, opensAt: RUN.closesAt, closesAt: RUN.opensAt }, CHANGE, BY))
+      'acct', { ...RUN, opensAt: RUN.closesAt, closesAt: RUN.opensAt }, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/no payment could ever fall inside it/i);
     expect(calls).toEqual([]);
     expect(staged).toEqual([]);
@@ -2373,7 +2392,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
 
   it('refuses an empty run without staging a salt', async () => {
     const { ledger, calls, staged } = harness({ openProposals: [] });
-    await expect(ledger.proposeRun('acct', { ...RUN, payees: 0n }, CHANGE, BY))
+    await expect(ledger.proposeRun('acct', { ...RUN, payees: 0n }, CHANGE, BY, RAISE_BY))
       .rejects.toThrow(/at least one payee/i);
     expect(calls).toEqual([]);
     expect(staged).toEqual([]);
@@ -2388,7 +2407,7 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
    */
   it('and an accepted run still stages exactly one record, carrying the salt', async () => {
     const { ledger, staged } = harness({ openProposals: [] });
-    await ledger.proposeRun('acct', RUN, CHANGE, BY);
+    await ledger.proposeRun('acct', RUN, CHANGE, BY, RAISE_BY);
     expect(staged).toHaveLength(1);
     expect(staged[0]!.value.proposalSalt).toBeInstanceOf(Uint8Array);
   });

@@ -364,7 +364,7 @@ describe('a run is paid one payee at a time', () => {
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: CLOSES, until: OPENS, vault: PAYROLL,
-    })).rejects.toThrow(/ends before it opens/i);
+    })).rejects.toThrow(/the time to carry out this proposal ends before it starts/i);
   });
 
   it('refuses a run with nobody in it, on chain as well as in the client', async () => {
@@ -373,7 +373,7 @@ describe('a run is paid one payee at a time', () => {
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: 0n,
       from: OPENS, until: CLOSES, vault: PAYROLL,
-    })).rejects.toThrow(/no payees/i);
+    })).rejects.toThrow(/this proposal names nobody to pay and nothing to set up/i);
   });
 
   it('refuses a claim before the run has enough approvals', async () => {
@@ -578,7 +578,7 @@ describe('the tree the client builds', () => {
  * ── WHAT PINS IT, AND WHAT THIS BLOCK IS FOR ─────────────────────────────
  *
  * One assert in the governance branch:
- * `assert(disclose(vault) == noVault(), "a governance proposal cannot name a
+ * `assert(disclose(vault) == noVault(), "a change to the company cannot name a
  * vault")`. **A mutation deletes it and the first test below must go red** —
  * that is the whole reason this block exists, and without it the line that
  * closes a live money-path hole would be pinned by nothing at all.
@@ -617,7 +617,7 @@ describe('a run cannot be raised through the governance branch', () => {
     const { payload } = runPayloadFor(runOf(3, 40));
     const c = govChange(140);
     await expect(sim.as(carrying(sim, A, c)).propose(payload, PAYROLL))
-      .rejects.toThrow(/governance proposal cannot name a vault/);
+      .rejects.toThrow(/a change to the company cannot name a vault/);
     expect(sim.ledger.openProposals.size()).toBe(0n);
   });
 
@@ -627,7 +627,7 @@ describe('a run cannot be raised through the governance branch', () => {
     const { payload } = runPayloadFor(runOf(3, 50));
     const c = govChange(141);
     await expect(sim.as(carrying(sim, A, c)).propose(payload, TREASURY))
-      .rejects.toThrow(/governance proposal cannot name a vault/);
+      .rejects.toThrow(/a change to the company cannot name a vault/);
     expect(sim.ledger.openProposals.size()).toBe(0n);
   });
 
@@ -691,7 +691,7 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees,
       from: OPENS, until: CLOSES, vault: NO_VAULT,
-    })).rejects.toThrow(/a run must name the vault that will pay it/);
+    })).rejects.toThrow(/this proposal must name the vault it is for/);
     expect(sim.ledger.openProposals.size()).toBe(0n);
     expect(sim.runWindow(sim.proposalId(
       pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n),
@@ -710,7 +710,7 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
     const c = govChange(151);
     await expect(sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES,
-    })).rejects.toThrow(/a run must name the vault that will pay it/);
+    })).rejects.toThrow(/this proposal must name the vault it is for/);
     expect(sim.ledger.openProposals.size()).toBe(0n);
   });
 

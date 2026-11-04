@@ -17,7 +17,7 @@ import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { PendingSignerPayload, SealedAccount } from '../../../src/core/types.js';
 import type { StateChange } from '../../../src/core/ledger.js';
-import { paysCommitmentOf, proposalFilingRefusal, VAULT_START_KINDS, type RetirementTerms } from '../../../src/core/proposal-filing.js';
+import { paysCommitmentOf, proposalFilingRefusal, raiseByOf, VAULT_START_KINDS, type RetirementTerms } from '../../../src/core/proposal-filing.js';
 import { companyRecordKey, FILING_REFUSAL, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
 import { proposalEntry } from '../../../src/midnight/record-manifest.js';
 import { vouchedRefusal } from '../../../src/midnight/record-tree.js';
@@ -89,7 +89,7 @@ export async function believedFilerHere(
   return rec.filedBy.publicKey.toLowerCase();
 }
 
-/** Kinds a device here acts on. Any other is refused before anything is read out of it. */
+/** Kinds a device here approves or raises. Any other is refused before anything is read out of it, unless it is opened to be withdrawn. */
 const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'transfer', 'add-signer', 'remove-signer', 'set-threshold', 'set-vault-threshold', 'set-spending-policy', 'set-policy-bar']);
 
 /**
@@ -111,6 +111,64 @@ const retirementTermsOf = (x: unknown): RetirementTerms | null => {
     ...(st === undefined ? {} : { statement: { recordsKey: st.recordsKey, seat: st.seat, signature: st.signature } }),
   };
 };
+
+const bytesOfHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu)!.map((b) => parseInt(b, 16)));
+
+/**
+ * **A PROPOSAL OPENED TO BE WITHDRAWN**: its record believed as its filer filed it (`believedFilerHere`), and its
+ * identity on the chain made again here from the payload, vault and salt its record names, with the account's own
+ * derivation (`proposalIdOf`), so the call that withdraws it can name no other proposal than the one opened. A removal
+ * also returns the leaf it takes off (`removes`), and is refused when its record names none. Refused,
+ * saying what resolves it, when this page was not given that derivation or the identity is not the one they make.
+ */
+async function withdrawalOpenedHere(
+  records: RecordsForTheRound | undefined, accountId: string,
+  rec: {
+    readonly id: string; readonly chainId: string; readonly digest: string; readonly keyEpoch: number; readonly createdAt: string;
+    readonly filedBy?: { readonly publicKey: string };
+  },
+  envelope: { readonly kind: string; readonly summary: string; readonly vault: string }, salt: string, leaf: unknown,
+): Promise<OpenedRound> {
+  /* A removal names the leaf it takes off, so whether that signer's retirement is already filed can be read before it is withdrawn. */
+  const removes = envelope.kind === 'remove-signer' && typeof leaf === 'string' && HEX64.test(leaf.toLowerCase()) ? leaf.toLowerCase() : null;
+  if (envelope.kind === 'remove-signer' && removes === null) {
+    throw new NotOpenedOnThisDevice('This proposal does not say which signer it removes, so this device cannot tell whether '
+      + 'withdrawing it is safe. Do not act on it.', { kind: envelope.kind });
+  }
+  const identity = records?.roundIdentity;
+  if (identity === undefined || typeof identity.proposalIdOf !== 'function') {
+    throw new NotOpenedOnThisDevice('This page cannot work out a proposal\'s identity on the chain, so it cannot check which '
+      + 'proposal it would withdraw. Reload the page to get the current version.', { kind: envelope.kind });
+  }
+  const digest = String(rec.digest).toLowerCase();
+  const vault = String(envelope.vault).toLowerCase();
+  const chainId = String(rec.chainId).toLowerCase();
+  if (![digest, vault, chainId].every((h) => HEX64.test(h))
+    || hexOfBytes(identity.proposalIdOf(bytesOfHex(digest), bytesOfHex(vault), bytesOfHex(salt))) !== chainId) {
+    throw new NotOpenedOnThisDevice('This proposal\'s identity on the chain is not the one its own record makes, so this device '
+      + 'does not know which proposal a withdrawal would close. Do not act on it.', { kind: envelope.kind });
+  }
+  const filedBy = rec.filedBy === undefined ? null : await (async () => {
+    if (records === undefined) {
+      throw new NotOpenedOnThisDevice('This page cannot read the company\'s directory, so it cannot check who wrote this '
+        + 'proposal down. Reload the page to get the current version.', { kind: envelope.kind });
+    }
+    return believedFilerHere(records, accountId, rec);
+  })();
+  return {
+    chainId: rec.chainId, digest: rec.digest, vault: envelope.vault, salt, summary: envelope.summary, kind: envelope.kind,
+    ...(filedBy === null ? {} : { filedBy, raiseBy: raiseByOf(rec.createdAt) }), ...(removes === null ? {} : { removes }),
+  };
+}
+
+/**
+ * Why a proposal that sets up one of the company's vaults is not approved through this door: it is approved in the
+ * wallet, by the approval of a vault's set-up step (or by setting the vault up), where who its secret is sealed to is
+ * checked. The wallet never withdraws one, and an adoption raised before a signer was removed is never carried out.
+ */
+const VAULT_START_HERE_NOT = 'This proposal sets up one of the company\'s vaults, and it is approved only in the wallet, by the '
+  + 'approval of a vault\'s set-up step or by setting the vault up, where who its secret is sealed to is checked. Nothing was '
+  + 'approved here. Approve it from the vault\'s set-up step instead; it is never withdrawn.';
 
 /**
  * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS.**
@@ -150,10 +208,19 @@ export async function openTheRoundHere(
   /** The leaf each opening makes, in this device's vault worker: a seat's leaf is approved here only as its opening makes it. */
   leaves?: SeatingReads['leaves'],
   /**
-   * Opened to be withdrawn: a withdrawal pays nobody, so a payroll run is not held to the checks of what it pays, and a
-   * run its payees' records no longer pay as raised can still be withdrawn and drawn again.
+   * Opened to be withdrawn: a withdrawal pays nobody and changes nothing, so a proposal of any kind is opened, believed
+   * as its filer filed it, and held only to its identity on the chain being the one its payload, vault and salt make
+   * (`withdrawalOpenedHere`). None of what it pays or changes is checked: a run its payees' records no longer pay as
+   * raised, or a one-off to a vendor entry that no longer names its address, can still be withdrawn. Its kind is
+   * returned, for the person's own wallet to refuse a kind it never withdraws.
    */
   forAWithdrawal = false,
+  /**
+   * Opened only to learn whether it is this kind (a removal, when who is leaving is read): a proposal of any other kind
+   * is refused with its kind as soon as its record is open, before a payroll run is made again or its payments are
+   * checked, so one run that fails its own checks never holds up an approval of something else.
+   */
+  onlyKind?: string,
 ): Promise<OpenedRound> {
   if (!service.sealedProposals) {
     throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot check this proposal. Reload '
@@ -178,12 +245,14 @@ export async function openTheRoundHere(
   try {
     key = keyOf(viewingKey, rec.keyEpoch);
     envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
-    if (VAULT_START_KINDS.includes(envelope.kind)) {
-      throw new NotOpenedOnThisDevice('This proposal sets up one of the company\'s vaults, and it is raised and approved only '
-        + 'from setting that vault up, where who its secret is sealed to is checked. Leave it unapproved here, and open the '
-        + 'vault to finish setting it up.', { kind: envelope.kind });
+    if (onlyKind !== undefined && envelope.kind !== onlyKind) {
+      throw new NotOpenedOnThisDevice(`This proposal is not the kind asked for (${onlyKind}), so it was not checked further here.`,
+        { kind: envelope.kind });
     }
-    if (!KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
+    if (!forAWithdrawal && VAULT_START_KINDS.includes(envelope.kind)) {
+      throw new NotOpenedOnThisDevice(VAULT_START_HERE_NOT, { kind: envelope.kind });
+    }
+    if (!forAWithdrawal && !KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
       throw new NotOpenedOnThisDevice('This page acts on payroll runs, one-off payments from a vault, access for new signers, removing '
         + 'a signer, changes to the approvals required by the company or by one of its vaults, and vaults\' spending policies, and this '
         + 'proposal is none of those, so it cannot be approved from this device yet. Leave it unapproved.', { kind: envelope.kind });
@@ -199,15 +268,14 @@ export async function openTheRoundHere(
     throw new NotOpenedOnThisDevice('This proposal\'s record is incomplete, so this device cannot check it. Withdraw the '
       + 'proposal and raise it again.');
   }
+  if (forAWithdrawal) return withdrawalOpenedHere(records, accountId, rec, envelope, change.salt, body.leaf);
   /*
    * **A RUN THAT PAYS NOTHING IS A VAULT'S SET-UP STEP, NOT A PAYROLL RUN.** A vault's first secret is set by a run in no
-   * asset, and it is approved only from setting that vault up, where every key the secret is sealed to is checked
-   * first. One reached through this door would skip that check, so it is refused here.
+   * asset, and it is approved only in the wallet, as a vault's set-up step, where every key the secret is sealed to is
+   * checked first. One reached through this door would skip that check, so it is refused here.
    */
   if (envelope.kind === 'payroll' && String(change.asset).toLowerCase() === NO_ASSET) {
-    throw new NotOpenedOnThisDevice('This proposal pays nothing: it sets up one of the company\'s vaults, and it is '
-      + 'approved only from setting that vault up, where who it is sealed to is checked. Leave it unapproved here, and '
-      + 'open the vault to finish setting it up.', { kind: envelope.kind });
+    throw new NotOpenedOnThisDevice(`This proposal pays nothing: ${VAULT_START_HERE_NOT.replace(/^This proposal /u, 'it ')}`, { kind: envelope.kind });
   }
   let governance: GovernanceOnTheWire | undefined;
   let retirement: RetirementTerms | undefined;
@@ -224,12 +292,19 @@ export async function openTheRoundHere(
       }
       retirement = terms;
     }
-    governance = { kind: 'remove-signer', leaf: body.leaf.toLowerCase() };
+    /* The threshold the company is left at, sealed beside the leaf: none or 0 keeps the one in force. */
+    const t = body.newThreshold;
+    if (t !== undefined && (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 0)) {
+      throw new NotOpenedOnThisDevice('This proposal does not say which threshold it leaves the company at once the signer is removed. '
+        + 'Withdraw it and raise the removal again.');
+    }
+    governance = { kind: 'remove-signer', leaf: body.leaf.toLowerCase(), ...(t === undefined || t === 0 ? {} : { threshold: String(t) }) };
   } else if (envelope.kind === 'add-signer') {
     /*
      * **WHAT THE SIGNERS APPROVE IS THE INVITATION THE SEAT THAT INVITED
-     * SIGNED**: the commitment to the invitee's address and the rights their
-     * seat will carry, as that signed invitation names them, and the proposal's
+     * SIGNED**: the commitment to the invitee's address, the rights their
+     * seat will carry and the threshold it sets once taken, as that signed
+     * invitation names them, and the proposal's
      * payload must be the one made from them. The leaf is the invitee's to put
      * on the chain when they take the seat from their own wallet; for an
      * invitation answered by link, the person named is still held, below, to
@@ -333,7 +408,11 @@ export async function openTheRoundHere(
     const why = invitationByAddressRefusal(accountId, body.invited, invite, provedSeatsOf((await records.directory()).dir.seats));
     if (why !== null) throw new NotOpenedOnThisDevice(why);
     const signed = (body.invited as SignedSeatInvitation).terms.invite!;
-    governance = { kind: 'add-signer', address: signed.address.toLowerCase(), scope: signed.scope.toLowerCase() };
+    /* The threshold the seat sets once taken is the signed invitation's too: none keeps the one in force. */
+    governance = {
+      kind: 'add-signer', address: signed.address.toLowerCase(), scope: signed.scope.toLowerCase(),
+      ...(signed.threshold === undefined ? {} : { threshold: signed.threshold }),
+    };
   } else if (envelope.kind === 'set-threshold') {
     if (typeof body.newThreshold !== 'number') {
       throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '
@@ -407,10 +486,10 @@ export async function openTheRoundHere(
      * **AND EVERY CHECK THE RAISING DEVICE RAN, RUN AGAIN HERE** on what this
      * device reads now, by its own clock, for a send and an approval alike: the
      * one list of raise checks, judged for the seat that filed the proposal, and
-     * never refusing the proposal for being itself; not for a withdrawal, which
-     * pays nothing.
+     * never refusing the proposal for being itself. A withdrawal never reaches
+     * here (`withdrawalOpenedHere`).
      */
-    if (!forAWithdrawal) try {
+    try {
       await refuseWhatNoRoundMay(records, accountId, viewingKey, {
         run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '', proposal: rec.id,
         vault: envelope.vault,
@@ -458,6 +537,7 @@ export async function openTheRoundHere(
     ...(governance === undefined ? {} : { governance }), ...(half === undefined ? {} : { half }),
     ...(retirement === undefined ? {} : { retirement }),
     ...(made === undefined ? {} : { made }), ...(filedBy === null ? {} : { filedBy }),
+    ...(forARaise && filedBy !== null ? { raiseBy: raiseByOf(rec.createdAt) } : {}),
   };
 }
 

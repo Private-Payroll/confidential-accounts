@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, publicAmount } from 'vaults-ui';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { untilPageShown } from '../page-shown.test-support.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE VENDORS PAGE AND A VENDOR'S PANEL, DRAWN over the real adapters and the real wallet wrappers, with only the call to the wallet and
@@ -51,7 +49,7 @@ const { CompanyRecordsProvider } = await import('../records/company-records.js')
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
 
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const en = (key: string): string => EN[key] ?? key;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const NIGHT_TOKEN = '00'.repeat(32);

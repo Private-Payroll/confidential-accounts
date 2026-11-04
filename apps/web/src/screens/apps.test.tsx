@@ -1,16 +1,13 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { KitProvider } from 'vaults-ui';
-import { LANGUAGES } from '../languages.js';
+import { KitProvider, languagesFrom } from 'vaults-ui';
 import { Apps } from './apps.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE APPS PAGE, AGAINST THE CATALOGUE IT IS TAKEN FROM: the ten apps the
- * earlier application listed, written out below, the page's own locale file,
+ * earlier application listed, written out below, the page's own English words,
  * and the category names the earlier application gave them, so a name,
  * summary or category that drifts from them turns this red.
  */
@@ -42,14 +39,14 @@ const LEGACY: readonly { id: string; name: string; publisher: string; category: 
     summary: 'Pay contributors and bounty claimants from the same account, confidentially, without adding them to the payroll roster.' },
 ];
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const EN = JSON.parse(readFileSync(resolve(HERE, '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 /** The category names, as the earlier application named them. */
 const LABELS: Record<string, string> = {
   offramp: 'Payouts and offramp', treasury: 'Treasury', interop: 'Interoperability',
   compliance: 'Compliance', accounting: 'Accounting', identity: 'Identity',
 };
 
+const LANGUAGES = languagesFrom({ './locales/en.json': ENGLISH });
 const draw = () => render(<KitProvider languages={LANGUAGES} pick="en"><Apps /></KitProvider>).container;
 const text = (e: Element | null) => e?.textContent ?? null;
 afterEach(cleanup);

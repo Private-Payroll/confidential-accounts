@@ -125,7 +125,7 @@ describe('sending an invitation', () => {
     const stop = (refused?: string) => { kr.ended = { of: 'stopped', step: 3, steps: 4, relayed: 0, unconfirmed: 0, why: refused === undefined ? 'relay-refused' : 'check-failed', ...(refused === undefined ? {} : { refused }) }; };
     for (const [refused, keeps, why] of [
       ['act.invite.why.raised-not-filed', true, 'raised-not-filed'], ['act.invite.why.may-be-sent', true, 'may-be-sent'], [undefined, true, 'stopped'],
-      ['act.invite.why.not-made', false, 'not-made'], ['act.invite.why.own-address', false, 'own-address'], ['act.invite.why.nobody-knows', true, 'other'],
+      ['act.invite.why.not-made', false, 'not-made'], ['act.invite.why.own-address', false, 'own-address'], ['act.invite.why.nobody-knows', true, 'other'], ['act.invite.why.not-a-threshold', false, 'not-a-threshold'], ['act.invite.why.threshold-refused', false, 'threshold-refused'],
       ['act.invite.why.filed-not-entered', true, 'filed-not-entered'], ['act.invite.why.offer-not-read', true, 'offer-not-read'],
     ] as const) {
       stop(refused);
@@ -211,3 +211,40 @@ describe('which address is private', () => {
   });
 });
 
+describe('the approvals needed once a signer is seated', () => {
+  const signer = (m: Awaited<ReturnType<typeof load>>, threshold: number | null) => ({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: PRIVATE, threshold });
+
+  /* RED WHEN: the number chosen does not reach the ask, or nothing chosen puts a threshold in the ask (the company's number would then change with every invitation). */
+  it('carries the number chosen into the ask, and leaves the ask without one when nothing is chosen', async () => {
+    const m = await load();
+    expect(m.askOf(signer(m, 3), NAMED)).toMatchObject({ of: 'ask', ask: { kind: 'signer', threshold: 3 } });
+    const none = m.askOf(signer(m, null), NAMED);
+    expect(none).toMatchObject({ of: 'ask', ask: { kind: 'signer' } });
+    expect((none as { ask: Record<string, unknown> }).ask).not.toHaveProperty('threshold');
+    expect(m.emptyDraft(m.INVITE_KIND.signer).threshold).toBeNull();
+  });
+
+  /* RED WHEN: something that is not a whole number of at least one is sent to the wallet as a threshold. */
+  it('refuses, at its own field, what is not a whole number of at least one', async () => {
+    const m = await load();
+    for (const bad of [0, -1, 1.5, Number.NaN, 2 ** 60]) {
+      expect(m.askOf(signer(m, bad), NAMED), String(bad)).toMatchObject({ of: 'problem', problem: 'bad-threshold', field: 'threshold' });
+    }
+  });
+
+  /* RED WHEN: a number above the signers the company would have once the seat is taken is let through to the wallet, one at that count is refused, or a company whose seats were not read is refused on a guess. */
+  it('refuses a number above the seats the company would hold, and guesses nothing when the seats are not known', async () => {
+    const m = await load();
+    expect(m.askOf(signer(m, 4), NAMED, undefined, undefined, 2)).toMatchObject({ of: 'problem', problem: 'threshold-too-high', field: 'threshold', most: 3 });
+    expect(m.askOf(signer(m, 3), NAMED, undefined, undefined, 2)).toMatchObject({ of: 'ask', ask: { threshold: 3 } });
+    expect(m.askOf(signer(m, 9), NAMED, undefined, undefined, null)).toMatchObject({ of: 'ask', ask: { threshold: 9 } });
+    expect(m.askOf(signer(m, 9), NAMED)).toMatchObject({ of: 'ask', ask: { threshold: 9 } });
+  });
+
+  /* RED WHEN: an employee or a vendor carries a threshold chosen for a signer. */
+  it('sends no threshold for an employee or a vendor', async () => {
+    const m = await load();
+    const e = m.askOf({ ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '1', threshold: 2 }, NAMED);
+    expect((e as { ask: Record<string, unknown> }).ask).not.toHaveProperty('threshold');
+  });
+});

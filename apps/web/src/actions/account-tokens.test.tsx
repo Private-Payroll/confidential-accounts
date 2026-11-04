@@ -9,6 +9,7 @@ import type { AddressesAndBalancesShown } from 'midnight-identity/profile/addres
 import { NIGHT, StaticAssetRegistry, type Asset } from '../../../../src/core/assets.js';
 import { ACT_REFUSAL } from '../adapters/refusals.js';
 import type { TokenChosen } from './account-tokens.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE ACCOUNT'S TOKENS, DRAWN WITH THE REAL COMPONENT AND THE REAL ADAPTER'S ANSWERS: only the ask of the wallet is
@@ -24,7 +25,7 @@ const { AccountTokens, WalletWindowNamed } = await import('./account-tokens.js')
 const { accountBalancesFrom } = await import('../adapters/account-balances.js');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const EN = JSON.parse(readFileSync(resolve(HERE, '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };

@@ -47,7 +47,7 @@
  * argument and asserts nothing about it, so every check that stopped at
  * `propose` — including the first three tests here — was green throughout.
  * Only the circuit that CONSUMES the payload recomputes it, and that is
- * `setThreshold`, `amendSigner` and `setVaultThreshold`, at the END of the
+ * `setThreshold`, `removeSignerAndSetThreshold` and `setVaultThreshold`, at the END of the
  * round, after the approvals and the fees.
  *
  * The first three tests below use a TRANSFER, which is the path that carries
@@ -174,10 +174,10 @@ class RecordingLedger extends SimulatedLedger {
   readonly raised: Array<{ payloadHash: Hex; change: StateChange; vault: Hex }> = [];
 
   override async propose(
-    accountId: string, payloadHash: Hex, change: StateChange, by: SignerRef, vault: Hex,
+    accountId: string, payloadHash: Hex, change: StateChange, by: SignerRef, vault: Hex, raiseBy?: bigint,
   ): Promise<TxRef> {
     this.raised.push({ payloadHash, change, vault });
-    return super.propose(accountId, payloadHash, change, by, vault);
+    return super.propose(accountId, payloadHash, change, by, vault, raiseBy);
   }
 }
 
@@ -484,7 +484,7 @@ describe('the service layer meets the chain', () => {
    *    where the round died: approvals collected, fees spent, and
    *    *"that proposal is not for this threshold"*.
    *
-   * **`setThreshold` RATHER THAN `amendSigner`, AND EITHER WOULD HAVE DONE.**
+   * **`setThreshold` RATHER THAN `removeSignerAndSetThreshold`, AND EITHER WOULD HAVE DONE.**
    * Both consume a payload the same way; this one needs no invitation flow to
    * reach, so the test is about the boundary rather than about a fixture.
    * `removeSigner` and `setThreshold` are also the two rounds an account uses

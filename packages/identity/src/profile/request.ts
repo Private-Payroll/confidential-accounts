@@ -1893,6 +1893,12 @@ const ACT_FIELDS: ReadonlySet<string> = new Set([
 const AMOUNT = /^(?:0|[1-9][0-9]{0,38})$/u;
 
 /**
+ * A field a page may still name on any action, and which the wallet reads nothing from: which way the calls an
+ * action finishes go is the company's own setting, never the page's or the person's at the moment of signing.
+ */
+export const HAND_OVER_FIELD = 'path';
+
+/**
  * Reads one field of an action by the kind its entry gives it. Every kind is
  * an id or an amount the wallet checks on its own; there is no kind for bytes.
  */
@@ -1957,7 +1963,7 @@ function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
       + `does, because a wallet guessing what it is doing is a wallet doing the wrong thing behind the right screen. ${nothing}`);
   }
   const wanted = Object.keys(shape.fields);
-  const given = Object.keys(named).filter((k) => k !== 'name');
+  const given = Object.keys(named).filter((k) => k !== 'name' && k !== HAND_OVER_FIELD);
   const unasked = given.filter((k) => !Object.prototype.hasOwnProperty.call(shape.fields, k));
   if (unasked.length > 0) {
     throw new RequestError(

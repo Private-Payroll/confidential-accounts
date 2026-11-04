@@ -175,11 +175,13 @@ describe('every rule, over the kit', () => {
 });
 
 describe('the kit owns no English', () => {
-  /* RED WHEN: a second English file, or any language file, appears outside the application's locales. */
-  it('has one English file, the application\'s', () => {
-    const json = [...filesUnder(ROOT, 'packages/ui', (p) => p.endsWith('.json') && !/\/(package|components|tsconfig)\.json$/.test(p)),
-      ...filesUnder(ROOT, 'apps/web', (p) => /(^|\/)[a-z]{2,3}(-[A-Za-z0-9]+)*\.json$/.test(p))];
-    expect(json).toEqual(['apps/web/src/locales/en.json']);
+  /* RED WHEN: a language file appears in the kit, or in the application outside its locales folder, or the application's first-download English file is gone. */
+  it('has its English files in the application\'s locales folder only', () => {
+    const inKit = filesUnder(ROOT, 'packages/ui', (p) => p.endsWith('.json') && !/\/(package|components|tsconfig)\.json$/.test(p));
+    const inApp = filesUnder(ROOT, 'apps/web', (p) => /(^|\/)[a-z]{2,3}(-[A-Za-z0-9]+)*\.json$/.test(p));
+    expect(inKit).toEqual([]);
+    expect(inApp.filter((p) => !p.startsWith('apps/web/src/locales/'))).toEqual([]);
+    expect(inApp).toContain('apps/web/src/locales/en.json');
     expect(existsSync(ROOT + 'packages/ui/src/locales')).toBe(false);
   });
 });

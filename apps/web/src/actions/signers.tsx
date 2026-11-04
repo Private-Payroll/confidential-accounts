@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Alert, AlertDescription, Badge, Button, Section, SectionRow, useText } from 'vaults-ui';
+import { AlertDescription, Badge, Button, Section, SectionRow, SoonAction, useText } from 'vaults-ui';
 import { APPROVALS, approvalsSentence, INVITE_KIND, ROLE } from '../adapters/invite.js';
 import { READ } from '../adapters/reads.js';
 import { SIGNER_ACT, SIGNER_ACTED, WHY, admitSigner, approveSigner, giveYourKeys, type SignerAct, type SignerActed, type SignerWhy } from '../adapters/signer-acts.js';
-import type { SignerInvited } from '../adapters/signers.js';
-import { ActRefused } from '../act-refused.js';
+import { thresholdChangesWaiting, type SignerInvited } from '../adapters/signers.js';
 import { useCompanyRecords } from '../records/company-records.js';
 import { WithRecords } from '../records/parts.js';
+import { ActDone, ActOutcome, ActStopped, type ActStep } from '../records/proposal-act.js';
 import { useSession } from '../session.js';
 import type { StepProps } from '../setup/step-ids.js';
+import { ChangeThreshold } from './change-threshold.js';
 import { CommitteeChange } from './committee-change.js';
 import { InvitePeople } from './invite.js';
 
@@ -54,7 +55,7 @@ const standingOf = (s: { accepted: boolean; seatOnChain: boolean }): Standing =>
 /** What is being asked of the wallet: which act, for which invitation (its record id) or signer (their id). */
 interface Pressed { readonly act: SignerAct; readonly id: string }
 /** The act the wallet is working on and how far it has got; null when nothing is being asked of it. */
-type Phase = { readonly on: Pressed; readonly step: number; readonly steps: number } | null;
+type Phase = (ActStep & { readonly on: Pressed }) | null;
 type Result = { readonly on: Pressed; readonly act: SignerActed; readonly name: string };
 const same = (a: Pressed, b: Pressed): boolean => a.act === b.act && a.id === b.id;
 
@@ -62,8 +63,8 @@ const same = (a: Pressed, b: Pressed): boolean => a.act === b.act && a.id === b.
  * The signers of a company: where each stands, with you marked by the seat this device holds; the invitations waiting for
  * approvals with Approve on each this person may still approve and what comes next on the others (`nextOf`); Finish adding
  * for a signer whose seat the network holds; Give your keys on your own seat while the company's directory holds no entry
- * for it; Add a signer, and below them who holds the company, with the change of the super admins a vault may be owed
- * (the committee change). The settings page shows it, and the setup wizard's signers step shows this same component (it
+ * for it; the approvals the company asks for, with the control that changes them (`ChangeThreshold`); Add a signer, and below
+ * them who holds the company, with the change of the super admins a vault may be owed (the committee change). The settings page shows it, and the setup wizard's signers step shows this same component (it
  * is given the step's props there, and then draws the invitation form itself); neither draws a copy.
  */
 export function Signers({ leadTo, onChanged }: Partial<StepProps>) {
@@ -96,6 +97,10 @@ export function Signers({ leadTo, onChanged }: Partial<StepProps>) {
             <StandingList records={records} busy={busy} result={result} phase={phase}
               onFinish={(s) => { void run({ act: SIGNER_ACT.admit, id: s.id }, s.name, (onStep) => admitSigner(person.id, company ?? '', { id: s.id, name: s.name }, onStep)); }}
               onGiveKeys={(s) => { void run({ act: SIGNER_ACT.giveKeys, id: s.id }, s.name, (onStep) => giveYourKeys(person.id, company ?? '', onStep)); }} />
+            <ThresholdNow records={records} />
+            <Section title={t('changeThreshold.title')} description={t('changeThreshold.description')} list={false} box={false} data-signers-change-threshold>
+              <ChangeThreshold {...(onChanged === undefined ? {} : { onChanged })} />
+            </Section>
             <WaitingList records={records} busy={busy} result={result} phase={phase} approvedHere={approvedHere}
               onApprove={(i) => { void run({ act: SIGNER_ACT.approve, id: i.proposal }, i.name, (onStep) => approveSigner(person.id, company ?? '', i, onStep)); }} />
           </>
@@ -114,48 +119,32 @@ export function Signers({ leadTo, onChanged }: Partial<StepProps>) {
 
 type Records = Parameters<Parameters<typeof WithRecords>[0]['children']>[0];
 
-function Working({ phase, of }: { phase: Phase; of: Pressed }) {
-  const t = useText();
-  if (phase === null || !same(phase.on, of)) return null;
-  return (
-    <p role="status" className="text-sm text-muted-foreground" data-working>
-      {phase.steps > 0 ? t('signers.working.step', { step: phase.step, steps: phase.steps }) : t('signers.working')}
-    </p>
-  );
-}
-
-function Outcome({ result, of, bar }: { result: Result | null; of: Pressed; bar: number | null }) {
+function Outcome({ phase, result, of, bar }: { phase: Phase; result: Result | null; of: Pressed; bar: number | null }) {
   const t = useText();
   const whySays = useWhySays();
-  if (result === null || !same(result.on, of)) return null;
-  const { act, name } = result;
-  const kind = result.on.act;
-  if (act.of === SIGNER_ACTED.done && kind === SIGNER_ACT.giveKeys) {
-    return (
-      <>
-        <p className="text-sm" data-acted={kind}>{t('signers.done.keysGiven')}</p>
-        <p className="text-sm text-muted-foreground" data-next-steps>{t('signers.done.keysGivenNext')}</p>
-      </>
-    );
-  }
-  if (act.of === SIGNER_ACTED.done) {
-    const words = kind === SIGNER_ACT.admit
-      ? (act.state === 'already-admitted' ? t('signers.done.alreadyAdmitted', { name }) : t('signers.done.admitted', { name }))
+  const mine = result !== null && same(result.on, of) ? result : null;
+  const working = phase !== null && same(phase.on, of) ? phase : null;
+  const act = mine?.act;
+  const kind = mine?.on.act;
+  const name = mine?.name ?? '';
+  const ended = act?.of === SIGNER_ACTED.done ? act : null;
+  const stopped = act?.of === SIGNER_ACTED.stopped ? act : null;
+  const words = kind === SIGNER_ACT.giveKeys ? t('signers.done.keysGiven')
+    : kind === SIGNER_ACT.admit ? (ended?.state === 'already-admitted' ? t('signers.done.alreadyAdmitted', { name }) : t('signers.done.admitted', { name }))
       : t('signers.done.approved', { name });
-    const next = kind === SIGNER_ACT.admit ? null : act.state === 'waiting-for-the-invitee' ? t('signers.done.complete', { name }) : bar === null ? t('signers.done.nextUnknown', { name }) : t('signers.done.next', { name, count: bar });
-    return (
-      <>
-        <p className="text-sm" data-acted={kind}>{words}</p>
-        {next === null ? null : <p className="text-sm text-muted-foreground" data-next-steps>{next}</p>}
-      </>
-    );
-  }
-  if (act.of === SIGNER_ACTED.refused) return <ActRefused why={act.why} />;
+  const next = kind === SIGNER_ACT.giveKeys ? t('signers.done.keysGivenNext')
+    : kind === SIGNER_ACT.admit ? null
+      : ended?.state === 'waiting-for-the-invitee' ? t('signers.done.complete', { name }) : bar === null ? t('signers.done.nextUnknown', { name }) : t('signers.done.next', { name, count: bar });
   return (
-    <Alert data-signer-stopped={act.why} variant={act.partial || act.handedOver ? 'default' : 'destructive'}>
-      <AlertDescription>{act.handedOver && !act.partial ? t('signers.sent') : whySays[act.why]}</AlertDescription>
-      {act.partial ? <AlertDescription data-partial>{t('signers.partial')}</AlertDescription> : null}
-    </Alert>
+    <ActOutcome phase={working} refused={act?.of === SIGNER_ACTED.refused ? act.why : null}>
+      {ended === null || kind === undefined ? null : <ActDone data-acted={kind} next={next}>{words}</ActDone>}
+      {stopped === null ? null : (
+        <ActStopped calm={stopped.partial || stopped.handedOver} data-signer-stopped={stopped.why}>
+          <AlertDescription>{stopped.handedOver && !stopped.partial ? t('signers.sent') : whySays[stopped.why]}</AlertDescription>
+          {stopped.partial ? <AlertDescription data-partial>{t('signers.partial')}</AlertDescription> : null}
+        </ActStopped>
+      )}
+    </ActOutcome>
   );
 }
 
@@ -196,16 +185,43 @@ function StandingList({ records, busy, result, phase, onFinish, onGiveKeys }: {
             {s.you === true ? <Badge data-you>{t('signers.you')}</Badge> : null}
             <Badge variant="outline">{says[stands]}</Badge>
             {s.you !== true && s.name === savedAsYou ? <p className="w-full text-sm text-muted-foreground" data-named-you>{t('signers.namedYou')}</p> : null}
+            {s.seatOnChain ? (
+              <div className="w-full">
+                <SoonAction size="sm" variant="outline" label={t('signers.remove')} soon={t('signers.remove.soon')} data-action="remove-signer" />
+              </div>
+            ) : null}
             {giveKeys ? <p className="w-full text-sm text-muted-foreground" data-give-keys-why>{t('signers.giveKeys.why')}</p> : null}
             {stands === STANDING.accepted ? <p className="w-full text-sm text-muted-foreground" data-next-for-them>{t('signers.standing.acceptedNext')}</p> : null}
             {stands === STANDING.notSeated ? <p className="w-full text-sm text-muted-foreground" data-next-for-them>{t('signers.standing.notSeatedNext')}</p> : null}
             <div className="flex w-full flex-col gap-2">
-              <Working phase={phase} of={on} />
-              <Outcome result={result} of={on} bar={bar} />
+              <Outcome phase={phase} result={result} of={on} bar={bar} />
             </div>
           </SectionRow>
         );
       })}
+    </Section>
+  );
+}
+
+/**
+ * The approvals the company asks for now, and beside it each change of that number that waits: an open proposal to set it, with the
+ * number it holds, and an open invitation that sets it once its seat is taken. A change shows only while the chain holds it open.
+ */
+function ThresholdNow({ records }: { records: Records }) {
+  const t = useText();
+  const now = records.approvalsNeeded;
+  const changes = thresholdChangesWaiting(records.proposals.of === READ.read ? records.proposals.value : []);
+  const invites = (records.signersInvited?.of === READ.read ? records.signersInvited.value : [])
+    .flatMap((i) => ((i.status === OPEN || i.status === 'approved') && typeof i.threshold === 'string' ? [{ id: i.proposal, name: i.name, threshold: i.threshold }] : []));
+  return (
+    <Section title={t('signers.threshold.title')} list={false} data-threshold>
+      <div className="flex flex-col gap-2 text-sm">
+        {now.of === READ.read
+          ? <p data-threshold-now>{t('signers.threshold.now', { count: now.value })}</p>
+          : <p className="text-muted-foreground" data-threshold-unread>{t('signers.threshold.unread')}</p>}
+        {changes.map((c) => <p key={c.id} className="text-muted-foreground" data-threshold-pending="change">{t('signers.threshold.pending.change', { count: c.count })}</p>)}
+        {invites.map((i) => <p key={i.id} className="text-muted-foreground" data-threshold-pending="invite">{t('signers.threshold.pending.invite', { name: i.name, threshold: i.threshold })}</p>)}
+      </div>
     </Section>
   );
 }
@@ -281,8 +297,7 @@ function WaitingList({ records, busy, result, phase, approvedHere, onApprove }: 
               {next === NEXT.seatWaiting ? <span className="text-muted-foreground" data-next-after-approve>{t('signers.pending.seatWaiting', { name: i.name })}</span> : null}
               {approvedHere.has(i.proposal) && i.status === OPEN ? <span className="text-muted-foreground" data-approved-here>{t('signers.approvedHere')}</span> : null}
               {i.coinKey === null ? <span data-no-coin-key>{t('signers.pending.noCoinKey')}</span> : null}
-              <Working phase={phase} of={on} />
-              <Outcome result={result} of={on} bar={bar} />
+              <Outcome phase={phase} result={result} of={on} bar={bar} />
             </div>
           </SectionRow>
         );

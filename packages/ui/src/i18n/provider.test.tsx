@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
-import { LanguageProvider, useLanguage, useText } from './provider.js';
+import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LanguageProvider, WithMessages, useLanguage, useText } from './provider.js';
 import { chooseLanguage, directionOf, languagesFrom } from './languages.js';
 
 afterEach(cleanup);
@@ -48,6 +50,45 @@ describe('the language provider', () => {
     cleanup();
     render(<LanguageProvider languages={languagesFrom(files)} pick="fr"><Show k="x.hello" /></LanguageProvider>);
     expect([document.documentElement.lang, document.documentElement.dir]).toEqual(['fr', 'ltr']);
+  });
+});
+
+describe('words that arrive after the provider', () => {
+  const PAGE = { en: { 'y.page': 'Page words' }, fr: { 'y.page': 'Mots de la page' } };
+  const kept = languagesFrom(FILES);
+  const around = (tag: string, children: ReactNode) => <LanguageProvider languages={kept} pick={tag}>{children}</LanguageProvider>;
+
+  /* RED WHEN: the children are drawn before the words they need are in, or the arrived words are not the ones read in the language shown, or a language with no words falls back to the key. */
+  it('has the words in when the children draw, in the language shown', () => {
+    expect(render(around('fr', <WithMessages more={PAGE}><Show k="y.page" /></WithMessages>)).getByTestId('p').textContent).toBe('Mots de la page');
+    cleanup();
+    expect(render(around('fr', <WithMessages more={{ en: PAGE.en }}><Show k="y.page" /></WithMessages>)).getByTestId('p').textContent).toBe('Page words');
+  });
+
+  /* RED WHEN: one provider's words reach another, or reach the languages the application handed over, so a screen's words are still there after it is gone. */
+  it('keeps a provider\'s words its own', () => {
+    render(around('en', <WithMessages more={PAGE}><Show k="y.page" /></WithMessages>));
+    cleanup();
+    expect(render(around('en', <Show k="y.page" />)).getByTestId('p').textContent).toBe('y.page');
+    expect(kept.find((l) => l.tag === 'en')!.messages).not.toHaveProperty('y.page');
+  });
+
+  /* RED WHEN: a draw again puts the same words in again, so a phrase changed since is put back; or two sets of words in one provider do not both stay. */
+  it('puts a set of words in once, and keeps every set', () => {
+    /* The store takes the words the translator is given; its type does not list the method, so the test names what it spies on. */
+    let store!: { addResourceBundle: (...args: unknown[]) => unknown };
+    function Grab() { store = useTranslation().i18n.store as unknown as typeof store; return null; }
+    const OTHER = { en: { 'y.other': 'Other words' } };
+    const tree = (more: typeof PAGE, key: string) => around('en', <><Grab /><WithMessages more={more}><WithMessages more={OTHER}><Show k={key} /></WithMessages></WithMessages></>);
+    const view = render(tree(PAGE, 'y.page'));
+    const put = vi.spyOn(store, 'addResourceBundle');
+    view.rerender(tree(PAGE, 'y.other'));
+    view.rerender(tree(PAGE, 'y.page'));
+    expect(put).not.toHaveBeenCalled();
+    expect(screen.getByTestId('p').textContent).toBe('Page words');
+    view.rerender(tree({ ...PAGE }, 'y.other'));
+    expect(put).toHaveBeenCalledTimes(Object.keys(PAGE).length);
+    expect(screen.getByTestId('p').textContent).toBe('Other words');
   });
 });
 

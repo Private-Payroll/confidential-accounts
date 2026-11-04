@@ -176,7 +176,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     }
   });
 
-  it('the two lists name twenty-three circuits between them, none twice', () => {
+  it('the two lists name twenty-two circuits between them, none twice', () => {
     // Fifteen before the S11 merges (addSigner+removeSigner → amendSigner,
     // propose+proposeRun → propose), thirteen after them, eleven once S23 shed
     // credit and attestSolvency, ten since `C292`/`S26` removed `execute` with
@@ -191,15 +191,17 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     // moves the company's record anchor on, TWENTY-TWO since a quorum can
     // recover the anchor past a batch nobody can check, and TWENTY-THREE since
     // a person invited takes their seat from their own wallet by a step of its
-    // own, and adding a signer is no longer a branch of another.
+    // own, and adding a signer is no longer a branch of another, and
+    // TWENTY-TWO again since every removal is carried out by the one circuit
+    // that also sets the threshold.
     
     // "No overlap" is what this used to claim, and while DEFERRED_CIRCUITS is
     // empty that claim cannot fail, so it is not made. What IS checked is that
     // the concatenation has no duplicate — which can fail — and that
     // assertKnownCircuitSet accepts the set it was built from.
     const all = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS];
-    expect(all).toHaveLength(23);
-    expect(new Set(all).size).toBe(23);
+    expect(all).toHaveLength(22);
+    expect(new Set(all).size).toBe(22);
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
@@ -236,7 +238,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
         .map((f) => f.replace(/\.verifier$/, '')),
     )].sort();
 
-    expect(keyed).toHaveLength(23);
+    expect(keyed).toHaveLength(22);
     expect([...DEPLOYED_CIRCUITS]).toEqual(keyed);
     expect(() => assertKnownCircuitSet(keyed)).not.toThrow();
   });

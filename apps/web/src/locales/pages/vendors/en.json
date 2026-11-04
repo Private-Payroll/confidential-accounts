@@ -1,0 +1,14 @@
+{
+  "vendors.none": "No vendor has been invited yet.",
+  "vendors.column.terms": "Terms",
+  "vendors.column.started": "Started",
+  "vendors.belief.title": "Some records are not listed as vendors",
+  "vendors.belief.notBelieved_one": "{count} record was not believed, so it is not listed: no seat of your company signed it, or the network does not agree with it. Reload the page to read again.",
+  "vendors.belief.notBelieved_other": "{count} records were not believed, so they are not listed: no seat of your company signed them, or the network does not agree with them. Reload the page to read again.",
+  "vendors.belief.notPayable": "{name} is listed but will not be paid, and nothing can be admitted or changed for them, because their record does not hold: {why}",
+  "vendors.panel.notPayable": "This vendor will not be paid, because their record does not hold: {why}. Nothing can be admitted or changed for them until it does.",
+  "vendors.panel.gone": "This vendor is no longer in the list. Close this panel and read again.",
+  "vendors.change.termsButton": "Change terms",
+  "vendors.column.pay": "Pay",
+  "vendors.pay": "Pay"
+}

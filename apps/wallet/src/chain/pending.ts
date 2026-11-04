@@ -369,6 +369,16 @@ export async function transactionStatusOnChain(identifier: string): Promise<Chai
   return answerFromTransactions(result.transactions);
 }
 
+/**
+ * Whether any of these identifiers is on the chain, in any outcome, read from this wallet's own indexer. It throws
+ * when the indexer cannot be read, so a caller deciding whether to send a call again never takes silence as absence.
+ */
+export const landedOnTheChain = (status: (identifier: string) => Promise<ChainAnswer> = transactionStatusOnChain) =>
+  async (identifiers: readonly string[]): Promise<boolean> => {
+    for (const identifier of identifiers) if ((await status(identifier)).found) return true;
+    return false;
+  };
+
 /** What resolution needs handed in — injectable so tests never dial. */
 export interface ResolutionDoors {
   readonly status: (identifier: string) => Promise<ChainAnswer>;

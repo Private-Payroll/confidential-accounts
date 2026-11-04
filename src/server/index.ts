@@ -54,6 +54,7 @@ import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep 
 import { companyRecordsRoutes, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
 import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
+import { closedOnChain } from './proposal-closed-on-chain.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
 import { runRoutes } from './run-routes.js';
 import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
@@ -66,7 +67,8 @@ import {
   directoryChainFromTheContract, directoryOf, filerSeatNow, seatDirectoryRoutes, type AccountHolds, type DirectoryChainRead,
 } from './seat-directory-route.js';
 import { ledger as readAccountLedger, pureCircuits as accountPure } from '../../contracts/managed/contract/index.js';
-import { adoptionRoundOf, type AccountStartPure } from '../midnight/vault-start.js';
+import { adoptionRoundOf, firstSecretRunCarriedOf, type AccountStartPure, type VaultStartPure } from '../midnight/vault-start.js';
+import { pureCircuits as vaultPure } from '../../contracts/managed-vault/contract/index.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
 import {
@@ -617,11 +619,44 @@ app.use(cors());
     proposalIdOf: (payloadHash, salt, vault) => MidnightCommitments.proposalId(payloadHash as Hex, salt as Hex, vault as Hex | undefined),
     /* A vault's adoption, as the account's own functions make it, and the vaults its account lists on the chain now. */
     adoptionOf: (vault) => adoptionRoundOf(accountPure as unknown as AccountStartPure, vault),
+    /* How the chain closed a proposal, read from the account's own history at this deployment's indexer. */
+    closedOnChain: async (accountId, chainId) => {
+      if (!startup.started) return 'unknown';
+      const address = (await ledger.address(accountId))?.value ?? null;
+      if (address === null) return 'unknown';
+      const [{ indexerContractHistory }, runtime, chainLedger] = await Promise.all([
+        import('../midnight/contract-history.js'), import('@midnight-ntwrk/compact-runtime'), import('@midnightntwrk/ledger-v9'),
+      ]);
+      const history = indexerContractHistory(startup.deployment.indexerUrl, startup.deployment.indexerWsUrl);
+      return closedOnChain({
+        accountPure, accountLedger: (data) => readAccountLedger(data as Parameters<typeof readAccountLedger>[0]), runtimeState: (runtime as { ContractState: unknown }).ContractState, ledger: chainLedger,
+        history: (account) => history.of(account),
+      }, String(address).toLowerCase().replace(/^0x/u, ''), chainId);
+    },
+    /* The chain's own time: the newest block this deployment's indexer names, read with the account, in milliseconds. */
+    chainTimeOf: async (accountId) => {
+      if (!startup.started) throw new Error(startup.refusal);
+      const address = (await ledger.address(accountId))?.value ?? null;
+      if (address === null) throw new Error('this company has no account on the chain');
+      const { accountPresenceAt } = await import('../../packages/web-shared/src/vault-on-chain-here.js');
+      return (await accountPresenceAt(startup.deployment.indexerUrl, String(address).toLowerCase().replace(/^0x/u, ''))).blockTime;
+    },
     vaultsAdopted: async (accountId) => {
       const address = (await ledger.address(accountId))?.value ?? null;
       if (address === null) return null;
       if (theChain.accountVaults === undefined) return null;
       try { return await theChain.accountVaults(address as Hex); } catch { return null; }
+    },
+    /* A vault's first secret run made again from its public parts, and the secret a vault holds on the chain now. */
+    firstSecretRunOf: (vault, parts) => firstSecretRunCarriedOf(
+      { vault: vaultPure as unknown as VaultStartPure, account: accountPure as unknown as AccountStartPure }, vault, parts),
+    vaultSecretOf: async (vault) => {
+      try {
+        const state = await theChain.contractState(vault);
+        if (state === null || state === undefined) return { commitment: '00'.repeat(32), started: false };
+        const held = theChain.startingLedgerOf(state);
+        return { commitment: held.nonceCommitment, started: held.started };
+      } catch { return null; }
     },
   }));
 
@@ -668,6 +703,8 @@ app.use(cors());
     register: (accountId, address) => book.record(accountId, address),
     readers: { proven: readProvenTransaction },
     expected: creationExpected,
+    records: companyRecordStore,
+    proposalIdOf: (payload, salt) => MidnightCommitments.proposalId(payload, salt),
   }));
   app.use(companyVaultRoutes({
     signedIn: (req, res, next) => authed(req, res, next),

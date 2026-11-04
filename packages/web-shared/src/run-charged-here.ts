@@ -30,6 +30,7 @@
  * run of the vault, on a read that does not show it yet.
  */
 import type { KeysHeld } from '../../../src/core/company-key.js';
+import { handedOver, type HandOver } from './hand-over.js';
 import { vouchedFreshOf, vouchedRefusal, type Vouched } from '../../../src/midnight/record-tree.js';
 import { assetIdHex, type AssetId } from '../../../src/core/assets.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -84,6 +85,8 @@ export interface ChargeDoors extends BuiltOnHereDoors, Pacing {
    * call and takes the run's proposal, still open on the chain, as charged.
    */
   readonly charge?: (proposalId: string, body: { tx: string; filer: string }) => Promise<unknown>;
+  /** Where the proven charge goes: to `charge` (the default), or straight to the chain from the person's wallet. */
+  readonly handOver?: HandOver;
   /** The filing key of the seat this device files under, sent with the charge so the service pays for that seat. */
   readonly filer: Hex;
   /** Where this device keeps a charge it relayed until the chain shows it. A vault under a policy pays nothing without it. */
@@ -109,6 +112,31 @@ async function standingHere(doors: ChargeDoors, vault: Hex, proposal: string) {
 }
 
 /**
+ * **WAITS UNTIL THE CHAIN THE WALLET READS NO LONGER HOLDS THE PROPOSAL OPEN.**
+ * A read that fails is waited past, as one that shows it open is, and the last
+ * failure is said in the `ChargeNotYetSeen` the caller throws when the wait
+ * ends unseen: a charge on its way is never forgotten, nor a second one sent,
+ * because a read failed. Answers null when the wait ended unseen.
+ */
+async function whereItStandsOnceSeen(
+  doors: ChargeDoors, vault: Hex, proposal: string,
+): Promise<{ readonly where: 'charged' | 'not-open' | null; readonly failed: string | null }> {
+  let failed: string | null = null;
+  const where = await until(doors, async () => {
+    try {
+      const now = await standingHere(doors, vault, proposal);
+      return now === 'open' ? null : now;
+    } catch (e) {
+      failed = String((e as Error)?.message ?? e).replace(/\.\s*$/u, '');
+      return null;
+    }
+  });
+  return { where, failed };
+}
+
+const butRead = (failed: string | null): string => (failed === null ? '' : ` The last read of it did not finish (${failed}).`);
+
+/**
  * **A CHARGE THIS DEVICE RELAYED EARLIER FROM THIS VAULT, SETTLED FIRST.**
  * Forgotten once the chain no longer holds its run's proposal open and not
  * charged, or once it can no longer land; otherwise waited for, and while it
@@ -118,11 +146,11 @@ async function earlierChargeSettled(doors: ChargeDoors, kept: ChargesInFlight, v
   const earlier = await kept.get(vault);
   if (earlier === null) return;
   const now = (doors.now?.() ?? new Date()).getTime();
-  const landed = now > earlier.recordedAt + DEPOSIT_TIME_TO_LIVE_MS
-    || (await until(doors, async () => ((await standingHere(doors, vault, earlier.proposal)) === 'open' ? null : true))) !== null;
-  if (!landed) {
+  const timedOut = now > earlier.recordedAt + DEPOSIT_TIME_TO_LIVE_MS;
+  const seen = timedOut ? null : await whereItStandsOnceSeen(doors, vault, earlier.proposal);
+  if (seen !== null && seen.where === null) {
     throw new ChargeNotYetSeen(vault, 'a charge of a run from this vault was sent from this device and the chain your wallet '
-      + 'reads does not show it yet, so no run from this vault is charged or paid from here until it does.');
+      + `reads does not show it yet, so no run from this vault is charged or paid from here until it does.${butRead(seen.failed)}`);
   }
   await kept.forget(vault, earlier.claim);
 }
@@ -386,19 +414,22 @@ export async function chargeTheRunHere(
     throw new RunNotChargedHere('another charge from this vault is being sent from this browser. Try again in a minute');
   }
   try {
-    await doors.charge(run.proposalId, { tx: built.tx, filer: doors.filer });
+    const tx = built.tx;
+    const charge = doors.charge;
+    await handedOver(doors.handOver, {
+      tx, call: { kind: 'account-call', contract: chain.account, circuit: 'clearRun' },
+      viaService: () => charge(run.proposalId, { tx, filer: doors.filer }),
+      after: async () => undefined,
+    });
   } catch (e) {
     if (sentNothing(e)) await kept.forget(vault, claim);
     throw e;
   }
   /* ---- the run is paid only once the chain the wallet reads holds it as charged ---- */
-  const seen = await until(doors, async () => {
-    const where = await standingHere(doors, vault, proposal);
-    return where === 'open' ? null : where;
-  });
+  const { where: seen, failed } = await whereItStandsOnceSeen(doors, vault, proposal);
   if (seen === null) {
     throw new ChargeNotYetSeen(vault, 'the charge of this run to its period was sent, and the chain your wallet reads does not show '
-      + 'it yet.');
+      + `it yet.${butRead(failed)}`);
   }
   await kept.forget(vault, claim);
   if (seen === 'not-open') {

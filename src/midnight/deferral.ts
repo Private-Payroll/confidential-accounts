@@ -14,8 +14,8 @@
  *
  * `S23` SHED `credit` AND `attestSolvency` FROM THE CONTRACT ITSELF, which is
  * the reason this file no longer needs a deferred list. The contract has since
- * grown again, to the twenty-three circuits `DEPLOYED_CIRCUITS` names, and the
- * deployment carries all twenty-three: nine in its deploy and fourteen in the
+ * grown again, to the twenty-two circuits `DEPLOYED_CIRCUITS` names, and the
+ * deployment carries all twenty-two: eight in its deploy and fourteen in the
  * one update that finishes it (below). **THE FIGURES IN THE NEXT PARAGRAPH ARE AN
  * ELEVEN-CIRCUIT MEASUREMENT AND ARE STALE**; what decides a deploy now is
  * `PER_TRANSACTION_CEILING`, read below from the derivation, and the two-step
@@ -64,7 +64,7 @@
 import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ceiling.js';
 
 /**
- * The twenty-three circuits a finished company account carries — every circuit the
+ * The twenty-two circuits a finished company account carries — every circuit the
  * contract has. **They do not fit one deploy**: the whole account in one deploy
  * is over the per-transaction ceiling (`PER_TRANSACTION_CEILING`, measured by
  * `a-company-is-created-in-two-steps.test.ts`). So a company is created in two steps, a
@@ -84,7 +84,6 @@ import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ce
  */
 export const DEPLOYED_CIRCUITS = [
   'adopt',
-  'amendSigner',
   'anchor',
   'approve',
   'approveVaultChange',
@@ -133,15 +132,13 @@ export type DeployedCircuit = (typeof DEPLOYED_CIRCUITS)[number];
  * needs to exist and to govern itself: seat a signer an invitation names and
  * remove signers, raise, approve and withdraw proposals, set its threshold,
  * adopt a vault. Measured with the ledger's own cost function over the deploy
- * itself, unproven and unbalanced: the eight without the invited seat write
- * 22,241 bytes, 69.5% of the 31,997 ceiling, 9,756 bytes of headroom; all nine
- * write 25,027 bytes, 78.2%, 6,970 bytes of headroom, the invited seat's key
- * being 2,119 bytes. Read it as about ±260 once proven and balanced, which
- * stays below the largest deploy a chain has accepted. The invited seat cannot
- * go in the second step instead: with it that update writes 32,188 bytes, over
- * the ceiling.
+ * itself, unproven and unbalanced: the eight write 22,786 bytes, 71.2% of the
+ * 31,997 ceiling, 9,211 bytes of headroom. Read it as about ±260 once proven and
+ * balanced, which stays below the largest deploy a chain has accepted. The
+ * invited seat cannot go in the second step instead: with it that update
+ * writes 32,188 bytes, over the ceiling.
  *
- * **WHY THESE NINE AND NOT THE ELEVEN THAT WOULD FIT.** The second step
+ * **WHY THESE EIGHT AND NOT MORE THAT WOULD FIT.** The second step
  * carries every circuit that moves money or depends on a vault's receipt: a
  * company whose second step never lands can seat its signers and approve
  * proposals, and can pay nothing, because the chain refuses a call to an
@@ -150,7 +147,6 @@ export type DeployedCircuit = (typeof DEPLOYED_CIRCUITS)[number];
  */
 export const FIRST_STEP_CIRCUITS = [
   'adopt',
-  'amendSigner',
   'approve',
   'cancel',
   'closeExpiredRun',

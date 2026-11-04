@@ -801,7 +801,7 @@ describe('one removal on two staying seats\' devices ends with the company\'s ke
     expect(seatsOnTheChain()).toEqual([ADA_SEAT.seat, BO_SEAT.seat]);
     const filing = store.directoryFilingsOf(CO).at(-1)!;
     /* RED WHEN: the change of the key is filed before the leaf is off the chain, or is not anchored. */
-    expect(events.slice(-3)).toEqual([`chain amendSigner removing ${CY_SEAT.seat}`, `directory ${filing.version} rotate`, 'anchored']);
+    expect(events.slice(-3)).toEqual([`chain removeSignerAndSetThreshold removing ${CY_SEAT.seat}`, `directory ${filing.version} rotate`, 'anchored']);
     /* RED WHEN: a retired seat gets a copy of the new key. */
     expect((filing.change as RotateChange).wraps.map((x) => x.seat).sort()).toEqual([ADA_SEAT.seat, BO_SEAT.seat].sort());
     const read = (s: typeof ADA_SEAT) => companyKeyHere({ ...companyKeyDoorsOf(s), accountId: CO, material: { signingSecret: s.signingSecret }, records: deviceOf(s).records! });

@@ -20,12 +20,14 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  AccountSimulator, change, privateStateFor, payoutTreeOf, sumArgsOf, TEST_TOKEN_BYTES, OTHER_TEST_TOKEN_BYTES, type Change,
+  AccountSimulator, change, privateStateFor, payoutTreeOf, sumArgsOf, TEST_TOKEN_BYTES, OTHER_TEST_TOKEN_BYTES, type Change, removalPayloadFor,
+  transactionOfCalls,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import { vouchingRunsIn } from 'vaults-web-shared/governed-call-builder.js';
+import { callsOnTheAccountIn, vouchingRunsIn } from 'vaults-web-shared/governed-call-builder.js';
+import * as L from '@midnightntwrk/ledger-v9';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import type { PolicyOpening } from '../src/witnesses.js';
 import { NO_LEG, type RetryOfALeg } from '../../src/midnight/spending-policy-record.js';
@@ -407,6 +409,15 @@ describe('clearRun: an approved run charged to its period once, inside its windo
       [{ state, block: { height: 1, at: 1 } }]).map((v) => v.chainId)).toEqual([toHex(run.id)]);
     /* RED WHEN a run can be charged twice. */
     await expect(clear(sim, run, { spent: 1_000n })).rejects.toThrow(/already been charged to its period/);
+  });
+
+  it('CHARGING A RUN WRITES OVER ITS OPEN ENTRY AND RAISES NOTHING, AS ITS TRANSACTION READS', async () => {
+    const run = await raise(sim, PAYROLL, [600n], 21, { required: 2n });
+    await clear(sim, run);
+    const raw = transactionOfCalls([{ call: sim.lastCall, entryPoint: 'clearRun' }]);
+    const unproven = { ledger: { Transaction: { deserialize: (s: string, _p: string, b: string, bytes: Uint8Array) => (L as any).Transaction.deserialize(s, 'pre-proof', b, bytes) } } };
+    /* RED WHEN: the cleared mark written over the run's open entry is read as raising it, so the charge could be named as the run's raise. */
+    expect(callsOnTheAccountIn(unproven, raw, sim.address).map((c) => [c.entryPoint, [...c.opened], [...c.closed]])).toEqual([['clearRun', [], []]]);
   });
 
   it('ONE SIGNER CANNOT FILL A PERIOD: a run not yet approved is not charged', async () => {
@@ -879,7 +890,7 @@ describe("a policy's highest band is a bar for changing who is seated, and a cha
 
   it('NO REMOVAL LEAVES FEWER SIGNERS THAN THE HIGHEST BAND', async () => {
     await (await setPolicyOn(sim, PAYROLL, POLICY, 712)).apply();
-    const one = await raiseGov(pureCircuits.removeSignerPayload(sim.leafOf(C)), 713, [A, B, C]);
+    const one = await raiseGov(removalPayloadFor(sim.leafOf(C)), 713, [A, B, C]);
     /* RED WHEN setPolicy stops raising the bar: two signers would be left for a band of three. */
     await expect(sim.as(sim.applying(A, one.c)).removeSigner(sim.leafOf(C), one.id))
       .rejects.toThrow(/that would leave fewer signers than a policy change needs/);

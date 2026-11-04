@@ -661,7 +661,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
     const id = idFrom(run.tree.leaves, window);
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
     /* No approvals beyond the vault's bar: `required` is nothing. The founding signer's raise is their approval. */
-    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault)], staged);
+    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault), now + 86_400n], staged);
     const paidNow = () => new Set(run.tree.leaves.filter((leaf) =>
       accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))));
     const order = () => {

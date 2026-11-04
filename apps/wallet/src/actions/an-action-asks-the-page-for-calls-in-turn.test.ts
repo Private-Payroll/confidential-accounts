@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActEnded, ActingChannel, CalledOver, Relayed, StepAt } from 'midnight-identity/profile/channel';
 import type { ActRequest } from 'midnight-identity/profile/request';
 import { RELAY_PATIENCE_MS, runAction } from './run.js';
-import type { ActionDefinition, ActionStep, Held, StepContext } from './definition.js';
+import { StepRefused, type ActionDefinition, type ActionStep, type Held, type StepContext } from './definition.js';
 
 vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => {
   const actual = await importOriginal<typeof import('midnight-identity/profile/act-intents')>();
@@ -25,7 +25,8 @@ vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => {
 /*
  * **AN ACTION ASKS THE PAGE FOR A CALL TO THE SERVICE ONLY WHERE ITS ENTRY NAMES ONE, IN TURN WITH WHAT IT HANDS
  * OVER.** The runner is driven over a channel that records what the wallet would post: a call its entry does not
- * name is never posted, a call the page refuses or does not answer stops the action, a call that carries a
+ * name is never posted, a call the page refuses stops the action, a call the service gives no answer to is told to
+ * the step, which may go around it, and stops the action only when the step does not, a call that carries a
  * transaction is counted with the relays, and the end tells the page only the outcome its entry lists.
  */
 
@@ -101,6 +102,39 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     expect(quiet.ended[0]).toMatchObject({ ended: 'stopped', why: 'no-call-answer', unconfirmed: 1, relayed: 0 });
   });
 
+  it('a call the service gave no answer to does not stop the action: the step is told, and whether the call carried anything', async () => {
+    const { channel, ended } = channelThat(async () => 'unreached');
+    const told: unknown[] = [];
+    await go(channel, [stepThat(async (c) => {
+      await c.call('GET', '/api/accounts/acc_1').catch((e: { unreached?: unknown; nothingWasSent?: unknown }) => { told.push({ unreached: e.unreached, nothingWasSent: e.nothingWasSent }); });
+      await c.call('POST', '/api/accounts/acc_1/proposals', '{"tx":"AAAA"}').catch((e: { unreached?: unknown; nothingWasSent?: unknown }) => { told.push({ unreached: e.unreached, nothingWasSent: e.nothingWasSent }); });
+      await c.relay('AAAA');
+    })]);
+    /* RED WHEN: a read the service did not answer is said to have handed something over, or a transaction said to have handed nothing. */
+    expect(told).toEqual([{ unreached: true, nothingWasSent: true }, { unreached: true, nothingWasSent: false }]);
+    /* RED WHEN: a service that gave no answer stops a step that went another way. */
+    expect(ended[0]).toMatchObject({ ended: 'done', relayed: 1 });
+    const left = channelThat(async () => 'unreached');
+    await go(left.channel, [stepThat(async (c) => { await c.call('GET', '/api/accounts/acc_1'); })]);
+    /* RED WHEN: a step that could not go around the service stops as anything but a call with no answer. */
+    expect(left.ended[0]).toMatchObject({ ended: 'stopped', why: 'no-call-answer' });
+  });
+
+  it('once anything was handed over, a read the service gave no answer to never says nothing was sent', async () => {
+    let first = true;
+    const { channel } = channelThat(async () => {
+      if (first) { first = false; return { of: 'answered', status: 200, body: {} }; }
+      return 'unreached';
+    });
+    const told: unknown[] = [];
+    await go(channel, [stepThat(async (c) => {
+      await c.call('POST', '/api/accounts/acc_1/proposals', '{"tx":"AAAA"}');
+      await c.call('GET', '/api/accounts/acc_1').catch((e: { nothingWasSent?: unknown }) => { told.push(e.nothingWasSent); });
+    })]);
+    /* RED WHEN: a read with no answer after a hand-over lets the step tell the person nothing was sent. */
+    expect(told).toEqual([false]);
+  });
+
   it('a call that carries a transaction counts with the relays once the service took it, and as unconfirmed when it answered otherwise', async () => {
     let status = 409;
     const { channel, ended } = channelThat(async () => ({ of: 'answered', status, body: {} }));
@@ -111,9 +145,11 @@ describe('a call goes to the page only where the action\'s entry names it', () =
       await c.call('GET', '/api/accounts/acc_1');
       status = 500;
       await c.call('GET', '/api/accounts/acc_1');
+      /* Stopped here, so the end carries its counts: an act that runs to its end has nothing unconfirmed. */
+      throw new StepRefused({ key: 'act.approve-proposal.why.may-be-sent' });
     })]);
     /* RED WHEN: a read, or a transaction the service refused, is counted as handed over. */
-    expect(ended[0]).toMatchObject({ ended: 'done', relayed: 1 });
+    expect(ended[0]).toMatchObject({ ended: 'stopped', relayed: 1 });
     /* RED WHEN: a transaction answered with a refusal is not counted as one that may be out, though the page may have sent it; or a read is. */
     expect(ended[0]).toMatchObject({ unconfirmed: 1 });
   });
@@ -127,9 +163,10 @@ describe('a call goes to the page only where the action\'s entry names it', () =
       status = 201;
       await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab"}');
       await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab","tx":"BBBB"}');
+      throw new StepRefused({ key: 'act.approve-proposal.why.may-be-sent' });
     })]);
     /* RED WHEN: a proposal written down with nothing for the chain counts as handed over, so the end says something may be out when nothing is. */
-    expect(ended[0]).toMatchObject({ ended: 'done', relayed: 1, unconfirmed: 1 });
+    expect(ended[0]).toMatchObject({ ended: 'stopped', relayed: 1, unconfirmed: 1 });
   });
 
   it('calls and relays go one at a time, each after the page\'s answer to the one before', async () => {

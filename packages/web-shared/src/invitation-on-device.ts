@@ -47,12 +47,13 @@ import { openVendor, sealVendor, vendorTermsRefusal, type VendorRecord, type Ven
 import { assets as defaultAssets, whyTheMoneyCannotReach } from '../../../src/core/assets.js';
 import { newSeatInvitation, proveSeatKeys, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
 import {
-  acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, newInvitationToken, offerExpiredRefusal, openOffer,
+  acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, invitationThresholdRefusal, newInvitationToken,
+  offerExpiredRefusal, openOffer,
   replacedBy, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, signWithdrawal, SUPER_ADMIN_INVITED_BY_THE_COMMITTEE,
   SUPER_ADMIN_JOINS_BY_THE_COMMITTEE, tokenOfLink,
   utcMomentOf, whyThisOfferCannotBeMade,
   type EmployeeClassification, type EmployeeOffer, type InvitationFiling, type InvitationKind, type InvitationOffer, type Inviter, type SignedOffer,
-  type SignedSeatInvitation, type VendorOffer,
+  type SeatInvitationAddress, type SignedSeatInvitation, type VendorOffer,
 } from '../../../src/core/invitation.js';
 import type { PendingSignerPayload, Role, RosterEmployee, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import { seatInvitationIn, seatStillProposedFor } from '../../../src/core/proposal-filing.js';
@@ -234,6 +235,11 @@ interface SignerSpec {
   readonly address?: string;
   /** The rights the seat carries, for a seat offered by address: every vault unless given. */
   readonly scope?: Hex;
+  /**
+   * For a seat offered by address: the approvals the account needs once the seat is taken, as digits. Left out, the
+   * threshold in force is kept. The signed invitation names it and the proposal binds it.
+   */
+  readonly threshold?: string;
 }
 
 /**
@@ -262,7 +268,9 @@ export interface SignerByAddressDoors {
   readonly network: NetworkName;
   readonly commitments: { inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex; allVaults(): Hex };
   readonly held: (coinPublicKey: Hex, except?: string) => Promise<string | null>;
-  readonly identity: (change: { readonly kind: 'add-signer'; readonly address: string; readonly scope: string }, salt: string) => Promise<{ readonly chainId: string }>;
+  readonly identity: (
+    change: { readonly kind: 'add-signer'; readonly address: string; readonly scope: string; readonly threshold?: string }, salt: string,
+  ) => Promise<{ readonly chainId: string }>;
   readonly raise: (input: {
     readonly invited: SignedSeatInvitation; readonly proposalSalt: string; readonly name: string; readonly inviter: Inviter; readonly coinPublicKey: Hex;
   }) => Promise<unknown>;
@@ -449,7 +457,8 @@ async function fileSignerInvitation(
  * **A SEAT OFFERED BY THE ADDRESS THE INVITER TYPED, RAISED BEFORE ANYBODY ACCEPTS.** A wallet already seated here,
  * or already invited by a proposal still open, is refused first (`doors.held`). The address's coin key is
  * committed to under a fresh salt; the proposal's identity is worked out first, under a salt chosen here, so the
- * signed invitation names the commitment, the seat's rights and the proposal; the proposal is raised with this seat's
+ * signed invitation names the commitment, the seat's rights, the threshold it sets once taken (where one is asked)
+ * and the proposal; the proposal is raised with this seat's
  * approval, carrying the coin key sealed; and only then is the offer filed, carrying the address, the proposal's salt
  * and the signed invitation, so the invitee's wallet can take the seat itself. Before the raise, this device keeps the
  * token and the offer it signed (`doors.keep`); nothing is raised when it cannot. If the filing fails after the raise,
@@ -473,9 +482,16 @@ async function fileSignerByAddress(
   if (held !== null) throw new InvitationNotMade(held);
   const addressSalt = toHex(randomBytes(32));
   const scope = (signer.scope ?? doors.commitments.allVaults()).toLowerCase() as Hex;
-  const invite = { address: doors.commitments.inviteAddressOf(coinPublicKey, addressSalt).toLowerCase() as Hex, salt: addressSalt, scope };
+  const threshold = signer.threshold;
+  if (threshold !== undefined && invitationThresholdRefusal(threshold) !== null) {
+    throw new InvitationNotMade('the approvals needed once the seat is taken must be a whole number of at least one: leave it out to keep the number in force');
+  }
+  const invite: SeatInvitationAddress = {
+    address: doors.commitments.inviteAddressOf(coinPublicKey, addressSalt).toLowerCase() as Hex, salt: addressSalt, scope,
+    ...(threshold === undefined ? {} : { threshold }),
+  };
   const proposalSalt = toHex(randomBytes(32));
-  const { chainId } = await doors.identity({ kind: 'add-signer', address: invite.address, scope }, proposalSalt);
+  const { chainId } = await doors.identity({ kind: 'add-signer', address: invite.address, scope, ...(threshold === undefined ? {} : { threshold }) }, proposalSalt);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role);
   const token = tokenFor(opts.token);
@@ -516,8 +532,8 @@ const lower = (x: unknown): unknown => (typeof x === 'string' ? x.toLowerCase() 
  * first offer carries is equal: for an employee their name, title, email, currency, pay, dates, classification and
  * address (an address on one side only is another way of inviting); for a vendor their name, email, dates and
  * address (their terms are in their entry, compared by `filedRecordEnteredHere`); for a signer the name and role, on the
- * offer and on the invitation it signs, the address it is offered at and its rights (`spec.scope`, or every vault,
- * `allVaults`). Returns null for the same ask, or why it is not, naming what resolves it; no value is repeated.
+ * offer and on the invitation it signs, the address it is offered at, its rights (`spec.scope`, or every vault,
+ * `allVaults`) and the threshold it sets once taken (none on both sides keeps the one in force). Returns null for the same ask, or why it is not, naming what resolves it; no value is repeated.
  */
 export function firstAskRefusal<K extends InvitationKind>(
   first: InvitationOffer['for'], kind: K, spec: InviteSpecs[K], allVaults: Hex,
@@ -539,7 +555,8 @@ export function firstAskRefusal<K extends InvitationKind>(
     const t = first.invited.terms;
     pairs = [['name', first.name, s.name], ['name', t.name, s.name], ['role', first.role, s.role], ['role', t.role, s.role],
       ['address', lower(first.byAddress?.address), lower(s.address)],
-      ['rights', lower(t.invite?.scope), t.invite === undefined && s.address === undefined ? undefined : lower(s.scope ?? allVaults)]];
+      ['rights', lower(t.invite?.scope), t.invite === undefined && s.address === undefined ? undefined : lower(s.scope ?? allVaults)],
+      ['threshold', t.invite?.threshold, s.threshold]];
   } else {
     return `the invitation already made under this link is ${KIND_SAID[first.kind] ?? 'of another kind'}, not ${KIND_SAID[kind] ?? 'this kind'}: ${SAME_ASK}`;
   }

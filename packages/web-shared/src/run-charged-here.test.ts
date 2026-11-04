@@ -123,6 +123,8 @@ let chainHolds = new Map<string, 'charged' | 'open' | 'not-open'>();
 let relayed: string | null = null;
 let readsOfTheCharge: string[] = [];
 let relayFails: Error | null = null;
+/* A read of where the charge stands that fails, as an indexer that stops answering does, after this many reads. */
+let readsFailAfter: number | null = null;
 let now = 1_000_000;
 const me = { signerId: 'ada', wrappingSecret: '11'.repeat(32) as never };
 let store = inFlightInMemory();
@@ -137,6 +139,7 @@ const doors = (withCharge = true, withKept = true) => ({
     periodTotal: async (i: unknown) => { asked.push(i); return '1234'; },
     runCharged: async (i: { accountState: string; proposal: string }) => {
       readsOfTheCharge.push(i.proposal);
+      if (readsFailAfter !== null && readsOfTheCharge.length > readsFailAfter) throw new Error('the indexer did not answer');
       if (relayed === i.proposal && lag-- <= 0) return 'charged';
       return chainHolds.get(i.proposal) ?? 'open';
     },
@@ -153,7 +156,7 @@ const doors = (withCharge = true, withKept = true) => ({
 
 beforeEach(() => {
   standing = { state: 'set' }; runs = [theRun()]; onChain = new Map(); oneOffs = []; proposalsNow = [aPayrollProposal()]; asked = []; sent.length = 0; answer = { tx: 'TX', spent: '700' };
-  lag = 0; chainHolds = new Map(); relayed = null; readsOfTheCharge = []; relayFails = null; now = 1_000_000;
+  lag = 0; chainHolds = new Map(); relayed = null; readsOfTheCharge = []; relayFails = null; readsFailAfter = null; now = 1_000_000;
   store = inFlightInMemory(); kept = sealedOnThisDevice<ChargeInFlight>(store, me, 'charge');
 });
 
@@ -389,6 +392,28 @@ describe('A CHARGE IS SEEN TO LAND BEFORE THE RUN IS PAID, AND PAYING AGAIN ON A
     relayFails = new Error('the connection was lost');
     await expect(chargeTheRunHere(doors(), run)).rejects.toThrow(/connection was lost/u);
     /* RED WHEN: a relay that may have reached the chain is forgotten, so paying again could charge the run twice. */
+    expect(store.kept.size).toBe(1);
+  });
+
+  it('A READ THAT FAILS WHILE A SENT CHARGE IS WAITED FOR STOPS AS NOT YET SEEN, NAMING WHY, AND KEEPS THE CHARGE SO IT IS NOT SENT AGAIN', async () => {
+    /* The first read, before the charge is built, answers; every read after the relay fails. */
+    readsFailAfter = 1;
+    const stopped = await chargeTheRunHere(doors(), run).catch((e: unknown) => e);
+    /* RED WHEN: a read failing after the charge was relayed escapes as its own error, not as a charge sent and not yet seen. */
+    expect(stopped).toBeInstanceOf(ChargeNotYetSeen);
+    expect(String((stopped as Error).message)).toMatch(/the indexer did not answer/u);
+    expect(sent).toHaveLength(1);
+    /* RED WHEN: the charge on its way is forgotten because a read failed, so paying again could build and send a second. */
+    expect(store.kept.size).toBe(1);
+  });
+
+  it('A READ THAT FAILS WHILE AN EARLIER CHARGE FROM THE VAULT IS WAITED FOR STOPS AS NOT YET SEEN, AND NOTHING IS BUILT OR SENT', async () => {
+    await kept.claim(VAULT as never, { proposal: '0e'.repeat(32), recordedAt: now });
+    readsFailAfter = 0;
+    const stopped = await chargeTheRunHere(doors(), run).catch((e: unknown) => e);
+    /* RED WHEN: a failed read of the earlier charge escapes as its own error instead of the refusal that says to pay again later. */
+    expect(stopped).toBeInstanceOf(ChargeNotYetSeen);
+    expect([asked, sent]).toEqual([[], []]);
     expect(store.kept.size).toBe(1);
   });
 

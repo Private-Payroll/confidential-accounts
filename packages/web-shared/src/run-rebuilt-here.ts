@@ -175,31 +175,52 @@ export async function proposalsListedHere(
 const CLOSED_UNPAID = new Set(['cancel', 'closeExpiredRun']);
 
 /**
+ * How the chain closed a proposal, from the calls that closed it (`closedBy`): `executed` when none of them closes a
+ * round unpaid, `cancelled` when every one withdrew it, `expired` when every one closed a run past its window, and
+ * `closed` when none was read or they were a mix, since then nobody can be said to have withdrawn it.
+ */
+export type ClosedAs = 'executed' | 'cancelled' | 'expired' | 'closed';
+export function closedAs(closedBy: readonly string[]): ClosedAs {
+  if (closedBy.length === 0) return 'closed';
+  if (closedBy.every((c) => c === 'cancel')) return 'cancelled';
+  if (closedBy.every((c) => c === 'closeExpiredRun')) return 'expired';
+  return closedBy.some((c) => CLOSED_UNPAID.has(c)) ? 'closed' : 'executed';
+}
+
+/** A closed proposal's status: `executed` when it was carried out, and `cancelled` however else it closed (`closedAs`). */
+export const statusOfAClose = (closedBy: readonly string[]): 'executed' | 'cancelled' => (closedAs(closedBy) === 'executed' ? 'executed' : 'cancelled');
+
+/**
  * **WHERE EACH PROPOSAL STANDS, AS THE CHAIN SAYS IT DOES**, never as the
  * service's plain fields say: every field of where it stands is the chain's, at
  * the indexer the person's own wallet names (`roundsOnChain`).
  *
  *   - **held open** (cleared or not): `open`, with the approvals the account
  *     counts for it;
- *   - **closed**: `cancelled` when a call of a transaction that succeeded in
- *     the block that closed it withdrew a proposal or closed one past its
- *     window, `executed` when no such call did and some call succeeded. The
- *     block may hold other proposals' calls: a change carried out beside
- *     another proposal's withdrawal reads `cancelled`, so a change never reads
- *     carried out when it was withdrawn. A payroll round is closed only those
- *     two ways and `payrollRoundsHere` reads every closed one as `cancelled`;
+ *   - **closed**: `cancelled` when the call that closed it, read from its
+ *     transaction's bytes (`closedBy`), withdrew it or closed it past its
+ *     window, `executed` when it was any other call; another proposal's calls
+ *     in the same block are not read as this one's. A history carrying no
+ *     transaction bytes names every call of that block instead, so there a
+ *     change carried out beside another proposal's withdrawal reads
+ *     `cancelled`, and a close no call is named for reads `cancelled` too; a
+ *     close every call of its block was read for and none explains is refused
+ *     by the chain read. A payroll round is closed only those two ways and
+ *     `payrollRoundsHere` reads every closed one as `cancelled`;
  *   - **never held**: `open`, with no `raisedAt` - withdrawn before it reached
  *     the chain, refused by the service, sent and not yet seen, or opened and
  *     closed within one block, which the chain cannot tell apart. Its proof
  *     may still be sent, so it is not taken as withdrawn on the service's word.
  *
  * `raisedAt` is the time of the first block whose state held it, and `txRef`
- * the one call to `propose` in that block. Refused, saying what resolves it,
- * when the page cannot read the chain.
+ * the transaction of the call that raised it in that block, read from its bytes
+ * (without bytes, the one call to `propose` in that block). `approvedHere`, when the read was
+ * made for this device's seat, is whether the chain counts that seat's approval.
+ * Refused, saying what resolves it, when the page cannot read the chain.
  */
 export async function standingOnChainHere<P extends {
   readonly id: string; readonly chainId: string; readonly status: string; readonly approvalCount?: number;
-  readonly raisedAt?: string; readonly txRef?: string; readonly executedAt?: string;
+  readonly raisedAt?: string; readonly txRef?: string; readonly executedAt?: string; readonly approvedHere?: boolean;
 }>(records: Pick<CompanyRecordsHere, 'roundsOnChain'>, proposals: readonly P[]): Promise<P[]> {
   if (proposals.length === 0) return [];
   if (records.roundsOnChain === undefined) {
@@ -212,13 +233,13 @@ export async function standingOnChainHere<P extends {
     if (r === undefined) {
       throw new Error(`where proposal ${p.id} stands on the chain was not read, so nothing is decided from it. Reload the page`);
     }
-    const { raisedAt: _r, txRef: _t, executedAt: _e, ...rest } = p;
-    const closedBy = r.closedBy ?? [];
-    const status = r.held !== 'closed' ? 'open' : closedBy.some((c) => CLOSED_UNPAID.has(c)) || closedBy.length === 0 ? 'cancelled' : 'executed';
+    const { raisedAt: _r, txRef: _t, executedAt: _e, approvedHere: _a, ...rest } = p;
+    const status = r.held !== 'closed' ? 'open' : statusOfAClose(r.closedBy ?? []);
     return {
       ...rest, status, approvalCount: r.approvals,
       ...(r.raisedAt === undefined ? {} : { raisedAt: new Date(r.raisedAt).toISOString() }),
       ...(r.txRef === undefined ? {} : { txRef: r.txRef }),
+      ...(r.approvedHere === undefined ? {} : { approvedHere: r.approvedHere }),
     } as unknown as P;
   });
 }

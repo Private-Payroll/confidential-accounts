@@ -3,7 +3,8 @@
  *
  * The web process never holds the wallet that pays. It holds a client that asks
  * this service to add the fee to a transaction the company has already
- * balanced and signed, and later asks it to submit what it added the fee to.
+ * balanced and signed, and later asks it to submit what it added the fee to -
+ * or hands what it added the fee to back to a device, which submits it itself.
  * The funded wallet, its keys and its DUST live in the process that serves
  * this, and nowhere else.
  *
@@ -22,15 +23,28 @@
  * this service handed out, and the transaction submitted is the one it kept -
  * not bytes the caller sends back.
  *
- * **ONE TRANSACTION AT A TIME, FROM THE BALANCE UNTIL ITS SUBMISSION OR
- * RELEASE HAS FINISHED.** While a booking is outstanding - held, being
- * submitted or being released - a second one is refused by name, and a booking
- * is submitted or released once, never both. The wallet books coins while it
- * balances, and a release racing a submission would mark spent coins free. A
- * booking nobody submits is released at its deadline - and, if that release
- * failed, again before the next booking is made - and a deadline further out
- * than thirty minutes is refused, so a caller that walks away cannot hold the
- * wallet for longer than that. **A SUBMISSION THAT NEVER SETTLES DOES HOLD IT**,
+ * **ONE TRANSACTION THIS SERVICE SUBMITS AT A TIME, FROM THE BALANCE UNTIL
+ * ITS SUBMISSION OR RELEASE HAS FINISHED.** While such a booking is outstanding
+ * - held, being submitted or being released - a second one is refused by name,
+ * and a booking is submitted or released once, never both. The wallet books
+ * coins while it balances, so only one balance runs at a time, and a release
+ * racing a submission would mark spent coins free.
+ *
+ * **A TRANSACTION HANDED BACK TO BE SUBMITTED ELSEWHERE HOLDS UP NONE OF
+ * THAT.** It is booked under its own rules: one per company at a time, at most
+ * `MOST_HANDED_BACK` in all, and a deadline at most five minutes away, since
+ * whoever is handed it submits it at once. Its holder says when it is done with
+ * it (`/done`), which frees its company's turn and releases nothing; a release
+ * asked for by name never releases it either, because it may still land.
+ *
+ * **EVERY BOOKING NOBODY SUBMITS HERE IS SETTLED BY WHAT THE CHAIN SHOWS.**
+ * Once the chain shows its transaction, wherever it was submitted, the booking
+ * is dropped and its DUST is never released as free; it is released only when
+ * it can no longer land: the chain read up to date, not showing it, and the
+ * newest finalized block's time past its deadline. This is checked at the
+ * deadline, again every half minute while the chain cannot say, and before the
+ * next booking is made. A deadline further out than thirty minutes is refused.
+ * **A SUBMISSION THAT NEVER SETTLES DOES HOLD IT**,
  * until this process restarts: nothing here can tell a submission that will
  * never settle from a slow one, and letting the next one go while it might
  * still land is the race this rule exists to prevent.
@@ -71,12 +85,24 @@ export interface FeePayerDeps {
   capacity(): Promise<{ dust: bigint; night: bigint }>;
   /** The clock, for the deadline rules. */
   now?: () => number;
-  /** Schedules the release of a booking at its deadline. Answers a cancel. */
+  /** Schedules the settling of a booking: at its deadline, then again while the chain cannot say. Answers a cancel. */
   schedule?: (ms: number, run: () => void) => () => void;
 }
 
 /** The furthest ahead a booking's deadline may be. */
 export const LONGEST_DEADLINE_MS = 30 * 60_000;
+
+/** How long a booking the chain cannot yet speak for waits before it is asked again. */
+export const ASK_THE_CHAIN_AGAIN_MS = 30_000;
+
+/**
+ * The furthest ahead a handed-back booking's deadline may be. Whoever is handed the transaction submits it at
+ * once, so its DUST is held only as long as a submission takes.
+ */
+export const HANDED_BACK_DEADLINE_MS = 5 * 60_000;
+
+/** How many handed-back bookings may stand at once, across every company, so they cannot hold all the DUST. */
+export const MOST_HANDED_BACK = 8;
 
 /** The shortest secret this service will run with. */
 export const SHORTEST_SECRET = 32;
@@ -84,11 +110,17 @@ export const SHORTEST_SECRET = 32;
 interface Booking {
   readonly payer: FeeSponsor;
   readonly finalised: unknown;
-  readonly cancel: () => void;
+  /** Stops the timer that settles it; replaced each time that timer is set again. */
+  cancel: () => void;
   /** Held until one of the two ways out starts; then it is that way's alone. */
   state: 'held' | 'submitting' | 'releasing';
   /** When the booking may be let go, in the clock's milliseconds. */
   readonly deadline: number;
+  /** Handed back to be submitted elsewhere, and for which company; never released on anyone's word. */
+  readonly handedBack: boolean;
+  readonly company: string;
+  /** For a handed-back booking: its holder is done with it, so it no longer counts against its company. */
+  done: boolean;
 }
 
 /**
@@ -145,6 +177,31 @@ export function refusalForFeeRequest(
   return null;
 }
 
+/**
+ * The refusal for a request to add a fee and hand the transaction back, given the handed-back bookings standing,
+ * or `null`. One per company at a time, at most `MOST_HANDED_BACK` in all, and a deadline no further than
+ * `HANDED_BACK_DEADLINE_MS`; none of it ever waits on, or holds up, a fee this service submits itself.
+ */
+export function refusalToHandBack(
+  body: unknown, now: number, standing: readonly { readonly company: string; readonly done: boolean }[],
+): string | null {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const ttl = typeof b.ttl === 'string' ? Date.parse(b.ttl) : NaN;
+  if (Number.isFinite(ttl) && ttl - now > HANDED_BACK_DEADLINE_MS) {
+    return 'a transaction handed back to be submitted elsewhere may have a deadline at most five minutes away. '
+      + 'Nothing was booked. Build it again with a nearer deadline.';
+  }
+  if (standing.some((x) => x.company === b.company && !x.done)) {
+    return 'the fee payer is already holding a transaction it handed back for this company. Nothing was booked. '
+      + 'Send this again once that one has been submitted.';
+  }
+  if (standing.length >= MOST_HANDED_BACK) {
+    return 'the fee payer is holding as many handed-back transactions as it holds at once. Nothing was booked. '
+      + 'Send this again in a few minutes.';
+  }
+  return null;
+}
+
 const fromBase64 = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'base64'));
 const toBase64 = (b: Uint8Array): string => Buffer.from(b).toString('base64');
 const message = (e: unknown): string => String((e as { message?: unknown })?.message ?? e);
@@ -187,27 +244,57 @@ export function feePayerApp(deps: FeePayerDeps): express.Express {
   });
 
   /*
-   * **A BOOKING PAST ITS DEADLINE IS LET GO BEFORE ANYTHING NEW IS BOOKED.**
-   * The timer at the deadline tries once; if that release failed, the booking
-   * is held again, and without this it would hold the wallet until a restart.
+   * **A HELD BOOKING IS SETTLED BY WHAT THE CHAIN SHOWS.** Shown on the chain, it is dropped and nothing is
+   * released: its DUST is spent, wherever the transaction was submitted. It is released only when the fee payer's
+   * chain read says it can no longer land: up to date, not showing it, and the latest finalized block's time past
+   * its deadline (`landed` answering false). Otherwise it stays held. A fee payer that cannot read the chain
+   * (`landed` absent) is released at its deadline by the clock. A release that failed leaves it held.
    */
-  const releaseOverdue = async (): Promise<void> => {
-    for (const [id, held] of bookings) {
-      if (held.state !== 'held' || held.deadline > now()) continue;
-      held.state = 'releasing';
-      try {
-        await held.payer.release(held.finalised);
+  const settle = async (id: string, held: Booking, due = false): Promise<void> => {
+    if (held.state !== 'held') return;
+    held.state = 'releasing';
+    try {
+      const shown = held.payer.landed === undefined
+        ? (due || held.deadline <= now() ? false : null)
+        : await held.payer.landed(held.finalised, new Date(held.deadline)).catch(() => null);
+      if (shown === true) {
         bookings.delete(id);
         held.cancel();
-      } catch {
-        held.state = 'held';
+        return;
       }
+      if (shown === null) {
+        held.state = 'held';
+        return;
+      }
+      await held.payer.release(held.finalised);
+      bookings.delete(id);
+      held.cancel();
+    } catch {
+      held.state = 'held';
     }
   };
 
+  /* Every held booking is settled before anything new is booked. */
+  const settleAll = async (): Promise<void> => {
+    for (const [id, held] of [...bookings]) await settle(id, held);
+  };
+
+  /* At the deadline, and every half minute after while the booking is still held. */
+  const settleAt = (id: string, held: Booking, ms: number): void => {
+    held.cancel = schedule(Math.max(0, ms), () => {
+      if (bookings.get(id) !== held) return;
+      void settle(id, held, true).then(() => {
+        if (bookings.get(id) === held && held.state === 'held') settleAt(id, held, ASK_THE_CHAIN_AGAIN_MS);
+      });
+    });
+  };
+
   app.post('/fee', async (req, res) => {
-    if (!balancing) await releaseOverdue();
-    const refusal = refusalForFeeRequest(req.body, now(), balancing || bookings.size > 0);
+    if (!balancing) await settleAll();
+    const handedBack = (req.body as { handedBack?: unknown } | null)?.handedBack === true;
+    const all = [...bookings.values()];
+    const refusal = refusalForFeeRequest(req.body, now(), balancing || (!handedBack && all.some((x) => !x.handedBack)))
+      ?? (handedBack ? refusalToHandBack(req.body, now(), all.filter((x) => x.handedBack)) : null);
     if (refusal) {
       res.status(409).json({ nothingWasSent: true, error: refusal });
       return;
@@ -220,22 +307,17 @@ export function feePayerApp(deps: FeePayerDeps): express.Express {
       payer.payingFor(company);
       const finalised = await payer.addFeeAndFinalise(await deps.codec.read(fromBase64(tx)), deadline);
       const booking = randomUUID();
-      const cancel = schedule(Math.max(0, deadline.getTime() - now()), () => {
-        const held = bookings.get(booking);
-        /* Only a booking nobody has started to submit or release is let go here. */
-        if (!held || held.state !== 'held') return;
-        held.state = 'releasing';
-        void held.payer.release(held.finalised).then(
-          () => { bookings.delete(booking); },
-          () => { held.state = 'held'; });
-      });
-      bookings.set(booking, { payer, finalised, cancel, state: 'held', deadline: deadline.getTime() });
+      const held: Booking = {
+        payer, finalised, cancel: () => undefined, state: 'held', deadline: deadline.getTime(), handedBack, company, done: false,
+      };
+      bookings.set(booking, held);
+      settleAt(booking, held, deadline.getTime() - now());
       let written: Uint8Array;
       try {
         written = await deps.codec.write(finalised);
       } catch (e) {
         bookings.delete(booking);
-        cancel();
+        held.cancel();
         try { await payer.release(finalised); } catch { /* the write failure is the error */ }
         throw e;
       }
@@ -294,6 +376,17 @@ export function feePayerApp(deps: FeePayerDeps): express.Express {
     }
   });
 
+  /*
+   * **A HANDED-BACK BOOKING'S HOLDER SAYS IT IS DONE WITH IT**, submitted or not. It then no longer counts against
+   * its company, and nothing is released: the transaction may still land, so its DUST waits for the chain.
+   */
+  app.post('/done', (req, res) => {
+    const id = (req.body as { booking?: unknown })?.booking;
+    const held = typeof id === 'string' ? bookings.get(id) : undefined;
+    if (held?.handedBack === true) held.done = true;
+    res.json({ done: held?.handedBack === true });
+  });
+
   app.post('/release', async (req, res) => {
     const id = (req.body as { booking?: unknown })?.booking;
     const held = typeof id === 'string' ? bookings.get(id) : undefined;
@@ -302,8 +395,21 @@ export function feePayerApp(deps: FeePayerDeps): express.Express {
       res.json({ released: false });
       return;
     }
+    if (held.handedBack) {
+      /* Its transaction is in someone else's hands and may still land: only the chain releases it. */
+      held.done = true;
+      res.json({ released: false, done: true });
+      return;
+    }
     held.state = 'releasing';
     try {
+      /* A transaction the chain already shows spent its DUST: dropped, never released. */
+      if (held.payer.landed !== undefined && await held.payer.landed(held.finalised, new Date(held.deadline)).catch(() => null) === true) {
+        bookings.delete(id as string);
+        held.cancel();
+        res.json({ released: false, landed: true });
+        return;
+      }
       await held.payer.release(held.finalised);
       bookings.delete(id as string);
       held.cancel();

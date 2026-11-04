@@ -28,6 +28,7 @@
     "passkey/bytes",
     "passkey/verify",
     "profile/act-intents",
+    "profile/act-shape",
     "profile/inbox-poll",
     "profile/seal",
     "profile/store",

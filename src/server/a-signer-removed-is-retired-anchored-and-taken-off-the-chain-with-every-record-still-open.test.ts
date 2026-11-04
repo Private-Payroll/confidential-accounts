@@ -92,7 +92,7 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
 
     /* RED WHEN: the chain is asked to take the leaf off before the retirement is filed and anchored, or the leaver's own policy before it. */
     expect(events).toEqual([
-      'anchored', 'chain propose', 'chain approve', 'directory 7 retire', 'anchored', `chain amendSigner removing ${CY.seat}`,
+      'anchored', 'chain propose', 'chain approve', 'directory 7 retire', 'anchored', `chain removeSignerAndSetThreshold removing ${CY.seat}`,
     ]);
     /* RED WHEN: the chain call is not relayed, or the chain keeps the leaf. */
     expect(seatsOnTheChain()).toEqual([ADA.seat, BO.seat]);

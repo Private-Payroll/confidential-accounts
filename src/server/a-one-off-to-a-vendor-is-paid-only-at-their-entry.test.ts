@@ -108,6 +108,9 @@ describe('A ONE-OFF TO A VENDOR ENTRY IS PAID ONLY AT THE ENTRY\'S OWN ADDRESS',
     await expect(oneOffToPayHere(withVendors(ADA), CO, KEY, round.id, PAYING)).rejects.toThrow(/pays another address than the vendor entry it names/u);
     /* RED WHEN: a page that cannot read the vendors passes a one-off naming one through its checks before approving. */
     await expect(checkedOn(ADA, round.id, oneOffRecordsOf(ADA))).rejects.toThrow(/cannot read the company's vendors/u);
+    /* RED WHEN: a one-off refused for its vendor entry cannot be opened to be withdrawn: the vendor check is run for a withdrawal, which pays nobody. */
+    const toWithdraw = await openTheRoundHere(deviceOf(ADA).service, CO, round.id, KEY, false, { ...withVendors(ADA), roundIdentity: pureCircuits as never }, undefined, true);
+    expect([toWithdraw.kind, toWithdraw.chainId, toWithdraw.made]).toEqual(['transfer', round.chainId, undefined]);
     /* RED WHEN: a one-off refused for its vendor entry is left out of what the company paid, so period totals and payroll's check undercount. */
     expect((await oneOffsHere(oneOffRecordsOf(ADA), CO)).believed.map((o) => o.oneOff.proposal.id)).toContain(round.id);
   }, 170_000);

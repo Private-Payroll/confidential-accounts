@@ -21,6 +21,8 @@ const t = vi.hoisted(() => ({
   vendors: null as null | (() => Promise<unknown>),
   asked: [] as any[][],
   pastDraft: [] as any[][],
+  /* The seat each read of where proposals stand was asked with. */
+  chainSeats: [] as Array<string | undefined>,
   admit: null as null | ((...a: any[]) => Promise<unknown>),
   raised: ['2026-10'] as string[],
   failEntries: 0,
@@ -108,7 +110,7 @@ const reachOf = () => ({
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null, records: { history: new Map() } }) },
   sealed: {}, companyKeys: KEYS,
   roster: async () => ({ id: 'acc_1', name: 'Acme Ltd', signers: [] }),
-  builder: { roundsOnChain: async () => ({}) },
+  builder: { roundsOnChain: async (q: { seat?: string }) => { t.chainSeats.push(q.seat); return {}; } },
   chain: { indexer: {} },
 });
 const ctxOf = (i: ActIntent, person: string | null = 'usr_a') => {
@@ -142,6 +144,7 @@ beforeEach(() => {
   t.calls.length = 0;
   t.asked.length = 0;
   t.pastDraft.length = 0;
+  t.chainSeats.length = 0;
   t.called.length = 0;
   t.people = peopleWith();
   t.vendors = vendorsWith();
@@ -272,6 +275,9 @@ describe('A PERSON\'S OR A VENDOR\'S RECORD IS CHANGED IN THE WALLET, NEVER IN A
     expect([accountId, keys, list]).toEqual(['acc_1', KEYS, 'employees']);
     /* RED WHEN: the months raised are read with a run identity that throws, so any company with a payroll proposal cannot change anyone. */
     expect(records.roundIdentity).toBe(IDENTITY);
+    /* RED WHEN: where a proposal stands is read without this wallet's seat, so whether its approval is already counted is never said. */
+    await records.roundsOnChain(['ab'.repeat(32)]);
+    expect(t.chainSeats).toEqual(['01'.repeat(32)]);
     expect(told).toContainEqual({ state: 'changed' });
   });
 
@@ -296,6 +302,7 @@ describe('A PERSON\'S OR A VENDOR\'S RECORD IS CHANGED IN THE WALLET, NEVER IN A
     expect(t.calls).toEqual(['upkeep-first', 'read-vendors', 'change-vendor', 'upkeep-last']);
     expect(t.asked[0]![2]).toEqual({ terms: { kind: 'monthly', asset: TEST_TOKEN, amount: 900n }, endDate: '2027-01-31', status: 'leaver' });
     t.pastDraft.length = 0;
+  t.chainSeats.length = 0;
     await t.asked[0]![3]();
     /* RED WHEN: a vendor's end date is checked against the employees' runs, so a raised vendor month is cut short. */
     expect(t.pastDraft[0]![4]).toBe('vendors');
@@ -440,6 +447,7 @@ describe('EACH ACTION CALLS ONLY THE ROUTES ITS INTENT LISTS, AND HAS ITS WORDS'
     const routesOf = async (shape: typeof admit, a: Parameters<typeof run>[0], i: ActIntent): Promise<string[]> => {
       t.called.length = 0;
       t.pastDraft.length = 0;
+  t.chainSeats.length = 0;
       await run(a, i, ctxOf(i).ctx);
       /* The months-raised reader the change hands the shared code is the action's own: it reads the runs and the proposals itself. */
       if (t.pastDraft.length > 0) {

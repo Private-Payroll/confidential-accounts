@@ -47,6 +47,24 @@ describe("a raise counts as its raiser's approval", () => {
     expect(sim.approvalsFor(sim.proposalId(payload, g.salt))).toBe(1n);
   });
 
+  it("A SEAT'S APPROVAL MARKER IS READ FROM THE CHAIN: the account's own derivation, over this account, finds it and nobody else's", async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    const g = change(0n, 96);
+    const payload = new Uint8Array(32).fill(6);
+    const markerOf = (who: typeof A, id: Uint8Array) => toHex(pureCircuits.approvalNullifierOf(who.secretKey, sim.selfBytes(), id));
+    await sim.as(carrying(sim, A, g)).propose(payload);
+    const id = sim.proposalId(payload, g.salt);
+    /* RED WHEN the marker a device computes is not the one the raise writes: a raiser would be told to approve again. */
+    expect(nullifiers(sim)).toContain(markerOf(A, id));
+    /* RED WHEN the marker is not tied to the seat: B would read A's approval as its own and never approve. */
+    expect(nullifiers(sim)).not.toContain(markerOf(B, id));
+    await sim.as(carrying(sim, B, g)).approve(id);
+    /* RED WHEN the marker a device computes is not the one `approve` writes. */
+    expect(nullifiers(sim)).toContain(markerOf(B, id));
+    /* RED WHEN the marker is not tied to the account: the same seat's approval elsewhere would read as approved here. */
+    expect(nullifiers(sim)).not.toContain(toHex(pureCircuits.approvalNullifierOf(B.secretKey, new Uint8Array(32).fill(7), id)));
+  });
+
   it('AT A THRESHOLD OF ONE A RAISE IS CARRIED OUT WITH NO APPROVE', async () => {
     const sim = await AccountSimulator.liveAccount([A], 1n);
     const c = change(0n, 93);

@@ -18,12 +18,12 @@ export function CompanyCreated() {
 }
 
 /**
- * SETTINGS > SIGNERS AND APPROVALS, THE PART BUILT SO FAR: what anyone can
- * look up about a company's signers, and the signers component (where each
- * stands, the invitations waiting for approvals, Finish adding, Add a signer,
- * and who holds the company, with the change of the super admins a vault may
- * be owed), which the wizard's signers step draws too. Choosing how many must
- * approve is not built yet and says so below.
+ * SETTINGS > SIGNERS AND APPROVALS: what anyone can look up about a
+ * company's signers, and the signers component (where each stands, the
+ * invitations waiting for approvals, the approvals the company asks for and the
+ * control that changes them, Finish adding, Add a signer, and who holds the
+ * company, with the change of the super admins a vault may be owed), which the
+ * wizard's signers step draws too.
  */
 export function SignersBuilt() {
   const t = useText();

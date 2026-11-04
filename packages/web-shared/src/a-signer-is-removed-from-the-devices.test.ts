@@ -13,7 +13,7 @@
  *   - a service that keeps proposals and the retirement signatures handed in
  *     beside them, and nothing else.
  * The chain double holds the account's own rules a removal rests on, in the
- * order its `amendSigner` checks them: the proposal is open, no signer was
+ * order its `removeSignerAndSetThreshold` checks them: the proposal is open, no signer was
  * removed since it was raised (its count of removals), its approvals reach the
  * seat bar, and the leaf is seated. What a proposal opens as is read from what
  * its raise sealed; opening real records is the subject of
@@ -49,10 +49,10 @@ import { FiledNotEntered, recordsEnteredFor } from './record-entered-here.js';
 import { believedFilerHere, NotOpenedOnThisDevice } from './round-opened-here.js';
 
 /* What each proposal opens as on this device: what its raise sealed, read back with the viewing key. */
-const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string) => Promise<OpenedRound> }));
+const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string, onlyKind?: string) => Promise<OpenedRound> }));
 vi.mock('./round-opened-here.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./round-opened-here.js')>()),
-  openTheRoundHere: (_s: unknown, _a: string, proposalId: string) => seams.opens(proposalId),
+  openTheRoundHere: (...a: unknown[]) => seams.opens(a[2] as string, a[8] as string | undefined),
 }));
 /* The account's asset blinding a raise commits with, from the state its founding seat signed: not this file's subject. */
 vi.mock('./run-rebuilt-here.js', async (importOriginal) => ({
@@ -148,6 +148,10 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
   let withholds = false;
   /* Whether the service serves each proposal without the filing its raising seat signed. */
   let noFilings = false;
+  /* Proposals the chain closed by a withdrawal while the service still lists them open. */
+  const withdrawnOnChain = new Set<string>();
+  /* What the chain does, once, just before the service is next asked where a proposal stands. */
+  let atNextStanding: (() => void) | null = null;
   /* Whether the person's wallet answered without the approvals a change of who is seated needs. */
   let barUnread = false;
   const holders = () => ({
@@ -210,8 +214,8 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
         file: async (_acc, body) => {
           /* What the raise sealed, read back with the viewing key: the proposal this company now holds. */
           const envelope = openRecord<{ sealedPayload: Sealed; summary: string; kind: string }>('proposals', ACC, body.proposal.sealed, KEY);
-          const sealed = parseCanonical(unseal(envelope.sealedPayload, KEY)) as { leaf: string; retirement?: RetirementTerms };
-          log.push(`raise remove ${sealed.leaf === BO.seat ? 'bo' : sealed.leaf === DEE.seat ? 'dee' : sealed.leaf}`);
+          const sealed = parseCanonical(unseal(envelope.sealedPayload, KEY)) as { leaf: string; newThreshold?: number; retirement?: RetirementTerms };
+          log.push(`raise remove ${sealed.leaf === BO.seat ? 'bo' : sealed.leaf === DEE.seat ? 'dee' : sealed.leaf}${sealed.newThreshold === undefined ? '' : ` needing ${sealed.newThreshold}`}`);
           const meanwhile = whileTheRaiseIsSent;
           whileTheRaiseIsSent = null;
           meanwhile?.();
@@ -224,7 +228,9 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
               chainId: body.proposal.chainId, digest: 'dd'.repeat(32), vault: '00'.repeat(32), salt: SALT, summary: envelope.summary,
               filedBy: body.proposal.filedBy.publicKey,
               /* A change other than a removal is opened as no change this file follows. */
-              ...(envelope.kind !== 'remove-signer' ? {} : { governance: { kind: 'remove-signer' as const, leaf: sealed.leaf } }),
+              ...(envelope.kind !== 'remove-signer' ? {} : {
+                governance: { kind: 'remove-signer' as const, leaf: sealed.leaf, ...(sealed.newThreshold === undefined ? {} : { threshold: String(sealed.newThreshold) }) },
+              }),
               ...(sealed.retirement === undefined ? {} : { retirement: sealed.retirement }),
             },
           });
@@ -244,18 +250,18 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
           if (!withholds) rounds.get(id)!.signatures.push(body.signature);
           return page(id);
         },
-        standing: async (id) => page(id),
+        standing: async (id) => { const meanwhile = atNextStanding; atNextStanding = null; meanwhile?.(); return page(id); },
         carry: async (id, body) => {
-          const order = lastOrder as Extract<GovernedCallOrder, { circuit: 'amendSigner' }>;
+          const order = lastOrder as Extract<GovernedCallOrder, { circuit: 'removeSignerAndSetThreshold' }>;
           const r = rounds.get(id)!;
           /* The account's own checks, in its own order. */
-          if (r.status !== 'open') throw new Error('there is no open proposal with that id');
+          if (r.status !== 'open' || withdrawnOnChain.has(r.chainId.toLowerCase())) throw new Error('there is no open proposal with that id');
           if (r.removals !== removals) throw new Error('a signer has been removed or replaced since this was raised; raise it again');
-          if (order.circuit === 'amendSigner' && (r.approvalCount ?? 0) < bar) throw new Error('not enough approvals');
-          if (order.circuit === 'amendSigner' && !chain.has(order.leaf)) throw new Error('that signer is not seated on this account');
+          if (order.circuit === 'removeSignerAndSetThreshold' && (r.approvalCount ?? 0) < bar) throw new Error('not enough approvals');
+          if (order.circuit === 'removeSignerAndSetThreshold' && !chain.has(order.leaf)) throw new Error('that signer is not seated on this account');
           if (failsOnce) { failsOnce = false; log.push('carry failed'); throw new Error('the fee was paid and nothing was written'); }
-          log.push(`carry ${body.circuit}${order.removing ? ' removing' : ''}`);
-          if (order.circuit === 'amendSigner') { chain.delete(order.leaf); removals += 1; }
+          log.push(`carry ${body.circuit}${order.removing ? ' removing' : ''}${order.circuit === 'removeSignerAndSetThreshold' && order.threshold !== '0' ? ` needing ${order.threshold}` : ''}`);
+          if (order.circuit === 'removeSignerAndSetThreshold') { chain.delete(order.leaf); removals += 1; }
           rounds.set(id, { ...r, status: 'executed' });
           return page(id);
         },
@@ -275,14 +281,24 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
       accountId: ACC,
       records: {
         directory: async () => here() as never,
+        /* The company's spending policies: the chain holds none in force, so a removal counts no band. */
+        spendingPolicies: {
+          versions: async () => [], me: { signerId: p.seat, wrappingSecret: '00'.repeat(32) },
+          file: async () => { throw new Error('no policy is filed here'); }, keys: async () => { throw new Error('no policy is in force here'); },
+          onChain: async (keys: readonly string[]) => new Map(keys.map((k) => [k, null])),
+        },
         roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(ids.map((id, i) => {
           if (i === 0) reads += 1;
           const r = [...rounds.values()].find((x) => x.chainId.toLowerCase() === id.toLowerCase());
-          const round: RoundOnChain = r === undefined || neverRaised || reads === losesTheRaiseAt ? { held: 'never', approvals: 0 }
-            : r.status === 'executed' ? { held: 'closed', approvals: 0, raisedAt: r.onChainAt, txRef: id, closedBy: ['amendSigner'] }
+          /* Whether the test's chain holds this seat's approval: its raise or its approval, as this seat's wallet reads its own marker. */
+          const approvedHere = [...approvedBy].some((k) => k.toLowerCase() === `${id}:${p.signing.secret}`.toLowerCase());
+          const round: RoundOnChain = r === undefined || neverRaised || reads === losesTheRaiseAt ? { held: 'never', approvals: 0, approvedHere: false }
+            /* Withdrawn: the chain reads a closed proposal at its count when it closed, and keeps this seat's approval marker. */
+            : withdrawnOnChain.has(id.toLowerCase()) ? { held: 'closed', approvals: r.approvalCount ?? 0, raisedAt: r.onChainAt, txRef: id, closedBy: ['cancel'], approvedHere }
+            : r.status === 'executed' ? { held: 'closed', approvals: 0, raisedAt: r.onChainAt, txRef: id, closedBy: ['removeSignerAndSetThreshold'], approvedHere }
               : {
                 held: 'open', approvals: r.approvalCount ?? 0, ...(raiseTimeUnread ? {} : { raisedAt: r.onChainAt }), txRef: id, ...(r.needs === undefined ? {} : { needed: r.needs }),
-                ...(r.removals !== removals ? { outrun: true as const } : {}),
+                ...(r.removals !== removals ? { outrun: true as const } : {}), approvedHere,
               };
           return [id.toLowerCase(), round];
         })),
@@ -338,7 +354,10 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
         } satisfies RetirementSignaturesKept,
       }),
     };
-    return { doors, kept, remove: (who: Person) => removeSignerOnDevice(doors, { viewingKey: KEY, leaf: who.seat, name: who.name }) };
+    return {
+      doors, kept,
+      remove: (who: Person, newThreshold?: number) => removeSignerOnDevice(doors, { viewingKey: KEY, leaf: who.seat, name: who.name, ...(newThreshold === undefined ? {} : { newThreshold }) }),
+    };
   };
   return {
     log, chain, deviceOf, rounds,
@@ -350,6 +369,16 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
     leaverFilesPool: (version: number) => { pending.push({ store: 'vault', kind: 'pool', id: 'ff'.repeat(32), version, digest: '03'.repeat(32), filedBy: { publicKey: BO.signing.publicKey, signature: 'aa'.repeat(64) } } as ManifestEntry); },
     /** Another signer's removal carried out on the chain: the account's count of removals moves. */
     anotherRemovalCarried: () => { removals += 1; },
+    /* The raiser withdraws a proposal on the chain; the service has not heard and still lists it open. */
+    withdrawnOnTheChain: (chainId: string) => { withdrawnOnChain.add(chainId.toLowerCase()); },
+    /* `fn` happens on the chain just before the service is next asked where a proposal stands. */
+    meanwhile: (fn: () => void) => { atNextStanding = fn; },
+    /* `who`'s approval of a proposal lands on the chain: its marker and one more in its count. */
+    approvalLands: (id: string, who: Person) => {
+      const r = rounds.get(id)!;
+      approvedBy.add(`${r.chainId}:${who.signing.secret}`);
+      rounds.set(id, { ...r, approvalCount: (r.approvalCount ?? 0) + 1 });
+    },
     failsOnce: () => { failsOnce = true; },
     leaverFilesAgain: (version = 2) => { pending.push({ store: 'company', kind: 'spending-policy', id: 'pol_1', version, digest: version.toString(16).padStart(2, '0').repeat(32), filedBy: { publicKey: BO.signing.publicKey, signature: 'aa'.repeat(64) } } as ManifestEntry); },
     /** The leaving seat's own device anchors what it filed, in a batch of its own landing one tick later: no staying device does. */
@@ -441,11 +470,51 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
       'anchor the records',
       'file retirement 4',
       'anchor the records',
-      'carry amendSigner removing',
+      'carry removeSignerAndSetThreshold removing',
     ]);
     /* RED WHEN: the leaf the chain holds is left, or the directory does not hold the seat retired at its boundary. */
     expect(co.chain.has(BO.seat)).toBe(false);
     expect(co.dir.seats.find((x) => x.seat === BO.seat)!.retired).toEqual({ [POLICY.replace(/^company:spending-policy:/u, 'spending-policy:')]: 1 });
+  });
+
+  it('A REMOVAL WITH A NEW THRESHOLD SEALS IT AT THE RAISE AND IS CARRIED OUT WITH IT, AND ITS OWN APPROVAL AND RETIREMENT HOLD ITS RISE UP NO MORE THAN ANY REMOVAL', async () => {
+    const co = aCompany({ seated: [ADA, BO, CY, DEE], bar: 2 });
+    expect((await co.deviceOf(ADA).remove(BO, 3)).state).toBe('waiting-for-approvals');
+    /* RED WHEN: the threshold is dropped from what the raise seals, so the approvers are shown and carry out a removal that keeps the old one. */
+    expect(co.log[0]).toBe('raise remove bo needing 3');
+    expect([...co.rounds.values()][0]!.opened.governance).toEqual({ kind: 'remove-signer', leaf: BO.seat, threshold: '3' });
+    /* RED WHEN: the threshold above the seat bar is refused because of this removal's own approval, or its own retirement filed before the chain is asked. */
+    expect((await co.deviceOf(CY).remove(BO, 3)).state).toBe('done');
+    /* RED WHEN: the removal is carried out keeping the threshold in force. */
+    expect(co.log.at(-1)).toBe('carry removeSignerAndSetThreshold removing needing 3');
+    expect(co.chain.has(BO.seat)).toBe(false);
+  });
+
+  it('A REMOVAL WITH A NEW THRESHOLD IS NOT APPROVED AS ONE WITH ANOTHER, AND A RISE ABOVE THE SEAT BAR WAITS FOR ANOTHER SIGNER\'S APPROVED REMOVAL', async () => {
+    const co = aCompany({ seated: [ADA, BO, CY, DEE], bar: 2 });
+    await co.deviceOf(ADA).remove(BO, 3);
+    /* RED WHEN: an approval for a removal at another threshold is counted for this one. */
+    await expect(removeSignerOnDevice(co.deviceOf(CY).doors, { viewingKey: KEY, leaf: BO.seat, name: 'bo', newThreshold: 2, approveOnly: [...co.rounds.values()][0]!.chainId }))
+      .rejects.toThrow();
+    co.approvedOnTheChain();
+    /* RED WHEN: another removal raising the threshold above the seat bar goes ahead while Bo's removal is approved and not yet carried out. */
+    await expect(co.deviceOf(ADA).remove(DEE, 3)).rejects.toThrow(/while a removal of a signer is approved/u);
+    /* RED WHEN: a part of an approval is taken as a threshold. */
+    await expect(co.deviceOf(ADA).remove(DEE, 1.5)).rejects.toThrow(/whole number/u);
+  });
+
+  it('TWO OPEN REMOVALS OF ONE SEAT AT DIFFERENT THRESHOLDS: EACH IS SIGNED, FILED AND CARRIED OUT UNDER ITS OWN PROPOSAL, NEVER THE OTHER\'S', async () => {
+    const co = aCompany({ seated: [ADA, BO, CY, DEE], bar: 2 });
+    await co.deviceOf(ADA).remove(BO);
+    await co.deviceOf(ADA).remove(BO, 3);
+    const [keeps, needing3] = [...co.rounds.values()];
+    expect(needing3!.opened.governance).toEqual({ kind: 'remove-signer', leaf: BO.seat, threshold: '3' });
+    const before = keeps!.signatures.length;
+    /* RED WHEN: the removal at 3 is approved and carried out with the retirement signatures and proposal of the one keeping the threshold. */
+    expect((await co.deviceOf(CY).remove(BO, 3)).state).toBe('done');
+    expect(co.log.at(-1)).toBe('carry removeSignerAndSetThreshold removing needing 3');
+    expect(co.rounds.get(keeps!.id)!.signatures).toHaveLength(before);
+    expect(co.rounds.get(needing3!.id)!.signatures.length).toBeGreaterThanOrEqual(2);
   });
 
   it('THE LEAVING SEAT\'S OWN APPROVAL COUNTS, AND A REMOVAL SHORT OF THE SEAT BAR IS NOT CARRIED OUT', async () => {
@@ -457,6 +526,23 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     /* RED WHEN: the leaving seat's own approval and signature are not counted toward its removal, or its own raise of it is refused as a proposal a leaver filed. */
     expect((await co.deviceOf(ADA).remove(BO)).state).toBe('done');
     expect(co.chain.has(BO.seat)).toBe(false);
+  });
+
+  it('A REMOVAL WITHDRAWN ON THE CHAIN AT ITS BAR IS NOT CARRIED OUT, AND NO RETIREMENT IS FILED FOR IT', async () => {
+    const co = aCompany({ bar: 2 });
+    expect((await co.deviceOf(ADA).remove(BO)).state).toBe('waiting-for-approvals');
+    const round = [...co.rounds.values()][0]!;
+    /*
+     * While cy's device works, cy's approval sent earlier lands, bringing it to its bar, and its raiser withdraws it:
+     * the chain reads it closed at 2 of 2 and keeps cy's approval marker.
+     */
+    co.meanwhile(() => { co.approvalLands(round.id, CY); co.withdrawnOnTheChain(round.chainId); });
+    co.log.length = 0;
+    /* RED WHEN: a closed proposal's count at close is read as a count it can still be carried out at - the retirement is filed and the carrying out refused. */
+    await expect(co.deviceOf(CY).remove(BO)).rejects.toThrow(/may have been withdrawn/u);
+    expect(co.log.filter((l) => l.startsWith('file ') || l.startsWith('carry'))).toEqual([]);
+    expect(co.dir.seats.find((x) => x.seat === BO.seat)!.retired ?? null).toBeNull();
+    expect(co.chain.has(BO.seat)).toBe(true);
   });
 
   it('A SECOND REMOVAL IS REFUSED WHILE ONE IS IN FLIGHT: A SEAT RETIRED IN THE DIRECTORY THAT THE CHAIN STILL HOLDS', async () => {
@@ -698,7 +784,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     /* Another device carries the removal out while Cy's is building its call. */
     const build = cy.doors.builder.governedCall;
     (cy.doors.builder as { governedCall: typeof build }).governedCall = async (a) => {
-      if (a.order.circuit === 'amendSigner') { co.chain.delete(BO.seat); const [id, round] = [...co.rounds.entries()][0]!; co.rounds.set(id, { ...round, status: 'executed' }); }
+      if (a.order.circuit === 'removeSignerAndSetThreshold') { co.chain.delete(BO.seat); const [id, round] = [...co.rounds.entries()][0]!; co.rounds.set(id, { ...round, status: 'executed' }); }
       return build(a);
     };
     /* RED WHEN: a removal the chain carried out is answered as a failure because another device carried it first. */
@@ -745,7 +831,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     expect(co.log).toEqual(['raise remove bo', 'ada signs the retirement for 4']);
     /* The control: a policy whose highest band is at the seat bar waits for nothing here, and is raised, which is Cy's approval (carrying it out is the policy page's). */
     const before = co.log.length;
-    await governOnDevice(doors, { viewingKey: KEY, change: { kind: 'spending-policy', vault, assetKey: '0b'.repeat(32), commitment: '0c'.repeat(32) }, summary: 'policy', body: {} as never, highestBand: 2 })
+    await governOnDevice(doors, { viewingKey: KEY, change: { kind: 'spending-policy', vault, assetKey: '0b'.repeat(32), commitment: '0c'.repeat(32) }, summary: 'policy', body: {} as never, highestBand: 2, bandsInForce: async () => [] })
       .catch(() => undefined);
     expect(co.log.slice(before)).toHaveLength(1);
     expect(co.log.at(-1)).toMatch(/^raise /u);
@@ -785,7 +871,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     await co.deviceOf(ADA).remove(DEE);
     expect((await co.deviceOf(CY).remove(DEE)).state).toBe('done');
     /* RED WHEN: a leaf with no directory entry can never be removed, or is removed with a retirement nothing can believe. */
-    expect(co.log).toEqual(['raise remove dee', 'approve by cy', 'carry amendSigner removing']);
+    expect(co.log).toEqual(['raise remove dee', 'approve by cy', 'carry removeSignerAndSetThreshold removing']);
     expect(co.chain.has(DEE.seat)).toBe(false);
   });
 });
@@ -865,7 +951,7 @@ describe('A REMOVAL FREEZES NOTHING UNTIL IT IS APPROVED', () => {
     /* Ada's raise was her approval; her signature went with it. */
     expect(co.log.filter((x) => x.startsWith('approve'))).toEqual([]);
     expect(co.log).toContain('ada signs the retirement for 5');
-    expect(co.log.slice(-1)).toEqual(['carry amendSigner removing']);
+    expect(co.log.slice(-1)).toEqual(['carry removeSignerAndSetThreshold removing']);
   });
 
   it('A SEAT WHOSE REMOVAL WAITS FOR ITS APPROVALS STILL CHANGES THE COMPANY\'S KEY; ONE WHOSE REMOVAL IS APPROVED DOES NOT', async () => {
@@ -1096,6 +1182,25 @@ describe('A REMOVAL FREEZES NOTHING UNTIL IT IS APPROVED', () => {
       };
       /* RED WHEN: an open proposal this device cannot open at all is read as no removal where who is leaving must be known. */
       await expect(approveOnDevice(cy, { round: ours, viewingKey: KEY })).rejects.toThrow(/Read the chain again/u);
+    } finally {
+      seams.opens = opens;
+    }
+  });
+
+  it('A RUN THAT FAILS ITS OWN CHECKS DOES NOT HOLD UP THE APPROVAL OF ANOTHER PROPOSAL, SINCE WHO IS LEAVING IS READ FROM ITS KIND ALONE', async () => {
+    const co = aCompany();
+    const cy = co.deviceOf(CY).doors;
+    const other = co.raisedBy(BO);
+    const ours = co.raisedBy(ADA, undefined, { anchored: true });
+    const opens = seams.opens;
+    try {
+      seams.opens = async (id, onlyKind) => {
+        if (id !== other.id) return opens(id, onlyKind);
+        if (onlyKind === 'remove-signer') throw new NotOpenedOnThisDevice('not the kind asked for.', { kind: 'payroll' });
+        throw new NotOpenedOnThisDevice('What the company\'s record of this proposal says it pays is not what this device builds the run to pay.');
+      };
+      /* RED WHEN: who is leaving is read by opening every open proposal with all its own checks, so one run that fails its payable check refuses every other approval. */
+      expect(await approveOnDevice(cy, { round: ours, viewingKey: KEY })).toMatchObject({ id: ours.id });
     } finally {
       seams.opens = opens;
     }

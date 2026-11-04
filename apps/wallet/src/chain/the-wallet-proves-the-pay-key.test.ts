@@ -26,6 +26,8 @@ import { keptProvers, type ProvingWorkerLike } from './proving.js';
  * was deployed with.
  */
 
+/* A raise's deadline as a device writes it down: a day after now, in seconds. */
+const aDayFromNow = (): string => String(Math.floor(Date.now() / 1000) + 86_400);
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const ACCOUNT_KEYS = join(ROOT, 'contracts', 'managed', 'keys');
 const WALLET_KEYS = join(ROOT, 'apps', 'wallet', 'public', 'keys');
@@ -141,7 +143,7 @@ describe.skipIf(!CAN_PROVE_HERE)('THE WALLET PROVES THE PAY-RECORD KEY\'S CALLS 
     const r = answer.standing.round;
     const payKey = { kind: 'pay-key', commitment: r.commitment } as const;
     const half = { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) };
-    const opened: OpenedRound = { chainId: r.proposal, digest: r.payload, vault: answer.standing.noVault, salt: r.salt, summary: '', governance: payKey, half };
+    const opened: OpenedRound = { chainId: r.proposal, digest: r.payload, vault: answer.standing.noVault, salt: r.salt, summary: '', governance: payKey, half, raiseBy: aDayFromNow() };
     const propose = { circuit: 'propose', payKey, half: { ...half, assetBlinding: hex(new Uint8Array(randomBytes(32))), proposalSalt: r.salt }, proposal: r.proposal } as GovernedCallOrder;
     return { proposal: r.proposal, opened, propose };
   };
@@ -205,7 +207,7 @@ describe.skipIf(!CAN_PROVE_HERE)('THE WALLET PROVES THE PAY-RECORD KEY\'S CALLS 
     const r = first.round;
     const payKey = { kind: 'pay-key', commitment: r.commitment } as const;
     const half = { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) };
-    const opened: OpenedRound = { chainId: r.proposal, digest: r.payload, vault: first.noVault, salt: r.salt, summary: '', governance: payKey, half };
+    const opened: OpenedRound = { chainId: r.proposal, digest: r.payload, vault: first.noVault, salt: r.salt, summary: '', governance: payKey, half, raiseBy: aDayFromNow() };
     expect([first.committed, first.round.open, first.sealedMine]).toEqual([null, false, false]);
     expect(chain.apply(proved(await call({ circuit: 'propose', payKey, half: { ...half, assetBlinding: hex(new Uint8Array(randomBytes(32))), proposalSalt: r.salt }, proposal: r.proposal } as GovernedCallOrder, opened)), true)).toEqual({ ok: true, error: '' });
     const approved = await standing();

@@ -44,6 +44,7 @@
  *     signature says.
  */
 import { signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
+import { handedOver, type HandOver } from './hand-over.js';
 import type { SealedProposal } from '../../../src/core/types.js';
 import { proposalFilingRefusal } from '../../../src/core/proposal-filing.js';
 import { FOUNDING_KEY_EPOCH, foundingStateRefusal, stateRecordId } from '../../../src/core/founding-state.js';
@@ -147,6 +148,8 @@ export interface AnchorDoors {
     foundingRecords(accountId: string): Promise<{ readonly state: SealedCompanyRecord | null; readonly roster: SealedCompanyRecord | null }>;
   };
   readonly builder: Pick<VaultBuilderClient, 'anchorHeads' | 'anchor' | 'anchorTag'>;
+  /** Where the proven anchor goes: through the service (the default), or straight to the chain from the person's wallet. */
+  readonly handOver?: HandOver;
   /**
    * **WHICH SEAT EACH TAG IS**, from the openings in the entries of the
    * directory this device believes (`tagSeatsHere`): a header naming one seat's
@@ -1065,7 +1068,11 @@ export async function anchorTheRecordsHere(doors: AnchorDoors): Promise<Anchored
       /* The send's answer, or where the head went while it gave none: a call the head moved past is not waited on. */
       const settled = { done: false };
       const went = await Promise.race([
-        doors.service.sendProven(company, tx).then(() => 'answered' as const),
+        handedOver(doors.handOver, {
+          tx, call: { kind: 'account-call', contract: chain.account, circuit: 'anchor' },
+          viaService: () => doors.service.sendProven(company, tx),
+          after: async () => undefined,
+        }).then(() => 'answered' as const),
         whereTheSendWent(doors, records.head, ours, settled),
       ]).finally(() => { settled.done = true; });
       if (went === 'superseded') throw new Error('the head moved on while this anchor was being sent: another anchor of its head landed, or this one did and another after it');

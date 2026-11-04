@@ -1,32 +1,26 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { readVaultAddress } from 'midnight-identity/profile/company-label';
 import { assets as theAssets, formatAmount, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
-import { fromHex, signingPublicKeyOf, toHex, type Hex } from '../../../../src/core/crypto.js';
+import { fromHex, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { privacyOf } from '../../../../src/core/movement.js';
-import type { PaymentsAmong } from '../../../../src/core/ledger.js';
 import { newProposalId } from '../../../../src/core/proposal-filing.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
-import { newOneOffSeed, oneOffTidied, OneOffRefused, openOneOff, type OneOffOpened } from '../../../../src/midnight/one-off-record.js';
+import { newOneOffSeed, oneOffTidied, OneOffRefused, type OneOffOpened } from '../../../../src/midnight/one-off-record.js';
 import { payeeOf } from '../../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
-import { companyWirePaths, fromCompanyWire, type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
-import { periodOf, periodWindowOf, SPENDING_POLICY_KIND } from '../../../../src/midnight/spending-policy-record.js';
-import { detailsOfKind } from '../../../../src/midnight/vault-details.js';
-import { buildOneOffRun, type DetailsOfKind } from '../../../../src/midnight/payout-tree.js';
+import { periodOf, periodWindowOf } from '../../../../src/midnight/spending-policy-record.js';
 import type { RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import {
-  approvedAlready, governedCallServiceFor, nothingWasSentBy, notEnoughApprovalsYet, type GovernedCallDoors, type RoundOnThePage,
+  ApprovalNotOwed, governedCallServiceFor, theRoundAsked, nothingWasSentBy, notEnoughApprovalsYet, type GovernedCallDoors, type RoundOnThePage,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import type { AccountGovernance } from 'midnight-identity/profile/records-key';
 import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere } from '../../../../packages/web-shared/src/one-off-here.js';
-import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
-import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
 import { oneOffToPayHere, type OneOffAsked, type OneOffRaiseDoors } from '../../../../packages/web-shared/src/one-off-raised-here.js';
 import { approveWith, chargeWith, raiseOneOffWith, spendingPolicyWith } from '../../../../packages/web-shared/src/one-off-in-the-wallet.js';
 import { ChargeNotYetSeen, type ChargeDoors, type ChargesInFlight } from '../../../../packages/web-shared/src/run-charged-here.js';
 import { LegNotRaisedHere } from '../../../../packages/web-shared/src/run-raised-here.js';
 import type { CompanyRecordsHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
-import { chainReadThroughTheWallet } from '../../../../packages/web-shared/src/spending-policy-here.js';
 import { deviceVaultHoldings } from '../../../../packages/web-shared/src/device-vault-holdings.js';
 import {
   payPrivatelyFromCompanyVault, payPubliclyFromCompanyVault, PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen,
@@ -40,18 +34,24 @@ import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flig
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { NETWORK } from 'midnight-identity/network';
-import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import {
+  companyReachFor, companyRecordsFor, enteredFor, handOverMarked, keptReach, paidAmongFor, pureCircuits, type CompanyChain, type CompanyReach,
+  type CompanyRecordsInTheWallet, type PureCircuits,
+} from './company-reach.js';
 import { anchorDoorsIn, anchoredAtTheEnd, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
+import { approveStep, approving, atTheBar, type Approving, type ApprovalStop, type ProposalKind, type ReadCompany } from './proposal-kinds.js';
 
 /*
  * A ONE-OFF PAYMENT OUT OF A COMPANY'S VAULT, MADE IN THE WALLET: one window and one passkey. The wallet raises the
  * proposal, seals the one-off's record to the signers under the company key and files it, and, once the chain it reads
  * through its own indexer shows the approvals the proposal needs, charges it to the vault's period (when the vault has a
  * spending policy) and pays it, privately or publicly as the payee's address decides. Asked with a proposal already
- * raised and the payment it should be, it refuses the proposal's record unless it is that payment, offers this seat's
- * approval, then charges and pays it the same way, as far as the company's account accepts. Every answer from the service is
+ * raised and the payment it should be, it approves through the one approval for every kind of proposal (`approveStep`,
+ * with the one-off kind, `oneOffKind`): it refuses the proposal's record unless it is that payment, gives this seat's
+ * approval where it is still owed and the chain shows the proposal short of the approvals the account needs, then
+ * charges and pays it the same way, as far as the company's account accepts. Every answer from the service is
  * a claim: the proposal's standing, the policy, the payments made and the vault's holdings are read from the chain and
  * from records this wallet opens itself. The proposal carries no amount, payee or name, and the record carries them only
  * sealed to the signers; a public payment's own transaction shows them on the chain, as every public payment does.
@@ -102,30 +102,6 @@ const NEVER_MATCHES = new RegExp([
   'another one-off payment, or another version', 'raised by another proposal', 'paid from another vault', 'paid in another currency',
   'filed by another seat', 'pays another address than the vendor', 'pays other keys than the vendor',
 ].join('|'), 'u');
-
-/** The account's and the vault's pure circuits this action computes with, read from the compiled contracts this wallet ships. */
-interface Pure {
-  readonly account: CompanyRecordsHere['roundIdentity'] & {
-    readonly retrySaltOf: (legRoot: Uint8Array, fresh: Uint8Array) => Uint8Array;
-    readonly noVault: () => Uint8Array;
-    readonly paidOnceOf: (nonce: Uint8Array) => Uint8Array;
-    readonly paidMovementOf: (leaf: Uint8Array) => Uint8Array;
-  };
-  readonly details: DetailsOfKind;
-}
-
-let pureLoaded: Promise<Pure> | null = null;
-const pureCircuits = (): Promise<Pure> => {
-  pureLoaded ??= (async () => {
-    const [account, vault] = await Promise.all([
-      import('../../../../contracts/managed/contract/index.js'),
-      import('../../../../contracts/managed-vault/contract/index.js'),
-    ]);
-    return { account: (account as any).pureCircuits, details: detailsOfKind((vault as any).pureCircuits) };
-  })();
-  pureLoaded.catch(() => { pureLoaded = null; });
-  return pureLoaded;
-};
 
 /**
  * The payment the page asks for, read from its fields: the vault, the currency, the amount, the payee's address and
@@ -181,77 +157,6 @@ export const notAsShown = (shown: Omit<OneOffAsked, 'opensAt' | 'closesAt'>, rec
   return null;
 };
 
-/**
- * The company's records as this wallet reads them for a one-off payment: the directory it judges every filing by, the
- * company's state, its proposals and runs as the service holds them (each judged where it is used), where each proposal
- * stands on the chain and what the account records as paid (the wallet's own indexer), the vault's spending policy
- * (sealed records this seat opens, checked against the chain), the one-off records under the company key, and the
- * company's vendors, read and judged as every device reads them, for a payment naming a vendor entry to be checked
- * against it.
- */
-export function oneOffRecordsFor(r: CompanyReach, reach: Pick<OneOffPaymentReach, 'assets' | 'network'>, pure: Pure): CompanyRecordsHere & { readonly oneOffs: NonNullable<CompanyRecordsHere['oneOffs']> } {
-  const registry = reach.assets ?? theAssets;
-  const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
-  const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
-  const store = new HttpCompanyRecordStore(r.accountId, r.send, null, judge);
-  const me = deviceSignerFrom(r.leaf, r.companyKey);
-  const served = async (path: string): Promise<unknown> => r.api(path);
-  return {
-    directory,
-    people: async () => { throw new Error('a one-off payment reads no person of the company.'); },
-    vendors: () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
-      send: r.send, directory, network: reach.network ?? NETWORK, claimRefusal: signedClaimRefusal,
-    }),
-    state: async (id) => {
-      const b = await served(companyWirePaths.one(r.accountId, 'state', id, 1)) as { filed?: unknown } | null;
-      return b?.filed == null ? null : fromCompanyWire(b.filed, { company: r.accountId, kind: 'state', id, version: 1 }).sealed;
-    },
-    runs: async () => r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/runs`),
-    proposals: async () => governedCallServiceFor(r.api).sealedProposals!(r.accountId),
-    roundsOnChain: (chainIds) => r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds }),
-    payments: {
-      paidOnceOf: (nonce) => pure.account.paidOnceOf(nonce),
-      paidMovementOf: (leaf) => pure.account.paidMovementOf(leaf),
-      read: async (entries) => {
-        if (r.chain.payments === undefined) throw new Error('this wallet cannot read the account\'s record of payments.');
-        const read = await r.chain.payments(r.account, r.label, entries);
-        if ('key' in read) throw new StepRefused(read);
-        return read;
-      },
-    },
-    roundIdentity: pure.account,
-    policy: async () => { throw new Error('a one-off payment reads no payroll policy.'); },
-    registry,
-    spendingPolicies: {
-      versions: async (id) => {
-        const b = await served(companyWirePaths.versions(r.accountId, SPENDING_POLICY_KIND, id)) as { versions?: unknown } | null;
-        return Array.isArray(b?.versions)
-          ? b!.versions.map((m) => fromCompanyWire(m, { company: r.accountId, kind: SPENDING_POLICY_KIND, id }).sealed) as SealedCompanyRecord[] : [];
-      },
-      file: async () => { throw new Error('a one-off payment files no spending policy.'); },
-      me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex },
-      keys: (input) => r.builder.spendingPolicyKeys(input),
-      onChain: chainReadThroughTheWallet(async (asked) => {
-        if (r.chain.roles === undefined) throw new Error('this wallet cannot read the account\'s entries.');
-        const read = await r.chain.roles(r.account, r.label, asked);
-        if ('key' in read) throw new StepRefused(read);
-        return { roles: read };
-      }),
-    },
-    oneOffs: {
-      at: (kind, id, version) => store.at(kind, id, version), keys: r.companyKeys, detailsOf: pure.details, registry,
-      open: openOneOff, treeOf: buildOneOffRun,
-    },
-  };
-}
-
-/** Which of these leaves the account records as paid, read from the chain through this wallet's own indexer. */
-const paidAmongFor = (records: CompanyRecordsHere, pure: Pure) => async (leaves: readonly Hex[]): Promise<PaymentsAmong> => {
-  const entries = leaves.map((leaf) => toHex(pure.account.paidMovementOf(fromHex(leaf))).toLowerCase());
-  const held = new Set((await records.payments.read(entries)).held.map((e) => e.toLowerCase()));
-  return { known: true, paid: leaves.filter((_leaf, i) => held.has(entries[i]!)) as Hex[] };
-};
-
 const keptInTheWallet = (opener: InFlightOpener) => ({
   payments: browserPaymentsInFlight(opener),
   charges: browserChargesInFlight(opener),
@@ -260,8 +165,10 @@ const keptInTheWallet = (opener: InFlightOpener) => ({
 
 /**
  * Everything charging and paying out of the vault needs, from this wallet's own reads: the vault's pool opened with this
- * seat, the chain through its own indexer, the vault's secret it keeps, and the calls that send the charge and the
- * payment. Records it files are signed with this seat's key here; the page only carries them.
+ * seat, the chain through its own indexer, the vault's secret it keeps, and the calls that send the charge, a payment
+ * and a merge - through the service, or straight to the chain (`handOverFor`) - each marking `handed` once it hands a
+ * transaction over. Records it files are signed with this seat's key
+ * here; the page only carries them. A one-off and a payroll run (`pay-run.ts`) are paid through these same doors.
  */
 export function payDoorsFor(
   ctx: StepContext, r: CompanyReach, reach: OneOffPaymentReach, handed: Handed = { over: false },
@@ -280,6 +187,7 @@ export function payDoorsFor(
       keys: async () => { throw new Error('a payment out of a vault reads no readers from the service.'); },
       payout: (vault, tx) => { handed.over = true; return base.payout(vault, tx); },
       payoutPublicly: (vault, tx) => { handed.over = true; return base.payoutPublicly(vault, tx); },
+      merge: (vault, tx) => { handed.over = true; return base.merge(vault, tx); },
     },
     account: r.account,
     onChain: async () => ({ holders: await r.holders() }),
@@ -298,6 +206,7 @@ export function payDoorsFor(
     filer: signingPublicKeyOf(r.seat.signingSecret).toLowerCase() as Hex,
     chargesInFlight: kept.charges,
     paidYet: async () => null,
+    handOver: handOverMarked(r.handOver, handed),
   };
 }
 
@@ -306,9 +215,9 @@ interface Handed { over: boolean }
 
 /**
  * The governed-call doors of this seat: the service's calls (each that hands a transaction over marks `handed`), this
- * wallet's builder, and the chain read at one block by this wallet.
+ * wallet's builder, the chain read at one block by this wallet, and where each finished call goes (`handOverFor`).
  */
-const governedDoorsFor = (
+export const governedDoorsFor = (
   ctx: StepContext, r: CompanyReach, reach: OneOffPaymentReach, records: CompanyRecordsHere, handed: Handed = { over: false },
 ): GovernedCallDoors => {
   const service = governedCallServiceFor(r.api);
@@ -329,6 +238,7 @@ const governedDoorsFor = (
     accountId: r.accountId,
     records,
     leaves: r.judges.leavesFor(r.account),
+    handOver: handOverMarked(r.handOver, handed),
     sleep: (ms) => reach.pause(ms, ctx.signal),
     ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }),
     ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
@@ -340,7 +250,7 @@ const governedDoorsFor = (
  * one-off's record filed signed with this seat's key, the account's pure circuits, and the anchor of what was filed.
  */
 export function raiseDoorsFor(
-  ctx: StepContext, r: CompanyReach, reach: OneOffPaymentReach, records: ReturnType<typeof oneOffRecordsFor>, pure: Pure,
+  ctx: StepContext, r: CompanyReach, reach: OneOffPaymentReach, records: CompanyRecordsInTheWallet, pure: PureCircuits,
   handed: Handed = { over: false },
 ): OneOffRaiseDoors {
   const pay = payDoorsFor(ctx, r, reach);
@@ -391,12 +301,15 @@ export async function oneOffWindowFor(
 }
 
 /**
- * Whether the chain shows the proposal open, or charged, with at least the approvals its hold names. The account may
- * still ask for more (a vault's bar raised since the raise, or a signer removed since), and then refuses the charge or
- * the payment when it is built (`notEnoughApprovalsYet`); that refusal, never this count, is what decides carrying out.
+ * The approvals the account needs before it charges or pays a one-off: the higher of what its hold took at the raise and
+ * the vault's bar now, plus one for every signer removed or replaced since the raise (`requireApprovedForVault`); null
+ * when the chain shows no hold. The account's own refusal when it is built (`notEnoughApprovalsYet`) still decides.
  */
-export const atItsBar = (round: RoundOnChain): boolean =>
-  (round.held === 'open' || round.held === 'cleared') && round.needed !== undefined && round.approvals >= round.needed;
+export const oneOffNeeded = (round: RoundOnChain, held: AccountGovernance, vault: string): number | null => {
+  if (round.needed === undefined) return null;
+  const bar = held.vaultThresholds.find((v) => v.vault.toLowerCase() === vault.toLowerCase())?.threshold ?? held.approvals;
+  return Math.max(round.needed, bar) + (round.removals ?? 0);
+};
 
 /** Polls where the proposal stands on the chain, through this wallet's indexer, until `seen` holds; null when it never does in time. */
 async function untilTheChainShows(
@@ -413,48 +326,207 @@ async function untilTheChainShows(
   }
 }
 
-/** A step's stop in its own words: nothing sent when nothing was handed over or the service said nothing went, else maybe sent. */
+/** A refusal after anything may have been handed over says so; one before says nothing was sent. */
 const refusedAfter = (e: unknown, handed: Handed, nothingSent: string, maybeSent: string): never => {
   if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
   throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? nothingSent : maybeSent, { says: said(e) }));
 };
 
-/** The one-off payment action. */
+/** The one-off's words for each stop of the one approval. */
+const oneOffWhy = (stop: ApprovalStop, values?: Readonly<Record<string, string | number>>): Words =>
+  why(({ 'not-raised': 'raise-not-seen', 'may-be-sent': 'approval-may-be-sent', withdrawn: 'closed', counted: 'closed' } as Record<string, string>)[stop] ?? stop, values);
+
+/** The lines of what the one-off pays, as the page names it. */
+const paymentShown = (intent: ActIntent, network: NetworkName, registry: AssetRegistry): ShownLine[] => {
+  const f = intent.fields;
+  const asked = oneOffAskedOf(intent, network, registry);
+  const form = 'key' in asked ? null : asked.form;
+  const asset = f['token'] === undefined || !HEX64.test(f['token']) ? null : registry.find(f['token'] as AssetId);
+  const raw = { amount: f['amount'] ?? '', token: f['token'] ?? '' };
+  return [
+    asset === null || !/^[0-9]+$/u.test(raw.amount)
+      ? { key: 'act.one-off-payment.shown.amount-raw', values: raw, from: 'page' as const }
+      : { key: 'act.one-off-payment.shown.amount', values: { shown: formatAmount(BigInt(raw.amount), asset), symbol: asset.symbol, name: asset.name, ...raw }, from: 'page' as const },
+    { key: 'act.one-off-payment.shown.payee', values: { payee: f['payee'] ?? '' }, from: 'page' as const },
+    ...(f['vendor'] === undefined ? [] : [{ key: 'act.one-off-payment.shown.vendor', values: { vendor: f['vendor'] }, from: 'page' as const }]),
+    ...(f['payeeName'] === undefined ? [] : [{ key: 'act.one-off-payment.shown.name', values: { name: f['payeeName'] }, from: 'page' as const }]),
+    { key: 'act.one-off-payment.shown.reason', values: { reason: f['reason'] ?? '' }, from: 'page' as const },
+    { key: 'act.one-off-payment.shown.vault', values: { vault: f['vault'] ?? '' }, from: 'page' as const },
+    ...(form === null ? [] : [{ key: `act.one-off-payment.shown.${form}`, from: 'action' as const }]),
+  ];
+};
+
+/**
+ * Charges the approved one-off to its vault's period (when the vault has a spending policy), then pays it, once the
+ * chain shows it at the approvals the account needs; short of them it says so and sends nothing.
+ */
+function oneOffCarry(reach: OneOffPaymentReach, read: ReadCompany, here: Approving): readonly ActionStep[] {
+  const charge: ActionStep = {
+    title: { key: 'act.one-off-payment.step.charge' },
+    notNeeded: (said) => said['state'] === ONE_OFF_STATE.awaitingApprovals || said['charge'] === ONE_OFF_CHARGE.none,
+    run: async (ctx) => {
+      if (here.round === null || here.standing === null) throw new StepRefused(why('closed'));
+      if (!atTheBar(here.standing, here.needed)) {
+        here.short = true;
+        ctx.tell({ state: ONE_OFF_STATE.awaitingApprovals });
+        return;
+      }
+      const r = await read.at(ctx);
+      const pure = await pureCircuits();
+      const records = companyRecordsFor(r, reach, pure);
+      const handed: Handed = { over: false };
+      const standing = here.standing;
+      try {
+        const toPay = await oneOffToPayHere(records, r.accountId, r.companyKeys, here.round.id, {
+          runPayload: pure.account.runPayload, proposalIdOf: pure.account.proposalIdOf, retrySaltOf: pure.account.retrySaltOf,
+          paidAmong: paidAmongFor(records, pure),
+        });
+        if (toPay.order.payments[0]?.paid === true) {
+          here.paid = true;
+          ctx.tell({ charge: ONE_OFF_CHARGE.none });
+          return;
+        }
+        const charged = await chargeWith({ ...payDoorsFor(ctx, r, reach, handed), records, accountId: r.accountId }, r.companyKeys, toPay);
+        if (charged.state === 'charged') ctx.tell({ state: ONE_OFF_STATE.charged, charge: ONE_OFF_CHARGE.charged });
+        else ctx.tell({ charge: charged.state === 'no-policy' ? ONE_OFF_CHARGE.none : ONE_OFF_CHARGE.already });
+      } catch (e) {
+        if (e instanceof LegNotRaisedHere) throw new StepRefused(why('not-found', { says: e.message }));
+        if (e instanceof ChargeNotYetSeen) throw new StepRefused(why('charge-not-seen'));
+        if (!handed.over && notEnoughApprovalsYet(e)) {
+          here.short = true;
+          if (standing.outrun === true && standing.removals === undefined) throw new StepRefused(why('outrun'));
+          ctx.tell({ state: ONE_OFF_STATE.awaitingApprovals });
+          return;
+        }
+        if (handed.over && !(e instanceof StepRefused || e instanceof ActionStopped)) {
+          /* A charge refused after it was handed over: a proposal the chain shows closed meanwhile is not charged again. */
+          const id = here.round.chainId.toLowerCase();
+          const now = (await records.roundsOnChain!([id]).catch(() => ({} as Record<string, RoundOnChain>)))[id];
+          if (now?.held === 'closed') throw new StepRefused(why('closed'));
+        }
+        refusedAfter(e, handed, 'not-charged', 'charge-may-be-sent');
+      }
+    },
+  };
+
+  const pay: ActionStep = {
+    title: { key: 'act.one-off-payment.step.pay' },
+    notNeeded: (said) => said['state'] === ONE_OFF_STATE.awaitingApprovals,
+    run: async (ctx) => {
+      if (here.round === null || here.standing === null || here.short || !atTheBar(here.standing, here.needed)) return;
+      if (here.paid) {
+        ctx.tell({ state: ONE_OFF_STATE.alreadyPaid });
+        return;
+      }
+      const r = await read.at(ctx);
+      const pure = await pureCircuits();
+      const records = companyRecordsFor(r, reach, pure);
+      const paidAmong = paidAmongFor(records, pure);
+      const handed: Handed = { over: false };
+      try {
+        const { order } = await oneOffToPayHere(records, r.accountId, r.companyKeys, here.round.id, {
+          runPayload: pure.account.runPayload, proposalIdOf: pure.account.proposalIdOf, retrySaltOf: pure.account.retrySaltOf, paidAmong,
+        });
+        const payment = order.payments[0]!;
+        if (payment.paid === true) {
+          ctx.tell({ state: ONE_OFF_STATE.alreadyPaid });
+          return;
+        }
+        const doors = payDoorsFor(ctx, r, reach, handed);
+        if (order.form === 'shielded') await payPrivatelyFromCompanyVault(doors, { order, payment });
+        else await payPubliclyFromCompanyVault({ ...doors, paidYet: async () => (await paidAmong([payment.leaf])).paid.length === 1 }, { order, payment });
+        ctx.tell({ state: ONE_OFF_STATE.paid });
+      } catch (e) {
+        if (e instanceof LegNotRaisedHere) throw new StepRefused(why('not-found', { says: e.message }));
+        if (e instanceof PaymentNotYetSeen || e instanceof PublicPaymentNotYetSeen) throw new StepRefused(why('payment-not-seen', { says: e.message }));
+        if (e instanceof PaymentLandedUnrecorded) throw new StepRefused(why('payment-not-recorded', { says: e.message }));
+        if (e instanceof PaymentStillInFlight) throw new StepRefused(why('payment-on-its-way', { says: e.message }));
+        if (e instanceof PaymentNotAsBuilt) throw new StepRefused(why('payment-not-as-built', { says: e.message }));
+        if (!handed.over && notEnoughApprovalsYet(e)) {
+          if (here.standing.outrun === true && here.standing.removals === undefined) throw new StepRefused(why('outrun'));
+          ctx.tell({ state: ONE_OFF_STATE.awaitingApprovals });
+          return;
+        }
+        refusedAfter(e, handed, 'not-paid', 'payment-not-seen');
+      }
+    },
+  };
+  return [charge, pay];
+}
+
+/**
+ * **THE ONE-OFF AS A KIND OF PROPOSAL** (`ProposalKind`): its record is opened from the company's records and approved
+ * only when it pays exactly what the page shows (`notAsShown`), to the vendor entry it names if any; its raiser's
+ * approval counts only where its rights let it approve on that vault, so the account's refusal says when it already
+ * did; once at its bar it is charged and paid.
+ */
+export function oneOffKind(reach: OneOffPaymentReach): ProposalKind {
+  const network = reach.network ?? NETWORK;
+  const registry = reach.assets ?? theAssets;
+  return {
+    fields: ['vault', 'token', 'amount', 'payee', 'reason'],
+    changesTheCompany: false,
+    shown: async (intent) => [
+      { key: 'act.one-off-payment.shown.proposal', values: { proposal: intent.fields['proposal'] ?? '' }, from: 'page' as const },
+      ...paymentShown(intent, network, registry),
+      { key: 'act.one-off-payment.shown.matched', from: 'action' as const },
+      { key: 'act.one-off-payment.shown.approve', from: 'action' as const },
+      { key: 'act.one-off-payment.shown.carry-out', from: 'action' as const },
+    ],
+    check: (intent) => {
+      const asked = oneOffAskedOf(intent, network, registry);
+      return 'key' in asked ? asked : null;
+    },
+    opened: async (_ctx, r, intent) => {
+      const named = intent.fields['proposal']!;
+      const asked = oneOffAskedOf(intent, network, registry);
+      if ('key' in asked) throw new StepRefused(asked);
+      const records = companyRecordsFor(r, reach, await pureCircuits());
+      try {
+        const found = await oneOffRaisedByHere(records, r.accountId, r.companyKeys, named);
+        if (found === null) throw new StepRefused(why('not-a-one-off'));
+        const differs = notAsShown(asked, found.oneOff);
+        if (differs !== null) throw new StepRefused(why('not-as-shown', { says: differs }));
+        await refuseAOneOffToAnotherVendorHere(records, found.oneOff);
+        return { id: named, chainId: found.oneOff.proposal.chainId };
+      } catch (e) {
+        if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
+        if (e instanceof OneOffRefused && NEVER_MATCHES.test(e.message)) throw new StepRefused(why('not-as-shown', { says: said(e).replace(/\.$/u, '') }));
+        throw new StepRefused(why('not-found', { says: said(e) }));
+      }
+    },
+    needed: (round, held, intent) => oneOffNeeded(round, held, readVaultAddress(intent.fields['vault']) ?? ''),
+    approve: async (ctx, r, _intent, round, handed) => {
+      const records = companyRecordsFor(r, reach, await pureCircuits());
+      try {
+        const served = theRoundAsked(await governedCallServiceFor(r.api).standing(round.id), round.id, round.chainId);
+        await approveWith(governedDoorsFor(ctx, r, reach, records, handed), { ...served, id: round.id, chainId: round.chainId }, r.companyKeys);
+      } catch (e) {
+        if (e instanceof ApprovalNotOwed && e.why === 'counted') throw e;
+        if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
+        refusedAfter(e, handed, 'not-approved', 'approval-may-be-sent');
+      }
+    },
+    stateAt: (_atItsBar, approvedNow) => (approvedNow ? ONE_OFF_STATE.approved : null),
+    carry: (here, read) => oneOffCarry(reach, read, here),
+    upkeep: { coins: (opener) => (reach.kept ?? keptInTheWallet)(opener).coins },
+    why: oneOffWhy,
+  };
+}
+
+/** The one-off payment action, raised here or, named by its proposal, approved through the one approval and paid. */
 export function oneOffPaymentAction(reach: OneOffPaymentReach): ActionDefinition {
   const network = reach.network ?? NETWORK;
   const registry = reach.assets ?? theAssets;
+  const kind = oneOffKind(reach);
   return Object.freeze({
     headline: 'act.one-off-payment.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => {
-      const f = intent.fields;
-      const asked = oneOffAskedOf(intent, network, registry);
-      const form = 'key' in asked ? null : asked.form;
-      const asset = f['token'] === undefined || !HEX64.test(f['token']) ? null : registry.find(f['token'] as AssetId);
-      const raw = { amount: f['amount'] ?? '', token: f['token'] ?? '' };
-      const payment: ShownLine[] = [
-        asset === null || !/^[0-9]+$/u.test(raw.amount)
-          ? { key: 'act.one-off-payment.shown.amount-raw', values: raw, from: 'page' as const }
-          : { key: 'act.one-off-payment.shown.amount', values: { shown: formatAmount(BigInt(raw.amount), asset), symbol: asset.symbol, name: asset.name, ...raw }, from: 'page' as const },
-        { key: 'act.one-off-payment.shown.payee', values: { payee: f['payee'] ?? '' }, from: 'page' as const },
-        ...(f['vendor'] === undefined ? [] : [{ key: 'act.one-off-payment.shown.vendor', values: { vendor: f['vendor'] }, from: 'page' as const }]),
-        ...(f['payeeName'] === undefined ? [] : [{ key: 'act.one-off-payment.shown.name', values: { name: f['payeeName'] }, from: 'page' as const }]),
-        { key: 'act.one-off-payment.shown.reason', values: { reason: f['reason'] ?? '' }, from: 'page' as const },
-        { key: 'act.one-off-payment.shown.vault', values: { vault: f['vault'] ?? '' }, from: 'page' as const },
-        ...(form === null ? [] : [{ key: `act.one-off-payment.shown.${form}`, from: 'action' as const }]),
-      ];
-      if (f['proposal'] !== undefined) {
-        return [
-          { key: 'act.one-off-payment.shown.proposal', values: { proposal: f['proposal'] }, from: 'page' as const },
-          ...payment,
-          { key: 'act.one-off-payment.shown.matched', from: 'action' as const },
-          { key: 'act.one-off-payment.shown.approve', from: 'action' as const },
-          { key: 'act.one-off-payment.shown.carry-out', from: 'action' as const },
-          ...upkeepShown(),
-          { key: 'act.one-off-payment.shown.nothing-else', from: 'action' as const },
-        ];
+      if (intent.fields['proposal'] !== undefined) {
+        return [...await kind.shown(intent), ...upkeepShown(), { key: 'act.one-off-payment.shown.nothing-else', from: 'action' as const }];
       }
       return [
-        ...payment,
+        ...paymentShown(intent, network, registry),
         { key: 'act.one-off-payment.shown.window', from: 'action' as const },
         { key: 'act.one-off-payment.shown.record', from: 'action' as const },
         { key: 'act.one-off-payment.shown.carry-out', from: 'action' as const },
@@ -472,39 +544,26 @@ export function oneOffPaymentAction(reach: OneOffPaymentReach): ActionDefinition
     ],
     check: async (intent) => {
       if (intent.fields['record'] === undefined) return why('not-a-company');
-      const asked = oneOffAskedOf(intent, network, registry);
-      return 'key' in asked ? asked : null;
+      return kind.check(intent);
     },
     steps: (intent) => {
       const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
-      const named = intent.fields['proposal'];
-      const here: { round: { readonly id: string; readonly chainId: string } | null; standing: RoundOnChain | null; paid: boolean; short: boolean } = {
-        round: null, standing: null, paid: false, short: false,
-      };
-      const told = (ctx: StepContext, standing: RoundOnChain): void => {
-        ctx.tell({ approvals: standing.approvals, ...(standing.needed === undefined ? {} : { needed: standing.needed }) });
-      };
-      const standingOrRefused = (standing: RoundOnChain | null, waited: string): RoundOnChain => {
-        if (standing === null) throw new StepRefused(why(waited));
-        if (standing.held === 'closed' || standing.held === 'never') throw new StepRefused(why('closed'));
-        return standing;
-      };
-
+      const here = approving();
       const seat: ActionStep = {
         title: { key: 'act.one-off-payment.step.seat' },
         run: async (ctx) => { await read.at(ctx); },
       };
-      const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, { coins: (opener) => (reach.kept ?? keptInTheWallet)(opener).coins });
-
-      const raise: ActionStep = {
-        title: { key: named === undefined ? 'act.one-off-payment.step.raise' : 'act.one-off-payment.step.approve' },
-        run: async (ctx) => {
-          const r = await read.at(ctx);
-          const pure = await pureCircuits();
-          const records = oneOffRecordsFor(r, reach, pure);
-          const asked = oneOffAskedOf(intent, network, registry);
-          if ('key' in asked) throw new StepRefused(asked);
-          if (named === undefined) {
+      const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, kind.upkeep ?? {});
+      const raise: ActionStep = intent.fields['proposal'] !== undefined
+        ? approveStep(kind, intent, read, here, { key: 'act.one-off-payment.step.approve' })
+        : {
+          title: { key: 'act.one-off-payment.step.raise' },
+          run: async (ctx) => {
+            const r = await read.at(ctx);
+            const pure = await pureCircuits();
+            const records = companyRecordsFor(r, reach, pure);
+            const asked = oneOffAskedOf(intent, network, registry);
+            if ('key' in asked) throw new StepRefused(asked);
             let window: { readonly opensAt: bigint; readonly closesAt: bigint };
             try {
               window = await oneOffWindowFor(records, r, asked, reach.now());
@@ -521,138 +580,15 @@ export function oneOffPaymentAction(reach: OneOffPaymentReach): ActionDefinition
             }
             ctx.tell({ state: ONE_OFF_STATE.raised });
             here.round = { id: round.id, chainId: round.chainId.toLowerCase() };
-            here.standing = standingOrRefused(await untilTheChainShows(ctx, records, reach, round.chainId, (s) => s.held !== 'never'), 'raise-not-seen');
-            told(ctx, here.standing);
-            return;
-          }
-          let chainId: string;
-          try {
-            const found = await oneOffRaisedByHere(records, r.accountId, r.companyKeys, named);
-            if (found === null) throw new StepRefused(why('not-a-one-off'));
-            const differs = notAsShown(asked, found.oneOff);
-            if (differs !== null) throw new StepRefused(why('not-as-shown', { says: differs }));
-            await refuseAOneOffToAnotherVendorHere(records, found.oneOff);
-            chainId = found.oneOff.proposal.chainId;
-          } catch (e) {
-            if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
-            if (e instanceof OneOffRefused && NEVER_MATCHES.test(e.message)) throw new StepRefused(why('not-as-shown', { says: said(e).replace(/\.$/u, '') }));
-            throw new StepRefused(why('not-found', { says: said(e) }));
-          }
-          here.round = { id: named, chainId };
-          const before = standingOrRefused(await untilTheChainShows(ctx, records, reach, chainId, () => true), 'raise-not-seen');
-          let approved = false;
-          const handed: Handed = { over: false };
-          try {
-            const served = await governedCallServiceFor(r.api).standing(named);
-            await approveWith(governedDoorsFor(ctx, r, reach, records, handed), { ...served, chainId }, r.companyKeys);
-            approved = true;
-            ctx.tell({ state: ONE_OFF_STATE.approved });
-          } catch (e) {
-            /* A seat that approved already, here or on another device, goes on to carry the payment out; any other refusal stops. */
-            if (!approvedAlready(e)) refusedAfter(e, handed, 'not-approved', 'approval-may-be-sent');
-          }
-          /* Only an approval this wallet made waits for the network to count it, so the charge reads the count that includes it. */
-          const counted = approved
-            ? await untilTheChainShows(ctx, records, reach, chainId, (now) => now.approvals > before.approvals || now.held === 'closed')
-            : null;
-          const standing = standingOrRefused(counted ?? await untilTheChainShows(ctx, records, reach, chainId, () => true), 'raise-not-seen');
-          here.standing = standing;
-          told(ctx, standing);
-        },
-      };
-
-      const charge: ActionStep = {
-        title: { key: 'act.one-off-payment.step.charge' },
-        notNeeded: (said) => said['state'] === ONE_OFF_STATE.awaitingApprovals || said['charge'] === ONE_OFF_CHARGE.none,
-        run: async (ctx) => {
-          if (here.round === null || here.standing === null) throw new StepRefused(why('closed'));
-          if (!atItsBar(here.standing)) {
-            here.short = true;
-            ctx.tell({ state: ONE_OFF_STATE.awaitingApprovals });
-            return;
-          }
-          const r = await read.at(ctx);
-          const pure = await pureCircuits();
-          const records = oneOffRecordsFor(r, reach, pure);
-          const handed: Handed = { over: false };
-          const standing = here.standing;
-          try {
-            const toPay = await oneOffToPayHere(records, r.accountId, r.companyKeys, here.round.id, {
-              runPayload: pure.account.runPayload, proposalIdOf: pure.account.proposalIdOf, retrySaltOf: pure.account.retrySaltOf,
-              paidAmong: paidAmongFor(records, pure),
-            });
-            if (toPay.order.payments[0]?.paid === true) {
-              here.paid = true;
-              ctx.tell({ charge: ONE_OFF_CHARGE.none });
-              return;
-            }
-            const charged = await chargeWith({ ...payDoorsFor(ctx, r, reach, handed), records, accountId: r.accountId }, r.companyKeys, toPay);
-            if (charged.state === 'charged') ctx.tell({ state: ONE_OFF_STATE.charged, charge: ONE_OFF_CHARGE.charged });
-            else ctx.tell({ charge: charged.state === 'no-policy' ? ONE_OFF_CHARGE.none : ONE_OFF_CHARGE.already });
-          } catch (e) {
-            if (e instanceof LegNotRaisedHere) throw new StepRefused(why('not-found', { says: e.message }));
-            if (e instanceof ChargeNotYetSeen) throw new StepRefused(why('charge-not-seen'));
-            if (!handed.over && notEnoughApprovalsYet(e)) {
-              here.short = true;
-              if (standing.outrun === true) throw new StepRefused(why('outrun'));
-              ctx.tell({ state: ONE_OFF_STATE.awaitingApprovals });
-              return;
-            }
-            if (handed.over && !(e instanceof StepRefused || e instanceof ActionStopped)) {
-              /* A charge the network then shows on a closed proposal: the payment may have been carried out elsewhere. */
-              const id = here.round.chainId.toLowerCase();
-              const now = (await records.roundsOnChain!([id]).catch(() => ({} as Record<string, RoundOnChain>)))[id];
-              if (now?.held === 'closed') throw new StepRefused(why('closed'));
-            }
-            refusedAfter(e, handed, 'not-charged', 'charge-may-be-sent');
-          }
-        },
-      };
-
-      const pay: ActionStep = {
-        title: { key: 'act.one-off-payment.step.pay' },
-        notNeeded: (said) => said['state'] === ONE_OFF_STATE.awaitingApprovals,
-        run: async (ctx) => {
-          if (here.round === null || here.standing === null || here.short || !atItsBar(here.standing)) return;
-          if (here.paid) {
-            ctx.tell({ state: ONE_OFF_STATE.alreadyPaid });
-            return;
-          }
-          const r = await read.at(ctx);
-          const pure = await pureCircuits();
-          const records = oneOffRecordsFor(r, reach, pure);
-          const paidAmong = paidAmongFor(records, pure);
-          const handed: Handed = { over: false };
-          try {
-            const { order } = await oneOffToPayHere(records, r.accountId, r.companyKeys, here.round.id, {
-              runPayload: pure.account.runPayload, proposalIdOf: pure.account.proposalIdOf, retrySaltOf: pure.account.retrySaltOf, paidAmong,
-            });
-            const payment = order.payments[0]!;
-            if (payment.paid === true) {
-              ctx.tell({ state: ONE_OFF_STATE.alreadyPaid });
-              return;
-            }
-            const doors = payDoorsFor(ctx, r, reach, handed);
-            if (order.form === 'shielded') await payPrivatelyFromCompanyVault(doors, { order, payment });
-            else await payPubliclyFromCompanyVault({ ...doors, paidYet: async () => (await paidAmong([payment.leaf])).paid.length === 1 }, { order, payment });
-            ctx.tell({ state: ONE_OFF_STATE.paid });
-          } catch (e) {
-            if (e instanceof LegNotRaisedHere) throw new StepRefused(why('not-found', { says: e.message }));
-            if (e instanceof PaymentNotYetSeen || e instanceof PublicPaymentNotYetSeen) throw new StepRefused(why('payment-not-seen', { says: e.message }));
-            if (e instanceof PaymentLandedUnrecorded) throw new StepRefused(why('payment-not-recorded', { says: e.message }));
-            if (e instanceof PaymentStillInFlight) throw new StepRefused(why('payment-on-its-way', { says: e.message }));
-            if (e instanceof PaymentNotAsBuilt) throw new StepRefused(why('payment-not-as-built', { says: e.message }));
-            if (!handed.over && notEnoughApprovalsYet(e)) {
-              if (here.standing.outrun === true) throw new StepRefused(why('outrun'));
-              ctx.tell({ state: ONE_OFF_STATE.awaitingApprovals });
-              return;
-            }
-            refusedAfter(e, handed, 'not-paid', 'payment-not-seen');
-          }
-        },
-      };
-
-      return [seat, upkeep.first, raise, charge, pay, upkeep.last];
+            const standing = await untilTheChainShows(ctx, records, reach, round.chainId, (s) => s.held !== 'never');
+            if (standing === null) throw new StepRefused(why('raise-not-seen'));
+            if (standing.held === 'closed' || standing.held === 'never') throw new StepRefused(why('closed'));
+            here.standing = standing;
+            here.needed = oneOffNeeded(standing, await r.holders(), asked.vault);
+            ctx.tell({ approvals: standing.approvals, ...(here.needed === null ? {} : { needed: here.needed }) });
+          },
+        };
+      return [seat, upkeep.first, raise, ...oneOffCarry(reach, read, here), upkeep.last];
     },
   } satisfies ActionDefinition);
 }

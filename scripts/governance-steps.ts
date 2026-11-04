@@ -53,6 +53,10 @@ import {
   pureCircuits, type Ledger, type ImpureCircuits,
 } from '../contracts/managed/contract/index.js';
 import { NO_ASSET } from '../src/core/assets.js';
+import { RAISE_WINDOW_SECONDS } from '../src/core/proposal-filing.js';
+
+/** A raise's deadline: a day after this machine's clock, the window a device gives a raise it writes down. */
+const aDayFromNow = (): bigint => BigInt(Math.floor(Date.now() / 1000) + RAISE_WINDOW_SECONDS);
 
 /*
  * The merged `propose` has fixed arity, so the branch a call does not take
@@ -141,7 +145,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   const invitedAt = (seed: number) => ({ coinSecretKey: seededBytes(seed), addressSalt: seededBytes(seed + 1) });
   const invitationOf = (s: AccountPrivateState, invite: { coinSecretKey: Uint8Array; addressSalt: Uint8Array }) =>
     pureCircuits.signerInvitePayload(
-      pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt), s.scope);
+      pureCircuits.inviteAddressOf(pureCircuits.coinPublicKeyOf(invite.coinSecretKey), invite.addressSalt), s.scope, 0n);
 
   /**
    * Which slot a signer sits in, read off the LEDGER rather than remembered.
@@ -295,7 +299,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
     note(`${label}: proposal id ${hex(id).slice(0, 24)}…`);
 
     await becomeSigner(A, 'A');
-    await callCircuit(`propose (${label})`, () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    await callCircuit(`propose (${label})`, () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault(), aDayFromNow()),
       async () => isOpen(await readState(), id));
 
     for (const [name, who] of approvers) {
@@ -430,8 +434,9 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   // `addDId` names WHICH approved invitation D takes — the contract recomputes
   // it from D's address, the salt and D's rights, and refuses any other.
   // `false` asks for a fresh slot: nothing has been vacated yet, and asking to
-  // reuse one that does not exist is refused rather than quietly corrected.
-  await callCircuit('seatInvited D', () => found.callTx.seatInvited(addDId, false),
+  // reuse one that does not exist is refused rather than quietly corrected. 0
+  // keeps the threshold in force.
+  await callCircuit('seatInvited D', () => found.callTx.seatInvited(addDId, false, 0n),
     async () => !!(await readState()).signers.findPathForLeaf(leafD));
   await wasConsumed('add D', addDId);
 
@@ -445,11 +450,12 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
 
   const leafB = leafOf(B);
   const vacated = withD.B!;
-  const removeBId = await approvedRound('remove B', pureCircuits.removeSignerPayload(leafB),
+  const removeBId = await approvedRound('remove B', pureCircuits.removeAndSetThresholdPayload(leafB, 0n),
     freshSalt(), approversFrom([['A', A], ['C', C], ['D', D]], start.threshold, 'remove B'));
 
   await becomeSigner(A, 'A');
-  await callCircuit('amendSigner B (unseat)', () => found.callTx.amendSigner(leafB, removeBId),
+  await callCircuit('removeSignerAndSetThreshold B (unseat, threshold kept)',
+    () => found.callTx.removeSignerAndSetThreshold(leafB, 0n, removeBId),
     async () => !(await readState()).signers.findPathForLeaf(leafB));
   await wasConsumed('remove B', removeBId);
 
@@ -500,7 +506,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   setProposalSalt(survivorSalt);
   await becomeSigner(A, 'A');
   await callCircuit('propose (can the survivors still act?)',
-    () => found.callTx.propose(survivorPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    () => found.callTx.propose(survivorPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault(), aDayFromNow()),
     async () => isOpen(await readState(), survivorId));
   for (const [name, who] of [['C', C], ['D', D]] as [string, AccountPrivateState][]) {
     await becomeSigner(who, name);
@@ -535,7 +541,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   // `true` — take the slot B left. The witness finds it by looking for the
   // vacancy marker the removal wrote; a blanked slot would be unfindable.
   await callCircuit('seatInvited E (reusing B\'s slot)',
-    () => found.callTx.seatInvited(addEId, true),
+    () => found.callTx.seatInvited(addEId, true, 0n),
     async () => !!(await readState()).signers.findPathForLeaf(leafE));
   await wasConsumed('add E', addEId);
 
@@ -591,7 +597,7 @@ export async function runGovernanceSteps(ctx: GovernanceContext): Promise<void> 
   setProposalSalt(biteSalt);
   await becomeSigner(A, 'A');
   await callCircuit('propose (is the new threshold visible on a fresh proposal?)',
-    () => found.callTx.propose(bitePayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    () => found.callTx.propose(bitePayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault(), aDayFromNow()),
     async () => isOpen(await readState(), biteId));
   /*
    * ONE SHORT OF THE RAISED THRESHOLD, then the one more it now demands.

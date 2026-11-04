@@ -538,24 +538,39 @@ export const heldFiledBy = (
  * and gone now is closed by the calls `closedBy` names for it - by default one
  * this test does not name, which reads as carried out; one never found held
  * was never held. **A STAND-IN, NAMED**: the test's chain keeps no history, so
- * a proposal raised and closed between two reads reads as never held.
+ * a proposal raised and closed between two reads reads as never held. Read for
+ * a `seat`, each also says whether that seat is among the open proposal's
+ * `approvedBy`, as a wallet's read of its own approval marker does; a test's
+ * chain that names no `approvedBy` holds no seat's approval. An open proposal
+ * whose `raisedBy` is named also says, read for a seat, whether that seat
+ * raised it; one whose `opensAt` is named carries it, as a run's window.
  */
 export const roundsOnATestChain = (
-  openNow: () => Promise<ReadonlyArray<{ readonly id: string; readonly approvals: number }>>,
+  openNow: () => Promise<ReadonlyArray<{
+    readonly id: string; readonly approvals: number; readonly approvedBy?: Iterable<string>; readonly raisedBy?: string; readonly opensAt?: number;
+  }>>,
   closedBy: (chainId: string) => readonly string[] = () => ['a call this test does not name'],
-): ((chainIds: readonly string[]) => Promise<Record<string, RoundOnChain>>) => {
+): ((chainIds: readonly string[], seat?: string) => Promise<Record<string, RoundOnChain>>) => {
   const raised = new Map<string, number>();
-  return async (chainIds) => {
-    const open = new Map((await openNow()).map((p) => [p.id.toLowerCase(), p.approvals] as const));
+  return async (chainIds, seat) => {
+    const now = await openNow();
+    const open = new Map(now.map((p) => [p.id.toLowerCase(), p.approvals] as const));
+    const by = new Map(now.map((p) => [p.id.toLowerCase(), new Set([...(p.approvedBy ?? [])].map((x) => x.toLowerCase()))] as const));
+    const held = new Map(now.map((p) => [p.id.toLowerCase(), p] as const));
     const at = Date.now();
     for (const id of open.keys()) if (!raised.has(id)) raised.set(id, at);
     return Object.fromEntries(chainIds.map((asked) => {
       const id = asked.toLowerCase();
       const first = raised.get(id);
       const approvals = open.get(id);
-      const round: RoundOnChain = first === undefined ? { held: 'never', approvals: 0 }
-        : approvals !== undefined ? { held: 'open', approvals, raisedAt: first, txRef: id }
-          : { held: 'closed', approvals: 0, raisedAt: first, txRef: id, closedBy: closedBy(id) };
+      const mine = seat === undefined ? {} : { approvedHere: by.get(id)?.has(seat.toLowerCase()) ?? false };
+      const round: RoundOnChain = first === undefined ? { held: 'never', approvals: 0, ...mine }
+        : approvals !== undefined ? {
+          held: 'open', approvals, raisedAt: first, txRef: id, ...mine,
+          ...(held.get(id)?.opensAt === undefined ? {} : { opensAt: held.get(id)!.opensAt! }),
+          ...(seat === undefined || held.get(id)?.raisedBy === undefined ? {} : { raisedHere: held.get(id)!.raisedBy!.toLowerCase() === seat.toLowerCase() }),
+        }
+          : { held: 'closed', approvals: 0, raisedAt: first, txRef: id, closedBy: closedBy(id), ...mine };
       return [id, round];
     }));
   };

@@ -327,6 +327,21 @@ describe('SOMEBODY IS INVITED FROM THE WALLET, WITH ITS OWN SEAT', () => {
     expect(await a.check(intent(EMPLOYEE), { identity, secret })).toBeNull();
   });
 
+  it('a signer invited with a new threshold is shown it, and one that is not a whole number of at least one is refused before anything is signed', async () => {
+    const a = action();
+    /* RED WHEN: the window does not show the threshold the seat sets once taken, or shows one where none was asked. */
+    expect((await a.shown(intent({ ...SIGNER, threshold: '2' }))).find((l) => l.key === 'act.invite.shown.threshold')).toMatchObject({ values: { threshold: '2' }, from: 'page' });
+    expect((await a.shown(intent(SIGNER))).map((l) => l.key)).not.toContain('act.invite.shown.threshold');
+    expect((await a.shown(intent({ ...SIGNER, threshold: '0' }))).map((l) => l.key)).not.toContain('act.invite.shown.threshold');
+    /* RED WHEN: a threshold no account could set is let through to be signed into the invitation. */
+    for (const bad of ['-1', '1.5', 'x', '01', '18446744073709551616']) {
+      expect(await a.check(intent({ ...SIGNER, threshold: bad }), { identity, secret }), bad).toEqual({ key: 'act.invite.why.not-a-threshold' });
+    }
+    /* "0", like none, keeps the threshold in force. */
+    expect(await a.check(intent({ ...SIGNER, threshold: '0' }), { identity, secret })).toBeNull();
+    expect(await a.check(intent({ ...SIGNER, threshold: '2' }), { identity, secret })).toBeNull();
+  });
+
   it('a seat offered by address raised and not filed says so, so the page gives the link it made by hand', async () => {
     const { ctx, told } = ctxWith(intent(SIGNER));
     t.invite = async () => { throw new InvitationRaisedNotFiled('l', 'the service is down'); };
@@ -400,7 +415,7 @@ describe('SOMEBODY IS INVITED FROM THE WALLET, WITH ITS OWN SEAT', () => {
       expect(routeOf(shape, m, p), `${m} ${p}`).not.toBeNull();
     }
     const keys = new Set<string>(['act.invite.headline', ...action().checks.filter((c) => c.key.startsWith('act.invite')).map((c) => c.key)]);
-    for (const i of [EMPLOYEE, VENDOR, SIGNER, { ...SIGNER, scope: '09'.repeat(32) }, { ...VENDOR, terms: 'monthly', termsAsset: TEST_TOKEN, termsAmount: '10' }]) {
+    for (const i of [EMPLOYEE, VENDOR, SIGNER, { ...SIGNER, scope: '09'.repeat(32) }, { ...SIGNER, threshold: '2' }, { ...VENDOR, terms: 'monthly', termsAsset: TEST_TOKEN, termsAmount: '10' }]) {
       for (const line of await action().shown(intent(i))) if (line.key.startsWith('act.invite')) keys.add(line.key);
     }
     for (const m of SOURCE.matchAll(/why\('([a-z-]+)'/gu)) keys.add(`act.invite.why.${m[1]}`);

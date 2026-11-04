@@ -120,6 +120,7 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: CreateVa
     account: r.account,
     service,
     builder,
+    ...(r.handOver === undefined ? {} : { handOver: r.handOver }),
     material: { signingSecret: r.seat.signingSecret, blinding: r.seat.blinding, scope: r.seat.scope },
     me: deviceSignerFrom(r.leaf, r.companyKey),
     myRecordsKey: recordsKeypairFrom(fromHex(r.companyKey)).publicKey as Hex,
@@ -137,7 +138,13 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: CreateVa
           return { ...chain, account: r.account };
         },
         send: proposals.send, file: proposals.file!, sealedProposals: proposals.sealedProposals!,
+        ...(proposals.cancel === undefined ? {} : { cancel: proposals.cancel }),
       },
+    },
+    /* The chain's time, read at the wallet's own indexer, as a withdrawal reads it. */
+    chainTime: async () => {
+      if (r.builder.accountPresence === undefined) throw new Error('this wallet cannot read the chain\'s time.');
+      return (await r.builder.accountPresence({ account: r.account, indexer: r.chain.indexer, transactions: [] })).blockTime;
     },
     onChain: async () => ({ holders: await r.holders() }),
     indexer: async () => r.chain.indexer,

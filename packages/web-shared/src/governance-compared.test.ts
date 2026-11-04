@@ -65,4 +65,29 @@ describe('THE SAME GOVERNANCE CHANGE', () => {
       expect(sameGovernance({ kind: 'vault-threshold', vault: A, threshold: bad } as RoundChangeOnTheWire, { kind: 'vault-threshold', vault: A, threshold: bad } as RoundChangeOnTheWire), bad).toBe(false);
     }
   });
+
+  it('A REMOVAL IS THE SAME CHANGE ONLY FOR THE SAME LEAF AT THE SAME NEW THRESHOLD, WHERE NONE AND 0 BOTH KEEP THE ONE IN FORCE', () => {
+    const keeps = { kind: 'remove-signer', leaf: A } as RoundChangeOnTheWire;
+    /* RED WHEN: a removal that keeps the threshold is not the same as one that names 0, which also keeps it. */
+    expect(sameGovernance(keeps, { kind: 'remove-signer', leaf: A, threshold: '0' } as RoundChangeOnTheWire)).toBe(true);
+    expect(sameGovernance({ kind: 'remove-signer', leaf: A, threshold: '02' } as RoundChangeOnTheWire, { kind: 'remove-signer', leaf: A, threshold: '2' } as RoundChangeOnTheWire)).toBe(true);
+    /* RED WHEN: the new threshold is left out of the comparison - an approval is built for, or a proposal found for, another removal. */
+    expect(sameGovernance(keeps, { kind: 'remove-signer', leaf: A, threshold: '2' } as RoundChangeOnTheWire)).toBe(false);
+    expect(sameGovernance({ kind: 'remove-signer', leaf: A, threshold: '2' } as RoundChangeOnTheWire, { kind: 'remove-signer', leaf: A, threshold: '3' } as RoundChangeOnTheWire)).toBe(false);
+    expect(sameGovernance(keeps, { kind: 'remove-signer', leaf: B } as RoundChangeOnTheWire)).toBe(false);
+    /* RED WHEN: a threshold that is not a whole number counts as keeping the one in force. */
+    expect(sameGovernance(keeps, { kind: 'remove-signer', leaf: A, threshold: 'x' } as RoundChangeOnTheWire)).toBe(false);
+  });
+
+  it('AN INVITATION IS THE SAME CHANGE ONLY AT THE SAME NEW THRESHOLD, WHERE NONE AND 0 BOTH KEEP THE ONE IN FORCE', () => {
+    const keeps = { kind: 'add-signer', address: A, scope: B } as RoundChangeOnTheWire;
+    /* RED WHEN: an invitation that keeps the threshold is not the same as one that names 0, which also keeps it. */
+    expect(sameGovernance(keeps, { kind: 'add-signer', address: A, scope: B, threshold: '0' } as RoundChangeOnTheWire)).toBe(true);
+    /* RED WHEN: the threshold an invitation sets is left out of the comparison - a seat is approved, or a proposal found, at another threshold. */
+    expect(sameGovernance(keeps, { kind: 'add-signer', address: A, scope: B, threshold: '2' } as RoundChangeOnTheWire)).toBe(false);
+    expect(sameGovernance({ kind: 'add-signer', address: A, scope: B, threshold: '2' } as RoundChangeOnTheWire,
+      { kind: 'add-signer', address: A, scope: B, threshold: '3' } as RoundChangeOnTheWire)).toBe(false);
+    expect(sameGovernance({ kind: 'add-signer', address: A, scope: B, threshold: '2' } as RoundChangeOnTheWire,
+      { kind: 'add-signer', address: A, scope: B, threshold: '2' } as RoundChangeOnTheWire)).toBe(true);
+  });
 });

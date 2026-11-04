@@ -23,7 +23,7 @@ export interface ProposalsKeptInATest {
   readonly doors: VaultStartProposals;
   /** The company's proposals as the service keeps them, in filing order. */
   readonly kept: SealedProposal[];
-  /** Each call, in order: `file`, `file and raise`, `send <id>`, `entered <id>`, `not entered <id>`, `carried <id>`, `not carried <id>`. */
+  /** Each call, in order: `file`, `file and raise`, `send <id>`, `entered <id>`, `not entered <id>`, `carried <id>`, `not carried <id>`, `withdrawn <id>`, `not withdrawn <id>`. */
   readonly log: string[];
   /** What a raise sent with each filing or send carried, by proposal. */
   readonly raised: Map<string, string>;
@@ -116,6 +116,16 @@ export const proposalsKeptInATest = (over: {
         raised.set(id, body.tx);
         over.onRaise?.(rec.chainId);
         return round(rec);
+      },
+      cancel: async (id, body) => {
+        const i = kept.findIndex((p) => p.id === id);
+        if (i < 0 || (kept[i]!.status !== 'open' && kept[i]!.status !== 'approved') || body.filer !== signingPublicKeyOf(over.signingSecret).toLowerCase()) {
+          log.push(`not withdrawn ${id}`);
+          throw new NothingWasSent('this proposal is not one open for this seat to withdraw. Nothing was withdrawn.');
+        }
+        kept[i] = { ...kept[i]!, status: 'cancelled' };
+        log.push(`withdrawn ${id}`);
+        return round(kept[i]!);
       },
     },
     carried: async (id, body) => {

@@ -7,6 +7,10 @@ import { READ, type CompanyRecords, type ProposalRow, type Read } from '../adapt
 import { browserKeep, keepFold, readFolds } from '../adapters/kept-folds.js';
 import { HOME, PAGE } from '../pages.js';
 import { go, PageLink } from '../router.js';
+import { Approve } from '../actions/approve.js';
+import { RaiseRun } from '../actions/raise-run.js';
+import { CreateMenu } from '../shell/create-menu.js';
+import { usePanel } from '../shell/right-panel.js';
 import { InvitePeople } from '../actions/invite.js';
 import { blockedBy, skippedFor, someoneInvited, STANDING, standingOf, stepsLeft, useCreationFact } from '../setup/standing.js';
 import { startSetupAt } from '../setup/asked.js';
@@ -14,7 +18,7 @@ import { useSession } from '../session.js';
 import { useCompanyName } from '../shell/company-facts.js';
 import { EVERY_STEP, type SetupFacts } from '../setup/steps.js';
 import type { StepId } from '../setup/step-ids.js';
-import { Approvals, CheckFingerprint, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, UnbuiltAction, useMonth, VaultTile, WaitingName, waitingRead, WithRecords } from '../records/parts.js';
+import { Approvals, CheckFingerprint, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, useMonth, VaultTile, WaitingName, waitingRead, WithRecords } from '../records/parts.js';
 
 /** How many rows of a list Home shows before "View all". */
 const SHOWN = 3;
@@ -30,8 +34,8 @@ const PASSED = { what: 'what', approvals: 'approvals', status: 'status', raised:
  * kit's section, tile, table or empty state, and each is read on its own, so
  * one that could not be read says so and hides nothing else.
  *
- * AN ACTION NOT BUILT YET IS SHOWN WHERE IT WILL BE, DISABLED, with nothing
- * beside it.
+ * New run, when there is no run yet, opens the same panel the Payroll page's
+ * New run opens.
  */
 export function Home() {
   const t = useText();
@@ -162,10 +166,9 @@ function SetupRow({ step, facts, skipped }: { step: (typeof EVERY_STEP)[number];
   );
 }
 
-/** Proposals waiting for approval. Approving and declining are built together with raising a proposal; until then both are shown disabled. */
+/** Proposals waiting for approval, each with the one Approve, and the Create menu. Nothing here declines a proposal. */
 function ProposalsWaiting({ records }: { records: CompanyRecords }) {
   const t = useText();
-  const create = <UnbuiltAction data-action="create-proposal">{<HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />}{t('home.proposals.create')}</UnbuiltAction>;
   return (
     <Part read={records.proposals} title={t('page.proposals.name')} data-part="proposals-waiting">
       {(rows) => {
@@ -174,21 +177,12 @@ function ProposalsWaiting({ records }: { records: CompanyRecords }) {
           <Section
             title={t('page.proposals.name')}
             count={waiting.length}
-            actions={<>{create}<Button variant="outline" asChild><PageLink to={PAGE.proposals} data-action="view-all-proposals">{t('home.viewAll')}</PageLink></Button></>}
+            actions={<><CreateMenu /><Button variant="outline" asChild><PageLink to={PAGE.proposals} data-action="view-all-proposals">{t('home.viewAll')}</PageLink></Button></>}
             empty={<EmptyState icon={CheckListIcon}>{t('home.proposalsWaiting.none')}</EmptyState>}
             data-part="proposals-waiting"
           >
             {waiting.slice(0, SHOWN).map((r) => (
-              <SectionRow
-                key={r.id}
-                data-proposal={r.id}
-                actions={(
-                  <>
-                    <UnbuiltAction size="sm" data-action="approve">{t('proposals.approve')}</UnbuiltAction>
-                    <UnbuiltAction size="sm" variant="outline" data-action="decline">{t('proposals.decline')}</UnbuiltAction>
-                  </>
-                )}
-              >
+              <SectionRow key={r.id} data-proposal={r.id} actions={<Approve row={r} size="sm" />}>
                 <span className="font-medium"><ProposalWhat row={r} /></span>
                 <span className="text-muted-foreground"><Approvals row={r} /></span>
               </SectionRow>
@@ -252,7 +246,8 @@ function Vaults({ records }: { records: CompanyRecords }) {
 function LatestRun({ records }: { records: CompanyRecords }) {
   const t = useText();
   const month = useMonth();
-  const newRun = <UnbuiltAction data-action="new-run">{t('payroll.newRun')}</UnbuiltAction>;
+  const panel = usePanel();
+  const newRun = <Button data-action="new-run" onClick={() => panel.open({ title: t('raiseRun.title'), body: <RaiseRun /> })}>{t('payroll.newRun')}</Button>;
   return (
     <Part read={records.runs} title={t('home.nextRun')} data-part="next-run">
       {(runs) => {

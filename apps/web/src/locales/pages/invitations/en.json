@@ -1,0 +1,10 @@
+{
+  "invitations.tab.sent": "Sent links",
+  "invitations.tab.waiting": "Waiting for the fingerprint check",
+  "invitations.sent.none": "No links are waiting to be used.",
+  "invitations.noName": "No name given",
+  "invitations.sentOn": "Sent {date}",
+  "invitations.expires": "Expires {date}",
+  "invitations.withdraw": "Withdraw",
+  "invitations.waiting.none": "No one you invited to be paid is waiting for the fingerprint check."
+}

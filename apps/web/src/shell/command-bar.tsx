@@ -49,7 +49,7 @@ function WithKeys({ phrase, children }: { phrase: string; children: ReactNode })
 const COMPARED = { form: 'NFKD' } as const;
 const comparable = (s: string): string => s.normalize(COMPARED.form).replace(/\p{M}/gu, '').toLowerCase();
 
-/** The English file's phrase for a key, whatever language is shown, so a page is also found by its English name. */
+/** The first download's English phrase for a key, whatever language is shown, so a page is also found by its English name. Page names and their other words are in that file, which the first download carries. */
 const ENGLISH = LANGUAGES[0]!.messages;
 const english: Text = (key) => ENGLISH[key] ?? key;
 

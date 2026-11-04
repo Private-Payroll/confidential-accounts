@@ -90,6 +90,24 @@ export function paidFeeFrom(
 
 const views = new WeakMap<object, FeePayerView>();
 
+/** The indexer's query address beside its subscription address: the same path, over http, without its `/ws`. */
+export const indexerHttpOf = (wsUrl: string): string => wsUrl.replace(/^ws/u, 'http').replace(/\/ws\/?$/u, '');
+
+/**
+ * The time of the newest block the indexer names, in milliseconds: the time the chain holds a transaction's
+ * deadline to. Throws when the indexer does not answer it, so nothing is released on a guess.
+ */
+export async function newestBlockTimeAt(httpUrl: string, fetcher: typeof fetch = fetch): Promise<number> {
+  const answered = await fetcher(httpUrl, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query: 'query { block { timestamp } }' }), signal: AbortSignal.timeout(15_000),
+  });
+  if (!answered.ok) throw new Error(`the indexer answered ${answered.status} when asked for its newest block`);
+  const time = ((await answered.json()) as { data?: { block?: { timestamp?: unknown } | null } })?.data?.block?.timestamp;
+  if (!Number.isSafeInteger(time) || (time as number) <= 0) throw new Error('the indexer named no newest block');
+  return time as number;
+}
+
 /**
  * **THE FEE PAYER'S VIEW OF THE NETWORK'S DUST, ONE PER WALLET.**
  *
@@ -106,6 +124,7 @@ export function feePayerViewOf(
   facade: any,
   tipAt: (wsUrl: string, from: bigint | null) => Promise<bigint> = (url, from) => dustTipAt(url, from),
   note: (line: string) => void = (line) => console.log(`      fee payer: ${line}`),
+  blockTimeAt: (httpUrl: string) => Promise<number> = newestBlockTimeAt,
 ): FeePayerView | undefined {
   if (!facade || typeof facade !== 'object' || typeof facade.state !== 'function') return undefined;
   const kept = views.get(facade);
@@ -128,6 +147,11 @@ export function feePayerViewOf(
     },
     numbers: () => dustNumbers(latest, lastTip),
     note,
+    chainTime: async () => {
+      const ws = dustIndexerWsOf(facade.dust);
+      if (ws === null) throw new Error('the wallet names no indexer to read the newest block from');
+      return blockTimeAt(indexerHttpOf(ws));
+    },
   };
   views.set(facade, view);
   return view;

@@ -41,10 +41,10 @@ const scriptedSocket = (script: () => unknown[]) => {
 };
 const step = (
   kind: string, hash: string, state = 'abcd', block: unknown = { height: 7, timestamp: 1_700_000_000_000 }, entryPoint?: unknown,
-  status: string | null = 'SUCCESS',
+  status: string | null = 'SUCCESS', raw: unknown = 'beef',
 ) =>
   ({ id: '1', type: 'next', payload: { data: { contractActions: {
-    __typename: kind, state, transaction: { hash, block, ...(status === null ? {} : { transactionResult: { status } }) },
+    __typename: kind, state, transaction: { hash, ...(raw === null ? {} : { raw }), block, ...(status === null ? {} : { transactionResult: { status } }) },
     ...(kind === 'ContractCall' ? { entryPoint: entryPoint ?? 'approve' } : {}),
   } } } });
 
@@ -65,7 +65,7 @@ describe('A CONTRACT\'S HISTORY, AS THE INDEXER SERVES IT', () => {
     const subscribe = socket.sent.find((m) => m.type === 'subscribe');
     /* RED WHEN: the subscription starts anywhere but the first block, or does not ask for each step's kind and state. */
     expect(subscribe.payload.variables).toEqual({ a: CONTRACT, o: { height: 0 } });
-    expect(subscribe.payload.query).toMatch(/__typename state transaction \{ hash block \{ height timestamp \} /);
+    expect(subscribe.payload.query).toMatch(/__typename state transaction \{ hash raw block \{ height timestamp \} /);
     /* RED WHEN: a step's block is not the one its transaction is in - the height or the time its author set dropped or swapped. */
     expect(list.map((s) => [s.block.height, s.block.at])).toEqual([[1, 1000], [2, 2000], [3, 3000], [4, 4000], [4, 4000]]);
     /* RED WHEN: a call is listed without the circuit it called, or a deploy or an update with one - which step raised or closed a round is read off it. */
@@ -87,6 +87,22 @@ describe('A CONTRACT\'S HISTORY, AS THE INDEXER SERVES IT', () => {
     expect(subscribe.payload.query).toMatch(/\.\.\. on RegularTransaction \{ transactionResult \{ status \} \}/);
     /* RED WHEN: a step of a transaction that failed, succeeded only in part, or whose result is not given, is read as one that succeeded. */
     expect(list.map((x) => x.succeeded)).toEqual([true, false, false, false]);
+  });
+
+  it("CARRIES A CALL'S TRANSACTION AS ITS BYTES, SO WHICH CALL MOVED A PROPOSAL CAN BE READ FROM THEM, AND REFUSES A CALL WITHOUT THEM", async () => {
+    const socket = scriptedSocket(() => [
+      step('ContractDeploy', H(1), '01', { height: 1, timestamp: 1000 }, undefined, 'SUCCESS', 'aa'),
+      step('ContractCall', H(2), '02', { height: 2, timestamp: 2000 }, 'propose', 'SUCCESS', '0xC0FFEE'),
+    ]);
+    const list = await indexerContractHistory('u', 'w', { post: latestIs(H(2)).post, open: socket.open, settleMs: 5 }).of(CONTRACT);
+    /* RED WHEN: a call's transaction bytes are not asked of the indexer or not handed on: the calls of one block cannot then be told apart. */
+    expect(list.map((s) => (s.raw === undefined ? null : Buffer.from(s.raw).toString('hex')))).toEqual([null, 'c0ffee']);
+    /* RED WHEN: a call is taken without its transaction's bytes, or with bytes that are not hex, and read as a call of its block alone. */
+    for (const raw of [null, '', 'xyz', 'abc']) {
+      const without = scriptedSocket(() => [step('ContractCall', H(1), '01', undefined, 'propose', 'SUCCESS', raw)]);
+      await expect(indexerContractHistory('u', 'w', { post: latestIs(H(1)).post, open: without.open, settleMs: 5 }).of(CONTRACT))
+        .rejects.toThrow(/a call whose transaction's bytes are not hex/);
+    }
   });
 
   it('NAMES THE LATEST TRANSACTION ON ITS OWN, SO A HISTORY IS READ AGAIN ONLY WHEN IT MOVES', async () => {

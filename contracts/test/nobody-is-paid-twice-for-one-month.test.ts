@@ -122,7 +122,7 @@ describe('the chain records who was paid for which month', () => {
     const before = sim.ledger.movements.size();
     /* RED WHEN recordPayment stops refusing a recorded nonce: the leaf is new, so nothing else refuses it. */
     await expect(pay(sim, PAYROLL, run2, raise, 0))
-      .rejects.toThrow(/a payment is already recorded for this person, kind of pay and month/);
+      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
     expect(sim.ledger.movements.size()).toBe(before);
   });
 
@@ -134,7 +134,7 @@ describe('the chain records who was paid for which month', () => {
     const moved = [payment(SEPTEMBER, { recipient: 0x22, blinding: 0x33 })];
     const run2 = await approvedRun(sim, TREASURY, moved, 13);
     await expect(pay(sim, TREASURY, run2, moved, 0))
-      .rejects.toThrow(/a payment is already recorded for this person, kind of pay and month/);
+      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
   });
 
   it('...in the OTHER FORM, public rather than private, is refused', async () => {
@@ -146,7 +146,7 @@ describe('the chain records who was paid for which month', () => {
     const run2 = await approvedRun(sim, PAYROLL, publicly, 14);
     expect(run2.leaves[0]).not.toBe(run1.leaves[0]);
     await expect(pay(sim, PAYROLL, run2, publicly, 0))
-      .rejects.toThrow(/a payment is already recorded for this person, kind of pay and month/);
+      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
   });
 
   it('...twice on ONE run, when the tree was built past the client that refuses it', async () => {
@@ -154,7 +154,7 @@ describe('the chain records who was paid for which month', () => {
     const run = await approvedRun(sim, PAYROLL, twice, 15);
     await pay(sim, PAYROLL, run, twice, 0);
     await expect(pay(sim, PAYROLL, run, twice, 1))
-      .rejects.toThrow(/a payment is already recorded for this person, kind of pay and month/);
+      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
   });
 
   it('an identical payment is still refused as the payment already made, before the month is asked', async () => {
@@ -179,7 +179,7 @@ describe('the chain records who was paid for which month', () => {
     const again = [payment(extra, { amount: 750n, blinding: 0x37 })];
     const run3 = await approvedRun(sim, PAYROLL, again, 17);
     await expect(pay(sim, PAYROLL, run3, again, 0))
-      .rejects.toThrow(/a payment is already recorded for this person, kind of pay and month/);
+      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
   });
 
   it('another month, another person and another kind are other records, and are paid', async () => {

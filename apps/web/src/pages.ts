@@ -1,14 +1,15 @@
-import { lazy, type ComponentType, type ReactNode } from 'react';
+import { createElement, lazy, type ComponentType, type ReactNode } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
   Activity01Icon, Analytics01Icon, ArrowDataTransferHorizontalIcon, Building03Icon, CheckListIcon, CreditCardIcon, DocumentValidationIcon, File01Icon,
   Folder01Icon, GridViewIcon, Home01Icon, Invoice01Icon, Key01Icon, LanguageSquareIcon, MailSend01Icon, MoneyReceive01Icon, Notification01Icon,
   PaintBoardIcon, PolicyIcon, Rocket01Icon, SafeIcon, Settings01Icon, ShieldUserIcon, Store01Icon, UserAccountIcon, UserGroupIcon, UserIcon,
 } from '@hugeicons/core-free-icons';
-import type { useText } from 'vaults-ui';
+import { WithMessages, type useText } from 'vaults-ui';
 import type { CompanyRecords } from './adapters/company-records.js';
 import { proposalsWaiting } from './records/counts.js';
 import { Fault, FAULT } from './faults.js';
+import { wordsFor } from './languages.js';
 import { Appearance } from './screens/appearance.js';
 import { Landing } from './screens/landing.js';
 import { LanguageSettings } from './screens/language.js';
@@ -72,17 +73,24 @@ export type OnDemand = Screen & { readonly load: () => Promise<Screen>; readonly
 /**
  * A SCREEN LOADED WHEN ITS PAGE IS FIRST OPENED, so the application's first
  * download carries only what the first page needs. `load` names the module
- * whole; `screenName` is the component it exports. The router shows a
- * placeholder while it loads.
+ * whole; `screenName` is the component it exports; `words` is the folder of
+ * the page's own words, `locales/pages/<words>/`, which are fetched with the
+ * words several screens share and are in before the screen is drawn. The
+ * router shows a placeholder while it loads.
  */
-export function onDemand(load: () => Promise<Record<string, unknown>>, screenName: string): OnDemand {
+export function onDemand(load: () => Promise<Record<string, unknown>>, screenName: string, words: string): OnDemand {
   const screen = async (): Promise<Screen> => {
     const found = (await load())[screenName];
-    /* The list names a screen its module does not export: a mistake in the code, which the list's test finds first. */
+
     if (typeof found !== 'function') throw new Fault(FAULT.noScreenInModule);
     return found as Screen;
   };
-  return Object.assign(lazy(async () => ({ default: await screen() })) as unknown as Screen, { load: screen, screenName });
+  const wordsOfTheScreen = wordsFor(words);
+  const withWords = async (): Promise<{ default: Screen }> => {
+    const [found, more] = await Promise.all([screen(), wordsOfTheScreen()]);
+    return { default: (props) => createElement(WithMessages, { more }, createElement(found, props)) };
+  };
+  return Object.assign(lazy(withWords) as unknown as Screen, { load: screen, screenName });
 }
 
 export interface Page {
@@ -125,37 +133,37 @@ export const PAGES = {
   },
   join: {
     path: '/join/:id', name: (t) => t('page.join.name'), icon: MailSend01Icon, group: null, audience: 'everyone', holdsLinkToken: true,
-    shows: { screen: onDemand(() => import('./screens/join.js'), 'Join') },
+    shows: { screen: onDemand(() => import('./screens/join.js'), 'Join', 'join') },
   },
   setup: {
     path: '/setup', name: (t) => t('page.setup.name'), words: (t) => t('page.setup.words'), icon: Rocket01Icon, group: null, audience: 'signed-in',
     focused: { exit: (t) => t('page.setup.exit') },
-    shows: { screen: onDemand(() => import('./screens/setup.js'), 'Setup') },
+    shows: { screen: onDemand(() => import('./screens/setup.js'), 'Setup', 'setup') },
   },
 
   home: {
     path: '/home', name: (t) => t('page.home.name'), icon: Home01Icon, group: 'top', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/home.js'), 'Home') },
+    shows: { screen: onDemand(() => import('./screens/home.js'), 'Home', 'home') },
   },
   proposals: {
     path: '/proposals', name: (t) => t('page.proposals.name'), words: (t) => t('page.proposals.words'), icon: CheckListIcon, group: 'top', audience: 'company', count: proposalsWaiting,
-    shows: { screen: onDemand(() => import('./screens/proposals.js'), 'Proposals') },
+    shows: { screen: onDemand(() => import('./screens/proposals.js'), 'Proposals', 'proposals') },
   },
   payroll: {
     path: '/payroll', name: (t) => t('page.payroll.name'), icon: Invoice01Icon, group: 'money', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/payroll.js'), 'Payroll') },
+    shows: { screen: onDemand(() => import('./screens/payroll.js'), 'Payroll', 'payroll') },
   },
   run: {
     path: '/payroll/:run', name: (t) => t('page.run.name'), icon: Invoice01Icon, group: null, inside: 'payroll', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/run.js'), 'Run') },
+    shows: { screen: onDemand(() => import('./screens/run.js'), 'Run', 'run') },
   },
   vaults: {
     path: '/vaults', name: (t) => t('page.vaults.name'), icon: SafeIcon, group: 'money', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/vaults.js'), 'Vaults') },
+    shows: { screen: onDemand(() => import('./screens/vaults.js'), 'Vaults', 'vaults') },
   },
   vault: {
     path: '/vaults/:vault', name: (t) => t('page.vault.name'), icon: SafeIcon, group: null, inside: 'vaults', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/vault.js'), 'Vault') },
+    shows: { screen: onDemand(() => import('./screens/vault.js'), 'Vault', 'vault') },
   },
   transactions: {
     path: '/transactions', name: (t) => t('page.transactions.name'), icon: ArrowDataTransferHorizontalIcon, group: 'money', audience: 'company',
@@ -167,15 +175,15 @@ export const PAGES = {
   },
   people: {
     path: '/people', name: (t) => t('page.people.name'), icon: UserGroupIcon, group: 'people', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/people.js'), 'People') },
+    shows: { screen: onDemand(() => import('./screens/people.js'), 'People', 'people') },
   },
   vendors: {
     path: '/vendors', name: (t) => t('page.vendors.name'), icon: Store01Icon, group: 'people', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/vendors.js'), 'Vendors') },
+    shows: { screen: onDemand(() => import('./screens/vendors.js'), 'Vendors', 'vendors') },
   },
   invitations: {
     path: '/invitations', name: (t) => t('page.invitations.name'), icon: MailSend01Icon, group: 'people', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/invitations.js'), 'Invitations') },
+    shows: { screen: onDemand(() => import('./screens/invitations.js'), 'Invitations', 'invitations') },
   },
   disclosures: {
     path: '/disclosures', name: (t) => t('page.disclosures.name'), icon: DocumentValidationIcon, group: 'compliance', audience: 'company',
@@ -191,7 +199,7 @@ export const PAGES = {
   },
   apps: {
     path: '/apps', name: (t) => t('page.apps.name'), icon: GridViewIcon, group: 'bottom', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/apps.js'), 'Apps') },
+    shows: { screen: onDemand(() => import('./screens/apps.js'), 'Apps', 'apps') },
   },
   settings: {
     path: '/settings', name: (t) => t('page.settings.name'), icon: Settings01Icon, group: 'bottom', audience: 'company',
@@ -199,11 +207,11 @@ export const PAGES = {
   },
   settingsCompany: {
     path: '/settings/company', name: (t) => t('page.settingsCompany.name'), icon: Building03Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsCompany.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'CompanyCreated') },
+    shows: { comingSoon: (t) => t('page.settingsCompany.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'CompanyCreated', 'settings-sections') },
   },
   settingsSigners: {
     path: '/settings/signers', name: (t) => t('page.settingsSigners.name'), icon: ShieldUserIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsSigners.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'SignersBuilt') },
+    shows: { screen: onDemand(() => import('./screens/settings-sections.js'), 'SignersBuilt', 'settings-sections') },
   },
   settingsRoles: {
     path: '/settings/roles', name: (t) => t('page.settingsRoles.name'), icon: Key01Icon, group: null, inside: 'settings', audience: 'company',
@@ -228,6 +236,10 @@ export const PAGES = {
   settingsBilling: {
     path: '/settings/billing', name: (t) => t('page.settingsBilling.name'), icon: CreditCardIcon, group: null, inside: 'settings', audience: 'company',
     shows: { comingSoon: (t) => t('page.settingsBilling.soon') },
+  },
+  settingsRecovery: {
+    path: '/settings/recovery', name: (t) => t('page.settingsRecovery.name'), icon: Folder01Icon, group: null, inside: 'settings', audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/recovery.js'), 'Recovery', 'recovery') },
   },
 
   payHome: {

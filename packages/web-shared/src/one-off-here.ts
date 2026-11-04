@@ -51,20 +51,23 @@ export interface OneOffRecords {
 }
 
 /** What reading a one-off needs of this device: the company, its directory, its records, and the company's keys it holds. */
-export interface OneOffReadDoors {
+export interface OneOffReadDoors<O = OneOffOpened> {
   readonly accountId: string;
   readonly directory: DirectoryRead;
   readonly records: Pick<OneOffRecords, 'at'>;
   /** The company's keys this device holds, every epoch it reaches. */
   readonly keys: KeysHeld;
   readonly registry?: AssetRegistry;
-  /** Opens the record (`openOneOff`), passed in by whoever reads: see `OneOffsHere.open`. */
-  readonly open: typeof openOneOff;
+  /**
+   * Opens the record (`openOneOff`), passed in by whoever reads: see `OneOffsHere.open`. A page that loads no address
+   * decoder hands in one that runs it in its worker, so the answer may come later and carry only what the page reads.
+   */
+  readonly open: (rec: SealedCompanyRecord, key: Hex, registry?: AssetRegistry) => O | Promise<O>;
 }
 
 /** A one-off as this device reads it. */
-type OneOffRead =
-  | { readonly state: 'read'; readonly oneOff: OneOffOpened; readonly version: number; readonly filedBy: Hex | null }
+type OneOffRead<O = OneOffOpened> =
+  | { readonly state: 'read'; readonly oneOff: O; readonly version: number; readonly filedBy: Hex | null }
   | { readonly state: 'none' }
   | { readonly state: 'unread'; readonly why: string };
 
@@ -94,9 +97,9 @@ const judgedHere = (judge: ReturnType<typeof judgeIn>, rec: SealedCompanyRecord)
 const NOT_BELIEVED = (why: string) => `this device does not believe the company's record of this one-off payment: ${why}`;
 
 /** `rec` opened with the company's key at its epoch. */
-const openedHere = (doors: Pick<OneOffReadDoors, 'keys' | 'open' | 'registry'>, rec: SealedCompanyRecord): OneOffRead => {
+const openedHere = async <O>(doors: Pick<OneOffReadDoors<O>, 'keys' | 'open' | 'registry'>, rec: SealedCompanyRecord): Promise<OneOffRead<O>> => {
   try {
-    return { state: 'read', oneOff: doors.open(rec, keyOf(doors.keys, rec.keyEpoch), doors.registry), version: rec.version, filedBy: verifiedCompanyFiler(rec) };
+    return { state: 'read', oneOff: await doors.open(rec, keyOf(doors.keys, rec.keyEpoch), doors.registry), version: rec.version, filedBy: verifiedCompanyFiler(rec) };
   } catch (e) {
     return { state: 'unread', why: said(e) };
   }
@@ -109,7 +112,7 @@ const openedHere = (doors: Pick<OneOffReadDoors, 'keys' | 'open' | 'registry'>, 
  * the key in force at the batch that anchored it (`judgeIn`, judged here
  * whatever store served it), and opened with the company's key at its epoch.
  */
-export async function oneOffHere(doors: OneOffReadDoors, id: string): Promise<OneOffRead> {
+export async function oneOffHere<O = OneOffOpened>(doors: OneOffReadDoors<O>, id: string): Promise<OneOffRead<O>> {
   const got = await fetchedHere(doors.records, doors.accountId, id);
   if (!('rec' in got)) return got;
   const why = judgedHere(judgeIn(await doors.directory({ records: [{ store: 'company', kind: ONE_OFF_KIND, id }] })), got.rec);
@@ -202,7 +205,7 @@ async function believedHere(
   if (!('rec' in got)) return got;
   const why = judgedHere(judge, got.rec);
   if (why !== null) return { state: 'unread', why: NOT_BELIEVED(why) };
-  const read = openedHere(door, got.rec);
+  const read = await openedHere(door, got.rec);
   if (read.state !== 'read') return read;
   const believed: OneOffBelieved = { id, version: read.version, oneOff: read.oneOff, filedBy: read.filedBy, ...oneOffBuiltHere(read.oneOff, door) };
   const key = keyMarkOf(door.keys, got.rec.keyEpoch);

@@ -247,7 +247,26 @@ export interface SeatInvitationAddress {
   readonly address: Hex;
   readonly salt: Hex;
   readonly scope: Hex;
+  /**
+   * The approvals the account needs once the seat is taken, as digits: a whole number of at least one, at most the
+   * largest the account stores. Left out, the threshold in force is kept. The proposal's payload binds it, so the seat
+   * is taken with exactly the threshold the signers approved.
+   */
+  readonly threshold?: string;
 }
+
+/** The largest threshold the account stores (`Uint<64>`). */
+export const MOST_A_THRESHOLD_CAN_BE = 2n ** 64n - 1n;
+const THRESHOLD_DIGITS = /^[1-9][0-9]{0,19}$/u;
+
+/** Why `x` is not a threshold an invitation can set (a whole number from one to the largest the account stores), or null. */
+export const invitationThresholdRefusal = (x: unknown): string | null =>
+  (typeof x === 'string' && THRESHOLD_DIGITS.test(x) && BigInt(x) <= MOST_A_THRESHOLD_CAN_BE
+    ? null
+    : 'the approvals it sets once the seat is taken are not a whole number of at least one');
+
+/** The threshold an invitation by address sets once its seat is taken, as the digits the proposal binds: '0' keeps the one in force. */
+export const thresholdTheInvitationSets = (invite: Pick<SeatInvitationAddress, 'threshold'> | undefined): string => invite?.threshold ?? '0';
 
 /** A seat invitation, signed by the filing key of the seat that invited (`signedBy`). */
 export interface SignedSeatInvitation {
@@ -267,6 +286,7 @@ export const signSeatInvitation = (terms: SeatInvitationTerms, signingSecret: He
     ...(terms.leaf === undefined ? {} : { leaf: terms.leaf.toLowerCase() as Hex }),
     ...(terms.invite === undefined ? {} : { invite: {
       address: terms.invite.address.toLowerCase() as Hex, salt: terms.invite.salt.toLowerCase() as Hex, scope: terms.invite.scope.toLowerCase() as Hex,
+      ...(terms.invite.threshold === undefined ? {} : { threshold: terms.invite.threshold }),
     } }),
     ...(terms.proposal === undefined ? {} : { proposal: terms.proposal.toLowerCase() as Hex }),
     ...(terms.replaces === undefined ? {} : { replaces: {
@@ -288,9 +308,15 @@ const seatInvitationTermsRefusal = (t: Partial<SeatInvitationTerms> | null | und
   }
   if ('invite' in t) {
     const a = t.invite as Partial<SeatInvitationAddress> | null | undefined;
-    if (typeof a !== 'object' || a === null || Object.keys(a).sort().join(',') !== 'address,salt,scope'
+    const named = typeof a === 'object' && a !== null ? Object.keys(a).sort().join(',') : '';
+    if (typeof a !== 'object' || a === null || (named !== 'address,salt,scope' && named !== 'address,salt,scope,threshold')
       || !HEX64.test(String(a.address)) || !HEX64.test(String(a.salt)) || !HEX64.test(String(a.scope))) {
       return 'the address it invites is not named by its commitment, its salt and the rights it carries';
+    }
+    /* A threshold it names is one the account can set; '0' is never written, since leaving it out keeps the one in force. */
+    if ('threshold' in a) {
+      const why = invitationThresholdRefusal(a.threshold);
+      if (why !== null) return why;
     }
   }
   if (t.replaces !== undefined) {

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { untilPageShown, untilShown } from './page-shown.test-support.js';
 import { PAGES } from './pages.js';
 import { Root } from './root.js';
+import { ENGLISH } from './english.test-support.js';
 
 /*
  * THE APPLICATION FROM ITS ROOT, AGAINST A STAND-IN SERVICE: which frame and
@@ -43,7 +44,7 @@ vi.mock('./adapters/creation-standing.js', async (real) => ({
 }));
 /* The creation adapter loads when a list first needs it; loaded here, once, so no test waits on that load. */
 await import('./adapters/creation-standing.js');
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 /* How a company with no name on the device is listed: by the day its account was made, written the way the app writes a day. */
 const STARTED = (iso: string): string => EN['company.startedOn']!.replace('{date}', new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(new Date(iso)));
 

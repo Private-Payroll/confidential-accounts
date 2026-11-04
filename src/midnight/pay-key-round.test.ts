@@ -58,8 +58,10 @@ describe('A SIGNER\'S SEALED COPY, AND THE COMMITMENT, AS THE ACCOUNT HOLDS THEM
   it('WHERE IT STANDS: COMMITTED TO THIS KEY OR ANOTHER, SEALED OR NOT, AND THE PROPOSAL OPEN AT ITS APPROVALS', () => {
     const round = payKeyRoundOf(P, KEY);
     const id = Buffer.from(round.proposal, 'hex');
-    const ledger = (r: ReturnType<typeof rolesOf>, open: boolean, approvals: bigint) => ({
+    const marker = (sk: string) => hex(P.approvalNullifierOf(Buffer.from(sk, 'hex'), Buffer.from(ADDRESS, 'hex'), id));
+    const ledger = (r: ReturnType<typeof rolesOf>, open: boolean, approvals: bigint, approvedBy: readonly string[] = []) => ({
       threshold: 2n, signerRoles: r,
+      approvals: { member: (m: Uint8Array) => approvedBy.map(marker).includes(hex(m)) },
       openProposals: { member: (k: Uint8Array) => open && hex(k) === hex(id) },
       approvalCounts: { member: (k: Uint8Array) => hex(k) === hex(id), lookup: () => approvals },
       proposalHolds: { member: () => false, lookup: () => ({ needed: 0n, removals: 0n }) },
@@ -72,5 +74,9 @@ describe('A SIGNER\'S SEALED COPY, AND THE COMMITMENT, AS THE ACCOUNT HOLDS THEM
     /* RED WHEN: the proposal's approvals or the bar it needs are read from anything but the account's own ledger. */
     const open = payKeyStandingOf(P, { address: ADDRESS, account: ledger(rolesOf([]), true, 1n), key: KEY, secretKey: SK });
     expect([open.committed, open.sealedMine, open.round.open, open.round.approvals, open.round.needed]).toEqual([null, false, true, 1, 2]);
+    /* RED WHEN: the asking seat's approval is read with anything but the account's own marker for this seat, this account and this proposal. */
+    expect(payKeyStandingOf(P, { address: ADDRESS, account: ledger(rolesOf([]), true, 1n, [SK]), key: KEY, secretKey: SK }).round.approvedHere).toBe(true);
+    expect(open.round.approvedHere).toBe(false);
+    expect(payKeyStandingOf(P, { address: ADDRESS, account: ledger(rolesOf([]), true, 1n, ['9c'.repeat(32)]), key: KEY, secretKey: SK }).round.approvedHere).toBe(false);
   });
 });

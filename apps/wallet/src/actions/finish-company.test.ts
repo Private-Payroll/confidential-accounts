@@ -22,7 +22,9 @@ import { drawCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/c
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { RelayLabel } from 'midnight-identity/profile/channel';
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
-import { toHex } from '../../../../src/core/crypto.js';
+import { canonical, newSigningKeypair, seal, signingPublicKeyOf, toHex, unwrapKey } from '../../../../src/core/crypto.js';
+import { payKeyProposalIn, proposalFilingRefusal, raiseByOf, signProposalFiling } from '../../../../src/core/proposal-filing.js';
+import { openStateRecord } from '../../../../src/core/founding-state.js';
 import { foundTheCompanyHere } from '../../../../src/core/company-founding.js';
 import { withCreation, withNewSeat, type Keyring, type SavedCreation } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { accountBuilding, type AccountBuilding, type BuilderWorkerLike } from '../chain/account-builder-client.js';
@@ -72,9 +74,15 @@ const keptFor = async (label: CompanyLabel, over: Partial<SavedCreation> = {}, s
   return { keys, creation };
 };
 
-const standingOf = (over: { open?: boolean; approvals?: number; committed?: string | null; sealedMine?: boolean; isThisKey?: boolean } = {}): PayKeyStandingAnswered => ({
+/* By default the company has this one seat, so an approval the chain counts is this seat's own (`approvedHere`). */
+const standingOf = (over: {
+  open?: boolean; approvals?: number; needed?: number; approvedHere?: boolean; committed?: string | null; sealedMine?: boolean; isThisKey?: boolean;
+} = {}): PayKeyStandingAnswered => ({
   committed: over.committed ?? null, isThisKey: over.isThisKey ?? (over.committed ?? null) !== null, sealedMine: over.sealedMine ?? false,
-  round: { commitment: 'c1'.repeat(32), payload: 'c2'.repeat(32), salt: 'c3'.repeat(32), proposal: 'c4'.repeat(32), open: over.open ?? false, approvals: String(over.approvals ?? 0), needed: '1', stale: false },
+  round: {
+    commitment: 'c1'.repeat(32), payload: 'c2'.repeat(32), salt: 'c3'.repeat(32), proposal: 'c4'.repeat(32), open: over.open ?? false,
+    approvals: String(over.approvals ?? 0), needed: String(over.needed ?? 1), stale: false, approvedHere: over.approvedHere ?? (over.approvals ?? 0) > 0,
+  },
   noVault: 'fe'.repeat(32), wrap: ['d1', 'd2', 'd3', 'd4'].map((b) => b.repeat(32)),
 });
 
@@ -90,9 +98,15 @@ const world = (opts: {
   keepRefuses?: boolean;
   /** Answers the builder gives for what it builds, in place of this file's own. */
   builds?: (ask: Record<string, unknown>) => Promise<unknown> | undefined;
+  /** How the service answers the pay-record key's proposal written down; by default it takes it. */
+  filed?: { status: number; body: unknown };
+  /** How the service answers each filing in turn, the first first; the last answers every later one. */
+  filings?: Array<{ status: number; body: unknown }>;
 }) => {
   const relays: Array<{ tx: string; label: RelayLabel | undefined }> = [];
+  const calls: Array<{ method: string; path: string; body: unknown }> = [];
   const events: string[] = [];
+  const shown: unknown[] = [];
   let h = 0;
   const asks: Array<Record<string, unknown>> = [];
   const pinned: string[] = [];
@@ -142,8 +156,16 @@ const world = (opts: {
       if (opts.relayRefuses === true) throw new Error('relay-refused');
       relays.push({ tx, label });
     },
-    call: async () => { throw new Error('finishing a company calls nothing'); },
-    tell: () => {}, show: () => {},
+    call: async (method, path, body) => {
+      events.push(`call ${method} ${path}`);
+      calls.push({ method, path, body: body === undefined ? undefined : JSON.parse(body) });
+      if (opts.filings !== undefined) return opts.filings[Math.min(calls.length - 1, opts.filings.length - 1)]!;
+      return opts.filed ?? { status: 201, body: { proposal: { id: 'prp_PayKeyRecord' }, ...(body?.includes('"tx"') === true ? { txRef: 'r' } : {}) } };
+    },
+    tell: () => {}, show: (words) => { shown.push(words); },
+    confirm: async () => { throw new Error('finishing a company waits on no Confirm in the window'); },
+    /* What the wallet sends itself, and finds on the chain, is counted by the run for the window's end; these steps end in the test. */
+    sentByTheWallet: () => {}, seenOnTheChain: () => {},
     keyring: {
       open: () => ({ read: () => structuredClone(keys), metadata: () => ({}) as never, seal: () => { throw new Error('not here'); }, letGo: () => {} }),
       keep: async (change) => {
@@ -153,7 +175,7 @@ const world = (opts: {
       },
     },
   });
-  return { reach, ctx, relays, asks, pinned, keysNow: () => keys, record, events };
+  return { reach, ctx, relays, calls, asks, pinned, keysNow: () => keys, record, events, shown };
 };
 
 const intentFor = (label: string): ActIntent => ({ name: 'finish-company', fields: { company: label } } as ActIntent);
@@ -178,8 +200,10 @@ describe('FINISHING A COMPANY IN THE WALLET', () => {
     expect(steps).toHaveLength(5);
     await runAll(steps, w.ctx);
     /* RED WHEN: a transaction is handed over for anything but what it is, or out of order, or the raiser sends an approval of its own after a raise the chain already counted. */
-    expect(w.relays.map((r) => r.label?.what)).toEqual(['creation-finish', 'pay-key-propose', 'pay-key-seal']);
+    expect(w.relays.map((r) => r.label?.what)).toEqual(['creation-finish', 'pay-key-seal']);
     expect(w.relays[0]!.tx).toBe(INSERT);
+    /* RED WHEN: the raise is handed over on its own, not beside its record, so the service would send one no page lists. */
+    expect(w.calls.map((c) => (c.body as { tx?: string }).tx)).toEqual(['VFgtprop']);
     /* RED WHEN: the account's deploy is sent again for an account the chain already holds. */
     expect(w.relays.some((r) => r.label?.what === 'creation')).toBe(false);
     const words = seatKeysFor(identity, label, 0);
@@ -191,7 +215,7 @@ describe('FINISHING A COMPANY IN THE WALLET', () => {
     /* RED WHEN: the call state is taken from anything but the wallet's own read of the chain. */
     for (const c of calls) expect(c['chain']).toEqual({ accountState: Buffer.from([1, 2]).toString('base64'), parameters: Buffer.from([3]).toString('base64') });
     /* RED WHEN: any part of the seat's secrets is in what the page is handed. */
-    const handed = JSON.stringify(w.relays);
+    const handed = JSON.stringify([w.relays, w.calls]);
     for (const part of [words.signingSecret, words.wrappingSecret, words.salt]) {
       expect(handed).not.toContain(toHex(part));
       expect(handed).not.toContain(toBase64Url(part));
@@ -199,6 +223,136 @@ describe('FINISHING A COMPANY IN THE WALLET', () => {
     /* RED WHEN: what was kept of the creation is left in the saved keys once the company is finished, or the seat is dropped with it. */
     expect(w.keysNow().creations?.[creation.accountId]).toBeUndefined();
     expect(w.keysNow().accounts[creation.accountId]).toBeDefined();
+  });
+
+  it('the pay-record key\'s proposal is written down, sealed under the company\'s key and signed by the founding seat, before its raise is handed over', async () => {
+    const label = drawCompanyLabel();
+    const { keys, creation } = await keptFor(label);
+    const w = world({
+      keys,
+      standings: [standingOf(), standingOf({ open: true, approvals: 1 }), standingOf({ open: true, approvals: 1 }), standingOf({ open: true, approvals: 1 }),
+        standingOf({ committed: 'c1'.repeat(32), sealedMine: true })],
+    });
+    await runAll(finishCompanyAction(w.reach).steps(intentFor(label)), w.ctx, 2);
+    /* RED WHEN: the raise is handed over before its record, or apart from it, so the service could send a raise whose record it never kept. */
+    expect(w.events.filter((e) => e.startsWith('call') || e.startsWith('relay'))).toEqual([
+      `call POST /api/accounts/${creation.accountId}/creation/pay-key/proposal`, 'relay pay-key-seal VFgtseal',
+    ]);
+    const { proposal, proposalSalt, tx } = w.calls[0]!.body as { proposal: Record<string, unknown>; proposalSalt: string; tx: string };
+    expect(tx).toBe('VFgtprop');
+    const seat = await foundingSeatOf(identity, label);
+    /* RED WHEN: the record is not signed as this company's by the founding seat, or is not the proposal the chain holds the key's round under. */
+    expect(proposalFilingRefusal(creation.accountId, proposal)).toBeNull();
+    expect((proposal['filedBy'] as { publicKey: string }).publicKey).toBe(signingPublicKeyOf(seat.signingSecret));
+    expect([proposal['chainId'], proposal['digest'], proposal['keyEpoch'], proposalSalt]).toEqual(['c4'.repeat(32), 'c2'.repeat(32), 0, 'c3'.repeat(32)]);
+    /* RED WHEN: the record does not open, under the company's key, as the pay-record key's proposal for the commitment the chain names. */
+    const founding = creation.request.founding;
+    const companyKey = unwrapKey(founding.account.wrappedKeys[0]!, seat.wrappingSecret);
+    expect(payKeyProposalIn({ ...proposal, accountId: creation.accountId } as never, creation.accountId, companyKey))
+      .toEqual({ chainId: 'c4'.repeat(32), digest: 'c2'.repeat(32), commitment: 'c1'.repeat(32), salt: 'c3'.repeat(32), vault: 'fe'.repeat(32) });
+    /* RED WHEN: what the page is handed for the service carries the pay-record key, the company's key or the seat's secret in the clear. */
+    const handed = JSON.stringify(w.calls);
+    const payRecordKey = String(openStateRecord(founding.state, companyKey as never).blinding.payRecordKey);
+    expect(payRecordKey).toMatch(/^[0-9a-f]{64}$/u);
+    for (const secret of [companyKey, payRecordKey, seat.signingSecret]) expect(handed).not.toContain(secret);
+  });
+
+  it('a raise pressed again under a record written down earlier is built again with that record\'s deadline, and a record not this seat\'s is refused', async () => {
+    const label = drawCompanyLabel();
+    const { keys, creation } = await keptFor(label);
+    const seat = await foundingSeatOf(identity, label);
+    const earlierAt = new Date(Date.now() - 3_600_000).toISOString();
+    const recordBy = (secret: string) => signProposalFiling(creation.accountId, {
+      id: 'prp_EarlierRec01', digest: 'c2'.repeat(32) as never, chainId: 'c4'.repeat(32) as never, keyEpoch: 0, createdAt: earlierAt,
+      sealed: seal(canonical({ kind: 'pay-key' }), '11'.repeat(32) as never),
+    }, secret as never);
+    const conflict = (record: unknown) => ({ status: 409, body: { nothingWasSent: true, code: 'raise-under-its-record', record, error: 'written down already.' } });
+    const ours = recordBy(seat.signingSecret);
+    const w = world({
+      keys, standings: [standingOf(), standingOf({ open: true, approvals: 1 })],
+      filings: [conflict(ours), { status: 200, body: { proposal: { id: 'prp_EarlierRec01' }, txRef: 'r' } }],
+    });
+    await finishCompanyAction(w.reach).steps(intentFor(label))[2]!.run(w.ctx(3));
+    const raises = w.asks.filter((a) => a['ask'] === 'governed-call').map((a) => (a['opened'] as { raiseBy?: string }).raiseBy);
+    /* RED WHEN: a raise sent under a record written down earlier carries a later deadline than that record's own. */
+    expect(raises).toHaveLength(2);
+    expect(raises[1]).toBe(raiseByOf(earlierAt));
+    expect(Number(raises[0])).toBeGreaterThan(Number(raises[1]));
+    /* RED WHEN: the second raise is sent beside another record than the one the service holds. */
+    expect((w.calls[1]!.body as { proposal: unknown; tx?: string })).toMatchObject({ proposal: ours, tx: 'VFgtprop' });
+    /* RED WHEN: a record the service hands back that this seat did not sign sets a raise's deadline. */
+    const forged = world({ keys, standings: [standingOf()], filings: [conflict(recordBy(newSigningKeypair().secret))] });
+    const stopped = await finishCompanyAction(forged.reach).steps(intentFor(label))[2]!.run(forged.ctx(3)).then(() => null, (e: unknown) => e);
+    expect(stopped).toBeInstanceOf(StepRefused);
+    expect(forged.asks.filter((a) => a['ask'] === 'governed-call')).toHaveLength(1);
+    expect(forged.calls).toHaveLength(1);
+  });
+
+  it('a proposal the service does not write down is not raised, and the action stops saying nothing was sent', async () => {
+    const label = drawCompanyLabel();
+    const { keys } = await keptFor(label);
+    const w = world({ keys, standings: [standingOf()], filed: { status: 422, body: { nothingWasSent: true, error: 'not now.' } } });
+    const steps = finishCompanyAction(w.reach).steps(intentFor(label));
+    const stopped = await steps[2]!.run(w.ctx(3)).then(() => null, (e: unknown) => e);
+    /* RED WHEN: a refused record goes unnoticed, so the action waits on a raise no page would ever list. */
+    expect(stopped).toBeInstanceOf(StepRefused);
+    expect((stopped as StepRefused).words).toEqual({ key: 'act.finish-company.why.not-written-down', values: { says: 'not now.' } });
+    /* RED WHEN: the raise is handed over by any other way than beside its record. */
+    expect(w.relays).toEqual([]);
+    expect(w.calls).toHaveLength(1);
+  });
+
+  it('a raise the service may have sent stops the action without saying nothing was sent', async () => {
+    const label = drawCompanyLabel();
+    const { keys } = await keptFor(label);
+    const w = world({ keys, standings: [standingOf()], filed: { status: 502, body: { nothingWasSent: false, error: 'the node did not answer.' } } });
+    const stopped = await finishCompanyAction(w.reach).steps(intentFor(label))[2]!.run(w.ctx(3)).then(() => null, (e: unknown) => e);
+    /* RED WHEN: a raise that may be on its way is reported as nothing sent. */
+    expect(stopped).toBeInstanceOf(Error);
+    expect(stopped).not.toBeInstanceOf(StepRefused);
+    expect(String((stopped as Error).message)).toBe('the node did not answer.');
+  });
+
+  it('a proposal already raised whose record the service will not take is still approved and sealed, and the window says so', async () => {
+    const label = drawCompanyLabel();
+    const { keys, creation } = await keptFor(label);
+    const w = world({
+      keys, filed: { status: 409, body: { nothingWasSent: true, error: 'this company holds another record under this proposal\'s identity on the chain.' } },
+      standings: [standingOf({ open: true, approvals: 1 }), standingOf({ open: true, approvals: 1 }), standingOf({ open: true, approvals: 1 }),
+        standingOf({ committed: 'c1'.repeat(32), sealedMine: true })],
+    });
+    await runAll(finishCompanyAction(w.reach).steps(intentFor(label)), w.ctx, 2);
+    /* RED WHEN: a record another seat put under the key's identity stops the founding seat's approval and seal for good, so the company never finishes. */
+    expect(w.relays.map((r) => r.label?.what)).toEqual(['pay-key-seal']);
+    expect(w.keysNow().creations?.[creation.accountId]).toBeUndefined();
+    /* RED WHEN: the record not written down goes unsaid, or a raise is built for a proposal the chain already holds. */
+    expect(w.shown).toEqual([{ key: 'act.finish-company.over.not-written-down', values: { says: 'this company holds another record under this proposal\'s identity on the chain.' } }]);
+    expect(w.asks.filter((a) => a['ask'] === 'governed-call').map((a) => (a['order'] as { circuit: string }).circuit)).toEqual(['sealPayKey']);
+  });
+
+  it('a proposal already raised with no record is written down, and not raised again', async () => {
+    const label = drawCompanyLabel();
+    const { keys } = await keptFor(label);
+    const w = world({ keys, standings: [standingOf({ open: true, approvals: 1, needed: 2 })] });
+    await finishCompanyAction(w.reach).steps(intentFor(label))[2]!.run(w.ctx(3));
+    /* RED WHEN: a pay-record key raised before its record was written down stays with no record, so no other signer can approve it. */
+    expect(w.calls).toHaveLength(1);
+    /* RED WHEN: a round the chain already holds is raised again. */
+    expect((w.calls[0]!.body as { tx?: string }).tx).toBeUndefined();
+    expect(w.asks.filter((a) => a['ask'] === 'governed-call')).toEqual([]);
+    expect(w.relays).toEqual([]);
+  });
+
+  it('a key another signer\'s wallet committed ends the creation, sealing and sending nothing more', async () => {
+    const label = drawCompanyLabel();
+    const { keys, creation } = await keptFor(label);
+    const w = world({ keys, standings: [standingOf({ committed: 'c1'.repeat(32), sealedMine: false }), standingOf({ committed: 'c1'.repeat(32), sealedMine: false }),
+      standingOf({ committed: 'c1'.repeat(32), sealedMine: false }), standingOf({ committed: 'c1'.repeat(32), sealedMine: true })] });
+    await runAll(finishCompanyAction(w.reach).steps(intentFor(label)), w.ctx, 2);
+    /* RED WHEN: the founding seat's copy is sent for an account already committed, which the service refuses, so the creation never ends. */
+    expect(w.relays).toEqual([]);
+    expect(w.calls).toEqual([]);
+    expect(w.keysNow().creations?.[creation.accountId]).toBeUndefined();
   });
 
   /* RED WHEN: a round a company's earlier account raised (the chain shows it open with no approval) is not approved by this seat before the seal, so the pay-record key is never committed. */
@@ -213,6 +367,34 @@ describe('FINISHING A COMPANY IN THE WALLET', () => {
     await runAll(finishCompanyAction(w.reach).steps(intentFor(label)), w.ctx);
     expect(w.relays.map((r) => r.label?.what)).toEqual(['pay-key-approve', 'pay-key-seal']);
     expect(w.asks.filter((a) => a['ask'] === 'governed-call').map((a) => (a['order'] as { circuit: string }).circuit)).toEqual(['approve', 'sealPayKey']);
+  });
+
+  /* RED WHEN: the raiser's approval, already counted by its raise, is built and sent again where the proposal needs another signer's too. */
+  it('a round needing two approvals whose raise already counted this seat\'s approves nothing, and says the others approve', async () => {
+    const label = drawCompanyLabel();
+    const { keys } = await keptFor(label);
+    const counted = standingOf({ open: true, approvals: 1, needed: 2 });
+    const w = world({ keys, standings: [counted, counted, standingOf({ committed: 'c1'.repeat(32), sealedMine: true })] });
+    const done = await runAll(finishCompanyAction(w.reach).steps(intentFor(label)), w.ctx).catch((e: unknown) => e);
+    expect(String((done as { words?: { key?: string } })?.words?.key ?? done)).toMatch(/counted-waiting/u);
+    expect(w.relays).toEqual([]);
+    expect(w.asks.filter((a) => a['ask'] === 'governed-call')).toEqual([]);
+  });
+
+  /* RED WHEN: the wait after this seat's approval ends on another signer's approval raising the count, before this seat's is on the chain. */
+  it('after its approval is sent, waits for this seat\'s approval on the chain, not for the count to rise', async () => {
+    const label = drawCompanyLabel();
+    const { keys } = await keptFor(label);
+    const w = world({
+      keys,
+      standings: [standingOf({ open: true, needed: 2 }), standingOf({ open: true, needed: 2 }),
+        standingOf({ open: true, approvals: 1, needed: 2, approvedHere: false }), standingOf({ open: true, approvals: 2, needed: 2, approvedHere: true }),
+        standingOf({ open: true, approvals: 2, needed: 2, approvedHere: true }), standingOf({ committed: 'c1'.repeat(32), sealedMine: true })],
+    });
+    await runAll(finishCompanyAction(w.reach).steps(intentFor(label)), w.ctx);
+    const seal = w.asks.findIndex((a) => a['ask'] === 'governed-call' && (a['order'] as { circuit: string }).circuit === 'sealPayKey');
+    expect(w.asks.slice(0, seal).filter((a) => a['ask'] === 'pay-key-standing')).toHaveLength(5);
+    expect(w.relays.map((r) => r.label?.what)).toEqual(['pay-key-approve', 'pay-key-seal']);
   });
 
   /* RED WHEN: an action taken up again proves or sends again what the chain already shows done. */

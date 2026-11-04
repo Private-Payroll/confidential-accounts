@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
+import { ENGLISH } from '../english.test-support.js';
 
 /*
  * THE FINISHING STEP WHEN THE SERVICE CANNOT BE READ, drawn with the real adapters (the creation read and the look
@@ -43,7 +41,7 @@ const { AuthError } = await import('vaults-web-shared/keyring.js');
 const { FinishCompany } = await import('./finish-company.js');
 const { SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS } = await import('../adapters/creation-standing.js');
 
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const READING = 'Reading where the company stands.';
 const BOUND = 20_000;
