@@ -459,16 +459,44 @@ describe('how a deposit ended, and whether anything may have been sent', () => {
     if (end.of !== 'failed') throw new Error('it fails');
     expect(end.reasons).toEqual([expect.stringMatching(/^the public deposit may have been sent/), 'the indexer did not answer']);
     expect(end.refusal).toBe('did-not-finish');
-    expect(end.until).toBe(1);
+    /* RED WHEN: Try again and the time the person is told not to put the money in again before leave out the margin for a device clock ahead of the chain's, which the page waits out before it says a deposit never landed. */
+    expect(end.until).toBe(1 + op.DEPOSIT_CLOCKS_MAY_DIFFER_MS);
+    expect(end.until).toBe(op.publicDepositCannotLandAfter(1));
     m.putAwayEndedDeposit(VAULT);
-    st.publicRun = async (doors) => { doors.progress('sending the deposit'); throw new Error('the public deposit was not sent, so no money has moved yet. Your wallet already signed it.'); };
+    st.publicRun = async (doors) => { doors.progress('sending the deposit'); throw new op.PublicDepositSignedNotSent(VAULT, 7, new Error('not exactly this')); };
     const signed = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 500n, REG);
     if (signed.of !== m.PUT_IN.started) throw new Error('it starts');
     const signedEnd = await signed.ended;
     if (signedEnd.of !== 'failed') throw new Error('it fails');
-    expect(signedEnd.until).toBeGreaterThan(Date.now() + 74 * 60_000);
-    expect(signedEnd.until).toBeLessThanOrEqual(Date.now() + 75 * 60_000);
+    /* RED WHEN: a deposit the wallet signed and the service did not send reads as nothing sent, or with another time than the one it can still be sent until. */
+    expect(signedEnd.mayHaveBeenSent).toBe(true);
+    expect(signedEnd.until).toBe(op.publicDepositCannotLandAfter(7));
+    /* RED WHEN: a deposit the wallet signed and this page did not send is not told apart from one that may have been sent without the page being told. */
+    expect(signedEnd.signedNotSent).toBe(true);
+    expect(end).not.toHaveProperty('signedNotSent');
     m.putAwayEndedDeposit(VAULT);
+    st.publicRun = async (doors) => { doors.progress('sending the deposit'); throw new Error('the connection closed'); };
+    const lost = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 500n, REG);
+    if (lost.of !== m.PUT_IN.started) throw new Error('it starts');
+    const lostEnd = await lost.ended;
+    if (lostEnd.of !== 'failed') throw new Error('it fails');
+    /* RED WHEN: a public deposit whose time to live was never read is given one the page made up from its own clock. */
+    expect(lostEnd.mayHaveBeenSent).toBe(true);
+    expect(lostEnd).not.toHaveProperty('until');
+    m.putAwayEndedDeposit(VAULT);
+    for (const [why, e, said, until] of [
+      ['the chain refused it', new op.PublicDepositRefused(VAULT, 'c4'.repeat(32)), m.CHAIN_SAID.refused, undefined],
+      ['it never landed', new op.PublicDepositNeverLanded(VAULT, 9), m.CHAIN_SAID.neverLanded, 9],
+    ] as const) {
+      st.publicRun = async (doors) => { doors.progress('sending the deposit'); throw e; };
+      const ended = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 500n, REG);
+      if (ended.of !== m.PUT_IN.started) throw new Error('it starts');
+      const end2 = await ended.ended;
+      if (end2.of !== 'failed') throw new Error('it fails');
+      /* RED WHEN: a public deposit the chain answered for, with nothing in the vault, is held back as one that may still arrive, or loses what the chain said. */
+      expect([end2.mayHaveBeenSent, end2.chainSaid, end2.until], why).toEqual([false, said, until]);
+      m.putAwayEndedDeposit(VAULT);
+    }
     /* RED WHEN: a private deposit starts for somebody not signed in, or asks the wallet. */
     st.signedIn = false;
     const s = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
@@ -479,7 +507,7 @@ describe('how a deposit ended, and whether anything may have been sent', () => {
     const p = m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 500n, REG);
     if (p.of !== m.PUT_IN.started) throw new Error('it starts');
     expect(await p.ended).toMatchObject({ of: 'failed', mayHaveBeenSent: false, refusal: 'not-signed-in' });
-    expect(st.runs.filter((x) => x.kind === 'public')).toHaveLength(2);
+    expect(st.runs.filter((x) => x.kind === 'public')).toHaveLength(5);
   });
 });
 
@@ -498,6 +526,16 @@ describe('check my last deposit', () => {
     expect(given[0]).toMatchObject({ me: MINE, records: HERE.records, inFlight: { isDepositsInFlight: true, opener: MINE } });
     await expect((given[0]!.pay as (a: unknown) => Promise<unknown>)({})).rejects.toThrow(/web-12-deposit-check-pays/);
     expect(found.of === 'checked' ? found.forSupport : '').toMatch(/has not reached the vault yet/);
+    st.check = async () => ({
+      deposit: { state: 'journalled-not-seen', until: 5678 }, named: 0, unnamed: 0, toName: 0,
+      alsoJournalled: [{ state: 'journalled-not-seen', until: 4321, checked: { from: 'the-vaults-journal', token: TDUST, value: 1_500_000n } }],
+    });
+    const journalled = await m.checkMyLastDeposit('u1', 'c1', VAULT, REG);
+    /* RED WHEN: the newest deposit filed for the vault and not yet seen is handed on with no time after which it can no longer arrive. */
+    expect(journalled).toMatchObject({ of: 'checked', deposit: 'journalled-not-seen', until: 5678 });
+    /* RED WHEN: an earlier deposit filed for the vault that can still arrive is not handed on, with its time and what it was. */
+    expect(journalled.of === 'checked' ? journalled.earlier.map((e) => [e.deposit, e.until, e.deposited?.symbol, e.unshown]) : [])
+      .toEqual([['journalled-not-seen', 4321, 'TDUST', null]]);
     st.check = async () => ({ deposit: { state: 'landed-owed-its-record' }, named: 0, unnamed: 0, toName: 0 });
     /* RED WHEN: a landed deposit owed its record is not handed on as such. */
     expect(await m.checkMyLastDeposit('u1', 'c1', VAULT)).toMatchObject({ of: 'checked', deposit: 'landed-owed-its-record' });
@@ -534,5 +572,43 @@ describe('check my last deposit', () => {
     st.check = async () => ({ deposit: { state: 'none' }, named: 0, unnamed: 0, toName: 0 });
     expect(await m.checkMyLastDeposit('u1', 'c1', VAULT)).toMatchObject({ of: 'checked', deposit: 'none' });
     expect(st.released).toBe(1);
+  });
+});
+
+describe('a vault the service says it refuses stops the deposit before the wallet is asked', () => {
+  const REFUSED = ['start-owed', 'not-on-chain-yet', 'not-fundable', 'account-not-handed-over', 'account-not-fundable', 'held-by-other-keys'] as const;
+  const nothingAsked = () => [st.acts, st.runs, st.paid, st.holdersAsked, st.released];
+
+  /* RED WHEN: a vault whose standing says the service refuses it still asks the wallet, builds a deposit, holds the company key or starts a deposit, private or public. */
+  it.each(REFUSED)('stops a private and a public deposit into a vault that stands %s, with nothing built, claimed or sent', async (standing) => {
+    const { m } = await load();
+    st.companyKey = null;
+    expect(m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG, standing)).toEqual({ of: 'vault-refused', standing });
+    expect(m.putMoneyIn('u1', 'c1', VAULT, PUBLIC_PUB, '1', 500n, REG, standing)).toEqual({ of: 'vault-refused', standing });
+    await flush();
+    expect(nothingAsked()).toEqual([[], [], [], 0, 0]);
+    expect(m.depositNow(VAULT)).toBeNull();
+  });
+
+  /* RED WHEN: any standing the vaults can be reported in, other than the one the service funds and an unreadable answer, is not refused by the page, so a standing added later slips past it. */
+  it('refuses every standing a vault can have except the funded one and unknown', async () => {
+    const { m } = await load();
+    const { VAULT: STANDS } = await import('vaults-web-shared/vault-standing.js');
+    const standings = Object.values(STANDS);
+    expect(standings).toHaveLength(8);
+    for (const standing of standings) {
+      const lets = standing === STANDS.held || standing === STANDS.unknown;
+      expect(m.serviceRefusesVault(standing), `RED WHEN: the page's answer for ${standing} differs from the service's`).toBe(!lets);
+    }
+    expect(m.serviceRefusesVault(undefined)).toBe(false);
+  });
+
+  /* RED WHEN: a vault the service funds, or one with no answer or an unreadable one, is stopped, so the deposit no longer goes on to the checks that follow. */
+  it.each(['held-by-committee', 'unknown', undefined] as const)('lets a deposit into a vault with the answer %s go on as before', async (standing) => {
+    const { m } = await load();
+    const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG, standing);
+    if (r.of !== m.PUT_IN.started) throw new Error('it starts');
+    expect(await r.ended).toMatchObject({ of: 'done', kind: 'private' });
+    expect(st.acts).toHaveLength(1);
   });
 });

@@ -11,6 +11,7 @@ import { api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithW
 import { companyKeysFor, directoryHereFor, filingJudgeFor, openedHere, rosterReadsFor, walletIndexerFor } from './filing-judge.js';
 import { KIND_FIELD, NEVER_WITHDRAWN, POLICY_KINDS, RUN_FORM, RUN_LIST, WALLET_KIND, type RunForm, type RunList } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import type { RoundOnChain } from 'vaults-web-shared/governed-call-builder.js';
+import { VAULT, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
 import type { ClosedAs } from 'vaults-web-shared/run-rebuilt-here.js';
 import type { DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
 import { keyOf, type CompanyKeys } from '../../../../src/core/company-key.js';
@@ -292,12 +293,7 @@ export interface PersonRow {
   notPayable: string | null;
 }
 
-/** Where a vault stands, one of a fixed set a screen says in its own words. */
-export const VAULT = {
-  held: 'held-by-committee', startOwed: 'start-owed', notOnChain: 'not-on-chain-yet', notFundable: 'not-fundable',
-  accountNotHandedOver: 'account-not-handed-over', accountNotFundable: 'account-not-fundable', heldByOtherKeys: 'held-by-other-keys', unknown: 'unknown',
-} as const;
-export type VaultStanding = (typeof VAULT)[keyof typeof VAULT];
+export { VAULT, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
 const VAULT_STANDINGS: readonly string[] = Object.values(VAULT);
 
 /**

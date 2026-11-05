@@ -140,7 +140,7 @@ function adaptersWalk(pageSide = false): Promise<BuildGraph> {
 const SENTENCES_FOR_THE_LEGACY_PAGE: Readonly<Record<string, { writes: string; times: number; why: string }>> = {
   'packages/web-shared/src/vault-operation.ts': {
     writes: 'toLocaleString',
-    times: 4,
+    times: 1,
     why: 'the time a deposit or a payment still on its way can no longer land, written into the sentences of two errors and of a check\'s summary; creating a vault (adapters/create-vault.ts) reaches the module and hands a screen a code for each answer',
   },
 };

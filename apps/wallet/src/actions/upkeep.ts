@@ -260,8 +260,6 @@ async function vaultSecretsGiven(
 
 const ROTATED: ReadonlySet<KeyRotated['state']> = new Set(['rotated', 'rotated-elsewhere']);
 const NOT_YET_ANCHORED = /not yet anchored/u;
-/* What a vault's read says when a record was not filed again for a signer seated since, or who the signers are was not read. */
-const NOT_FILED_AGAIN = /not filed again for a signer who cannot open it yet|no record was sealed to more of them/u;
 
 /**
  * The head and the tail of a seat action's steps. The head runs before the action seals anything, because a company
@@ -362,7 +360,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       for (const vault of vaults) {
         const notes = await vaultNotesHere(rebuildDoorsIn(ctx, r, w.api, w.send, reach), vault.toLowerCase() as Hex);
         w.rethrow();
-        if ((notes.of !== 'as-filed' && notes.of !== 'filed') || notes.said.some((s) => NOT_FILED_AGAIN.test(s))) left();
+        if ((notes.of !== 'as-filed' && notes.of !== 'filed') || (notes.unsealed ?? []).length > 0) left();
       }
       await vaultSecretsGiven(ctx, r, w, reach, vaults, seats, left);
       let anchored = 0;

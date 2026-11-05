@@ -67,6 +67,7 @@ import { directoryOf, seatDirectoryRoutes } from '../../src/server/seat-director
 import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifest-route.js';
 import { MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
 import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { readTransaction } from 'vaults-web-shared/vault-builder.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -111,6 +112,16 @@ const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-jour
 const ACCOUNT_ID = 'acc_vaulted';
 const TOKEN_HEX = 'a7'.repeat(32);
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+
+/**
+ * A deposit here is built without its proof, which the vault worker's reader of a proved transaction cannot read: the
+ * product's own reader reads it, and what the wallet bound, as built.
+ */
+const readsUnproven = {
+  readTransaction: async ({ transaction }: { transaction: string }) => readTransaction({ ledger: { Transaction: {
+    deserialize: (s: string, _p: string, b: string, raw: Uint8Array) => L.Transaction.deserialize(s as never, 'pre-proof', b as never, raw),
+  } } } as never, Buffer.from(transaction, 'base64')),
+};
 const asRuntime = (state: { serialize(): Uint8Array }) => (runtime as any).ContractState.deserialize(state.serialize());
 const vaultLedgerOf = (state: { serialize(): Uint8Array }) => (vaultModule as any).ledger(asRuntime(state).data);
 
@@ -729,7 +740,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* ---- the deposit ---- */
     shown = [];
     const deposited = await depositIntoCompanyVault({
-      ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
+      ...poolDoors, company: label, account: readAccountAddress(company)!, builder: { ...builder(), ...readsUnproven }, pay: wallet, inFlight: inFlightInMemory(),
     }, vault, { token: TOKEN_HEX, value: 1_000n });
     expect(chain.applied.map((a) => a.ok)).toEqual(Array(startedAt + 1).fill(true));
     const depositAt = startedAt;

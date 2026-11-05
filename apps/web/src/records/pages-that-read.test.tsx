@@ -1260,7 +1260,7 @@ describe('vaults and a vault', () => {
     expect(said).toBe(EN['vault.privateMoney.cannotRead']!.replace('{why}', reason).replace('{next}', next));
     expect(said).toContain(reason);
     if (key === 'noKeys') expect(said).toContain("Open your company's records in your wallet first: press Check my last deposit above");
-    if (key === 'record') expect(said).toContain('Press Check my last deposit above, which files the record this device lacks');
+    if (key === 'record') { expect(said).toContain('The money stays in the vault and is not lost. Tell the company\'s other signers and contact support.'); expect(said).not.toMatch(/Check my last deposit|files it/u); }
     if (key === 'noKeys' || key === 'record') expect(said).not.toMatch(/^[^.]*\.[^.]*\. Use the refresh button/u);
     expect(q(page, '[data-part=money] [data-action=read-money]')).not.toBeNull();
     expect(q(page, '[data-part=money] [data-private-money]')).toBeNull();

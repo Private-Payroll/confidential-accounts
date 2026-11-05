@@ -35,13 +35,14 @@
  * slow and not the chain saying no, but this client and that indexer out of
  * step, which no amount of reading again repairs.
  *
- * **ONE MORE READ LIVES HERE, FOR A PUBLIC DEPOSIT, WHICH MAKES NO NOTE.**
- * `indexerTransactionsByIdentifier` asks the indexer for the transactions that
- * carry an identifier the device worked out from what the wallet signed, with
- * the result the ledger applied each with and its contract calls, and
- * `publicDepositLandedAmong` says which of them, if any, is that deposit landed.
- * An indexer that cannot be read, or will not take the question, is an error,
- * never an empty list.
+ * **ONE MORE READ LIVES HERE: WHETHER A TRANSACTION THIS DEVICE HOLDS LANDED
+ * FOR ONE VAULT CALL.** `indexerTransactionsByIdentifier` asks the indexer for
+ * the transactions that carry an identifier the device read off the bytes it
+ * holds, with the result the ledger applied each with, each part's own result
+ * and its contract calls. `vaultCallOnChain` judges them by the part of the
+ * transaction that carries the vault's call, and `vaultCallByIdentifiers`
+ * asks about every identifier in turn. An indexer that cannot be read, or will
+ * not take the question, is an error, never an empty list.
  */
 import type { Hex } from '../core/crypto.js';
 import type { NotePool } from './vault-ledger.js';
@@ -590,12 +591,15 @@ export interface TransactionByIdentifier {
   readonly hash: string;
   /** `SUCCESS`, `PARTIAL_SUCCESS` or `FAILURE` as the indexer reports it; null when it reports none. */
   readonly status: string | null;
+  /** Each part's own result, which the indexer reports for a partial success only; null when it reports none. */
+  readonly segments: ReadonlyArray<{ readonly id: number; readonly success: boolean }> | null;
   /** Every contract the transaction called or deployed, and the circuit it called (null for a deploy). */
   readonly calls: ReadonlyArray<{ readonly address: string; readonly entryPoint: string | null }>;
 }
 
 /**
- * Every transaction the indexer at `indexerUrl` lists under one identifier, with its result and its contract calls.
+ * Every transaction the indexer at `indexerUrl` lists under one identifier, with its result, each part's result and its
+ * contract calls.
  * Refuses, rather than answering "none", when the indexer cannot be reached or will not answer: a missing answer is not
  * a transaction that never landed.
  */
@@ -613,7 +617,7 @@ export function indexerTransactionsByIdentifier(
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             query: 'query ($offset: TransactionOffset!) { transactions(offset: $offset) { hash '
-              + '... on RegularTransaction { transactionResult { status } } '
+              + '... on RegularTransaction { transactionResult { status segments { id success } } } '
               + 'contractActions { address ... on ContractCall { entryPoint } } } }',
             variables: { offset: { identifier: bare(identifier) } },
           }),
@@ -642,6 +646,11 @@ export function indexerTransactionsByIdentifier(
       return txs.map((tx: any): TransactionByIdentifier => ({
         hash: bare(String(tx?.hash ?? '')),
         status: typeof tx?.transactionResult?.status === 'string' ? tx.transactionResult.status : null,
+        segments: Array.isArray(tx?.transactionResult?.segments)
+          ? tx.transactionResult.segments
+            .filter((g: any) => Number.isInteger(g?.id) && typeof g?.success === 'boolean')
+            .map((g: any) => ({ id: g.id as number, success: g.success as boolean }))
+          : null,
         calls: Array.isArray(tx?.contractActions)
           ? tx.contractActions.map((a: any) => ({
             address: bare(String(a?.address ?? '')),
@@ -653,16 +662,87 @@ export function indexerTransactionsByIdentifier(
   };
 }
 
+/** The call a transaction this device holds was made for: one vault, and the circuits that count as that call. */
+export interface VaultCall {
+  readonly vault: string;
+  readonly entryPoints: readonly string[];
+}
+
 /**
- * The hash of the one transaction among `found` that the ledger applied in full and that calls `vault`'s public
- * deposit; null when none does. A partial success is not taken, because its failed part may be the very call to the
- * vault, and the indexer lists a transaction the ledger applied with failure just as it lists one that landed.
+ * Where one vault call stands on the chain, judged by the transaction's own identifiers.
+ *
+ * - `landed`: the chain applied the part of the transaction that carries the call.
+ * - `refused`: the chain took the transaction and that part failed, so the call did nothing. It cannot be applied again.
+ * - `not-seen`: the indexer lists no transaction carrying the call under any of the identifiers.
+ * - `not-known`: the indexer lists it, but whether the call took effect cannot be told (`why` says what is missing).
  */
-export function publicDepositLandedAmong(vault: string, found: readonly TransactionByIdentifier[]): string | null {
-  const into = bare(vault);
-  const landed = found.find((tx) => tx.status === 'SUCCESS' && /^[0-9a-f]{64}$/u.test(tx.hash)
-    && tx.calls.some((c) => c.address === into && c.entryPoint === 'depositUnshielded'));
-  return landed === undefined ? null : landed.hash;
+export type VaultCallOnChain =
+  | { readonly of: 'landed'; readonly transactionHash: string }
+  | { readonly of: 'refused'; readonly transactionHash: string }
+  | { readonly of: 'not-seen' }
+  | { readonly of: 'not-known'; readonly why: string };
+
+/**
+ * One contract call in a transaction this device holds, read from its own bytes: the contract (lower-case hex without
+ * a prefix), the circuit, and every part of the transaction the call has a transcript in, ascending: 0 for the part
+ * that always runs, an intent's own number for the part that may fail alone.
+ */
+export interface CallAsBuilt {
+  readonly address: string;
+  readonly entryPoint: string;
+  readonly segments: readonly number[];
+}
+
+/**
+ * **WHETHER THE ONE CALL TO `call.vault` IN A TRANSACTION THIS DEVICE BUILT TOOK EFFECT**, among the transactions the
+ * indexer listed under one of its identifiers. Which parts the call runs in is read from the device's own bytes
+ * (`built`), never from the indexer, which names no part for a call; the indexer gives each part's result. A full
+ * success lands it. A partial success lands it only when every part it runs in succeeded, and refuses it when every
+ * one failed; a call split across parts, one failed, is `not-known`, because the part that always runs moved its share.
+ * A failure refuses it. A call the bytes do not carry exactly once is `not-known`: nothing here can say which part to
+ * read.
+ */
+export function vaultCallOnChain(
+  call: VaultCall, built: readonly CallAsBuilt[], found: readonly TransactionByIdentifier[],
+): VaultCallOnChain {
+  const into = bare(call.vault);
+  const counts = (address: string, entryPoint: string | null) => address === into && entryPoint !== null && call.entryPoints.includes(entryPoint);
+  const ours = built.filter((c) => counts(bare(c.address), c.entryPoint));
+  if (ours.length !== 1 || ours[0]!.segments.length === 0) {
+    return { of: 'not-known', why: 'the transaction this device holds does not carry exactly one such call to this vault' };
+  }
+  const parts = ours[0]!.segments;
+  const listed = found.find((tx) => /^[0-9a-f]{64}$/u.test(tx.hash) && tx.calls.some((c) => counts(c.address, c.entryPoint)));
+  if (listed === undefined) return { of: 'not-seen' };
+  const transactionHash = listed.hash;
+  if (listed.status === 'SUCCESS') return { of: 'landed', transactionHash };
+  if (listed.status === 'FAILURE') return { of: 'refused', transactionHash };
+  if (listed.status !== 'PARTIAL_SUCCESS' || listed.segments === null) {
+    return { of: 'not-known', why: `the indexer reports the transaction ${transactionHash} with no result this can read` };
+  }
+  const results = parts.map((id) => (id === 0 ? true : listed.segments!.find((g) => g.id === id)?.success));
+  if (results.some((r) => r === undefined)) {
+    return { of: 'not-known', why: `the indexer reports no result for the part of ${transactionHash} that carries the call` };
+  }
+  if (results.every((r) => r === true)) return { of: 'landed', transactionHash };
+  if (results.every((r) => r === false)) return { of: 'refused', transactionHash };
+  return { of: 'not-known', why: `the call in ${transactionHash} runs in two parts and only one of them took effect` };
+}
+
+/**
+ * `vaultCallOnChain` asked of the indexer under every identifier of the transaction in turn, until one of them answers
+ * anything but `not-seen`. An indexer that cannot be read throws, as `indexerTransactionsByIdentifier` does.
+ */
+export async function vaultCallByIdentifiers(
+  reader: { byIdentifier(identifier: string): Promise<readonly TransactionByIdentifier[]> },
+  built: { readonly identifiers: readonly string[]; readonly calls: readonly CallAsBuilt[] },
+  call: VaultCall,
+): Promise<VaultCallOnChain> {
+  for (const identifier of built.identifiers) {
+    const seen = vaultCallOnChain(call, built.calls, await reader.byIdentifier(identifier));
+    if (seen.of !== 'not-seen') return seen;
+  }
+  return { of: 'not-seen' };
 }
 
 /* ------------------------------------------------------------------ *

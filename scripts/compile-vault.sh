@@ -58,10 +58,23 @@ if [ "${1:-}" = "--full" ]; then
   # and it failed in under a second the first time it was.
   # The idiom expands to nothing when the array is empty and to the flag when
   # it is not, on every bash version.
-  "$COMPACTC" ${ZKIR_FLAG[@]+"${ZKIR_FLAG[@]}"} "$SRC" "$OUT"
+  "$COMPACTC" ${ZKIR_FLAG[@]+"${ZKIR_FLAG[@]}"} "$SRC" "$OUT" || exit $?
+  # The code this copy and its keys were built from (scripts/contract-version.mjs).
+  node "$ROOT/scripts/contract-version.mjs" --record contracts/managed-vault; cp "$OUT/.version" "$OUT/.keys-version"
   link_account_module
 else
   echo "compiling the vault without proving keys ($("$COMPACTC" --version))"
-  "$COMPACTC" --skip-zk "$SRC" "$OUT"
+  # A quick compile does not throw away keys that still match the code: the keys are
+  # set aside, and put back only when .keys-version shows they were built from this same code.
+  KEPT=""
+  if [ -d "$OUT/keys" ] && [ -f "$OUT/.keys-version" ]; then KEPT="$ROOT/contracts/.keys-kept-$(basename "$OUT")"; mv "$OUT/keys" "$KEPT"; cp "$OUT/.keys-version" "$KEPT.version"; fi
+  "$COMPACTC" --skip-zk "$SRC" "$OUT" || { RC=$?; if [ -n "$KEPT" ]; then mv "$KEPT" "$OUT/keys"; fi; exit $RC; }
+  node "$ROOT/scripts/contract-version.mjs" --record contracts/managed-vault
+  if [ -n "$KEPT" ]; then
+    cp "$KEPT.version" "$OUT/.keys-version"
+    if node "$ROOT/scripts/contract-version.mjs" --current contracts/managed-vault .keys-version; then mv "$KEPT" "$OUT/keys"; echo "  the proving keys still match the code and are kept"
+    else mkdir -p "$ROOT/_to_delete"; mv "$KEPT" "$ROOT/_to_delete/keys-$(basename "$OUT")-$(date +%s)"; echo "  the code changed: the old proving keys are set aside; run the key build"; fi
+    mv "$KEPT.version" "$ROOT/_to_delete/" 2>/dev/null || true
+  fi
   link_account_module
 fi

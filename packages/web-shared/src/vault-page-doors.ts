@@ -83,9 +83,7 @@ export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promi
     handover: (vault, tx) => post(`${base}/vaults/${vault}/handover`, tx),
     chain: (vault) => api(`${base}/vaults/${vault}/chain`),
     deposit: (vault, tx) => post(`${base}/vaults/${vault}/deposit`, tx),
-    depositPublicly: (vault, tx, money) => marked(() => api(`${base}/vaults/${vault}/public-deposit`, {
-      method: 'POST', body: JSON.stringify({ tx, token: money.token, amount: money.amount }),
-    })),
+    depositPublicly: (vault, tx) => post(`${base}/vaults/${vault}/public-deposit`, tx),
     payoutState: (vault) => api(`${base}/vaults/${vault}/payout-state`),
     payout: (vault, tx) => post(`${base}/vaults/${vault}/payout`, tx),
     merge: (vault, tx) => post(`${base}/vaults/${vault}/merge`, tx),

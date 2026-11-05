@@ -1015,6 +1015,30 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     expect(keyring.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
   });
 
+  it('NEVER SETS ASIDE A CREATION WHILE A COPY THE WALLET BUILT AGAIN AND HANDED ON CAN STILL LAND, THOUGH THE COPY KEPT HERE HAS RUN OUT', async () => {
+    const LATER = TTL + 30 * 60_000;
+    const { accountId, wallet, asked } = await sentWith(deploying);
+    /* The chain's newest block is past the kept copy's time and the margin; the copy carried again lives half an hour longer. */
+    const b: keyring.AccountCreationBuilder = { accountPresence: async (input: { account: string; indexer: unknown; transactions: string[] }) => {
+      asked.push(input);
+      return absentAt(TTL + FIVE, input.transactions.includes('QUdBSU4=') ? LATER : TTL);
+    } };
+    await walletCannotRead(wallet, accountId);
+    expect(await keyring.relayForTheCreation(accountId, 'QUdBSU4=', { what: 'creation-again', also: 'SU5BR0FJTg==' })).toBe(true);
+    /* RED WHEN: the page judges by its own older copy alone, sets the creation aside while the copy the wallet relayed can still land, and the person founds a second company beside it. */
+    expect(await again(accountId, wallet, b)).toEqual({ of: 'may-still-land', minutes: Math.ceil((LATER + FIVE - (TTL + FIVE)) / 60_000) });
+    expect(asked.at(-1)!.transactions).toEqual(expect.arrayContaining(['QUdBSU4=', 'SU5BR0FJTg==']));
+    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+  });
+
+  it('NEVER SETS ASIDE A CREATION WHILE THE SERVICE SAYS THE DEPLOY IT HOLDS CAN STILL BE SENT, THOUGH THIS TAB NEVER SAW THAT COPY', async () => {
+    const { accountId, wallet, b } = await sentWith({ account: null, state: 'deploy-sent' }, absentAt(TTL + FIVE));
+    await walletCannotRead(wallet, accountId);
+    /* RED WHEN: a copy the wallet built again and relayed from another tab is not weighed, and a creation that can still land is set aside. */
+    expect(await again(accountId, wallet, b)).toEqual({ of: 'not-confirmed' });
+    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+  });
+
   it('FINISHES A CREATION SET ASIDE IF ITS ACCOUNT LATER APPEARS: THE SERVICE READS THE DEPLOY LANDED AND THE CREATION COMES BACK', async () => {
     const { states, accountId, wallet, b, service } = await sentWith(deploying, absentAt(TTL + FIVE));
     await walletCannotRead(wallet, accountId);

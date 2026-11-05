@@ -89,11 +89,15 @@ import {
 } from '../../../src/midnight/vault-pool.js';
 import { afterDeposit } from '../../../src/midnight/vault-note-deposit.js';
 import type { Note } from '../../../src/midnight/vault-notes.js';
-import { PaymentJournalInStore, attemptKey, attemptsFromJournalVersions } from '../../../src/midnight/vault-journal.js';
+import type { VaultCallOnChain } from '../../../src/midnight/note-index.js';
+import {
+  PaymentJournalInStore, attemptKey, attemptsFromJournalVersions, endDepositNeverHandedOver, noteKey, stepOfLine,
+} from '../../../src/midnight/vault-journal.js';
 import { coinsFileRead, coinsFileText, type CoinKept, type CoinsFileCompany, type CoinsKeptHere } from './vault-coins-kept-here.js';
 import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
-import type { EventOnTheWire, NoteOnTheWire } from './vault-builder.js';
+import type { EventOnTheWire, NoteOnTheWire, TransactionRead } from './vault-builder.js';
+import { PUBLIC_DEPOSIT_ENTRY } from './public-deposit-call.js';
 import { openNonceSecrets, recordsKeypairFrom, refileNonceSecret, type NonceSecretReader } from '../../../src/midnight/company-nonce-secret.js';
 import { openSecretCopy, sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import {
@@ -134,6 +138,9 @@ import { VaultAskFailed } from './vault-worker-client.js';
 import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS } from './read-bound.js';
 import type { Kept, KeptOnThisDevice } from './in-flight-on-this-device.js';
 import type { AccountHolders } from 'midnight-identity/profile/records-key';
+
+/** A time written into a sentence a person reads: the moment a deposit or a payment still on its way can no longer land, in this browser's own language and zone. */
+const timeShown = (ms: number): string => new Date(ms).toLocaleString();
 
 /**
  * **A VAULT'S COMPANY ACCOUNT, AS THE SIGNER'S OWN WALLET READ IT OFF THE CHAIN
@@ -565,10 +572,11 @@ export interface VaultService {
   deposit(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
   /**
    * Sends a public deposit into the vault, with the network fee paid for it.
-   * `money` is what the page asked the vault to receive, and the service
-   * refuses a deposit that is anything else.
+   * The service is handed the transaction and nothing else: it reads the token
+   * and the amount from it, and refuses one that is not exactly one public
+   * token, a positive amount of it, into this vault.
    */
-  depositPublicly?(vault: Hex, tx: string, money: { token: Hex; amount: string }): Promise<{ txRef: string; transactionHash: string | null }>;
+  depositPublicly?(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
   /**
    * One block's view of the vault and the company's account, as the service
    * reads it. Nothing on the page reads it: a vault's start, a deposit and a
@@ -1122,7 +1130,8 @@ const startDoorsOf = (doors: CreateVaultDoors, vault: Hex) => {
 
 /**
  * What a step sent straight to the chain is named by: nothing, since no service answered for it. The step is then
- * found on the chain by what it left, as one whose answer from the service was lost.
+ * found on the chain as one whose answer from the service was lost: by the coin it kept, or, for a payment that keeps
+ * no change, by its own transaction.
  */
 const NAMED_BY_NOTHING: { readonly txRef: string; readonly transactionHash: string | null } = Object.freeze({ txRef: '', transactionHash: null });
 
@@ -2561,7 +2570,7 @@ export interface DepositInFlight {
   /**
    * When this was written, in milliseconds. It is written after the deposit is
    * built and before the wallet is asked, so the transaction's own time to live
-   * ends no later than this plus `DEPOSIT_TIME_TO_LIVE_MS`.
+   * ends before `depositLandsBy` of this.
    */
   readonly recordedAt: number;
   /** The service's reference for the send, once it has one. */
@@ -2581,11 +2590,51 @@ export type DepositsInFlight = KeptOnThisDevice<DepositInFlight>;
  * **HOW LONG A DEPOSIT CAN TAKE TO LAND, AT MOST.** The call is built with a
  * time to live of one hour from when it is built (`ttlOneHour` in
  * `@midnight-ntwrk/midnight-js-contracts`), and the ledger refuses a
- * transaction whose time to live is behind the block it would go in. A quarter
- * of an hour more covers a block clock and this device's clock disagreeing.
+ * transaction whose time to live is behind the block it would go in. The
+ * quarter of an hour more is room for the time from filing its coin in the
+ * vault's deposit journal to building it. `depositIntoCompanyVault` reads the
+ * built transaction's own time to live and sends nothing that could land after
+ * this window, counted from either its journal line or its record here.
  * Past this, a deposit the chain does not hold never will.
  */
 export const DEPOSIT_TIME_TO_LIVE_MS = 75 * 60_000;
+
+/**
+ * How far apart two devices' clocks may be when one judges a deposit another
+ * filed in the vault's deposit journal. The line's time is the filing device's;
+ * a reader whose clock runs ahead would otherwise call a deposit over while it
+ * can still land.
+ */
+export const DEPOSIT_CLOCKS_MAY_DIFFER_MS = 5 * 60_000;
+
+/**
+ * **WHEN A PUBLIC DEPOSIT CAN NO LONGER LAND**, on this device's clock: its own time to live (`until`, read from the
+ * transaction the wallet signed) and the margin for a device clock ahead of the chain's. Before this the same money is
+ * not put in again, and only after it is a deposit the chain does not show said never to have landed.
+ */
+export const publicDepositCannotLandAfter = (until: number): number => until + DEPOSIT_CLOCKS_MAY_DIFFER_MS;
+
+/** When a deposit can no longer land, counted from this device's own time for it (when it was kept on its way). */
+const depositLandsBy = (from: number): number => from + DEPOSIT_TIME_TO_LIVE_MS;
+
+/**
+ * **THE ONE WINDOW BOTH JUDGES OF A PRIVATE DEPOSIT SAY "NEVER LANDED" AFTER**: the window and the margin for clocks
+ * that differ, counted from a time no earlier than the deposit's journal line. The record kept on its way is taken
+ * after its line is filed, so a deposit settled as never landed from that record is past its line's window too, and
+ * no check of the journal then reports it as still on its way.
+ */
+const depositCannotLandAfter = (from: number): number => depositLandsBy(from) + DEPOSIT_CLOCKS_MAY_DIFFER_MS;
+
+/**
+ * When a deposit the vault's deposit journal names can no longer land, counted
+ * from the time its line was filed, which is before the deposit was built (a
+ * build that ends later than the window allows is never sent). A line with no
+ * readable time is past it: nothing can say when it began.
+ */
+export const journalledDepositLandsBy = (attemptedAt: unknown): number => {
+  const at = typeof attemptedAt === 'string' ? Date.parse(attemptedAt) : Number.NaN;
+  return Number.isFinite(at) ? depositCannotLandAfter(at) : Number.NEGATIVE_INFINITY;
+};
 
 /** **THE DEPOSIT MAY HAVE BEEN SENT AND THE VAULT DOES NOT HOLD IT YET.** The money may have moved. */
 export class DepositNotYetSeen extends Error {
@@ -2621,7 +2670,7 @@ export class DepositLandedNotYetRecorded extends Error {
  */
 export class DepositStillInFlight extends Error {
   constructor(readonly vault: Hex, readonly txRef: string, readonly until: number) {
-    const at = new Date(until).toLocaleString();
+    const at = timeShown(until);
     super(`an earlier deposit into this vault from this browser${txRef === '' ? '' : ` (${txRef})`} has not reached the `
       + `vault yet, and can still arrive until ${at}. Nothing new was prepared or sent. Try again after ${at}: if the `
       + 'earlier deposit has arrived by then, it is recorded first; if it has not, it never will, and your new deposit '
@@ -2652,10 +2701,109 @@ export class DepositStartedElsewhere extends Error {
 export class DepositNotSent extends Error {
   constructor(readonly vault: Hex, why: string) {
     super(`the deposit was not sent, so no money moved (${why}). You can put money in again now. Your wallet may show `
-      + 'part of its balance as held for this deposit until the transaction it finished can no longer be sent, about '
-      + 'an hour after it was prepared; only your wallet can release that hold.');
+      + 'part of its balance as held for this deposit until the transaction it finished can no longer be sent; only '
+      + 'your wallet can release that hold.');
     this.name = 'DepositNotSent';
   }
+}
+
+/**
+ * **THE DEPOSIT COULD LAND AFTER EVERY CHECK SAYS IT NEVER WILL, SO IT WAS NOT
+ * SENT.** Every reader counts a deposit's window from its journal line or its
+ * record here; a built transaction whose own time to live ends later, or whose
+ * time to live cannot be read, is stopped before the wallet is asked.
+ */
+export class DepositMayOutliveItsWindow extends Error {
+  constructor(readonly vault: Hex) {
+    super('the deposit was not sent and no money moved: the transaction built for it could still have arrived after '
+      + 'this page would say it never will. Your wallet was not asked to pay. You can put money in again now.');
+    this.name = 'DepositMayOutliveItsWindow';
+  }
+}
+
+/**
+ * **THE WALLET HANDED BACK A PRIVATE DEPOSIT OTHER THAN THE ONE THIS DEVICE
+ * BUILT, SO IT WAS NOT SENT.** No money moved: the wallet runs the whole private
+ * deposit and hands what it finished to nobody else. Its own hold on its coins is
+ * as for any deposit that was not sent. A public deposit refused for the same
+ * reason is `PublicDepositNotAsBuilt`.
+ */
+export class DepositNotAsBuilt extends DepositNotSent {
+  constructor(vault: Hex, why: string) {
+    super(vault, `your wallet handed back a deposit other than the one this device built: ${why}`);
+    this.name = 'DepositNotAsBuilt';
+  }
+}
+
+/** What a deposit this device built puts into the vault: a private deposit's coin, by the commitment the ledger records for it, or a public deposit's token and amount. */
+export type DepositAsBuilt =
+  | { readonly vault: Hex; readonly coin: string }
+  | { readonly vault: Hex; readonly token: Hex; readonly amount: bigint };
+
+const bareOf = (v: string): string => v.toLowerCase().replace(/^0x/u, '');
+const callKey = (c: { address: string; entryPoint: string; segments: readonly number[] }): string =>
+  `${bareOf(c.address)}|${c.entryPoint}|${[...c.segments].join(',')}`;
+const sameList = (a: readonly string[], b: readonly string[]): boolean => {
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.length === y.length && x.every((k, i) => k === y[i]);
+};
+
+/**
+ * **WHY THE TRANSACTION THE WALLET HANDED BACK IS NOT THE DEPOSIT THIS DEVICE
+ * BUILT**, or null when it is. Both are read from their own bytes on this device
+ * (`readTransaction`), and nothing the wallet says beside the transaction is
+ * believed. It must make exactly the contract calls the device built, every one
+ * to this vault; create for a contract exactly what was built (a private
+ * deposit's one coin, as an output to this vault, once; a public deposit none),
+ * and no coin for a contract that it spends again inside itself; and take in
+ * public money exactly as built (a private deposit none; a public deposit this
+ * token and this amount, once, into this vault's public deposit, in one part
+ * of the transaction, as `readPublicDepositCall` reads the call). Whatever the
+ * wallet adds to pay for it (its own coins, its change, the fee) is not judged
+ * here. Anything that cannot be read is refused, so a deposit is only ever
+ * stopped by this, never let through.
+ */
+export function whyNotTheDepositBuilt(
+  finished: TransactionRead | null, built: TransactionRead | null, asBuilt: DepositAsBuilt,
+): string | null {
+  if (finished === null || built === null) return 'it could not be read on this device.';
+  const vault = bareOf(asBuilt.vault);
+  if (built.calls.length === 0 || built.calls.some((c) => bareOf(c.address) !== vault)) {
+    return 'the deposit this device built could not be read as a call to this vault.';
+  }
+  if (!sameList(finished.calls.map(callKey), built.calls.map(callKey))) {
+    return 'it does not make the calls to the vault this device built.';
+  }
+  const made = finished.coinsForContracts;
+  const takes = finished.publicTakes;
+  if (made === undefined || made === null || takes === undefined || takes === null) {
+    return 'what it pays into the vault could not be read on this device.';
+  }
+  /* A coin made and spent inside the transaction is never held by its contract, so it can be no deposit's coin. */
+  if (made.some((c) => c.madeAndSpent === true)) return 'it makes a private coin for a contract and spends it again at once.';
+  const coins = made;
+  if ('coin' in asBuilt) {
+    const own = bareOf(asBuilt.coin);
+    if (coins.length !== 1 || coins[0]!.contract !== vault || bareOf(coins[0]!.commitment) !== own) {
+      return 'it does not create the one coin this device built for this vault, exactly once.';
+    }
+    if (takes.length !== 0) return 'it takes public money into a contract, and this private deposit takes none.';
+    return null;
+  }
+  if (coins.length !== 0) return 'it creates a private coin for a contract, and this public deposit creates none.';
+  /* What the one public deposit call asks for is read by `readPublicDepositCall`; compared here with what was built. */
+  const deposits = finished.publicDeposits;
+  if (deposits === undefined) return 'what it pays into the vault could not be read on this device.';
+  const deposit = deposits[0];
+  if (deposits.length === 1 && deposit !== undefined && 'refused' in deposit && deposit.refused === 'split') {
+    return 'its call is split across two parts of the transaction, so the chain could apply one part and refuse the other.';
+  }
+  if (takes.length !== 1 || deposits.length !== 1 || deposit === undefined || 'refused' in deposit || bareOf(deposit.vault) !== vault
+    || bareOf(deposit.colour) !== bareOf(asBuilt.token) || deposit.amount !== asBuilt.amount.toString()) {
+    return 'it does not put exactly this token and amount into this vault\'s public deposit, once.';
+  }
+  return null;
 }
 
 const inFlightCoin = (d: DepositInFlight) => ({ nonce: d.coin.nonce, token: d.coin.token, value: BigInt(d.coin.value) });
@@ -2741,6 +2889,17 @@ const letGo = async (doors: DepositDoors, vault: Hex, claim: string): Promise<vo
 };
 
 /**
+ * **A DEPOSIT THIS DEVICE NEVER HANDED OVER TO BE SENT**: its claim here, if it took one, is let go, and its line in
+ * the vault's deposit journal is marked ended, so no check says a deposit that cannot land is on its way. Called only
+ * where this device never handed the transaction to anything that could send it. A line that cannot be marked stays as it was, and is reported with its until.
+ */
+const neverHandedOver = async (doors: DepositDoors, vault: Hex, nonce: string, claim?: string): Promise<void> => {
+  if (claim !== undefined) await letGo(doors, vault, claim);
+  await endDepositNeverHandedOver(doors.records('deposit-journal'), vault,
+    { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers, nonce).catch(() => false);
+};
+
+/**
  * **RECORDS A DEPOSIT THE VAULT'S NOTES HOLD, ONCE, AND FORGETS IT AS IN
  * FLIGHT.** Only ever called once the vault's notes hold this coin. A pool that
  * already holds its nonce has it recorded already, by this browser or another
@@ -2793,23 +2952,59 @@ async function recordLandedDeposit(
 }
 
 /**
- * **WHAT BECAME OF A DEPOSIT KEPT ON ITS WAY AND NOT YET SEEN ARRIVE.**
+ * **WHERE A DEPOSIT'S COIN STANDS, AS THE CHAIN AND THE VAULT'S RECORD SHOW IT.**
+ * The one judge of whether a private deposit landed, for the deposit this device
+ * kept on its way and for every deposit the vault's deposit journal names:
  *
- *   · the chain made its coin and the vault's record already holds its nonce
- *     (recorded here or by another signer): nothing to record, and it is
- *     forgotten. A record naming the nonce, with the chain showing no such
- *     coin made, releases nothing: a record alone is not the chain's word;
- *   · the vault's notes hold its coin: the note is recorded, under the
- *     transaction the chain says created it; once its time to live has
- *     passed, without that transaction if it still cannot be read;
- *   · the chain made it, the vault's notes do not hold it, and a believed
- *     version of the vault's record once named it: it landed and has since
- *     left the vault (recorded, then spent or merged), so it is forgotten;
- *   · the chain made it and no record ever named it: it has arrived and is
- *     not recorded yet, so it is kept (`DepositLandedNotYetRecorded`);
- *   · its time to live has passed and the chain never made it: it never will,
- *     and it is forgotten;
- *   · otherwise it can still arrive, and `DepositStillInFlight` says so.
+ *   · `recorded`: the chain made its coin and the vault's record holds its
+ *     nonce. A record naming the nonce with no such coin made is not the
+ *     chain's word, so it is not this;
+ *   · `held`: the vault's notes hold its coin and its record does not;
+ *   · `spent`: the chain made it, the vault no longer holds it, and a believed
+ *     version of the vault's record once named it: it landed and has since left;
+ *   · `made-unnamed`: the chain made it and no record ever named it: it has
+ *     arrived, or the read saw it made before it saw it held;
+ *   · `unseen`: the chain has not made it.
+ *
+ * It reads the chain as `view` holds it and the vault's record; it files nothing.
+ */
+async function depositAsTheChainShows(
+  doors: DepositDoors, vault: Hex, coin: { readonly nonce: string; readonly token: string; readonly value: string }, view: VaultChainView,
+): Promise<{ readonly is: 'recorded' | 'held' | 'spent' | 'made-unnamed' | 'unseen'; readonly output: string }> {
+  const { output, held } = await doors.builder.commitments({ vault, coin: coin as { nonce: Hex; token: Hex; value: string } });
+  const bare = (h: string) => h.toLowerCase().replace(/^0x/u, '');
+  const made = (view.everCreated ?? []).some((c) => bare(c) === bare(output));
+  const pool = new SealedNotePool(doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  const nonce = coin.nonce.toLowerCase();
+  if (made && (await pool.load(vault)).notes.some((n) => n.nonce.toLowerCase() === nonce)) return { is: 'recorded', output };
+  if ((view.notes ?? []).some((n) => n.toLowerCase() === held.toLowerCase())) return { is: 'held', output };
+  if (!made) return { is: 'unseen', output };
+  for (const v of await doors.records('pool').versions(vault)) {
+    if (v.neverEntered === true) continue;
+    try {
+      const page = openPool(v.sealed, doors.me.signerId, doors.me.wrappingSecret, { record: 'pool' }) as { notes?: Array<{ nonce?: string }> };
+      if ((page.notes ?? []).some((n) => String(n.nonce).toLowerCase() === nonce)) return { is: 'spent', output };
+    } catch {
+      /* a version this signer cannot open names nothing it can read */
+    }
+  }
+  return { is: 'made-unnamed', output };
+}
+
+/**
+ * **WHAT BECAME OF A DEPOSIT KEPT ON ITS WAY AND NOT YET SEEN ARRIVE**, as
+ * `depositAsTheChainShows` judges its coin:
+ *
+ *   · recorded: nothing to record, and it is forgotten;
+ *   · held: the note is recorded, under the transaction the chain says created
+ *     it; once it can no longer land, without that transaction if it still
+ *     cannot be read;
+ *   · spent: it landed and has since left the vault, so it is forgotten;
+ *   · made and never named: it is kept (`DepositLandedNotYetRecorded`);
+ *   · unseen past `depositCannotLandAfter` of when it was kept, the same window
+ *     its journal line is judged by: it never will land, and it is forgotten;
+ *   · otherwise it can still arrive, and `DepositStillInFlight` says until when.
  *
  * Nothing is recorded that the vault's notes do not hold. With `files` false (a
  * check on the page, which signs nothing) a deposit the vault holds is not
@@ -2822,43 +3017,18 @@ export async function settleDepositInFlight(
   const d = await doors.inFlight.get(vault);
   if (d === null) return { state: 'none' };
   const seen = view ?? await notesAsThisDeviceReadsThem(doors, vault);
-  const { output, held } = await doors.builder.commitments({ vault, coin: d.coin });
-  const bare = (h: string) => h.toLowerCase().replace(/^0x/u, '');
-  const made = (seen.everCreated ?? []).some((c) => bare(c) === bare(output));
-  const holds = (notes: readonly string[] | undefined) => (notes ?? []).some((n) => n.toLowerCase() === held.toLowerCase());
-  const pool = new SealedNotePool(doors.records('pool'),
-    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
-  if (made && (await pool.load(vault)).notes.some((n) => n.nonce.toLowerCase() === d.coin.nonce.toLowerCase())) {
-    await letGo(doors, vault, d.claim);
-    return { state: 'already-recorded' };
-  }
-  const until = d.recordedAt + DEPOSIT_TIME_TO_LIVE_MS;
+  const { is, output } = await depositAsTheChainShows(doors, vault, d.coin, seen);
+  const until = depositCannotLandAfter(d.recordedAt);
   const past = (doors.clock ?? Date.now)() > until;
-  const landed = async (): Promise<{ state: 'recorded' | 'landed-owed-its-record' } & Partial<DepositRecorded>> => {
+  if (is === 'recorded' || is === 'spent') {
+    await letGo(doors, vault, d.claim);
+    return { state: is === 'recorded' ? 'already-recorded' : 'landed-and-since-spent' };
+  }
+  if (is === 'held') {
     if (!files) return { state: 'landed-owed-its-record' };
     return { state: 'recorded', ...await recordLandedDeposit(doors, vault, d, output, { waiting: false, giveUp: past }) };
-  };
-  if (holds(seen.notes)) return await landed() as never;
-  if (made) {
-    /*
-     * Made and not held: it landed, and either it has since left the vault (a signer recorded it, and a payment or a
-     * merge spent it) or the read saw it made before it saw it held. Only a believed version of the vault's record
-     * that ever named its nonce says the first, so only then is the claim let go: the deposit cannot be sent again.
-     */
-    let named = false;
-    for (const v of await doors.records('pool').versions(vault)) {
-      if (v.neverEntered === true) continue;
-      try {
-        const page = openPool(v.sealed, doors.me.signerId, doors.me.wrappingSecret, { record: 'pool' }) as { notes?: Array<{ nonce?: string }> };
-        if ((page.notes ?? []).some((n) => String(n.nonce).toLowerCase() === d.coin.nonce.toLowerCase())) { named = true; break; }
-      } catch {
-        /* a version this signer cannot open names nothing it can read */
-      }
-    }
-    if (!named) throw new DepositLandedNotYetRecorded(vault, d.txRef);
-    await letGo(doors, vault, d.claim);
-    return { state: 'landed-and-since-spent' };
   }
+  if (is === 'made-unnamed') throw new DepositLandedNotYetRecorded(vault, d.txRef);
   if (past) {
     await letGo(doors, vault, d.claim);
     return { state: 'never-landed' };
@@ -2905,9 +3075,10 @@ async function chainParametersForADeposit(doors: BuiltOnHereDoors, vault: Hex): 
 }
 /**
  * Puts a private deposit into the vault: refuses unless the vault is fundable, settles an earlier deposit kept on its
- * way in `doors.inFlight` first, keeps the coin before it is paid, and from the send on says the deposit may have landed
- * on every failure but one the send marks as having sent nothing. The wallet runs it whole, and its send marks none:
- * no page's word that nothing left is believed.
+ * way in `doors.inFlight` first, keeps the coin before it is paid, sends nothing the wallet hands back that is not the
+ * deposit built here (`whyNotTheDepositBuilt`), and from the send on says the deposit may have landed on every failure
+ * but one the send marks as having sent nothing. The wallet runs it whole, and its send marks none: no page's word that
+ * nothing left is believed.
  */
 export async function depositIntoCompanyVault(
   doors: DepositDoors, vault: Hex, money: DepositMoney,
@@ -2951,6 +3122,8 @@ export async function depositIntoCompanyVault(
   /* The records' newest secret is the vault's own, filed again from an earlier version when it is not. */
   await theChainWins(doors, vault, view.state);
   doors.progress?.('choosing the coin');
+  /* Taken before the coin is filed in the vault's deposit journal, so no later than the line's own time. */
+  const choosing = (doors.clock ?? Date.now)();
   const { coin } = await depositCoinOnThisDevice({
     vault, money, me: doors.me, signers: doors.signers, records: doors.records,
     chain: {
@@ -2973,23 +3146,48 @@ export async function depositIntoCompanyVault(
    */
   const { output, held } = await commitments(coin);
   /*
+   * Every reader counts this deposit's window from its journal line (filed after `choosing`, so its window ends no
+   * earlier than the one counted here) or from its record here (`recordedAt`). The built transaction's own earliest
+   * time to live, read from its bytes, must end inside both, or it could land when every reader says it never will.
+   * One whose time to live cannot be read is not sent either. Stopped here, before the wallet is asked.
+   */
+  const recordedAt = (doors.clock ?? Date.now)();
+  const read = typeof doors.builder.readTransaction === 'function'
+    ? await doors.builder.readTransaction({ transaction: built.tx }).catch(() => null) : null;
+  const endsBy = read?.timeToLive ?? null;
+  if (endsBy === null || endsBy > journalledDepositLandsBy(new Date(choosing).toISOString()) || endsBy > depositLandsBy(recordedAt)) {
+    await neverHandedOver(doors, vault, coin.nonce);
+    throw new DepositMayOutliveItsWindow(vault);
+  }
+  /*
    * **KEPT ON THIS DEVICE BEFORE THE WALLET IS ASKED, AND THIS MAY NOT MOVE
    * BELOW THE SEND.** From the send on, the money may move whatever happens to
    * this page, and this is what the next deposit from here looks for first.
    */
   const coinOnTheWire = { nonce: coin.nonce, token: coin.token, value: coin.value.toString() };
-  const first: DepositInFlight = { coin: coinOnTheWire, recordedAt: (doors.clock ?? Date.now)(), txRef: '', transactionHash: null };
+  const first: DepositInFlight = { coin: coinOnTheWire, recordedAt, txRef: '', transactionHash: null };
   /* Kept only where nothing is: another tab's deposit into this vault, kept since this one settled, stops this one here. */
   const claim = await doors.inFlight.claim(vault, first);
-  if (claim === null) throw new DepositStartedElsewhere(vault);
+  if (claim === null) {
+    await neverHandedOver(doors, vault, coin.nonce);
+    throw new DepositStartedElsewhere(vault);
+  }
   let inFlight: Kept<DepositInFlight> = { ...first, claim };
   doors.progress?.('asking your wallet');
   let paid: { transaction: string; leaves: readonly unknown[] };
   try {
     paid = await doors.pay({ company: doors.company, account: doors.account, vault: vault as VaultAddress, transaction: built.tx });
   } catch (e) {
-    await letGo(doors, vault, claim);
+    await neverHandedOver(doors, vault, coin.nonce, claim);
     throw e;
+  }
+  /* The wallet balanced, proved and signed the deposit out of this device's sight: it is sent only if it still puts in exactly the coin built here. */
+  const handedBack = typeof doors.builder.readTransaction === 'function'
+    ? await doors.builder.readTransaction({ transaction: paid.transaction }).catch(() => null) : null;
+  const notAsBuilt = whyNotTheDepositBuilt(handedBack, read, { vault, coin: output });
+  if (notAsBuilt !== null) {
+    await neverHandedOver(doors, vault, coin.nonce, claim);
+    throw new DepositNotAsBuilt(vault, notAsBuilt);
   }
   doors.progress?.('sending the deposit');
   let sent: { txRef: string; transactionHash: string | null };
@@ -2997,6 +3195,7 @@ export async function depositIntoCompanyVault(
     sent = await doors.service.deposit(vault, paid.transaction);
   } catch (e) {
     if (!sentNothing(e)) throw new DepositNotYetSeen(vault, '');
+    /* Handed to the service: its word that nothing left is not this device's own, so the journal line is not marked. */
     await letGo(doors, vault, claim);
     throw new DepositNotSent(vault, (e as Error)?.message ?? String(e));
   }
@@ -3024,17 +3223,81 @@ export interface PublicDepositMoney {
 }
 
 /**
+ * **THE SERVICE DID NOT SEND THIS PUBLIC DEPOSIT, AND THE WALLET HAS SIGNED IT.** No money has moved, but the signed
+ * transaction can still land until `publicDepositCannotLandAfter(until)`, `until` being its own time to live, and if it
+ * does, the money goes into this vault. So the same money must not be put in again before then. `refusal` is the
+ * service's own answer.
+ */
+export class PublicDepositSignedNotSent extends Error {
+  constructor(readonly vault: Hex, readonly until: number, refusal: unknown) {
+    const at = new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString();
+    super(`the public deposit was not sent, so no money has moved yet. Your wallet already signed it, and `
+      + `until ${at} anyone can still send it. If they do, the money goes into this vault and nowhere else. Do not put `
+      + `the same money in again before ${at}, or the vault may receive it twice. The service said: `
+      + `${(refusal as Error)?.message ?? String(refusal)}`);
+    this.name = 'PublicDepositSignedNotSent';
+  }
+}
+
+/**
+ * **THE WALLET SIGNED A PUBLIC DEPOSIT OTHER THAN THE ONE THIS DEVICE BUILT, AND
+ * THIS PAGE DID NOT SEND IT.** The page cannot say no money moved: the wallet
+ * holds what it signed and can send it itself until it can no longer land
+ * (`publicDepositCannotLandAfter(until)`), so, as for any signed public deposit
+ * this page did not send, the money is not put in again before then.
+ */
+export class PublicDepositNotAsBuilt extends PublicDepositSignedNotSent {
+  constructor(vault: Hex, until: number, why: string) {
+    super(vault, until, why);
+    const at = new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString();
+    this.message = `this page did not send the public deposit, because your wallet handed back a deposit other than `
+      + `the one this device built: ${why} Your wallet already signed what it handed back, and until ${at} anyone `
+      + `holding it, your wallet included, can still send it. Do not put money in again before ${at}. If your wallet's `
+      + 'public balance has not dropped by then, no money moved.';
+    this.name = 'PublicDepositNotAsBuilt';
+  }
+}
+
+/**
+ * **THE CHAIN TOOK THIS PUBLIC DEPOSIT AND REFUSED IT.** The part of the transaction that carries the vault's public
+ * deposit failed, so nothing went into the vault, and the chain will not apply the same transaction again: the money
+ * can be put in again at once. Raised only on the chain's own result for that part, read at the wallet's indexer.
+ */
+export class PublicDepositRefused extends Error {
+  constructor(readonly vault: Hex, readonly transactionHash: string) {
+    super(`the chain refused this public deposit (${transactionHash}), so nothing went into the vault and it will not `
+      + 'be tried again. You can put money in again now.');
+    this.name = 'PublicDepositRefused';
+  }
+}
+
+/**
+ * **THIS PUBLIC DEPOSIT CAN NO LONGER LAND, AND THE CHAIN DOES NOT SHOW IT.** Raised only when the wallet's indexer
+ * answered cleanly that it holds no such transaction, after the deposit's own time to live (`until`) and the margin for
+ * clocks that differ have both passed. Nothing went into the vault, and the money can be put in again.
+ */
+export class PublicDepositNeverLanded extends Error {
+  constructor(readonly vault: Hex, readonly until: number) {
+    super(`the public deposit did not reach the chain before ${new Date(until).toLocaleTimeString()}, when it stopped `
+      + 'being valid, so it never will and nothing went into the vault. You can put money in again now.');
+    this.name = 'PublicDepositNeverLanded';
+  }
+}
+
+/**
  * **A PUBLIC DEPOSIT MAY HAVE BEEN SENT, AND THIS PAGE HAS NOT SEEN IT ARRIVE.** The
  * money may have moved. Raised for every failure after the service began
  * sending, and when the chain at the wallet's indexer has not shown the deposit
  * by the end of the wait or cannot be looked at, so no screen reads it as a
- * deposit that did not happen. `cause`, when given, is why this page could not
- * see it, and is named for support.
+ * deposit that did not happen. `until` is the deposit's own time to live, read
+ * from the transaction the wallet signed; the time it names is
+ * `publicDepositCannotLandAfter(until)`. `cause`, when given, is why this page
+ * could not see it, and is named for support.
  */
 export class PublicDepositNotYetSeen extends Error {
   constructor(readonly vault: Hex, readonly until: number, cause?: unknown) {
     super('the public deposit may have been sent, and this page was not told whether it arrived. Do not put the same '
-      + `money in again before ${new Date(until).toLocaleTimeString()}. If it has not arrived by then, it never will. `
+      + `money in again before ${new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString()}. If it has not arrived by then, it never will. `
       + 'Open your wallet: if its public balance has dropped by this amount and you spent nothing else from it, the '
       + 'vault has it. "Check my last deposit" finds only private deposits, so it cannot tell you about this one.'
       + (cause === undefined ? '' : ` Details for support: ${(cause as Error)?.message ?? String(cause)}`),
@@ -3088,12 +3351,21 @@ const HEX32_TOKEN = /^[0-9a-f]{64}$/u;
  *      the token, the amount, and that both are public;
  *   4. the wallet's answer must name exactly this token and this amount leaving
  *      it, or nothing is sent;
- *   5. the service adds the network fee and sends it, and refuses one that is
- *      not exactly this vault's public deposit of this token and this amount;
- *   6. this device waits until the chain at the wallet's indexer shows the very
- *      transaction the wallet signed, applied in full and calling this vault's
- *      public deposit, and only then says it is done. It returns the chain's hash
- *      of that transaction, never the service's.
+ *   5. the transaction the wallet signed is read on this device: its
+ *      identifiers, its earliest time to live, and what it puts into the vault,
+ *      which must be exactly the call built here, taking this token and this
+ *      amount once (`whyNotTheDepositBuilt`). One this device cannot read, that
+ *      is not the deposit built, or that can no longer land, is not sent;
+ *   6. the service is handed the transaction and nothing else; it adds the
+ *      network fee and sends it, and refuses one that is not exactly one
+ *      public token, a positive amount of it, into this vault;
+ *   7. this device waits until the chain at the wallet's indexer shows the very
+ *      transaction the wallet signed with the part carrying this vault's public
+ *      deposit applied, and only then says it is done. It returns the chain's
+ *      hash of that transaction, never the service's. A deposit whose part the
+ *      chain refused ends at once with nothing paid in, and one the indexer
+ *      still does not hold once its time to live and the margin for clocks
+ *      have passed never landed.
  *
  * **WHY NOTHING IS KEPT ON THIS DEVICE.** A private deposit is kept here
  * until the chain holds it because its coin was chosen here and its note must
@@ -3123,8 +3395,8 @@ export async function depositPubliclyIntoCompanyVault(
   if (typeof doors.builder.publicDeposit !== 'function') {
     throw new Error('this page cannot build a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
   }
-  /* A deposit this page could not watch arrive would end with nobody able to say it did, so it is not started. */
-  if (typeof doors.builder.publicDepositLanded !== 'function') {
+  /* A deposit this page could not read or watch arrive would end with nobody able to say it did, so it is not started. */
+  if (typeof doors.builder.vaultCallOnChain !== 'function' || typeof doors.builder.readTransaction !== 'function') {
     throw new Error('this page cannot watch the chain for a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
   }
   doors.progress?.('building the deposit');
@@ -3145,41 +3417,70 @@ export async function depositPubliclyIntoCompanyVault(
     throw new Error('your wallet prepared a payment for something other than this public deposit, so this page did not '
       + 'send it and no money moved. You can put money in again now.');
   }
+  /*
+   * **WHEN IT CAN NO LONGER LAND, READ FROM WHAT THE WALLET SIGNED.** Every intent's time to live is checked by the
+   * chain, so the earliest is the deposit's; the fee the service merges in can only end it sooner. A transaction this
+   * device cannot read, or that names nothing to look for it by, could never be followed to the chain, and one already
+   * past its time could never land: neither is sent.
+   */
+  const read = await doors.builder.readTransaction!({ transaction: paid.transaction });
+  if (read === null || read.timeToLive === null || read.identifiers.length === 0) {
+    throw new Error('this page could not read the public deposit your wallet signed, so it did not send it and no '
+      + 'money moved. You can put money in again now.');
+  }
+  const livesUntil = read.timeToLive;
+  if ((doors.clock ?? Date.now)() >= livesUntil) {
+    throw new Error(`the public deposit your wallet signed stopped being valid at ${new Date(livesUntil).toLocaleTimeString()}, `
+      + 'so this page did not send it and no money moved. You can put money in again now.');
+  }
+  /*
+   * The wallet's own account of what it paid (`leaves`) is its word; the transaction it signed is what lands. One that
+   * is not the deposit built here is not sent, and, being signed, is said to be still sendable until it can no longer land.
+   */
+  const builtRead = await doors.builder.readTransaction!({ transaction: built.tx }).catch(() => null);
+  const notAsBuilt = whyNotTheDepositBuilt(read, builtRead, { vault, token: money.token, amount: money.value });
+  if (notAsBuilt !== null) throw new PublicDepositNotAsBuilt(vault, livesUntil, notAsBuilt);
   doors.progress?.('sending the deposit');
-  /* The deposit is built to live an hour, and no longer than this, clocks disagreeing included. */
-  const livesUntil = (doors.clock ?? Date.now)() + DEPOSIT_TIME_TO_LIVE_MS;
   let sent: { txRef: string; transactionHash: string | null };
   try {
-    sent = await doors.service.depositPublicly(vault, paid.transaction, { token: money.token, amount: money.value.toString() });
+    sent = await doors.service.depositPublicly(vault, paid.transaction);
   } catch (e) {
     if (!sentNothing(e)) throw new PublicDepositNotYetSeen(vault, livesUntil);
-    const at = new Date(livesUntil).toLocaleTimeString();
-    throw new Error(`the public deposit was not sent, so no money has moved yet. Your wallet already signed it, and `
-      + `until ${at} anyone can still send it. If they do, the money goes into this vault and nowhere else. Do not put `
-      + `the same money in again before ${at}, or the vault may receive it twice. The service said: `
-      + `${(e as Error)?.message ?? String(e)}`);
+    throw new PublicDepositSignedNotSent(vault, livesUntil, e);
   }
   /*
    * **DONE ONLY WHEN THE CHAIN SHOWS IT.** The service's answer, its hash included, is its own word. The deposit is
    * looked for at the indexer the wallet names, by the identifiers of the very transaction the wallet signed, which the
-   * service's fee does not change: applied in full, and calling this vault's public deposit. Another deposit of the
-   * same token and amount is another transaction and is never taken for this one. A read that may come right if asked
-   * again keeps the wait going; one that cannot ends it at once. Either way the person is told the deposit may have
-   * been sent, with the last reason the page could not see it.
+   * service's fee does not change, and judged by the part of it that carries this vault's public deposit
+   * (`vaultCallOnChain`). Another deposit of the same token and amount is another transaction and is never taken for
+   * this one. A part the chain refused ends the wait at once: nothing went in. A read that may come right if asked again
+   * keeps the wait going; one that cannot, or an answer that cannot say whether the deposit took effect, ends it at once
+   * as may have been sent. Only a clean answer that the indexer holds no such transaction, once the deposit's own time
+   * and the margin for clocks have passed, says it never landed.
    */
   doors.progress?.('waiting for the chain');
+  const clock = doors.clock ?? Date.now;
   let lastFailure: unknown;
-  const seen = await until<{ readonly found: { readonly transactionHash: string } } | { readonly cannot: unknown }>(doors, async () => {
+  type Look = { readonly found: VaultCallOnChain } | { readonly cannot: unknown } | { readonly never: true };
+  const seen = await until<Look>(doors, async () => {
     try {
-      const found = await doors.builder.publicDepositLanded!({ vault, transaction: paid.transaction, indexer: await theWalletsIndexer(doors, vault) });
-      return found === null ? null : { found };
+      const found = await doors.builder.vaultCallOnChain!({
+        vault, entryPoints: [PUBLIC_DEPOSIT_ENTRY], transaction: paid.transaction, indexer: await theWalletsIndexer(doors, vault),
+      });
+      if (found.of !== 'not-seen') return { found };
+      return clock() > publicDepositCannotLandAfter(livesUntil) ? { never: true } : null;
     } catch (e) {
       lastFailure = e;
       return aLookThatMayClear(e) ? null : { cannot: e };
     }
   });
   if (seen === null) throw new PublicDepositNotYetSeen(vault, livesUntil, lastFailure);
-  if (!('found' in seen)) throw new PublicDepositNotYetSeen(vault, livesUntil, seen.cannot);
+  if ('never' in seen) throw new PublicDepositNeverLanded(vault, livesUntil);
+  if ('cannot' in seen) throw new PublicDepositNotYetSeen(vault, livesUntil, seen.cannot);
+  if (seen.found.of === 'refused') throw new PublicDepositRefused(vault, seen.found.transactionHash);
+  if (seen.found.of !== 'landed') {
+    throw new PublicDepositNotYetSeen(vault, livesUntil, new Error(seen.found.of === 'not-known' ? seen.found.why : seen.found.of));
+  }
   doors.progress?.('done');
   return { txRef: sent.txRef, transactionHash: seen.found.transactionHash, token: money.token, value: money.value };
 }
@@ -3189,10 +3490,12 @@ export async function depositPubliclyIntoCompanyVault(
 /**
  * **A PRIVATE PAYMENT THIS DEVICE HAS HANDED OVER TO BE SENT AND HAS NOT YET
  * RECORDED.** Kept on this device, sealed under the signer's own key, from
- * just before the send until the vault's record shows it. It keeps the one
- * thing nothing else can give back: the coin the payment returns to the vault,
- * read when the payment was built. Without it, a payment that landed while
- * this page was not watching leaves change nobody can name.
+ * just before the send until the vault's record shows it. It keeps what
+ * nothing else can give back: the coin the payment returns to the vault, read
+ * when the payment was built, or, for a payment that returns none, its own
+ * transaction's identifiers, by which alone the chain says it landed. Without
+ * them, a payment that landed while this page was not watching leaves nothing
+ * anyone can name it by.
  */
 export interface PaymentInFlight {
   /** The note the payment spends first. */
@@ -3208,6 +3511,17 @@ export interface PaymentInFlight {
   readonly recordedAt: number;
   readonly txRef: string;
   readonly transactionHash: string | null;
+  /**
+   * For a payment that keeps no change, read before the send from the transaction handed over to be sent: every
+   * identifier the chain can be asked about it by (binding it and merging a fee into it leave each one as it was).
+   * Absent on a step that keeps a coin. A payment that keeps no coin and whose record lacks them cannot name its own
+   * transaction, so it is never recorded as landed.
+   */
+  readonly identifiers?: readonly string[];
+  /** The same transaction's earliest time to live, in milliseconds since the epoch: after it, it can no longer land. */
+  readonly timeToLive?: number;
+  /** The same transaction (base64), from which the worker reads its identifiers and its call to the vault again. */
+  readonly transaction?: string;
 }
 
 /** One payment in flight per vault on this device, changed or forgotten only under the claim it was kept with. */
@@ -3226,17 +3540,28 @@ export interface PayoutDoors extends PoolDoors {
 /**
  * **AN EARLIER PAYMENT OUT OF THIS VAULT FROM THIS BROWSER IS NOT IN THE
  * VAULT'S RECORD YET, AND CAN STILL BE.** No note is chosen for another: the
- * vault's record does not yet say which notes are left.
+ * vault's record does not yet say which notes are left. `unread` when it is
+ * held because something on the chain could not be read: then it stays held
+ * until the chain can be read, whatever the time, and the words never name a
+ * time after which it is let go.
  */
 export class PaymentStillInFlight extends Error {
-  constructor(readonly vault: Hex, readonly txRef: string, readonly until: number, why?: string) {
-    const at = new Date(until).toLocaleString();
+  readonly unread: boolean;
+  constructor(
+    readonly vault: Hex, readonly txRef: string, readonly until: number, why?: string,
+    held: { readonly unread?: boolean } = {},
+  ) {
+    const at = timeShown(until);
     super(`an earlier payment out of this vault from this browser${txRef === '' ? '' : ` (${txRef})`} is not in the `
       + `vault's record yet${why === undefined ? '' : ` (${why})`}, so no other payment is made from here until it is. `
-      + `Nothing new was prepared or sent. Try again in a minute: once the chain shows it, it is recorded first. If `
-      + `the chain has not shown it by ${at}, it never will, and after then payments go ahead as soon as this vault's `
-      + 'history can be read.');
+      + `Nothing new was prepared or sent. Try again in a minute: once the chain shows it, it is recorded first. `
+      + (held.unread === true
+        ? 'The chain could not be read just now. This payment stays held, and no other payment leaves this vault from '
+          + 'here, until it can be.'
+        : `If the chain has not shown it by ${at}, it never will, and after then payments go ahead as soon as this `
+          + 'vault\'s history can be read.'));
     this.name = 'PaymentStillInFlight';
+    this.unread = held.unread === true;
   }
 }
 
@@ -3300,6 +3625,20 @@ export class PaymentNotAsBuilt extends Error {
   }
 }
 
+/**
+ * **A PAYMENT THE CHAIN REFUSED.** Its own transaction is on the chain, and the
+ * part of it that carries this vault's payout did not take effect, so no money
+ * left the vault by it. It is let go at once.
+ */
+export class PaymentRefusedOnChain extends Error {
+  constructor(readonly vault: Hex, readonly transactionHash: string) {
+    super(`the chain refused the payment${transactionHash === '' ? '' : ` (${transactionHash})`}, so no money left the `
+      + 'vault by it and nobody was paid by it. The run shows whether this person is still owed: open it again before '
+      + 'paying them.');
+    this.name = 'PaymentRefusedOnChain';
+  }
+}
+
 const HEX64 = /^[0-9a-f]{64}$/u;
 
 /** A note as the page's vault worker is handed one: its value written as whole digits. */
@@ -3357,6 +3696,49 @@ const lowerOf = (h: string): string => h.toLowerCase();
 const coinOnTheWire = (c: { readonly nonce: Hex; readonly token: Hex; readonly value: bigint }): NoteOnTheWire =>
   ({ nonce: c.nonce, token: c.token, value: c.value.toString() });
 
+/** The one circuit of the vault a payment out of it calls. */
+const A_PAYOUT: readonly string[] = ['payout'];
+
+/**
+ * **UNTIL WHEN A PAYMENT ON ITS WAY CAN STILL LAND.** Never before
+ * `DEPOSIT_TIME_TO_LIVE_MS` after it was kept; for a record that kept its own
+ * transaction's time to live, never before that time plus the one margin for
+ * clocks that differ (`DEPOSIT_CLOCKS_MAY_DIFFER_MS`).
+ */
+const paymentLandsBy = (p: PaymentInFlight): number => {
+  const kept = p.recordedAt + DEPOSIT_TIME_TO_LIVE_MS;
+  return typeof p.timeToLive === 'number' && Number.isFinite(p.timeToLive)
+    ? Math.max(kept, p.timeToLive + DEPOSIT_CLOCKS_MAY_DIFFER_MS) : kept;
+};
+
+/**
+ * What the chain says of a payment's own transaction: `vaultCallOnChain`'s
+ * answer, or `unnamed` when the record names no transaction of its own, or
+ * `cannot` when the chain could not be asked, which says nothing about whether
+ * it landed.
+ */
+type OwnPaymentSeen = VaultCallOnChain | { readonly of: 'unnamed' } | { readonly of: 'cannot'; readonly why: string };
+
+/**
+ * **A PAYMENT'S OWN TRANSACTION, LOOKED FOR ON THE CHAIN.** Asked in the worker
+ * at the wallet's indexer by the identifiers of the transaction the record
+ * kept, and judged by the part of it that carries this vault's payout
+ * (`vaultCallOnChain`). A hash the service answered with is never asked for.
+ */
+async function ownPaymentOnChain(doors: PayoutDoors, vault: Hex, p: PaymentInFlight): Promise<OwnPaymentSeen> {
+  if (!Array.isArray(p.identifiers) || p.identifiers.length === 0 || typeof p.transaction !== 'string') return { of: 'unnamed' };
+  if (typeof doors.builder.vaultCallOnChain !== 'function') {
+    return { of: 'cannot', why: 'this page cannot ask the chain about a payment by its own transaction' };
+  }
+  try {
+    return await doors.builder.vaultCallOnChain({
+      vault, entryPoints: [...A_PAYOUT], transaction: p.transaction, indexer: await theWalletsIndexer(doors, vault),
+    });
+  } catch (e) {
+    return { of: 'cannot', why: whyAfterTheSend(e) };
+  }
+}
+
 /**
  * **A STEP WRITTEN IN THE VAULT'S PAYMENT JOURNAL THAT SPENT A NOTE THIS
  * PAYMENT SPENDS, AND LANDED.** A note is spent once, so when another step -
@@ -3370,13 +3752,17 @@ const coinOnTheWire = (c: { readonly nonce: Hex; readonly token: Hex; readonly v
  * that coin, holds none of the notes the line names, and does not hold this
  * payment's own change. A line identical to this payment's is this payment.
  * For a payment that kept no change, and so left no coin of its own to look
- * for, a line counts only when the first note it names is one this payment
- * spends: a coin names the note it was made from, so that coin on the chain
- * says this payment's note went into another step, and this payment cannot
- * have landed.
+ * for, a line whose first note is one this payment spends counts at once: a
+ * coin names the note it was made from, so that coin on the chain says this
+ * payment's note went into another step, and this payment cannot have landed.
+ * A line that names this payment's note only beside its first counts only once
+ * this payment is established as not landed (`notLanded`: its own transaction
+ * refused, or unseen past its window): that coin names the other note, which
+ * another step may have spent, so until then it cannot say this payment did
+ * not land, and a payment that paid never reads as payable again.
  */
 async function overtakenBy(
-  doors: PayoutDoors, vault: Hex, p: PaymentInFlight, onChain: ReadonlySet<string>, until: number,
+  doors: PayoutDoors, vault: Hex, p: PaymentInFlight, onChain: ReadonlySet<string>, until: number, notLanded: boolean,
 ): Promise<{
   readonly spent: Hex; readonly further: readonly Hex[]; readonly amount: string; readonly kept: NoteOnTheWire; readonly createdIn: Hex;
 } | null> {
@@ -3401,14 +3787,13 @@ async function overtakenBy(
   for (const a of attempts) {
     const notes = [a.spent, ...(a.further ?? [])];
     if (!notes.some((n) => mine.includes(lowerOf(n.nonce)))) continue;
-    /* With no change of its own on the chain to weigh it against, only a coin made from this payment's own note says so. */
-    if (p.change === null && !mine.includes(lowerOf(a.spent.nonce))) continue;
-    const step = {
-      spent: a.spent, ...(a.further === undefined || a.further.length === 0 ? {} : { further: a.further }),
-      amount: a.amount, ...(a.step === 'merge' ? { merge: true } : {}),
-    };
+    /*
+     * With no change of its own on the chain to weigh it against, only a coin made from this payment's own note says
+     * so, until this payment is established as not landed.
+     */
+    if (p.change === null && !notLanded && !mine.includes(lowerOf(a.spent.nonce))) continue;
     /* A line identical to this payment's is this payment: the same notes and amount make the same change. */
-    if (attemptKey(step) === thisPayment) continue;
+    if (attemptKey(stepOfLine(a)) === thisPayment) continue;
     /* A step that landed spent every note it names: one the chain still holds says this line is not the one that landed. */
     let allGone = true;
     for (const n of notes) if (onChain.has(await heldOf(coinOnTheWire(n)))) allGone = false;
@@ -3433,7 +3818,8 @@ async function overtakenBy(
     const found = await creatingTransactionOfOutput(doors, vault, output, null, 'the coin of the step that spent this payment\'s note');
     if (found.state !== 'found') {
       throw new PaymentStillInFlight(vault, p.txRef, until,
-        'a step that spent the note it would spend has landed, and the transfer that made that step\'s coin cannot be read yet');
+        'a step that spent the note it would spend has landed, and the transfer that made that step\'s coin cannot be read yet',
+        { unread: true });
     }
     return {
       spent: a.spent.nonce, further: (a.further ?? []).map((n) => n.nonce), amount: a.amount.toString(), kept, createdIn: found.createdIn,
@@ -3446,14 +3832,15 @@ async function overtakenBy(
  * **WHEN ANOTHER STEP SPENT A NOTE THIS ONE SPENDS AND LANDED, THAT STEP IS
  * RECORDED AS THE CHAIN HOLDS IT**: every note it spent gone, its coin added
  * under the transaction that made it. Asked of a step on its way wherever it
- * is settled - when this browser looks again, and when a step whose send named
- * no transaction is found by its note leaving the vault - so a step another
- * holder made is never recorded as this one. `true` when it was.
+ * is settled - when this browser looks again, and while a payment that kept no
+ * change is watched for and its own transaction is not seen yet - so a step
+ * another holder made is never recorded as this one. `notLanded` as
+ * `overtakenBy` takes it. `true` when it was.
  */
 async function recordedIfOvertaken(
-  doors: PayoutDoors, vault: Hex, p: PaymentInFlight, onChain: ReadonlySet<string>, until: number,
+  doors: PayoutDoors, vault: Hex, p: PaymentInFlight, onChain: ReadonlySet<string>, until: number, notLanded: boolean,
 ): Promise<boolean> {
-  const overtaken = await overtakenBy(doors, vault, p, onChain, until);
+  const overtaken = await overtakenBy(doors, vault, p, onChain, until, notLanded);
   if (overtaken === null) return false;
   await recordPayment(doors, vault, overtaken.spent as Hex, overtaken.further as Hex[], overtaken.amount, overtaken.kept, overtaken.createdIn);
   return true;
@@ -3465,10 +3852,21 @@ async function recordedIfOvertaken(
  *   · the vault's record no longer holds the note it spent (this browser or
  *     another signer recorded it): nothing to record, and it is forgotten;
  *   · the chain still holds that note: nothing spent it yet. Once the
- *     payment's own time to live has passed it never will, and it is
+ *     payment's window (`paymentLandsBy`) has passed it never will, and it is
  *     forgotten; until then `PaymentStillInFlight`;
- *   · the chain no longer holds that note and the payment left no change: the
- *     note is taken out of the record, and nothing is added;
+ *   · the chain no longer holds that note and the payment left no change: it
+ *     landed only when the chain shows its own transaction, by the identifiers
+ *     it kept, take effect in the part that carries this vault's payout. Then
+ *     its notes are taken out of the record and nothing is added. Its notes
+ *     leaving is never enough: another step may have spent them. Refused, or
+ *     unseen on a clean look past its window, it never landed: a step the
+ *     journal names that spent its note, first or beside another, is written
+ *     into the record as below, and otherwise it is forgotten and the next
+ *     open's rebuild files the coin of whatever spent the note. Unseen inside
+ *     its window, or when the chain could not be asked, `PaymentStillInFlight`.
+ *     A record that names no transaction of its own, or whose transaction the
+ *     chain answers about in a way this cannot read, is let go as
+ *     `not-matched` once its window has passed;
  *   · the chain no longer holds that note and the transaction that made the
  *     payment's change can be read: the note goes and the change is added
  *     under that transaction, found by the change's own commitment when the
@@ -3498,11 +3896,11 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
     return { state: 'already-recorded' };
   }
   const seen = view ?? await notesAsThisDeviceReadsThem(doors, vault);
-  const until = p.recordedAt + DEPOSIT_TIME_TO_LIVE_MS;
+  const until = paymentLandsBy(p);
   const past = (doors.now ?? (() => new Date()))().getTime() > until;
   /* Only a view that read the vault's notes can say the note it spent has left. */
   if (seen.onChain !== true || !Array.isArray(seen.notes)) {
-    throw new PaymentStillInFlight(vault, p.txRef, until, 'the vault\'s notes could not be read just now');
+    throw new PaymentStillInFlight(vault, p.txRef, until, 'the vault\'s notes could not be read just now', { unread: true });
   }
   const { held } = await doors.builder.commitments({ vault, coin: p.spent });
   if (seen.notes.some((n) => n.toLowerCase() === held.toLowerCase())) {
@@ -3512,7 +3910,8 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
     }
     throw new PaymentStillInFlight(vault, p.txRef, until);
   }
-  if (await recordedIfOvertaken(doors, vault, p, new Set(seen.notes.map(lowerOf)), until)) {
+  const onChain = new Set(seen.notes.map(lowerOf));
+  if (await recordedIfOvertaken(doors, vault, p, onChain, until, false)) {
     await forget();
     return { state: 'overtaken' };
   }
@@ -3527,9 +3926,30 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
       }
       throw new PaymentStillInFlight(vault, p.txRef, until, 'a note it spends is still held on the chain');
     }
-    await recordPayment(doors, vault, p.spent.nonce, (p.further ?? []).map((n) => n.nonce), p.amount, null, null);
-    await forget();
-    return { state: 'recorded', createdIn: null };
+    /* **ONLY ITS OWN TRANSACTION SAYS IT LANDED.** */
+    const own = await ownPaymentOnChain(doors, vault, p);
+    if (own.of === 'landed') {
+      await recordPayment(doors, vault, p.spent.nonce, (p.further ?? []).map((n) => n.nonce), p.amount, null, null);
+      await forget();
+      return { state: 'recorded', createdIn: null };
+    }
+    /* An indexer that could not be asked is not an answer: never landed only on a clean look past the window. */
+    const notLanded = own.of === 'refused' || (own.of === 'not-seen' && past);
+    if (notLanded) {
+      if (await recordedIfOvertaken(doors, vault, p, onChain, until, true)) {
+        await forget();
+        return { state: 'overtaken' };
+      }
+      await forget();
+      return { state: 'never-landed' };
+    }
+    if ((own.of === 'unnamed' || own.of === 'not-known') && past) {
+      await forget();
+      return { state: 'not-matched' };
+    }
+    throw new PaymentStillInFlight(vault, p.txRef, until, own.of === 'cannot' || own.of === 'not-known' ? own.why
+      : own.of === 'unnamed' ? 'this browser\'s record of it does not name its own transaction, and the chain no longer holds the note it spent'
+        : 'the chain has not shown its own transaction yet', { unread: own.of === 'cannot' });
   }
   const { output, held: heldChange } = await doors.builder.commitments({ vault, coin: p.change });
   const found = await creatingTransactionOfOutput(doors, vault, output, p.transactionHash, 'this payment\'s change');
@@ -3560,8 +3980,10 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
     await forget();
     return { state: 'not-matched' };
   }
+  /* Only an answer the time can settle names the time: one still waiting on a read, or on a change the chain holds, does not. */
   throw new PaymentStillInFlight(vault, p.txRef, until, found.state === 'unknown' ? found.why
-    : 'the chain no longer holds the note it spent, and the transfer that made its change cannot be read yet');
+    : 'the chain no longer holds the note it spent, and the transfer that made its change cannot be read yet',
+  { unread: found.state !== 'unknown' && (found.listed !== 'none' || changeOnChain) });
 }
 
 /**
@@ -3732,11 +4154,21 @@ async function filableHere(doors: RebuildDoors, said: string[]): Promise<Readonl
  * not believed, every line not read and every note not named, in words.
  * `leaver` is the part of it a leaving seat's filings left: what the chain
  * contradicts in them, which a balance read shows as its answer.
+ * `unsealed` is, as codes, every way a record was left not sealed to every
+ * signer the directory seats: the words in `said` are for a person, and
+ * nothing reads them to decide anything.
  */
+export const NOT_SEALED = Object.freeze({
+  signersNotRead: 'signers-not-read',
+  notFiledHere: 'not-filed-here',
+  notFiledFailed: 'not-filed-failed',
+} as const);
+export type NotSealed = typeof NOT_SEALED[keyof typeof NOT_SEALED];
+
 export type NotesHere = (
   | { readonly of: 'as-filed' | 'filed' | 'not-filed'; readonly notes: readonly Note[]; readonly unexplained: number; readonly said: readonly string[] }
   | { readonly of: 'not-read'; readonly said: readonly string[] }
-) & { readonly leaver?: readonly string[] };
+) & { readonly leaver?: readonly string[]; readonly unsealed?: readonly NotSealed[] };
 
 const REBUILD_ATTEMPTS = 5;
 /*
@@ -3790,23 +4222,24 @@ const failedSaying = (e: unknown): string => (e as Error)?.message ?? String(e);
 export async function vaultNotesHere(doors: RebuildDoors, vault: Hex, view?: VaultChainView): Promise<NotesHere> {
   const said: string[] = [];
   const leaver: string[] = [];
+  const unsealed: NotSealed[] = [];
   try {
     for (let attempt = 1; ; attempt += 1) {
-      const done = await rebuiltOnce(doors, vault, attempt === 1 ? view : undefined, said, leaver);
-      if (done !== 'lost-a-race') return { ...done, leaver };
+      const done = await rebuiltOnce(doors, vault, attempt === 1 ? view : undefined, said, leaver, unsealed);
+      if (done !== 'lost-a-race') return { ...done, leaver, unsealed };
       if (attempt === REBUILD_ATTEMPTS) {
         said.push(`another device filed this vault's record first on all ${REBUILD_ATTEMPTS} attempts, so nothing was filed from here`);
-        return { of: 'not-read', said, leaver };
+        return { of: 'not-read', said, leaver, unsealed };
       }
     }
   } catch (e) {
     said.push(failedSaying(e));
-    return { of: 'not-read', said, leaver };
+    return { of: 'not-read', said, leaver, unsealed };
   }
 }
 
 async function rebuiltOnce(
-  doors: RebuildDoors, vault: Hex, given: VaultChainView | undefined, said: string[], leaver: string[],
+  doors: RebuildDoors, vault: Hex, given: VaultChainView | undefined, said: string[], leaver: string[], unsealed: NotSealed[],
 ): Promise<NotesHere | 'lost-a-race'> {
   let view = given;
   if (view === undefined) {
@@ -3823,7 +4256,7 @@ async function rebuiltOnce(
   const onChain = new Set(chainNotes);
   const heldOf = new Map<string, string>();
   const held = async (n: { readonly nonce: string; readonly token: string; readonly value: bigint | string }): Promise<string> => {
-    const key = `${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}`;
+    const key = noteKey(n);
     if (!heldOf.has(key)) heldOf.set(key, (await doors.builder.commitments({ vault, coin: coinWire(n) })).held.toLowerCase());
     return heldOf.get(key)!;
   };
@@ -3858,11 +4291,11 @@ async function rebuiltOnce(
   const recorded = new Set<string>();
   for (const n of poolNotes) recorded.add(await held(n));
   const unnamed = chainNotes.filter((c) => !recorded.has(c));
-  const notHeld = poolNotes.filter((n) => !onChain.has(heldOf.get(`${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}`)!));
-  const readers = await readersMissing(doors, vault, said);
+  const notHeld = poolNotes.filter((n) => !onChain.has(heldOf.get(noteKey(n))!));
+  const readers = await readersMissing(doors, vault, said, unsealed);
 
   if (loaded !== null && unnamed.length === 0 && notHeld.length === 0) {
-    if (readers.length > 0) await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said);
+    if (readers.length > 0) await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said, unsealed);
     return { of: 'as-filed', notes: poolNotes, unexplained: 0, said };
   }
   if (doors.builder.vaultRebuilt === undefined) {
@@ -4026,7 +4459,7 @@ async function rebuiltOnce(
   const before = new Set(poolNotes.map(noteText));
   const changed = next.length !== poolNotes.length || next.some((n) => !before.has(noteText(n)));
   if (!changed) {
-    if (loaded !== null && readers.length > 0) await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said);
+    if (loaded !== null && readers.length > 0) await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said, unsealed);
     return { of: loaded === null ? 'not-filed' : 'as-filed', notes: poolNotes, unexplained: rebuilt.unexplained.length, said };
   }
   if (loaded === null) {
@@ -4044,21 +4477,23 @@ async function rebuiltOnce(
     said.push(`the notes found were not filed: ${failedSaying(e)}`);
     return { of: 'not-filed', notes: next, unexplained: rebuilt.unexplained.length, said };
   }
-  if (readers.length > 0) await sealedToEverySigner(doors, vault, null, null, readers, filable, said);
+  if (readers.length > 0) await sealedToEverySigner(doors, vault, null, null, readers, filable, said, unsealed);
   return { of: 'filed', notes: next, unexplained: rebuilt.unexplained.length, said };
 }
 
 /**
  * Which of the vault's records - the pool and the two journals, each as the
  * one check gives its newest version - a signer the directory seats cannot
- * open, because it was last filed before they were seated.
+ * open, because it was last filed before they were seated. When the signers
+ * cannot be read, that is said and coded in `unsealed`.
  */
-async function readersMissing(doors: RebuildDoors, vault: Hex, said: string[]): Promise<Array<'pool' | 'deposit-journal' | 'payment-journal'>> {
+async function readersMissing(doors: RebuildDoors, vault: Hex, said: string[], unsealed: NotSealed[]): Promise<Array<'pool' | 'deposit-journal' | 'payment-journal'>> {
   let ids: string[];
   try {
     ids = (await doors.signers()).map((x) => x.id);
   } catch (e) {
     said.push(`who the company's signers are was not read, so no record was sealed to more of them: ${failedSaying(e)}`);
+    unsealed.push(NOT_SEALED.signersNotRead);
     return [];
   }
   const out: Array<'pool' | 'deposit-journal' | 'payment-journal'> = [];
@@ -4076,17 +4511,19 @@ async function readersMissing(doors: RebuildDoors, vault: Hex, said: string[]): 
 /**
  * **THE NEWEST POOL AND JOURNALS, FILED AGAIN UNCHANGED, SEALED TO EVERY SIGNER
  * THE DIRECTORY SEATS**, so a signer seated after their last version opens
- * them. Only a seat that reads them and may file does it; a refusal is said.
+ * them. Only a seat that reads them and may file does it; a refusal is said, and
+ * coded in `unsealed`.
  * `pool` and `loaded` are given only when the pool itself still needs it.
  */
 async function sealedToEverySigner(
   doors: RebuildDoors, vault: Hex, pool: SealedNotePool | null, loaded: Awaited<ReturnType<SealedNotePool['load']>> | null,
-  records: ReadonlyArray<VaultRecordKind>, filable: ReadonlySet<VaultRecordKind>, said: string[],
+  records: ReadonlyArray<VaultRecordKind>, filable: ReadonlySet<VaultRecordKind>, said: string[], unsealed: NotSealed[],
 ): Promise<void> {
   for (const record of records) {
     if (!filable.has(record)) {
       said.push(`this vault's ${record} is not filed again for a signer who cannot open it yet: `
         + (doors.seatHere === undefined ? 'a read files nothing, and a seat action in a signer\'s wallet owes it' : 'this device\'s seat may not file it'));
+      unsealed.push(NOT_SEALED.notFiledHere);
       continue;
     }
     try {
@@ -4107,6 +4544,7 @@ async function sealedToEverySigner(
     } catch (e) {
       if (isALostPoolRace(e)) continue;
       said.push(`this vault's ${record} was not filed again for a signer who cannot open it yet: ${failedSaying(e)}`);
+      unsealed.push(NOT_SEALED.notFiledFailed);
     }
   }
 }
@@ -4299,10 +4737,13 @@ async function writtenDown(
 /**
  * **ONE BUILT STEP OUT OF THE VAULT, KEPT, SENT, WATCHED AND RECORDED.** Kept on
  * this device before it is sent; sent through `send`; from then on every
- * failure says the step may have landed. It is confirmed only by its own
- * transaction's events, read on this device - or, when the send named none, by
- * the coin it kept, or by its first note leaving the vault - and the vault's
- * record is advanced on those and nothing else.
+ * failure says the step may have landed. A step that keeps a coin is confirmed
+ * only by its own transaction's events, read on this device - or, when the
+ * send named none, by the coin it kept. A payment that keeps no coin is
+ * confirmed only by the chain showing its own transaction, by the identifiers
+ * read from it before the send, take effect in the part that carries this
+ * vault's payout; never by its notes leaving, and never by a hash the service
+ * named. The vault's record is advanced on those and nothing else.
  */
 async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
   readonly notes: readonly NoteOnTheWire[];
@@ -4317,16 +4758,35 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
   const [note, ...further] = s.notes as unknown as NoteAsHex[];
   if (note === undefined) throw new Error('a step that spends no note is not sent. Nothing was sent.');
   /*
+   * **A PAYMENT THAT KEEPS NO COIN IS KNOWN ON THE CHAIN ONLY BY ITS OWN
+   * TRANSACTION**, so it is not sent unless that transaction names itself: at
+   * least one identifier, a time to live, and exactly one payout of this vault.
+   */
+  const byItsOwn = s.kept === null && !s.merge;
+  let named: Pick<PaymentInFlight, 'identifiers' | 'timeToLive' | 'transaction'> = {};
+  if (byItsOwn) {
+    const read = typeof doors.builder.readTransaction === 'function' && typeof doors.builder.vaultCallOnChain === 'function'
+      ? await doors.builder.readTransaction({ transaction: s.tx }).catch(() => null) : null;
+    const bare = (h: string) => lowerOf(h).replace(/^0x/u, '');
+    const payouts = read === null ? [] : read.calls.filter((c) => bare(c.address) === bare(vault) && A_PAYOUT.includes(c.entryPoint));
+    if (read === null || read.identifiers.length === 0 || read.timeToLive === null || payouts.length !== 1) {
+      throw new Error('this page could not read the payment it built well enough to find it on the chain afterwards, so '
+        + 'it did not send it. Nothing was sent and nobody was paid by it. Reload the page and pay again.');
+    }
+    named = { identifiers: [...read.identifiers], timeToLive: read.timeToLive, transaction: s.tx };
+  }
+  /*
    * **KEPT ON THIS DEVICE BEFORE IT IS SENT, AND THIS MAY NOT MOVE BELOW THE
-   * SEND.** The coin kept is known only from the build, and from the send on the
-   * step may land whatever happens to this page; this is what lets the record
-   * be written once it does.
+   * SEND.** The coin kept, and a payment's own transaction, are known only from
+   * the build, and from the send on the step may land whatever happens to this
+   * page; this is what lets the record be written once it does.
    */
   const first: PaymentInFlight = {
     spent: { nonce: note.nonce, token: note.token, value: note.value },
     ...(further.length === 0 ? {} : { further: further.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value })) }),
     ...(s.merge ? { merge: true as const } : {}),
     amount: s.amount, change: s.kept, recordedAt: (doors.now ?? (() => new Date()))().getTime(), txRef: '', transactionHash: null,
+    ...named,
   };
   const claim = await doors.inFlight.claim(vault, first);
   if (claim === null) throw new PaymentStartedElsewhere(vault);
@@ -4347,36 +4807,38 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
 
   /* ---- from here the money may have moved, and every failure says so ---- */
   try {
-    await doors.inFlight.update(vault, claim, { ...first, txRef: sent.txRef, transactionHash: sent.transactionHash })
-      .catch(() => { /* the record kept before still names the coin kept, and the chain is asked by its commitment */ });
-    const named = sent.transactionHash === null ? null : sent.transactionHash.toLowerCase();
-    const hash = named !== null && HEX64.test(named) ? named : null;
+    const inFlight: PaymentInFlight = { ...first, txRef: sent.txRef, transactionHash: sent.transactionHash };
+    await doors.inFlight.update(vault, claim, inFlight)
+      .catch(() => { /* the record kept before still names the coin kept, or the payment's own transaction */ });
+    const answered = sent.transactionHash === null ? null : sent.transactionHash.toLowerCase();
+    const hash = answered !== null && HEX64.test(answered) ? answered : null;
     doors.progress?.(s.words.waiting);
     /*
-     * **WITHOUT A NAME FROM THE SEND, THE STEP IS FOUND BY WHAT IT LEFT.** The
-     * coin it kept by that coin's own commitment, in this vault's history; a
-     * step that kept none, by its note leaving the vault - once no other step
-     * the journal names is the one that spent it. Either way its own events,
-     * once found, are judged exactly as a named transaction's are.
+     * **WITHOUT A NAME FROM THE SEND, A STEP THAT KEPT A COIN IS FOUND BY IT**,
+     * by that coin's own commitment, in this vault's history, and its own
+     * events, once found, are judged exactly as a named transaction's are.
      */
-    const heldSpent = hash === null && s.kept === null ? await heldOfANote(doors, vault, s.notes[0]!) : null;
-    /* Every note it spends leaves in the one transaction, so a step whose other notes are still held has not landed. */
-    const heldFurther = heldSpent === null ? [] : await Promise.all(s.notes.slice(1).map((n) => heldOfANote(doors, vault, n)));
+    const heldSpent = byItsOwn ? await heldOfANote(doors, vault, s.notes[0]!) : null;
     const keptOutput = hash === null && s.kept !== null
       ? (await doors.builder.commitments({ vault, coin: s.kept })).output : null;
     let unchecked: string | undefined;
     const confirmed = await until(doors, async () => {
-      if (hash === null && heldSpent !== null) {
-        /* Only a view that read the vault's notes can say the note has left: an unreadable one says nothing. */
+      if (byItsOwn) {
+        const own = await ownPaymentOnChain(doors, vault, inFlight);
+        if (own.of === 'landed') return { state: 'landed' as const, createdIn: own.transactionHash };
+        if (own.of === 'refused') return { state: 'refused' as const, transactionHash: own.transactionHash };
+        if (own.of === 'cannot' || own.of === 'not-known') unchecked = own.why;
+        /*
+         * Not seen yet. Its note leaving says nothing of this payment, but a step the journal names that spent it
+         * first and landed says this one never can - asked as settling asks it. Only a view that read the vault's
+         * notes can say the note has left: an unreadable one says nothing.
+         */
         const now = await notesAsThisDeviceReadsThem(doors, vault).catch(() => null);
         if (now === null || now.onChain !== true || !Array.isArray(now.notes)) return null;
         if (now.notes.some((n) => n.toLowerCase() === heldSpent)) return null;
-        if (heldFurther.some((h) => now.notes!.some((n) => n.toLowerCase() === h))) return null;
-        /* The note left: by this step, or by another the journal names that landed first - asked as settling asks it. */
         try {
           const onChain = new Set<string>(now.notes.map((n: string) => lowerOf(n)));
-          const inFlight = { ...first, txRef: sent.txRef, transactionHash: sent.transactionHash };
-          if (await recordedIfOvertaken(doors, vault, inFlight, onChain, first.recordedAt + DEPOSIT_TIME_TO_LIVE_MS)) {
+          if (await recordedIfOvertaken(doors, vault, inFlight, onChain, paymentLandsBy(first), false)) {
             return { state: 'overtaken' as const };
           }
         } catch (e) {
@@ -4384,7 +4846,7 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
           if (e instanceof PaymentStillInFlight) return null;
           throw e;
         }
-        return { state: 'landed' as const, createdIn: null };
+        return null;
       }
       let own: { transactionHash: string; events: EventOnTheWire[] } | null;
       try {
@@ -4411,7 +4873,11 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
     });
     if (confirmed === null) {
       throw s.words.notYetSeen(vault, sent.txRef,
-        sendFailed ?? (hash === null ? 'the service could not name the transaction it sent' : unchecked));
+        sendFailed ?? (byItsOwn || hash !== null ? unchecked : 'the service could not name the transaction it sent'));
+    }
+    if (confirmed.state === 'refused') {
+      await doors.inFlight.forget(vault, claim).catch(() => { /* the next step settles it, and finds it refused */ });
+      throw new PaymentRefusedOnChain(vault, confirmed.transactionHash);
     }
     if (confirmed.state === 'overtaken') {
       await doors.inFlight.forget(vault, claim).catch(() => { /* the next look finds its note gone from the record and forgets it */ });
@@ -4428,11 +4894,11 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
     }
     await doors.inFlight.forget(vault, claim).catch(() => { /* the next step finds it recorded and forgets it */ });
     doors.progress?.('done');
-    return { txRef: sent.txRef, hash, createdIn };
+    return { txRef: sent.txRef, hash: byItsOwn ? createdIn : hash, createdIn };
   } catch (e) {
     if (e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded
       || e instanceof MergeNotYetSeen || e instanceof MergeNotAsBuilt || e instanceof MergeLandedUnrecorded
-      || e instanceof StepOvertaken) throw e;
+      || e instanceof StepOvertaken || e instanceof PaymentRefusedOnChain) throw e;
     throw s.words.notYetSeen(vault, sent.txRef, whyAfterTheSend(e));
   }
 }
@@ -4459,10 +4925,12 @@ const whyAfterTheSend = (e: unknown): string => (e instanceof VaultAskFailed
  * Without them the payment's notes are chosen by the one function every
  * payment chooses by.
  *
- * **THE POOL IS ADVANCED ONLY ON THIS PAYMENT'S OWN EVENTS.** Two payments out of
- * one note for one amount make the same change coin, so what the vault holds
- * cannot say which of them landed; the transaction the service sent can. The
- * change is recorded under that transaction, and under nothing else.
+ * **THE POOL IS ADVANCED ONLY ON THIS PAYMENT'S OWN TRANSACTION.** Two payments
+ * out of one note for one amount make the same change coin, so what the vault
+ * holds cannot say which of them landed; the transaction's own events can. The
+ * change is recorded under that transaction, and under nothing else. A payment
+ * that keeps no change is recorded only once the chain shows its own
+ * transaction, by the identifiers read from it before the send, take effect.
  */
 export async function payPrivatelyFromCompanyVault(
   doors: PayoutDoors,
@@ -4474,11 +4942,12 @@ export async function payPrivatelyFromCompanyVault(
   txRef: string; transactionHash: string; spent: Hex; change: NoteOnTheWire | null;
   /**
    * `its-own-transaction` when the transaction the service named was read and
-   * judged to pay a person; `by-what-it-left` when the send named none and the
-   * payment was found by its change, or by its note leaving the vault. The
-   * vault's record is right either way, but another payment of the same amount
-   * out of the same note leaves exactly the same, so only the run, read from
-   * the company's account, says whether this person was paid.
+   * judged to pay a person, or, for a payment that kept no change, when the
+   * chain showed its own transaction take effect; `by-what-it-left` when the
+   * send named none and the payment was found by its change. The vault's record
+   * is right either way, but another payment of the same amount out of the same
+   * note leaves exactly the same change, so only the run, read from the
+   * company's account, says whether this person was paid.
    */
   seenAs: 'its-own-transaction' | 'by-what-it-left';
 }> {
@@ -4709,8 +5178,18 @@ export interface WhatThisBrowserDeposited {
     | Awaited<ReturnType<typeof settleDepositInFlight>>
     | { readonly state: 'still-on-its-way'; readonly until: number }
     | { readonly state: 'landed-not-recorded' }
-    /* For a check that files nothing and keeps no deposit of its own: the newest deposit filed for the vault has not reached it. */
-    | { readonly state: 'journalled-not-seen' };
+    /*
+     * For a check that files nothing and keeps no deposit of its own, the newest deposit filed for the vault: not reached
+     * it and can still until `until`; past that and never reached it; or in the vault and named by no record yet.
+     */
+    | { readonly state: 'journalled-not-seen'; readonly until: number }
+    | { readonly state: 'journalled-never-landed' }
+    | { readonly state: 'journalled-not-recorded' };
+  /**
+   * For a check that files nothing: every other deposit the vault's deposit journal names that can still land and is
+   * not in the vault's record, oldest first. Empty when there is none.
+   */
+  readonly alsoJournalled?: readonly JournalledDeposit[];
   /** Notes in the vault's record that did not name the transaction that made them, and now do. */
   readonly named: number;
   /** Notes in the vault's record that still do not, because the chain cannot say yet. */
@@ -4718,6 +5197,14 @@ export interface WhatThisBrowserDeposited {
   /** For a check that files nothing: notes the chain can name and that are left for a signer's wallet to name. */
   readonly toName?: number;
   /** The deposit the check judged, as the check read it; absent when it found none to judge. */
+  readonly checked?: DepositChecked;
+}
+
+/** One more deposit the vault's deposit journal names, as the check found it, and the coin it carries. */
+export interface JournalledDeposit {
+  readonly state: 'journalled-not-seen' | 'landed-owed-its-record' | 'journalled-not-recorded';
+  /** When it can no longer land. */
+  readonly until: number;
   readonly checked?: DepositChecked;
 }
 
@@ -4743,8 +5230,9 @@ const checkedOf = (from: DepositChecked['from'], coin: { readonly token?: unknow
 };
 
 /** What checking a vault from this browser found: its deposits, and the payment this browser kept on its way. */
-export interface WhatThisBrowserSent extends WhatThisBrowserDeposited {
-  readonly payment: PaymentSettled | { readonly state: 'still-on-its-way'; readonly until: number };
+interface WhatThisBrowserSent extends WhatThisBrowserDeposited {
+  /** `unread` on a payment held because the chain could not be read: no time lets it go. */
+  readonly payment: PaymentSettled | { readonly state: 'still-on-its-way'; readonly until: number; readonly unread?: true };
 }
 
 /** The vault as this device reads it for a check; a vault the chain does not show has nothing to check. */
@@ -4759,14 +5247,21 @@ async function theVaultForACheck(doors: DepositDoors, vault: Hex): Promise<Vault
  * settle it: recorded once the vault holds it, under the transaction that made
  * it, found by its own output when the send named none. One still on its way,
  * or in the vault and not yet readable, is said as such rather than refused.
- * Says too which deposit it judged and what it was (`checked`).
+ * Says too which deposit it judged and what it was (`checked`). A check that
+ * files nothing also reads the vault's deposit journal (`journalledForARead`):
+ * its newest deposit when this browser keeps none, and every other one that can
+ * still land.
  */
 async function depositSettledForACheck(
   doors: DepositDoors, vault: Hex, view: VaultChainView, files = true,
-): Promise<Pick<WhatThisBrowserDeposited, 'deposit' | 'checked'>> {
+): Promise<Pick<WhatThisBrowserDeposited, 'deposit' | 'checked' | 'alsoJournalled'>> {
   /* The coin this browser kept, read before settling it lets it go, so the check can say what it judged. */
   const kept = await doors.inFlight.get(vault);
   const ofThisBrowser = checkedOf('this-browser', kept === null ? null : kept.coin);
+  const journal = files ? null : await journalledForARead(doors, vault, view, kept === null ? null : kept.coin.nonce);
+  /* With a deposit of its own judged first, the journal's newest is one more to say, after the older ones. */
+  const also = journal === null ? {} : { alsoJournalled: journal.also };
+  const alsoWithNewest = journal === null ? {} : { alsoJournalled: [...journal.also, ...journal.newestAsAlso] };
   try {
     const settled = await settleDepositInFlight(doors, vault, view, files);
     /* A deposit this browser kept from before deposits moved into the wallet is said owed once, and then let go: the journal still names it. */
@@ -4774,49 +5269,81 @@ async function depositSettledForACheck(
       const d = await doors.inFlight.get(vault);
       if (d !== null) await letGo(doors, vault, d.claim);
     }
-    if (settled.state === 'none' && !files) return newestJournalledDepositForARead(doors, vault, view);
-    return { deposit: settled, ...(settled.state === 'none' ? {} : ofThisBrowser) };
+    if (settled.state === 'none' && journal !== null) return { ...journal.newest, ...also };
+    return { deposit: settled, ...(settled.state === 'none' ? {} : ofThisBrowser), ...alsoWithNewest };
   } catch (e) {
-    if (e instanceof DepositStillInFlight) return { deposit: { state: 'still-on-its-way', until: e.until }, ...ofThisBrowser };
-    if (e instanceof DepositLandedNotYetRecorded) return { deposit: { state: 'landed-not-recorded' }, ...ofThisBrowser };
+    if (e instanceof DepositStillInFlight) return { deposit: { state: 'still-on-its-way', until: e.until }, ...ofThisBrowser, ...alsoWithNewest };
+    if (e instanceof DepositLandedNotYetRecorded) return { deposit: { state: 'landed-not-recorded' }, ...ofThisBrowser, ...alsoWithNewest };
     throw e;
   }
 }
 
 /**
- * **THE NEWEST DEPOSIT FILED FOR THE VAULT, AS A READ JUDGES IT**, for a check that keeps no deposit of its own (the
- * wallet keeps the deposits it makes): the last coin the vault's deposit journal names, which is filed before its
- * deposit is sent, against the chain and the vault's record. In the record with its coin made: recorded. Held by the
- * vault and not in the record: owed its record. Made and no longer held: it landed and has since left the vault. Not
- * made: it has not reached the vault, and may still. A journal this signer cannot open, or none, is nothing to say.
+ * **THE DEPOSITS THE VAULT'S DEPOSIT JOURNAL NAMES, AS A READ JUDGES THEM**, for a check that files nothing (the
+ * wallet keeps the deposits it makes, and files each coin in the journal before its deposit is sent). Each coin is
+ * judged by `depositAsTheChainShows`, against the chain and the vault's record:
+ *
+ *   · `newest`: the last line not marked ended (a deposit never handed over to be sent), whatever its age, so a deposit that landed and is owed its record is never missed. In
+ *     the record: recorded. Held and not in the record: owed its record. Gone after a record named it: landed and since
+ *     left. Made and never named: in the vault and not yet recorded. Not made: on its way until
+ *     `journalledDepositLandsBy` of its line, and past that, never landed;
+ *   · `also`: every other line that can still land, oldest first, that is not on its way from this browser
+ *     (`keptHere`) and not yet in the vault's record;
+ *   · `newestAsAlso`: the newest line said the same way, for a check that judged a deposit of this browser's first. A line past its window is dropped before anything is read for
+ *     it: it can no longer land, and judging it would cost a read for every deposit the vault ever took.
+ *
+ * A journal this signer cannot open, or none, is nothing to say.
  */
-async function newestJournalledDepositForARead(
-  doors: DepositDoors, vault: Hex, view: VaultChainView,
-): Promise<Pick<WhatThisBrowserDeposited, 'deposit' | 'checked'>> {
-  const none = { deposit: { state: 'none' as const } };
+async function journalledForARead(
+  doors: DepositDoors, vault: Hex, view: VaultChainView, keptHere: string | null,
+): Promise<{
+  newest: Pick<WhatThisBrowserDeposited, 'deposit' | 'checked'>; also: readonly JournalledDeposit[]; newestAsAlso: readonly JournalledDeposit[];
+}> {
+  const none = { newest: { deposit: { state: 'none' as const } }, also: [], newestAsAlso: [] };
   const rec = await doors.records('deposit-journal').get(vault);
   if (rec === null) return none;
-  let coins: Array<{ nonce?: unknown; token?: unknown; value?: unknown }>;
+  let lines: Array<{ nonce?: unknown; token?: unknown; value?: unknown; attemptedAt?: unknown; ended?: unknown }>;
   try {
-    coins = (openPool(rec, doors.me.signerId, doors.me.wrappingSecret, { record: 'deposit-journal' }) as { notes?: typeof coins }).notes ?? [];
+    lines = (openPool(rec, doors.me.signerId, doors.me.wrappingSecret, { record: 'deposit-journal' }) as { notes?: typeof lines }).notes ?? [];
   } catch {
     return none;
   }
-  const last = coins[coins.length - 1];
-  if (last === undefined || typeof last.nonce !== 'string' || typeof last.token !== 'string') return none;
-  const coin = { nonce: last.nonce, token: last.token, value: String(last.value) };
-  const judged = (deposit: WhatThisBrowserDeposited['deposit']) => ({ deposit, ...checkedOf('the-vaults-journal', coin) });
-  const { output, held } = await doors.builder.commitments({ vault, coin });
-  const bare = (h: string) => h.toLowerCase().replace(/^0x/u, '');
-  const made = (view.everCreated ?? []).some((c) => bare(c) === bare(output));
-  const holds = (view.notes ?? []).some((n) => n.toLowerCase() === held.toLowerCase());
-  const pool = new SealedNotePool(doors.records('pool'),
-    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
-  const listed = (await pool.load(vault)).notes.some((n) => n.nonce.toLowerCase() === coin.nonce.toLowerCase());
-  if (made && listed) return judged({ state: 'already-recorded' });
-  if (holds) return judged({ state: 'landed-owed-its-record' });
-  if (made) return judged({ state: 'landed-and-since-spent' });
-  return judged({ state: 'journalled-not-seen' });
+  /* A line its own device marked ended was never handed over to be sent: it cannot land, and is not read as on its way. */
+  lines = lines.filter((l) => l?.ended !== true);
+  const now = (doors.clock ?? Date.now)();
+  const coinOf = (l: (typeof lines)[number]) => (typeof l.nonce === 'string' && typeof l.token === 'string'
+    ? { nonce: l.nonce, token: l.token, value: String(l.value) } : null);
+  const last = lines[lines.length - 1];
+  const newestCoin = last === undefined ? null : coinOf(last);
+  let newest: Pick<WhatThisBrowserDeposited, 'deposit' | 'checked'> = none.newest;
+  let newestAsAlso: JournalledDeposit[] = [];
+  if (newestCoin !== null && (keptHere === null || keptHere.toLowerCase() !== newestCoin.nonce.toLowerCase())) {
+    const until = journalledDepositLandsBy(last!.attemptedAt);
+    const { is } = await depositAsTheChainShows(doors, vault, newestCoin, view);
+    const deposit: WhatThisBrowserDeposited['deposit'] = is === 'recorded' ? { state: 'already-recorded' }
+      : is === 'held' ? { state: 'landed-owed-its-record' }
+      : is === 'spent' ? { state: 'landed-and-since-spent' }
+      : is === 'made-unnamed' ? { state: 'journalled-not-recorded' }
+      : now < until ? { state: 'journalled-not-seen', until } : { state: 'journalled-never-landed' };
+    newest = { deposit, ...checkedOf('the-vaults-journal', newestCoin) };
+    const state = deposit.state === 'journalled-not-seen' || deposit.state === 'journalled-not-recorded'
+      || (deposit.state === 'landed-owed-its-record' && now < until) ? deposit.state : null;
+    if (state !== null) newestAsAlso = [{ state, until, ...newest.checked === undefined ? {} : { checked: newest.checked } }];
+  }
+  const also: JournalledDeposit[] = [];
+  const judged = new Set<string>(newestCoin === null ? [] : [newestCoin.nonce.toLowerCase()]);
+  if (keptHere !== null) judged.add(keptHere.toLowerCase());
+  for (const line of lines.slice(0, -1)) {
+    const coin = coinOf(line);
+    const until = journalledDepositLandsBy(line.attemptedAt);
+    if (coin === null || !(now < until) || judged.has(coin.nonce.toLowerCase())) continue;
+    judged.add(coin.nonce.toLowerCase());
+    const { is } = await depositAsTheChainShows(doors, vault, coin, view);
+    const state = is === 'unseen' ? 'journalled-not-seen' as const : is === 'held' ? 'landed-owed-its-record' as const
+      : is === 'made-unnamed' ? 'journalled-not-recorded' as const : null;
+    if (state !== null) also.push({ state, until, ...checkedOf('the-vaults-journal', coin) });
+  }
+  return { newest, also, newestAsAlso };
 }
 
 /**
@@ -4889,7 +5416,7 @@ export async function checkWhatThisBrowserSent(
       ...(doors.clock === undefined ? {} : { now: () => new Date(doors.clock!()) }),
     }, vault, view);
   } catch (e) {
-    if (e instanceof PaymentStillInFlight) payment = { state: 'still-on-its-way', until: e.until };
+    if (e instanceof PaymentStillInFlight) payment = { state: 'still-on-its-way', until: e.until, ...(e.unread ? { unread: true as const } : {}) };
     else throw e;
   }
   return { ...deposit, payment, ...await notesNamedForACheck(doors, vault) };
@@ -4905,8 +5432,10 @@ export async function checkWhatThisBrowserSent(
  * check, which signs nothing) nothing is recorded or named either: what is owed
  * is said. A deposit kept in this store that is owed its record is said once
  * and let go; with none kept, the newest deposit the vault's journal names is
- * judged instead (`newestJournalledDepositForARead`). Which of the two was
- * judged, and its token and value as the check read them, is `checked`.
+ * judged instead (`journalledForARead`), and every other journalled deposit
+ * that can still land and is not in the vault's record is said too
+ * (`alsoJournalled`). Which deposit was judged, and its token and value as the
+ * check read them, is `checked`.
  */
 export async function checkWhatThisBrowserDeposited(
   doors: DepositDoors, vault: Hex, how: { readonly files?: false } = {},
@@ -4941,11 +5470,19 @@ export function sayWhatTheCheckFound(found: WhatThisBrowserDeposited & { readonl
   }
   if (d.state === 'still-on-its-way') {
     said.push(`Your last deposit from this browser has not reached the vault yet. If it has not arrived by `
-      + `${new Date(d.until).toLocaleString()}, it never will and no money moved. Do not put the same money in again.`);
+      + `${timeShown(d.until)}, it never will and no money moved. Do not put the same money in again.`);
   }
   if (d.state === 'journalled-not-seen') {
-    said.push('The newest deposit filed for this vault has not reached the vault yet. It may still arrive. Do not put the same '
-      + 'money in again.');
+    said.push(`The newest deposit filed for this vault has not reached the vault yet. If it was sent, it can still arrive `
+      + `until ${timeShown(d.until)}. If it has not arrived by then, it never will and no money moved. Do `
+      + 'not put the same money in again.');
+  }
+  if (d.state === 'journalled-never-landed') {
+    said.push('The newest deposit filed for this vault never reached the vault, and now it never will. No money moved.');
+  }
+  if (d.state === 'journalled-not-recorded') {
+    said.push('The newest deposit filed for this vault is in the vault, and not yet in its record. Check again in a minute. '
+      + 'Do not put the same money in again.');
   }
   if (d.state === 'landed-and-since-spent') {
     said.push('The deposit reached the vault, and the vault has since paid it out or combined it.');
@@ -4957,6 +5494,13 @@ export function sayWhatTheCheckFound(found: WhatThisBrowserDeposited & { readonl
   if (d.state === 'landed-not-recorded') {
     said.push('Your last deposit from this browser is in the vault, and this page cannot yet read the transfer that '
       + 'brought it in. Check again in a minute.');
+  }
+  for (const e of found.alsoJournalled ?? []) {
+    said.push(e.state === 'journalled-not-seen'
+      ? `An earlier deposit filed for this vault has not reached the vault yet. If it was sent, it can still arrive until `
+        + `${timeShown(e.until)}. If it has not arrived by then, it never will and no money moved.`
+      : 'An earlier deposit filed for this vault is in the vault, and not yet in its record. It is not lost. Do not put '
+        + 'the same money in again.');
   }
   const p = found.payment;
   if (p?.state === 'recorded') {
@@ -4982,9 +5526,13 @@ export function sayWhatTheCheckFound(found: WhatThisBrowserDeposited & { readonl
       + 'out again.');
   }
   if (p?.state === 'still-on-its-way') {
-    said.push(`A payment this browser sent is not in the vault's record yet. If the chain has not shown it by `
-      + `${new Date(p.until).toLocaleString()}, it never will. Until then, no other payment leaves this vault from this `
-      + 'browser. Check again in a minute.');
+    said.push(p.unread === true
+      ? 'A payment this browser sent is not in the vault\'s record yet. The chain could not be read just now. This '
+        + 'payment stays held, and no other payment leaves this vault from this browser, until it can be. Check again in '
+        + 'a minute.'
+      : `A payment this browser sent is not in the vault's record yet. If the chain has not shown it by `
+        + `${timeShown(p.until)}, it never will. Until then, no other payment leaves this vault from this `
+        + 'browser. Check again in a minute.');
   }
   if (found.named > 0) {
     said.push(found.named === 1

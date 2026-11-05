@@ -87,6 +87,11 @@ const setUp = async () => {
     ownSeat: refuse, spendingPolicyKeys: refuse, policyBarKey: refuse, clearRun: refuse, periodTotal: refuse, runCharged: refuse, lastRecovery: refuse, anchorHeads: refuse, anchorTag: refuse, seatOpenings: refuse, anchorsOnChain: refuse, roundsOnChain: refuse, paidLeaves: refuse, runsOutrun: refuse, invitedSeats: refuse, seatInvited: refuse, anchor: refuse, recoverAnchor: refuse, accountCallChain: refuse,
     secretIsTheVaults: async () => true,
     deposit: async (i) => { lastBuilt = i.coin; log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`); return { tx: 'PROVEN' }; },
+    /* The built deposit ends an hour on, as the call is built; it and what the wallet hands back call this vault's deposit and create the one coin built. */
+    readTransaction: async () => ({
+      identifiers: [], timeToLive: Date.now() + 60 * 60_000, calls: [{ address: VAULT, entryPoint: 'deposit', segments: [0] }],
+      coinsForContracts: [{ contract: VAULT, commitment: `out:${lastBuilt!.nonce}` }], publicTakes: [],
+    }),
   } as VaultBuilderClient;
   const kept = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;

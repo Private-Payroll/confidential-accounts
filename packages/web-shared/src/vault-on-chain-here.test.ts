@@ -16,7 +16,7 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { accountPresenceAt, accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk, vaultAsDeployed } from './vault-worker-entry.js';
-import { newestTimeToLive } from './vault-builder.js';
+import { newestTimeToLive, readTransaction } from './vault-builder.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 import { existsSync, readFileSync } from 'node:fs';
 import * as accountModule from '../../../contracts/managed/contract/index.js';
@@ -489,6 +489,76 @@ describe('WHETHER THE COMPANY\'S ACCOUNT IS ON THE CHAIN, READ ON THIS DEVICE BY
     expect(newestTimeToLive({ ledger } as never, bytes('a', 'c'))).toBeNull();
     expect(newestTimeToLive({ ledger } as never, bytes('b', 'd'))).toBeNull();
     expect(newestTimeToLive({ ledger } as never, [])).toBeNull();
+  });
+
+  it('READS A TRANSACTION AS FINISHED OR NOT YET BOUND, WITH ITS IDENTIFIERS, ITS EARLIEST TIME TO LIVE AND THE PART EACH CALL RUNS IN', () => {
+    const call = (address: string, entryPoint: unknown, parts: { g?: boolean; f?: boolean }) => ({
+      address, entryPoint, ...(parts.g ? { guaranteedTranscript: { effects: {} } } : {}), ...(parts.f ? { fallibleTranscript: { effects: {} } } : {}),
+    });
+    /* The deposit's own intent lives an hour; the fee merged in beside it, twenty minutes. */
+    const finished = {
+      identifiers: () => ['00aa', '00bb'],
+      intents: new Map<number, unknown>([
+        [7, { ttl: new Date(60_000), actions: [call('AB'.repeat(32), new TextEncoder().encode('depositUnshielded'), { g: true })] }],
+        [2, { ttl: new Date(20_000), actions: [] }],
+      ]),
+    };
+    const unbound = { identifiers: () => ['00cc'], intents: new Map([[3, { ttl: new Date(9_000), actions: [call('cd'.repeat(32), 'payout', { f: true }), call('ef'.repeat(32), 'split', { g: true, f: true })] }]]) };
+    const read: string[] = [];
+    const ledger = (bound: unknown, notBound: unknown) => ({ Transaction: { deserialize: (_s: string, _p: string, b: string) => {
+      read.push(b);
+      const tx = b === 'binding' ? bound : notBound;
+      if (tx === undefined) throw new Error('not a transaction');
+      return tx;
+    } } });
+    const one = new Uint8Array([1]);
+    /* RED WHEN: a transaction the service merged its fee into is read as living as long as the deposit's own part, or cannot be read at all. */
+    expect(readTransaction({ ledger: ledger(finished, undefined) } as never, one)).toEqual({
+      identifiers: ['00aa', '00bb'], timeToLive: 20_000,
+      calls: [{ address: 'ab'.repeat(32), entryPoint: 'depositUnshielded', segments: [0] }],
+      coinsForContracts: [], publicTakes: null, publicDeposits: [{ vault: 'ab'.repeat(32), refused: 'unread' }],
+    });
+    /* RED WHEN: a transaction proved and not yet bound cannot be read, so a payment cannot name itself before it is sent. */
+    read.length = 0;
+    expect(readTransaction({ ledger: ledger(undefined, unbound) } as never, one)).toEqual({
+      identifiers: ['00cc'], timeToLive: 9_000,
+      calls: [{ address: 'cd'.repeat(32), entryPoint: 'payout', segments: [3] }, { address: 'ef'.repeat(32), entryPoint: 'split', segments: [0, 3] }],
+      coinsForContracts: [], publicTakes: null, publicDeposits: [],
+    });
+    expect(read).toEqual(['binding', 'pre-binding']);
+    /* RED WHEN: bytes that are no transaction, or an intent with no time, are read as a transaction that has run out. */
+    expect(readTransaction({ ledger: ledger(undefined, undefined) } as never, one)).toBeNull();
+    expect(readTransaction({ ledger: ledger({ identifiers: () => [], intents: new Map([[1, { ttl: undefined, actions: [] }]]) }, undefined) } as never, one)?.timeToLive).toBeNull();
+    /* RED WHEN: the step of a company's creation whose fee sits in an intent of its own is read as already run out. */
+    expect(newestTimeToLive({ ledger: ledger(finished, undefined) } as never, [one])).toBe(20_000);
+  });
+
+  it('READS EVERY PRIVATE COIN A TRANSACTION CREATES FOR A CONTRACT AND EVERY PUBLIC TOKEN ITS CALLS TAKE IN, AND SAYS SO WHEN EITHER CANNOT BE READ', () => {
+    const ledgerOf = (tx: unknown) => ({ Transaction: { deserialize: () => tx } });
+    const one = new Uint8Array([1]);
+    const takes = (entries: Array<[{ tag: string; raw: string }, unknown]>) => ({ effects: { unshieldedInputs: new Map(entries) } });
+    const tx = {
+      identifiers: () => ['00aa'],
+      intents: new Map<number, unknown>([[1, { ttl: new Date(9_000), actions: [
+        { address: 'AB'.repeat(32), entryPoint: 'depositUnshielded', guaranteedTranscript: takes([[{ tag: 'unshielded', raw: 'CD'.repeat(32) }, 40n]]) },
+      ] }]]),
+      /* The vault's coin, the wallet's own change (no contract), and a coin made and spent inside the transaction for another contract. */
+      guaranteedOffer: { outputs: [{ contractAddress: 'AB'.repeat(32), commitment: '0x' + 'E1'.repeat(32) }, { contractAddress: undefined, commitment: 'e2'.repeat(32) }], transients: [] },
+      fallibleOffer: new Map([[1, { outputs: [], transients: [{ contractAddress: 'ef'.repeat(32), commitment: 'e3'.repeat(32) }] }]]),
+    };
+    /* RED WHEN: a coin created for a contract in either part is missed, the wallet's change is counted as one, or a public token a call takes in is not read. */
+    const read = readTransaction({ ledger: ledgerOf(tx) } as never, one)!;
+    /* RED WHEN: a coin made and spent inside the transaction reads as one its contract holds. */
+    expect(read.coinsForContracts).toEqual([{ contract: 'ab'.repeat(32), commitment: 'e1'.repeat(32) }, { contract: 'ef'.repeat(32), commitment: 'e3'.repeat(32), madeAndSpent: true }]);
+    expect(read.publicTakes).toEqual([{ address: 'ab'.repeat(32), entryPoint: 'depositUnshielded', colour: 'cd'.repeat(32), amount: '40' }]);
+    /* RED WHEN: an offer or a transcript this cannot read is taken for one that creates or takes nothing. */
+    expect(readTransaction({ ledger: ledgerOf({ ...tx, guaranteedOffer: { outputs: 'x' } }) } as never, one)!.coinsForContracts).toBeNull();
+    expect(readTransaction({ ledger: ledgerOf({ ...tx, fallibleOffer: [] }) } as never, one)!.coinsForContracts).toBeNull();
+    expect(readTransaction({ ledger: ledgerOf({ ...tx, guaranteedOffer: { outputs: [{ contractAddress: 'ab'.repeat(32) }] } }) } as never, one)!.coinsForContracts).toBeNull();
+    const unreadCall = { ...tx, intents: new Map([[1, { ttl: new Date(9_000), actions: [{ address: 'ab'.repeat(32), entryPoint: 'deposit', guaranteedTranscript: { effects: {} } }] }]]) };
+    expect(readTransaction({ ledger: ledgerOf(unreadCall) } as never, one)!.publicTakes).toBeNull();
+    const shieldedTake = { ...tx, intents: new Map([[1, { ttl: new Date(9_000), actions: [{ address: 'ab'.repeat(32), entryPoint: 'deposit', guaranteedTranscript: takes([[{ tag: 'shielded', raw: 'cd'.repeat(32) }, 1n]]) }] }]]) };
+    expect(readTransaction({ ledger: ledgerOf(shieldedTake) } as never, one)!.publicTakes).toBeNull();
   });
 
   it('IS ANSWERED BY THE WORKER FROM THE INDEXER THE ASK NAMES, WITH THE TIME TO LIVE OF THE TRANSACTIONS ASKED ABOUT', async () => {

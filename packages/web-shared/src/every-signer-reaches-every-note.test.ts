@@ -25,7 +25,7 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { recordsReaderOf } from './deposit-on-device.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
-import { coinsHandedOverHere, coinsToHandOverHere, vaultNotesHere, type NotesHere, type RebuildDoors } from './vault-operation.js';
+import { coinsHandedOverHere, coinsToHandOverHere, vaultNotesHere, NOT_SEALED, type NotSealed, type NotesHere, type RebuildDoors } from './vault-operation.js';
 import { coinsFileText, coinsKeptOnThisDevice } from './vault-coins-kept-here.js';
 import { inFlightInMemory, openInFlight } from './in-flight-on-this-device.js';
 
@@ -394,5 +394,51 @@ describe('A READ OF A VAULT\'S NOTES FILES NOTHING', () => {
     /* RED WHEN: the read says the seat may not file, as though the person's role were the reason, not that a read files nothing. */
     expect(read.said.join(' ')).toMatch(/a read files nothing/);
     expect(read.said.join(' ')).not.toMatch(/its role files none/);
+  });
+});
+
+describe('A READ SAYS IN A CODE, NOT ONLY IN WORDS, THAT A RECORD IS NOT SEALED TO EVERY SIGNER', () => {
+  const onlyAda = [BOTH[0]!];
+  const poolForAdaOnly = async (c: Awaited<ReturnType<typeof aCompany>>) => {
+    await new SealedNotePool(c.stores('pool'), { signerId: 'ada', wrappingSecret: ada.secret }, async () => onlyAda).create(VAULT, { notes: [] });
+  };
+
+  it('A READ WITH NO SEAT, FOR A SIGNER WHO CANNOT OPEN THE POOL YET, CARRIES THE CODE FOR "NOT FILED HERE"', async () => {
+    const c = await aCompany();
+    await poolForAdaOnly(c);
+    const { seatHere: _seat, ...reading } = c.doors(ADA);
+    const read = await vaultNotesHere(reading, VAULT);
+    /* RED WHEN: a record left unsealed to a seated signer because a read files nothing is told in words only, so the wallet's upkeep cannot see it is still owed. */
+    expect(read.unsealed).toEqual<NotSealed[]>([NOT_SEALED.notFiledHere]);
+  });
+
+  it('A SIGNERS LIST THAT CANNOT BE READ CARRIES THE CODE FOR "SIGNERS NOT READ"', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    const signers = async (): Promise<PoolSigner[]> => { throw new Error('the directory could not be read'); };
+    const read = await vaultNotesHere(c.doors(ADA, { signers }), VAULT);
+    /* RED WHEN: a read that could not learn who the signers are says so in words only, so the upkeep reports it done. */
+    expect(read.unsealed).toContain(NOT_SEALED.signersNotRead);
+  });
+
+  it('A RECORD THAT COULD NOT BE FILED AGAIN FOR A NEW SIGNER CARRIES THE CODE FOR "NOT FILED"', async () => {
+    const c = await aCompany();
+    await poolForAdaOnly(c);
+    const failing = (r: Parameters<typeof c.stores>[0]) => {
+      const store = c.stores(r);
+      return r === 'pool' ? Object.assign(Object.create(store), { put: async () => { throw new Error('the service refused'); } }) : store;
+    };
+    const read = await vaultNotesHere(c.doors(ADA, { records: failing as never }), VAULT);
+    /* RED WHEN: a refiling the service refused is told in words only, so the upkeep reports it done while a signer still cannot open the record. */
+    expect(read.unsealed).toContain(NOT_SEALED.notFiledFailed);
+  });
+
+  it('A COMPANY WHOSE RECORDS EVERY SIGNER CAN OPEN CARRIES NO CODE AND NO SENTENCE ABOUT IT', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    const read = await vaultNotesHere(c.doors(ADA), VAULT);
+    /* RED WHEN: a read of a fully sealed company reports a record as unsealed, so the upkeep never reports done. */
+    expect(read.of).toBe('as-filed');
+    expect(read.unsealed).toEqual([]);
   });
 });

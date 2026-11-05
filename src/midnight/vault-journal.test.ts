@@ -7,10 +7,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions, JOURNAL_WRITE_ATTEMPTS,
+  PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions, endDepositNeverHandedOver, JOURNAL_WRITE_ATTEMPTS,
+  attemptKey, noteKey, stepOfLine,
 } from './vault-journal.js';
 import {
-  MemorySealedPoolStore, sealPool, type PoolSigner, type SealedPoolStore,
+  MemorySealedPoolStore, openPool, sealPool, type PoolSigner, type SealedPoolStore,
 } from './vault-pool.js';
 import { newWrappingKeypair, newSymmetricKey, seal, wrapKey, canonical } from '../core/crypto.js';
 import { depositNonceAt, depositNonceKeyFor, DepositSlotTaken, DEPOSIT_CLAIM_LIVE_MS } from './deposit-nonce.js';
@@ -122,6 +123,28 @@ describe('a journal over any store', () => {
     });
     expect(read.deposits, 'RED WHEN: the line filed is not the coin the claim handed back')
       .toEqual([claimed.coin]);
+  });
+
+  it('A DEPOSIT NEVER HANDED OVER IS MARKED ENDED ON ITS OWN LINE ONLY, AND EVERY READER STILL READS ITS COIN', async () => {
+    const a = signer('ada');
+    const store = new MemorySealedPoolStore();
+    const opener = { id: 'ada', wrappingSecret: a.secret };
+    const j = new DepositJournalInStore(store, VAULT, opener, async () => [a.who], KEY);
+    const money = { token: GBP, value: 70n };
+    const kept = await j.claim(VAULT, money, 1, 'x');
+    const stopped = await j.claim(VAULT, money, 2, 'y');
+    expect(await endDepositNeverHandedOver(store, VAULT, opener, async () => [a.who], stopped.coin.nonce.toUpperCase())).toBe(true);
+    const lines = (openPool((await store.get(VAULT))!, 'ada', a.secret, { record: 'deposit-journal' }) as { notes: Array<{ nonce: string; ended?: true }> }).notes;
+    /* RED WHEN: the line of a deposit never handed over is not marked, or another deposit's line is. */
+    expect(lines.map((l) => [l.nonce, l.ended])).toEqual([[kept.coin.nonce, undefined], [stopped.coin.nonce, true]]);
+    expect(await endDepositNeverHandedOver(store, VAULT, opener, async () => [a.who], stopped.coin.nonce), 'a line already ended writes nothing').toBe(false);
+    expect(await endDepositNeverHandedOver(store, VAULT, opener, async () => [a.who], 'ee'.repeat(32)), 'no line names the coin: nothing is written').toBe(false);
+    expect((await store.versions(VAULT)).map((v) => v.version)).toEqual([1, 2, 3]);
+    /* RED WHEN: a rebuild or a claim stops reading the coin of a line marked ended. */
+    const read = attemptsFromJournalVersions({ deposits: await store.versions(VAULT), payments: [], opener });
+    expect(read.deposits).toEqual([kept.coin, stopped.coin]);
+    expect(read.unread).toEqual([]);
+    expect((await j.open()).attempts.map((l) => l.nonce)).toEqual([kept.coin.nonce, stopped.coin.nonce]);
   });
 
   it('A CLAIM DERIVES ITS NONCE FROM THE SLOT IT IS GIVEN, whatever version it files', async () => {
@@ -294,5 +317,35 @@ describe('a journal over any store', () => {
     await expect(j.record(VAULT, attempt('01'.repeat(32), 5n, 1n) as never)).rejects.toThrow(/bo/);
     await expect(j.record('d9'.repeat(32), attempt('01'.repeat(32), 5n, 1n) as never)).rejects.toThrow(/different vault/);
     expect(await store.versions(VAULT)).toHaveLength(1);
+  });
+});
+
+describe('one note is one note however its hex is written', () => {
+  it('a note or a step written in capitals in one version and in small letters in another is read as one', async () => {
+    const a = signer('ada');
+    const deposits = new MemorySealedPoolStore();
+    const payments = new MemorySealedPoolStore();
+    const small = { nonce: 'ab'.repeat(32), token: GBP, value: 70n };
+    const capitals = { nonce: 'AB'.repeat(32), token: GBP.toUpperCase(), value: 70n };
+    await deposits.put(VAULT, sealPool(VAULT, { notes: [{ ...capitals, attemptedAt: 't' }] } as never, [a.who], 1, 'deposit-journal'));
+    await deposits.put(VAULT, sealPool(VAULT, { notes: [{ ...capitals, attemptedAt: 't' }, { ...small, attemptedAt: 't' }] } as never, [a.who], 2, 'deposit-journal'));
+    await payments.put(VAULT, sealPool(VAULT, { attempts: [{ spent: capitals, step: 'payment', amount: 20n, attemptedAt: 't' }] } as never, [a.who], 1, 'payment-journal'));
+    await payments.put(VAULT, sealPool(VAULT, { attempts: [{ spent: small, step: 'payment', amount: 20n, attemptedAt: 't' }] } as never, [a.who], 2, 'payment-journal'));
+    const read = attemptsFromJournalVersions({
+      deposits: await deposits.versions(VAULT), payments: await payments.versions(VAULT), opener: { id: 'ada', wrappingSecret: a.secret },
+    });
+    /* RED WHEN: one deposit written in two cases is read as two coins, so a rebuild counts the money twice. */
+    expect(read.deposits).toHaveLength(1);
+    /* RED WHEN: one payment attempt written in two cases is read as two attempts. */
+    expect(read.payments).toHaveLength(1);
+    expect(noteKey(capitals)).toBe(noteKey(small));
+  });
+
+  it('a filed line marked as a merge keys as a merge, and any other step as a payment', () => {
+    const n = { nonce: '0c'.repeat(32), token: GBP, value: 9n };
+    /* RED WHEN: a merge line and a payment line of the same notes and amount are taken for the same attempt. */
+    expect(attemptKey(stepOfLine({ spent: n, step: 'merge', amount: 0n })))
+      .not.toBe(attemptKey(stepOfLine({ spent: n, step: 'payment', amount: 0n })));
+    expect(stepOfLine({ spent: n, further: [], step: 'batch', amount: 3n })).toEqual({ spent: n, amount: 3n });
   });
 });

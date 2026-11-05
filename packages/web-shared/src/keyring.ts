@@ -1645,6 +1645,14 @@ export type StartedAgain =
 /** The service's own margin past a transaction's time to live before it counts it as run out. */
 const THE_SERVICES_MARGIN_MS = 5 * 60_000;
 
+/**
+ * Every creation this tab handed on for the person's wallet (`relayForTheCreation`), by company: the deploy and its
+ * second step as the wallet built them, which may be newer than the copy kept in the saved keys, because the wallet
+ * builds a creation again shortly before it runs out. Kept for the life of the tab and never sent anywhere: a creation
+ * is never set aside while any copy handed on can still land.
+ */
+const CREATIONS_HANDED_ON = new Map<string, string[]>();
+
 /** The service's creation standings in which the account's deploy has not landed. */
 const DEPLOY_NOT_LANDED: ReadonlySet<CompanyCreationState> = new Set<CompanyCreationState>(['not-created', 'deploy-sent', 'deploy-expired']);
 
@@ -1658,9 +1666,11 @@ const DEPLOY_LANDED: ReadonlySet<CompanyCreationState> = new Set<CompanyCreation
  * only when all of this holds: the service does not say its deploy landed; the person's wallet does not read the
  * account; and this device, reading the chain at the indexer that wallet named (never the service's word), is told by
  * a clean answer that no contract is held at the address AND the chain's own newest block is past the newest time to
- * live of the kept transactions, read from their bytes, by the service's five-minute margin. No device clock is used.
- * Any failure, an indexer not named, or a transaction that cannot be read keeps the creation. A landed deploy is
- * finished, never set aside. The company's keys stay kept.
+ * live of the kept transactions and of every copy this tab handed on for the wallet, read from their bytes, by the
+ * service's five-minute margin; AND the service does not say the deploy it holds, which a copy the wallet built again
+ * replaces, can still be sent (its word can only keep a creation, never set one aside). No device clock is used. Any
+ * failure, an indexer not named, or a transaction that cannot be read keeps the creation. A landed deploy is finished,
+ * never set aside. The company's keys stay kept.
  */
 export async function startAnUnfinishedCreationAgain(
   accountId: string, walletOrigin: string, builder: AccountCreationBuilder | null, view?: Openable, atOrigin?: string,
@@ -1687,7 +1697,8 @@ export async function startAnUnfinishedCreationAgain(
   let seen: AccountPresenceOnTheWire;
   try {
     seen = await builder.accountPresence({
-      account, indexer, transactions: [saved.deploy.tx, ...(saved.signed === null ? [] : [saved.signed.tx])],
+      account, indexer,
+      transactions: [...new Set([saved.deploy.tx, ...(saved.signed === null ? [] : [saved.signed.tx]), ...(CREATIONS_HANDED_ON.get(accountId) ?? [])])],
     });
   } catch {
     return { of: 'not-confirmed' };
@@ -1696,6 +1707,8 @@ export async function startAnUnfinishedCreationAgain(
   if (seen.ttl === null || !Number.isFinite(seen.ttl) || !Number.isFinite(seen.blockTime)) return { of: 'not-confirmed' };
   const endsAt = seen.ttl + THE_SERVICES_MARGIN_MS;
   if (seen.blockTime < endsAt) return { of: 'may-still-land', minutes: Math.max(1, Math.ceil((endsAt - seen.blockTime) / 60_000)) };
+  /* A copy the wallet built again in another tab is not read here; the service holds it, and says whether it can still be sent. */
+  if (standing === 'deploy-sent') return { of: 'not-confirmed' };
   const now = theCreation(accountId);
   if (now === undefined) return { of: 'dropped' };
   /* Carried again while the chain was read: what was read is not what is kept now. */
@@ -1912,6 +1925,8 @@ export async function relayForTheCreation(
     case 'creation':
     case 'creation-again': {
       if (at.also === undefined) return false;
+      /* Kept before it is handed on: a copy the service may have sent can land whatever its answer was. */
+      CREATIONS_HANDED_ON.set(accountId, [...(CREATIONS_HANDED_ON.get(accountId) ?? []), transaction, at.also]);
       /* The service records the account against the company it was told was founded; tell it first if it was not. */
       const saved = theCreation(accountId);
       if (saved !== undefined) await sendTheCompany(saved);

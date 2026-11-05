@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   MIDNIGHT_PARAMETER_SHA256, PARAMETER_SOURCES, describeParameters, ensureProvingParameters, parameterSources,
   parametersNeeded, publishedByMidnight, servedCircuits, sizesFromTheCircuits, startProvingParameters, type ReadSizes,
@@ -13,6 +14,18 @@ import {
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 
 const sha256 = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
+
+/*
+ * The size the deposit circuit needs, read from the compiled circuit this repository ships through the same reader
+ * the service uses, so the fixtures below follow the circuit when it is rebuilt at another size.
+ */
+const DEPOSIT_K: number = await (async () => {
+  const [size] = await sizesFromTheCircuits([fileURLToPath(new URL('../../contracts/managed-vault/zkir/deposit.bzkir', import.meta.url))]);
+  if (size === undefined || !('k' in size)) throw new Error(`the compiled deposit circuit could not be read: ${size === undefined ? 'no answer' : size.why}`);
+  return size.k;
+})();
+const OUTPUT_K = DEPOSIT_K + 1;
+const UNKNOWN_K = DEPOSIT_K + 2;
 
 describe('THE DIGESTS A PARAMETER FILE IS CHECKED AGAINST', () => {
   it('lists exactly bls_midnight_2p0 to bls_midnight_2p25, each with a whole SHA-256, and nothing else', () => {
@@ -64,7 +77,7 @@ describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
     expect(labels).toContain('depositUnshielded (vault)');
     expect(labels).toContain('recordPaymentFromVault (company account)');
     expect(labels).toContain('shielded output (network)');
-    const sizes: Record<string, number> = { deposit: 15, depositUnshielded: 9, output: 14 };
+    const sizes: Record<string, number> = { deposit: DEPOSIT_K, depositUnshielded: 9, output: OUTPUT_K };
     for (const c of circuits) {
       const name = c.label.split(' ')[c.label.startsWith('shielded') ? 1 : 0]!;
       if (name === 'payout') continue; /* left missing on purpose */
@@ -73,13 +86,13 @@ describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
     }
     const readSizes: ReadSizes = async (files) => files.map((f) => {
       const name = readFileSync(f, 'utf8');
-      return name === 'unreadable' ? { why: 'not a circuit' } : { k: sizes[name] ?? 16 };
+      return name === 'unreadable' ? { why: 'not a circuit' } : { k: sizes[name] ?? UNKNOWN_K };
     });
     const { needs, unread } = await parametersNeeded(circuits, readSizes);
-    expect(needs.get(15)).toEqual(['deposit (vault)']);
+    expect(needs.get(DEPOSIT_K)).toEqual(['deposit (vault)']);
     expect(needs.get(9)).toEqual(['depositUnshielded (vault)']);
-    expect(needs.get(14)).toEqual(['shielded output (network)']);
-    expect([...needs.keys()]).toEqual([9, 14, 15, 16]);
+    expect(needs.get(OUTPUT_K)).toEqual(['shielded output (network)']);
+    expect([...needs.keys()]).toEqual([9, DEPOSIT_K, OUTPUT_K, UNKNOWN_K]);
     expect(unread.some((u) => u.startsWith('payout (vault)'))).toBe(true);
     expect(unread.some((u) => u.startsWith('retire (vault)') && u.includes('not a circuit'))).toBe(true);
     expect([...needs.values()].flat().length + unread.length).toBe(circuits.length);
@@ -91,10 +104,11 @@ describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
  * those of the stand-in bytes, so a check that passes proves the comparison and not the table.
  */
 const GENUINE_9 = Buffer.from('parameters for circuits of size 2^9');
-const GENUINE_15 = Buffer.from('parameters for circuits of size 2^15');
-const DIGESTS: Record<string, string> = { bls_midnight_2p9: sha256(GENUINE_9), bls_midnight_2p15: sha256(GENUINE_15) };
+const GENUINE_DEPOSIT = Buffer.from(`parameters for circuits of size 2^${DEPOSIT_K}`);
+const DEPOSIT_PARAMETERS = `bls_midnight_2p${DEPOSIT_K}`;
+const DIGESTS: Record<string, string> = { bls_midnight_2p9: sha256(GENUINE_9), [DEPOSIT_PARAMETERS]: sha256(GENUINE_DEPOSIT) };
 const published = (name: string): string | undefined => DIGESTS[name];
-const K_OF: Record<string, number> = { deposit: 15, depositUnshielded: 9 };
+const K_OF: Record<string, number> = { deposit: DEPOSIT_K, depositUnshielded: 9 };
 const readSizes: ReadSizes = async (files) => files.map((f) => ({ k: K_OF[readFileSync(f, 'utf8')] ?? 9 }));
 
 type Answer = { ok: boolean; status: number; arrayBuffer(): Promise<ArrayBuffer> };
@@ -132,35 +146,35 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     const asked: string[] = [];
     const fetch = async (url: string): Promise<Answer> => {
       asked.push(url);
-      return url.endsWith('bls_midnight_2p9') ? answer(GENUINE_9) : url.endsWith('bls_midnight_2p15') ? answer(GENUINE_15) : notThere;
+      return url.endsWith('bls_midnight_2p9') ? answer(GENUINE_9) : url.endsWith(DEPOSIT_PARAMETERS) ? answer(GENUINE_DEPOSIT) : notThere;
     };
     const out = await ensureProvingParameters({ places, sources: ['https://stand-in.example'], fetch, published, readSizes });
-    expect(out.fetched.map((f) => f.name).sort()).toEqual(['bls_midnight_2p15', 'bls_midnight_2p9']);
+    expect(out.fetched.map((f) => f.name).sort()).toEqual([DEPOSIT_PARAMETERS, 'bls_midnight_2p9'].sort());
     expect(out.missing).toEqual([]);
-    expect(asked).toContain('https://stand-in.example/bls_midnight_2p15');
-    expect(readFileSync(join(places.params, 'bls_midnight_2p15'))).toEqual(GENUINE_15);
+    expect(asked).toContain(`https://stand-in.example/${DEPOSIT_PARAMETERS}`);
+    expect(readFileSync(join(places.params, DEPOSIT_PARAMETERS))).toEqual(GENUINE_DEPOSIT);
     const get = await serve();
-    const got = await get('bls_midnight_2p15');
+    const got = await get(DEPOSIT_PARAMETERS);
     expect(got.status).toBe(200);
-    expect(got.body).toEqual(GENUINE_15);
+    expect(got.body).toEqual(GENUINE_DEPOSIT);
     const { info } = describeParameters(out);
-    expect(info.some((l) => l.includes('fetched bls_midnight_2p15') && l.includes('https://stand-in.example'))).toBe(true);
+    expect(info.some((l) => l.includes(`fetched ${DEPOSIT_PARAMETERS}`) && l.includes('https://stand-in.example'))).toBe(true);
   });
 
   it('A FILE THAT FAILS THE CHECK IS NOT KEPT AND NOT SERVED, AND THE NEXT SOURCE IS TRIED', async () => {
     /* RED WHEN: a download is kept without being compared, a failed comparison stops the search early, or a
      * file already here that is not genuine is overwritten rather than moved aside, or left where the route looks. */
     mkdirSync(places.params, { recursive: true });
-    writeFileSync(join(places.params, 'bls_midnight_2p15'), 'left here by somebody');
+    writeFileSync(join(places.params, DEPOSIT_PARAMETERS), 'left here by somebody');
     const forged = Buffer.from('not the parameters');
     const fetch = async (url: string): Promise<Answer> =>
       url.startsWith('https://first.example') ? answer(forged)
-        : url.endsWith('bls_midnight_2p15') ? answer(GENUINE_15) : notThere;
+        : url.endsWith(DEPOSIT_PARAMETERS) ? answer(GENUINE_DEPOSIT) : notThere;
     const out = await ensureProvingParameters({ places, sources: ['https://first.example', 'https://second.example'], fetch, published, readSizes });
-    expect(out.fetched.find((f) => f.name === 'bls_midnight_2p15')?.from).toBe('https://second.example');
-    expect(readFileSync(join(places.params, 'bls_midnight_2p15'))).toEqual(GENUINE_15);
+    expect(out.fetched.find((f) => f.name === DEPOSIT_PARAMETERS)?.from).toBe('https://second.example');
+    expect(readFileSync(join(places.params, DEPOSIT_PARAMETERS))).toEqual(GENUINE_DEPOSIT);
     expect(out.setAside).toHaveLength(1);
-    expect(out.setAside[0]?.from).toBe(join(places.params, 'bls_midnight_2p15'));
+    expect(out.setAside[0]?.from).toBe(join(places.params, DEPOSIT_PARAMETERS));
     expect(readFileSync(out.setAside[0]!.to, 'utf8')).toBe('left here by somebody');
 
     const onlyForged = async (): Promise<Answer> => answer(forged);
@@ -169,8 +183,8 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     for (const c of servedCircuits(places2)) { mkdirSync(dirname(c.ir), { recursive: true }); writeFileSync(c.ir, c.label.split(' ')[0]!); }
     const out2 = await ensureProvingParameters({ places: places2, sources: ['https://first.example'], fetch: onlyForged, published, readSizes });
     expect(out2.fetched).toEqual([]);
-    expect(out2.missing.map((m) => m.name).sort()).toEqual(['bls_midnight_2p15', 'bls_midnight_2p9']);
-    expect(existsSync(join(places2.params, 'bls_midnight_2p15'))).toBe(false);
+    expect(out2.missing.map((m) => m.name).sort()).toEqual([DEPOSIT_PARAMETERS, 'bls_midnight_2p9'].sort());
+    expect(existsSync(join(places2.params, DEPOSIT_PARAMETERS))).toBe(false);
     expect(existsSync(places2.params) ? readdirSync(places2.params).filter((f) => f.startsWith('bls_')) : []).toEqual([]);
 
     /* And a forged file somebody put in place by hand is refused by the route itself. */
@@ -187,11 +201,11 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     const offline = async (): Promise<Answer> => { throw new Error('getaddrinfo ENOTFOUND'); };
     const out = await ensureProvingParameters({ places, sources: ['https://unreachable.example'], fetch: offline, published, readSizes });
     expect(out.fetched).toEqual([]);
-    const k15 = out.missing.find((m) => m.name === 'bls_midnight_2p15');
-    expect(k15?.circuits).toEqual(['deposit (vault)']);
-    expect(k15?.why).toContain('failed');
+    const depositFile = out.missing.find((m) => m.name === DEPOSIT_PARAMETERS);
+    expect(depositFile?.circuits).toEqual(['deposit (vault)']);
+    expect(depositFile?.why).toContain('failed');
     const { warn } = describeParameters(out);
-    expect(warn.some((l) => l.includes('bls_midnight_2p15') && l.includes('could not be fetched'))).toBe(true);
+    expect(warn.some((l) => l.includes(DEPOSIT_PARAMETERS) && l.includes('could not be fetched'))).toBe(true);
     expect(warn.some((l) => l.includes('MIDNIGHT_PARAM_SOURCE') && l.includes('restart'))).toBe(true);
     expect(warn.some((l) => l.includes('will fail') && l.includes('deposit (vault)'))).toBe(true);
     expect(warn.some((l) => l.includes('will fail') && l.includes('depositUnshielded (vault)'))).toBe(true);
@@ -201,12 +215,12 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     /* RED WHEN: a genuine file is fetched again on every start, or is moved aside. */
     mkdirSync(places.params, { recursive: true });
     writeFileSync(join(places.params, 'bls_midnight_2p9'), GENUINE_9);
-    writeFileSync(join(places.params, 'bls_midnight_2p15'), GENUINE_15);
+    writeFileSync(join(places.params, DEPOSIT_PARAMETERS), GENUINE_DEPOSIT);
     const asked: string[] = [];
     const fetch = async (url: string): Promise<Answer> => { asked.push(url); return notThere; };
     const out = await ensureProvingParameters({ places, sources: ['https://stand-in.example'], fetch, published, readSizes });
     expect(asked).toEqual([]);
-    expect([...out.present].sort()).toEqual(['bls_midnight_2p15', 'bls_midnight_2p9']);
+    expect([...out.present].sort()).toEqual([DEPOSIT_PARAMETERS, 'bls_midnight_2p9'].sort());
     expect(out.setAside).toEqual([]);
   });
 
@@ -231,14 +245,14 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     /* RED WHEN: the route remembers its answer for a path and not for the version of the file at that path - a
      * request that arrived before the fetch finished would then keep the file refused until a restart. */
     mkdirSync(places.params, { recursive: true });
-    const file = join(places.params, 'bls_midnight_2p15');
+    const file = join(places.params, DEPOSIT_PARAMETERS);
     writeFileSync(file, 'half a download, or something else');
     const get = await serve();
-    expect((await get('bls_midnight_2p15')).status).toBe(404);
-    writeFileSync(`${file}.new`, GENUINE_15);
+    expect((await get(DEPOSIT_PARAMETERS)).status).toBe(404);
+    writeFileSync(`${file}.new`, GENUINE_DEPOSIT);
     renameSync(`${file}.new`, file);
-    const got = await get('bls_midnight_2p15');
+    const got = await get(DEPOSIT_PARAMETERS);
     expect(got.status).toBe(200);
-    expect(got.body).toEqual(GENUINE_15);
+    expect(got.body).toEqual(GENUINE_DEPOSIT);
   });
 });

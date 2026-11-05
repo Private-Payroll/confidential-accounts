@@ -245,6 +245,7 @@ export async function readVaultPrivateMoney(
     const found = await holdings.privateNotes(vault, tokens);
     switch (found.of) {
       case 'nothing-yet': return { of: PRIVATE_MONEY.nothingYet };
+      case 'unfiled': return unreadable(COULD_NOT_READ.record);
       case 'contradicted': return { of: PRIVATE_MONEY.notBelieved };
       case 'unreadable': {
         if (found.because === 'layout') return unreadable(COULD_NOT_READ.layout);

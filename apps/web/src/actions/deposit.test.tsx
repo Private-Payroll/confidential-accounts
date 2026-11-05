@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
 import type { AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
 import { NIGHT, StaticAssetRegistry, type Asset } from '../../../../src/core/assets.js';
-import { DEPOSIT_STEP, type DepositNow, type LastDepositChecked } from '../adapters/deposit.js';
+import { CHAIN_SAID, DEPOSIT_STEP, type DepositNow, type LastDepositChecked } from '../adapters/deposit.js';
+import type { VaultStanding } from '../adapters/company-records.js';
 import { ACT_REFUSAL } from '../adapters/refusals.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
@@ -44,6 +45,7 @@ vi.mock('../adapters/deposit.js', async (real) => {
     putMoneyIn: (...args: Parameters<typeof r.putMoneyIn>) => {
       dp.put.push(args);
       const [, , , pick, entry, held] = args;
+      if (r.serviceRefusesVault(args[7])) return { of: 'vault-refused', standing: args[7] };
       const checked = r.amountToPutIn(entry, pick, held, registry);
       if (checked.of === 'refused') return checked;
       if ((dp.now as { of?: string } | null)?.of === 'running') return { of: 'already-running' };
@@ -86,20 +88,20 @@ const session = {
 
 const changed = vi.fn();
 const lead = vi.fn();
-const panel = (checked: LastDepositChecked | null = null) => (
+const panel = (checked: LastDepositChecked | null = null, standing?: VaultStanding) => (
   <KitProvider languages={LANGUAGES} pick="en">
-    <SessionProvider session={session}><Deposit company="c-1" vault={VAULT} leadTo={lead} onChanged={changed} checked={checked} /></SessionProvider>
+    <SessionProvider session={session}><Deposit company="c-1" vault={VAULT} standing={standing} leadTo={lead} onChanged={changed} checked={checked} /></SessionProvider>
   </KitProvider>
 );
-const draw = (checked: LastDepositChecked | null = null) => render(panel(checked));
+const draw = (checked: LastDepositChecked | null = null, standing?: VaultStanding) => render(panel(checked, standing));
 const q = (c: ParentNode, sel: string) => c.querySelector<HTMLElement>(sel);
 const all = (c: ParentNode, sel: string) => [...c.querySelectorAll<HTMLElement>(sel)];
 const click = async (el: HTMLElement | null) => { await act(async () => { fireEvent.click(el!); await Promise.resolve(); await Promise.resolve(); }); };
 const settle = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
 
 /** The panel at the amount: the way from the wallet chosen, the tokens shown, and a row picked. */
-async function atTheAmount(row: 'private' | 'public' = 'private') {
-  const view = draw();
+async function atTheAmount(row: 'private' | 'public' = 'private', standing?: VaultStanding) {
+  const view = draw(null, standing);
   await click(q(view.container, '[data-action=choose-method]'));
   await click(q(view.container, '[data-action=show-account-tokens]'));
   await settle();
@@ -184,6 +186,32 @@ describe('the ways to put money in', () => {
   });
 });
 
+describe('a vault the service says it refuses', () => {
+  /* RED WHEN: pressing Put money in on a vault the service's answer says it refuses starts a deposit, or does not say the answer's own words and that the wallet was not asked, in the panel's footer. */
+  it.each(['private', 'public'] as const)('stops a %s deposit at the press and says the answer\'s own words', async (row) => {
+    const view = await atTheAmount(row, 'held-by-other-keys');
+    await type(view.container, '1');
+    await click(putButton(view.container));
+    expect(dp.started).toBe(0);
+    expect(dp.now).toBeNull();
+    expect(dp.put[0]![7]).toBe('held-by-other-keys');
+    const stopped = q(view.container, '[data-deposit-footer] [data-vault-refused=held-by-other-keys]')!;
+    expect(stopped.textContent).toContain(EN['deposit.refused.vaultTitle']);
+    expect(stopped.textContent).toContain(EN['vaults.standing.heldByOtherKeys']);
+    expect(stopped.textContent).toContain(EN['deposit.refused.notAsked']);
+    expect(putButton(view.container).disabled).toBe(false);
+  });
+
+  /* RED WHEN: a vault the service funds, or one with no answer, no longer goes on to start the deposit at the press. */
+  it.each(['held-by-committee', undefined] as const)('lets a deposit into a vault with the answer %s start', async (standing) => {
+    const view = await atTheAmount('private', standing);
+    await type(view.container, '1');
+    await click(putButton(view.container));
+    expect(dp.started).toBe(1);
+    expect(q(view.container, '[data-vault-refused]')).toBeNull();
+  });
+});
+
 describe('the amount', () => {
   /* RED WHEN: in the right-hand panel, the Put money in press or a refusal of the amount is in the panel's scrolling body instead of its footer (which stays in view), the refusal is below the press, or outside a panel they are not still drawn together, the refusal first. */
   it('puts the press and a refusal in the panel\'s footer, the refusal above the press, and keeps them together outside a panel', async () => {
@@ -260,7 +288,7 @@ describe('the amount', () => {
     expect(q(view.container, '[data-max-all]')!.textContent).toContain('PRV');
     await click(putButton(view.container));
     expect(dp.put).toHaveLength(1);
-    expect(dp.put[0]!.slice(3)).toEqual([{ code: PRIVATE_TOKEN, kind: 'private' }, expect.any(Symbol), 2_500_000n]);
+    expect(dp.put[0]!.slice(3, 6)).toEqual([{ code: PRIVATE_TOKEN, kind: 'private' }, expect.any(Symbol), 2_500_000n]);
     expect(dp.started).toBe(1);
   });
 
@@ -269,7 +297,7 @@ describe('the amount', () => {
     const view = await atTheAmount('public');
     await type(view.container, '1.25');
     await click(putButton(view.container));
-    expect(dp.put[0]!.slice(1)).toEqual(['c-1', VAULT, { code: NIGHT, kind: 'public' }, '1.25', 12_000_000n]);
+    expect(dp.put[0]!.slice(1, 6)).toEqual(['c-1', VAULT, { code: NIGHT, kind: 'public' }, '1.25', 12_000_000n]);
   });
 });
 
@@ -506,11 +534,51 @@ describe('how it ended', () => {
   });
 
 
+  /* RED WHEN: a public deposit the wallet signed and this page did not send is said to be one that may have been sent and that the page was not told of, leaves out the time until which it can still be sent, offers Try again or Check my last deposit before then, or drops the page's own reason from the details. */
+  it('says a public deposit the wallet signed and this page did not send was not sent here, until when it can still be sent, and why', async () => {
+    const until = Date.now() + 3_600_000;
+    dp.now = failed({
+      kind: 'public', amount: publicAmount(4_000_000n, 6, 'NIGHT'), mayHaveBeenSent: true, until, signedNotSent: true,
+      reasons: ['this page did not send the public deposit, because your wallet handed back a deposit other than the one this device built', 'the service refused it'],
+    });
+    const view = draw();
+    const words = q(view.container, '[data-failed-words]')!.textContent!;
+    expect(words).toMatch(/^This page did not send this public deposit\. Your wallet already signed it, so until .*20\d\d.* anyone who holds it can still send it\. Do not put money in again before .*20\d\d.*\./u);
+    expect(words).not.toContain('may have been sent');
+    expect(words).not.toContain('was not told whether it arrived');
+    expect(q(view.container, '[data-details]')!.textContent).toBe(
+      'Details for support: this page did not send the public deposit, because your wallet handed back a deposit other than the one this device built; the service refused it.',
+    );
+    expect(q(view.container, '[data-action=try-again]')).toBeNull();
+    expect(q(view.container, '[data-action=check-last-deposit]')).toBeNull();
+  });
+
+
+  /* RED WHEN: a public deposit the chain refused, or that never landed, says nothing was sent, offers the setup steps or Check my last deposit, holds Try again back, or leaves out the time it stopped being valid. */
+  it('says a public deposit the chain refused or that never landed put nothing in, never that nothing was sent, and lets the person put money in again', async () => {
+    const ended = (over: Partial<Extract<DepositNow, { of: 'failed' }>>) => failed({
+      kind: 'public', amount: publicAmount(4_000_000n, 6, 'NIGHT'), mayHaveBeenSent: false, reasons: ['the chain refused this public deposit'], ...over,
+    });
+    dp.now = ended({ chainSaid: CHAIN_SAID.refused });
+    const view = draw();
+    expect(q(view.container, '[data-failed-words]')!.textContent).toBe(EN['deposit.failed.publicRefused']);
+    expect(q(view.container, '[data-refusal=chain][data-chain-refused=true]')).not.toBeNull();
+    expect(q(view.container, '[data-nothing-sent]')).toBeNull();
+    expect(q(view.container, '[data-lead-to]')).toBeNull();
+    expect(q(view.container, '[data-action=check-last-deposit]')).toBeNull();
+    expect(q(view.container, '[data-action=try-again]')).not.toBeNull();
+    await act(async () => { dp.set(ended({ chainSaid: CHAIN_SAID.neverLanded, until: Date.now() - 60_000 })); });
+    const words = q(view.container, '[data-failed-words]')!.textContent!;
+    expect(words).toMatch(/^This public deposit did not reach the network before .*20\d\d.*, when it stopped being valid, so it never will and nothing went into the vault\. You can put money in again now\.$/u);
+    expect(q(view.container, '[data-nothing-sent]')).toBeNull();
+    expect(q(view.container, '[data-action=try-again]')).not.toBeNull();
+  });
+
   /* RED WHEN: in a tab that holds no company key, Check my last deposit opens the person's wallet on the first press without saying so first, or does not check on the press that follows the naming. */
   it('names the wallet window before Check my last deposit opens it, in a tab that holds no company key, and checks on the next press', async () => {
     dp.keyHeld = false;
     dp.now = failed({ mayHaveBeenSent: true, reasons: ['x'] });
-    dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null } satisfies LastDepositChecked;
+    dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null, earlier: [] } satisfies LastDepositChecked;
     const view = draw();
     await click(q(view.container, '[data-action=check-last-deposit]'));
     expect(dp.checks).toHaveLength(0);
@@ -548,7 +616,7 @@ describe('how it ended', () => {
   /* RED WHEN: the failure of a deposit that may have been sent has no Check my last deposit, a second press runs a second check, or the answer is not shown on the panel. */
   it('checks the last deposit from a failed one, once for two presses, and shows the answer', async () => {
     dp.now = failed({ mayHaveBeenSent: true, reasons: ['x'] });
-    dp.checkAnswer = { of: 'checked', deposit: 'still-on-its-way', until: Date.UTC(2026, 9, 23, 12, 0), notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: 'for support', deposited: null, unshown: null } satisfies LastDepositChecked;
+    dp.checkAnswer = { of: 'checked', deposit: 'still-on-its-way', until: Date.UTC(2026, 9, 23, 12, 0), notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: 'for support', deposited: null, unshown: null, earlier: [] } satisfies LastDepositChecked;
     const view = draw();
     await act(async () => { const b = q(view.container, '[data-action=check-last-deposit]')!; b.click(); b.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(dp.checks).toEqual([['u1', 'c-1', VAULT]]);
@@ -560,7 +628,7 @@ describe('how it ended', () => {
 describe('Check my last deposit, as the panel says it', () => {
   const checked = (over: Partial<Extract<LastDepositChecked, { of: 'checked' }>>): LastDepositChecked => ({
     of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '',
-    deposited: null, unshown: null, ...over,
+    deposited: null, unshown: null, earlier: [], ...over,
   });
 
   /* RED WHEN: the panel does not say what the check reads (the newest private deposit filed for the vault, and one this browser kept from before) and that a public deposit is checked in the wallet. */
@@ -579,7 +647,8 @@ describe('Check my last deposit, as the panel says it', () => {
     ['recorded', 'Your last deposit from this browser has reached the vault and is now in its record.'],
     ['landed-not-recorded', 'Your last deposit from this browser is in the vault, and this page cannot yet read the transfer that brought it in. Check again in a minute.'],
     ['landed-owed-its-record', "The deposit is in the vault, and not yet in its record. The vault's deposit journal names it, so it is not lost; a check here files nothing. Do not put the same money in again."],
-    ['journalled-not-seen', 'The newest deposit filed for this vault has not reached the vault yet. It may still arrive. Do not put the same money in again.'],
+    ['journalled-never-landed', 'The newest deposit filed for this vault never reached the vault, and now it never will. No money moved.'],
+    ['journalled-not-recorded', 'The newest deposit filed for this vault is in the vault, and not yet in its record. Check again in a minute. Do not put the same money in again.'],
     ['landed-and-since-spent', 'The deposit reached the vault, and the vault has since paid it out or combined it.'],
   ] as const)('says %s', (state, words) => {
     const view = draw(checked({ deposit: state }));
@@ -600,6 +669,23 @@ describe('Check my last deposit, as the panel says it', () => {
     cleanup();
     const waiting = draw(checked({ deposit: 'still-on-its-way', until: Date.UTC(2026, 9, 23, 12, 0) }));
     expect(q(waiting.container, '[data-check-says]')!.textContent).toMatch(/^Your last deposit from this browser has not reached the vault yet\. If it has not arrived by .*2026.*, it never will and no money moved\. Do not put the same money in again\.$/u);
+  });
+
+  it('a deposit filed for the vault and not yet seen says until when it can still arrive, and so does every earlier one', () => {
+    const view = draw(checked({
+      deposit: 'journalled-not-seen', until: Date.UTC(2026, 10, 4, 18, 0),
+      earlier: [
+        { deposit: 'journalled-not-seen', until: Date.UTC(2026, 10, 4, 17, 0), deposited: privateAmountOf(1_500_000n), unshown: null },
+        { deposit: 'landed-owed-its-record', until: Date.UTC(2026, 10, 4, 17, 30), deposited: null, unshown: null },
+      ],
+    }));
+    /* RED WHEN: the newest deposit filed for the vault and not yet seen is said as one that may still arrive, with no time after which it never will. */
+    expect(q(view.container, '[data-check-says]')!.textContent).toMatch(/^The newest deposit filed for this vault has not reached the vault yet\. If it was sent, it can still arrive until .*2026.*\. If it has not arrived by then, it never will and no money moved\. Do not put the same money in again\.$/u);
+    const earlier = [...view.container.querySelectorAll('[data-earlier-deposit]')];
+    /* RED WHEN: an earlier deposit filed for the vault that can still land, or one in the vault and not yet in its record, is not said. */
+    expect(earlier.map((e) => e.getAttribute('data-earlier-deposit'))).toEqual(['journalled-not-seen', 'landed-owed-its-record']);
+    expect(earlier[0]!.textContent).toMatch(/^An earlier deposit filed for this vault has not reached the vault yet\. If it was sent, it can still arrive until .*2026.*\. If it has not arrived by then, it never will and no money moved\.1\.5\s*PRV/u);
+    expect(earlier[1]!.textContent).toBe('An earlier deposit filed for this vault is in the vault, and not yet in its record. It is not lost. Do not put the same money in again.');
   });
 
   /* RED WHEN: a deposit the check judged is said without what it was, or a token the page does not list is shown with no reason. */
