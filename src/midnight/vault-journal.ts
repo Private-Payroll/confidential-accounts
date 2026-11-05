@@ -176,6 +176,30 @@ export class SealedJournal<Line> {
       + `written, nothing is proved and nothing is ${what === 'deposit' ? 'deposited' : 'paid'}. `
       + 'Find what else is moving money in or out of this vault before trying again.', { cause: lost });
   }
+
+  /**
+   * Files the next version holding the lines `change` makes of the lines as
+   * filed, asked again after every lost race; `change` answering null writes
+   * nothing. Answers whether a version was filed. Sealed to every signer and
+   * refused for a signer it would drop, exactly as `append` is.
+   */
+  async rewrite(change: (lines: readonly Line[]) => readonly Line[] | null): Promise<boolean> {
+    for (let i = 1; i <= JOURNAL_WRITE_ATTEMPTS; i += 1) {
+      const now = await this.open();
+      const lines = change(now.lines);
+      if (lines === null) return false;
+      const to = await this.signers();
+      assertNoSignerWouldLoseAccess(now.wrappedFor, to.map((s) => s.id), this.page.called);
+      passedOverAbove(this.store, this.vault, this.page.record, now.version);
+      try {
+        await this.store.put(this.vault, sealPool(this.vault, { [this.page.lines]: lines } as never, to, now.version + 1, this.page.record));
+        return true;
+      } catch (cause) {
+        if (!(cause instanceof Error && cause.name === 'VaultPoolVersionAlreadyFiled')) throw cause;
+      }
+    }
+    return false;
+  }
 }
 
 /**
@@ -211,12 +235,24 @@ export class PaymentJournalInStore implements PaymentJournal {
   }
 }
 
-/** One deposit journal line, exactly as the deposit journal has always written it. */
+/** Where the deposit journal keeps its lines, and what it is called in a sentence. */
+const DEPOSIT_JOURNAL_PAGE = {
+  lines: 'notes', called: 'this vault\x27s deposit journal', record: 'deposit-journal',
+} as const;
+
+/** One deposit journal line, as the deposit journal writes it. */
 export interface DepositLine {
   readonly nonce: Hex;
   readonly token: Hex;
   readonly value: bigint;
   readonly attemptedAt: string;
+  /**
+   * Set only once the device that filed the line established that its deposit
+   * was never handed over to be sent (`endDepositNeverHandedOver`), so its coin
+   * can never be made. Every reader of the coin reads it as before; a check of
+   * what is on its way does not report it.
+   */
+  readonly ended?: true;
 }
 
 /**
@@ -243,9 +279,7 @@ export class DepositJournalInStore implements DepositJournal {
     /** Called once the line is stored, before the ledger calls the contract. */
     private readonly written: () => void = () => {},
   ) {
-    this.journal = new SealedJournal(store, vault, me, signers, {
-      lines: 'notes', called: 'this vault\x27s deposit journal', record: 'deposit-journal',
-    });
+    this.journal = new SealedJournal(store, vault, me, signers, DEPOSIT_JOURNAL_PAGE);
   }
 
   async open(): Promise<{ attempts: readonly DepositLine[]; version: number; passedOver: number }> {
@@ -286,6 +320,27 @@ export class DepositJournalInStore implements DepositJournal {
 }
 
 /**
+ * **A DEPOSIT NEVER HANDED OVER TO BE SENT IS MARKED ENDED ON ITS LINE.** Called
+ * only once the device that filed the line has established that the deposit's
+ * transaction never reached anything that could send it, so its coin can never
+ * be made. The newest line naming the coin stays, whole, with `ended` set; a line
+ * already ended, or no line naming the coin, writes nothing. Answers whether a
+ * version was filed.
+ */
+export async function endDepositNeverHandedOver(
+  store: SealedPoolStore, vault: string, me: JournalOpener, signers: () => Promise<readonly PoolSigner[]>, nonce: string,
+): Promise<boolean> {
+  const journal = new SealedJournal<DepositLine>(store, vault, me, signers, DEPOSIT_JOURNAL_PAGE);
+  const named = nonce.toLowerCase();
+  return journal.rewrite((lines) => {
+    let at = -1;
+    lines.forEach((l, i) => { if (typeof l?.nonce === 'string' && l.nonce.toLowerCase() === named) at = i; });
+    if (at < 0 || lines[at]!.ended === true) return null;
+    return lines.map((l, i) => (i === at ? { ...l, ended: true as const } : l));
+  });
+}
+
+/**
  * **ONE STEP A JOURNAL SAYS WAS ATTEMPTED**: every note it was about to spend,
  * whole, and what was leaving. `spent` is the first note, `further` the rest in
  * place order; a merge sends nothing out (`amount` 0) and keeps one coin worth
@@ -301,10 +356,31 @@ export interface AttemptedStep {
   readonly amount: bigint;
 }
 
+/**
+ * The one spelling of "the same note": its nonce, token and value, with the hex
+ * read without regard to case, because the chain reads the bytes and not the
+ * letters. Two spellings of one note that keyed apart would let a rebuild take
+ * the same note twice.
+ */
+export const noteKey = (c: { readonly nonce: string; readonly token: string; readonly value: bigint | string }): string =>
+  `${c.nonce.toLowerCase()}:${c.token.toLowerCase()}:${c.value}`;
+
 /** The one spelling of "the same attempt", so a line read twice, or from two versions, is one attempt. */
 export const attemptKey = (a: AttemptedStep): string =>
-  `${[a.spent, ...(a.further ?? [])].map((c) => `${c.nonce}:${c.token}:${c.value}`).join('+')}`
-  + `:${a.merge === true ? 'merge' : 'pays'}:${a.amount}`;
+  `${[a.spent, ...(a.further ?? [])].map(noteKey).join('+')}:${a.merge === true ? 'merge' : 'pays'}:${a.amount}`;
+
+/**
+ * A payment journal line as it is filed, read as the step it attempted. The
+ * line says `step: 'merge'` for a merge; every other step pays out `amount` and
+ * keeps the rest as change. This is the one place that reading is made.
+ */
+export const stepOfLine = (line: {
+  readonly spent: VaultCoin; readonly further?: readonly VaultCoin[]; readonly step?: unknown; readonly amount: bigint;
+}): AttemptedStep => ({
+  spent: line.spent, amount: line.amount,
+  ...(line.further === undefined || line.further.length === 0 ? {} : { further: line.further }),
+  ...(line.step === 'merge' ? { merge: true } : {}),
+});
 
 /** A journal version or line a read skipped, and why: said to the person, never taken as nothing. */
 export interface JournalLineUnread {
@@ -400,7 +476,8 @@ export const attemptsFromJournalVersions = (input: {
         say('deposit-journal', page.version, 'a deposit journal line is not a coin (nonce, token, value), so it is not read', line);
         continue;
       }
-      deposits.set(`${nonce}:${token}:${value}`, { nonce, token, value });
+      const coin: VaultCoin = { nonce, token, value };
+      deposits.set(noteKey(coin), coin);
     }
   }
 
@@ -424,11 +501,7 @@ export const attemptsFromJournalVersions = (input: {
         say('payment-journal', page.version, 'a payment journal line is not an attempt (the notes it spends and the amount), so it is not read', line);
         continue;
       }
-      const attempt: AttemptedStep = {
-        spent, amount: a.amount,
-        ...(further.length === 0 ? {} : { further: further as VaultCoin[] }),
-        ...(step === 'merge' ? { merge: true } : {}),
-      };
+      const attempt = stepOfLine({ spent, further: further as VaultCoin[], step, amount: a.amount });
       payments.set(attemptKey(attempt), attempt);
     }
   }

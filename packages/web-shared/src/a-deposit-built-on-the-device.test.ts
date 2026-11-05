@@ -45,7 +45,7 @@ import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
-import { buildVaultDeploy, type VaultBuilderDeps } from './vault-builder.js';
+import { buildVaultDeploy, readTransaction, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 import { openCompanyVaultPool, type VaultChainView, type ServedVaultChain, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
@@ -311,6 +311,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       },
     }, NET);
     let chosen: { nonce: string; token: string; value: string } | null = null;
+    const reads: unknown[] = [];
     /*
      * The vault as this device's worker reads it at the wallet's indexer: the state above, held by the keys that hold
      * the account as the wallet reads it, and the notes the chain shows. The read of a real state is
@@ -319,6 +320,18 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     const watched = {
       ...builder,
       deposit: async (i: Parameters<typeof builder.deposit>[0]) => { chosen = i.coin; return builder.deposit(i); },
+      /*
+       * Nothing here is proved, and the worker reads only a proved transaction: the product's own reader reads the
+       * deposit as the prover was given it, and what the wallet finished, with their proofs left out. The built one ends
+       * an hour on, as the call is built.
+       */
+      readTransaction: async (i: { transaction: string }) => {
+        const bytes = i.transaction === Buffer.from(PROVEN).toString('base64') ? erased[erased.length - 1]! : Buffer.from(i.transaction, 'base64');
+        const unproved = { Transaction: { deserialize: (s: string, _p: string, _b: string, raw: Uint8Array) => L.Transaction.deserialize(s as never, 'no-proof', 'no-binding', raw) } };
+        const read = readTransaction({ ledger: unproved } as never, bytes);
+        reads.push(read);
+        return read === null ? null : { ...read, timeToLive: Date.now() + 60 * 60_000 };
+      },
       vaultOnChain: async (i: { vault: string; indexer: unknown }) => {
         catching('device read', [i.vault, i.indexer]);
         return { onChain: true as const, state, notes: [...notes], notesFromThisBuild: true, everCreated: [], authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true,
@@ -419,6 +432,12 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
 
     /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */
     expect(done.note.value).toBe(VALUE);
+    /* RED WHEN: the ledger's own record of the coin built, read off what the wallet finished, is not the commitment this device worked out for it. */
+    const own = (await builder.commitments({ vault, coin: chosen! })).output;
+    /* Read twice: the deposit as built, and as the wallet handed it back with its own coins and change beside it. */
+    expect(reads.map((r) => (r as { coinsForContracts: unknown } | null)?.coinsForContracts)).toEqual([
+      [{ contract: vault.toLowerCase(), commitment: own.toLowerCase() }], [{ contract: vault.toLowerCase(), commitment: own.toLowerCase() }],
+    ]);
     /* RED WHEN: a deposit whose send named no transaction is recorded without the one its own output was found in. */
     expect(done.note.createdIn).toBe(LANDED_IN);
     expect(unproven, 'the deposit was built once, on this device').toHaveLength(1);

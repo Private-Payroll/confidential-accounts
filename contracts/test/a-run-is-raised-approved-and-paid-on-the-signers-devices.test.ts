@@ -58,6 +58,7 @@ import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifes
 import { companyRecordsRoutes, MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
 import { companyRecordEntry } from '../../src/midnight/record-manifest.js';
 import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { readTransaction } from 'vaults-web-shared/vault-builder.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -142,6 +143,16 @@ const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-jour
 const ACCOUNT_ID = 'acc_paying';
 const TOKEN = 'a7'.repeat(32) as Hex;
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+
+/**
+ * A deposit here is built without its proof, which the vault worker's reader of a proved transaction cannot read: the
+ * product's own reader reads it, and what the wallet bound, as built.
+ */
+const readsUnproven = {
+  readTransaction: async ({ transaction }: { transaction: string }) => readTransaction({ ledger: { Transaction: {
+    deserialize: (s: string, _p: string, b: string, raw: Uint8Array) => L.Transaction.deserialize(s as never, 'pre-proof', b as never, raw),
+  } } } as never, Buffer.from(transaction, 'base64')),
+};
 const asRuntime = (state: { serialize(): Uint8Array }) => (runtime as any).ContractState.deserialize(state.serialize());
 const vaultLedgerOf = (state: { serialize(): Uint8Array }) => (vaultModule as any).ledger(asRuntime(state).data);
 const accountLedgerOf = (state: { serialize(): Uint8Array }) => (accountModule as any).ledger(asRuntime(state).data);
@@ -646,7 +657,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     handover: (vault, tx) => http(`${at}/vaults/${vault}/handover`, { method: 'POST', body: { tx } }),
     chain: (vault) => http(`${at}/vaults/${vault}/chain`),
     deposit: (vault, tx) => http(`${at}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }),
-    depositPublicly: (vault, tx, money) => http(`${at}/vaults/${vault}/public-deposit`, { method: 'POST', body: { tx, ...money } }),
+    depositPublicly: (vault, tx) => http(`${at}/vaults/${vault}/public-deposit`, { method: 'POST', body: { tx } }),
     payoutState: (vault) => http(`${at}/vaults/${vault}/payout-state`),
     payout: (vault, tx) => http(`${at}/vaults/${vault}/payout`, { method: 'POST', body: { tx } }),
     merge: (vault, tx) => http(`${at}/vaults/${vault}/merge`, { method: 'POST', body: { tx } }),
@@ -764,7 +775,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
     const { vault } = created;
     await openCompanyVaultPool(poolDoors, vault, async () => {});
-    const deposited = await depositIntoCompanyVault({ ...poolDoors, company: LABEL, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
+    const deposited = await depositIntoCompanyVault({ ...poolDoors, company: LABEL, account: readAccountAddress(company)!, builder: { ...builder(), ...readsUnproven }, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
     return { vault, note: deposited.note };
   };
 

@@ -35,6 +35,7 @@
  * to do with the guard.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { codeHash } from './contract-version.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +117,36 @@ describe('the guard passes only what a compile would have left behind', () => {
     // guard that refused here would be refusing every fast compile.
     setMtime(artifactPath(), 1_000_000);
     expect(findRefusals(root, [PAIR])).toEqual([]);
+  });
+});
+
+describe('BY THE CODE ONCE THE COMPILE RECORDED WHAT IT COMPILED', () => {
+  // The compile writes <compiled folder>/.version with each source's code fingerprint. With it, a source
+  // saved again with only its comments, spacing or save time changed is current; a code change is stale.
+  const record = (): string => join(dirname(dirname(artifactPath())), '.version');
+  const recordSource = (): void =>
+    writeFileSync(record(), JSON.stringify({ sources: { [PAIR.source]: codeHash(sourcePath()) } }));
+
+  it('says nothing when the same code is saved again after the compile', () => {
+    recordSource();
+    setMtime(sourcePath(), 1_000_061);
+    expect(findRefusals(root, [PAIR])).toEqual([]);
+  });
+
+  it('says nothing when only a comment changed', () => {
+    recordSource();
+    writeFileSync(sourcePath(), '// a new comment\ncircuit fixture(): [] {}\n');
+    setMtime(sourcePath(), 1_000_061);
+    expect(findRefusals(root, [PAIR])).toEqual([]);
+  });
+
+  it('refuses when the code changed, whatever the save times say', () => {
+    recordSource();
+    writeFileSync(sourcePath(), 'circuit fixture(): [] { assert(true, "x"); }\n');
+    setMtime(sourcePath(), 1_000_000);
+    const refusals = findRefusals(root, [PAIR]);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0].kind).toBe('stale');
   });
 });
 
@@ -565,7 +596,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       if (c === -1 || c < at) return `nothing in ${job.id} copies the account's keys into the wallet after they are built, and ${walletAccountGated[0]} proves with them`;
       if (job.steps[c].conditional) return `the step that copies the account's keys into the wallet in ${job.id} is conditional, so it need never run`;
       if (job.steps[c].tolerated) return `the step that copies the account's keys into the wallet in ${job.id} tolerates its own failure`;
-      const afterCopy = job.steps.slice(c + 1).filter((s) => reads.includes(s));
+      const afterCopy = after.slice(c - at).filter((s) => reads.includes(s));
       for (const missing of walletAccountGated.filter((f) => !afterCopy.some((s) => (s.run as string).includes(f)))) {
         return `${missing} proves with the account's keys in the wallet and is run by no step after they are copied there`;
       }

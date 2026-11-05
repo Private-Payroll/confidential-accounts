@@ -106,9 +106,18 @@ export interface ChainNotesView {
 /** Where an unreadable answer broke: the chain could not be asked or shows no vault, the chain's ledger is not the shape this build reads, or this device has no record of notes the chain holds. */
 type UnreadableBecause = 'chain' | 'layout' | 'record';
 
+/**
+ * What a vault's notes come to once the chain and this device's record are set
+ * side by side. `unfiled` is a screen's answer only: this device's pool record is
+ * absent while the chain holds notes. It is given only when the caller asks
+ * for it (`privateNotes`); `held` and `fits` never ask, read that case as
+ * `unreadable` for `record`, and so never count a note this device has not
+ * filed as money that can be spent.
+ */
 type Reconciled = { readonly of: 'notes'; readonly notes: readonly PoolNote[] }
   | { readonly of: 'nothing-yet' }
   | { readonly of: 'unreadable'; readonly why: string; readonly because: UnreadableBecause; readonly cause?: unknown }
+  | { readonly of: 'unfiled'; readonly onChain: number }
   | { readonly of: 'contradicted'; readonly why: string };
 
 const why = (e: unknown): string => (e as Error)?.message ?? String(e);
@@ -119,7 +128,7 @@ const why = (e: unknown): string => (e as Error)?.message ?? String(e);
  * over its own read; what is here is how this device reads the chain and says
  * each answer.
  */
-async function reconciled(doors: DeviceHoldingsDoors, vault: Hex): Promise<Reconciled> {
+async function reconciled(doors: DeviceHoldingsDoors, vault: Hex, unfiledIsAnAnswer = false): Promise<Reconciled> {
   let view: ChainNotesView;
   try {
     view = await doors.chain(vault);
@@ -141,20 +150,21 @@ async function reconciled(doors: DeviceHoldingsDoors, vault: Hex): Promise<Recon
     };
   }
   const onChain = new Set(view.notes.map((n) => String(n).toLowerCase()));
-  if (doors.fileAgain === undefined) return againstTheChain(doors, vault, onChain);
+  if (doors.fileAgain === undefined) return againstTheChain(doors, vault, onChain, [], unfiledIsAnAnswer);
   const filed = await doors.fileAgain(vault, async (note) => onChain.has((await doors.heldCommitmentOf(vault, note)).toLowerCase()));
   /* What a seat that left filed and this device could not take is said, never summed past. */
   if (filed.said.length > 0) return { of: 'contradicted', why: `${filed.said.join('. ')}.` };
-  return againstTheChain(doors, vault, onChain, filed.notes);
+  return againstTheChain(doors, vault, onChain, filed.notes ?? [], unfiledIsAnAnswer);
 }
 
 /** The pool this device believes against the notes the chain holds for the vault (`onChain`), once. */
 async function againstTheChain(
-  doors: DeviceHoldingsDoors, vault: Hex, onChain: ReadonlySet<string>, rebuilt: readonly PoolNote[] = [],
+  doors: DeviceHoldingsDoors, vault: Hex, onChain: ReadonlySet<string>, rebuilt: readonly PoolNote[], unfiledIsAnAnswer: boolean,
 ): Promise<Reconciled> {
   const filed = await doors.pool(vault);
   if (filed === null) {
     if (onChain.size === 0) return { of: 'nothing-yet' };
+    if (unfiledIsAnAnswer) return { of: 'unfiled', onChain: onChain.size };
     return {
       of: 'unreadable',
       because: 'record',
@@ -190,6 +200,7 @@ async function againstTheChain(
 type PrivateNotesAnswer =
   | { readonly of: 'held'; readonly amounts: readonly bigint[]; readonly unrecognised: number }
   | { readonly of: 'nothing-yet' }
+  | { readonly of: 'unfiled'; readonly onChain: number }
   | { readonly of: 'unreadable'; readonly why: string; readonly because: UnreadableBecause; readonly cause?: unknown }
   | { readonly of: 'contradicted'; readonly why: string };
 
@@ -197,11 +208,12 @@ interface DeviceVaultHoldings extends VaultHoldings {
   privateNotes(vault: string, named: readonly string[]): Promise<PrivateNotesAnswer>;
 }
 
+const NOT_FILED_HERE = 'this device has no record of the notes the chain holds for this vault';
 const NO_NOTES_YET = 'this vault has no record of private notes yet, so its private money is not known';
 
 export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): DeviceVaultHoldings => ({
   privateNotes: async (vault: string, named: readonly string[]): Promise<PrivateNotesAnswer> => {
-    const r = await reconciled(doors, vault as Hex);
+    const r = await reconciled(doors, vault as Hex, true);
     if (r.of !== 'notes') return r;
     const sums = new Map<string, bigint>();
     for (const token of named) sums.set(token.toLowerCase(), 0n);
@@ -225,7 +237,7 @@ export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): DeviceVaultHold
     if (form !== 'shielded') return { of: 'unreadable', why: `"${String(form)}" is not a form money takes on Midnight` };
     const r = await reconciled(doors, vault as Hex);
     if (r.of === 'nothing-yet') return { of: 'unreadable', why: NO_NOTES_YET };
-    if (r.of !== 'notes') return r.of === 'unreadable' ? { of: 'unreadable', why: r.why } : { of: 'contradicted', why: r.why };
+    if (r.of !== 'notes') return r.of === 'contradicted' ? { of: 'contradicted', why: r.why } : { of: 'unreadable', why: r.of === 'unreadable' ? r.why : NOT_FILED_HERE };
     const wanted = token.toLowerCase();
     return { of: 'held', amount: r.notes.filter((n) => n.token.toLowerCase() === wanted).reduce((a, n) => a + n.value, 0n) };
   },
@@ -237,7 +249,7 @@ export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): DeviceVaultHold
     }
     const r = await reconciled(doors, vault as Hex);
     if (r.of === 'nothing-yet') return { of: 'unreadable', why: NO_NOTES_YET };
-    if (r.of !== 'notes') return r.of === 'unreadable' ? { of: 'unreadable', why: r.why } : { of: 'contradicted', why: r.why };
+    if (r.of !== 'notes') return r.of === 'contradicted' ? { of: 'contradicted', why: r.why } : { of: 'unreadable', why: r.of === 'unreadable' ? r.why : NOT_FILED_HERE };
     /*
      * Only the walk's own answer is an answer about the notes. Anything else -
      * the background thread not starting, a payment it could not read - is a

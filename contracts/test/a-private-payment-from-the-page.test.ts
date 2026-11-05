@@ -78,6 +78,7 @@ import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifes
 import { MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
 import { companyRecordEntry } from '../../src/midnight/record-manifest.js';
 import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { readTransaction } from 'vaults-web-shared/vault-builder.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -164,6 +165,16 @@ const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-jour
 const ACCOUNT_ID = 'acc_paying';
 const TOKEN = 'a7'.repeat(32) as Hex;
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+
+/**
+ * A deposit here is built without its proof, which the vault worker's reader of a proved transaction cannot read: the
+ * product's own reader reads it, and what the wallet bound, as built.
+ */
+const readsUnproven = {
+  readTransaction: async ({ transaction }: { transaction: string }) => readTransaction({ ledger: { Transaction: {
+    deserialize: (s: string, _p: string, b: string, raw: Uint8Array) => L.Transaction.deserialize(s as never, 'pre-proof', b as never, raw),
+  } } } as never, Buffer.from(transaction, 'base64')),
+};
 const asRuntime = (state: { serialize(): Uint8Array }) => (runtime as any).ContractState.deserialize(state.serialize());
 const vaultLedgerOf = (state: { serialize(): Uint8Array }) => (vaultModule as any).ledger(asRuntime(state).data);
 const accountLedgerOf = (state: { serialize(): Uint8Array }) => (accountModule as any).ledger(asRuntime(state).data);
@@ -350,7 +361,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         byIdentifier: async (identifier: string) => chain.applied
           .filter((a) => (a.tx.identifiers() as string[]).map((i) => String(i).toLowerCase()).includes(identifier.toLowerCase()))
           .map((a) => ({
-            hash: a.name, status: a.ok ? 'SUCCESS' : 'FAILURE',
+            hash: a.name, status: a.ok ? 'SUCCESS' : 'FAILURE', segments: null,
             calls: [...a.tx.intents.values()].flatMap((i: any) => [...(i.actions ?? [])].map((c: any) => ({
               address: String(c.address).toLowerCase(),
               entryPoint: c.entryPoint === undefined ? null
@@ -637,7 +648,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     handover: (vault, tx) => http(`${at}/vaults/${vault}/handover`, { method: 'POST', body: { tx } }),
     chain: (vault) => http(`${at}/vaults/${vault}/chain`),
     deposit: (vault, tx) => http(`${at}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }),
-    depositPublicly: (vault, tx, money) => http(`${at}/vaults/${vault}/public-deposit`, { method: 'POST', body: { tx, ...money } }),
+    depositPublicly: (vault, tx) => http(`${at}/vaults/${vault}/public-deposit`, { method: 'POST', body: { tx } }),
     payoutState: (vault) => http(`${at}/vaults/${vault}/payout-state`),
     payout: (vault, tx) => http(`${at}/vaults/${vault}/payout`, { method: 'POST', body: { tx } }),
     merge: (vault, tx) => http(`${at}/vaults/${vault}/merge`, { method: 'POST', body: { tx } }),
@@ -736,7 +747,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
     const { vault } = created;
     await openCompanyVaultPool(poolDoors, vault, async () => {});
-    const deposited = await depositIntoCompanyVault({ ...poolDoors, company: LABEL, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
+    const deposited = await depositIntoCompanyVault({ ...poolDoors, company: LABEL, account: readAccountAddress(company)!, builder: { ...builder(), ...readsUnproven }, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
     return { vault, note: deposited.note };
   };
 
@@ -839,13 +850,62 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     }
   });
 
+  it('ONE PERSON PAID THE WHOLE NOTE: THE PAYMENT KEEPS NO CHANGE, IS KEPT ON THIS DEVICE BY ITS OWN TRANSACTION BEFORE IT IS SENT, AND IS RECORDED ONLY WHEN THE CHAIN SHOWS THAT TRANSACTION', async () => {
+    const { vault } = await aFundedVault();
+    const run = await anApprovedRun(vault, 1_000n);
+    const order = run.order();
+    const real = builder();
+    /* What the vault worker reads of the payout the page sends, and every answer it gives about that payout on the chain. */
+    const reads: Array<Awaited<ReturnType<NonNullable<typeof real.readTransaction>>>> = [];
+    const looks: string[] = [];
+    const watched = {
+      ...real,
+      readTransaction: async (i: { transaction: string }) => { const r = await real.readTransaction!(i); reads.push(r); return r; },
+      vaultCallOnChain: async (i: Parameters<NonNullable<typeof real.vaultCallOnChain>>[0]) => {
+        const seen = await real.vaultCallOnChain!(i); looks.push(seen.of); return seen;
+      },
+    };
+    const inFlight = paymentsInFlight();
+    const keptAtTheSend: Array<PaymentInFlight | null> = [];
+    const before = chain.applied.length;
+    const done = await payPrivatelyFromCompanyVault({
+      ...pacing, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads,
+      builder: watched, inFlight, seatHere: anAdminsSeat,
+      service: { ...service, payout: async (v, tx) => { keptAtTheSend.push(await inFlight.get(vault)); return service.payout(v, tx); } },
+    }, { order, payment: order.payments[0]! });
+
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, '']]);
+    expect(done.change).toBeNull();
+    /* RED WHEN: the payout the page builds cannot be read for its identifiers, its time to live or its one call to this vault's payout. */
+    expect(reads).toHaveLength(1);
+    const read = reads[0]!;
+    expect(read).not.toBeNull();
+    expect(read!.identifiers.length).toBeGreaterThan(0);
+    expect(typeof read!.timeToLive).toBe('number');
+    expect(read!.calls.filter((c) => c.address === vault.toLowerCase().replace(/^0x/u, '') && c.entryPoint === 'payout')).toHaveLength(1);
+    /* RED WHEN: the record kept before the send does not name the payment's own transaction. */
+    expect(keptAtTheSend).toHaveLength(1);
+    expect(keptAtTheSend[0]).toMatchObject({ change: null, identifiers: read!.identifiers, timeToLive: read!.timeToLive });
+    /* RED WHEN: the identifiers read before the send are not among those of the transaction the chain applied. */
+    const onChain = (chain.applied.at(-1)!.tx.identifiers() as string[]).map((i) => String(i).toLowerCase());
+    expect(read!.identifiers.every((i) => onChain.includes(String(i).toLowerCase()))).toBe(true);
+    /* RED WHEN: the payment is recorded on anything but the chain showing its own transaction take effect. */
+    expect(looks.at(-1)).toBe('landed');
+    expect([done.seenAs, done.transactionHash]).toEqual(['its-own-transaction', chain.applied.at(-1)!.name]);
+    expect(run.order().payments.map((p) => p.paid)).toEqual([true]);
+    const pool = await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault);
+    expect(pool.notes).toEqual([]);
+    expect([...vaultLedgerOf(chain.contract(vault)).notes]).toHaveLength(0);
+    expect(await inFlight.get(vault)).toBeNull();
+  });
+
   it('TWO NOTES ARE MERGED FROM THE DEVICE: WRITTEN DOWN, PAID FOR AS THE VAULT\'S OWN COINS, KEPT AS ONE, AND A PAYMENT NEITHER COVERED SPENDS IT WITH NO REBUILD', async () => {
     const { vault, note } = await aFundedVault();
     const doors = {
       ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
       onChain: walletReads, builder: builder(), inFlight: paymentsInFlight(), seatHere: anAdminsSeat,
     };
-    const second = await depositIntoCompanyVault({ ...doors, company: LABEL, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 500n });
+    const second = await depositIntoCompanyVault({ ...doors, builder: { ...doors.builder, ...readsUnproven }, company: LABEL, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 500n });
     const poolOf = async () => new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault);
     const named = (await poolOf()).notes.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString() }))
       .sort((a, b) => Number(BigInt(b.value) - BigInt(a.value)));
@@ -1712,7 +1772,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /* RED WHEN: the deposit does not reach the chain through the public deposit route, or the chain refuses it. */
     expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, '']]);
     expect(arrivals.at(-1)).toBe('finished-by-the-depositor');
-    expect(sent.some((b) => b.includes('"amount":"900"') && b.includes(`"token":"${PUBLIC_TOKEN}"`))).toBe(true);
+    /* RED WHEN: the service is told the deposit's token and amount beside the transaction that carries them. */
+    expect(sent.some((b) => b.includes('"amount"') || b.includes(`"token":"${PUBLIC_TOKEN}"`))).toBe(false);
     expect(done.txRef).toBe(String(chain.applied.at(-1)!.tx.identifiers()[0]));
     /* RED WHEN: the wallet is asked as for a private deposit, or is shown another token or amount. */
     expect(asked).toEqual([{ pays: 'public', leaves: [{ token: PUBLIC_TOKEN, amount: '900', kind: 'unshielded' }] }]);
@@ -1730,12 +1791,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /* No private coin moved and the vault's notes were not touched: nothing is recorded on the device for public money. */
     expect(tx.guaranteedOffer).toBeUndefined();
     expect([...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c))).toEqual(notesBefore);
-    /* RED WHEN: the service's reader stops matching what the page and the wallet build, or takes it for another vault, token or amount. */
+    /* RED WHEN: the service's reader stops matching what the page and the wallet build, or takes it for another vault. */
     const addressOf = L.addressFromKey as (o: unknown) => string;
-    expect(refusalForPublicDeposit(tx, { vault, token: PUBLIC_TOKEN, amount: 900n, addressOf })).toBeNull();
-    expect(refusalForPublicDeposit(tx, { vault: 'ee'.repeat(32), token: PUBLIC_TOKEN, amount: 900n, addressOf })).toMatch(/must call this vault's public deposit/);
-    expect(refusalForPublicDeposit(tx, { vault, token: PUBLIC_TOKEN, amount: 901n, addressOf })).toMatch(/exactly the token and amount asked for/);
-    expect(refusalForPublicDeposit(tx, { vault, token: TOKEN, amount: 900n, addressOf })).toMatch(/exactly the token and amount asked for/);
+    expect(refusalForPublicDeposit(tx, { vault, addressOf })).toBeNull();
+    expect(refusalForPublicDeposit(tx, { vault: 'ee'.repeat(32), addressOf })).toMatch(/must call this vault's public deposit/);
     /* And the private deposit's reader never takes it. */
     expect(refusalForDeposit(tx, { vault })).not.toBeNull();
   });
@@ -1764,7 +1823,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(run.order().payments.map((p) => p.paid)).toEqual([true]);
   });
 
-  it('THE SERVICE SENDS NO PUBLIC DEPOSIT THAT IS NOT EXACTLY WHAT THE PAGE ASKED FOR, AND NO MONEY MOVES', async () => {
+  it('THE SERVICE SENDS NO PUBLIC DEPOSIT IT IS TOLD MORE THAN THE TRANSACTION OF, OR THAT NOBODY PAID FOR, AND NO MONEY MOVES', async () => {
     const { vault } = await aFundedVault();
     /* One coin for each deposit the wallet pays for below, since it forgets a coin once it has paid with it. */
     const { pay } = await aPublicWallet([1_000n, 1_000n, 1_000n, 1_000n]);
@@ -1778,12 +1837,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         .then(() => null, (err: Error) => err.message);
       return e;
     };
-    /* RED WHEN: the service sends a public deposit for another amount than the page named. */
-    expect(await refusedBy({ ...service, depositPublicly: (v, tx, m) => service.depositPublicly!(v, tx, { ...m, amount: '299' }) }))
-      .toMatch(/^the public deposit was not sent, so no money has moved yet\.[\s\S]*The service said: this is not this company's public deposit into this vault: it does not put exactly the token and amount asked for/);
-    /* RED WHEN: the service sends a public deposit for another token than the page named. */
-    expect(await refusedBy({ ...service, depositPublicly: (v, tx, m) => service.depositPublicly!(v, tx, { ...m, token: TOKEN }) }))
-      .toMatch(/it does not put exactly the token and amount asked for/);
+    /* RED WHEN: the service takes a public deposit from a page that names its token and amount beside the transaction. */
+    const toldMore: VaultService['depositPublicly'] = (v, tx) => http(`${at}/vaults/${v}/public-deposit`, { method: 'POST', body: { tx, token: PUBLIC_TOKEN, amount: '300' } });
+    expect(await refusedBy({ ...service, depositPublicly: toldMore }))
+      .toMatch(/^the public deposit was not sent, so no money has moved yet\.[\s\S]*The service said: this request does not carry the public deposit's transaction and nothing else/);
     /* RED WHEN: the service sends a deposit nobody's public money paid for: the page's own, unbalanced. */
     const theWalletPaidNothing = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
       const t = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', Buffer.from(ask.transaction, 'base64')) as any;

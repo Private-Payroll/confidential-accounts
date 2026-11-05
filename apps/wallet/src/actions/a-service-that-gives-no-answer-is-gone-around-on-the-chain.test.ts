@@ -294,7 +294,7 @@ describe('A SERVICE THAT GIVES NO ANSWER IS SEEN AS THAT THROUGH EVERY ROUTE A M
       ['cancel', () => governed.cancel!('p1', { tx: CALL } as never)],
       ['payout', () => vaults.payout!('ab'.repeat(32), CALL)],
       ['merge', () => vaults.merge!('ab'.repeat(32), CALL)],
-      ['deposit', () => vaults.depositPublicly!('ab'.repeat(32), CALL, {} as never)],
+      ['deposit', () => vaults.depositPublicly!('ab'.repeat(32), CALL)],
     ];
     for (const [name, call] of calls) {
       const e = await call().then(() => null, (x: unknown) => x);

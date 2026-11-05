@@ -15,8 +15,8 @@
  *      company's committee, against the counter the chain holds now;
  *   3. **a deposit into a vault the committee holds**: calls to that vault's
  *      `deposit` and nothing else, with coins the depositor's own wallet added;
- *      or one call to its public deposit, of exactly the token and amount the
- *      page asked for, paid from the depositor's own public money;
+ *      or one call to its public deposit, of exactly one public token and a
+ *      positive amount of it, paid from the depositor's own public money;
  *   4. **a private payment out of that vault**: the vault's `payout` and the
  *      company account's `recordPaymentFromVault` it asks, and nothing else,
  *      spending one coin the vault owns into one person's coin and at most one
@@ -47,6 +47,7 @@ import { whyNotInstallable } from 'midnight-identity/profile/request';
 import { vaultBornHeldRefusal, type VaultBornHeldExpectations } from '../midnight/vault-circuits.js';
 import { bare, emptyOffer, nameOf, theOnlyIntent, type DeployVerdict, type IntentShape, type TxShape } from '../midnight/account-deploy.js';
 import { STEP_LIMITS } from '../midnight/payment-plan.js';
+import { readPublicDepositCall } from '../../packages/web-shared/src/public-deposit-call.js';
 
 export { readAccountDeploy, type AccountDeployExpectations, type DeployVerdict } from '../midnight/account-deploy.js';
 
@@ -373,29 +374,30 @@ function refusalForADepositThatStatesItsMoney(t: TxShape & { imbalances?: unknow
 
 /* ------------------------------------------------ 3b. a public deposit */
 
-/** What a public deposit must put into the vault, as the page asked for it. */
+/** What a public deposit is read against. The token and the amount are read from the transaction itself. */
 export interface PublicDepositExpectations {
   /** The vault the money goes into. */
   readonly vault: string;
-  /** The one public token that goes in. */
-  readonly token: string;
-  /** How much of it, in its smallest unit. */
-  readonly amount: bigint;
   /** The address a public input's owner is paid change at: the ledger's own `addressFromKey`. */
   readonly addressOf: (owner: unknown) => string;
 }
 
 /**
- * **`null` ONLY FOR EXACTLY ONE PUBLIC DEPOSIT OF THIS TOKEN AND THIS AMOUNT INTO
- * THIS VAULT, PAID FOR BY THE DEPOSITOR'S OWN PUBLIC MONEY.**
+ * **`null` ONLY FOR EXACTLY ONE PUBLIC DEPOSIT OF ONE PUBLIC TOKEN INTO THIS
+ * VAULT, PAID FOR BY THE DEPOSITOR'S OWN PUBLIC MONEY.**
  *
  * The vault's public deposit asks the transaction for one token and one amount,
- * and the chain adds them to the vault's public balance. So what is read here:
+ * and the chain adds them to the vault's public balance. Nobody tells the
+ * service which token or how much: both are read from the transaction, whose
+ * depositor's wallet showed them before it signed. So what is read here:
  *
  *   · one call, to this vault's `depositUnshielded`, and nothing else;
- *   · what that call asks for, read from its own declared effects: exactly
- *     this amount of this token, and no coin, no other token, nothing paid out
- *     and no other contract called;
+ *   · what that call asks for, read from its own declared effects, all in one
+ *     part of the transaction: exactly one public token, a positive amount of
+ *     it, and no coin, nothing paid out and no other contract called. A call
+ *     whose effects are split between the part that always runs and the part
+ *     that may fail is refused, because a failure of the second would leave the
+ *     first half paid in;
  *   · no private coin anywhere in it;
  *   · every public coin it spends belongs to whoever pays for it, and every
  *     public coin it makes goes back to one of those owners as change, so the
@@ -419,44 +421,24 @@ export function refusalForPublicDeposit(tx: unknown, expect: PublicDepositExpect
   if (intent.actions.length !== 1) {
     return `this is not ${what}: it must call this vault's public deposit and nothing else. Nothing was sent.`;
   }
-  const call = intent.actions[0] as {
-    address?: unknown; entryPoint?: unknown;
-    guaranteedTranscript?: { effects?: unknown } | null; fallibleTranscript?: { effects?: unknown } | null;
-  } | null;
-  if (!call || call.entryPoint === undefined || call.address === undefined
-    || bare(call.address) !== bare(expect.vault) || nameOf(call.entryPoint) !== 'depositUnshielded') {
-    return `this is not ${what}: it must call this vault's public deposit and nothing else. Nothing was sent.`;
-  }
-  /* What the call asks the transaction for, from its own declared effects. */
+  /* What the call asks the transaction for, from its own declared effects, by the rule the page also checks. */
   const unreadable = `this is not ${what}: what it asks for could not be read, so it was not paid for. Nothing was sent.`;
-  const asked = new Map<string, bigint>();
-  let transcripts = 0;
-  for (const transcript of [call.guaranteedTranscript, call.fallibleTranscript]) {
-    if (transcript === undefined || transcript === null) continue;
-    transcripts += 1;
-    const e = transcript.effects as Record<string, unknown> | undefined | null;
-    if (e === undefined || e === null) return unreadable;
-    for (const k of ['claimedNullifiers', 'claimedShieldedReceives', 'claimedShieldedSpends', 'claimedContractCalls']) {
-      if (!Array.isArray(e[k])) return unreadable;
-      if ((e[k] as unknown[]).length !== 0) {
+  const deposit = readPublicDepositCall(intent.actions[0], expect.vault);
+  if ('refused' in deposit) {
+    switch (deposit.refused) {
+      case 'not-the-call':
+        return `this is not ${what}: it must call this vault's public deposit and nothing else. Nothing was sent.`;
+      case 'split':
+        return `this is not ${what}: its call is split across two parts of the transaction, so the chain could apply one `
+          + 'part and refuse the other. Nothing was sent.';
+      case 'more-than-public':
         return `this is not ${what}: the call asks for more than public money going into the vault. Nothing was sent.`;
-      }
+      case 'not-one-token':
+        return `this is not ${what}: it does not put exactly one public token, a positive amount of it, into the vault. `
+          + 'Nothing was sent.';
+      default:
+        return unreadable;
     }
-    for (const k of ['shieldedMints', 'unshieldedMints', 'unshieldedOutputs', 'claimedUnshieldedSpends', 'unshieldedInputs']) {
-      if (!(e[k] instanceof Map)) return unreadable;
-      if (k !== 'unshieldedInputs' && (e[k] as Map<unknown, unknown>).size !== 0) {
-        return `this is not ${what}: the call asks for more than public money going into the vault. Nothing was sent.`;
-      }
-    }
-    for (const [type, value] of e.unshieldedInputs as Map<{ tag?: unknown; raw?: unknown } | null, unknown>) {
-      if (type?.tag !== 'unshielded' || typeof value !== 'bigint') return unreadable;
-      const k = bare(type.raw);
-      asked.set(k, (asked.get(k) ?? 0n) + value);
-    }
-  }
-  if (transcripts === 0) return unreadable;
-  if (asked.size !== 1 || asked.get(bare(expect.token)) !== expect.amount) {
-    return `this is not ${what}: it does not put exactly the token and amount asked for into the vault. Nothing was sent.`;
   }
   /* No private coin moves in a public deposit, in any part. */
   const shielded: ShieldedOfferShape[] = [];

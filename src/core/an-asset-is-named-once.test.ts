@@ -377,7 +377,6 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/midnight/vault-ledger.ts token': { count: 1, why: '`toNote` carries the token it is handed into a note' },
   'src/midnight/vault-recovery.ts token': { count: 1, why: '`paidCoinOf` carries the spent note\'s token to the coin it paid' },
   'src/midnight/vault-notes.ts token': { count: 1, why: 'the token a payment asked for, handed to the run planner to choose that payment\'s notes' },
-  'src/server/company-vaults.ts z.string().regex(HEX64)': { count: 1, why: 'a request schema, which describes a body and makes nothing' },
   'scripts/measure-call-cost.ts toHex(TEST_TOKEN_BYTES)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
   'src/midnight/vault-journal.ts token': { count: 1, why: 'the colour read off a journal line this reader has already checked is a coin, carried into the coin proposed to the chain' },
   'packages/web-shared/src/device-vault-holdings.ts p.token as Hex': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the question the worker is asked' },
@@ -436,7 +435,7 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
       'a payment names its token from ledgerTokenOf in src/core/assets.ts, and from nowhere else').toEqual([]);
     /*
      * **A LISTED SITE IS CHECKED WHERE THE WALK STILL REACHES ITS FILE.** These
-     * seventeen pairs are <file, exact site count>, derived from a directory
+     * sixteen pairs are <file, exact site count>, derived from a directory
      * walk - so in any copy that does not carry one of those files this went red
      * saying a site "moved or multiplied" when it had done neither.
      * Where the file is still walked the count is exact, which is the guard;
@@ -456,7 +455,7 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
       expect(counted.get(key) ?? 0, `${key}: a listed site that moved or multiplied`).toBe(count);
     }
     // AND EVERY LISTED SITE WHOSE FILE IS HERE WAS CHECKED - an exact count, not
-    // a floor of one. Sixteen of seventeen could stop being checked under `> 0`.
+    // a floor of one. Fifteen of sixteen could stop being checked under `> 0`.
     expect(listed.filter(([k]) => inThisCopy(k.slice(0, k.indexOf(' ')))).length,
       'a listed site whose file is in this copy was not checked')
       .toBe(listed.filter(([k]) => inThisCopy(k.slice(0, k.indexOf(' ')))).length);

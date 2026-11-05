@@ -12,9 +12,9 @@ import { browserDepositsInFlight, browserInFlightRecords, vaultServiceFor } from
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
 import { privateTokenFromTheWallet, publicTokenFromTheWallet } from 'vaults-web-shared/deposit-source.js';
 import {
-  checkWhatThisBrowserDeposited, DEPOSIT_TIME_TO_LIVE_MS, depositPubliclyIntoCompanyVault, DepositLandedNotYetRecorded,
-  DepositNotSent, DepositNotYetSeen, DepositStartedElsewhere, DepositStillInFlight, PublicDepositNotYetSeen, sayWhatTheCheckFound, type settleDepositInFlight,
-  type DepositDoors, type PublicDepositDoors, type VaultStage, type WhatThisBrowserDeposited,
+  checkWhatThisBrowserDeposited, depositPubliclyIntoCompanyVault, DepositLandedNotYetRecorded,
+  DepositNotSent, DepositNotYetSeen, DepositMayOutliveItsWindow, DepositStartedElsewhere, DepositStillInFlight, PublicDepositNeverLanded, PublicDepositNotYetSeen, PublicDepositRefused, PublicDepositSignedNotSent, publicDepositCannotLandAfter, sayWhatTheCheckFound, type settleDepositInFlight,
+  type DepositDoors, type JournalledDeposit, type PublicDepositDoors, type VaultStage, type WhatThisBrowserDeposited,
 } from 'vaults-web-shared/vault-operation.js';
 import type { DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import type { ProofInProgress } from 'vaults-web-shared/vault-worker-client.js';
@@ -25,6 +25,7 @@ import { proofsRunning } from './proofs-running.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
 import { Fault, FAULT } from '../faults.js';
 import { DEPOSIT_USUAL_SECONDS } from './usual-times.js';
+import { VAULT as VAULT_STANDS, vaultStandingIsFunded, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
 import { theVaultBuilder } from './vault-builder.js';
 import { seatAndRecordsHere, type SeatAndRecordsHere } from './vault-private-money.js';
 
@@ -145,7 +146,11 @@ export type AmountToPutIn =
   | { readonly of: typeof PUT_IN.refused; readonly why: AmountRefusal };
 
 /** What an answer of this adapter is, compared by a screen. */
-export const PUT_IN = { amount: 'amount', refused: 'refused', started: 'started', alreadyRunning: 'already-running' } as const;
+export const PUT_IN = { amount: 'amount', refused: 'refused', started: 'started', alreadyRunning: 'already-running', vaultRefused: 'vault-refused' } as const;
+
+/** Whether the service's answer about a vault already says it will refuse money for it: a standing is present, is not unknown, and is not one the service funds. The answer can only stop a deposit: an absent or unreadable one is false and leaves the deposit to the checks that follow. */
+export const serviceRefusesVault = (standing: VaultStanding | undefined): boolean =>
+  standing !== undefined && standing !== VAULT_STANDS.unknown && !vaultStandingIsFunded(standing);
 
 const refusedAmount = (why: AmountRefusal): AmountToPutIn => ({ of: PUT_IN.refused, why });
 /** A plain decimal: digits, at most one point, digits. */
@@ -235,9 +240,16 @@ export type DepositNow =
   | {
     readonly of: typeof DEPOSITED.failed; readonly kind: DepositKind; readonly amount: PrivateAmount | PublicAmount;
     readonly mayHaveBeenSent: boolean; readonly refusal: ActRefusal; readonly reasons: readonly string[];
-    /** A public deposit that may have been sent: the time until which it can still arrive, and the same money must not be put in again. */
+    /** A public deposit that may have been sent: the time until which it can still arrive and the same money must not be put in again (`publicDepositCannotLandAfter`). A public deposit that never landed: the time it stopped being valid. */
     readonly until?: number;
+    /** A public deposit the chain answered for: it took it and refused it, or it never landed and now never will. Nothing went into the vault either way. */
+    readonly chainSaid?: typeof CHAIN_SAID[keyof typeof CHAIN_SAID];
+    /** A public deposit the wallet signed and this page did not send: whoever holds the signed transaction can still send it until `until`. */
+    readonly signedNotSent?: true;
   };
+
+/** What the chain answered for a public deposit that was sent and put nothing into the vault. */
+export const CHAIN_SAID = { refused: 1, neverLanded: 2 } as const;
 
 /** The deposit in this tab for each vault, by the vault's address in lower case, and who is watching each. */
 const DEPOSITS = new Map<string, DepositNow>();
@@ -280,9 +292,11 @@ export function putAwayEndedDeposit(vault: string): void {
 }
 
 /** The errors after which money may have moved, or may still move: the person checks before trying again. */
-const MAY_HAVE_BEEN_SENT = [DepositNotYetSeen, DepositLandedNotYetRecorded, PublicDepositNotYetSeen] as const;
-/** The errors that say nothing was sent. */
-const NOTHING_SENT = [DepositNotSent, DepositStillInFlight, DepositStartedElsewhere] as const;
+const MAY_HAVE_BEEN_SENT = [DepositNotYetSeen, DepositLandedNotYetRecorded, PublicDepositNotYetSeen, PublicDepositSignedNotSent] as const;
+/** The errors that say nothing was sent, or that what was sent put nothing into the vault and never will. */
+const NOTHING_SENT = [
+  DepositNotSent, DepositMayOutliveItsWindow, DepositStillInFlight, DepositStartedElsewhere, PublicDepositRefused, PublicDepositNeverLanded,
+] as const;
 
 /** An error's own message and those of what caused it, for support. */
 function reasonsOf(e: unknown): string[] {
@@ -291,14 +305,22 @@ function reasonsOf(e: unknown): string[] {
   return out;
 }
 
-/** How a deposit that threw ended: anything may have been sent once its send began, unless the error says nothing was; a public one that may have been sent also says until when it can still arrive. */
-function failedWith(e: unknown, began: { readonly sending: boolean; readonly sentAt: number | null }, kind: DepositKind): Pick<Extract<DepositNow, { of: 'failed' }>, 'mayHaveBeenSent' | 'refusal' | 'reasons' | 'until'> {
+/** How a deposit that threw ended: anything may have been sent once its send began, unless the error says nothing was or that the chain put nothing in; a public one that may have been sent also says until when it can still arrive, from the transaction the wallet signed and the margin for clocks, and says no time when none was read; a public one the wallet signed and this page did not send says so (`signedNotSent`). */
+function failedWith(e: unknown, began: { readonly sending: boolean }, kind: DepositKind): Pick<Extract<DepositNow, { of: 'failed' }>, 'mayHaveBeenSent' | 'refusal' | 'reasons' | 'until' | 'chainSaid' | 'signedNotSent'> {
   const maybe = MAY_HAVE_BEEN_SENT.some((c) => e instanceof c)
     || (began.sending && !NOTHING_SENT.some((c) => e instanceof c));
-  const until = !maybe || kind !== DEPOSIT_KIND.public ? null
-    : e instanceof PublicDepositNotYetSeen ? e.until
-    : began.sentAt === null ? null : began.sentAt + DEPOSIT_TIME_TO_LIVE_MS;
-  return { mayHaveBeenSent: maybe, refusal: refusalOf(e), reasons: reasonsOf(e), ...(until === null ? {} : { until }) };
+  const until = e instanceof PublicDepositNeverLanded ? e.until
+    : maybe && kind === DEPOSIT_KIND.public && (e instanceof PublicDepositNotYetSeen || e instanceof PublicDepositSignedNotSent)
+      ? publicDepositCannotLandAfter(e.until)
+    : null;
+  const chainSaid = e instanceof PublicDepositRefused ? CHAIN_SAID.refused
+    : e instanceof PublicDepositNeverLanded ? CHAIN_SAID.neverLanded
+    : null;
+  return {
+    mayHaveBeenSent: maybe, refusal: refusalOf(e), reasons: reasonsOf(e),
+    ...(until === null ? {} : { until }), ...(chainSaid === null ? {} : { chainSaid }),
+    ...(until !== null && e instanceof PublicDepositSignedNotSent ? { signedNotSent: true as const } : {}),
+  };
 }
 
 const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
@@ -433,38 +455,42 @@ function publicly(personId: string, companyId: string, vault: string, code: Asse
   };
 }
 
-/** What a press of Put money in came to: started (with the deposit's end), refused before anything (the amount's reason), or one already running for this vault, so nothing was sent. */
+/** What a press of Put money in came to: started (with the deposit's end), refused before anything (the amount's reason, or the service's own answer that it refuses the vault), or one already running for this vault, so nothing was sent. */
 export type PutMoneyIn =
   | { readonly of: typeof PUT_IN.started; readonly ended: Promise<DepositNow> }
   | { readonly of: typeof PUT_IN.refused; readonly why: AmountRefusal }
+  | { readonly of: typeof PUT_IN.vaultRefused; readonly standing: VaultStanding }
   | { readonly of: typeof PUT_IN.alreadyRunning };
 
 /**
  * PUTS `entry` OF THE PICKED TOKEN INTO THE VAULT `vault` OF THE COMPANY
  * `companyId`, for the person `personId`, the way the picked row names and no
- * other. The amount is checked first (`amountToPutIn`); while a deposit into
- * this vault runs in this tab, a press sends nothing. The deposit is held here
+ * other. While a deposit into this vault runs in this tab, a press sends
+ * nothing. A `standing` that says the service refuses the vault stops the press
+ * before the amount is read and before the wallet is asked; a missing or
+ * unreadable one stops nothing. Then the amount is checked (`amountToPutIn`). The deposit is held here
  * from the press, before anything is awaited, and runs to its end whatever
  * the screen does; `depositNow` and `watchDeposit` follow it.
  */
 export function putMoneyIn(
   personId: string, companyId: string, vault: string, pick: DepositPick, entry: string | typeof MAX, held: bigint | null,
-  registry: AssetRegistry = assets,
+  registry: AssetRegistry = assets, standing?: VaultStanding,
 ): PutMoneyIn {
   if (DEPOSITS.get(keyOf(vault))?.of === DEPOSITED.running) return { of: PUT_IN.alreadyRunning };
+  if (standing !== undefined && serviceRefusesVault(standing)) return { of: PUT_IN.vaultRefused, standing };
   const checked = amountToPutIn(entry, pick, held, registry);
   if (checked.of === PUT_IN.refused) return checked;
   const { units, amount } = checked;
   const kind = pick.kind;
   const steps = depositSteps(kind, kind === DEPOSIT_KIND.public || companyKeyHeldHere(companyId));
-  const began = { sending: false, sentAt: null as number | null };
+  const began = { sending: false };
   const step = (to: DepositStep): void => {
     const n = steps.indexOf(to) + 1;
     if (n === 0) return;
     setNow(vault, { of: DEPOSITED.running, kind, amount, steps, step: to, n, since: Date.now(), proofs: [] });
   };
   const progress = (stage: VaultStage): void => {
-    if (stage === 'sending the deposit') { began.sending = true; began.sentAt = Date.now(); }
+    if (stage === 'sending the deposit') began.sending = true;
     const to = STEP_OF_STAGE[stage];
     if (to !== undefined && (DEPOSITS.get(keyOf(vault)) as { step?: DepositStep } | undefined)?.step !== to) step(to);
   };
@@ -499,7 +525,9 @@ function privateAmountOf(token: string, value: bigint, registry: AssetRegistry):
  * yet, and how many of the vault's amounts were named now or still cannot be;
  * what the deposit it judged was (`deposited`), or why no amount is shown for
  * it (`unshown`): the shared check says which deposit it judged and its token
- * and value as it read them.
+ * and value as it read them. `earlier` is every other deposit the vault's
+ * deposit journal names that can still land and is not in its record, oldest
+ * first, each with until when it can arrive and what it was.
  * `forSupport` is the shared code's sentence for what it found, for support.
  */
 export type LastDepositChecked =
@@ -511,6 +539,11 @@ export type LastDepositChecked =
     readonly forSupport: string;
     readonly deposited: PrivateAmount | null;
     readonly unshown: AmountUnshown | null;
+    /** One more deposit the vault's deposit journal names, each as the check found it. */
+    readonly earlier: ReadonlyArray<{
+      readonly deposit: JournalledDeposit['state']; readonly until: number;
+      readonly deposited: PrivateAmount | null; readonly unshown: AmountUnshown | null;
+    }>;
   }
   | { readonly of: typeof CHECKED.refused; readonly why: ActRefusal; readonly reasons: readonly string[] };
 
@@ -518,7 +551,8 @@ export type LastDepositChecked =
  * CHECKS THE LAST PRIVATE DEPOSIT INTO `vault`, for the person `personId`: a
  * deposit this browser kept on its way from before the wallet made deposits,
  * said once and then let go; otherwise the newest deposit the vault's deposit
- * journal names, judged against the chain and the vault's record; and how many
+ * journal names, judged against the chain and the vault's record, with every
+ * other journalled deposit that can still land; and how many
  * amounts in the record the chain can name. The check files and signs nothing:
  * a deposit in the vault and not yet in its record, and an amount not yet
  * named, are said as owed. Deposits only: no payment is read or settled, and
@@ -535,8 +569,16 @@ export async function checkMyLastDeposit(personId: string, companyId: string, va
     const d = found.deposit;
     const judged = found.checked ?? null;
     const deposited = judged === null ? null : privateAmountOf(judged.token, judged.value, registry);
+    const earlier = (found.alsoJournalled ?? []).map((e) => {
+      const amount = e.checked === undefined ? null : privateAmountOf(e.checked.token, e.checked.value, registry);
+      return {
+        deposit: e.state, until: e.until, deposited: amount,
+        unshown: e.checked !== undefined && amount === null ? AMOUNT_UNSHOWN.tokenNotListed : null,
+      };
+    });
     return {
-      of: CHECKED.checked, deposit: d.state, until: d.state === 'still-on-its-way' ? d.until : null,
+      of: CHECKED.checked, deposit: d.state,
+      until: d.state === 'still-on-its-way' || d.state === 'journalled-not-seen' ? d.until : null, earlier,
       notYetSpendable: d.state === 'recorded' && d.notYetSpendable !== undefined,
       named: found.named, unnamed: found.unnamed, toName: found.toName ?? 0, forSupport: sayWhatTheCheckFound(found),
       deposited, unshown: judged !== null && deposited === null ? AMOUNT_UNSHOWN.tokenNotListed : null,

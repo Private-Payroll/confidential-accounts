@@ -56,8 +56,9 @@
  *     nobody wired in is invisible to a unit test of the guard, and a guard
  *     whose wiring is checked by substring is invisible to a comment character.
  */
-import { statSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { codeHash } from './contract-version.mjs';
+import { dirname, isAbsolute, join } from 'node:path';
 
 /**
  * A source a person edits, the artifact the tests import, and the door between
@@ -169,6 +170,18 @@ export function findRefusals(root: string, pairs: readonly ArtifactPair[]): Refu
     // Strictly newer. A compile writes the artifact after it reads the source,
     // so equal timestamps are what an untouched pair looks like on a filesystem
     // with coarse resolution, and are not evidence of anything being stale.
+    // By the code when the compile recorded what it compiled (scripts/contract-version.mjs writes
+    // <compiled folder>/.version): a source saved again with no change to its code (comments, spacing or
+    // the save time only, as moving a folder onto another branch does) is current. Without it, save time.
+    const record = join(dirname(dirname(under(root, pair.artifact))), '.version');
+    const want = existsSync(record)
+      ? (JSON.parse(readFileSync(record, 'utf8')) as { sources?: Record<string, string> }).sources?.[pair.source]
+      : undefined;
+    if (want !== undefined) {
+      const have = codeHash(under(root, pair.source));
+      if (have !== want) refusals.push({ kind: 'stale', pair, sourceMs, artifactMs });
+      continue;
+    }
     if (sourceMs > artifactMs) {
       refusals.push({ kind: 'stale', pair, sourceMs, artifactMs });
     }

@@ -1401,16 +1401,16 @@ describe('WHO HOLDS A CONTRACT IS NOT ASKED BEFORE MONEY GOES IN; HOW IT WAS CRE
 });
 
 describe('A PUBLIC DEPOSIT\'S ROUTE', () => {
-  const TOKEN_ASKED = 'cd'.repeat(32);
+  const TOKEN = 'cd'.repeat(32);
   const vaultHeld = async () => {
     await give('ada', 1); await give('bo', 2);
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
   };
-  const publicDeposit = (body: Record<string, unknown> = { tx: 'AAAA', token: TOKEN_ASKED, amount: '900' }) =>
+  const publicDeposit = (body: Record<string, unknown> = { tx: 'AAAA' }) =>
     call(`/api/accounts/acc_1/vaults/${VAULT}/public-deposit`, 'ada', 'POST', body);
 
-  it('IS SENT ONLY THROUGH THE ONE GATE, WHOEVER HOLDS THE VAULT, AND READ AS A PUBLIC DEPOSIT OF THE TOKEN AND AMOUNT ASKED', async () => {
+  it('IS SENT ONLY THROUGH THE ONE GATE, WHOEVER HOLDS THE VAULT, AND READ AS A PUBLIC DEPOSIT FROM THE TRANSACTION ALONE', async () => {
     const checks: Array<(tx: unknown) => unknown> = [];
     sendVault = async (_a, what, _arrival, _bytes, check) => { sent.push(what); checks.push(check); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
@@ -1428,21 +1428,20 @@ describe('A PUBLIC DEPOSIT\'S ROUTE', () => {
     /* Held by keys the account does not have: a payment goes ahead all the same. */
     expect(await publicDeposit()).toMatchObject({ status: 200, body: { txRef: 'r', transactionHash: 'h' } });
     expect(sent).toEqual(['a public deposit into a vault']);
-    /* RED WHEN: the route sends with any reader but the public deposit's, or one not told the token and amount asked. */
+    /* RED WHEN: the route takes a public deposit only when the page names its token and amount, or sends with any reader but the public deposit's. */
     expect(await checks[0]!({})).toMatch(/^this is not this company's public deposit into this vault/);
   });
 
-  it('A BODY THAT DOES NOT NAME ONE PUBLIC TOKEN AND A WHOLE AMOUNT, OR CARRIES ANYTHING ELSE, IS REFUSED BEFORE ANYTHING IS READ', async () => {
+  it('A BODY THAT CARRIES ANYTHING BUT THE TRANSACTION, THE TOKEN AND THE AMOUNT INCLUDED, IS REFUSED BEFORE ANYTHING IS READ', async () => {
     await vaultHeld();
     for (const [why, body] of [
-      ['no token', { tx: 'AAAA', amount: '900' }],
-      ['no amount', { tx: 'AAAA', token: TOKEN_ASKED }],
-      ['a token that is not one', { tx: 'AAAA', token: 'CD'.repeat(32), amount: '900' }],
-      ['an amount of nothing', { tx: 'AAAA', token: TOKEN_ASKED, amount: '0' }],
-      ['an amount that is not whole', { tx: 'AAAA', token: TOKEN_ASKED, amount: '9.5' }],
-      ['something else as well', { tx: 'AAAA', token: TOKEN_ASKED, amount: '900', vault: 'ee'.repeat(32) }],
-      ['no transaction', { token: TOKEN_ASKED, amount: '900' }],
+      ['the token and the amount as well', { tx: 'AAAA', token: TOKEN, amount: '900' }],
+      ['the token as well', { tx: 'AAAA', token: TOKEN }],
+      ['something else as well', { tx: 'AAAA', vault: 'ee'.repeat(32) }],
+      ['an empty transaction', { tx: '' }],
+      ['no transaction', {}],
     ] as const) {
+      /* RED WHEN: a page that still names the token and the amount is taken, so the service is told them beside the transaction. */
       expect(await publicDeposit(body), why).toMatchObject({ status: 400, body: { nothingWasSent: true } });
     }
     expect(sent).toEqual([]);

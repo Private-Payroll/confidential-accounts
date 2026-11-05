@@ -67,6 +67,7 @@ import { publicHoldingsOf, PublicBalanceUnreadable } from '../midnight/public-ba
 import { authorityView, type ContractAuthorityView, type PlaceSignature } from '../midnight/company-authority.js';
 import { contractsOwingAChange, type ContractOwingAChange } from '../midnight/committee-change.js';
 import type { CollectedCommitteeSignatures } from '../core/store.js';
+import { VAULT, vaultStandingIsFunded } from '../../packages/web-shared/src/vault-standing.js';
 import { whyNotInstallable } from 'midnight-identity/profile/request';
 import { joinedBy, superAdminChangeBytes } from 'midnight-identity/profile/committee-sign';
 import {
@@ -225,22 +226,22 @@ export function vaultState(
   read: ContractAnswer | AuthorityRead,
   refused: { heldByOthers: boolean; accountNotReady?: AccountNotReady; notStarted?: true } | null,
 ): string {
-  if (refused === null) return 'held-by-committee';
+  if (refused === null) return VAULT.held;
   /* The company's in every other way, and not yet adopted with its first secret: creating it again finishes it. */
-  if (refused.notStarted === true) return 'start-owed';
+  if (refused.notStarted === true) return VAULT.startOwed;
   /* An account still exactly as deployed is a step somebody has not taken yet; any other refusal about the
    * account - other keys, more than one change, circuits this build did not compile - is an alarm. */
-  if (refused.accountNotReady === 'not-handed-over') return 'account-not-handed-over';
-  if (refused.accountNotReady === 'not-vouched') return 'account-not-fundable';
-  if (refused.accountNotReady === 'unknown') return 'unknown';
+  if (refused.accountNotReady === 'not-handed-over') return VAULT.accountNotHandedOver;
+  if (refused.accountNotReady === 'not-vouched') return VAULT.accountNotFundable;
+  if (refused.accountNotReady === 'unknown') return VAULT.unknown;
   /*
    * **WHAT THE CHAIN SAID IS READ HERE AND NOT INFERRED FROM THE REFUSAL.** A
    * vault the chain could not be asked about is not a vault this service has
    * decided something about, whatever else the refusal carries.
    */
-  if (read.state !== 'answered' && read.state !== 'read') return read.state === 'absent' ? 'not-on-chain-yet' : 'unknown';
-  if (!refused.heldByOthers) return 'not-fundable';
-  return 'held-by-other-keys';
+  if (read.state !== 'answered' && read.state !== 'read') return read.state === 'absent' ? VAULT.notOnChain : VAULT.unknown;
+  if (!refused.heldByOthers) return VAULT.notFundable;
+  return VAULT.heldByOtherKeys;
 }
 
 /** The signed-in person, as the sign-in in front of these routes set them. */
@@ -670,25 +671,21 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
   });
 
   /*
-   * **A PUBLIC DEPOSIT, BEHIND THE SAME GATE AS A PRIVATE ONE.** The page names
-   * the token and the amount it asked the vault to receive, and the transaction
-   * is refused unless it is exactly that, into this vault, paid for by the
-   * depositor's own public money.
+   * **A PUBLIC DEPOSIT, BEHIND THE SAME GATE AS A PRIVATE ONE.** The page hands
+   * over the transaction and nothing else, and a body that carries anything
+   * more is refused: the token and the amount are read from the transaction,
+   * which is refused unless it puts exactly one public token, a positive amount
+   * of it, into this vault, paid for by the depositor's own public money.
    */
   r.post('/api/accounts/:id/vaults/:vault/public-deposit', ...guard, async (req, res) => {
     const record = theVault(req, res);
     if (record === null) return;
-    const asked = z.object({
-      tx: z.string().min(1).max(VAULT_TX_LIMIT),
-      token: z.string().regex(HEX64),
-      amount: z.string().regex(/^[1-9][0-9]{0,38}$/u),
-    }).strict().safeParse(req.body);
+    const asked = z.object({ tx: z.string().min(1).max(VAULT_TX_LIMIT) }).strict().safeParse(req.body);
     if (!asked.success) {
       res.status(400).json({
         nothingWasSent: true,
-        error: 'this request does not say which public token and how much of it goes into the vault, with the '
-          + 'transaction that puts it there. Nothing was sent and no money moved. Reload the page and try again; if it '
-          + 'happens again, the service needs attention.',
+        error: 'this request does not carry the public deposit\'s transaction and nothing else. Nothing was sent and no '
+          + 'money moved. Reload the page and try again; if it happens again, the service needs attention.',
       });
       return;
     }
@@ -707,7 +704,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     const sent = await send(res, account.id, 'a public deposit into a vault', 'finished-by-the-depositor', bytes,
       async (tx) => refusalForPublicDeposit(tx, {
-        vault: record.vault, token: asked.data.token, amount: BigInt(asked.data.amount),
+        vault: record.vault,
         addressOf: (await import('@midnightntwrk/ledger-v9')).addressFromKey as (owner: unknown) => string,
       }));
     if (sent === null) return;
@@ -782,7 +779,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     const refused = await whyNotFunded(record.vault, company.address,
       undefined, undefined, 'this vault is not started from here', vaultIsTheCompanys);
-    if (refused !== null) {
+    if (refused !== null && !vaultStandingIsFunded(vaultState(refused.vaultRead ?? { state: 'answered' }, refused))) {
       res.status(409).json({ nothingWasSent: true, error: refused.why });
       return null;
     }

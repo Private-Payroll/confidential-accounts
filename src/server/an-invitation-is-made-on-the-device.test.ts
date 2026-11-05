@@ -608,7 +608,7 @@ describe('AN INVITATION ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
 describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER AND A SUPER ADMIN', () => {
   const VERAS_ADDRESS = payeeFor('5a'.repeat(32), theNetwork()).bech32;
   /* What a vendor's offer says; the invitation is made with their payment terms and network besides, which stay out of it. */
-  const VERA = { name: 'Vera Vendorson', email: 'vera@vendors.co', startDate: '2026-11-05', endDate: '2027-02-28', address: VERAS_ADDRESS };
+  const VERA = { name: 'Vera Vendorson', email: 'vera@vendors.co', startDate: '2025-03-04', endDate: '2025-09-30', address: VERAS_ADDRESS };
   const VERA_ADDED = { ...VERA, terms: { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 70000n }, network: theNetwork() };
   /*
    * A company whose vendors, as the adding device reads them, hold no address yet: this file adds Vera at one address
@@ -617,7 +617,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
    */
   const NO_VENDOR_HELD = { vendors: async () => ({ vendors: [], notPayable: [] }) };
   const SPECS: InviteSpecs = {
-    employee: { ...DANA, name: 'Emil Termson', email: 'emil@acme.co', classification: 'part-time' as const, startDate: '2026-11-05', endDate: '2027-02-28', address: 'mn_shield-addr_test1emilsaddress' },
+    employee: { ...DANA, name: 'Emil Termson', email: 'emil@acme.co', classification: 'part-time' as const, startDate: '2025-03-04', endDate: '2025-09-30', address: 'mn_shield-addr_test1emilsaddress' },
     vendor: VERA_ADDED,
     signer: { name: 'Sid Signerson', role: 'approver' as const, person: 'sid' },
     'super-admin': { name: 'Sue Committeeson', address: 'mn_shield-addr_test1suesaddress' },
@@ -646,7 +646,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
         /* RED WHEN: a vendor's payment terms travel in the offer the vendor opens, beside what they are invited as. */
         expect(Object.keys(opened.signed.offer.for)).not.toContain('terms');
       }
-      if (kind === 'employee') expect(opened.signed.offer.for).toMatchObject({ classification: 'part-time', endDate: '2027-02-28', address: SPECS.employee.address });
+      if (kind === 'employee') expect(opened.signed.offer.for).toMatchObject({ classification: 'part-time', endDate: '2025-09-30', address: SPECS.employee.address });
     }
     /* RED WHEN: a kind is filed on a route of its own instead of the one invitation route. */
     expect(filedPaths).toEqual(Array(3).fill(`POST /api/accounts/${CO}/invites`));
@@ -710,7 +710,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
     const sent = wire.join('\n');
     const held = canonical(store.snapshot());
     /* RED WHEN: anything the person was offered reaches the service in a request body or what it keeps. */
-    for (const said of ['Emil Termson', 'Vera Vendorson', 'Sid Signerson', 'vera@vendors.co', 'emil@acme.co', '2026-11-05', '2027-02-28',
+    for (const said of ['Emil Termson', 'Vera Vendorson', 'Sid Signerson', 'vera@vendors.co', 'emil@acme.co', '2025-03-04', '2025-09-30',
       VERAS_ADDRESS.slice(-24), 'test1emilsaddress', 'part-time', 'classification', 'endDate', 'madeAt', 'terms', 'monthly']) {
       expect(sent, said).not.toContain(said);
       expect(held, said).not.toContain(said);
@@ -749,8 +749,8 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
     const { classification: _c, ...unclassified } = SPECS.employee;
     await expect(notMade('employee', unclassified)).rejects.toThrow(/full-time or part-time: choose one/u);
     /* RED WHEN: an end date before the start date is taken, for an employee or a vendor. */
-    await expect(notMade('employee', { ...SPECS.employee, endDate: '2026-11-04' })).rejects.toThrow(/end date is before its start date/u);
-    await expect(notMade('vendor', { ...VERA_ADDED, endDate: '2026-11-04' })).rejects.toThrow(/end date is before its start date/u);
+    await expect(notMade('employee', { ...SPECS.employee, endDate: '2025-03-03' })).rejects.toThrow(/end date is before its start date/u);
+    await expect(notMade('vendor', { ...VERA_ADDED, endDate: '2025-03-03' })).rejects.toThrow(/end date is before its start date/u);
     /* RED WHEN: a date that is not a calendar date is taken. */
     await expect(notMade('vendor', { ...VERA_ADDED, startDate: '2026-13-01' })).rejects.toThrow(/start date is not a calendar date/u);
     await expect(notMade('employee', { ...SPECS.employee, endDate: '28/02/2027' })).rejects.toThrow(/end date is not a calendar date/u);

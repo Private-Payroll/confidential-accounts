@@ -69,9 +69,9 @@ function VaultBody({ records, vault, number }: { records: CompanyRecords; vault:
       <PageHeader
         title={<span className="flex flex-wrap items-center gap-2" data-vault={vault.vault}><span><VaultName company={company} vault={vault} number={number} /></span><PendingPill vault={vault} /></span>}
         description={t('vaults.tile.created', { date: day(vault.createdAt) })}
-        actions={<><PaySomeone vault={vault.vault} /><DepositActions company={company} vault={vault.vault} /></>}
+        actions={<><PaySomeone vault={vault.vault} /><DepositActions company={company} vault={vault.vault} standing={vault.standing} /></>}
       />
-      <DepositStrip company={company} vault={vault.vault} onDone={() => setDeposited((n) => n + 1)} />
+      <DepositStrip company={company} vault={vault.vault} standing={vault.standing} onDone={() => setDeposited((n) => n + 1)} />
       {isPending(vault.standing) ? null : <p className="text-sm" data-standing={vault.standing}>{says(vault.standing)}</p>}
       <Approvals vault={vault} />
       <MoneyHeld company={company} vault={vault.vault} deposited={deposited} />

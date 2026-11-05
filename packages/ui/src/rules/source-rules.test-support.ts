@@ -1034,7 +1034,6 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/company-records.ts#PAID': 'how a payment is made, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/company-records.ts#STANDING': 'where a person on the payroll stands, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/company-records.ts#ADMIT_BY': 'what admits a person, the fingerprint they read out or their wallet\'s signed claim, compared by the code and chosen by the address they were added at',
-  'apps/web/src/adapters/company-records.ts#VAULT': 'where a vault stands, the service\'s own words for it compared and a screen\'s phrase chosen by them',
   'apps/web/src/adapters/company-records.ts#INVITED': 'who an invitation is for, the service\'s words compared, and a screen\'s phrase chosen by them',
   'apps/web/src/adapters/reads.ts#READ': 'what a read is, compared by the code',
   'apps/web/src/adapters/kept-skips.ts#KEPT': 'where the skipped setup steps are kept in the tab\'s storage',

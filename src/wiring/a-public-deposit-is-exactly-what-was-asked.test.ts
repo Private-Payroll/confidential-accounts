@@ -1,7 +1,8 @@
 /**
- * **THE SERVICE PAYS THE FEE ON A PUBLIC DEPOSIT ONLY WHEN IT IS EXACTLY THE
- * TOKEN AND AMOUNT THE PAGE ASKED FOR, INTO THIS VAULT, PAID FROM THE
- * DEPOSITOR'S OWN PUBLIC MONEY.** Each refusal is driven over a transaction's
+ * **THE SERVICE PAYS THE FEE ON A PUBLIC DEPOSIT ONLY WHEN IT PUTS EXACTLY ONE
+ * PUBLIC TOKEN, A POSITIVE AMOUNT OF IT, INTO THIS VAULT, PAID FROM THE
+ * DEPOSITOR'S OWN PUBLIC MONEY.** Nobody tells the service the token or the
+ * amount: both are read from the transaction. Each refusal is driven over a transaction's
  * shape, one part changed at a time. The same reader over what the page, the
  * wallet SDK and the ledger really build is watched in
  * `contracts/test/a-private-payment-from-the-page.test.ts`.
@@ -19,7 +20,7 @@ const addressOf = (owner: unknown): string => {
   if ((owner as { value?: unknown })?.value === PAYER_KEY.value) return PAYER;
   throw new Error('not a key');
 };
-const EXPECT: PublicDepositExpectations = { vault: VAULT, token: TOKEN, amount: 700n, addressOf };
+const EXPECT: PublicDepositExpectations = { vault: VAULT, addressOf };
 
 const effects = (over: Record<string, unknown> = {}) => ({
   claimedNullifiers: [], claimedShieldedReceives: [], claimedShieldedSpends: [], claimedContractCalls: [],
@@ -45,8 +46,11 @@ const finished = (over: {
 });
 
 describe('A PUBLIC DEPOSIT, AS THE SERVICE READS IT', () => {
-  it('TAKES EXACTLY ONE PUBLIC DEPOSIT OF THIS TOKEN AND AMOUNT INTO THIS VAULT, PAID BY THE DEPOSITOR, OWING ONLY DUST', () => {
+  it('TAKES EXACTLY ONE PUBLIC DEPOSIT OF ONE TOKEN INTO THIS VAULT, PAID BY THE DEPOSITOR, OWING ONLY DUST, WITHOUT BEING TOLD THE TOKEN OR THE AMOUNT', () => {
+    /* RED WHEN: the service needs the page to name the token and the amount before it sends a public deposit. */
     expect(refusalForPublicDeposit(finished(), EXPECT)).toBeNull();
+    const ofAnother = finished({ call: { guaranteedTranscript: { effects: effects({ unshieldedInputs: new Map([[{ tag: 'unshielded', raw: OTHER }, 5n]]) }) } } });
+    expect(refusalForPublicDeposit(ofAnother, EXPECT)).toBeNull();
     /* And the private deposit's reader never takes it. */
     expect(refusalForDeposit(finished(), { vault: VAULT })).toMatch(/moves public money as well/);
   });
@@ -54,8 +58,6 @@ describe('A PUBLIC DEPOSIT, AS THE SERVICE READS IT', () => {
   it('REFUSES EVERYTHING ELSE, SAYING NOTHING WAS SENT', () => {
     const cases: Array<[string, unknown, PublicDepositExpectations, RegExp]> = [
       ['another vault named', finished(), { ...EXPECT, vault: 'ee'.repeat(32) }, /must call this vault's public deposit and nothing else/],
-      ['another amount named', finished(), { ...EXPECT, amount: 699n }, /exactly the token and amount asked for/],
-      ['another token named', finished(), { ...EXPECT, token: OTHER }, /exactly the token and amount asked for/],
       ['the private deposit called', finished({ call: { entryPoint: 'deposit' } }), EXPECT, /must call this vault's public deposit/],
       ['two calls', { ...finished(), intents: new Map([[7, { ...finished().intents.get(7)!, actions: [finished().intents.get(7)!.actions[0], finished().intents.get(7)!.actions[0]] }]]) }, EXPECT, /must call this vault's public deposit and nothing else/],
       ['two sets of actions', { ...finished(), intents: new Map([[7, finished().intents.get(7)!], [8, finished().intents.get(7)!]]) }, EXPECT, /exactly one set of actions/],
@@ -64,8 +66,10 @@ describe('A PUBLIC DEPOSIT, AS THE SERVICE READS IT', () => {
       ['the call takes a coin', finished({ call: { guaranteedTranscript: { effects: effects({ claimedShieldedReceives: ['c'] }) } } }), EXPECT, /asks for more than public money/],
       ['the call mints', finished({ call: { guaranteedTranscript: { effects: effects({ unshieldedMints: new Map([['d', 1n]]) }) } } }), EXPECT, /asks for more than public money/],
       ['the call claims a public coin to someone', finished({ call: { guaranteedTranscript: { effects: effects({ claimedUnshieldedSpends: new Map([[['t', 'a'], 1n]]) }) } } }), EXPECT, /asks for more than public money/],
-      ['the call asks for two tokens', finished({ call: { guaranteedTranscript: { effects: effects({ unshieldedInputs: new Map([[{ tag: 'unshielded', raw: TOKEN }, 700n], [{ tag: 'unshielded', raw: OTHER }, 1n]]) }) } } }), EXPECT, /exactly the token and amount/],
-      ['split over both parts, to another total', finished({ call: { fallibleTranscript: { effects: effects({ unshieldedInputs: new Map([[{ tag: 'unshielded', raw: TOKEN }, 1n]]) }) } } }), EXPECT, /exactly the token and amount/],
+      ['the call asks for two tokens', finished({ call: { guaranteedTranscript: { effects: effects({ unshieldedInputs: new Map([[{ tag: 'unshielded', raw: TOKEN }, 700n], [{ tag: 'unshielded', raw: OTHER }, 1n]]) }) } } }), EXPECT, /exactly one public token, a positive amount of it/],
+      ['an amount of nothing', finished({ call: { guaranteedTranscript: { effects: effects({ unshieldedInputs: new Map([[{ tag: 'unshielded', raw: TOKEN }, 0n]]) }) } } }), EXPECT, /exactly one public token, a positive amount of it/],
+      ['no token at all', finished({ call: { guaranteedTranscript: { effects: effects({ unshieldedInputs: new Map() }) } } }), EXPECT, /exactly one public token, a positive amount of it/],
+      ['split over both parts', finished({ call: { fallibleTranscript: { effects: effects({ unshieldedInputs: new Map([[{ tag: 'unshielded', raw: TOKEN }, 1n]]) }) } } }), EXPECT, /split across two parts/],
       ['no transcript', finished({ call: { guaranteedTranscript: undefined } }), EXPECT, /could not be read/],
       ['unreadable effects', finished({ call: { guaranteedTranscript: { effects: { ...effects(), unshieldedInputs: [] } } } }), EXPECT, /could not be read/],
       ['a private coin as well', finished({ top: { guaranteedOffer: { inputs: [], outputs: [1], transients: [] } } }), EXPECT, /moves private money as well/],
@@ -81,7 +85,7 @@ describe('A PUBLIC DEPOSIT, AS THE SERVICE READS IT', () => {
     ];
     for (const [why, tx, expect_, says] of cases) {
       const refusal = refusalForPublicDeposit(tx, expect_);
-      /* RED WHEN: the service pays the fee on a public deposit that is not exactly what the page asked for. */
+      /* RED WHEN: the service pays the fee on a public deposit of nothing, of two tokens, split so half can be refused, or not into this vault. */
       expect(refusal, why).toMatch(says);
       expect(refusal, why).toMatch(/Nothing was sent/);
     }

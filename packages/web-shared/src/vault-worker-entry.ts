@@ -17,7 +17,7 @@
  * files, and is never trusted to say which ones are right.
  */
 import {
-  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, newestTimeToLive, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
+  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, newestTimeToLive, readTransaction, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
   buildWriteSecretCopy, notesForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment, buildMerge,
   type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
@@ -45,7 +45,7 @@ import { ASK_STARTED, CHAIN_READS, WALLET_VAULT_BUILDER } from './vault-worker-c
 import { SERVICE_READ_BOUND_MS } from './read-bound.js';
 import type { EventOnTheWire } from './vault-builder.js';
 import {
-  establishCreatingTransaction, indexerTransactionsByIdentifier, NoteIndexRefused, publicDepositLandedAmong, type ServedEvent,
+  establishCreatingTransaction, indexerTransactionsByIdentifier, NoteIndexRefused, vaultCallByIdentifiers, type ServedEvent,
 } from '../../../src/midnight/note-index.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { ensureBuffer } from 'midnight-identity/browser';
@@ -1222,25 +1222,28 @@ export const answerVaultAsk = async (
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
       return { id: ask.id, ok: true, ask: 'created-by', found: await readCreatedBy(source, ask.vault, ask.commitment) };
     }
-    case 'public-deposit-landed': {
+    case 'vault-call-on-chain': {
       /*
-       * The deposit is looked for by the identifiers of the transaction the person's wallet signed, worked out here from
-       * its bytes. The wallet hands back a bound transaction; the service merges its fee in as a separate intent, which
-       * changes the hash and leaves every identifier as it was, so the service's hash is never needed and never believed.
+       * The call is looked for by the identifiers of the transaction this device holds, read here from its bytes. The
+       * service merges its fee in as a separate intent, which changes the hash and leaves every identifier as it was, so
+       * the service's hash is never needed and never believed. Which part of the transaction carries the call is read
+       * from the same bytes, because the indexer names none.
        */
-      if (!/^[0-9a-f]{64}$/iu.test(ask.vault)) throw new Error('that is not a vault, so no deposit into it was looked for.');
+      if (!/^[0-9a-f]{64}$/iu.test(ask.vault)) throw new Error('that is not a vault, so no call to it was looked for.');
+      if (!Array.isArray(ask.entryPoints) || ask.entryPoints.length === 0 || !ask.entryPoints.every((e) => typeof e === 'string')) {
+        throw new Error('no circuit of the vault was named, so no call to it was looked for.');
+      }
       const { refuseEndpointsThatCannotWork } = await import('./public-data.js');
       refuseEndpointsThatCannotWork(ask.indexer);
-      const signed = d.ledger.Transaction.deserialize('signature', 'proof', 'binding', fromBase64(ask.transaction));
-      const identifiers = (signed.identifiers() as unknown[]).map(String);
-      if (identifiers.length === 0) throw new Error('the deposit your wallet signed names no identifier, so it cannot be looked for on the chain.');
+      const held = readTransaction(withNetwork, fromBase64(ask.transaction));
+      if (held === null) throw new Error('the transaction could not be read, so it cannot be looked for on the chain.');
+      if (held.identifiers.length === 0) throw new Error('the transaction names no identifier, so it cannot be looked for on the chain.');
       const reader = (d.transactionsAt ?? ((i) => indexerTransactionsByIdentifier(i.indexerUri)))(ask.indexer);
-      for (const identifier of identifiers) {
-        const transactionHash = publicDepositLandedAmong(ask.vault, await reader.byIdentifier(identifier));
-        if (transactionHash !== null) return { id: ask.id, ok: true, ask: 'public-deposit-landed', found: { transactionHash } };
-      }
-      return { id: ask.id, ok: true, ask: 'public-deposit-landed', found: null };
+      const seen = await vaultCallByIdentifiers(reader, held, { vault: ask.vault, entryPoints: ask.entryPoints });
+      return { id: ask.id, ok: true, ask: 'vault-call-on-chain', seen };
     }
+    case 'transaction-read':
+      return { id: ask.id, ok: true, ask: 'transaction-read', read: readTransaction(withNetwork, fromBase64(ask.transaction)) };
     case 'step-kept': {
       /* The coin a journalled step kept, worked out with the vault's own functions: a merge's, or a payment's change. */
       const [{ keptByAStep }, { nonceCircuitsFrom }] = await Promise.all([

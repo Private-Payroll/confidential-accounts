@@ -36,7 +36,7 @@ import {
   assertNoSignerWouldLoseAccess, openPool, sealPool, SealedNotePool, type PoolSigner, type SealedPool, type SealedPoolStore,
 } from '../../../src/midnight/vault-pool.js';
 import type { Note } from '../../../src/midnight/vault-notes.js';
-import { DepositJournalInStore } from '../../../src/midnight/vault-journal.js';
+import { DepositJournalInStore, attemptKey, noteKey, stepOfLine } from '../../../src/midnight/vault-journal.js';
 import {
   claimNewDepositCoin, type DepositCoin, type DepositMoney,
 } from '../../../src/midnight/deposit-nonce.js';
@@ -202,8 +202,8 @@ export interface PoolTheChainHolds {
 /** One step a payment journal line names, with every note it spends. */
 type JournalStep = { readonly spent: Note; readonly further?: readonly Note[]; readonly step?: string; readonly amount: bigint };
 
-const noteKey = (n: Pick<Note, 'nonce' | 'token' | 'value'>): string => `${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}`;
-const stepKey = (a: JournalStep): string => `${[a.spent, ...(a.further ?? [])].map(noteKey).join('+')}:${a.step === 'merge' ? 'merge' : 'pays'}:${a.amount}`;
+/** The same step, keyed as every other reader of the payment journal keys it. */
+const stepKey = (a: JournalStep): string => attemptKey(stepOfLine(a));
 
 /**
  * **THE CHAIN WINS: THE VAULT'S POOL AND JOURNALS, FILED AGAIN UNDER THIS

@@ -244,6 +244,23 @@ describe('the deposit step tells the page only where it got to', () => {
     expect(told).toEqual({ vault: VAULT, state: 'recorded', created: 'ab'.repeat(32) });
   });
 
+  it('a deposit the wallet handed back other than the one built refuses as not made, and tells the page no state, so it reads as not sent', async () => {
+    let seen: Record<string, unknown> = {};
+    t.run = async () => { throw new op.DepositNotAsBuilt(VAULT as never, 'it does not create the one coin this device built for this vault, exactly once.'); };
+    const { ctx, told } = ctxWith();
+    const action = privateDepositAction({
+      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
+      reachFor: async () => reachOf(),
+    } as never);
+    let refused: unknown = null;
+    for (const s of ownSteps(action)) await s.run(ctx).catch((x: unknown) => { refused = x; });
+    seen = told;
+    /* RED WHEN: a deposit that was never sent is told to the page as one on its way or landed. */
+    expect(refused).toBeInstanceOf(StepRefused);
+    expect((refused as StepRefused).words).toMatchObject({ key: 'act.private-deposit.why.not-made', values: { says: expect.stringMatching(/your wallet handed back a deposit other than the one this device built/) } });
+    expect(seen).toEqual({ vault: VAULT });
+  });
+
   it('a deposit not yet seen, or landed and not yet recorded, says so and refuses, so the page says it may have been sent', async () => {
     for (const [e, state] of [[new op.DepositNotYetSeen(VAULT as never, 'r1'), 'not-yet-seen'], [new op.DepositLandedNotYetRecorded(VAULT as never, 'r1'), 'landed-not-recorded']] as const) {
       const told = await run(async () => { throw e; }).catch((x: unknown) => x);

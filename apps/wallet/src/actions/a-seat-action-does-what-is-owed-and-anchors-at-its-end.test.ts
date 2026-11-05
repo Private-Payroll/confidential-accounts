@@ -4,6 +4,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
 import { ActionStopped } from './run.js';
+import { NOT_SEALED } from '../../../../packages/web-shared/src/vault-operation.js';
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
 
 /*
@@ -439,7 +440,7 @@ describe('the upkeep says what it could not do, and stops only for what the page
     const outcomes: unknown[] = [];
     for (const [onTheWayIn, notes] of [
       [{ waits: 'this-seat-does-not-anchor' }, { of: 'as-filed', notes: [], unexplained: 0, said: [] }],
-      [{ anchored: 1, head: '00' }, { of: 'as-filed', notes: [], unexplained: 0, said: ['this vault\'s pool was not filed again for a signer who cannot open it yet: refused'] }],
+      [{ anchored: 1, head: '00' }, { of: 'as-filed', notes: [], unexplained: 0, said: ['a record is still sealed to fewer signers than the directory seats'], unsealed: [NOT_SEALED.notFiledFailed] }],
       [{ anchored: 1, head: '00' }, { of: 'not-filed', notes: [], unexplained: 2, said: [] }],
     ] as const) {
       t.onTheWayIn = onTheWayIn; t.notes = notes;
@@ -449,6 +450,19 @@ describe('the upkeep says what it could not do, and stops only for what the page
     }
     /* RED WHEN: the outcome says the upkeep is done while the action's filings wait unanchored, or a signer seated since still reaches none of a vault's notes. */
     expect(outcomes).toEqual([UPKEEP.partial, UPKEEP.partial, UPKEEP.partial]);
+  });
+
+  it('reads that a record is still not sealed to every signer from the code the read carries, never from its wording', async () => {
+    const outcomes: unknown[] = [];
+    for (const unsealed of [[NOT_SEALED.signersNotRead], [NOT_SEALED.notFiledHere], [NOT_SEALED.notFiledFailed], []] as const) {
+      t.onTheWayIn = { anchored: 1, head: '00' };
+      t.notes = { of: 'as-filed', notes: [], unexplained: 0, said: ['this vault\'s pool was not filed again for a signer who cannot open it yet: refused'], unsealed };
+      const { ctx, told } = ctxWith('give-vault-keys');
+      await upkeepSteps(company().doors, {}).last.run(ctx);
+      outcomes.push(told['upkeep']);
+    }
+    /* RED WHEN: the outcome says the upkeep is done while a record is still not sealed to every signer, or says it is partial for a sentence alone when the read carries no code for it. */
+    expect(outcomes).toEqual([UPKEEP.partial, UPKEEP.partial, UPKEEP.partial, UPKEEP.done]);
   });
 
   it('never stops the action for what it could not do, and says so in the outcome', async () => {

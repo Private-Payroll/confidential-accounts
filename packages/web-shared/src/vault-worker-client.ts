@@ -10,7 +10,8 @@ import type { Committee } from '../../../src/midnight/vault-committee.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
-import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire } from './vault-builder.js';
+import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire, TransactionRead } from './vault-builder.js';
+import type { VaultCallOnChain } from '../../../src/midnight/note-index.js';
 import type { RoundMadeOf, RoundStanding } from '../../../src/midnight/vault-start.js';
 import { PROOF_CEILING_MS } from './proof-ceiling.js';
 import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
@@ -115,7 +116,8 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'chain-at-one-block'; vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'created-by'; vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
-  | { id: number; network: string; ask: 'public-deposit-landed'; vault: string; transaction: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | { id: number; network: string; ask: 'vault-call-on-chain'; vault: string; entryPoints: string[]; transaction: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | { id: number; network: string; ask: 'transaction-read'; transaction: string }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
   | { id: number; network: string; ask: 'warm-proving' }
   /* A company's deploy and its signed second step, carried in fresh transactions: the same account, the same signature. */
@@ -284,7 +286,8 @@ export type VaultAnswer =
   | Answered<'chain-at-one-block', { chain: PayoutChainOnTheWire | null }>
   | Answered<'events-of', { events: EventOnTheWire[] }>
   | Answered<'created-by', { found: { transactionHash: string; events: EventOnTheWire[] } | null }>
-  | Answered<'public-deposit-landed', { found: { transactionHash: string } | null }>
+  | Answered<'vault-call-on-chain', { seen: VaultCallOnChain }>
+  | Answered<'transaction-read', { read: TransactionRead | null }>
   | Answered<'own-seat', { seat: string }>
   | Answered<'warm-proving', unknown>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
@@ -480,12 +483,17 @@ export interface VaultBuilderClient {
    */
   createdBy(input: { vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ transactionHash: string; events: EventOnTheWire[] } | null>;
   /**
-   * **WHETHER THE PUBLIC DEPOSIT THIS PERSON'S WALLET SIGNED HAS LANDED**, read in this worker at the indexer the wallet
-   * names: the transaction carrying an identifier of `transaction` (the finished deposit, base64, exactly as it was
-   * handed to the service), applied in full, calling `vault`'s public deposit. Null while the chain shows no such
-   * transaction. The hash the service answered with is never asked for: it is the service's word.
+   * **WHETHER ONE CALL TO `vault` IN A TRANSACTION THIS DEVICE HOLDS TOOK EFFECT ON THE CHAIN**, read in this worker at
+   * the indexer the wallet names: `transaction` (base64, finished or not yet bound) is looked for by its own
+   * identifiers, and judged by the part of it that carries the call to one of `entryPoints` (`vaultCallOnChain`). A hash
+   * the service answered with is never asked for: it is the service's word. Refuses bytes it cannot read, or that name
+   * no identifier.
    */
-  publicDepositLanded?(input: { vault: string; transaction: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ transactionHash: string } | null>;
+  vaultCallOnChain?(input: {
+    vault: string; entryPoints: string[]; transaction: string; indexer: { indexerUri: string; indexerWsUri: string };
+  }): Promise<VaultCallOnChain>;
+  /** What a transaction (base64, finished or not yet bound) says of itself: its identifiers, its earliest time to live, its calls, the private coins it creates for contracts and the public tokens its calls take in (`readTransaction`). Null for bytes that are no transaction. */
+  readTransaction?(input: { transaction: string }): Promise<TransactionRead | null>;
   /**
    * The seat this signer's own key material makes on the company's account: the
    * leaf the account holds for them, worked out here and not taken from any record.
@@ -820,7 +828,7 @@ const START_MS = 30_000;
  * says it has started it, its code loaded. Every other ask may be a send or a proof and is never cut short.
  */
 export const CHAIN_READS: ReadonlySet<string> = new Set([
-  'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'public-deposit-landed', 'anchors-on-chain', 'rounds-on-chain',
+  'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'vault-call-on-chain', 'anchors-on-chain', 'rounds-on-chain',
   'paid-leaves', 'runs-outrun', 'invited-seats', 'account-call-chain', 'account-presence',
 ]);
 
@@ -1096,7 +1104,8 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     chainAtOneBlock: async (input) => (await ask({ ask: 'chain-at-one-block', ...input })).chain,
     eventsOf: async (input) => (await ask({ ask: 'events-of', ...input })).events,
     createdBy: async (input) => (await ask({ ask: 'created-by', ...input })).found,
-    publicDepositLanded: async (input) => (await ask({ ask: 'public-deposit-landed', ...input })).found,
+    vaultCallOnChain: async (input) => (await ask({ ask: 'vault-call-on-chain', ...input })).seen,
+    readTransaction: async (input) => (await ask({ ask: 'transaction-read', ...input })).read,
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
     creationAgain: async (input) => {
       const a = await ask({ ask: 'creation-again', ...input });

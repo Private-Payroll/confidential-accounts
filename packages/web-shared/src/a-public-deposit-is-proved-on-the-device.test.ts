@@ -37,7 +37,8 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { createProofProvider } from '@midnight-ntwrk/midnight-js-types';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
-import { buildPublicDeposit, buildVaultDeploy, whyNotOnlyThisPublicDeposit, type VaultBuilderDeps } from './vault-builder.js';
+import { buildPublicDeposit, buildVaultDeploy, readTransaction, whyNotOnlyThisPublicDeposit, type VaultBuilderDeps } from './vault-builder.js';
+import { whyNotTheDepositBuilt } from './vault-operation.js';
 import { startVaultWorker } from './vault-worker-entry.js';
 import { provingOnWorkers } from './vault-proof-workers.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from '../../../src/server/vault-artefacts.js';
@@ -217,6 +218,11 @@ describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEV
     }
     expect(proofBytesOf(tx).length, 'a proof is there').toBeGreaterThan(1000);
     expect(whyNotOnlyThisPublicDeposit(tx.eraseProofs(), { vault, token: TOKEN, amount: AMOUNT })).toBeNull();
+    /* RED WHEN: the page's reader of a proved deposit, or its check of what the wallet hands back, refuses the real deposit it built. */
+    const read = readTransaction({ ledger: L } as never, Buffer.from(b64!, 'base64'));
+    expect(read?.publicTakes, 'the real deposit takes in the token and amount').toEqual([{ address: vault, entryPoint: CIRCUIT, colour: TOKEN.toLowerCase(), amount: AMOUNT.toString() }]);
+    expect(whyNotTheDepositBuilt(read, read, { vault: vault as never, token: TOKEN as never, amount: AMOUNT })).toBeNull();
+    expect(whyNotTheDepositBuilt(read, read, { vault: vault as never, token: TOKEN as never, amount: AMOUNT + 1n })).toMatch(/exactly this token and amount/);
     return tx;
   };
 

@@ -41,7 +41,26 @@ describe('a vault\'s private notes, as a screen is told them', () => {
     const holdings = deviceVaultHoldings(doors(null, holding([])));
     expect(await holdings.privateNotes(VAULT, [TOKEN])).toEqual({ of: 'nothing-yet' });
     const notNothing = await deviceVaultHoldings(doors(null, holding([NOTES[0]!]))).privateNotes(VAULT, [TOKEN]);
-    expect(notNothing).toMatchObject({ of: 'unreadable', because: 'record' });
+    expect(notNothing).toEqual({ of: 'unfiled', onChain: 1 });
+  });
+
+  /* RED WHEN: a lost pool record with notes on the chain is told to a screen as anything but unfiled, or the chain's note count is lost from the answer. */
+  it('tells a screen the record is unfiled when this device has none and the chain holds notes, with or without a rebuild', async () => {
+    const lost = [NOTES[0]!, NOTES[1]!];
+    expect(await deviceVaultHoldings(doors(null, holding(lost))).privateNotes(VAULT, [TOKEN])).toEqual({ of: 'unfiled', onChain: 2 });
+    const rebuilt = doors(null, holding(lost), { fileAgain: async () => ({ answer: 'the-newest', said: [], notes: lost }) } as Partial<DeviceHoldingsDoors>);
+    expect(await deviceVaultHoldings(rebuilt).privateNotes(VAULT, [TOKEN])).toEqual({ of: 'unfiled', onChain: 2 });
+  });
+
+  /* RED WHEN: a note the chain holds and this device has not filed is counted as money that can be spent, so a balance asked for or a payment's check hears an amount or that it fits. */
+  it('never counts an unfiled record as spendable: a balance and a payment\'s check still read it as unreadable for the record', async () => {
+    const holdings = deviceVaultHoldings(doors(null, holding([NOTES[0]!])));
+    const held = await holdings.held(VAULT, 'shielded', TOKEN);
+    expect(held.of).toBe('unreadable');
+    expect(JSON.stringify(held)).toContain('no record of its notes');
+    const fits = await holdings.fits(VAULT, [{ payee: { kind: 'shielded' }, token: TOKEN, amount: 1n }]);
+    expect(fits.of).toBe('unreadable');
+    expect(JSON.stringify(fits)).toContain('no record of its notes');
   });
 
   /* RED WHEN: a payment's check or a balance asked of a vault with no pool reads it as holding zero, or throws instead of saying it could not be read. */

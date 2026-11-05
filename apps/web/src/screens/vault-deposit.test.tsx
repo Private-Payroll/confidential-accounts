@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { KitProvider, languagesFrom, privateAmount } from 'vaults-ui';
+import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
 import type { Company } from '../adapters/company-records.js';
 import { untilPageShown, untilShown } from '../page-shown.test-support.js';
 import { ENGLISH } from '../english.test-support.js';
+import { StaticAssetRegistry } from '../../../../src/core/assets.js';
+import { accountBalancesFrom } from '../adapters/account-balances.js';
 
 /*
  * THE VAULT PAGE'S DEPOSIT AND CHECK MY LAST DEPOSIT, drawn in the frame over a company's records. The deposit the
@@ -21,7 +23,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   watchCompanyKeyReleased: (watch: (accountId: string) => void) => { state.released.add(watch); return () => { state.released.delete(watch); }; },
 }));
 const dp = vi.hoisted(() => ({
-  now: null as unknown, watchers: new Set<() => void>(), checks: [] as unknown[][], checkGate: null as Promise<unknown> | null, checkAnswer: null as unknown, keyHeld: true,
+  now: null as unknown, watchers: new Set<() => void>(), put: [] as unknown[][], checks: [] as unknown[][], checkGate: null as Promise<unknown> | null, checkAnswer: null as unknown, keyHeld: true,
   set(now: unknown) { this.now = now; for (const w of [...this.watchers]) w(); },
 }));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
@@ -44,8 +46,20 @@ vi.mock('../adapters/vault-private-money.js', async (real) => ({
 }));
 vi.mock('../adapters/vault-rows.js', async (real) => ({ ...(await real<typeof import('../adapters/vault-rows.js')>()), readVaultRows: async () => [] }));
 vi.mock('../adapters/session.js', async (real) => ({ ...(await real<typeof import('../adapters/session.js')>()), companyNamesFor: async () => new Map() }));
+vi.mock('../adapters/account-balances.js', async (real) => ({
+  ...(await real<typeof import('../adapters/account-balances.js')>()),
+  askForAccountBalances: async () => accountBalancesFrom(
+    {
+      addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}` },
+      balances: [{ token: 'ab'.repeat(32), amount: '2500000', visibility: 'private' }],
+      read: { private: Date.now(), public: Date.now() },
+    },
+    Date.now(), new StaticAssetRegistry([{ code: 'ab'.repeat(32), symbol: 'PRV', name: 'Private token', decimals: 6, ledger: { shielded: 'ab'.repeat(32), unshielded: null }, enabled: true, sortOrder: 60 }]),
+  ),
+}));
 vi.mock('../adapters/deposit.js', async (real) => ({
   ...(await real<typeof import('../adapters/deposit.js')>()),
+  putMoneyIn: (...args: unknown[]) => { dp.put.push(args); return { of: 'vault-refused', standing: args[7] }; },
   depositNow: () => dp.now,
   watchDeposit: (_vault: string, watcher: () => void) => { dp.watchers.add(watcher); return () => { dp.watchers.delete(watcher); }; },
   companyKeyHeldHere: () => dp.keyHeld,
@@ -100,8 +114,8 @@ const running = (n: number) => {
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   state.company = company(); state.publicReads = 0; state.companyReads = 0; state.privateReads = 0; state.priv = { of: 'nothing-yet' }; state.pub = { amounts: [], unrecognised: 0 };
-  dp.now = null; dp.watchers.clear(); dp.checks = []; dp.checkGate = null; dp.keyHeld = true;
-  dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null };
+  dp.now = null; dp.watchers.clear(); dp.put = []; dp.checks = []; dp.checkGate = null; dp.keyHeld = true;
+  dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null, earlier: [] };
   window.sessionStorage.clear();
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -120,6 +134,23 @@ describe('the vault page\'s deposit', () => {
     await untilShown(() => document.querySelector('[data-panel] [data-deposit-methods]'), 'the ways to put money in');
     expect(document.querySelector('[data-panel]')!.textContent).toContain('Deposit');
     expect(dp.checks).toHaveLength(0);
+  });
+
+  /* RED WHEN: the vault page does not hand the deposit panel the service's answer about the vault, so a vault the service refuses is still put money into after the press, or the answer's words are not shown. */
+  it('gives the deposit panel the service\'s answer about the vault and shows its words when the press is stopped', async () => {
+    state.company = { ...company(), vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'not-fundable' }] } };
+    const c = await draw();
+    await act(async () => { fireEvent.click(button(c, 'deposit')); });
+    await untilShown(() => document.querySelector('[data-panel] [data-deposit-methods]'), 'the ways to put money in');
+    const panel = (): HTMLElement => document.querySelector<HTMLElement>('[data-panel]')!;
+    await act(async () => { fireEvent.click(panel().querySelector('[data-action=choose-method]')!); });
+    await act(async () => { fireEvent.click(panel().querySelector('[data-action=show-account-tokens]')!); await new Promise((r) => setTimeout(r, 5)); });
+    await act(async () => { fireEvent.click(panel().querySelector('[data-token-side=private] [data-token-choice]')!); });
+    await act(async () => { fireEvent.change(panel().querySelector('[data-field=deposit-amount]')!, { target: { value: '1' } }); });
+    await act(async () => { fireEvent.click(panel().querySelector('[data-action=put-money-in]')!); });
+    expect(dp.put).toHaveLength(1);
+    expect(dp.put[0]![7]).toBe('not-fundable');
+    expect(panel().querySelector('[data-vault-refused=not-fundable]')!.textContent).toContain(EN['vaults.standing.notFundable']);
   });
 
   /* RED WHEN: Check my last deposit does not show at once that it was taken, a second press runs a second check, or its answer is not opened in the panel with the words that only private deposits are checked there. */
@@ -189,6 +220,24 @@ describe('the vault page\'s deposit', () => {
     expect(state.publicReads).toBe(before + 1);
     await act(async () => { dp.set({ of: 'failed', kind: 'private', amount: privateAmount(1n, 6, 'PRV'), mayHaveBeenSent: true, refusal: 'did-not-finish', reasons: ['x'] }); });
     expect(q(c, '[data-deposit-strip=failed]')!.textContent).toContain('A deposit did not finish.');
+  });
+});
+
+describe('a public deposit the wallet signed and this page did not send', () => {
+  /* RED WHEN: the vault page's panel says such a deposit may have been sent and that the page was not told whether it arrived, or leaves out until when it can still be sent. */
+  it('is said on the vault page not to have been sent from it, with the time it can still be sent until', async () => {
+    const c = await draw();
+    await act(async () => {
+      dp.set({
+        of: 'failed', kind: 'public', amount: publicAmount(4_000_000n, 6, 'NIGHT'), mayHaveBeenSent: true, refusal: 'did-not-finish',
+        reasons: ['not as built'], until: Date.now() + 3_600_000, signedNotSent: true,
+      });
+    });
+    await act(async () => { fireEvent.click(q(c, '[data-action=open-deposit]')!); });
+    const words = await untilShown(() => document.querySelector('[data-panel] [data-deposit=failed] [data-failed-words]'), 'the failed deposit in the panel');
+    expect(words!.textContent).toMatch(/^This page did not send this public deposit\. Your wallet already signed it, so until /u);
+    expect(words!.textContent).not.toContain('may have been sent');
+    expect(document.querySelector('[data-panel] [data-details]')!.textContent).toBe('Details for support: not as built.');
   });
 });
 

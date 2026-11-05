@@ -34,6 +34,7 @@ import { CREATION_STEPS, overTheCeiling } from '../../../src/midnight/deferral.j
 import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
 import { companyLabelBytes, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../src/core/crypto.js';
+import type { CallAsBuilt } from '../../../src/midnight/note-index.js';
 import {
   afterStep, notesToSpend, paymentsFitAnswer, withIndexRead, witnessesOver, type Note, type PaymentsFitAnswer, type VaultNotes,
 } from '../../../src/midnight/vault-notes.js';
@@ -48,6 +49,7 @@ import { pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnT
 import { notePlaces } from '../../../src/midnight/vault-step-notes.js';
 import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
 import { INTENT_LIFETIME_MS } from '../../../src/midnight/intent-lifetime.js';
+import { PUBLIC_DEPOSIT_ENTRY, publicTakesOfTranscript, readPublicDepositCall, type PublicDepositCallRefusal } from './public-deposit-call.js';
 
 
 export interface SigningKeyLike { readonly tag: string; readonly value: string }
@@ -233,24 +235,160 @@ export async function finishedCreation(
   return { proven: proven.serialize(), bytesWritten };
 }
 
+/** What a transaction says of itself, read from its own bytes, with nothing taken from whoever handed them over. */
+export interface TransactionRead {
+  /** Every identifier the chain can be asked about it by. Binding it and merging a fee into it leave each one as it was. */
+  readonly identifiers: readonly string[];
+  /** The earliest time to live across its intents (milliseconds since the epoch): after it the transaction can no longer land. Null when an intent carries none this can read. */
+  readonly timeToLive: number | null;
+  /** Every contract call it makes. A deploy is not a call and is not listed. */
+  readonly calls: readonly CallAsBuilt[];
+  /**
+   * Every private coin it creates for a contract, in either part: as an output, which the contract then holds, or
+   * marked `madeAndSpent` when it is made and spent inside the transaction, so the contract never holds it. A coin it
+   * creates for a person (the wallet's own change) is not listed. Null when an offer cannot be read, so an unread offer
+   * is never taken for one that creates nothing.
+   */
+  readonly coinsForContracts?: readonly CoinForAContract[] | null;
+  /**
+   * Every public token each call takes in, as its proven transcripts state it. Null when a call's transcript cannot be
+   * read, so an unread call is never taken for one that takes nothing.
+   */
+  readonly publicTakes?: readonly PublicTake[] | null;
+  /** Every call it makes to a vault's public deposit, each with what it puts in or why it is no such call (`readPublicDepositCall`). */
+  readonly publicDeposits?: readonly PublicDepositInTransaction[];
+}
+
+/** One call to a vault's public deposit in a transaction: the vault (as `CallAsBuilt` names it) and the ledger colour (lower-case hex) and amount (base units, decimal) it puts in, or why it is no such call. */
+type PublicDepositInTransaction =
+  | { readonly vault: string; readonly colour: string; readonly amount: string }
+  | { readonly vault: string; readonly refused: PublicDepositCallRefusal };
+
+/** A private coin a transaction creates for a contract: the contract (lower-case hex without a prefix) and the coin's commitment as the ledger records it (lower-case hex); `madeAndSpent` when it is spent in the same transaction. */
+interface CoinForAContract {
+  readonly contract: string;
+  readonly commitment: string;
+  readonly madeAndSpent?: true;
+}
+
+/** A public token one call takes in: the contract and circuit taking it (as `CallAsBuilt` names them), the ledger colour (lower-case hex) and the amount (base units, decimal). */
+interface PublicTake {
+  readonly address: string;
+  readonly entryPoint: string;
+  readonly colour: string;
+  readonly amount: string;
+}
+
+const bareHex = (v: unknown): string => String(v).toLowerCase().replace(/^0x/u, '');
+
+/** The coins an offer creates for a contract, or null when the offer cannot be read. */
+const coinsForContractsIn = (offer: unknown): CoinForAContract[] | null => {
+  if (offer === undefined || offer === null) return [];
+  const o = offer as { outputs?: unknown; transients?: unknown };
+  const found: CoinForAContract[] = [];
+  for (const [list, madeAndSpent] of [[o.outputs, false], [o.transients, true]] as const) {
+    if (list === undefined || list === null) continue;
+    if (!Array.isArray(list)) return null;
+    for (const coin of list as Array<{ contractAddress?: unknown; commitment?: unknown } | null>) {
+      if (coin === null || typeof coin !== 'object') return null;
+      if (coin.contractAddress === undefined || coin.contractAddress === null) continue;
+      if (typeof coin.commitment !== 'string' && !(coin.commitment instanceof Uint8Array)) return null;
+      found.push({
+        contract: bareHex(coin.contractAddress),
+        commitment: coin.commitment instanceof Uint8Array ? hex(coin.commitment) : bareHex(coin.commitment),
+        ...(madeAndSpent ? { madeAndSpent: true as const } : {}),
+      });
+    }
+  }
+  return found;
+};
+
+/** The public tokens one call's transcripts take in, or null when a transcript cannot be read. */
+const publicTakesOf = (address: string, entryPoint: string, action: { guaranteedTranscript?: unknown; fallibleTranscript?: unknown }): PublicTake[] | null => {
+  const takes: PublicTake[] = [];
+  for (const transcript of [action.guaranteedTranscript, action.fallibleTranscript]) {
+    if (transcript === undefined || transcript === null) continue;
+    const read = publicTakesOfTranscript(transcript);
+    if (typeof read === 'string') return null;
+    for (const take of read) takes.push({ address, entryPoint, colour: take.colour, amount: take.value.toString() });
+  }
+  return takes;
+};
+
 /**
- * **THE NEWEST TIME TO LIVE OF TRANSACTIONS KEPT, READ FROM THEIR BYTES** (milliseconds since the epoch): the moment
- * after which the last of them can no longer land. Null unless every one is exactly one transaction with one intent
- * that has a time to live, so a transaction this cannot read is never taken for one that has run out.
+ * **A TRANSACTION, READ FROM ITS BYTES**: as finished and bound, or proved and not yet bound. Null when it is neither,
+ * so bytes this cannot read are never taken for a transaction that has run out or that names nothing. Every intent's
+ * time to live is checked by the chain, so the earliest is the one that ends when the transaction can land.
+ */
+export function readTransaction(deps: Pick<VaultBuilderDeps, 'ledger'>, bytes: Uint8Array): TransactionRead | null {
+  let tx: { intents?: unknown; identifiers?: () => unknown };
+  try {
+    tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'binding', bytes);
+  } catch {
+    try {
+      tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes);
+    } catch {
+      return null;
+    }
+  }
+  let identifiers: string[];
+  try {
+    const listed = typeof tx?.identifiers === 'function' ? tx.identifiers() : [];
+    identifiers = Array.isArray(listed) ? listed.map(String) : [];
+  } catch {
+    return null;
+  }
+  const intents = tx?.intents instanceof Map ? [...tx.intents.entries()] as Array<[unknown, any]> : [];
+  let timeToLive: number | null = intents.length === 0 ? null : Number.POSITIVE_INFINITY;
+  const calls: CallAsBuilt[] = [];
+  let publicTakes: PublicTake[] | null = [];
+  const publicDeposits: PublicDepositInTransaction[] = [];
+  for (const [segment, intent] of intents) {
+    const ttl: unknown = intent?.ttl;
+    if (!(ttl instanceof Date) || !Number.isFinite(ttl.getTime())) timeToLive = null;
+    else if (timeToLive !== null) timeToLive = Math.min(timeToLive, ttl.getTime());
+    for (const action of Array.isArray(intent?.actions) ? intent.actions : []) {
+      if (action?.entryPoint === undefined || action?.address === undefined) continue;
+      const parts: number[] = [];
+      if (action.guaranteedTranscript !== undefined && action.guaranteedTranscript !== null) parts.push(0);
+      if (action.fallibleTranscript !== undefined && action.fallibleTranscript !== null) parts.push(Number(segment));
+      const address = String(action.address).toLowerCase().replace(/^0x/u, '');
+      const entryPoint = action.entryPoint instanceof Uint8Array ? new TextDecoder().decode(action.entryPoint) : String(action.entryPoint);
+      calls.push({ address, entryPoint, segments: parts });
+      const takes = publicTakesOf(address, entryPoint, action);
+      publicTakes = publicTakes === null || takes === null ? null : [...publicTakes, ...takes];
+      if (entryPoint === PUBLIC_DEPOSIT_ENTRY) {
+        const deposit = readPublicDepositCall(action, address);
+        publicDeposits.push('refused' in deposit ? { vault: address, refused: deposit.refused }
+          : { vault: address, colour: deposit.colour, amount: deposit.amount.toString() });
+      }
+    }
+  }
+  const offers = tx as { guaranteedOffer?: unknown; fallibleOffer?: unknown };
+  let coinsForContracts: CoinForAContract[] | null = coinsForContractsIn(offers.guaranteedOffer);
+  if (offers.fallibleOffer !== undefined && offers.fallibleOffer !== null) {
+    if (!(offers.fallibleOffer instanceof Map)) coinsForContracts = null;
+    else {
+      for (const offer of offers.fallibleOffer.values()) {
+        const more = coinsForContractsIn(offer);
+        coinsForContracts = coinsForContracts === null || more === null ? null : [...coinsForContracts, ...more];
+      }
+    }
+  }
+  return { identifiers, timeToLive, calls, coinsForContracts, publicTakes, publicDeposits };
+}
+
+/**
+ * **THE NEWEST TIME TO LIVE OF TRANSACTIONS KEPT** (milliseconds since the epoch): the moment after which the last of
+ * them can no longer land, each one's own being its earliest intent's (`readTransaction`). Null when there are none or
+ * any one cannot be read, so a transaction this cannot read is never taken for one that has run out.
  */
 export function newestTimeToLive(deps: Pick<VaultBuilderDeps, 'ledger'>, transactions: readonly Uint8Array[]): number | null {
   let newest: number | null = null;
   for (const bytes of transactions) {
-    let ttl: unknown;
-    try {
-      const tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes) as unknown as { intents?: Map<unknown, { ttl?: unknown }> };
-      const intents = tx.intents instanceof Map ? [...tx.intents.values()] : [];
-      ttl = intents.length === 1 ? intents[0]!.ttl : undefined;
-    } catch {
-      return null;
-    }
-    if (!(ttl instanceof Date) || !Number.isFinite(ttl.getTime())) return null;
-    newest = newest === null ? ttl.getTime() : Math.max(newest, ttl.getTime());
+    const ttl = readTransaction(deps, bytes)?.timeToLive ?? null;
+    if (ttl === null) return null;
+    newest = newest === null ? ttl : Math.max(newest, ttl);
   }
   return newest;
 }
@@ -381,7 +519,7 @@ export async function buildPublicDeposit(
   const L = deps.ledger;
   const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
     compiledContract: deps.compiled,
-    circuitId: 'depositUnshielded',
+    circuitId: PUBLIC_DEPOSIT_ENTRY,
     contractAddress: vault,
     coinPublicKey: keys.coinPublicKey,
     initialContractState: deps.runtimeState.deserialize(input.state),
@@ -393,13 +531,24 @@ export async function buildPublicDeposit(
   const unproven = built.private.unprovenTx;
   const refused = whyNotOnlyThisPublicDeposit(unproven, { vault, token: input.token, amount: input.amount });
   if (refused !== null) throw new Error(`${refused} Nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.`);
-  const proven = await deps.prove(unproven, 'depositUnshielded');
+  const proven = await deps.prove(unproven, PUBLIC_DEPOSIT_ENTRY);
   return { proven: proven.serialize() };
 }
 
+/** What the page says of a call that is not a public deposit into the vault, for each reason `readPublicDepositCall` gives. */
+const WHY_NOT_A_PUBLIC_DEPOSIT: Readonly<Record<PublicDepositCallRefusal, string>> = {
+  'not-the-call': 'this does not call this vault\'s public deposit.',
+  split: 'this call is split across two parts of the transaction, so the chain could apply one part and refuse the other.',
+  unread: 'what this call asks for could not be read.',
+  'more-than-public': 'this call asks for more than public money.',
+  'not-public': 'this call asks for money that is not a public token.',
+  'not-one-token': 'this call does not ask for exactly the token and amount of this deposit.',
+};
+
 /**
  * `null` only for a transaction that is one call, to this vault's public
- * deposit, asking for exactly `amount` of `token` and for nothing else.
+ * deposit, asking for exactly `amount` of `token` in one part of the
+ * transaction and for nothing else.
  * Exported so the check can be driven without building anything.
  */
 export function whyNotOnlyThisPublicDeposit(
@@ -419,38 +568,16 @@ export function whyNotOnlyThisPublicDeposit(
   if ((intent.guaranteedUnshieldedOffer ?? null) !== null || (intent.fallibleUnshieldedOffer ?? null) !== null) {
     return 'this already moves public money of its own.';
   }
-  const call = intent.actions[0] as {
-    address?: unknown; entryPoint?: unknown; guaranteedTranscript?: { effects?: unknown }; fallibleTranscript?: { effects?: unknown };
-  } | null;
-  const name = call?.entryPoint instanceof Uint8Array ? new TextDecoder().decode(call.entryPoint) : String(call?.entryPoint);
-  if (String(call?.address).toLowerCase() !== expect.vault.toLowerCase() || name !== 'depositUnshielded') {
-    return 'this does not call this vault\'s public deposit.';
-  }
-  const asked = new Map<string, bigint>();
-  for (const transcript of [call?.guaranteedTranscript, call?.fallibleTranscript]) {
-    if (transcript === undefined || transcript === null) continue;
-    const e = transcript.effects as Record<string, unknown> | undefined;
-    if (e === undefined || e === null) return 'what this call asks for could not be read.';
-    for (const k of ['claimedNullifiers', 'claimedShieldedReceives', 'claimedShieldedSpends', 'claimedContractCalls']) {
-      if (!Array.isArray(e[k]) || (e[k] as unknown[]).length !== 0) return 'this call asks for more than public money.';
-    }
-    for (const k of ['shieldedMints', 'unshieldedMints', 'unshieldedOutputs', 'claimedUnshieldedSpends']) {
-      if (!(e[k] instanceof Map) || (e[k] as Map<unknown, unknown>).size !== 0) return 'this call asks for more than public money.';
-    }
-    if (!(e.unshieldedInputs instanceof Map)) return 'what this call asks for could not be read.';
-    for (const [type, value] of e.unshieldedInputs as Map<{ tag?: unknown; raw?: unknown }, unknown>) {
-      if (type?.tag !== 'unshielded' || typeof value !== 'bigint') return 'this call asks for money that is not a public token.';
-      const k = String(type.raw).toLowerCase();
-      asked.set(k, (asked.get(k) ?? 0n) + value);
-    }
-  }
-  if (asked.size !== 1 || asked.get(expect.token.toLowerCase()) !== expect.amount) {
+  const deposit = readPublicDepositCall(intent.actions[0], expect.vault);
+  if ('refused' in deposit) return WHY_NOT_A_PUBLIC_DEPOSIT[deposit.refused];
+  if (deposit.colour !== expect.token.toLowerCase() || deposit.amount !== expect.amount) {
     return 'this call does not ask for exactly the token and amount of this deposit.';
   }
   return null;
 }
 
 export { hex as hexOfBytes };
+export { PUBLIC_DEPOSIT_ENTRY };
 
 /* ------------------------------------------------------------ a payment out */
 

@@ -6,12 +6,14 @@ import {
 import { ActRefused } from '../act-refused.js';
 import { useVaultActions } from '../records/vault-pending.js';
 import {
-  AMOUNT_REFUSAL, CHECKED, checkMyLastDeposit, companyKeyHeldHere, DEPOSIT_KIND, DEPOSIT_METHODS, DEPOSIT_STEP, DEPOSITED, depositNow, MAX, putAwayEndedDeposit,
+  AMOUNT_REFUSAL, CHAIN_SAID, CHECKED, checkMyLastDeposit, companyKeyHeldHere, DEPOSIT_KIND, DEPOSIT_METHODS, DEPOSIT_STEP, DEPOSITED, depositNow, MAX, putAwayEndedDeposit,
   putMoneyIn, PUT_IN, usualSecondsOf, watchDeposit,
   type AmountRefusal, type DepositMethod, type DepositNow, type DepositStep, type LastDepositChecked,
 } from '../adapters/deposit.js';
+import type { VaultStanding } from '../adapters/company-records.js';
 import { proofsRunning } from '../adapters/proofs-running.js';
 import { ACT_REFUSAL, type ActRefusal } from '../adapters/refusals.js';
+import { useStandingSays } from '../records/vault-pending.js';
 import { useSession } from '../session.js';
 import { STEP, type StepProps } from '../setup/step-ids.js';
 import { secondsSince, StageProgress, useTicker } from '../stage-progress.js';
@@ -70,13 +72,13 @@ function usePayPress(kind: DepositNow['kind']): string {
  * What opens the right-hand panel on this vault's deposit, on what checking its last deposit found, or on the naming of
  * the wallet window that check opens in a tab that holds no company key.
  */
-function useOpenDeposit(company: string, vault: string): (from?: { checked?: LastDepositChecked | null; naming?: boolean }) => void {
+function useOpenDeposit(company: string, vault: string, standing?: VaultStanding): (from?: { checked?: LastDepositChecked | null; naming?: boolean }) => void {
   const t = useText();
   const { inPanel } = useVaultActions();
   return ({ checked = null, naming = false } = {}) => {
     inPanel(
       checked === null && !naming ? t('vault.deposit') : t('vault.checkLastDeposit'),
-      (props) => <Deposit company={company} vault={vault} checked={checked} naming={naming} {...props} />,
+      (props) => <Deposit company={company} vault={vault} standing={standing} checked={checked} naming={naming} {...props} />,
     );
   };
 }
@@ -113,10 +115,10 @@ function useCheckMyLastDeposit(company: string, vault: string) {
  * THE VAULT PAGE'S LINE ABOUT A DEPOSIT THAT RUNS, OR HAS ENDED AND NOT BEEN PUT AWAY: the step it is on, and a way back
  * to the panel that shows it. `onDone` is told once for each deposit seen to finish.
  */
-export function DepositStrip({ company, vault, onDone }: { company: string; vault: string; onDone: () => void }) {
+export function DepositStrip({ company, vault, standing, onDone }: { company: string; vault: string; standing?: VaultStanding; onDone: () => void }) {
   const t = useText();
   const now = useDepositNow(vault);
-  const open = useOpenDeposit(company, vault);
+  const open = useOpenDeposit(company, vault, standing);
   useToldWhenDone(now, onDone);
   if (now === null) return null;
   const says = now.of === DEPOSITED.running ? t('vault.deposit.running', { n: now.n, count: now.steps.length })
@@ -135,12 +137,13 @@ export function DepositStrip({ company, vault, onDone }: { company: string; vaul
  * DEPOSIT AND CHECK MY LAST DEPOSIT, THE VAULT PAGE'S TWO ACTIONS. Deposit is always there and opens the panel on the ways
  * to put money in. Checking the last deposit shows at once that it was taken, and opens the panel on what it found, or,
  * in a tab that holds no company key, on the naming of the wallet window it opens; it waits while a deposit into this
- * vault runs, since the two would read and settle the same deposit.
+ * vault runs, since the two would read and settle the same deposit. `standing` is the service's answer about the vault; the
+ * panel Deposit opens stops a vault it says the service refuses at the press.
  */
-export function DepositActions({ company, vault }: { company: string; vault: string }) {
+export function DepositActions({ company, vault, standing }: { company: string; vault: string; standing?: VaultStanding }) {
   const t = useText();
   const now = useDepositNow(vault);
-  const open = useOpenDeposit(company, vault);
+  const open = useOpenDeposit(company, vault, standing);
   const { checking, run, keyHeld } = useCheckMyLastDeposit(company, vault);
   const check = (): void => {
     if (!keyHeld()) { open({ naming: true }); return; }
@@ -225,14 +228,17 @@ function AmountRefused({ why }: { why: AmountRefusal }) {
 
 /**
  * THE AMOUNT, AND THE PRESS. What is typed (or Max, which is exactly what the wallet said is held) is checked by the
- * adapter at the press, before the wallet is asked; the windows the press opens are named before it.
+ * adapter at the press, before the wallet is asked; the windows the press opens are named before it. A vault the service's
+ * answer (`standing`, read when the vault screen loaded) says it refuses stops the press the same way, in that answer's own words.
  */
-function AmountEntry({ company, vault, chosen }: { company: string; vault: string; chosen: TokenChosen }) {
+function AmountEntry({ company, vault, standing, chosen }: { company: string; vault: string; standing?: VaultStanding; chosen: TokenChosen }) {
   const t = useText();
+  const standingSays = useStandingSays();
   const { person } = useSession();
   const field = useId();
   const [entry, setEntry] = useState<string | typeof MAX>('');
   const [refused, setRefused] = useState<AmountRefusal | null>(null);
+  const [vaultRefused, setVaultRefused] = useState<VaultStanding | null>(null);
   const [taken, setTaken] = useState(false);
   const took = useRef(false);
   const { side, token } = chosen;
@@ -241,10 +247,12 @@ function AmountEntry({ company, vault, chosen }: { company: string; vault: strin
 
   const put = (): void => {
     if (took.current) return;
-    const started = putMoneyIn(person.id, company, vault, { code: token.code, kind: side }, entry, token.held);
-    if (started.of === PUT_IN.refused) { setRefused(started.why); return; }
+    const started = putMoneyIn(person.id, company, vault, { code: token.code, kind: side }, entry, token.held, undefined, standing);
+    if (started.of === PUT_IN.vaultRefused) { setRefused(null); setVaultRefused(started.standing); return; }
+    if (started.of === PUT_IN.refused) { setVaultRefused(null); setRefused(started.why); return; }
     took.current = true;
     setRefused(null);
+    setVaultRefused(null);
     setTaken(true);
   };
 
@@ -275,6 +283,16 @@ function AmountEntry({ company, vault, chosen }: { company: string; vault: strin
       {/* The refusal and the press are in the foot of the panel, which stays in view while the form above them scrolls: a refusal is seen where the press is made, and the press is never below the fold. */}
       <PanelFooter>
         <div className="flex flex-col gap-3" data-deposit-footer>
+          {vaultRefused === null ? null : (
+            <Alert data-vault-refused={vaultRefused}>
+              <AlertTitle>{t('deposit.refused.vaultTitle')}</AlertTitle>
+              <AlertDescription>
+                <span>{standingSays(vaultRefused)}</span>
+                {' '}
+                <span>{t('deposit.refused.notAsked')}</span>
+              </AlertDescription>
+            </Alert>
+          )}
           {refused === null ? null : <AmountRefused why={refused} />}
           <div>
             <Button disabled={taken} onClick={put} data-action="put-money-in">
@@ -360,7 +378,10 @@ const SETUP_MAY_HELP: readonly ActRefusal[] = [ACT_REFUSAL.vaultNotTheCompanys, 
  * A DEPOSIT THAT DID NOT FINISH. A private one that may have been sent says its own agreed words and leads to Check my
  * last deposit. A public one that may have been sent leads with the time before which the same money must not be put
  * in again and with looking at the wallet's public balance, because Check my last deposit reads private deposits only;
- * Try again is held back until that time.
+ * Try again is held back until that time. A public one the wallet signed and this page did not send says that this
+ * page did not send it, until when whoever holds it can still send it, and its whole reason under the details; Try
+ * again is held back until then too. A public one the chain refused, or that never landed, was sent and put nothing
+ * in: it says so, and never that nothing was sent.
  */
 function Failed({ vault, now, check, leadTo }: {
   vault: string; now: Extract<DepositNow, { of: 'failed' }>; check: () => void; leadTo: StepProps['leadTo'];
@@ -371,13 +392,27 @@ function Failed({ vault, now, check, leadTo }: {
   const reasons = reasonsSaid(now.reasons);
   const isPublic = now.mayHaveBeenSent && now.kind === DEPOSIT_KIND.public;
   const holding = useBefore(isPublic && now.until !== undefined ? now.until : null);
+  const notSentHere = isPublic && now.signedNotSent === true && now.until !== undefined;
   const lead = !isPublic ? t('deposit.failed.maybeSent', { reasons })
     : now.until === undefined ? t('deposit.failed.publicMaybeSentNoTime')
+    : notSentHere ? t('deposit.failed.publicNotSent', { when: formatDate(new Date(now.until), language, UNTIL) })
     : t('deposit.failed.publicMaybeSent', { when: formatDate(new Date(now.until), language, UNTIL) });
-  const causes = isPublic ? now.reasons.slice(1) : [];
+  /* The first reason of a deposit that may have been sent repeats what the lead says; the reason a signed deposit was not sent is its own. */
+  const causes = notSentHere ? now.reasons : isPublic ? now.reasons.slice(1) : [];
   return (
     <div className="flex flex-col gap-4" data-deposit="failed" data-may-have-been-sent={now.mayHaveBeenSent}>
-      {now.mayHaveBeenSent ? (
+      {now.chainSaid !== undefined ? (
+        <>
+          <Alert data-refusal="chain" data-chain-refused={now.chainSaid === CHAIN_SAID.refused}>
+            <AlertTitle>{t('act.refused.title')}</AlertTitle>
+            <AlertDescription data-failed-words>
+              {now.chainSaid === CHAIN_SAID.refused ? t('deposit.failed.publicRefused')
+                : t('deposit.failed.publicNeverLanded', { when: formatDate(new Date(now.until ?? 0), language, UNTIL) })}
+            </AlertDescription>
+          </Alert>
+          {now.reasons.length === 0 ? null : <p className="text-xs text-muted-foreground" data-details>{t('deposit.failed.details', { reasons })}</p>}
+        </>
+      ) : now.mayHaveBeenSent ? (
         <>
           <Alert data-refusal="may-have-been-sent">
             <AlertTitle>{t('act.refused.title')}</AlertTitle>
@@ -395,7 +430,7 @@ function Failed({ vault, now, check, leadTo }: {
       <div className="flex flex-wrap items-center gap-3">
         {now.mayHaveBeenSent && !isPublic ? <Button onClick={check} data-action="check-last-deposit">{t('vault.checkLastDeposit')}</Button> : null}
         {holding ? null : <Button variant="outline" onClick={() => putAwayEndedDeposit(vault)} data-action="try-again">{t('deposit.failed.again')}</Button>}
-        {!now.mayHaveBeenSent && SETUP_MAY_HELP.includes(now.refusal) ? (
+        {!now.mayHaveBeenSent && now.chainSaid === undefined && SETUP_MAY_HELP.includes(now.refusal) ? (
           <Button variant="outline" onClick={() => leadTo(STEP.vault)} data-lead-to={STEP.vault}>{t('deposit.failed.setup')}</Button>
         ) : null}
       </div>
@@ -446,7 +481,9 @@ function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?
     : d === 'recorded' ? t('deposit.check.recorded')
     : d === 'still-on-its-way' ? t('deposit.check.stillOnItsWay', { when: formatDate(new Date(found.until ?? 0), language, UNTIL) })
     : d === 'landed-owed-its-record' ? t('deposit.check.owedItsRecord')
-    : d === 'journalled-not-seen' ? t('deposit.check.journalledNotSeen')
+    : d === 'journalled-not-seen' ? t('deposit.check.journalledNotSeen', { when: formatDate(new Date(found.until ?? 0), language, UNTIL) })
+    : d === 'journalled-never-landed' ? t('deposit.check.journalledNeverLanded')
+    : d === 'journalled-not-recorded' ? t('deposit.check.journalledNotRecorded')
     : d === 'landed-and-since-spent' ? t('deposit.check.landedAndSinceSpent')
     : t('deposit.check.landedNotRecorded');
   const details = answer.of === CHECKED.checked ? t('deposit.check.details', { text: answer.forSupport }) : answer.reasons.length === 0 ? '' : t('deposit.failed.details', { reasons: reasonsSaid(answer.reasons) });
@@ -459,6 +496,15 @@ function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?
           {answer.deposited !== null ? <p className="text-sm" data-checked-amount><Amount value={answer.deposited} kind={AMOUNT_KIND.held} /></p>
             : answer.unshown !== null ? <p className="text-sm" data-checked-unshown={answer.unshown}>{t('records.unrecognised', { count: 1 })}</p> : null}
           {answer.notYetSpendable ? <p className="text-sm" data-not-spendable>{t('deposit.check.notSpendable')}</p> : null}
+          {answer.earlier.map((e, i) => (
+            <div className="flex flex-col gap-1" key={i} data-earlier-deposit={e.deposit}>
+              <p className="text-sm">{e.deposit === 'journalled-not-seen'
+                ? t('deposit.check.earlierNotSeen', { when: formatDate(new Date(e.until), language, UNTIL) })
+                : t('deposit.check.earlierNotRecorded')}</p>
+              {e.deposited !== null ? <p className="text-sm"><Amount value={e.deposited} kind={AMOUNT_KIND.held} /></p>
+                : e.unshown !== null ? <p className="text-sm" data-checked-unshown={e.unshown}>{t('records.unrecognised', { count: 1 })}</p> : null}
+            </div>
+          ))}
           {answer.unnamed === 0 ? null : <p className="text-sm" data-unnamed={answer.unnamed}>{t('deposit.check.unnamed', { count: answer.unnamed })}</p>}
           {answer.toName === 0 ? null : <p className="text-sm" data-to-name={answer.toName}>{t('deposit.check.toName', { count: answer.toName })}</p>}
         </div>
@@ -475,10 +521,11 @@ function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?
  * tokens (asked on a press), then the amount. A deposit that runs, or has ended and not been put away, is the adapter's:
  * this panel shows it whenever it is open, so closing it and opening it again shows the same deposit. When a deposit
  * ends nothing picked or held for it is kept: the next one asks the wallet again. `checked` opens the panel on what
- * checking the last deposit found, and `naming` on the naming of the wallet window that check opens.
+ * checking the last deposit found, and `naming` on the naming of the wallet window that check opens. `standing` is the
+ * service's answer about the vault as the screen loaded it; it can only stop a deposit, and none changes nothing.
  */
-export function Deposit({ company, vault, leadTo, checked = null, naming: namingFirst = false }: {
-  company: string; vault: string; checked?: LastDepositChecked | null; naming?: boolean;
+export function Deposit({ company, vault, standing, leadTo, checked = null, naming: namingFirst = false }: {
+  company: string; vault: string; standing?: VaultStanding; checked?: LastDepositChecked | null; naming?: boolean;
 } & Pick<StepProps, 'leadTo' | 'onChanged'>) {
   const t = useText();
   const now = useDepositNow(vault);
@@ -510,7 +557,7 @@ export function Deposit({ company, vault, leadTo, checked = null, naming: naming
         <Button variant="ghost" size="sm" onClick={() => { setMethod(null); setChosen(null); }} data-action="deposit-methods">{t('deposit.methods.back')}</Button>
       </div>
       <AccountTokens choose={setChosen} onAnswered={() => setChosen(null)} />
-      {chosen === null ? null : <AmountEntry key={chosen.side + chosen.token.code} company={company} vault={vault} chosen={chosen} />}
+      {chosen === null ? null : <AmountEntry key={chosen.side + chosen.token.code} company={company} vault={vault} standing={standing} chosen={chosen} />}
     </div>
   );
 }
