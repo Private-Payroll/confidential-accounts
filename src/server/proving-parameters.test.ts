@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
@@ -16,16 +16,12 @@ import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 const sha256 = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
 
 /*
- * The size the deposit circuit needs, read from the compiled circuit this repository ships through the same reader
- * the service uses, so the fixtures below follow the circuit when it is rebuilt at another size.
+ * The compiled deposit circuit this repository ships. Only the full key build writes it and the quick compile does
+ * not, so the one block that reads it stands down where it is absent and says so.
  */
-const DEPOSIT_K: number = await (async () => {
-  const [size] = await sizesFromTheCircuits([fileURLToPath(new URL('../../contracts/managed-vault/zkir/deposit.bzkir', import.meta.url))]);
-  if (size === undefined || !('k' in size)) throw new Error(`the compiled deposit circuit could not be read: ${size === undefined ? 'no answer' : size.why}`);
-  return size.k;
-})();
-const OUTPUT_K = DEPOSIT_K + 1;
-const UNKNOWN_K = DEPOSIT_K + 2;
+const DEPOSIT_CIRCUIT = fileURLToPath(new URL('../../contracts/managed-vault/zkir/deposit.bzkir', import.meta.url));
+const HAS_DEPOSIT_CIRCUIT = existsSync(DEPOSIT_CIRCUIT);
+if (!HAS_DEPOSIT_CIRCUIT) console.log(`  NOT CHECKED HERE: the size the served circuits need was not read, because ${DEPOSIT_CIRCUIT} is missing. \`npm run compact\` then \`npm run compact:vault -- --full\` build it.`);
 
 describe('THE DIGESTS A PARAMETER FILE IS CHECKED AGAINST', () => {
   it('lists exactly bls_midnight_2p0 to bls_midnight_2p25, each with a whole SHA-256, and nothing else', () => {
@@ -46,7 +42,18 @@ describe('THE DIGESTS A PARAMETER FILE IS CHECKED AGAINST', () => {
   });
 });
 
-describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
+describe.skipIf(!HAS_DEPOSIT_CIRCUIT)('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT [needs contracts/managed-vault/zkir/deposit.bzkir; `npm run compact` then `npm run compact:vault -- --full` build it]', () => {
+  /*
+   * The size the deposit circuit needs, read from the compiled circuit through the same reader the service uses, so
+   * the fixtures below follow the circuit when it is rebuilt at another size.
+   */
+  let depositK = 0;
+  beforeAll(async () => {
+    const [size] = await sizesFromTheCircuits([DEPOSIT_CIRCUIT]);
+    if (size === undefined || !('k' in size)) throw new Error(`the compiled deposit circuit could not be read: ${size === undefined ? 'no answer' : size.why}`);
+    depositK = size.k;
+  });
+
   it('reads k from each compiled circuit, off the circuit, and says why for a file that is not one', async () => {
     /* RED WHEN: k is taken from anywhere but the compiled bytes - a constant, a list, or the file's name - or
      * one unreadable file costs the answers for the others. The two values were read off the circuit library
@@ -77,7 +84,9 @@ describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
     expect(labels).toContain('depositUnshielded (vault)');
     expect(labels).toContain('recordPaymentFromVault (company account)');
     expect(labels).toContain('shielded output (network)');
-    const sizes: Record<string, number> = { deposit: DEPOSIT_K, depositUnshielded: 9, output: OUTPUT_K };
+    const outputK = depositK + 1;
+    const unknownK = depositK + 2;
+    const sizes: Record<string, number> = { deposit: depositK, depositUnshielded: 9, output: outputK };
     for (const c of circuits) {
       const name = c.label.split(' ')[c.label.startsWith('shielded') ? 1 : 0]!;
       if (name === 'payout') continue; /* left missing on purpose */
@@ -86,13 +95,13 @@ describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
     }
     const readSizes: ReadSizes = async (files) => files.map((f) => {
       const name = readFileSync(f, 'utf8');
-      return name === 'unreadable' ? { why: 'not a circuit' } : { k: sizes[name] ?? UNKNOWN_K };
+      return name === 'unreadable' ? { why: 'not a circuit' } : { k: sizes[name] ?? unknownK };
     });
     const { needs, unread } = await parametersNeeded(circuits, readSizes);
-    expect(needs.get(DEPOSIT_K)).toEqual(['deposit (vault)']);
+    expect(needs.get(depositK)).toEqual(['deposit (vault)']);
     expect(needs.get(9)).toEqual(['depositUnshielded (vault)']);
-    expect(needs.get(OUTPUT_K)).toEqual(['shielded output (network)']);
-    expect([...needs.keys()]).toEqual([9, DEPOSIT_K, OUTPUT_K, UNKNOWN_K]);
+    expect(needs.get(outputK)).toEqual(['shielded output (network)']);
+    expect([...needs.keys()]).toEqual([9, depositK, outputK, unknownK]);
     expect(unread.some((u) => u.startsWith('payout (vault)'))).toBe(true);
     expect(unread.some((u) => u.startsWith('retire (vault)') && u.includes('not a circuit'))).toBe(true);
     expect([...needs.values()].flat().length + unread.length).toBe(circuits.length);
@@ -100,16 +109,48 @@ describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
 });
 
 /*
- * ON START. The public source is stood in by a function: nothing here reaches the internet. The digests are
- * those of the stand-in bytes, so a check that passes proves the comparison and not the table.
+ * WHERE THE KEYS ARE BUILT, THE BLOCK ABOVE CANNOT STAND DOWN. It stands down, and passes, where the compiled
+ * circuit is missing, so a job that built the keys and lost the circuit would pass having read nothing. The job
+ * that builds the keys sets KEYS_MUST_BE_BUILT, and there a missing circuit is a failure naming it.
  */
-const GENUINE_9 = Buffer.from('parameters for circuits of size 2^9');
-const GENUINE_DEPOSIT = Buffer.from(`parameters for circuits of size 2^${DEPOSIT_K}`);
-const DEPOSIT_PARAMETERS = `bls_midnight_2p${DEPOSIT_K}`;
-const DIGESTS: Record<string, string> = { bls_midnight_2p9: sha256(GENUINE_9), [DEPOSIT_PARAMETERS]: sha256(GENUINE_DEPOSIT) };
+const KEYS_MUST_BE_BUILT = (process.env.KEYS_MUST_BE_BUILT ?? '') !== '';
+
+describe.skipIf(!KEYS_MUST_BE_BUILT)('where the checks built the keys, the size each served circuit needs is read [needs KEYS_MUST_BE_BUILT, which the job that runs `npm run compact` then `npm run compact:vault -- --full` sets]', () => {
+  it('the compiled deposit circuit is on disk', () => {
+    /* RED WHEN: the job that builds the keys leaves no compiled deposit circuit, which would stand the block above down green. */
+    expect(HAS_DEPOSIT_CIRCUIT, `${DEPOSIT_CIRCUIT} is missing`).toBe(true);
+  });
+});
+
+/*
+ * ON START. The public source is stood in by a function: nothing here reaches the internet. The circuits are
+ * stand-ins built with the circuit library and read through the service's own reader, the deposit a larger one
+ * and every other served circuit a small one, so each size here is read off a circuit and none is written in.
+ * The digests are those of the stand-in bytes, so a check that passes proves the comparison and not the table.
+ */
+const STAND_INS = await (async () => {
+  const zkir: any = await import('@midnight-ntwrk/zkir-v2');
+  const circuit = (n: number): Uint8Array => zkir.jsonIrToBinary(JSON.stringify({
+    version: { major: 2, minor: 0 }, do_communications_commitment: false, num_inputs: 1,
+    instructions: Array.from({ length: n }, () => ({ op: 'constrain_bits', var: 0, bits: n === 1 ? 8 : 248 })),
+  }));
+  const dir = mkdtempSync(join(tmpdir(), 'stand-ins-'));
+  const files = [join(dir, 'small.bzkir'), join(dir, 'larger.bzkir')];
+  writeFileSync(files[0]!, circuit(1));
+  writeFileSync(files[1]!, circuit(10));
+  const [small, larger] = await sizesFromTheCircuits(files);
+  if (small === undefined || !('k' in small) || larger === undefined || !('k' in larger)) throw new Error('a stand-in circuit could not be read');
+  return { small: { bytes: readFileSync(files[0]!), k: small.k }, larger: { bytes: readFileSync(files[1]!), k: larger.k } };
+})();
+const SMALL_PARAMETERS = `bls_midnight_2p${STAND_INS.small.k}`;
+const DEPOSIT_PARAMETERS = `bls_midnight_2p${STAND_INS.larger.k}`;
+const GENUINE_SMALL = Buffer.from(`parameters for circuits of size 2^${STAND_INS.small.k}`);
+const GENUINE_DEPOSIT = Buffer.from(`parameters for circuits of size 2^${STAND_INS.larger.k}`);
+const DIGESTS: Record<string, string> = { [SMALL_PARAMETERS]: sha256(GENUINE_SMALL), [DEPOSIT_PARAMETERS]: sha256(GENUINE_DEPOSIT) };
 const published = (name: string): string | undefined => DIGESTS[name];
-const K_OF: Record<string, number> = { deposit: DEPOSIT_K, depositUnshielded: 9 };
-const readSizes: ReadSizes = async (files) => files.map((f) => ({ k: K_OF[readFileSync(f, 'utf8')] ?? 9 }));
+const readSizes: ReadSizes = sizesFromTheCircuits;
+/** The deposit gets the larger stand-in and every other served circuit the small one. */
+const standInFor = (label: string): Buffer => (label.split(' ')[0] === 'deposit' ? STAND_INS.larger.bytes : STAND_INS.small.bytes);
 
 type Answer = { ok: boolean; status: number; arrayBuffer(): Promise<ArrayBuffer> };
 const answer = (b: Uint8Array): Answer => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array(b).buffer });
@@ -124,7 +165,7 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     places = vaultArtefactPlaces(root, {});
     for (const c of servedCircuits(places)) {
       mkdirSync(dirname(c.ir), { recursive: true });
-      writeFileSync(c.ir, c.label.split(' ')[0]!);
+      writeFileSync(c.ir, standInFor(c.label));
     }
   });
   afterEach(() => { server?.close(); server = undefined; });
@@ -146,10 +187,10 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     const asked: string[] = [];
     const fetch = async (url: string): Promise<Answer> => {
       asked.push(url);
-      return url.endsWith('bls_midnight_2p9') ? answer(GENUINE_9) : url.endsWith(DEPOSIT_PARAMETERS) ? answer(GENUINE_DEPOSIT) : notThere;
+      return url.endsWith(SMALL_PARAMETERS) ? answer(GENUINE_SMALL) : url.endsWith(DEPOSIT_PARAMETERS) ? answer(GENUINE_DEPOSIT) : notThere;
     };
     const out = await ensureProvingParameters({ places, sources: ['https://stand-in.example'], fetch, published, readSizes });
-    expect(out.fetched.map((f) => f.name).sort()).toEqual([DEPOSIT_PARAMETERS, 'bls_midnight_2p9'].sort());
+    expect(out.fetched.map((f) => f.name).sort()).toEqual([DEPOSIT_PARAMETERS, SMALL_PARAMETERS].sort());
     expect(out.missing).toEqual([]);
     expect(asked).toContain(`https://stand-in.example/${DEPOSIT_PARAMETERS}`);
     expect(readFileSync(join(places.params, DEPOSIT_PARAMETERS))).toEqual(GENUINE_DEPOSIT);
@@ -180,17 +221,17 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     const onlyForged = async (): Promise<Answer> => answer(forged);
     const root2 = mkdtempSync(join(tmpdir(), 'forged-'));
     const places2 = vaultArtefactPlaces(root2, {});
-    for (const c of servedCircuits(places2)) { mkdirSync(dirname(c.ir), { recursive: true }); writeFileSync(c.ir, c.label.split(' ')[0]!); }
+    for (const c of servedCircuits(places2)) { mkdirSync(dirname(c.ir), { recursive: true }); writeFileSync(c.ir, standInFor(c.label)); }
     const out2 = await ensureProvingParameters({ places: places2, sources: ['https://first.example'], fetch: onlyForged, published, readSizes });
     expect(out2.fetched).toEqual([]);
-    expect(out2.missing.map((m) => m.name).sort()).toEqual([DEPOSIT_PARAMETERS, 'bls_midnight_2p9'].sort());
+    expect(out2.missing.map((m) => m.name).sort()).toEqual([DEPOSIT_PARAMETERS, SMALL_PARAMETERS].sort());
     expect(existsSync(join(places2.params, DEPOSIT_PARAMETERS))).toBe(false);
     expect(existsSync(places2.params) ? readdirSync(places2.params).filter((f) => f.startsWith('bls_')) : []).toEqual([]);
 
     /* And a forged file somebody put in place by hand is refused by the route itself. */
-    writeFileSync(join(places.params, 'bls_midnight_2p9'), forged);
+    writeFileSync(join(places.params, SMALL_PARAMETERS), forged);
     const get = await serve();
-    const got = await get('bls_midnight_2p9');
+    const got = await get(SMALL_PARAMETERS);
     expect(got.status).toBe(404);
     expect(got.body.includes(forged)).toBe(false);
   });
@@ -214,13 +255,13 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
   it('A FILE ALREADY HERE AND GENUINE IS KEPT AND NOTHING IS FETCHED FOR IT', async () => {
     /* RED WHEN: a genuine file is fetched again on every start, or is moved aside. */
     mkdirSync(places.params, { recursive: true });
-    writeFileSync(join(places.params, 'bls_midnight_2p9'), GENUINE_9);
+    writeFileSync(join(places.params, SMALL_PARAMETERS), GENUINE_SMALL);
     writeFileSync(join(places.params, DEPOSIT_PARAMETERS), GENUINE_DEPOSIT);
     const asked: string[] = [];
     const fetch = async (url: string): Promise<Answer> => { asked.push(url); return notThere; };
     const out = await ensureProvingParameters({ places, sources: ['https://stand-in.example'], fetch, published, readSizes });
     expect(asked).toEqual([]);
-    expect([...out.present].sort()).toEqual([DEPOSIT_PARAMETERS, 'bls_midnight_2p9'].sort());
+    expect([...out.present].sort()).toEqual([DEPOSIT_PARAMETERS, SMALL_PARAMETERS].sort());
     expect(out.setAside).toEqual([]);
   });
 
