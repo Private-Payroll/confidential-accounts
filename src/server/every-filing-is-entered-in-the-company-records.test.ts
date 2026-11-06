@@ -5,7 +5,9 @@
  *
  * Over real HTTP with the people, invitation, run and manifest routes as the
  * service mounts them. A filing whose entry is missing is never anchored, so it
- * is never believed as a record's newest version on any other device.
+ * is never believed as a record's newest version on any other device - until
+ * any seat's device enters the entry its filer signed, which every filing
+ * carries.
  */
 import { describe, it, expect } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
@@ -13,7 +15,10 @@ import { signJoinCode } from 'midnight-identity/profile/join-code';
 import { newWrappingKeypair } from '../core/crypto.js';
 import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 import { theNetwork } from '../midnight/network.js';
-import { companyRecordEntry, runEntry } from '../midnight/record-manifest.js';
+import { companyRecordEntry, runEntry, signedWithItsEntry, signManifestEntry } from '../midnight/record-manifest.js';
+import { carriedEntryRefusal } from '../midnight/carried-entry.js';
+import { toCompanyWire } from '../midnight/sealed-record-wire.js';
+import { recordEnteredHere } from 'vaults-web-shared/carried-entries-entered.js';
 import { payeeFor } from '../testing/payees.js';
 import { FiledNotEntered } from 'vaults-web-shared/record-entered-here.js';
 import { enteredHere } from '../testing/records-entered.js';
@@ -23,7 +28,7 @@ import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
 import { runRoutes } from './run-routes.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, apiAs, aRecordFiledBy, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, sendAs, store,
+  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, apiAs, aRecordFiledBy, BO, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
@@ -51,6 +56,8 @@ describe('THE ONE FILING CALL', () => {
     const id = made.person!;
     /* RED WHEN: a person invited from a device is not entered, or is entered as other bytes than the record the service kept. */
     expect(enteredFor('company', id)).toEqual([{ ...companyRecordEntry((await newestPerson(id))!), by: ADA.statement.signingKey }]);
+    /* RED WHEN: a person invited from a device is filed without the entry its filer signed, so no other seat could enter it were it lost. */
+    expect(carriedEntryRefusal((await newestPerson(id))!)).toBeNull();
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(61)), LABEL, 'usr_61', {
       kind: 'payee', address: payeeFor('3d'.repeat(32), NETWORK).bech32, payslipKey: newWrappingKeypair().publicKey,
     });
@@ -64,6 +71,8 @@ describe('THE ONE FILING CALL', () => {
     /* RED WHEN: a change of where a person stands is not entered. */
     expect(enteredFor('company', id).map((e) => e.version)).toEqual([1, 2, 3]);
     expect(enteredFor('company', id).at(-1)!.digest).toBe(companyRecordEntry((await newestPerson(id))!).digest);
+    /* RED WHEN: a change of where a person stands is filed without the entry its filer signed. */
+    expect(carriedEntryRefusal((await newestPerson(id))!)).toBeNull();
   });
 
   it('a run drawn on a device is entered as version one, as the digest of the run its seat signed', async () => {
@@ -112,5 +121,39 @@ describe('THE ONE FILING CALL', () => {
     await expect(setStatusHere({ ...peopleOn(ADA), send: refusing as never, entered: watched }, here, 'leaver', LEFT)).rejects.toThrow();
     /* RED WHEN: a person's filing is entered before the service keeps it, so a record the service refused is anchored as the newest. */
     expect(watched.filed).toEqual([]);
+  });
+});
+
+describe('EVERY FILING CARRIES THE ENTRY ITS FILER SIGNED', () => {
+  it('the service keeps and serves it, and keeps no version whose entry is another seat\'s', async () => {
+    const rec = signedWithItsEntry({
+      company: CO, kind: 'vault-info', id: 'vlt_carried', version: 1, keyEpoch: 0, sealed: { iv: 'iv', tag: 't', body: 'b' } as never, wrapped: [],
+    }, ADA.signingSecret);
+    const put = (body: unknown) => sendAs('ada')(`/api/accounts/${CO}/records/vault-info/vlt_carried/1`, { method: 'PUT', body: JSON.stringify(body) });
+    /* RED WHEN: the service keeps a version carrying an entry another seat signed, which no device could ever enter for it. */
+    expect((await put(toCompanyWire({ ...rec, entry: signManifestEntry(CO, companyRecordEntry(rec), BO.signingSecret) }))).body).toMatchObject({ refused: 'not-its-entry' });
+    expect((await put(toCompanyWire(rec))).status).toBe(201);
+    /* RED WHEN: the entry is dropped where the service keeps the version, so no other device can enter it. */
+    expect((await apiAs('bo')(`/api/accounts/${CO}/records/vault-info/vlt_carried/1`)).filed.body).toBe(toCompanyWire(rec).body);
+  });
+
+  it('a person admitted whose entry was lost is entered from another seat\'s device and then believed there', async () => {
+    const made = await inviteHere(ACME, ADA, 'employee', {
+      name: 'Lee', email: 'lee@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_005n, classification: 'full-time' as const, startDate: '2026-10-01',
+    }, ORIGIN, fromAda);
+    const id = made.person!;
+    const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(65)), LABEL, 'usr_65', {
+      kind: 'payee', address: payeeFor('3e'.repeat(32), NETWORK).bech32, payslipKey: newWrappingKeypair().publicKey,
+    });
+    const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs('usr_65'));
+    const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === id)!;
+    const lost = { enter: async () => { throw new FiledNotEntered('the service did not keep it'); } };
+    await expect(admitHere({ ...peopleOn(ADA), entered: lost }, here, accepted.fingerprint)).rejects.toBeInstanceOf(FiledNotEntered);
+    expect((await readPeopleHere(peopleOn(BO))).notBelieved).toContain(id);
+    const swept = await recordEnteredHere({ accountId: CO, api: apiAs('bo'), directory: acmeDirectory }, 'person', id);
+    /* RED WHEN: only the seat that admitted a person can enter the admission again, so every other device refuses them until it acts. */
+    expect(swept).toEqual({ entered: 1, refused: null });
+    expect((await readPeopleHere(peopleOn(BO))).people.find((p) => p.person.id === id)?.person.status).toBe('active');
+    expect(enteredFor('company', id).at(-1)).toEqual({ ...companyRecordEntry((await newestPerson(id))!), by: ADA.statement.signingKey });
   });
 });

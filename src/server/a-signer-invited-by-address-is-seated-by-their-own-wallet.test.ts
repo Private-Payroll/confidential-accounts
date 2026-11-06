@@ -15,9 +15,9 @@ import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
 import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
 import { signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
-import { acceptanceProofOf, invitationIdOf, invitationLink, newInvitationToken, signSeatInvitation, tokenOfLink, type SignerOffer } from '../core/invitation.js';
+import { acceptanceProofOf, invitationIdOf, invitationLink, invitationProposalSalt, newInvitationToken, signSeatInvitation, tokenOfLink, type SignerOffer } from '../core/invitation.js';
 import { addressesInvitedIn } from '../core/proposal-filing.js';
-import { sealToInbox } from '../core/sealed-records.js';
+import { inboxPublicKey, sealToInbox } from '../core/sealed-records.js';
 import { proveSeatKeys } from '../core/seat-invite-proof.js';
 import { seatBlinding } from '../core/seat-opening.js';
 import { storedSignerLeaf } from '../core/signer-leaf.js';
@@ -26,10 +26,12 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { theNetwork } from '../midnight/network.js';
 import { firstAskRefusal, InvitationNotMade, InvitationRaisedNotFiled, inviteHere, openInvitationHere, type KeptSeatInvitation } from 'vaults-web-shared/invitation-on-device.js';
 import {
-  addressSeatedOrInvitedRefusal, governOnDevice, raiseSeatInvitationOnDevice, signerByAddressDoorsOf, type SeatInvitationToRaise,
+  governOnDevice, raiseSeatInvitationOnDevice, signerByAddressDoorsOf, type SeatInvitationToRaise,
 } from 'vaults-web-shared/governed-call-on-device.js';
+import { addressSeatedOrInvitedRefusal } from 'vaults-web-shared/address-seated-or-invited.js';
 import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { admitSignerHere, rosterHere } from 'vaults-web-shared/roster-here.js';
+import { SEAT_READ_STOP } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
 import { ACME, ORIGIN, acmeReads, fromAda, seatsTakenByInvitation, store } from './a-company-of-two-seats.test-support.js';
 import {
   aCompanyWhoseSignersChange, ADA, ADDRESS, api, BO, CO, committeeKeyOfLeaf, companyNow, deviceOf, directoryOf, events, KEY, LABEL,
@@ -91,9 +93,9 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const bosRaise: SeatInvitationToRaise = { invited: offer.invited, proposalSalt: offer.byAddress!.proposalSalt, name: 'dee' };
     const bo = await raiseSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, ...bosRaise });
     expect(bo.state).toBe('waiting-for-the-invitee');
-    /* RED WHEN: an invitation's proposal salt is not the one the raise was made under. */
+    /* RED WHEN: a proposal is raised under another salt than the one its invitation makes. */
     await expect(raiseSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, invited: offer.invited, proposalSalt: '00'.repeat(32), name: 'dee' }))
-      .rejects.toThrow(/not the one its address, rights, threshold and salt make/u);
+      .rejects.toThrow(/salt this proposal is raised under is not the one its invitation makes/u);
 
     /* Dee's wallet takes the seat: its own seat 0, which the account does not hold. The chain checks the address. */
     const dee = deesSeat(0, terms.invite!.scope as Hex);
@@ -197,7 +199,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const before = events.length;
     await expect(inviteHere(ACME, ADA, 'signer', { name: 'dee again', role: 'approver', person: 'unused', address: DEES_ADDRESS }, ORIGIN, fromAda,
       signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); })))
-      .rejects.toThrow(/already holds a seat on this company/u);
+      .rejects.toThrow(/that address already has a seat on this company/u);
     expect(kept).toEqual([]);
     expect(events.slice(before)).toEqual([]);
   });
@@ -233,7 +235,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     expect(kept[0]!.link).toBe(invitationLink(ORIGIN, token));
     const proposes = events.filter((e) => e === 'chain propose').length;
     await expect(inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, fromAda, doors()))
-      .rejects.toThrow(/already invited to a seat on this company by a proposal still open/u);
+      .rejects.toThrow(/another invitation for this address is still open on the network/u);
     expect(kept).toHaveLength(1);
     /* RED WHEN: an invitation kept past its expiry is raised again, for an offer nobody can open any more. */
     const stale = { ...kept[0]!, offer: { ...kept[0]!.offer, offer: { ...kept[0]!.offer.offer, expiresAt: Date.now() - 1 } } };
@@ -250,6 +252,95 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     await expect(inviteHere(ACME, ADA, 'signer', { name: 'hal', role: 'approver', person: 'unused', address: addressOfWallet(52) }, ORIGIN, fromAda, doors(),
       { resume: kept[0]! })).rejects.toThrow(/not a seat offered at this address/u);
   });
+
+  it('RED WHEN: a seat kept before the company key changed is taken up again and filed with the old key\'s inbox, which a removed seat may hold', async () => {
+    const ned = addressOfWallet(56);
+    const token = newInvitationToken();
+    const kept: KeptSeatInvitation[] = [];
+    const down: typeof fromAda = async (path, init) => (path.endsWith('/invites') && init?.method === 'POST'
+      ? { status: 503, body: { error: 'the service is down' } } : fromAda(path, init));
+    const doors = () => signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); });
+    const asked = { name: 'ned', role: 'approver' as const, person: 'unused', address: ned };
+    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, down, doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
+    const first = kept[0]!;
+    expect(first.offer.offer.inboxPublicKey).toBe(inboxPublicKey(KEY, CO));
+    /* The company's key has changed since: the key in force now is the second, and the first is still held. */
+    const NEWER = '7e'.repeat(32) as Hex;
+    const rotated = {
+      epoch: 1, key: NEWER, newest: 1, keyAt: (e: number) => (e === 0 ? KEY : NEWER), sealing: () => ({ key: NEWER, epoch: 1 }),
+    };
+    const filings: { keyEpoch: number }[] = [];
+    const watching: typeof fromAda = async (path, init) => {
+      if (path.endsWith('/invites') && init?.method === 'POST') filings.push((JSON.parse(String(init.body)) as { invitation: { keyEpoch: number } }).invitation);
+      return fromAda(path, init);
+    };
+    const made = await inviteHere({ ...ACME, keyEpoch: 1, viewingKey: rotated }, ADA, 'signer', asked, ORIGIN, watching, doors(), { token, resume: first });
+    /* RED WHEN: the invitation is filed with an offer that still names the old key's inbox, so a seat request is sealed to a key a removed seat may hold. */
+    const filed = (await openInvitationHere(made.link, sendAs(null))).signed;
+    expect(filed.offer.inboxPublicKey).toBe(inboxPublicKey(NEWER, CO));
+    expect(filings).toEqual([expect.objectContaining({ keyEpoch: 1 })]);
+    /* RED WHEN: the re-signed offer is not the one kept in place of the old one, so a press again refuses the filed one as not the kept one. */
+    expect(kept).toHaveLength(2);
+    expect(kept[1]!.offer).toEqual(filed);
+    expect(kept[1]!.id).toBe(first.id);
+    /* The terms, the proposal and the expiry are the kept ones; only the seat proof's secret is made from the new key. */
+    const was = first.offer.offer.for as SignerOffer;
+    const now = kept[1]!.offer.offer.for as SignerOffer;
+    expect(now).toEqual({ ...was, seat: { nonce: was.seat.nonce, secret: now.seat.secret } });
+    expect(now.seat.secret).not.toBe(was.seat.secret);
+    expect(kept[1]!.offer.offer.expiresAt).toBe(first.offer.offer.expiresAt);
+    expect(kept[1]!.offer.signature).not.toBe(first.offer.signature);
+  });
+
+  it('RED WHEN: a seat taken from an invitation resumed across a change of the company key cannot be admitted, because its seat proof is from the old key', async () => {
+    const wallet = identityFromSecret(new Uint8Array(32).fill(61));
+    const address = addressFor(wallet.moneyAt(0).zswap, NETWORK as never).bech32;
+    const token = newInvitationToken();
+    const kept: KeptSeatInvitation[] = [];
+    const down: typeof fromAda = async (path, init) => (path.endsWith('/invites') && init?.method === 'POST'
+      ? { status: 503, body: { error: 'the service is down' } } : fromAda(path, init));
+    const doors = () => signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); });
+    const asked = { name: 'una', role: 'approver' as const, person: 'unused', address };
+    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, down, doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
+    const NEWER = '7f'.repeat(32) as Hex;
+    const rotated = {
+      epoch: 1, key: NEWER, newest: 1, keyAt: (e: number) => (e === 0 ? KEY : NEWER), sealing: () => ({ key: NEWER, epoch: 1 }),
+    };
+    const made = await inviteHere({ ...ACME, keyEpoch: 1, viewingKey: rotated }, ADA, 'signer', asked, ORIGIN, fromAda, doors(), { token, resume: kept[0]! });
+    const opened = await openInvitationHere(made.link, sendAs(null));
+    const offer = opened.signed.offer.for as SignerOffer;
+    const terms = offer.invited.terms;
+    expect(opened.signed.offer.inboxPublicKey).toBe(inboxPublicKey(NEWER, CO));
+    /* RED WHEN: the seat proof the offer carries is still made from the old key, so no device holding the new key believes it. */
+    expect(offer.seat.nonce).toBe((kept[0]!.offer.offer.for as SignerOffer).seat.nonce);
+    expect(offer.seat.secret).not.toBe((kept[0]!.offer.offer.for as SignerOffer).seat.secret);
+    expect((await raiseSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, invited: offer.invited, proposalSalt: offer.byAddress!.proposalSalt, name: 'una' })).state)
+      .toBe('waiting-for-the-invitee');
+    /* Her wallet takes the seat on the chain and asks to be admitted, proving its keys with the offer's seat secret. */
+    const keys = seatKeysFor(wallet, LABEL, 0);
+    const signingSecret = toHex(keys.signingSecret) as Hex;
+    const walletKey = { tag: 'schnorr' as const, value: String((committeeKeyFor(wallet, LABEL) as { value: string }).value).toLowerCase() };
+    const salt = toHex(keys.salt) as Hex;
+    const blinding = seatBlinding(walletKey, salt) as Hex;
+    const scope = terms.invite!.scope as Hex;
+    const leaf = storedSignerLeaf({ signingSecret, blinding, scope }, MidnightCommitments).toLowerCase();
+    committeeKeyOfLeaf.set(leaf, committeeKeyFor(wallet, LABEL) as never);
+    theInviteeTakesTheSeatHere(terms.proposal!, terms.invite!.address, leaf);
+    const published = { signingPublicKey: signingPublicKeyOf(signingSecret).toLowerCase() as Hex, wrappingPublicKey: toHex(x25519.getPublicKey(keys.wrappingSecret)) as Hex, leafCommitment: leaf as Hex };
+    const waiting = {
+      name: 'una', role: 'approver', ...published, opening: { publicKey: MidnightCommitments.signerPublicKey(signingSecret).toLowerCase(), scope, blinding, walletKey, salt },
+      person: 'una', invited: offer.invited,
+      seatProof: proveSeatKeys({ accountId: CO, nonce: offer.seat.nonce, secret: offer.seat.secret }, published),
+    } as unknown as PendingSignerPayload;
+    const asking = await sendAs('una')(`/api/invites/${invitationIdOf(token)}/accept-signer`, {
+      method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(token), waiting: sealToInbox(waiting, opened.signed.offer.inboxPublicKey) }),
+    });
+    expect(asking.status).toBe(201);
+    /* A device that holds both keys opens her request (sealed to the current key's inbox), checks the proof and admits her; it files the roster under the key the other devices of this test use. */
+    const admitting = { ...rotated, sealing: () => ({ key: KEY, epoch: 0 }) };
+    await admitSignerHere({ ...rosterDoorsOf(BO), viewingKey: admitting as never, commitments: MidnightCommitments }, { signerId: (asking.body as { id: string }).id, readOut: '' });
+    expect(companyNow().signers.find((x) => x.name === 'una')).toMatchObject({ status: 'active', leafCommitment: leaf });
+  }, 170_000);
 
   it('RED WHEN: a seat kept on the device is taken up again for another name, role or rights than it was kept with, and raised as the kept one', async () => {
     const ivy = addressOfWallet(54);
@@ -276,23 +367,80 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
 
   it('RED WHEN: the chain cannot be read for the seats invitations took, and a wallet is invited anyway', async () => {
     const ada = seatingDevice(ADA);
-    const { invitedSeats: _none, ...blind } = acmeReads;
-    await expect(addressSeatedOrInvitedRefusal({ ...ada.records, holders: blind.holders }, CO, KEY, inviteAddressOf, DEES_COIN_KEY))
-      .resolves.toMatch(/cannot read which wallets/u);
+    /* A device given no door to read them, and one whose read fails, are one read not made. */
+    await expect(addressSeatedOrInvitedRefusal({ ...ada.records }, CO, KEY, inviteAddressOf, DEES_COIN_KEY))
+      .rejects.toMatchObject({ name: SEAT_READ_STOP.notRead });
+    await expect(addressSeatedOrInvitedRefusal({ ...ada.records, invitedSeats: async () => { throw new Error('the indexer did not answer'); } }, CO, KEY,
+      inviteAddressOf, DEES_COIN_KEY)).rejects.toMatchObject({ name: SEAT_READ_STOP.notRead });
+  });
+
+  it('RED WHEN: a wallet whose invitation is written down and not yet on the chain is invited again while that raise may still land', async () => {
+    const ivy = addressOfWallet(53);
+    const ivysKey = coinKeyAt(ivy);
+    await inviteHere(ACME, ADA, 'signer', { name: 'ivy', role: 'approver', person: 'unused', address: ivy }, ORIGIN, fromAda,
+      signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async () => {}));
+    const first = addressesInvitedIn(await store.listProposals(CO), CO, KEY, inviteAddressOf).find((x) => x.coinPublicKey === ivysKey)!;
+    const raiseByMs = Number(first.raiseBy) * 1000;
+    const ada = seatingDevice(ADA);
+    /* The chain shows nothing of Ivy's proposal yet, as when its record is filed and its raise is still on its way. */
+    const notYetOnTheChain = {
+      ...ada.records!,
+      roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(Object.entries(await ada.records!.roundsOnChain!(ids))
+        .map(([id, r]) => [id, id === first.chainId ? { ...r, held: 'never' as const } : r])),
+    };
+    let directoryReads = 0;
+    const reads = (chainTime?: () => Promise<number>) => ({
+      ...notYetOnTheChain, invitedSeats: acmeReads.invitedSeats, ...(chainTime === undefined ? {} : { chainTime }),
+      directory: ((...a: Parameters<NonNullable<typeof notYetOnTheChain.directory>>) => { directoryReads += 1; return notYetOnTheChain.directory!(...a); }) as typeof notYetOnTheChain.directory,
+    });
+    const at = (ms: number) => async () => ms;
+    /* RED WHEN: a raise that may still land by the chain's time does not hold the address it invites. */
+    await expect(addressSeatedOrInvitedRefusal(reads(at(raiseByMs - 1)), CO, KEY, inviteAddressOf, ivysKey))
+      .resolves.toMatch(/written down but is not on the network yet, and it may still reach the network until/u);
+    /* RED WHEN: one refusal reads the company's directory, and the chain's holders with it, more than once. */
+    expect(directoryReads).toBe(1);
+    /* RED WHEN: the chain's time cannot be read and the address is let through anyway. */
+    await expect(addressSeatedOrInvitedRefusal(reads(), CO, KEY, inviteAddressOf, ivysKey)).resolves.toMatch(/network's time could not be read/u);
+    await expect(addressSeatedOrInvitedRefusal(reads(async () => { throw new Error('no indexer'); }), CO, KEY, inviteAddressOf, ivysKey))
+      .resolves.toMatch(/network's time could not be read/u);
+    /* RED WHEN: a raise past its deadline still holds the address, so a lost raise keeps the person from ever being invited again. */
+    await expect(addressSeatedOrInvitedRefusal(reads(at(raiseByMs)), CO, KEY, inviteAddressOf, ivysKey)).resolves.toBeNull();
+    /* RED WHEN: a deadline further off than one raise window and ten minutes of a filer's clock running ahead holds the
+       address, so a seat writing a record with a clock ahead of the chain keeps that address from being invited for as long as it likes. */
+    await expect(addressSeatedOrInvitedRefusal(reads(at(raiseByMs - 87_000_000 - 1)), CO, KEY, inviteAddressOf, ivysKey)).resolves.toBeNull();
+    /* RED WHEN: a record filed a moment ago by a clock a few minutes ahead of the newest block holds nothing, so the address is invited twice. */
+    await expect(addressSeatedOrInvitedRefusal(reads(at(raiseByMs - 87_000_000)), CO, KEY, inviteAddressOf, ivysKey))
+      .resolves.toMatch(/written down but is not on the network yet, and it may still reach the network until/u);
+    /* RED WHEN: a record filed by a seat that no longer sits holds the address, so a removed seat's refiling keeps it from ever being invited. */
+    const allRetired = {
+      ...reads(at(raiseByMs - 1)),
+      directory: (async (...a: unknown[]) => {
+        const here = await (notYetOnTheChain.directory as unknown as (...x: unknown[]) => Promise<{ dir: { seats: readonly { retired: unknown }[] } }>)(...a);
+        return { ...here, dir: { ...here.dir, seats: here.dir.seats.map((x) => ({ ...x, retired: { 0: 1 } })) } };
+      }) as never,
+    };
+    await expect(addressSeatedOrInvitedRefusal(allRetired, CO, KEY, inviteAddressOf, ivysKey)).resolves.toBeNull();
+    /* RED WHEN: the invite act's doors do not read the chain's time, so a filed raise never holds its address there. */
+    const kept: KeptSeatInvitation[] = [];
+    const device = { ...ada, records: notYetOnTheChain };
+    await expect(inviteHere(ACME, ADA, 'signer', { name: 'ivy again', role: 'approver', person: 'unused', address: ivy }, ORIGIN, fromAda,
+      signerByAddressDoorsOf(device as never, KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); }, at(raiseByMs - 1))))
+      .rejects.toThrow(/written down but is not on the network yet, and it may still reach the network until/u);
+    expect(kept).toEqual([]);
   });
 
   it('RED WHEN: a proposal to seat an address is raised without its coin key, or with a coin key the address does not commit to', async () => {
     const ada = seatingDevice(ADA);
     const ivy = coinKeyAt(addressOfWallet(53));
     const salt = '7a'.repeat(32) as Hex;
-    const proposalSalt = '7b'.repeat(32);
     const scope = MidnightCommitments.allVaults().toLowerCase() as Hex;
     const at = MidnightCommitments.inviteAddressOf(ivy, salt).toLowerCase() as Hex;
+    const terms = {
+      company: CO, invitation: '7c'.repeat(32) as Hex, person: 'adr_00000000000000000002', name: 'ivy', role: 'approver' as const, invite: { address: at, salt, scope },
+    };
+    const proposalSalt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(ADA.signingSecret as Hex) });
     const { chainId } = await ada.builder.proposalIdentity!({ kind: 'add-signer', address: at, scope }, proposalSalt);
-    const invited = signSeatInvitation({
-      company: CO, invitation: '7c'.repeat(32) as Hex, person: 'adr_00000000000000000002', name: 'ivy', role: 'approver',
-      invite: { address: at, salt, scope }, proposal: String(chainId).toLowerCase() as Hex,
-    }, ADA.signingSecret as Hex);
+    const invited = signSeatInvitation({ ...terms, proposal: String(chainId).toLowerCase() as Hex }, ADA.signingSecret as Hex);
     const before = events.length;
     await expect(raiseSeatInvitationOnDevice(ada, { viewingKey: KEY, invited, proposalSalt, name: 'ivy' }, inviteAddressOf))
       .rejects.toThrow(/without the coin key/u);

@@ -149,6 +149,7 @@ const builderOf = (s: Seat | null): VaultBuilderClient => ({
     SEATED.get(m.signingSecret.toLowerCase()) ?? storedSignerLeaf(m as never, MidnightCommitments).toLowerCase(),
   anchorsOnChain: async () => acmeChain.read(),
   invitedSeats: async ({ proposals }: { proposals: readonly string[] }) => acmeReads.invitedSeats(proposals),
+  proposalIdentity: acmeReads.proposalIdentity,
   /* The wallet asks with its own seat's signing secret; the test's chain names each approval by the seat's leaf. */
   roundsOnChain: async ({ chainIds, seat }: { chainIds: readonly string[]; seat?: string }) =>
     theChain(chainIds, seat === undefined ? undefined : SEATED.get(seat.toLowerCase()) ?? s?.seat),

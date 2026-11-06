@@ -9,6 +9,7 @@ import { companyKeyHere, keysInTheFilings, type CompanyKeyHere } from './company
 import { vouchedRunsHere } from './run-rebuilt-here.js';
 import { governedCallServiceFor } from './governed-call-on-device.js';
 import { ROSTER_CHECK, rosterBelievedHere, RosterNotBelieved, seatsAdmittedHere, type BelievedAccount, type RosterReads } from './roster-here.js';
+import { NoIndexerToReadTheChain } from './seat-not-read-on-the-chain.js';
 import {
   attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, directoryWithItsRecordsHere, type DirectoryHereDeps, type DirectoryRead,
 } from './vault-page-doors.js';
@@ -20,6 +21,7 @@ import { tagSeatsHere } from './seat-openings-here.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import type { AccountKeys } from './keyring-blob.js';
 import type { RefusedEntry } from '../../../src/core/roster-record.js';
+import type { ProposalIdentityOf } from '../../../src/core/invitation.js';
 
 /*
  * WHO A DEVICE BELIEVES FILED A COMPANY'S RECORDS, the one way every reader
@@ -34,8 +36,12 @@ import type { RefusedEntry } from '../../../src/core/roster-record.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
-/** A company as a device believes it: its roster record opened and each entry held to its own signer's witnesses. */
-export type OpenedAccount = BelievedAccount & { readonly refused: readonly RefusedEntry[] };
+/**
+ * A company as a device believes it: its roster record opened and each entry held to its own signer's witnesses, with each
+ * entry refused on its own. `waited` holds the seats the chain holds that the roster read waits for someone invited to be
+ * admitted to; it is absent from a page's own opener that does not read them.
+ */
+export type OpenedAccount = BelievedAccount & { readonly refused: readonly RefusedEntry[]; readonly waited?: readonly string[] };
 
 type Holders = (company: CompanyLabel, account: AccountAddress) => Promise<AccountHoldersRead>;
 type Anchored = (accountId: string, company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['anchored'];
@@ -75,10 +81,12 @@ interface CompanyJudgeDoors {
   /** Opens the company's roster as this device believes it (`openAccountWith`, or the page's own). */
   readonly openAccount: (
     rec: SealedWithRoster, holders: Holders, anchored: Anchored, leaves: Leaves, companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats,
+    identity?: ProposalIdentityOf,
   ) => Promise<OpenedAccount | null>;
   /** The seats the company's roster admitted, read with the same doors (`seatsAdmittedWith`, or the page's own). */
   readonly seatsAdmittedFor: (
     rec: SealedWithRoster, holders: Holders, anchored: Anchored, leaves: Leaves, companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats,
+    identity?: ProposalIdentityOf,
   ) => Promise<ReadonlySet<string>>;
   /** Throws what this device throws for a company that has no account on the chain yet. */
   readonly noAccount: () => never;
@@ -89,11 +97,12 @@ const NO_ACCOUNT_TO_READ_SIGNERS_BY = 'This company has no account on the chain 
 
 /**
  * The arguments a roster is read with on this device. Without `invitedSeats` a seat the chain holds that was taken on an
- * invitation by address is never waited for, so the roster is refused for leaving it out until Finish adding admits it.
+ * invitation by address is a read not made, so the roster stops while it leaves that seat out until Finish adding admits it;
+ * without `identity` no directory entry made on such an invitation is believed, nor is such a seat admitted.
  */
 async function rosterReadWith(
   d: Pick<CompanyJudgeDoors, 'api' | 'keysFor' | 'servedKeyFor'>, rec: SealedWithRoster, holders: Holders, anchored: Anchored, leaves: Leaves,
-  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats,
+  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats, identity?: ProposalIdentityOf,
 ): Promise<Parameters<typeof rosterBelievedHere> | null> {
   const keys = d.keysFor(rec.id);
   let served: Hex;
@@ -113,6 +122,7 @@ async function rosterReadWith(
       filings: () => directoryFilingsFrom(d.api, rec.id), holders: () => holders(label, account), anchored: anchored(rec.id, label, account),
       leaves: leaves(label, account),
       ...(invitedSeats === undefined ? {} : { invitedSeats: invitedSeats(label, account) }),
+      ...(identity === undefined ? {} : { proposalIdentity: identity }),
     },
     own: { signerId: keys.signerId, signingPublicKey: keys.signingPublicKey.toLowerCase() as Hex },
     proposals: async () => d.api(`/api/accounts/${encodeURIComponent(rec.id)}/proposals`),
@@ -125,25 +135,25 @@ async function rosterReadWith(
  * read afresh with the chain as `holders` reads it, each entry held to its own
  * signer's witnesses, this device's own key among them for its own entry. A
  * refusal throws `RosterNotBelieved`; each entry refused on its own is handed
- * back beside the company, with why. Null when this device holds no keys for
+ * back beside the company, with why, and the seats the roster read waits for (`waited`). Null when this device holds no keys for
  * the company, or cannot open the company's key the service wrapped to it.
  */
 export async function openAccountWith(
   d: Pick<CompanyJudgeDoors, 'api' | 'keysFor' | 'servedKeyFor'>, rec: SealedWithRoster, holders: Holders, anchored: Anchored, leaves: Leaves,
-  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats,
+  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats, identity?: ProposalIdentityOf,
 ): Promise<OpenedAccount | null> {
-  const read = await rosterReadWith(d, rec, holders, anchored, leaves, companyKeys, invitedSeats);
+  const read = await rosterReadWith(d, rec, holders, anchored, leaves, companyKeys, invitedSeats, identity);
   if (read === null) return null;
   const believed = await rosterBelievedHere(...read);
-  return { ...believed.account, refused: believed.refused };
+  return { ...believed.account, refused: believed.refused, waited: [...believed.held.waited] };
 }
 
 /** The seats the company's roster admitted, read as `openAccountWith` reads them; throws when this device holds no keys for it. */
 export async function seatsAdmittedWith(
   d: Pick<CompanyJudgeDoors, 'api' | 'keysFor' | 'servedKeyFor'>, rec: SealedWithRoster, holders: Holders, anchored: Anchored, leaves: Leaves,
-  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats,
+  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>, invitedSeats?: InvitedSeats, identity?: ProposalIdentityOf,
 ): Promise<ReadonlySet<string>> {
-  const read = await rosterReadWith(d, rec, holders, anchored, leaves, companyKeys, invitedSeats);
+  const read = await rosterReadWith(d, rec, holders, anchored, leaves, companyKeys, invitedSeats, identity);
   if (read === null) throw new Error('this device holds no keys for the company, so it cannot read who its roster admitted.');
   return seatsAdmittedHere(...read);
 }
@@ -190,11 +200,18 @@ export function companyJudges(d: CompanyJudgeDoors) {
       account, openings: openings.map((o) => ({ publicKey: o.publicKey, scope: o.scope, blinding: o.blinding })),
     })).openings.map((o) => o.leaf);
 
-  /** The seat each invitation's proposal took, read through the indexer this device's own chain read names. */
+  /** A proposal's identity from its change and salt, worked out by the builder with the account's own functions. */
+  const identityHere: ProposalIdentityOf = async (change, salt) => (await d.builder()).proposalIdentity(change, salt);
+
+  /**
+   * The seat each invitation's proposal took, read through the indexer this device's own chain read names, and nowhere
+   * else. Every reader asks it through `seatsTakenAsked`, which gives a failed read its one meaning.
+   */
   const invitedSeatsFor: InvitedSeats = (company, account) => async (proposals) => {
     const indexer = await d.indexer(company, account);
-    /* No indexer named by the person's own wallet: no seat taken by an invitation by address is believed on this read. */
-    return indexer === null ? {} : (await d.builder()).invitedSeats({ account, indexer, proposals });
+    /* No indexer named by the person's own wallet is a read not made, never an answer that no proposal took a seat, and pressing again cannot make it. */
+    if (indexer === null) throw new NoIndexerToReadTheChain();
+    return (await d.builder()).invitedSeats({ account, indexer, proposals });
   };
 
   /** What a roster is read with: the directory's filings, the chain's holders, what is anchored, each opening's leaf, and each invitation's seat. */
@@ -204,6 +221,7 @@ export function companyJudges(d: CompanyJudgeDoors) {
     anchored: anchoredHere(companyId, company, account),
     leaves: leavesFor(account),
     invitedSeats: invitedSeatsFor(company, account),
+    proposalIdentity: identityHere,
   });
 
   /**
@@ -261,11 +279,11 @@ export function companyJudges(d: CompanyJudgeDoors) {
 
   /** The company as this device believes it, its signers read from its roster record only, under the keys its directory believes. */
   const openedHere = (sealed: SealedAccount): Promise<OpenedAccount | null> =>
-    d.openAccount(sealed, d.holders, anchoredHere, (_company, account) => leavesFor(account), companyKeysOf, invitedSeatsFor);
+    d.openAccount(sealed, d.holders, anchoredHere, (_company, account) => leavesFor(account), companyKeysOf, invitedSeatsFor, identityHere);
 
   /** The seats the company's roster admitted, read afresh with the same doors as `openedHere`. */
   const seatsAdmittedOn = (sealed: SealedAccount): Promise<ReadonlySet<string>> =>
-    d.seatsAdmittedFor(sealed, d.holders, anchoredHere, (_company, account) => leavesFor(account), companyKeysOf, invitedSeatsFor);
+    d.seatsAdmittedFor(sealed, d.holders, anchoredHere, (_company, account) => leavesFor(account), companyKeysOf, invitedSeatsFor, identityHere);
 
   /** Whether a filing's signer is one the company's directory believes, read afresh for each filing judged. */
   const filingJudgeFor = (

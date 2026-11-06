@@ -727,7 +727,7 @@ describe('a step that is not reached says so, and no stop after a send reads as 
     for (const [k, way] of [['act.claim-by-address.why.not-a-company', /Open the invitation link again/u], ['act.claim-by-address.why.not-a-payee', /Ask the person who added you/u],
       ['act.claim-by-address.why.no-payslip-key', /Reload the page/u], ['act.claim-by-address.why.another-company', /Open the link you were sent/u],
       ['act.seat-invited.why.not-a-company', /Open the invitation link again/u], ['act.seat-invited.why.another-company', /Open the link you were sent/u],
-      ['act.seat-invited.why.no-free-seat', /Ask the signer who invited you/u], ['act.seat-invited.why.taken-by-another', /Ask the signer who invited you/u],
+      ['act.seat-invited.why.no-free-seat', /Tell the signer who invited you/u], ['act.seat-invited.why.taken-by-another', /Ask the signer who invited you/u],
       ['act.one-off-payment.why.payee', /Check the address/u], ['act.one-off-payment.why.not-a-payment', /enter the payment again/u]] as const) {
       expect(WORDS[k], k).toMatch(way);
     }

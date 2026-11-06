@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
@@ -87,13 +88,15 @@ interface ChainNow {
 
 interface Seen {
   relayed: Array<Record<string, unknown>>; asked: Array<Record<string, unknown>>; built: InvitedSeatOnTheWire[];
-  order: string[]; rolesAsked: string[][]; kept: any;
+  order: string[]; rolesAsked: string[][]; kept: any; namedAsked: Array<Record<string, unknown>>;
 }
-const newSeen = (): Seen => ({ relayed: [], asked: [], built: [], order: [], rolesAsked: [], kept: { accounts: {} } });
+const newSeen = (): Seen => ({ relayed: [], asked: [], built: [], order: [], rolesAsked: [], kept: { accounts: {} }, namedAsked: [] });
 interface Opts {
   held?: any; keyring?: false; acceptAnswers?: Array<{ status: number; body: unknown }>; into?: Seen;
-  /* The service has closed the offer (accepted or expired) and answers 410. */
-  offerGone?: boolean;
+  /* The service has closed the offer and answers 410: as used (true), or as the reason named. */
+  offerGone?: boolean | 'used' | 'expired' | 'withdrawn';
+  /* What the service says the company's directory already names among the leaves and keys asked about; an error or a refusal instead. */
+  named?: { leaves?: readonly string[]; keys?: readonly string[] } | 'error' | 'refused' | 'used' | 'expired' | 'unreadable';
   /* The action made once for the wallet's lifetime, as the registry makes it, shared by the runs given it. */
   action?: ReturnType<typeof seatInvitedAction>;
 }
@@ -164,8 +167,18 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
     relay: async () => { throw new Error('a seat is relayed through its invitation'); },
     call: async (method: string, path: string, body?: string) => {
       if (method === 'GET') {
-        if (opts.offerGone === true) return { status: 410, body: { refused: 'used', error: 'this invitation has already been accepted' } };
+        if (opts.offerGone !== undefined && opts.offerGone !== false) {
+          return { status: 410, body: { refused: opts.offerGone === true ? 'used' : opts.offerGone, error: 'this invitation is closed' } };
+        }
         return { status: 200, body: { offer: o.sealed, kind: 'signer', expiresAt: new Date(Date.now() + 1e6).toISOString() } };
+      }
+      if (path.endsWith('/seats-named')) {
+        seen.namedAsked.push(JSON.parse(body!));
+        if (opts.named === 'error') throw new Error('the service could not be reached');
+        if (opts.named === 'refused') return { status: 410, body: { refused: 'withdrawn', error: 'taken back' } };
+        if (opts.named === 'used' || opts.named === 'expired') return { status: 410, body: { refused: opts.named, error: 'closed' } };
+        if (opts.named === 'unreadable') return { status: 503, body: { error: 'the chain could not be read' } };
+        return { status: 200, body: { leaves: opts.named?.leaves ?? [], keys: opts.named?.keys ?? [] } };
       }
       if (path.endsWith('/seat') && chain.goneAround === true) throw new ServiceNotReached('the company\'s service could not be reached', true);
       if (path.endsWith('/seat')) { order.push('relay'); relayed.push(JSON.parse(body!)); return { status: 200, body: { sent: true } }; }
@@ -366,6 +379,76 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     for (const p of Object.values(elsewhere.pendingSeats) as any[]) p.joining.account = 'd0'.repeat(32);
     const another = await run(o, { seats: [own.leaf], took: own.leaf }, { offerGone: true, held: elsewhere }).catch((e: unknown) => e);
     expect(another).toMatchObject({ words: { key: 'act.seat-invited.why.no-offer' } });
+  });
+
+  it('RED WHEN: an invitation the company withdrew is taken on the wallet\'s own path from the kept offer, though the service says it is withdrawn', async () => {
+    const o = anOffer();
+    const kept = await run(o, {}, { acceptAnswers: [{ status: 500, body: { error: 'the service failed' } }] });
+    const resumed = newSeen();
+    resumed.kept = kept.kept;
+    await expect(run(o, { goneAround: true }, { into: resumed, offerGone: 'withdrawn' }))
+      .rejects.toMatchObject({ words: { key: 'act.seat-invited.why.withdrawn-kept' } });
+    /* Nothing was proved, sent by the wallet or relayed. */
+    expect(resumed.order).toEqual([]);
+    expect(resumed.built).toEqual([]);
+  });
+
+  it('RED WHEN: an invitation taken back before this wallet kept any seat for it says nothing was sent', async () => {
+    await expect(run(anOffer(), {}, { offerGone: 'withdrawn' })).rejects.toMatchObject({ words: { key: 'act.seat-invited.why.withdrawn' } });
+  });
+
+  it('RED WHEN: an invitation closed by expiry or by use no longer resumes from the offer the wallet kept', async () => {
+    const o = anOffer();
+    const { leaf } = deesSeat(0, o.invite.scope);
+    const kept = await run(o, {}, { acceptAnswers: [{ status: 500, body: { error: 'the service failed' } }] });
+    for (const gone of ['expired', 'used'] as const) {
+      const again = await run(o, { seats: [leaf], took: leaf }, { offerGone: gone, held: structuredClone(kept.kept), acceptAnswers: [{ status: 201, body: { id: 'sgn_dee' } }] });
+      expect(again.built).toEqual([]);
+      expect(again.kept.accounts[COMPANY]).toMatchObject({ signerId: 'sgn_dee', seat: 0 });
+    }
+  });
+
+  it('RED WHEN: a seat number whose leaf or key the company\'s directory already names is chosen again, or a directory that cannot be asked is picked past', async () => {
+    const o = anOffer();
+    const zero = deesSeat(0, o.invite.scope);
+    const atAll = deesSeat(0, MidnightCommitments.allVaults().toLowerCase() as Hex);
+    const keyOf = (n: number) => signingPublicKeyOf(deesSeat(n, o.invite.scope).signingSecret).toLowerCase();
+    const seatTaken = async (named: Opts['named']) => (await run(o, {}, { named })).built[0]!.material.signingSecret;
+    expect(await seatTaken(undefined)).toBe(zero.signingSecret);
+    /* RED WHEN: a retired or claimed seat's leaf, at the invitation's rights or at all vaults, or its key, does not move the wallet to the next number. */
+    expect(await seatTaken({ leaves: [zero.leaf] })).toBe(deesSeat(1, o.invite.scope).signingSecret);
+    expect(await seatTaken({ leaves: [atAll.leaf] })).toBe(deesSeat(1, o.invite.scope).signingSecret);
+    expect(await seatTaken({ keys: [keyOf(0)] })).toBe(deesSeat(1, o.invite.scope).signingSecret);
+    expect(await seatTaken({ leaves: [zero.leaf], keys: [keyOf(1)] })).toBe(deesSeat(2, o.invite.scope).signingSecret);
+    /* The question carries the proof and at most the seat numbers the wallet tries, and no secret. */
+    const seen = newSeen();
+    await run(o, {}, { into: seen });
+    expect(seen.namedAsked).toHaveLength(1);
+    const asked = seen.namedAsked[0] as { acceptance: string; leaves: string[]; keys: string[] };
+    expect(asked.acceptance).toBe(acceptanceProofOf(o.token));
+    expect(asked.leaves.length).toBeLessThanOrEqual(128);
+    expect(asked.keys).toHaveLength(64);
+    expect(asked.leaves).toContain(zero.leaf);
+    expect(JSON.stringify(asked)).not.toContain(zero.signingSecret);
+    /* RED WHEN: an answer that is an error, a refusal or no answer is taken as nothing named, and a seat is picked blind; or a closed invitation is told to try again. */
+    const refusals = { error: 'no-slots', unreadable: 'no-slots', refused: 'withdrawn', used: 'used', expired: 'expired' } as const;
+    for (const [named, key] of Object.entries(refusals) as Array<[keyof typeof refusals, string]>) {
+      const blind = newSeen();
+      await expect(run(o, {}, { into: blind, named })).rejects.toMatchObject({ words: { key: `act.seat-invited.why.${key}` } });
+      expect(blind.built).toEqual([]);
+    }
+  });
+
+  it('RED WHEN: the screen says nothing else reaches the page though the public keys of the seats this wallet could take, and the seat taken, do', async () => {
+    const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    expect(words['act.seat-invited.shown.nothing-else']).toMatch(/in the clear, the public keys/u);
+    expect(words['act.seat-invited.shown.nothing-else']).toMatch(/the seat it takes/u);
+  });
+
+  it('RED WHEN: the request to be admitted does not name the seat the wallet took, so it cannot be filed after the invitation expires', async () => {
+    const o = anOffer();
+    const { asked } = await run(o);
+    expect(asked[0]!.leaf).toBe(deesSeat(0, o.invite.scope).leaf);
   });
 
   it('RED WHEN: a seat kept for an invitation that never landed takes its number, so the next invitation at other rights cannot be taken', async () => {

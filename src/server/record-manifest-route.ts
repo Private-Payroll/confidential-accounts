@@ -169,7 +169,7 @@ export const recordManifestRoutes = (deps: {
       }
       if (kept.filedBy !== e.filedBy.publicKey.toLowerCase()) {
         res.status(403).json({ refused: 'not-the-filer', error: `this entry for ${e.store} record ${e.id} is signed by another seat than `
-          + 'the one that filed the record. A record is entered by its own filer, from their device. Nothing was entered.' });
+          + 'the one that filed the record. Any seat may enter a record, but only with the entry its own filer signed. Nothing was entered.' });
         return;
       }
     }

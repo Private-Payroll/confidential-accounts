@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { accountCircuitsBeside, networkCircuitsBeside } from './vault-worker-entry.js';
+import { accountCircuitsBeside, networkCircuitsBeside } from './circuits-served-beside.js';
 import type { ArtefactSource } from './key-material.js';
 import {
   ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ACCOUNT_CIRCUITS_AN_INVITEE_PROVES, ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,

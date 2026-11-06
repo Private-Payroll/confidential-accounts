@@ -9,6 +9,7 @@ import { admitHere, PersonNotChanged, readPeopleHere, type PeopleDevice, type Pe
 import { admitVendorHere, readVendorsHere, VendorNotChanged, type VendorHere } from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
 import { FiledNotEntered, type Filed, type RecordsEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
+import { readAfterEntering, recordEnteredHere } from '../../../../packages/web-shared/src/carried-entries-entered.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
@@ -199,7 +200,10 @@ export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
           const entries = enteredUntilTaken(enteredFor(r));
           const d = await peopleDeviceFor(ctx, r, network, registry, refuse, entries.entered);
           try {
-            const found = await personNamedHere(d, kind, f['person']!, refuse);
+            /* A version of the record whose entry was lost is entered with the entry its filer signed, then read again. */
+            const found = await readAfterEntering(() => personNamedHere(d, kind, f['person']!, refuse),
+              (e) => e instanceof StepRefused && e.words.key === why('not-believed').key,
+              () => recordEnteredHere({ ...r, directory: d.directory }, kind === 'employee' ? 'person' : 'vendor', f['person']!));
             const rec = found.kind === 'employee' ? found.here.person : found.here.vendor;
             if (rec.name !== f['personName']) refuse('not-as-shown');
             const done = found.kind === 'employee' ? found.here.person.status === 'active' : (found.here.vendor.payeeCode ?? null) !== null;

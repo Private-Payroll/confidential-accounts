@@ -32,6 +32,7 @@ import { payeesHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import {
   admitVendorHere, changeVendorHere, readVendorsHere, VendorNotChanged, type VendorChange, type VendorHere, type VendorsHere,
 } from 'vaults-web-shared/vendors-on-device.js';
+import { carriedEntryRefusal } from '../midnight/carried-entry.js';
 import { aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, BO, CO, fromAda, KEY, LABEL, ORIGIN, peopleRecords, sendAs } from './a-company-of-two-seats.test-support.js';
 
 aCompanyOfTwoSeats();
@@ -77,6 +78,8 @@ describe('A VENDOR ENTRY IS FILED WITH ITS INVITATION, ON A LIST OF ITS OWN', ()
     /* RED WHEN: a vendor entry is kept under the payroll's kind, so the service would list it with the people. */
     expect(await peopleRecords.get(CO, 'person', made.person!)).toBeNull();
     expect((await peopleRecords.get(CO, 'vendor', made.person!))?.facts).toBeUndefined();
+    /* RED WHEN: a vendor's first version is filed without the entry its filer signed, so no other seat could enter it were it lost. */
+    expect(carriedEntryRefusal((await peopleRecords.get(CO, 'vendor', made.person!))!)).toBeNull();
   });
 
   it('a vendor admitted on the fingerprint they read out is paid where their own wallet said, and sealed their payslips to', async () => {
@@ -90,6 +93,8 @@ describe('A VENDOR ENTRY IS FILED WITH ITS INVITATION, ON A LIST OF ITS OWN', ()
     expect(admitted.address!.bech32).toBe(shieldedOf(2));
     const read: VendorsHere = await readVendorsHere(device, '2026-11');
     expect(read.vendors.some((v) => v.vendor.id === made.person && v.version === 2)).toBe(true);
+    /* RED WHEN: a vendor's admission is filed without the entry its filer signed. */
+    expect(carriedEntryRefusal((await peopleRecords.get(CO, 'vendor', made.person!))!)).toBeNull();
     /* RED WHEN: what a vendor handed over is still waiting once they are admitted. */
     expect((await fromAda(`/api/accounts/${CO}/vendors/${made.person}/handover`, { method: 'GET' })).body).toEqual({ inbox: null });
     /* RED WHEN: a vendor is admitted twice. */

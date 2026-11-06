@@ -13,9 +13,8 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import {
-  accountCircuitsBeside, answerVaultAsk, networkCircuitsBeside, provingWarmed, VAULT_ARTEFACT_BASE, type WorkerDeps,
-} from './vault-worker-entry.js';
+import { answerVaultAsk, provingWarmed, VAULT_ARTEFACT_BASE, type WorkerDeps } from './vault-worker-entry.js';
+import { accountCircuitsBeside, networkCircuitsBeside } from './circuits-served-beside.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 import {
   contractPins, httpKeyMaterialSource, MemoryArtefactCache, networkPins, type ArtefactSource, type ProvingPins,

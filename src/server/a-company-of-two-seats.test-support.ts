@@ -36,7 +36,7 @@ import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
 import { directoryChangeMessage, directoryEntryMade } from '../midnight/seat-directory.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
+import { invitationIdOf, newInvitationToken, signSeatInvitation, type SeatByAddressChange } from '../core/invitation.js';
 import type { InvitationSend, InvitingCompany, InvitingSeat } from 'vaults-web-shared/invitation-on-device.js';
 import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
@@ -160,10 +160,19 @@ let base = '';
 let chain: ChainHolders | null = null;
 /** The chain as the server reads it, each company's account on its own once both are set up; `chain` while they are. */
 export const chains = new Map<string, ChainHolders | null>();
-/* The server's read of who holds each account: the server never opens an entry, so it needs no leaf of anybody's. */
-const chainRead: DirectoryChainRead = async (id) => {
+/** The chain as it holds each account now, every seat: what a wallet reads whole through its own indexer. */
+const chainNow = (id: string): ChainHolders | null => {
   const c = chains.has(id) ? chains.get(id)! : chain;
   return c === null ? null : { ...c };
+};
+/*
+ * The server's read of who holds each account, as the service's own read of the contract answers it: of the seats it is
+ * asked about only, those an entry names and those a route asks of. The server never opens an entry, so it needs no leaf.
+ */
+export const chainRead: DirectoryChainRead = async (id, asked) => {
+  const c = chainNow(id);
+  const of = new Set(asked.map((x) => x.toLowerCase()));
+  return c === null ? null : { ...c, seats: { ...c.seats, seats: c.seats.seats.filter((x) => of.has(x.toLowerCase())) } };
 };
 
 /** A device signed in as `person`; the directory route takes PUT, so a POST to it is sent as one. */
@@ -219,15 +228,24 @@ const acmeAnchored: DirectoryHereDeps['anchored'] = (directory, asked) => anchor
  * account was deployed with.
  */
 /**
- * The seat each invitation by address took on the test's chain, by its proposal: what a device's vault worker reads
- * from the account's history (`seatsInvitedIn`). Written by the test chain's `seatInvited` stand-in.
+ * The seat each invitation by address took on the test's chain, by its proposal: the seatings a device's vault worker
+ * reads from the account's history (`seatingsIn`). Written by the test chain's `seatInvited` stand-in.
  */
 export const seatsTakenByInvitation = new Map<string, string>();
 
+const { identityOfAChange } = await import('vaults-web-shared/governed-call-builder.js');
+const { seatsInvitedIn } = await import('vaults-web-shared/seats-invited-in.js');
+const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
+
 export const acmeReads = {
-  /* The seat each invitation by address took, as the account's history shows it. */
+  /*
+   * The seat each invitation by address took, as the account's history shows it, looked up as a device's vault worker
+   * looks it up: one identity that is not thirty-two bytes refuses the whole ask.
+   */
   invitedSeats: async (proposals: readonly string[]) =>
-    Object.fromEntries(proposals.map((p) => [p.toLowerCase(), seatsTakenByInvitation.get(p.toLowerCase()) ?? null])),
+    Object.fromEntries(seatsInvitedIn([...seatsTakenByInvitation].map(([proposal, leaf]) => ({ proposal: proposal.toLowerCase(), leaf })), proposals)),
+  /* A proposal's identity, as a device's vault worker makes it with the account's own functions. */
+  proposalIdentity: async (change: SeatByAddressChange, salt: string) => identityOfAChange({ accountPure: pureCircuits as never }, change, salt),
   /** Acme's records as the head the test's chain holds them, over the tree routes mounted below. */
   get anchored() { return acmeAnchored; },
   /* Acme's viewing key, which every member's device here holds and opens each entry's proof with. */
@@ -236,7 +254,7 @@ export const acmeReads = {
   /* What a device's vault worker makes of each entry's opening, with the account's own compiled `signerLeaf`. */
   leaves: leavesOfTheContract,
   holders: async () => {
-    const c = await chainRead(CO, [ADA.seat, BO.seat]);
+    const c = chainNow(CO);
     if (c === null) throw new Error('the test has the company on no chain');
     return {
       ...c.seats, approvals: c.approvals, vaultThresholds: [], policyBar: c.seatBar > c.approvals ? c.seatBar : null, seatBar: c.seatBar,
@@ -366,7 +384,7 @@ export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: Mounted
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: chainRead }));
     app.use(companyRecordsRoutes({ signedIn, member, records, accountOf: (id) => store.getAccount(id), directoryOf: (id) => directoryOf(store, chainRead, id) }));
     app.use(invitationRoutes({
-      signedIn, member, store, records: () => records, directoryOf: (id) => directoryOf(store, chainRead, id),
+      signedIn, member, store, records: () => records, directoryOf: (id, also) => directoryOf(store, chainRead, id, also),
       meterOffer: async (req) => { metered.push(String(req.params.id)); return true; },
       recordRefusal: (method, path, status, kind) => { refusals.push(`${status} ${method} ${path} ${kind}`); },
     }));

@@ -424,21 +424,6 @@ export function withNewSeat(k: Keyring, accountId: string, keys: AccountKeys): K
 }
 
 /**
- * The keyring with a seat offered by address kept under its invitation's id, and every kept one that has expired by
- * `now` let go. Refuses to write over another invitation kept under the same id: the one kept first may be the only
- * copy of a proposal already raised.
- */
-export function withSeatInvitationKept(k: Keyring, kept: KeptSeatInvitation, now: number): Keyring {
-  const held = k.seatInvitationsKept ?? {};
-  const was = held[kept.id];
-  if (was !== undefined && was.offer.signature !== kept.offer.signature) {
-    throw new Error('these saved keys already keep another invitation under this id, so it is not written over. Nothing was changed.');
-  }
-  const live = Object.fromEntries(Object.entries(held).filter(([id, x]) => id !== kept.id && x.offer.offer.expiresAt > now));
-  return { ...k, seatInvitationsKept: { ...live, [kept.id]: kept } };
-}
-
-/**
  * The keyring holding a seat kept before its leaf is published, under its signing public key, as `pendingSeats` is
  * keyed. The same seat kept again changes nothing; another seat under the same key is refused, since the one kept
  * first may be the only copy of a leaf already published.

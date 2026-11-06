@@ -26,8 +26,9 @@ import type { GovernanceOnTheWire, OpenedRound } from './governed-call-builder.j
 import type { GovernedCallService } from './governed-call-on-device.js';
 import { judgeIn, kindAsked, listedHere, refusedForItsKey } from './vault-page-doors.js';
 import {
-  invitationByAddressRefusal, NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads,
+  NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads,
 } from './roster-here.js';
+import { invitationByAddressRefusal } from './invitation-signed-by-a-seat.js';
 import type { SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { runRebuiltHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';

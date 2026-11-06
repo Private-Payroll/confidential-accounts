@@ -26,8 +26,9 @@ import {
   payPrivatelyFromCompanyVault, payPubliclyFromCompanyVault, PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen,
   PaymentStillInFlight, PublicPaymentNotYetSeen, seatHereIn, wireOf, type PaymentsInFlight, type PayoutDoors, type SecretKeptHere,
 } from '../../../../packages/web-shared/src/vault-operation.js';
+import { browserChargesInFlight, browserInFlightRecords, browserPaymentsInFlight } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import {
-  browserChargesInFlight, browserInFlightRecords, browserPaymentsInFlight, deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,
+  deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,
 } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';

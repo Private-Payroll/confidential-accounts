@@ -37,6 +37,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { canonical, sign, signingPublicKeyOf, toHex, utf8, verify, type Hex } from '../core/crypto.js';
 import { whyThisIsNotASealedPool, type SealedPool, type SealedRecordKind, type WrappedPoolKey } from './vault-pool.js';
 import type { Sealed } from '../core/crypto.js';
+import type { ManifestEntry } from './record-manifest.js';
 
 export type WireRecord = SealedRecordKind;
 export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
@@ -261,6 +262,12 @@ export interface SealedCompanyRecord {
   /** A person record's plain facts (`PersonFacts`); absent on every other kind. */
   facts?: PersonFacts;
   filedBy?: { publicKey: Hex; signature: Hex };
+  /**
+   * The filer's own signed entry for this version in the company's records, carried beside the signature and outside
+   * what it covers, so any seat's device can enter a version whose entry never reached the records
+   * (`carriedEntryRefusal` says when it may be believed).
+   */
+  entry?: ManifestEntry;
 }
 
 const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/u;
@@ -311,20 +318,24 @@ export const whyThisIsNotACompanyRecord = (
       return 'it says who filed it in a form that is not a signing key and a signature';
     }
   }
+  if (r.entry !== undefined && (r.entry === null || typeof r.entry !== 'object')) return 'it carries an entry in the company\'s records that is not one';
   return null;
 };
 
 const COMPANY_FILING_DOMAIN = 'confidential-accounts/company-filing/v1';
 
-/** The exact text a filer signs for a company record: everything but the signature. */
+/** The exact text a filer signs for a company record: everything but the signature and the entry it carries. */
 export const companyFilingMessage = (rec: SealedCompanyRecord): string => {
-  const { filedBy: _signature, ...unsigned } = rec;
+  const { filedBy: _signature, entry: _carried, ...unsigned } = rec;
   return canonical({ domain: COMPANY_FILING_DOMAIN, ...unsigned });
 };
 
-/** The record, signed by the seat filing it. The signing secret stays on the device. */
+/**
+ * The record, signed by the seat filing it, carrying no entry: an entry carried from an earlier version is dropped, as
+ * it names other bytes. The signing secret stays on the device.
+ */
 export const signCompanyFiling = (rec: SealedCompanyRecord, signingSecret: Hex): SealedCompanyRecord => {
-  const { filedBy: _replaced, ...unsigned } = rec;
+  const { filedBy: _replaced, entry: _earlier, ...unsigned } = rec;
   return {
     ...unsigned,
     filedBy: { publicKey: signingPublicKeyOf(signingSecret), signature: sign(companyFilingMessage(unsigned), signingSecret) },

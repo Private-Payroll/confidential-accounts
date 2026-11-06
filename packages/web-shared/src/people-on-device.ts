@@ -48,8 +48,8 @@ import { assets as defaultAssets, whyTheMoneyCannotReach, type AssetRegistry } f
 import type { Invite, RosterEmployee } from '../../../src/core/types.js';
 import type { Payee } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
-import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
-import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import { toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
+import { companyRecordEntry, signedWithItsEntry } from '../../../src/midnight/record-manifest.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import { joinCodeSignedBy, type JoinCode, type PayeeParts } from 'midnight-identity/profile/join-code';
 import { payeeCodeFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
@@ -104,7 +104,7 @@ const filedAndEntered = async (
 ): Promise<RosterEmployee> => {
   const filed: RosterEmployee = { ...person, ...made };
   const sealing = sealingWith(d.company.viewingKey, d.company.keyEpoch);
-  const rec = signCompanyFiling(sealPerson(filed, version, sealing.epoch, sealing.key), d.signingSecret);
+  const rec = signedWithItsEntry(sealPerson(filed, version, sealing.epoch, sealing.key), d.signingSecret);
   answered(await d.send(path, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(rec) }) }), 201);
   await d.entered.enter([companyRecordEntry(rec)]);
   return filed;

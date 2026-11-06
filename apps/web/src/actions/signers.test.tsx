@@ -138,6 +138,20 @@ describe('where each signer stands', () => {
     expect(en('signers.standing.notSeatedNext')).toMatch(/open their invitation link and take the seat in their own wallet/);
   });
 
+  it('tells a seat someone invited took and waits to be added on, with nothing to press, and who acts next', async () => {
+    const seat = '03'.repeat(32);
+    kr.company = records({ signerStandings: { of: 'read', value: [{ id: seat, name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, waiting: true }] } });
+    await draw();
+    const row = q(`[data-signer="${seat}"]`)!;
+    /* RED WHEN: a seat the roster waits for is told as a seated signer, or with no name in place of who took it. */
+    expect([row.dataset['standing'], row.textContent]).toEqual(['waiting', expect.stringContaining(en('signers.standing.waitingWho'))]);
+    expect(row.textContent).toContain(en('signers.standing.waiting'));
+    /* RED WHEN: the person is not told their request has not reached the page and to reload. */
+    expect(qa(`[data-signer="${seat}"] [data-next-for-them]`).map((n) => n.textContent)).toEqual([en('signers.standing.waitingNext')]);
+    /* RED WHEN: Finish adding or Remove is offered on a seat whose request has not reached the page. */
+    expect(row.querySelector('[data-action]')).toBeNull();
+  });
+
   /* RED WHEN: a read of the standings that failed is shown as a list of seated signers. */
   it('says so when where each signer stands could not be read', async () => {
     kr.company = records({ signerStandings: { of: 'unreadable' } });
@@ -246,6 +260,14 @@ describe('the invitations waiting for approvals', () => {
     expect(row.textContent).toContain(en('signers.pending.address').replace('{address}', HEX(1)));
     expect(row.textContent).toContain(en('signers.pending.role').replace('{role}', en('invite.role.approver')));
     expect(row.querySelector('[data-address]')!.className).toContain('break-all');
+  });
+
+  /* RED WHEN: an invitation a removal outran is offered Approve, or listed without saying it can no longer seat anyone and must be withdrawn and made again. */
+  it('offers no Approve on an invitation a removal outran, and says to withdraw it and invite again', async () => {
+    kr.company = records({ signersInvited: read([invited({ outrun: true })]) });
+    await draw();
+    expect(q('[data-invited=prop_1] [data-action=approve-signer]')).toBeNull();
+    expect(q('[data-invited=prop_1] [data-outrun]')!.textContent).toBe(en('signers.pending.outrun'));
   });
 
   /* RED WHEN: the rights or the coin key are shown as the whole run of digits (or not shown), or the address is shortened so it can no longer be compared. */
@@ -380,6 +402,14 @@ describe('approving an invitation', () => {
     }]);
     expect(q('[data-acted=approve-proposal]')!.textContent).toBe(en('signers.done.approved').replace('{name}', 'Sam'));
     expect(kr.reads).toBe(2);
+  });
+
+  /* RED WHEN: an approval after which the wallet found the invitation outrun is followed by words that the invitee now takes the seat. */
+  it('says after an approval that found the invitation outrun that it can seat nobody, and not that the invitee takes the seat', async () => {
+    kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'outrun' } };
+    await draw();
+    await press('[data-invited=prop_1] [data-action=approve-signer]');
+    expect(q('[data-next-steps]')!.textContent).toBe(en('signers.done.outrun'));
   });
 
   /* RED WHEN: after an approval the page does not say how many approvals are needed in all, who gives the rest, and that the person takes the seat and a signer then presses Finish adding; or says a count it does not have. */

@@ -33,10 +33,11 @@ import {
   type InvitationFiling,
 } from '../core/invitation.js';
 import {
-  acceptAsPayeeHere, acceptAsSignerHere, addPayeeFromCodeHere, addSignerFromCodeHere, CodeNotTaken, FingerprintsDiffer, inviteHere,
-  InvitationNotMade, InvitationRefused, makeSignerCodeHere, openInvitationHere, SeatMayNotInvite, payeeHandoverOf, refuseASeatWhoseFingerprintIsNotTheJoiners, seatRequestFingerprint,
+  acceptAsPayeeHere, acceptAsSignerHere, addPayeeFromCodeHere, addSignerFromCodeHere, CodeNotTaken, inviteHere,
+  InvitationNotMade, InvitationRefused, makeSignerCodeHere, openInvitationHere, SeatMayNotInvite, payeeHandoverOf,
   type InvitationSend, type InviteSpecs,
 } from 'vaults-web-shared/invitation-on-device.js';
+import { FingerprintsDiffer, refuseASeatWhoseFingerprintIsNotTheJoiners, seatRequestFingerprint } from 'vaults-web-shared/seat-request-fingerprint.js';
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { readJoinCode, signJoinCode, writeJoinCode, type JoinCode, type SignerParts } from 'midnight-identity/profile/join-code';
 import {

@@ -16,6 +16,21 @@ describe('a signer who accepted is told from one who is seated', () => {
       ['s1', false, true], ['s2', true, true], ['s3', true, false], ['s4', false, false],
     ]);
   });
+
+  it('lists once each seat the chain holds that someone invited waits to be admitted to, and no entry or invitation by address names', () => {
+    const read = signerStandings([
+      { id: 's1', name: 'Priya', status: 'active', leafCommitment: LEAF(1) },
+      { id: 's2', name: 'Sam', status: 'pending', leafCommitment: LEAF(2) },
+    ], [LEAF(1), LEAF(2), LEAF(0xc3), LEAF(5), LEAF(6)], { waited: [LEAF(2), LEAF(0xc3).toUpperCase(), LEAF(5), LEAF(6), LEAF(6), LEAF(7)], shown: [LEAF(5).toUpperCase()] });
+    /* RED WHEN: a seat the chain holds that the roster waits for, with no roster entry and no invitation by address showing it, is left off the page, as when it is waited for in upper case. */
+    expect(read.filter((s) => s.waiting === true).map((s) => s.id)).toContain(LEAF(0xc3));
+    /* RED WHEN: a waited seat the chain no longer holds is listed as seated. */
+    expect(read.some((s) => s.id === LEAF(7))).toBe(false);
+    /* RED WHEN: a waited seat is listed twice, or beside the entry or the invitation by address that already shows it. */
+    expect(read.map((s) => s.id)).toEqual(['s1', 's2', LEAF(0xc3), LEAF(6)]);
+    /* RED WHEN: a waited seat is offered Finish adding, which needs the request that has not reached the page. */
+    expect(read.filter((s) => s.waiting === true).every((s) => !s.accepted && s.seatOnChain && !s.you)).toBe(true);
+  });
 });
 
 describe('the approvals a change of signers needs', () => {
@@ -99,6 +114,14 @@ describe('the signers invited by address, read off the company\'s proposals', ()
     expect(read.map((x) => [x.proposal, x.seat])).toEqual([
       ['p1', { signer: 'sB' }], ['p2', null], ['p3', { signer: null }], ['p4', null],
     ]);
+  });
+
+  /* RED WHEN: an invitation a removal outran is listed as one to approve, though it can never seat anyone; or one whose seat is already taken is marked outrun. */
+  it('marks an invitation the chain says a removal outran, and only while it has taken no seat', () => {
+    const one = { rec: rec('p1'), opened: opened('open', 1), status: 'open' as const, approvals: 1, standing: { outrun: true } };
+    expect(signersInvitedIn([one], () => body('Sam', COIN))[0]!.outrun).toBe(true);
+    expect(signersInvitedIn([{ ...one, standing: { outrun: false } }], () => body('Sam', COIN))[0]!.outrun).toBeUndefined();
+    expect(signersInvitedIn([one], () => body('Sam', COIN), { taken: { cc: LEAF(3) }, waiting: [] })[0]!.outrun).toBeUndefined();
   });
 
   it('carries the role the signed terms name', () => {

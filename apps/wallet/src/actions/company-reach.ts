@@ -48,6 +48,8 @@ import { verifiedCompanyFiler } from '../../../../src/midnight/sealed-record-wir
 import { intentShapeOf } from 'midnight-identity/profile/act-shape';
 import { routeOf } from 'midnight-identity/profile/act-intents';
 import { StepRefused, type StepContext, type Words } from './definition.js';
+import { fellBackLine, type FellBack } from './fall-back-line.js';
+
 
 /*
  * WHAT AN ACTION ON A COMPANY READS THE COMPANY WITH, IN THE WALLET. The page
@@ -116,25 +118,6 @@ export interface CompanyReach {
   /** Opens this seat's copy of a version of the company's choice of service, for an act that reads its versions. */
   readonly opener: ServiceOpener;
 }
-
-/** Which fallbacks one window used, as the one plain line its end shows. */
-export const FELL_BACK: Readonly<Record<string, string>> = Object.freeze({
-  chain: 'act.fell-back.chain', 'own-dust': 'act.fell-back.own-dust', 'chain,own-dust': 'act.fell-back.chain-own-dust',
-  unread: 'act.fell-back.unread', 'unread,own-dust': 'act.fell-back.unread-own-dust',
-  unreached: 'act.fell-back.unreached', 'unreached,own-dust': 'act.fell-back.unreached-own-dust',
-  'chain,unreached': 'act.fell-back.chain-unreached', 'chain,unreached,own-dust': 'act.fell-back.chain-unreached-own-dust',
-});
-/* The order the reasons are named in, so each mix of them is one key of `FELL_BACK`. */
-export const FELL_ORDER = ['chain', 'unread', 'unreached', 'own-dust'] as const;
-/** One reason a window's call went another way than the company's service. */
-export type FellBack = (typeof FELL_ORDER)[number];
-
-/**
- * The one plain line for the reasons a window fell back for. An unread choice sends every call straight from the
- * start, so it never mixes with our service being unable to take a call or unreachable; every other mix has a line.
- */
-export const fellBackLine = (fell: ReadonlySet<FellBack>): string | undefined =>
-  FELL_BACK[FELL_ORDER.filter((x) => fell.has(x)).join(',')];
 
 /**
  * **WHERE EVERY CALL AN ACTION FINISHES GOES, AND WHO PAYS ITS FEE.** Decided by the company's choice of service

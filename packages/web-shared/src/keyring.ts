@@ -1993,7 +1993,9 @@ const creationStateOf = (s: unknown): CompanyCreationState =>
  * The roster opens under the company's key of the epoch it was sealed at,
  * from `companyKeys`. A seat the chain holds that was taken on an invitation by
  * address, whose signer waits for Finish adding, is waited for only through
- * `invitedSeats`, the seat the chain shows that invitation's proposal took.
+ * `invitedSeats`, the seat the chain shows that invitation's proposal took,
+ * and believed only when the invitation makes that proposal, worked out with
+ * `identity`.
  *
  * Returns null rather than throwing when this device holds no keys for the
  * account. That is a real state — you are a member, on a machine you have not
@@ -2005,16 +2007,16 @@ export async function openAccount(
   anchored: (accountId: string, company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['anchored'],
   leaves: (company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['leaves'],
   companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>,
-  invitedSeats?: Parameters<typeof openAccountWith>[6],
+  invitedSeats?: Parameters<typeof openAccountWith>[6], identity?: Parameters<typeof openAccountWith>[7],
 ): Promise<OpenedAccount | null> {
-  return openAccountWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats);
+  return openAccountWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats, identity);
 }
 
 /** The seats the company's roster admitted, read with the same doors as `openAccount`; throws when this device holds no keys for it. */
 export async function seatsAdmittedFor(
   rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
   holders: Parameters<typeof openAccount>[1], anchored: Parameters<typeof openAccount>[2], leaves: Parameters<typeof openAccount>[3],
-  companyKeys?: Parameters<typeof openAccount>[4], invitedSeats?: Parameters<typeof openAccount>[5],
+  companyKeys?: Parameters<typeof openAccount>[4], invitedSeats?: Parameters<typeof openAccount>[5], identity?: Parameters<typeof openAccount>[6],
 ): Promise<ReadonlySet<string>> {
-  return seatsAdmittedWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats);
+  return seatsAdmittedWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats, identity);
 }

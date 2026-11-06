@@ -35,7 +35,7 @@ import { seatBlinding, type SeatOpening } from '../../../src/core/seat-opening.j
 import { invitationIdOf, newInvitationToken, signSeatInvitation, type SeatInvitationTerms } from '../../../src/core/invitation.js';
 import type { PendingSignerPayload } from '../../../src/core/types.js';
 import { directoryHere } from './vault-page-doors.js';
-import { seatRequestFingerprint } from './invitation-on-device.js';
+import { seatRequestFingerprint } from './seat-request-fingerprint.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import {
@@ -410,10 +410,28 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
       name: 'Dana', role: 'approver', ...eve, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver'), eve),
       person: 'usr_dana', invited: signSeatInvitation(DANAS_INVITATION, ada.signingSecret as Hex),
     };
-    inTheInbox(danasRequest(), 'usr_dana', [{ id: 'sgn_second', userId: 'usr_eve', request: evesRequest }]);
+    inTheInbox(danasRequest(), 'usr_dana', [{ id: 'sgn_second', userId: 'usr_dana', request: evesRequest }]);
     try {
       /* RED WHEN: two wallets answer one invitation and the device seats either. */
       await refusedOnEveryReading(danasRequest(), /Another seat request answers the same invitation/u);
+    } finally {
+      putBack();
+    }
+  });
+
+  it('a request on the same invitation that fails its own checks does not stop the seating of the one that passes', async () => {
+    const eve = keysOf();
+    const evesRequest: PendingSignerPayload = {
+      name: 'Dana', role: 'approver', ...eve, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver'), eve),
+      person: 'usr_dana', invited: signSeatInvitation(DANAS_INVITATION, ada.signingSecret as Hex),
+    };
+    /* The invitation is genuine, but the request was filed under another sign-in than the person it names. */
+    inTheInbox(danasRequest(), 'usr_dana', [{ id: 'sgn_junk', userId: 'usr_eve', request: evesRequest }]);
+    try {
+      /* RED WHEN: whoever holds an invitation's link files a request that can never be seated, and the invited person's request is seated by no device. */
+      const { outcomes } = await everyReading(waiting.id);
+      expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'fulfilled', 'rejected']);
+      await expect(seatingDevice(danasRequest()).out).rejects.toThrow(/every check passed/u);
     } finally {
       putBack();
     }

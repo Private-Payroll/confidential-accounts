@@ -19,7 +19,8 @@ import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js'
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import { MidnightCommitments } from '../../../../src/midnight/commitments.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
-import { metadataOf, withSeatInvitationKept, type Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { metadataOf, type Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { withSeatInvitationKept } from '../../../../packages/web-shared/src/kept-seat-invitations.js';
 import type { KeptSeatInvitation } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { StepRefused, type StepContext } from './definition.js';
 
@@ -41,6 +42,8 @@ const t = vi.hoisted(() => ({
   entered: 1,
   entries: [] as unknown[],
   enterFails: false,
+  /* How the chain holds the proposal every kept seat offer names: open, cleared, closed or never raised (the default). */
+  held: 'never' as string,
 }));
 vi.mock('../../../../packages/web-shared/src/invitation-on-device.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/invitation-on-device.js')>()),
@@ -144,7 +147,7 @@ const filedAs = (forWhom: InvitationOffer['for'], o: { company?: string; token?:
   status: 200, body: { kind: forWhom.kind, offer: sealOffer(o.signed ?? offerOf(forWhom, o), o.token ?? TOKEN), expiresAt: '2027-01-15T08:00:00.000Z' },
 });
 
-const ctxWith = (i: ActIntent, o: { keyring?: Keyring | null; offer?: { status: number; body?: unknown } } = {}) => {
+const ctxWith = (i: ActIntent, o: { keyring?: Keyring | null; offer?: { status: number; body?: unknown }; offerAt?: Record<string, { status: number }> } = {}) => {
   const calls: string[] = [];
   const told: Array<Record<string, unknown>> = [];
   let held: Keyring = o.keyring ?? { accounts: {} };
@@ -157,9 +160,11 @@ const ctxWith = (i: ActIntent, o: { keyring?: Keyring | null; offer?: { status: 
       calls.push(`${method} ${path}`);
       const record = /\/records\/(person|vendor)\/([^/]+)\/versions$/u.exec(path);
       if (record !== null && t.records !== null) return t.records(record[1]!, record[2]!);
+      const only = o.offerAt?.[path.split('/')[3] ?? ''];
+      if (only !== undefined && path.endsWith('/offer')) return { status: only.status, body: {} };
       return path.endsWith('/offer') && o.offer !== undefined ? { status: o.offer.status, body: o.offer.body ?? {} } : { status: 404, body: {} };
     },
-    tell: (x: Record<string, unknown>) => { told.push(x); t.calls.push(`told ${String(x['state'])}`); },
+    tell: (x: Record<string, unknown>) => { told.push(x); if (x['state'] !== undefined) t.calls.push(`told ${String(x['state'])}`); },
     keyring: o.keyring === null ? null : {
       open: () => ({ read: () => held }),
       keep: async (change: (k: Keyring) => Keyring) => { held = change(held); kept.push(held); t.calls.push('kept'); },
@@ -191,7 +196,7 @@ const reachOf = (scope = ALL) => ({
   },
   sealed: {}, companyKeys: KEYS,
   roster: async () => ({ id: 'acc_1', name: 'Acme', signers: [] }),
-  builder: { roundsOnChain: async () => ({}), companyWide: async () => 'cc'.repeat(32) },
+  builder: { roundsOnChain: async (q: { chainIds: string[] }) => Object.fromEntries(q.chainIds.map((c) => [c, { held: t.held, approvals: 0 }])), companyWide: async () => 'cc'.repeat(32) },
   chain: {
     indexer: { indexerUri: 'https://indexer.wallet.example', indexerWsUri: 'wss://indexer.wallet.example' },
     callState: async () => ({ blockHash: 'b'.repeat(64), accountState: 'AS', parameters: 'PP' }),
@@ -221,6 +226,7 @@ beforeEach(() => {
   t.entered = 1;
   t.entries.length = 0;
   t.enterFails = false;
+  t.held = 'never';
 });
 
 describe('SOMEBODY IS INVITED FROM THE WALLET, WITH ITS OWN SEAT', () => {
@@ -434,6 +440,11 @@ describe('A SEAT OFFERED BY ADDRESS IS KEPT IN THE SAVED KEYS, AND NEVER SHOWN T
     const other = KEPT('cd'.repeat(32));
     const later = withSeatInvitationKept(first, other, NOW_MS + 120_000);
     expect(Object.keys(later.seatInvitationsKept!)).toEqual(['cd'.repeat(32)]);
+    /* RED WHEN: the same invitation signed again for the key in force now does not replace the one kept, or any other signature does. */
+    const again = { ...KEPT(), offer: signOffer({ ...KEPT_OFFER.offer, inboxPublicKey: '13'.repeat(32) }, SIGNING) };
+    expect(withSeatInvitationKept(first, again, NOW_MS).seatInvitationsKept).toEqual({ [again.id]: again });
+    expect(() => withSeatInvitationKept(first, { ...again, offer: signOffer({ ...again.offer.offer, expiresAt: NOW_MS + 90_000 }, SIGNING) }, NOW_MS)).toThrow(/not written over/u);
+    expect(() => withSeatInvitationKept(first, { ...again, offer: signOffer({ ...again.offer.offer, for: seatFor({ name: 'Eve' }) }, SIGNING) }, NOW_MS)).toThrow(/not written over/u);
   });
 
   it('RED WHEN: what the page is shown of the saved keys carries a kept invitation, with the secret its seat is proved by', () => {
@@ -469,6 +480,85 @@ describe('A PRESS AGAIN WITH THE SAME TOKEN CARRIES THE FIRST PRESS\'S ASK, OR I
     let asked: any[] = [];
     t.invite = async (...a: any[]) => { asked = a; return { link: 'l', id: 'i' }; };
     await run(intent(SIGNER), ctxWith(intent(SIGNER), { keyring: keptHere() }).ctx);
+    expect(asked[7]).toEqual({ token: TOKEN, resume: KEPT() });
+  });
+
+  it('a signer pressed again from a page that lost its token goes on with the invitation this wallet kept for the same company and address', async () => {
+    const fresh = newInvitationToken();
+    const i = intent({ ...SIGNER, token: fresh });
+    let asked: any[] = [];
+    t.invite = async (...a: any[]) => { asked = a; return { link: 'l', id: 'i' }; };
+    const first = ctxWith(i, { keyring: keptHere() });
+    await run(i, first.ctx);
+    /* RED WHEN: a page that lost its token starts a new invitation, which the address's open proposal then refuses. */
+    expect(asked[7]).toEqual({ token: TOKEN, resume: KEPT() });
+    /* RED WHEN: the page is not told the token the invitation goes on under, and gives the person a link built from its own. */
+    expect(first.told).toContainEqual({ token: TOKEN });
+    /* The page's own token needs no telling. */
+    const own = ctxWith(intent(SIGNER), { keyring: keptHere() });
+    await run(intent(SIGNER), own.ctx);
+    expect(own.told.some((x) => 'token' in x)).toBe(false);
+    /* RED WHEN: an invitation kept for another company, for another address or past its expiry is taken up for this press. */
+    const idOf = 'cd'.repeat(32);
+    for (const other of [{ ...KEPT(idOf), company: 'acc_2' }, KEPT(idOf, undefined, NOW_MS - 1), { ...KEPT(idOf), offer: offerOf(seatFor({ address: OTHER_ADDRESS })) }]) {
+      asked = [];
+      const keyring: Keyring = { accounts: {}, seatInvitationsKept: { [idOf]: other } };
+      await run(i, ctxWith(i, { keyring }).ctx);
+      expect(asked[7]).toEqual({ token: fresh });
+    }
+    /* RED WHEN: a press that differs from the kept invitation in name, role or rights is taken up as the kept one. */
+    t.calls.length = 0;
+    const differs = intent({ ...SIGNER, token: fresh, role: 'admin' });
+    const e = await refused(run(differs, ctxWith(differs, { keyring: keptHere() }).ctx));
+    expect(String(e.words.values?.['says'])).toMatch(/press again with the same details as the first time/u);
+    nothingMade();
+  });
+
+  it('RED WHEN: a kept invitation whose link was used or withdrawn, or whose proposal is closed, is taken up again for a page that lost its token', async () => {
+    const fresh = newInvitationToken();
+    const i = intent({ ...SIGNER, token: fresh });
+    let asked: any[] = [];
+    t.invite = async (...a: any[]) => { asked = a; return { link: 'l', id: 'i' }; };
+    /* The service answers that the kept link is closed: it is passed over and let go of, and a new invitation is made. */
+    const used = ctxWith(i, { keyring: keptHere(), offerAt: { [invitationIdOf(TOKEN)]: { status: 410 } } });
+    await run(i, used.ctx);
+    expect(asked[7]).toEqual({ token: fresh });
+    expect(used.held().seatInvitationsKept ?? {}).toEqual({});
+    /* The chain holds its proposal closed (withdrawn or carried out): the same. */
+    t.held = 'closed';
+    asked = [];
+    const closed = ctxWith(i, { keyring: keptHere() });
+    await run(i, closed.ctx);
+    expect(asked[7]).toEqual({ token: fresh });
+    expect(closed.held().seatInvitationsKept ?? {}).toEqual({});
+    /* RED WHEN: one closed and one open of two kept for an address are told as two live ones, so the person is refused. */
+    t.held = 'never';
+    asked = [];
+    const second = 'cd'.repeat(32);
+    const two = ctxWith(i, { keyring: { accounts: {}, seatInvitationsKept: { [invitationIdOf(TOKEN)]: KEPT(), [second]: KEPT(second) } }, offerAt: { [second]: { status: 410 } } });
+    await run(i, two.ctx);
+    expect(asked[7]).toEqual({ token: TOKEN, resume: KEPT() });
+    expect(Object.keys(two.held().seatInvitationsKept ?? {})).toEqual([invitationIdOf(TOKEN)]);
+    /* RED WHEN: a read of the service that fails is taken for a closed invitation. */
+    t.calls.length = 0;
+    const unread = await refused(run(i, ctxWith(i, { keyring: keptHere(), offerAt: { [invitationIdOf(TOKEN)]: { status: 503 } } }).ctx));
+    expect(unread.words.key).toBe('act.invite.why.offer-not-read');
+    nothingMade();
+  });
+
+  it('RED WHEN: two live invitations kept for one company and address are told apart by the page\'s token alone, or one is taken for the other', async () => {
+    const fresh = newInvitationToken();
+    const i = intent({ ...SIGNER, token: fresh });
+    const keyring: Keyring = { accounts: {}, seatInvitationsKept: { [invitationIdOf(TOKEN)]: KEPT(), ['cd'.repeat(32)]: KEPT('cd'.repeat(32)) } };
+    t.calls.length = 0;
+    const e = await refused(run(i, ctxWith(i, { keyring }).ctx));
+    expect(e.words.key).toBe('act.invite.why.not-made');
+    expect(String(e.words.values?.['says'])).toMatch(/more than one invitation kept on this device for this address.*withdraw/u);
+    nothingMade();
+    /* The page's own token still names its own. */
+    let asked: any[] = [];
+    t.invite = async (...a: any[]) => { asked = a; return { link: 'l', id: 'i' }; };
+    await run(intent(SIGNER), ctxWith(intent(SIGNER), { keyring }).ctx);
     expect(asked[7]).toEqual({ token: TOKEN, resume: KEPT() });
   });
 

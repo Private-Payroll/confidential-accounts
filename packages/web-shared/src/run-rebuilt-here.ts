@@ -216,11 +216,13 @@ export const statusOfAClose = (closedBy: readonly string[]): 'executed' | 'cance
  * the transaction of the call that raised it in that block, read from its bytes
  * (without bytes, the one call to `propose` in that block). `approvedHere`, when the read was
  * made for this device's seat, is whether the chain counts that seat's approval.
- * Refused, saying what resolves it, when the page cannot read the chain.
+ * `outrun`, on one still open, is the chain's word that a signer was removed or replaced since it was raised, so a change
+ * to the company is never carried out. Refused, saying what resolves it, when the page cannot read the chain.
  */
 export async function standingOnChainHere<P extends {
   readonly id: string; readonly chainId: string; readonly status: string; readonly approvalCount?: number;
   readonly raisedAt?: string; readonly txRef?: string; readonly executedAt?: string; readonly approvedHere?: boolean;
+  readonly outrun?: true;
 }>(records: Pick<CompanyRecordsHere, 'roundsOnChain'>, proposals: readonly P[]): Promise<P[]> {
   if (proposals.length === 0) return [];
   if (records.roundsOnChain === undefined) {
@@ -233,13 +235,14 @@ export async function standingOnChainHere<P extends {
     if (r === undefined) {
       throw new Error(`where proposal ${p.id} stands on the chain was not read, so nothing is decided from it. Reload the page`);
     }
-    const { raisedAt: _r, txRef: _t, executedAt: _e, approvedHere: _a, ...rest } = p;
+    const { raisedAt: _r, txRef: _t, executedAt: _e, approvedHere: _a, outrun: _o, ...rest } = p;
     const status = r.held !== 'closed' ? 'open' : statusOfAClose(r.closedBy ?? []);
     return {
       ...rest, status, approvalCount: r.approvals,
       ...(r.raisedAt === undefined ? {} : { raisedAt: new Date(r.raisedAt).toISOString() }),
       ...(r.txRef === undefined ? {} : { txRef: r.txRef }),
       ...(r.approvedHere === undefined ? {} : { approvedHere: r.approvedHere }),
+      ...(r.held !== 'closed' && r.outrun === true ? { outrun: true } : {}),
     } as unknown as P;
   });
 }

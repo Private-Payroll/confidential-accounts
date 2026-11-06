@@ -9,6 +9,8 @@ import { READ, type Read } from './reads.js';
  * names them active and the account holds their seat on the chain; active with no seat on the chain is neither. `you`: this
  * is the seat whose keys this device holds, told by its seat id and signing key together, never by a name. `entryFiled`: whether the
  * company's directory, as this device read it, holds an entry for their seat; null when it was not read or they have no seat.
+ * `waiting`: a seat the chain holds that someone the company invited is waiting to be admitted to, and that no roster entry
+ * names yet: their request to be added has not reached this page, so the row has no name and nothing to press.
  */
 export interface SignerStanding {
   id: string;
@@ -17,6 +19,7 @@ export interface SignerStanding {
   seatOnChain: boolean;
   you: boolean;
   entryFiled: boolean | null;
+  waiting?: true;
 }
 
 /** What the account's holders carry of the signers' seats, as the person's own wallet read them off the chain. */
@@ -40,17 +43,22 @@ interface RosterSigner {
 /**
  * Each signer of the believed roster as accepted (pending) or not, and whether the chain holds their leaf. `here.own` is the
  * seat id and signing key of the seat this device holds for the company: a row is you only when it carries both, so a second
- * row a filer put under the same key is never marked as you. `here.entries` the seats the
- * company's directory holds an entry for, as this device read it, or null when it was not read.
+ * row a filer put under the same key is never marked as you. `here.entries` is the set of seats the
+ * company's directory holds an entry for, as this device read it, or null when it was not read. After them, each seat the
+ * chain holds that `here.waited` names and no row and no seat in `here.shown` does, once (`seatsWaitedUnlisted`).
  */
 export function signerStandings(
   signers: readonly RosterSigner[], seatsOnChain: readonly string[],
-  here: { readonly own?: { readonly signerId: string; readonly signingPublicKey: string } | null; readonly entries?: ReadonlySet<string> | null } = {},
+  here: {
+    readonly own?: { readonly signerId: string; readonly signingPublicKey: string } | null; readonly entries?: ReadonlySet<string> | null;
+    /** The seats the roster read waits for someone invited to be admitted to, and those an invitation by address already shows. */
+    readonly waited?: readonly string[]; readonly shown?: readonly string[];
+  } = {},
 ): SignerStanding[] {
   const held = new Set(seatsOnChain.map((s) => s.toLowerCase()));
   const own = here.own == null ? null : { id: here.own.signerId, key: here.own.signingPublicKey.toLowerCase() };
   const entries = here.entries ?? null;
-  return signers.map((s) => {
+  return [...signers.map((s) => {
     const leaf = typeof s.leafCommitment === 'string' ? s.leafCommitment.toLowerCase() : null;
     return {
       id: s.id, name: s.name, accepted: s.status === 'pending',
@@ -58,8 +66,18 @@ export function signerStandings(
       you: own !== null && s.id === own.id && typeof s.signingPublicKey === 'string' && s.signingPublicKey.toLowerCase() === own.key,
       entryFiled: entries === null || leaf === null ? null : entries.has(leaf),
     };
-  });
+  }), ...seatsWaitedUnlisted(here.waited ?? [], held, [...signers.map((s) => s.leafCommitment), ...(here.shown ?? [])])];
 }
+
+/**
+ * Each seat the chain holds that the roster read waits for someone invited to be admitted to, and that no roster entry
+ * and no invitation by address lists: listed once, by its seat, so a seat the network holds is never left off the page.
+ */
+const seatsWaitedUnlisted = (waited: readonly string[], held: ReadonlySet<string>, listed: readonly (string | null)[]): SignerStanding[] => {
+  const named = new Set(listed.flatMap((x) => (typeof x === 'string' ? [x.toLowerCase()] : [])));
+  return [...new Set(waited.map((x) => x.toLowerCase()))].filter((leaf) => held.has(leaf) && !named.has(leaf))
+    .map((leaf) => ({ id: leaf, name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, waiting: true as const }));
+};
 
 /**
  * The approvals a change of who is seated needs: the account's seat bar as its wallet read and checked it. `vaultsAtThatNumber`
@@ -107,9 +125,14 @@ export interface SignerInvited {
   readonly approvals: number;
   /**
    * The seat the chain says this proposal took, read through the person's own indexer, with the roster's entry waiting at that
-   * seat (null when none waits there yet); null when the chain shows no seat taken by it, or could not be read.
+   * seat (null when none waits there yet); null when the chain shows no seat taken by it. A chain not read lists no invitation at all.
    */
   readonly seat: { readonly signer: string | null } | null;
+  /**
+   * The chain's word that a signer was removed or replaced since this invitation was raised: it can no longer seat anyone,
+   * so it is withdrawn and the person invited again, never approved.
+   */
+  readonly outrun?: true;
 
   /** The approvals the company will need once the seat is taken, as the digits the invitation binds; null or absent where it binds none (the number in force is kept). */
   readonly threshold?: string | null;
@@ -127,7 +150,10 @@ const thresholdOf = (bound: string | undefined): string | null => (bound !== und
  * is left out: the service never marks it so.
  */
 export function signersInvitedIn(
-  proposals: readonly { readonly rec: SealedProposal; readonly opened: Proposal; readonly status: ProposalStatus; readonly approvals: number }[],
+  proposals: readonly {
+    readonly rec: SealedProposal; readonly opened: Proposal; readonly status: ProposalStatus; readonly approvals: number;
+    readonly standing?: { readonly outrun?: boolean };
+  }[],
   open: (rec: SealedProposal) => AddSignerByAddress | null,
   here: {
     readonly taken: Readonly<Record<string, string | null>>;
@@ -137,7 +163,7 @@ export function signersInvitedIn(
 ): SignerInvited[] {
   const low = (x: string): string => x.toLowerCase();
   const taken = new Map(Object.entries(here.taken).map(([k, v]) => [low(k), typeof v === 'string' ? low(v) : null]));
-  return proposals.flatMap(({ rec, status, approvals }) => {
+  return proposals.flatMap(({ rec, status, approvals, standing }) => {
     const body = open(rec);
     const invite = body?.invited.terms.invite;
     if (body === null || invite === undefined) return [];
@@ -149,6 +175,7 @@ export function signersInvitedIn(
       status, approvals,
       seat: leaf === null ? null : { signer: entry?.id ?? null },
       threshold: thresholdOf(invite.threshold),
+      ...(standing?.outrun === true && leaf === null ? { outrun: true as const } : {}),
     }];
   });
 }

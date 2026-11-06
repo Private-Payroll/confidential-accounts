@@ -26,13 +26,15 @@ import {
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
 import {
-  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, buildSeatInvitedCall, identityOfAChange, roundsOnChainIn, runsOutrunIn, seatsInvitedIn, vouchingRunsIn, vouchedRunIdentityOf,
+  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, buildSeatInvitedCall, identityOfAChange, roundsOnChainIn, runsOutrunIn, vouchingRunsIn, vouchedRunIdentityOf,
   spendingPolicyKeysOf, approvalMarkerOf, type AnchorsOnChain, type GovernedCallDeps, type InvitedSeatInput, type RoundOnChain,
 } from './governed-call-builder.js';
+import { seatingsIn, seatsInvitedIn, type Seating } from './seats-invited-in.js';
+import { accountCircuitsBeside, networkCircuitsBeside } from './circuits-served-beside.js';
 import { buildClearRun, periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
 import { detailsOfKind } from '../../../src/midnight/vault-details.js';
 import {
-  circuitOf, contractPins, httpKeyMaterialSource, IndexedDbArtefactCache, networkPins, ProvingMaterialRefused,
+  contractPins, httpKeyMaterialSource, IndexedDbArtefactCache, networkPins, ProvingMaterialRefused,
   type ArtefactSource, type CompiledManifest, type HttpKeyMaterialOptions, type NetworkKeyPins,
 } from './key-material.js';
 import { publishedByMidnight } from '../../../src/midnight/proving-parameter-digests.js';
@@ -77,37 +79,6 @@ const NETWORK_KEYS_FOLDER = 'zswap/9';
 
 /** The network's own shielded circuits a device proves, as the network's folder names them. */
 const NETWORK_SHIELDED_CIRCUITS = ['output', 'spend', 'sign'] as const;
-
-/**
- * **A PRIVATE DEPOSIT OR PAYMENT ALSO PROVES THE NETWORK'S OWN SHIELDED CIRCUITS**
- * (`spend`, `output`, `sign`), asked for as `midnight/zswap/<circuit>`. They are
- * served beside the vault's own, and every other name goes to the vault's.
- */
-export const networkCircuitsBeside = (vault: ArtefactSource, network: ArtefactSource): ArtefactSource => {
-  const which = (keyLocation: string) => (keyLocation.startsWith('midnight/zswap/') ? network : vault);
-  return {
-    lookupKey: (keyLocation) => which(keyLocation).lookupKey(keyLocation),
-    getParams: (k) => vault.getParams(k),
-    artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation),
-  };
-};
-
-/**
- * **A PAYMENT OUT ALSO PROVES THE COMPANY ACCOUNT'S `recordPayment`**, which the
- * vault's `payout` calls inside the same transaction, **AND A RAISE OR AN
- * APPROVAL IS ONE OF THE ACCOUNT'S OWN CIRCUITS.** Their material is served
- * beside the vault's, and a location is sent there by the circuit it names: no
- * vault circuit shares a name with one of the account's served to a device.
- */
-export const accountCircuitsBeside = (vault: ArtefactSource, account: ArtefactSource): ArtefactSource => {
-  const which = (keyLocation: string) =>
-    (ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuitOf(keyLocation)) ? account : vault);
-  return {
-    lookupKey: (keyLocation) => which(keyLocation).lookupKey(keyLocation),
-    getParams: (k) => vault.getParams(k),
-    artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation),
-  };
-};
 
 /** The served events, with each position read as the number it is. */
 const servedOf = (events: readonly EventOnTheWire[]): ServedEvent[] => events.map((e) => ({
@@ -175,12 +146,14 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
 
 /*
  * An account's history as last read, per indexer and account, with the latest
- * transaction it was read up to and the anchors read off it: read again in
- * full only when the account has acted since, because a history only ever
- * grows.
+ * transaction it was read up to and the anchors and seatings read off it: read
+ * again in full only when the account has acted since, because a history only
+ * ever grows.
  */
 type HistorySteps = Awaited<ReturnType<import('../../../src/midnight/contract-history.js').ContractHistory['of']>>;
-const historiesRead = new Map<string, { readonly latest: string; readonly steps: HistorySteps; anchors?: AnchorsOnChain }>();
+/** One history read, with what is worked out from it once and kept while it stands: its anchors, and its seatings. */
+type HistoryRead = { readonly latest: string; readonly steps: HistorySteps; anchors?: AnchorsOnChain; seatings?: readonly Seating[] };
+const historiesRead = new Map<string, HistoryRead>();
 
 /**
  * **THE ACCOUNT'S HISTORY, READ HERE AT THE INDEXER THE PERSON'S OWN WALLET
@@ -191,7 +164,7 @@ async function historyHere(
   d: Pick<WorkerDeps, 'historyAt'>,
   ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } },
   what: string,
-): Promise<{ readonly latest: string; readonly steps: HistorySteps; anchors?: AnchorsOnChain }> {
+): Promise<HistoryRead> {
   const account = String(ask.account).toLowerCase();
   if (!/^[0-9a-f]{64}$/u.test(account)) throw new Error(`${what} not read: that is not a company account this device can name.`);
   const { indexerContractHistory } = await import('../../../src/midnight/contract-history.js');
@@ -293,7 +266,6 @@ async function paidLeavesHere(
   return Object.fromEntries(leaves.map((l, i) => [l, paid[i]!]));
 }
 
-/** The seat each invitation's proposal took, read from the account's own history in this worker (`seatsInvitedIn`). */
 /**
  * **EVERY RUN OPEN NOW, WITH THE SIGNERS REMOVED SINCE ITS RAISE, READ HERE** from the account's history at the indexer the person's own
  * wallet names (`runsOutrunIn`), never from a list the company's service gives.
@@ -306,12 +278,18 @@ async function runsOutrunHere(
   return runsOutrunIn(d, steps);
 }
 
+/**
+ * The seat each invitation's proposal took, read from the account's own history in this worker (`seatsInvitedIn`). The
+ * seatings are worked out once per history read and kept on it, so asking again decodes no transaction again; a refusal
+ * keeps nothing, and is made again at the next ask.
+ */
 async function invitedSeatsHere(
-  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
+  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt' | 'ledger'>,
   ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly proposals: readonly string[] },
 ): Promise<Record<string, string | null>> {
-  const { steps } = await historyHere(d, ask, 'which seat each invitation took on the chain was');
-  return Object.fromEntries(seatsInvitedIn(d, steps, ask.proposals));
+  const history = await historyHere(d, ask, 'which seat each invitation took on the chain was');
+  history.seatings ??= seatingsIn(d, history.steps, ask.account);
+  return Object.fromEntries(seatsInvitedIn(history.seatings, ask.proposals));
 }
 
 /** What this copy of the app was compiled with, read from its own files and never from the service. */
@@ -431,7 +409,6 @@ export const provingWarmed = async (
   ].filter((location) => !(CIRCUITS_A_DEPOSIT_PROVES as readonly string[]).includes(location)), false);
   if (failures.length > 0) throw failures[0];
 };
-
 
 /**
  * **A CONTRACT'S VERIFYING KEYS, EACH CHECKED AGAINST THE DIGEST ITS COMPILED
@@ -719,8 +696,6 @@ export const loadDeps = (scope: any) => {
  * in Node.
  */
 const giveTheRuntimeABuffer = (): void => ensureBuffer();
-
-
 
 type RebuildAsk = Extract<VaultAsk, { ask: 'vault-rebuilt' }> & VaultRebuildAsked;
 const HEX64_ASKED = /^[0-9a-f]{64}$/u;

@@ -84,6 +84,7 @@ import {
 } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { canonical, sign, verify, type Hex, type Sealed } from '../core/crypto.js';
+import { exactly, HEX128, HEX64, HEX_OR_EMPTY, rotateShaped } from './directory-change-shape.js';
 import { openSeatProof, sealSeatProof, walletKeyProvedBy, type LeafOf, type SeatOpening, type SeatProof } from '../core/seat-opening.js';
 import type { Role } from '../core/types.js';
 import { replacedBy, seatInvitationRefusal, type SignedSeatInvitation } from '../core/invitation.js';
@@ -196,10 +197,6 @@ export const directoryEntryMade = (input: {
 const ENTRY_FIELDS = ['person', 'proof', 'signature', 'statement'];
 const STATEMENT_FIELDS = ['account', 'seat', 'signingKey', 'wrappingKey'];
 const PROOF_FIELDS = ['body', 'iv', 'tag'];
-const exactly = (o: object, fields: readonly string[]): boolean => {
-  const keys = Object.keys(o).sort();
-  return keys.length === fields.length && keys.every((k, i) => k === fields[i]);
-};
 
 /**
  * **AN ENTRY IN ITS SHAPE, FOR THIS ACCOUNT, SIGNED BY THE FILING KEY IT
@@ -375,7 +372,8 @@ export const DIRECTORY_REFUSAL = {
   'inviter-not-seated': 'the invitation that entry carries was not signed by a seat this directory holds and has not retired, so it is not believed. A seated signer invites the person again.',
   'not-the-invitation-it-replaces': 'that entry carries a re-issued invitation that is not the one a seat of this company signed when that seat was proposed, for the same person, name, role and seat, so it is not believed. A seated signer re-issues it again from the proposal that seated it.',
   'inviter-may-not-invite': 'the invitation that entry carries was signed by a seat whose role may not file a proposal, and only such a seat invites anybody, so it is not believed. A seated signer whose role may file one invites the person again.',
-  'invited-another-leaf': 'the invitation that entry carries names no seat, or another seat than the one the entry names, so it is not believed. Open the company again on the device that holds the seat: it files the entry with the invitation the proposal that seated it carries.',
+  'not-the-approved-invitation': 'the invitation that entry carries does not make the proposal it names, so it is not the invitation the approvers approved and may name another role, and it is not believed. A seated signer invites the person again.',
+  'invited-another-leaf': 'the invitation that entry carries names no seat, or another seat than the one the entry names, so it is not believed. A seated signer invites the person again.',
   'no-such-seat': 'that change names a seat the directory has no entry for.',
   'seat-retired': 'that seat has been retired, so it cannot be changed or sign a change.',
   'statement-not-the-leavers': 'that retirement does not carry the records-key statement the leaving seat\'s own wallet signed for that seat, so the records it filed could not be read once it leaves. Raise the retirement again with the statement its roster entry holds.',
@@ -407,10 +405,6 @@ export class DirectoryRefused extends Error {
   }
 }
 
-const HEX64 = /^[0-9a-f]{64}$/u;
-const HEX128 = /^[0-9a-f]{128}$/u;
-const HEX_OR_EMPTY = /^(?:[0-9a-f]{2})*$/u;
-
 /** What the chain says about the company's account, as the checker read it. */
 export interface ChainHolders {
   /** The committee the account lists, and every seat it holds now. */
@@ -441,10 +435,16 @@ export type EntryJudge =
     readonly founding: string | null;
     /**
      * The seat an invitation made by address took, by its proposal's identity on chain, as the account's own history
-     * shows it (`seatsInvitedIn`), or null where it shows none or cannot tell. Absent on a device that cannot read the
+     * shows it (`seatsInvitedIn`), or null where no seating call closed it. Absent on a device that cannot read the
      * history: no seat is believed from an invitation made by address there.
      */
     readonly invitedLeafOf?: (proposal: string) => string | null;
+    /**
+     * Whether an invitation made by address makes the proposal it names: the identity its change and its own salt
+     * make, worked out on this device with the account's own functions (`invitationMakesItsProposal`). Absent on a
+     * device that cannot work it out: no seat is believed from an invitation made by address there.
+     */
+    readonly makesItsProposal?: (invited: SignedSeatInvitation) => boolean;
   };
 
 export const AT_THE_SERVER: EntryJudge = Object.freeze({ by: 'the-server' });
@@ -480,11 +480,11 @@ export const proofsOpenedWith = (company: string, viewingKeys: readonly Hex[]): 
  */
 export const asAMember = (
   proofOf: (entry: DirectoryEntry) => SeatProof | null, leafOf: LeafOf, founding: string | null,
-  invitedLeafOf?: (proposal: string) => string | null,
+  invitedLeafOf?: (proposal: string) => string | null, makesItsProposal?: (invited: SignedSeatInvitation) => boolean,
 ): EntryJudge =>
   ({
     by: 'a-member', proofOf, leafOf, founding: typeof founding === 'string' ? founding.toLowerCase() : null,
-    ...(invitedLeafOf === undefined ? {} : { invitedLeafOf }),
+    ...(invitedLeafOf === undefined ? {} : { invitedLeafOf }), ...(makesItsProposal === undefined ? {} : { makesItsProposal }),
   });
 
 /**
@@ -495,8 +495,11 @@ export const asAMember = (
  * the invitation it replaces, signed by a seat it holds (`replacedBy`). An
  * invitation made by address names no person and no leaf, only the proposal
  * raised for the address: its seat is the one the account's history shows that
- * proposal took (`invitedLeafOf`), and none where the history cannot tell. So
- * every invitation seats one leaf and no other seat can be entered under it.
+ * proposal took (`invitedLeafOf`), and none where the history cannot tell, and
+ * it is believed only when it makes that proposal (`makesItsProposal`), whose
+ * identity commits to the whole invitation, so an entry cannot carry another
+ * role than the one the approvers approved. So every invitation seats one leaf
+ * and no other seat can be entered under it.
  * The founding seat needs none.
  */
 const invitationRefusalOf = (
@@ -508,8 +511,12 @@ const invitationRefusalOf = (
   if (invited === undefined || seatInvitationRefusal(invited) !== null || invited.terms.company !== dir.company) return 'not-invited';
   const seat = entry.statement.seat.toLowerCase();
   if (invited.terms.leaf === undefined && invited.terms.invite !== undefined && invited.terms.proposal !== undefined) {
-    /* Made by address: the invitee's wallet chose its own leaf, so the seat is the one the chain shows the invitation's own proposal took. */
+    /*
+     * Made by address: the invitee's wallet chose its own leaf, so the seat is the one the chain shows the invitation's own
+     * proposal took, and the invitation is the one that proposal commits to, never another filed beside it.
+     */
     if ((judge.invitedLeafOf?.(invited.terms.proposal.toLowerCase()) ?? null) !== seat) return 'invited-another-leaf';
+    if (judge.makesItsProposal?.(invited) !== true) return 'not-the-approved-invitation';
   } else {
     if (invited.terms.person !== entry.person) return 'invited-someone-else';
     if (invited.terms.leaf === undefined || invited.terms.leaf.toLowerCase() !== seat) return 'invited-another-leaf';
@@ -596,37 +603,6 @@ const statementShapedFor = (statement: unknown, seat: string): boolean => {
   return typeof st === 'object' && st !== null && exactly(st, STATEMENT_KEYS)
     && typeof st.recordsKey === 'string' && HEX64.test(st.recordsKey) && st.seat === seat
     && typeof st.signature === 'string' && HEX128.test(st.signature);
-};
-
-const HEX24 = /^[0-9a-f]{24}$/u;
-const SEALED_FIELDS = ['body', 'iv', 'tag'];
-const WRAP_FIELDS = ['body', 'ephemeral', 'iv', 'tag'];
-const ROTATE_FIELDS = ['after', 'epoch', 'keyCheck', 'kind', 'previous', 'signatures', 'waiting', 'wraps'];
-const ROTATE_OPTIONAL = ['repairs', 'replaces', 'seed'];
-
-const sealedShaped = (x: unknown, fields: readonly string[] = SEALED_FIELDS): boolean => {
-  const v = x as Partial<Sealed> & { ephemeral?: unknown } | null;
-  return typeof v === 'object' && v !== null && exactly(v, fields)
-    && typeof v.iv === 'string' && HEX24.test(v.iv) && typeof v.tag === 'string' && HEX_OR_EMPTY.test(v.tag)
-    && typeof v.body === 'string' && v.body.length > 0 && HEX_OR_EMPTY.test(v.body)
-    && (!fields.includes('ephemeral') || (typeof v.ephemeral === 'string' && HEX64.test(v.ephemeral)));
-};
-const whole = (n: unknown, from: number): boolean => Number.isSafeInteger(n) && (n as number) >= from;
-
-/** Whether a change of key is in its shape: what anyone can check of it without the key, the server included. */
-const rotateShaped = (c: RotateChange): boolean => {
-  const keys = Object.keys(c);
-  return ROTATE_FIELDS.every((k) => keys.includes(k)) && keys.every((k) => ROTATE_FIELDS.includes(k) || ROTATE_OPTIONAL.includes(k))
-    && whole(c.epoch, 1) && typeof c.keyCheck === 'string' && HEX64.test(c.keyCheck) && whole(c.after, 1)
-    && Array.isArray(c.wraps) && c.wraps.every((w) => typeof w === 'object' && w !== null && exactly(w, ['seat', 'wrap'])
-      && typeof w.seat === 'string' && HEX64.test(w.seat) && sealedShaped(w.wrap, WRAP_FIELDS))
-    && sealedShaped(c.previous)
-    && (c.seed === undefined || (typeof c.seed === 'object' && c.seed !== null && exactly(c.seed, ['epoch', 'sealed'])
-      && whole(c.seed.epoch, 1) && sealedShaped(c.seed.sealed)))
-    && Array.isArray(c.waiting) && c.waiting.every((d) => typeof d === 'string' && HEX64.test(d))
-    && (c.repairs === undefined || whole(c.repairs, 1))
-    && (c.replaces === undefined || whole(c.replaces, 0))
-    && Array.isArray(c.signatures) && c.signatures.length === 1;
 };
 
 /**

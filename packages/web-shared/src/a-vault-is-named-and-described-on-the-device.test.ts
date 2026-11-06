@@ -16,6 +16,7 @@ import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../.
 import { sealVaultInfo } from '../../../src/midnight/vault-info-record.js';
 import { judgeIn, type DirectoryHere } from './vault-page-doors.js';
 import { HttpCompanyRecordStore } from './http-sealed-pool-store.js';
+import { carriedEntryRefusal } from '../../../src/midnight/carried-entry.js';
 import {
   fileVaultInfoHere, VaultInfoChanged, vaultInfoHere, VaultInfoNotFiled, VaultInfoRefused, type VaultInfoDoors, type VaultInfoRead,
 } from './vault-info-here.js';
@@ -109,6 +110,8 @@ describe('A VAULT\'S NAME AND DESCRIPTION, ON A SIGNER\'S DEVICE', () => {
     const unnamed: VaultInfoRead = await vaultInfoHere(co.doorsOf(ADA), VAULT);
     expect(unnamed).toEqual({ state: 'none' });
     expect(await fileVaultInfoHere(co.doorsOf(ADA), { vault: VAULT, name: ' Payroll UK ', description: 'London.', over: null })).toEqual({ state: 'filed', version: 1 });
+    /* RED WHEN: a company record filed through the record store goes without the entry its filer signed. */
+    expect(carriedEntryRefusal(co.served[0]!)).toBeNull();
     /* RED WHEN: another signer, or one seated after it was filed, cannot read it: it was sealed to the signers there were. */
     for (const who of [ADA, BO, CY]) {
       expect(await vaultInfoHere(co.doorsOf(who), VAULT)).toEqual({ state: 'named', name: 'Payroll UK', description: 'London.', version: 1 });
