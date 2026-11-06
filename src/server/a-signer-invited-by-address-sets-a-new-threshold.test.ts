@@ -113,7 +113,7 @@ describe('A SIGNER INVITED BY ADDRESS SETS THE THRESHOLD THE SIGNERS APPROVED, O
     const before = events.length;
     await expect(raiseSeatInvitationOnDevice(seatingDevice(BO), {
       viewingKey: KEY, invited: stripped, proposalSalt: w.offer.byAddress!.proposalSalt, name: 'w86',
-    }, undefined, { allVaults: ALL })).rejects.toThrow(/not the one its address, rights, threshold and salt make/u);
+    }, undefined, { allVaults: ALL })).rejects.toThrow(/salt this proposal is raised under is not the one its invitation makes/u);
     expect(events.slice(before)).toEqual([]);
   });
 

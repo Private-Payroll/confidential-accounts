@@ -58,6 +58,8 @@ aCompanyOfTwoSeats((app, deps) => {
     const id = String(req.params.id);
     res.json({ ...store.getAccount(id), roster: store.newestRoster(id) });
   });
+  /* The company's proposals, as the whole server serves them: what a device reads for who waits for a seat the roster leaves out. */
+  app.get('/api/accounts/:id/proposals', deps.signedIn, deps.member, (req, res) => { res.json(store.listProposals(String(req.params.id))); });
   app.use(signerRoutes({
     signedIn: deps.signedIn, member: deps.member, store, records: () => deps.records, directoryOf: deps.directoryOf,
     ledger: { status: async () => null, holdsSigner: async (_a, seat) => (chains.get(CO)?.seats.seats ?? []).includes(String(seat)) },

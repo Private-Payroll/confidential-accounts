@@ -84,17 +84,19 @@
 import type { AccountPrivateState } from '../../../contracts/src/witnesses.js';
 import { fromHex, type Hex } from '../../../src/core/crypto.js';
 import { vouchedFreshOf, vouchedRefusal } from '../../../src/midnight/record-tree.js';
+import { HEX64 } from '../../../src/midnight/directory-change-shape.js';
 import { CIRCUITS_THAT_READ_NO_WITNESS } from '../../../src/midnight/governed-call.js';
 import { ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS } from '../../../src/midnight/vault-contract.js';
 import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
 import { PAY_KEY_PARTS } from '../../../src/midnight/pay-key-round.js';
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
-import type { RetirementTerms } from '../../../src/core/proposal-filing.js';
+import { raiseMayStillLandAt, type RetirementTerms } from '../../../src/core/proposal-filing.js';
 import { signerHalfOf, type SignerMaterial } from './private-state.js';
 import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere, type VouchedHere } from './what-this-device-made.js';
 import { sameGovernance } from './governance-compared.js';
 import { authorityIn } from 'midnight-identity/profile/contract-authority';
+import { SIGNER_LEAVES_FIELD } from 'midnight-identity/profile/account-state';
 import type { DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import type { AccountStartPure, VaultStartPure } from '../../../src/midnight/vault-start.js';
 import { NO_LEG, policyOpeningFromWire, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
@@ -102,7 +104,6 @@ import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
 
 export type { SignerMaterial } from './private-state.js';
 
-const HEX64 = /^[0-9a-f]{64}$/u;
 const DIGITS = /^[0-9]+$/u;
 const ZERO_32 = new Uint8Array(32);
 
@@ -1158,7 +1159,7 @@ export class RaiseTooLate extends Error {
 
 /** Refuses a raise once this device's clock has reached the deadline it would carry. */
 const refuseARaisePastItsTime = (deps: Pick<GovernedCallDeps, 'now'>, raiseBy: string): void => {
-  if ((deps.now ?? Date.now)() >= Number(raiseBy) * 1000) throw new RaiseTooLate(raiseBy);
+  if (!raiseMayStillLandAt(raiseBy, (deps.now ?? Date.now)())) throw new RaiseTooLate(raiseBy);
 };
 
 const wipe = (record: AccountPrivateState): void => {
@@ -1712,15 +1713,17 @@ export const OPEN_PROPOSALS_FIELD = 2;
 
 /**
  * One call to the account, as its transaction carries it: the circuit called,
- * and the proposals, as 64 hex digits, it raised (`opened`: found not open by
+ * the proposals, as 64 hex digits, it raised (`opened`: found not open by
  * its own check, then written into the account's open proposals) and took out
- * of them (`closed`). A call that writes over a proposal already open, as
- * charging a run to its period writes its cleared mark, raises nothing.
+ * of them (`closed`), and the leaves it put into the account's signers
+ * (`seated`). A call that writes over a proposal already open, as charging a
+ * run to its period writes its cleared mark, raises nothing.
  */
 export interface CallOnTheAccount {
   readonly entryPoint: string;
   readonly opened: ReadonlySet<string>;
   readonly closed: ReadonlySet<string>;
+  readonly seated: ReadonlySet<string>;
 }
 
 type AlignedHere = { readonly value?: unknown };
@@ -1729,14 +1732,15 @@ const atomOf = (v: AlignedHere | undefined): Uint8Array | null => {
   const parts = v?.value;
   return Array.isArray(parts) && parts.length === 1 && parts[0] instanceof Uint8Array ? parts[0] : null;
 };
-/* Whether `op` indexes the account's open proposals: to write them (`pushPath`), or to read them. */
-const isOpenProposalsField = (op: unknown, writing: boolean): boolean => {
+/* Whether `op` indexes one field of the account's public state: to write it (`pushPath`), or to read it. */
+const isFieldOfTheAccount = (op: unknown, writing: boolean, at: number): boolean => {
   const idx = (op as { idx?: { pushPath?: unknown; path?: unknown } } | null)?.idx;
   if (idx === undefined || idx.pushPath !== writing || !Array.isArray(idx.path) || idx.path.length !== 1) return false;
   const key = idx.path[0] as { tag?: unknown; value?: AlignedHere };
   const field = key.tag === 'value' ? atomOf(key.value) : null;
-  return field !== null && field.length <= 1 && (field[0] ?? 0) === OPEN_PROPOSALS_FIELD;
+  return field !== null && field.length <= 1 && (field[0] ?? 0) === at;
 };
+const isOpenProposalsField = (op: unknown, writing: boolean): boolean => isFieldOfTheAccount(op, writing, OPEN_PROPOSALS_FIELD);
 const proposalKeyOf = (op: unknown): string | null => {
   const push = (op as { push?: { storage?: unknown; value?: { tag?: unknown; content?: AlignedHere } } } | null)?.push;
   if (push === undefined || push.storage !== false || push.value?.tag !== 'cell') return null;
@@ -1763,7 +1767,9 @@ const memberAnswerOf = (op: unknown): boolean | null => {
  * closes it; a value pushed and inserted (`ins`) raises it only where the same
  * call first checked that identity's membership and the chain answered that it
  * was not open (`member`, then the answer carried by `popeq`), as `propose`
- * does. Calls to any other contract, and deploys, are left out. Refused when
+ * does. A leaf is read where a call writes the account's signer leaves, pushes
+ * that leaf and its value, and inserts it, as `seatInvited` does. Calls to any
+ * other contract, and deploys, are left out. Refused when
  * the bytes are not such a transaction or its parts cannot be read.
  */
 export function callsOnTheAccountIn(
@@ -1788,6 +1794,7 @@ export function callsOnTheAccountIn(
       const entryPoint = entry instanceof Uint8Array ? new TextDecoder().decode(entry) : String(entry);
       const opened = new Set<string>();
       const closed = new Set<string>();
+      const seated = new Set<string>();
       /* The identities this call found not open, by its own membership check; the guaranteed part runs before the fallible. */
       const notOpen = new Set<string>();
       for (const part of [a['guaranteedTranscript'], a['fallibleTranscript']]) {
@@ -1795,6 +1802,11 @@ export function callsOnTheAccountIn(
         if (part === undefined) continue;
         if (!Array.isArray(program)) throw new Error('a call in the account\'s history carries operations this device cannot read. Read again');
         program.forEach((op, i) => {
+          if (isFieldOfTheAccount(op, true, SIGNER_LEAVES_FIELD)) {
+            const leaf = proposalKeyOf(program[i + 1]);
+            if (leaf !== null && opIs(program[i + 2], 'push') && opIs(program[i + 3], 'ins')) seated.add(leaf);
+            return;
+          }
           const reading = isOpenProposalsField(op, false);
           if (!reading && !isOpenProposalsField(op, true)) return;
           const id = proposalKeyOf(program[i + 1]);
@@ -1805,7 +1817,7 @@ export function callsOnTheAccountIn(
           else if (opIs(program[i + 2], 'push') && opIs(program[i + 3], 'ins') && notOpen.has(id)) opened.add(id);
         });
       }
-      out.push({ entryPoint, opened, closed });
+      out.push({ entryPoint, opened, closed, seated });
     }
   }
   return out;
@@ -2084,60 +2096,6 @@ export const PROPOSAL_CLOSING_CIRCUITS: readonly string[] = Object.freeze([
   'reseatSigner', 'retireVault', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold',
 ]);
 
-/**
- * The leaf each invitation's proposal seated, read from the account's own history: for each proposal asked
- * about, the one leaf that entered the account's signers in a block where the account stopped holding the
- * proposal, when that block's only successful call that closes a proposal is one `seatInvited`, and exactly
- * one leaf entered. Every such block is read, the latest seating taken: a proposal cancelled and raised again under
- * its own salt closes once for the cancel and again when it seats. The steps carry no call's arguments, so a block where anything
- * else closed a proposal (a `cancel` of this one beside a seating for another, say) cannot show which call closed
- * which. Null for a proposal never closed, closed by anything else, or closed in such a block: a state is the
- * whole block's, and no seat is bound to an invitation on a guess.
- */
-export function seatsInvitedIn(
-  deps: Pick<GovernedCallDeps, 'accountLedger' | 'runtimeState'>,
-  steps: ReadonlyArray<{
-    readonly kind: string; readonly state: Uint8Array; readonly entryPoint?: string;
-    readonly block: { readonly height: number; readonly at: number }; readonly succeeded: boolean;
-  }>,
-  proposals: readonly string[],
-): ReadonlyMap<string, string | null> {
-  if (deps.accountLedger === undefined) {
-    throw new Error('this device was not given the account\'s reader, so which seat each invitation took was not read. Reload the page');
-  }
-  type View = {
-    openProposals: { member(id: Uint8Array): boolean };
-    signerLeaves: Iterable<Uint8Array>;
-  };
-  const viewOf = (state: Uint8Array) => deps.accountLedger!((deps.runtimeState.deserialize(state) as { data: unknown }).data) as View;
-  const blocks: Array<{ readonly steps: typeof steps[number][]; readonly view: View }> = [];
-  for (const step of steps) {
-    const last = blocks[blocks.length - 1];
-    if (last !== undefined && last.steps[0]!.block.height === step.block.height) last.steps.push(step);
-    else blocks.push({ steps: [step], view: viewOf(step.state) });
-  }
-  const leavesOf = (v: View): Set<string> => new Set([...v.signerLeaves].map((l) => hexOf(l)));
-  const out = new Map<string, string | null>();
-  for (const asked of proposals) {
-    const hex = String(asked).toLowerCase();
-    if (!HEX64.test(hex)) throw new Error('an invitation\'s proposal was asked about by an identity that is not thirty-two bytes');
-    const id = bytesOf('proposal', hex);
-    /* Every block where the account stopped holding it: a proposal cancelled and raised again closes more than once. */
-    let seat: string | null = null;
-    blocks.forEach((b, gone) => {
-      if (gone < 1 || !blocks[gone - 1]!.view.openProposals.member(id) || b.view.openProposals.member(id)) return;
-      const closers = b.steps.filter((x) => x.kind === 'call' && x.succeeded && PROPOSAL_CLOSING_CIRCUITS.includes(x.entryPoint ?? ''));
-      const before = leavesOf(blocks[gone - 1]!.view);
-      const added = [...leavesOf(b.view)].filter((l) => !before.has(l));
-      const onlyThisSeating = closers.length === 1 && closers[0]!.entryPoint === 'seatInvited';
-      if (onlyThisSeating && added.length === 1) seat = added[0]!;
-    });
-    out.set(hex, seat);
-  }
-  return out;
-}
-
-/** What a payroll run's identity on chain is made from, as its sealed proposal holds them, with the head its raiser checked: decimal and hexadecimal. */
 export interface VouchedRunOnTheWire {
   readonly root: string; readonly payees: string; readonly opensAt: string; readonly closesAt: string; readonly required: string;
   readonly vault: string; readonly head: string; readonly r: string;

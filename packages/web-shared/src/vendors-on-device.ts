@@ -22,8 +22,8 @@ import type { Invite } from '../../../src/core/types.js';
 import { stopDateRefusal } from '../../../src/core/person-record.js';
 import { sealVendor, vendorTermsRefusal, type VendorRecord, type VendorTerms } from '../../../src/core/vendor-record.js';
 import { assets as defaultAssets, whyTheMoneyCannotReach } from '../../../src/core/assets.js';
-import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
-import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import { toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
+import { companyRecordEntry, signedWithItsEntry } from '../../../src/midnight/record-manifest.js';
 import type { PayeeParts } from 'midnight-identity/profile/join-code';
 import { judgeIn, kindAsked } from './vault-page-doors.js';
 import { payeeAt } from './invitation-on-device.js';
@@ -46,7 +46,7 @@ const filedAndEntered = async (
 ): Promise<VendorRecord> => {
   const filed: VendorRecord = { ...vendor, ...madeHere(d.signingSecret) };
   const sealing = sealingWith(d.company.viewingKey, d.company.keyEpoch);
-  const rec = signCompanyFiling(sealVendor(filed, version, sealing.epoch, sealing.key), d.signingSecret);
+  const rec = signedWithItsEntry(sealVendor(filed, version, sealing.epoch, sealing.key), d.signingSecret);
   const wire = toCompanyWire(rec);
   answered(await d.send(path, { method, body: JSON.stringify(field === null ? wire : { [field]: wire }) }), 201);
   await d.entered.enter([companyRecordEntry(rec)]);

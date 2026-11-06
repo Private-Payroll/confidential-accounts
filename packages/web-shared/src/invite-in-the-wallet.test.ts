@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { invitationIdOf, invitationLink } from '../../../src/core/invitation.js';
 
-const keyring = vi.hoisted(() => ({ intents: [] as Record<string, string>[] }));
+const keyring = vi.hoisted(() => ({ intents: [] as Record<string, string>[], outcome: undefined as Record<string, string | number> | undefined }));
 vi.mock('./keyring.js', () => ({
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     keyring.intents.push(intent);
-    return { of: 'done', steps: 1, relayed: 0 };
+    return { of: 'done', steps: 1, relayed: 0, ...(keyring.outcome === undefined ? {} : { outcome: keyring.outcome }) };
   },
 }));
 
@@ -20,7 +20,7 @@ const ask = {
 const VIEW = {} as never;
 const GIVEN = 'ab'.repeat(32);
 
-beforeEach(() => { keyring.intents.length = 0; });
+beforeEach(() => { keyring.intents.length = 0; keyring.outcome = undefined; });
 
 describe('inviting from the page with a token of its own', () => {
   /* RED WHEN: a token handed in does not reach the wallet's intent unchanged, or the link and id are not made from it. */
@@ -36,6 +36,18 @@ describe('inviting from the page with a token of its own', () => {
   it.each(['', 'AB'.repeat(32), 'ab'.repeat(31), 'ab'.repeat(33), `${'ab'.repeat(31)}zz`, ` ${GIVEN}`, `${GIVEN}\n`])('refuses the token %j before the wallet is asked', async (token) => {
     await expect(inviteInTheWallet(ask, 'https://wallet.example', { origin: US, token }, VIEW)).rejects.toThrow();
     expect(keyring.intents).toEqual([]);
+  });
+
+  /* RED WHEN: a press that went on under the token of an invitation the wallet kept is given a link made from the page's own token, which opens nothing. */
+  it('gives the link of the invitation the wallet went on under, when it names one', async () => {
+    const KEPT = 'cd'.repeat(32);
+    keyring.outcome = { state: 'kept', token: KEPT };
+    const made = await inviteInTheWallet(ask, 'https://wallet.example', { origin: US, token: GIVEN }, VIEW);
+    expect(made.link).toBe(invitationLink(US, KEPT as never));
+    expect(made.id).toBe(invitationIdOf(KEPT as never));
+    /* RED WHEN: something that is not a whole token in the outcome is taken for the invitation's token. */
+    keyring.outcome = { token: 'zz' };
+    expect((await inviteInTheWallet(ask, 'https://wallet.example', { origin: US, token: GIVEN }, VIEW)).link).toBe(invitationLink(US, GIVEN as never));
   });
 
   /* RED WHEN: without a token no fresh one is made, or two invitations share a token. */

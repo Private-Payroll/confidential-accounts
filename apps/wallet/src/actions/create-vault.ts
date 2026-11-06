@@ -13,6 +13,7 @@ import { deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor } from '
 import type { DeviceRecords } from '../../../../packages/web-shared/src/deposit-on-device.js';
 import { readAccountAddress, readCompanyLabel, readVaultAddress, type VaultAddress } from 'midnight-identity/profile/company-label';
 import { vaultOnChain, fromIndexerAt } from '../chain/company-label-on-chain.js';
+import { chainTimeOf } from './chain-time.js';
 import { approversHere, enteredFor, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type StepContext, type Words } from './definition.js';
 import { vaultKeysShown, vaultKeysSteps, type VaultKeysReach } from './give-vault-keys.js';
@@ -142,10 +143,7 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: CreateVa
       },
     },
     /* The chain's time, read at the wallet's own indexer, as a withdrawal reads it. */
-    chainTime: async () => {
-      if (r.builder.accountPresence === undefined) throw new Error('this wallet cannot read the chain\'s time.');
-      return (await r.builder.accountPresence({ account: r.account, indexer: r.chain.indexer, transactions: [] })).blockTime;
-    },
+    chainTime: chainTimeOf(r),
     onChain: async () => ({ holders: await r.holders() }),
     indexer: async () => r.chain.indexer,
     secretReaders: {

@@ -39,7 +39,7 @@ import {
   type DirectoryWitness, type RefusedEntry, type RosterEntryRefusal, type RosterSecrets, type RosterWitnesses,
 } from '../../../src/core/roster-record.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
-import { seatInvitationRefusal, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { invitationMakesItsProposal, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import {
   addSignerByAddressIn, invitationsByAddressIn, proposalFilingRefusal, seatInvitationIn, type AddSignerByAddress,
@@ -51,15 +51,18 @@ import {
 } from '../../../src/core/vault-keys.js';
 import type { Account, PendingSigner, PendingSignerPayload, SealedAccount, SealedProposal, Signer } from '../../../src/core/types.js';
 import {
-  companyWirePaths, fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord,
+  companyWirePaths, fromCompanyWire, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
-import { heldStandingOf } from '../../../src/midnight/records-held.js';
-import { companyRecordEntry, proposalEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
+import { heldStandingOf, type RecordsHeld } from '../../../src/midnight/records-held.js';
+import { companyRecordEntry, proposalEntry, signedWithItsEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
 import { FOUNDING_KEY_EPOCH, foundingStateRefusal, stateRecordId } from '../../../src/core/founding-state.js';
-import type { RecordsEntered } from './record-entered-here.js';
+import { manifestServiceFor, type RecordsEntered } from './record-entered-here.js';
+import { carriedEntriesEntered } from './carried-entries-entered.js';
+import { aReadNotMade, PROPOSALS_NOT_READ, SEAT_READ_STOP, seatsTakenAsked } from './seat-not-read-on-the-chain.js';
+import { signedByASeatHeld } from './invitation-signed-by-a-seat.js';
 import { companyRecordKey, filingRefusalOf, mayInvite, seatsWithAnotherRecordsKey, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
-import { refuseASeatWhoseFingerprintIsNotTheJoiners } from './invitation-on-device.js';
+import { refuseASeatWhoseFingerprintIsNotTheJoiners } from './seat-request-fingerprint.js';
 import { notePreparing } from './read-bound.js';
 import {
   attestedIn, directoryHere, filingRefusalCodeOf, foundingRecordRefusalHere, judgeIn, kindAsked, listedHere, newerNamedRefusal, passedOverSaid, type DirectoryHere,
@@ -96,7 +99,7 @@ export interface RosterDoors {
  * believed against. Nothing a device believed before is kept or read: an
  * older version, or other bytes under a version, is refused by the anchor.
  */
-export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored' | 'leaves'> & Partial<Pick<DirectoryHereDeps, 'invitedSeats'>>;
+export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored' | 'leaves'> & Partial<Pick<DirectoryHereDeps, 'invitedSeats' | 'proposalIdentity'>>;
 
 /**
  * The company as this device believes it, with every seat the chain holds that
@@ -131,7 +134,7 @@ interface RosterReadHeld {
  */
 export const ROSTER_CHECK = {
   noAccount: 'no-account', noRoster: 'no-roster', notOpened: 'roster-not-opened', filerNotChecked: 'filer-not-checked',
-  filerNotBelieved: 'filer-not-believed', seatUnnamed: 'seat-unnamed',
+  filerNotBelieved: 'filer-not-believed', seatUnnamed: 'seat-unnamed', chainUnread: 'chain-unread', seatingRefused: 'seating-refused',
 } as const;
 type RosterCheck = (typeof ROSTER_CHECK)[keyof typeof ROSTER_CHECK];
 
@@ -147,7 +150,7 @@ export class RosterNotBelieved extends Error {
   readonly followable: RosterReadHeld | null;
   /**
    * Set only where the version is this device's own seat's filing, signed by it, newer than any the company's records
-   * name, and never entered in them: the one refusal this seat lifts by entering it again (`rosterHere`).
+   * name, and never entered in them: a refusal this seat lifts by entering it again (`rosterHere`).
    */
   readonly ownUnentered: OwnUnentered | null;
   /** The check that refused, or null where the refusal was made outside the checks named in `ROSTER_CHECK`. */
@@ -162,9 +165,14 @@ export class RosterNotBelieved extends Error {
    * `newer-withheld`, never the reason's sentence. Null for every other refusal.
    */
   readonly because: string | null;
+  /**
+   * For a roster refused for its filer, the company's records as the refusing read held them: what another seat's
+   * device enters the version's carried entry against (`carriedEntriesEntered`). Null for every other refusal.
+   */
+  readonly records: RecordsHeld | null;
   constructor(
     why: string, followable: RosterReadHeld | null = null, ownUnentered: OwnUnentered | null = null,
-    said: { readonly check?: RosterCheck; readonly stoppedBy?: readonly string[]; readonly because?: string } = {},
+    said: { readonly check?: RosterCheck; readonly stoppedBy?: readonly string[]; readonly because?: string; readonly records?: RecordsHeld } = {},
   ) {
     super(why);
     this.name = 'RosterNotBelieved';
@@ -173,6 +181,7 @@ export class RosterNotBelieved extends Error {
     this.check = said.check ?? null;
     this.stoppedBy = said.stoppedBy ?? [];
     this.because = said.because ?? null;
+    this.records = said.records ?? null;
   }
 }
 
@@ -212,6 +221,19 @@ export const signersCheckNoted = async <T>(read: () => Promise<T>, about?: strin
 /** Why a waiting request was not read as waited for, when it was refused rather than stopped by a throw. */
 const INVITATION_REFUSED = 'invitation-refused';
 
+/** A roster with a seat it leaves out, read while the chain or the company's proposals could not be read: nothing is built from it until a read is made. */
+const CHAIN_UNREAD = 'This page could not check the network for a signer who took a seat the company\'s list leaves out. Nothing was changed. '
+  + 'Reload the page to check again.';
+
+/** The same, where the person's wallet names no indexer to read the network through: reading again cannot resolve it. */
+const NO_INDEXER_TO_READ = 'Your wallet did not name the indexer it reads the network through, so whether someone invited to the company waits '
+  + 'for a seat its roster leaves out was not read, and nothing is built from the roster. Open your wallet, check its network, and reload the page.';
+
+/** A roster with a seat it leaves out, while the network shows a seating this device must not tell as any seat: reading again shows the same. */
+const SEATING_REFUSED = 'The network shows a seat taken on an invitation that this device cannot tie to that one invitation, so whether someone '
+  + 'invited waits for a seat the company\'s roster leaves out was not decided, and nothing is built from the roster. Reading again will not '
+  + 'change it: the company removes the seat it did not mean, then reads again.';
+
 /** A roster version this seat filed that the company's records never named: the version, and whether nothing is anchored yet. */
 interface OwnUnentered { readonly roster: SealedCompanyRecord; readonly nothingAnchored: boolean }
 
@@ -231,7 +253,7 @@ interface RosterRead {
 }
 
 /**
- * **THE SEATS PEOPLE WAITING FOR ONE WERE INVITED TO**: a seat the chain holds
+ * **THE SEATS THE CHAIN HOLDS THAT SOMEONE INVITED TO THE COMPANY IS WAITING FOR**: a seat the chain holds
  * before the roster names its signer, between the seat being carried out and
  * its signer being admitted. Each request is read from the company's inbox and
  * held to what every approving device holds it to before it approves the leaf
@@ -247,9 +269,10 @@ interface RosterRead {
  * admission and never refuses the roster. A seat whose own entry the directory
  * already holds was admitted, so nobody waits for it, whatever the inbox holds.
  * A request taken by address is waited for only when the chain shows its
- * invitation's proposal took the seat it names, so without `invitedSeats` it
- * waits for nothing. What kept each request from being waited for is added to
- * `stopped`, by class only.
+ * invitation's proposal took the seat it names (`seatsTakenAsked`). What kept
+ * each request from being waited for is added to `stopped`, by class only, and
+ * so is what stopped a read of the company's proposals or of the chain: a read
+ * not made (`aReadNotMade`), or a seating refused for good. A read that failed adds a stop word and no seat.
  */
 const seatsWaitedFor = async (
   sealed: SealedAccount, viewingKey: KeysHeld, seating: SeatingReads, entered: readonly DirectorySeat[],
@@ -274,18 +297,18 @@ const seatsWaitedFor = async (
   /* The proposals are asked for only when a seat the chain holds is neither admitted nor answered for. */
   let served: readonly ProposalOpened[] = [];
   if (unanswered.length > 0 && proposals !== undefined) {
-    try { served = await proposals(); } catch { served = []; }
+    try { served = await proposals(); } catch { stopped.push(PROPOSALS_NOT_READ); }
   }
   for (const leaf of Array.isArray(served) ? unanswered : []) {
     const invited = seatInvitationIn(served, sealed.id, viewingKey, leaf);
     if (invited !== null && invited.terms.company === sealed.id && signedByASeatHeld(invited, seating.seats, true)) seats.add(leaf);
   }
   /* A seat taken by address is waited for when the account's history shows it is the one an invitation's own proposal took. */
-  const byAddress = Array.isArray(served) && unanswered.some((leaf) => !seats.has(leaf)) && seating.invitedSeats !== undefined
+  const byAddress = Array.isArray(served) && unanswered.some((leaf) => !seats.has(leaf))
     ? invitationsByAddressIn(served, sealed.id, viewingKey).filter((x) => x.terms.company === sealed.id && signedByASeatHeld(x, seating.seats, true)) : [];
   if (byAddress.length > 0) {
     let took: Readonly<Record<string, string | null>> = {};
-    try { took = await seating.invitedSeats!(byAddress.map((x) => x.terms.proposal!.toLowerCase())); } catch { took = {}; }
+    try { took = await seatsTakenAsked(seating.invitedSeats, byAddress.map((x) => x.terms.proposal!.toLowerCase())); } catch (e) { stopped.push(classOf(e)); }
     for (const x of byAddress) {
       const leaf = took[x.terms.proposal!.toLowerCase()]?.toLowerCase();
       if (leaf !== undefined && unanswered.includes(leaf)) seats.add(leaf);
@@ -339,12 +362,18 @@ export const provedSeatsOf = (seats: readonly DirectorySeat[]): DirectoryWitness
  *
  * Refused whole, so nothing is built from it, when it has no entry for a seat
  * the chain holds that nobody invited to it is waiting for (`seatsWaitedFor`:
- * a request this device believes, or the invitation the proposal that seated
- * it carries). An older version,
- * or another record under a version, is refused by the anchor on chain like
- * any record read as the newest; nothing a device believed before is kept. A
- * seat the chain holds that no believed entry names is returned in
- * `notBelieved`, and no committee is built while there is one.
+ * a request this device believes, the invitation the proposal that seated it
+ * carries, or an invitation by address whose proposal the chain's history
+ * shows took it). An older version, or another record under a version, is
+ * refused by the anchor on chain like any record read as the newest; nothing
+ * a device believed before is kept. A seat the chain holds that no believed
+ * entry names is returned in `notBelieved`, and no committee is built while
+ * there is one. Where a seat is left out and the chain or the company's
+ * proposals could not be read for who waits for it, the read stops and is
+ * made again (`chain-unread`): a read not made is never taken as nobody
+ * waiting. Where the chain shows a seating this device must not tell as any
+ * seat, it stops with words that reading again will not change it
+ * (`seating-refused`).
  */
 export async function rosterBelievedHere(
   sealed: SealedAccount & { readonly roster?: SealedCompanyRecord | null }, viewingKey: KeysHeld,
@@ -399,9 +428,16 @@ export async function rosterBelievedHere(
   if (why !== null) {
     throw new RosterNotBelieved(`This device does not believe the company's roster it was given (${why}).`,
       roster.version !== 1 && refusedForItsFilerOnly(here, roster) ? { ...held, refusedForItsFiler: true } : null,
-      ownFilingNeverEntered(here, roster, d.own ?? null), { check: ROSTER_CHECK.filerNotBelieved, because: filingRefusalCodeOf(why) });
+      ownFilingNeverEntered(here, roster, d.own ?? null), { check: ROSTER_CHECK.filerNotBelieved, because: filingRefusalCodeOf(why), records: here.records });
   }
   const missing = unnamedIn(opened.signers, stayingIn(witnesses), waited);
+  if (missing.length > 0 && stopped.includes(SEAT_READ_STOP.refused)) {
+    throw new RosterNotBelieved(SEATING_REFUSED, null, null, { check: ROSTER_CHECK.seatingRefused, stoppedBy: stopped });
+  }
+  if (missing.length > 0 && aReadNotMade(stopped)) {
+    throw new RosterNotBelieved(stopped.includes(SEAT_READ_STOP.noIndexer) ? NO_INDEXER_TO_READ : CHAIN_UNREAD, null, null,
+      { check: ROSTER_CHECK.chainUnread, stoppedBy: stopped });
+  }
   if (missing.length > 0) {
     const over = passedOverSaid(read);
     throw new RosterNotBelieved(`This device does not believe the company's roster it was given (it has no entry for `
@@ -463,8 +499,9 @@ const refusedForItsFilerOnly = (here: Awaited<ReturnType<typeof directoryHere>>,
 /**
  * **THIS SEAT'S OWN ROSTER FILING THAT THE COMPANY'S RECORDS NEVER NAMED**, or null: a version after the first, signed
  * by this device's own seat, with no entry in the records and newer than every version they name. The service took it
- * and its entry was lost on the way, so every device refuses it and none can follow an older one; only the seat that
- * signed it can enter it, and entering it is all that is missing. Read from the records, never from a refusal's words.
+ * and its entry was lost on the way, so every device refuses it and none can follow an older one. This seat enters it
+ * with its own key, its founding records first while nothing is anchored; another seat's device can enter it only with
+ * the entry the version carries, once something is anchored. Read from the records, never from a refusal's words.
  */
 const ownFilingNeverEntered = (
   here: Awaited<ReturnType<typeof directoryHere>>, roster: SealedCompanyRecord, own: { readonly signingPublicKey: string } | null,
@@ -536,9 +573,11 @@ interface RosterHere extends RosterRead {
  * device believes the version filed next would make it, and `followed` says
  * which version and why. A newest version this seat filed itself whose
  * entry in the company's records was lost (`ownFilingNeverEntered`) is
- * entered again from here, once, and the roster read again: no other device
- * can enter it, and every device refuses the roster until it is. Nothing is
- * kept from an earlier read. Any other refusal is thrown, and nothing is filed.
+ * entered again from here, once, and the roster read again. A newest version
+ * another seat filed whose entry was lost is entered from here with the entry
+ * its filer signed and the version carries (`carriedEntriesEntered`), once, and
+ * the roster read again. Nothing is kept from an earlier read. Any other
+ * refusal is thrown, and nothing is filed.
  */
 export async function rosterHere(d: RosterDoors): Promise<RosterHere> {
   return rosterReadHere(d, true);
@@ -559,6 +598,9 @@ const rosterReadHere = async (d: RosterDoors, mayEnter: boolean): Promise<Roster
       await d.entered.enter(await withTheFoundingFirst(d, e.ownUnentered.nothingAnchored, companyRecordEntry(e.ownUnentered.roster)));
       return rosterReadHere(d, false);
     }
+    /* Another seat's filing whose entry was lost is entered with the entry it carries, once, and the roster read again. */
+    if (e.records !== null && mayEnter && sealed.roster != null
+      && (await carriedEntriesEntered({ accountId: d.accountId, manifest: manifestServiceFor(d.api) }, e.records, [sealed.roster])).entered > 0) return rosterReadHere(d, false);
     if (e.followable === null) throw new RosterNotFiled(e.message);
     const held = e.followable;
     const { signers, above } = await carriedHere(d, held, true);
@@ -741,7 +783,7 @@ const nextFiling = (
   d: RosterDoors, keyEpoch: number, next: RosterSecrets, version: number,
   sealing: { readonly key: Hex; readonly epoch: number } = sealingWith(d.viewingKey, keyEpoch),
 ) => {
-  const rec = signCompanyFiling(sealRoster(d.accountId, next, version + 1, sealing.epoch, sealing.key), d.signingSecret);
+  const rec = signedWithItsEntry(sealRoster(d.accountId, next, version + 1, sealing.epoch, sealing.key), d.signingSecret);
   return {
     filing: {
       roster: { version: version + 1, message: toCompanyWire(rec) },
@@ -762,69 +804,13 @@ export interface SeatingReads {
   readonly onTheChain: readonly string[];
   /** The leaf each opening makes, worked out in this device's vault worker. Never the service's word. */
   readonly leaves: RosterReads['leaves'];
-  /** The seat each invitation by address took, from the account's own history (`seatsInvitedIn`). Absent, nobody invited by address is seated here. */
+  /** The seat each invitation by address took, from the account's own history (`seatsInvitedIn`). Absent, it is a read not made (`seatsTakenAsked`). */
   readonly invitedSeats?: RosterReads['invitedSeats'];
 }
 
 /** Whether an invitation was made by address: it names the proposal raised for the address, and no leaf. */
 const madeByAddress = (invited: SignedSeatInvitation | undefined): boolean =>
   invited !== undefined && invited.terms.leaf === undefined && invited.terms.invite !== undefined && invited.terms.proposal !== undefined;
-
-/**
- * Whether `invited` is signed by the filing key of a seat this device believes,
- * whose role may invite (`mayInvite`), and which it has not seen retired - or,
- * once the chain holds the leaf the request is for (`leafOnTheChain`), which it
- * believes at all: the signers approved that leaf on the chain with its
- * inviter checked, so an inviter who has left since strands nobody waiting to
- * be admitted.
- */
-const signedByASeatHeld = (invited: SignedSeatInvitation, seats: readonly DirectoryWitness[], leafOnTheChain = false): boolean =>
-  seats.some((x) => (leafOnTheChain || !x.retired) && mayInvite(x) && x.signingKey.toLowerCase() === invited.signedBy.toLowerCase());
-
-/** The way out every refusal of an invitation by address names. */
-const RAISE_IT_AGAIN = 'Withdraw this proposal, and raise the invitation again from the device of a seated signer who may invite.';
-
-/**
- * **WHAT A SIGNER APPROVES WHEN THEY APPROVE AN INVITATION IS WHAT THE SEAT
- * THAT INVITED SIGNED.** Why the address and the rights a proposal invites
- * (`invite`, as the raiser sealed them beside it) are not bound to the
- * invitation it carries (`invited`), in the sentence a device shows, or null:
- * the invitation must be a seat invitation (`seatInvitationRefusal`) for this
- * company that names an address, signed by the filing key of a seat this
- * device believes, has not seen retired and whose role may invite; and the
- * address and the rights the proposal invites must be the ones it signed. The
- * payload a device then approves is made from the signed invitation alone, so
- * a raiser who names another address or wider rights is refused here and, if
- * the record says otherwise, by the payload made again before any call is
- * built. Run on the raising device before it raises, and on every approving
- * device before it approves.
- */
-export const invitationByAddressRefusal = (
-  company: string, invited: unknown, invite: { readonly address?: unknown; readonly scope?: unknown }, seats: readonly DirectoryWitness[],
-): string | null => {
-  if (seatInvitationRefusal(invited) !== null) {
-    return `This proposal does not carry an invitation signed by the seat that invited, so this device does not act on it. ${RAISE_IT_AGAIN}`;
-  }
-  const signed = invited as SignedSeatInvitation;
-  const t = signed.terms;
-  if (t.invite === undefined) {
-    return `The invitation this proposal carries does not name the address it invites, so this device does not act on it. ${RAISE_IT_AGAIN}`;
-  }
-  if (t.company !== company) {
-    return `The invitation this proposal carries is for another company, so this device does not act on it. ${RAISE_IT_AGAIN}`;
-  }
-  if (!signedByASeatHeld(signed, seats)) {
-    const inviter = seats.find((x) => x.signingKey.toLowerCase() === signed.signedBy.toLowerCase());
-    return inviter !== undefined && !inviter.retired && !mayInvite(inviter)
-      ? `The seat that signed this invitation has a role that may not file a proposal, so it invites nobody. ${RAISE_IT_AGAIN}`
-      : `The seat that signed this invitation is not one this device believes is seated, so this device does not act on it. ${RAISE_IT_AGAIN}`;
-  }
-  if (String(invite.address).toLowerCase() !== t.invite.address.toLowerCase() || String(invite.scope).toLowerCase() !== t.invite.scope.toLowerCase()) {
-    return 'The address or the rights this proposal invites are not the ones the seat that invited signed, so this device does not '
-      + `approve it. Do not approve it. ${RAISE_IT_AGAIN}`;
-  }
-  return null;
-};
 
 /** Whether `leaf` is one of the seats the company's account holds now, as this device's own wallet read it. */
 const onTheChain = (leaf: string, reads: Pick<SeatingReads, 'onTheChain'>): boolean =>
@@ -833,19 +819,6 @@ const onTheChain = (leaf: string, reads: Pick<SeatingReads, 'onTheChain'>): bool
 /** Thrown with the sentence an approving device shows; nothing was raised, approved, carried out or filed. */
 const notTheInvited = (why: string): SeatKeyNotFromTheInvitee =>
   new SeatKeyNotFromTheInvitee(`${why} Nothing was sent. Do not give this person access: ask a seated signer to invite them again.`);
-
-/**
- * Thrown when this device could not read from the chain which seat an invitation's proposal took: the read failed or
- * ran out of time, or this device has no indexer to read it through. It says nothing about the seat itself, so the
- * person is not refused for good: nobody is seated yet, nothing was sent, and pressing again reads the chain again.
- */
-export class SeatNotReadOnTheChain extends Error {
-  constructor() {
-    super('This device could not read from the network which seat this invitation\'s proposal took, so nobody was admitted yet. '
-      + 'Nothing was sent. Press again to read the network again.');
-    this.name = 'SeatNotReadOnTheChain';
-  }
-}
 
 /**
  * Thrown when the id the service gave a person waiting for a seat is also carried by another entry of the roster: a
@@ -876,8 +849,8 @@ const waitingIdTakenIn = (signers: readonly Pick<Signer, 'id' | 'leafCommitment'
  * leaf; its opening must make this leaf for the wallet key it names
  * (`walletKeyProvedBy`, with the leaf this device's vault worker works out); and
  * no other request waiting in the company's inbox, under an invitation a seat
- * this device believes signed, may answer the same invitation or wait for the
- * same person; and the person may hold no other seat this device believes and
+ * this device believes signed and that itself passes these checks, may answer the
+ * same invitation or wait for the same person; and the person may hold no other seat this device believes and
  * has not seen retired. Trusts the viewing key, this device's own read of the directory
  * and its own vault worker; trusts nothing the service says about who is
  * waiting.
@@ -899,6 +872,8 @@ export async function refuseASeatNotForTheInvited(
     }
     /* Only an invitation a seat this device believes signed counts: anybody can seal a request to the inbox, a seat's signature nobody can make. */
     if (seatInvitationRefusal(theirs.invited) !== null || !signedByASeatHeld(theirs.invited!, reads.seats)) continue;
+    /* A request that fails its own checks is seated by no device, so it stops no other. */
+    if ((await invitationRefusalHere(sealed, other, theirs, reads)) !== null) continue;
     if (theirs.invited!.terms.invitation === t.invitation) {
       throw notTheInvited('Another seat request answers the same invitation, so this device seats neither.');
     }
@@ -920,8 +895,9 @@ export async function refuseASeatNotForTheInvited(
  * sentence an approving device shows, or null: everything
  * `refuseASeatNotForTheInvited` holds a request to but the other requests in
  * the inbox. The one rule for approving a leaf and for a seat being waited for.
- * Throws `SeatNotReadOnTheChain` when a seat taken by address cannot be checked
- * because the chain was not read: an unread chain is never told as another seat.
+ * Throws what `seatsTakenAsked` throws when a seat taken by address cannot be
+ * checked: an unread chain is never told as another seat, and a seating
+ * refused for good keeps its own words.
  */
 const invitationRefusalHere = async (
   sealed: SealedAccount, box: Pick<PendingSigner, 'userId'>, payload: PendingSignerPayload, reads: SeatingReads,
@@ -943,15 +919,7 @@ const invitationRefusalHere = async (
   if (madeByAddress(invited)) {
     /* Made by address: nobody's sign-in was known, and the seat is the one the chain shows the invitation's own proposal took. */
     const proposal = t.proposal!.toLowerCase();
-    let answered: Readonly<Record<string, string | null>>;
-    try {
-      answered = reads.invitedSeats === undefined ? {} : await reads.invitedSeats([proposal]);
-    } catch {
-      throw new SeatNotReadOnTheChain();
-    }
-    /* A read of the chain answers every proposal asked about, null where it shows no seat taken; one that answers nothing did not read it. */
-    if (!Object.prototype.hasOwnProperty.call(answered, proposal)) throw new SeatNotReadOnTheChain();
-    const took = answered[proposal] ?? null;
+    const took = (await seatsTakenAsked(reads.invitedSeats, [proposal]))[proposal] ?? null;
     if (took === null || took.toLowerCase() !== payload.leafCommitment.toLowerCase()) {
       return 'The seat in this request is not the one the network shows this invitation\'s proposal took, so nobody is seated from it.';
     }
@@ -1022,22 +990,26 @@ export const seatingOf = (read: { readonly witnesses: RosterWitnesses }, reads: 
     ...(reads.invitedSeats === undefined ? {} : { invitedSeats: reads.invitedSeats }),
   });
 
-/** Whether two signed seat invitations are one: the same terms, signed by the same seat, with the same signature. */
-export const sameSignedInvitation = (a: SignedSeatInvitation, b: SignedSeatInvitation): boolean =>
-  canonical(a.terms) === canonical(b.terms) && a.signedBy.toLowerCase() === b.signedBy.toLowerCase()
-  && a.signature.toLowerCase() === b.signature.toLowerCase();
+/**
+ * Whether two signed seat invitations are one: the same terms, signed by the same seat. The signature is not compared:
+ * each is verified on its own, and the same terms signed again by the same seat invite the same person to the same seat.
+ */
+export const sameInvitation = (a: SignedSeatInvitation, b: SignedSeatInvitation): boolean =>
+  canonical(a.terms) === canonical(b.terms) && a.signedBy.toLowerCase() === b.signedBy.toLowerCase();
 
 /**
  * **THE PROPOSALS TO SEAT AN ADDRESS UNDER ONE ID ON THE NETWORK THAT THIS DEVICE BELIEVES**: of the records the service
  * serves, the ones the company's records hold as they were served (`listedHere`), filed by a seat the directory this
  * device reads holds as able to file them (`judgeIn`, as `believedProposalIdsOnChainHere` asks it), that open with the
- * viewing key as a proposal to seat an address under `chainId` (`addSignerByAddressIn`), and whose invitation a seat
- * that may invite signed (`signedByASeatHeld`). A record filed or an invitation signed by any other key is not one.
+ * viewing key as a proposal to seat an address under `chainId` (`addSignerByAddressIn`), whose invitation a seat
+ * that may invite signed (`signedByASeatHeld`), and whose invitation makes that id (`invitationMakesItsProposal`). A record
+ * filed or an invitation signed by any other key is not one, and nor is a second invitation filed under an id the
+ * approved one made: the id commits to the whole invitation, so two different invitations never stand under one id.
  */
-export const believedSeatingsUnder = (
+export const believedSeatingsUnder = async (
   here: DirectoryHere, served: readonly SealedProposal[], accountId: string, viewingKey: KeysHeld, chainId: string,
-  seats: readonly DirectoryWitness[], leafOnTheChain = false,
-): AddSignerByAddress[] => {
+  seats: readonly DirectoryWitness[], identity: ProposalIdentityOf, leafOnTheChain = false,
+): Promise<AddSignerByAddress[]> => {
   const judge = judgeIn(here);
   const id = chainId.toLowerCase();
   const out: AddSignerByAddress[] = [];
@@ -1048,7 +1020,8 @@ export const believedSeatingsUnder = (
     if (x === null || x.chainId !== id || !signedByASeatHeld(x.invited, seats, leafOnTheChain)) continue;
     out.push(x);
   }
-  return out;
+  const made = await Promise.all(out.map((x) => invitationMakesItsProposal(x.invited, identity)));
+  return out.filter((_, i) => made[i]);
 };
 
 /**
@@ -1057,19 +1030,21 @@ export const believedSeatingsUnder = (
  * invitation is the one a seat signed and the chain shows its proposal took this seat (`invitationRefusalHere`), so the
  * key is the seat's own wallet's, whatever the service serves beside it. Only the proposals under that id this device
  * believes count (`believedSeatingsUnder`, over the directory read with the records-key statements of the roster it
- * believes, `attestedIn`), and **ONE OF THEM MUST CARRY THE VERY SIGNED INVITATION THE REQUEST CARRIES,
- * AND NONE ANOTHER** (`sameSignedInvitation`): the chain binds only the address and the rights, so the name and role a
- * seat is admitted with are the ones the approvers opened and approved. A record the service serves beside them, filed
- * or signed by a key that is no seat that may invite, changes nothing. Refused when this device cannot make the
- * commitment, no believed proposal under that id carries the request's invitation, two believed ones carry different
- * invitations, or none carries a coin key that makes the commitment.
+ * believes, `attestedIn`, each one whose invitation makes that id), and **ONE OF THEM MUST CARRY THE VERY SIGNED
+ * INVITATION THE REQUEST CARRIES, AND NONE ANOTHER** (`sameInvitation`): the id commits to the whole invitation,
+ * so the name and role a seat is admitted with are the ones the approvers opened and approved. A record the service
+ * serves beside them, filed or signed by a key that is no seat that may invite, or carrying an invitation that does not
+ * make that id, changes nothing. Refused when this device cannot make the commitment or the proposal's identity, no
+ * believed proposal under that id carries the request's invitation, two believed ones carry different invitations, or
+ * none carries a coin key that makes the commitment.
  */
 const coinKeyOfTheSeatHere = async (
   d: RosterDoors, invited: SignedSeatInvitation, seats: readonly DirectoryWitness[], believed: Pick<Account, 'signers'>,
 ): Promise<Hex> => {
   const invite = invited.terms.invite!;
   const proposal = invited.terms.proposal!.toLowerCase();
-  if (d.commitments === undefined) {
+  const identity = d.reads.proposalIdentity;
+  if (d.commitments === undefined || identity === undefined) {
     throw new RosterNotFiled('This device cannot check the address this seat was invited at, so nobody was admitted and nothing was '
       + 'sent. Reload the page to get the current version.');
   }
@@ -1077,13 +1052,13 @@ const coinKeyOfTheSeatHere = async (
     d.api(route(d.accountId, '/proposals')) as Promise<unknown>,
     directoryHere({ accountId: d.accountId, label: d.label, viewingKey: d.viewingKey, ...d.reads, attested: async () => attestedIn(believed) }, kindAsked('proposal')),
   ]);
-  const named = believedSeatingsUnder(here, Array.isArray(served) ? served as SealedProposal[] : [], d.accountId, d.viewingKey, proposal, seats, true);
-  if (!named.some((x) => sameSignedInvitation(x.invited, invited))) {
+  const named = await believedSeatingsUnder(here, Array.isArray(served) ? served as SealedProposal[] : [], d.accountId, d.viewingKey, proposal, seats, identity, true);
+  if (!named.some((x) => sameInvitation(x.invited, invited))) {
     throw notTheInvited('The invitation this seat request carries is not the invitation the proposal its seat was approved on carries, '
       + 'as this device believes the company\'s proposals, so it may name another person or role than the approvers approved, and '
       + 'nobody is seated from it.');
   }
-  if (named.some((x) => !sameSignedInvitation(x.invited, invited))) {
+  if (named.some((x) => !sameInvitation(x.invited, invited))) {
     throw notTheInvited('Two proposals this device believes, each filed and signed by a seat that may invite, carry different '
       + 'invitations under the id the network seated, so this device cannot tell which one the approvers approved, and nobody is '
       + 'seated from it. The seat this invitation took on the network must be removed by the company before this person is invited again.');

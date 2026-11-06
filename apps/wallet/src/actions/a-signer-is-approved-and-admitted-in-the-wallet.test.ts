@@ -6,6 +6,7 @@ import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profil
 import { MidnightCommitments } from '../../../../src/midnight/commitments.js';
 import { SeatKeyNotFromTheInvitee } from '../../../../src/core/seat-invite-proof.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { InvitationOutrun } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 
 /*
  * **A SIGNER INVITED BY ADDRESS IS APPROVED, AND THEN ADMITTED, FROM ANOTHER SEAT'S WALLET, ONE WINDOW EACH.** What the
@@ -60,7 +61,8 @@ const { admitSignerAction, ADMIT_STATE } = await import('./admit-signer.js');
 const { ApprovalNotOwed, InvitationNotBound, NothingToApprove } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
 const { runAction } = await import('./run.js');
 const { FiledNotEntered } = await import('../../../../packages/web-shared/src/record-entered-here.js');
-const { SeatNotReadOnTheChain, WaitingIdTaken } = await import('../../../../packages/web-shared/src/roster-here.js');
+const { WaitingIdTaken } = await import('../../../../packages/web-shared/src/roster-here.js');
+const { SeatNotReadOnTheChain } = await import('../../../../packages/web-shared/src/seat-not-read-on-the-chain.js');
 const { governanceDoorsFor } = await import('./company-reach.js');
 
 const secret = newSecret();
@@ -207,6 +209,29 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED IN THE WALLET, EXACTLY AS THE 
       expect(await refusedWith(run(approveProposalAction(reach()), intent('approve-proposal', APPROVE), ctx))).toBe(says);
     }
     expect(t.calls).not.toContain('approve');
+  });
+
+  it('an invitation a removal outran while it was being approved is never told as waiting for the invitee, and one the shared code finds outrun is refused as outrun', async () => {
+    Object.defineProperty(t, 'onChain', {
+      configurable: true, enumerable: true,
+      get: () => (t.approved === 0 ? { held: 'open', approvals: 1, needed: 2, raisedAt: 1 } : { held: 'open', approvals: 2, needed: 2, raisedAt: 1, outrun: true }),
+      set: () => {},
+    });
+    try {
+      const { ctx, told } = ctxOf(intent('approve-proposal', APPROVE));
+      await run(approveProposalAction(reach()), intent('approve-proposal', APPROVE), ctx);
+      /* RED WHEN: an invitation that reached its bar after a signer was removed is told as waiting for the invitee, who can never take its seat. */
+      expect(told).toContainEqual({ state: 'outrun', approvals: 2, needed: 2 });
+      expect(told.some((x) => (x as { state?: string }).state === 'waiting-for-the-invitee')).toBe(false);
+    } finally {
+      delete (t as { onChain?: unknown }).onChain;
+      t.onChain = null;
+    }
+    t.approved = 0;
+    t.approve = async () => { throw new InvitationOutrun(); };
+    const { ctx } = ctxOf(intent('approve-proposal', APPROVE));
+    /* RED WHEN: the shared code's refusal of an outrun invitation is told as the wallet not approving, not as outrun with what to do next. */
+    expect(await refusedWith(run(approveProposalAction(reach()), intent('approve-proposal', APPROVE), ctx))).toBe('act.approve-proposal.why.outrun');
   });
 
   it('RED WHEN: a proposal is approved that the wallet found changed, or found not raised, and the person is told it was', async () => {

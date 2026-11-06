@@ -77,6 +77,13 @@ const KIND_SAID: { readonly [K in InvitationKind]: string } = {
   employee: 'an employee\'s', vendor: 'a vendor\'s', signer: 'a signer\'s', 'super-admin': 'a super admin\'s',
 };
 
+const HEX64_LOW = /^[0-9a-f]{64}$/;
+
+const OLDER_KEY_REFUSAL = 'this invitation was made under an older key of the company than the one it holds now, so a seat request cannot be filed after it expired. Ask the person who invited you for a new invitation. Nothing was sent.';
+
+/* The seat numbers a wallet tries for one company: each makes a leaf at the invitation's rights and one at all vaults. */
+const MOST_SEAT_NUMBERS = 64;
+
 const SEALED = z.object({
   ephemeral: z.string().regex(/^[0-9a-f]{64}$/), iv: z.string().min(1), tag: z.string(), body: z.string().min(1),
 }).strict();
@@ -86,7 +93,7 @@ export const invitationRoutes = (deps: {
   readonly member: express.RequestHandler;
   readonly store: InvitationStore;
   readonly records: () => CompanyRecordStore;
-  readonly directoryOf: (accountId: string) => Promise<DirectoryNow>;
+  readonly directoryOf: (accountId: string, also?: readonly string[]) => Promise<DirectoryNow>;
   /**
    * Counts a look at an offer against whoever is asking, before anything is
    * looked up; true when it may go on, having answered the request itself
@@ -152,7 +159,33 @@ export const invitationRoutes = (deps: {
     if (!acceptsTheInvitation(acceptance, invite!.acceptanceHash)) return { status: 403, body: { refused: 'not-accepted', error: INVITATION_REFUSAL['not-accepted'] } };
     return invite!;
   };
-  const isAnswer = (x: Invite | Answer): x is Answer => 'status' in x && 'body' in x;
+  const isAnswer = (x: object): x is Answer => 'status' in x && 'body' in x;
+
+  /*
+   * Opens an invitation for a seat request. One that expired still takes the request of a seat the chain already holds
+   * and no directory entry names, since the seat was taken before it ended (`late` is then true); one withdrawn or used
+   * never does, and neither does a request without that seat. The same sign-in asking again for the same seat is given
+   * the id it had; a request for a seat is never refused because somebody else asked for it, and one made under an
+   * older key of the company than it holds now is refused.
+   */
+  const acceptingSeatRequest = async (
+    req: express.Request, acceptance: string, leaf: string | undefined, who: string,
+  ): Promise<{ invite: Invite; late: boolean } | Answer> => {
+    const invite = accepting(req, ['signer'], acceptance);
+    if (!isAnswer(invite)) return { invite, late: false };
+    const row = deps.store.invitationById(String(req.params.id));
+    if (invite.body.refused !== 'expired' || leaf === undefined || row === null || row.kind !== 'signer' || row.revokedAt || row.acceptedAt
+      || !acceptsTheInvitation(acceptance, row.acceptanceHash)) return invite;
+    const earlier = row.lateSeatRequests?.find((r) => r.leaf === leaf && r.userId === who);
+    if (earlier !== undefined) return { status: 201, body: { id: earlier.id } };
+    const rec = deps.store.getAccount(row.accountId);
+    if (rec !== null && (row.keyEpoch ?? 0) < rec.keyEpoch) return { status: 410, body: { refused: 'expired', error: OLDER_KEY_REFUSAL } };
+    let now: DirectoryNow;
+    try { now = await deps.directoryOf(row.accountId, [leaf]); } catch (e) { return { status: 503, body: { error: CHAIN_UNREAD(e) } }; }
+    const held = (now.chain?.seats.seats ?? []).some((x) => x.toLowerCase() === leaf);
+    const named = now.dir.seats.some((x) => x.seat.toLowerCase() === leaf);
+    return held && !named ? { invite: row, late: true } : invite;
+  };
   /*
    * The id a signer's own seat request on this invitation was given, when the same signed-in person asks again with
    * the link's proof and that request is still waiting: an answer that never reached their wallet is given again, and
@@ -288,13 +321,14 @@ export const invitationRoutes = (deps: {
    * seats anybody.
    */
   router.post('/api/invites/:id/accept-signer', logged, deps.signedIn, json, async (req, res) => {
-    const b = z.object({ acceptance: z.string(), waiting: SEALED, for: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional() }).strict().safeParse(req.body);
+    const b = z.object({ acceptance: z.string(), waiting: SEALED, for: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(), leaf: z.string().regex(HEX64_LOW).optional() }).strict().safeParse(req.body);
     if (!b.success) { res.status(400).json({ refused: 'not-an-acceptance', error: 'an acceptance is the proof the link gives and what was sealed on this device, and nothing else. Nothing was sent.' }); return; }
     const again = b.data.for === undefined ? seatRequestAskedAgain(req, b.data.acceptance) : null;
     if (again !== null) { res.status(201).json({ id: again }); return; }
-    const invite = accepting(req, ['signer'], b.data.acceptance);
-    if (isAnswer(invite)) { res.status(invite.status).json(invite.body); return; }
     const signedIn = (req as { userId?: unknown }).userId as string;
+    const opened = await acceptingSeatRequest(req, b.data.acceptance, b.data.leaf, b.data.for ?? signedIn);
+    if (isAnswer(opened)) { res.status(opened.status).json(opened.body); return; }
+    const { invite, late } = opened;
     /*
      * **A SEAT REQUEST FOR SOMEBODY ELSE, FROM THE CODE THEY GAVE.** Only the
      * seat that made this invitation may accept it for the person a pasted code
@@ -321,19 +355,41 @@ export const invitationRoutes = (deps: {
     }
     const pending = { id: 'sgn_' + nanoid(10), userId: who, createdAt: new Date().toISOString(), sealed: b.data.waiting };
     deps.store.putAccount({ ...rec, pendingSigners: [...rec.pendingSigners, pending] });
-    deps.store.putInvite({ ...invite, acceptedAt: pending.createdAt, subjectId: pending.id });
+    deps.store.putInvite(late
+      ? { ...invite, subjectId: pending.id, lateSeatRequests: [...(invite.lateSeatRequests ?? []), { leaf: b.data.leaf!, userId: who, id: pending.id }] }
+      : { ...invite, acceptedAt: pending.createdAt, subjectId: pending.id });
     res.status(201).json({ id: pending.id });
+  });
+
+  /*
+   * Which of the leaves and signing keys a wallet asks about a directory entry of the company already names, retired
+   * seats included: it answers for those asked and nothing else, so a wallet picks a seat number no entry holds.
+   */
+  router.post('/api/invites/:id/seats-named', logged, deps.signedIn, json, async (req, res) => {
+    const list = (most: number) => z.array(z.string().regex(HEX64_LOW)).max(most);
+    if (!(await deps.meterOffer(req, res))) return;
+    const b = z.object({ acceptance: z.string(), leaves: list(2 * MOST_SEAT_NUMBERS), keys: list(MOST_SEAT_NUMBERS) }).strict().safeParse(req.body);
+    if (!b.success) { res.status(400).json({ refused: 'not-a-question', error: 'this asks which of a bounded list of seats and keys the company already names, with the proof the link gives. Nothing was answered.' }); return; }
+    const invite = accepting(req, ['signer'], b.data.acceptance);
+    if (isAnswer(invite)) { res.status(invite.status).json(invite.body); return; }
+    let now: DirectoryNow;
+    try { now = await deps.directoryOf(invite.accountId); } catch (e) { res.status(503).json({ error: CHAIN_UNREAD(e) }); return; }
+    const leaves = new Set(now.dir.seats.map((x) => x.seat.toLowerCase()));
+    const keys = new Set(now.dir.seats.map((x) => x.signingKey.toLowerCase()));
+    res.status(200).json({ leaves: b.data.leaves.filter((x) => leaves.has(x)), keys: b.data.keys.filter((x) => keys.has(x)) });
   });
 
   /*
    * **SOMEBODY WAITING FOR A SEAT, WITHDRAWN.** A store and a relay only: the
    * withdrawal is held to its shape, its signature, and a seat the chain holds
-   * now for the key that signed it, whoever hands it in, and never while this
-   * service's own read of the chain shows the leaf it names seated. The seat
-   * request it names is let go, and the invitation it answered is marked
-   * withdrawn. Which leaf the sealed request is for is not this service's to
-   * see: the signing device names it, and refuses while the chain holds that
-   * leaf or a proposal to seat it.
+   * now for the key that signed it, whoever hands it in. The seat request it
+   * names is let go, and the invitation it answered is marked withdrawn,
+   * except that a request filed after its invitation closed is let go alone
+   * and leaves the invitation open. A request whose leaf this service's read
+   * of the chain shows seated is refused as seated, unless it was filed late.
+   * Which leaf the sealed request is for is not this service's to see: the
+   * signing device names it, and refuses while a proposal that could seat it
+   * is open on the chain.
    */
   router.post('/api/accounts/:id/signers/:signerId/withdraw', logged, deps.signedIn, deps.member, json, async (req, res) => {
     const company = String(req.params.id);
@@ -344,29 +400,36 @@ export const invitationRoutes = (deps: {
       return;
     }
     let now: DirectoryNow;
-    try { now = await deps.directoryOf(company); } catch (e) { res.status(503).json({ error: CHAIN_UNREAD(e) }); return; }
+    /* The withdrawal's leaf is asked of the chain beside every seat an entry names, so a seat nobody has claimed yet is still seen. */
+    try { now = await deps.directoryOf(company, [withdrawal!.leaf]); } catch {
+      res.status(503).json({ error: 'the network could not be read just now, so nobody was withdrawn. Reload the page and try again.' });
+      return;
+    }
     const seat = signerSeatNow(now, withdrawal!.signedBy);
     if (typeof seat === 'string') {
       res.status(403).json({ refused: seat, error: `nobody was withdrawn, because ${FILING_REFUSAL[seat]}.` });
       return;
     }
-    /* The chain's own add decides: a request whose leaf this service's read of the chain shows seated is admitted, never let go. */
-    if ((now.chain?.seats.seats ?? []).some((x) => x.toLowerCase() === withdrawal!.leaf.toLowerCase())) {
-      res.status(409).json({ refused: 'seated-on-the-chain', error: 'the chain already holds the seat this withdrawal names, so that person is admitted, not withdrawn. Nobody was withdrawn.' });
-      return;
-    }
+    /* A request whose leaf this service's read of the chain shows seated is admitted, never let go, unless it was filed late for that seat. */
     const rec = deps.store.getAccount(company);
     const invite = deps.store.invitationById(withdrawal!.invitation);
+    const late = invite?.lateSeatRequests?.some((r) => r.id === withdrawal!.signerId) === true;
+    if (!late && (now.chain?.seats.seats ?? []).some((x) => x.toLowerCase() === withdrawal!.leaf.toLowerCase())) {
+      res.status(409).json({ refused: 'seated-on-the-chain', error: 'that person has already taken their seat on the network, so they cannot be withdrawn. Press Finish adding beside their name to add them. Nobody was withdrawn.' });
+      return;
+    }
     if (rec === null || !rec.pendingSigners.some((p) => p.id === withdrawal!.signerId)) {
       res.status(409).json({ refused: 'not-waiting', error: 'that person is not waiting for a seat on this company. Reload the page. Nobody was withdrawn.' });
       return;
     }
-    if (invite === null || invite.accountId !== company || invite.subjectId !== withdrawal!.signerId) {
-      res.status(409).json({ refused: 'not-its-invitation', error: 'the withdrawal names another invitation than the one that seat request answered. Nobody was withdrawn.' });
+    if (invite === null || invite.accountId !== company || (invite.subjectId !== withdrawal!.signerId && !late)) {
+      res.status(409).json({ refused: 'not-its-invitation', error: 'the withdrawal names another invitation than the one that seat request answered. Nobody was withdrawn. Reload the page and try again.' });
       return;
     }
     deps.store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.filter((p) => p.id !== withdrawal!.signerId) });
-    if (!invite.revokedAt) deps.store.putInvite({ ...invite, revokedAt: new Date().toISOString() });
+    /* A request filed late is let go alone: the invitation stays open to the person it was made for. */
+    if (late) deps.store.putInvite({ ...invite, lateSeatRequests: invite.lateSeatRequests!.filter((r) => r.id !== withdrawal!.signerId) });
+    else if (!invite.revokedAt) deps.store.putInvite({ ...invite, revokedAt: new Date().toISOString() });
     res.status(200).json({ withdrawn: withdrawal!.signerId });
   });
 

@@ -561,7 +561,7 @@ app.use(cors());
     contractState: (address) => theChain.contractState(address as Hex),
     readLedger: (data) => readAccountLedger(data as never) as unknown as AccountHolds,
   });
-  const directoryNow = (accountId: string) => directoryOf(store, directoryChain, accountId);
+  const directoryNow = (accountId: string, also?: readonly string[]) => directoryOf(store, directoryChain, accountId, also);
   /* `authed` is defined further down; it is looked up when a request arrives, by which time it is. */
   mountVaultRecords(app, {
     signedIn: (req, res, next) => authed(req, res, next),

@@ -1,7 +1,8 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { SeatKeyNotFromTheInvitee } from '../../../../src/core/seat-invite-proof.js';
-import { admitSignerHere, rosterHere, SeatNotReadOnTheChain, WaitingIdTaken } from '../../../../packages/web-shared/src/roster-here.js';
+import { admitSignerHere, rosterHere, WaitingIdTaken } from '../../../../packages/web-shared/src/roster-here.js';
+import { SeatNotReadOnTheChain } from '../../../../packages/web-shared/src/seat-not-read-on-the-chain.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, governanceDoorsFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';

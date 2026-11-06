@@ -1169,6 +1169,12 @@ export interface Invite {
    */
   revokedAt?: string;
   acceptedAt?: string;
+  /**
+   * The seat requests filed after the invitation expired, each for a seat the chain already held: the seat (a leaf, in
+   * lower case), the sign-in it was filed under and the id of the request. One sign-in asking again for one seat is
+   * answered with the id it was first given; nobody else's request for that seat is refused or stands for it.
+   */
+  lateSeatRequests?: ReadonlyArray<{ readonly leaf: string; readonly userId: string; readonly id: string }>;
   /*
    * `acceptedBy` USED TO BE HERE AND WAS A LEAK.
    *

@@ -67,6 +67,30 @@ export const raiseByOf = (createdAt: string): string => {
   return String(Math.floor(at / 1000) + RAISE_WINDOW_SECONDS);
 };
 
+/**
+ * Whether a raise carrying the deadline `raiseBy` (whole seconds, as `raiseByOf` gives it) may still reach the chain at
+ * the time `atMs`, in milliseconds: the chain takes it only before that deadline. A withdrawal waits on this, since a
+ * record withdrawn while its raise may still land could leave the chain holding a proposal its records say is gone.
+ */
+export const raiseMayStillLandAt = (raiseBy: string, atMs: number): boolean => atMs < Number(raiseBy) * 1000;
+
+/**
+ * Whether a written-down proposal that is not on the chain still holds what it names (an address it invites) at the
+ * chain time `atMs`: while its raise may still land, and only when its deadline is no further off than one raise
+ * window and the lag `CLOCK_AHEAD_SECONDS` allows. The time a record was written down is chosen by its filer, so a deadline
+ * further off than any record written now could carry was written with a clock ahead of the chain, and holding it would let one seat keep an
+ * address from ever being invited again.
+ */
+export const raiseHoldsWhatItNamesAt = (raiseBy: string, atMs: number): boolean =>
+  raiseMayStillLandAt(raiseBy, atMs) && Number(raiseBy) * 1000 <= atMs + (RAISE_WINDOW_SECONDS + CLOCK_AHEAD_SECONDS) * 1000;
+
+/**
+ * How far, in seconds, a filer's clock may run ahead of the newest block an indexer shows and its record still hold
+ * what it names: a record is written down by the filer's clock, and the chain's time trails it by a block and the
+ * indexer's lag, so a record filed a moment ago must not read as written ahead of the chain.
+ */
+export const CLOCK_AHEAD_SECONDS = 600;
+
 /** The raising seat's signature over the filing, and the key it is checked against. */
 export interface ProposalFiledBy { readonly publicKey: Hex; readonly signature: Hex }
 
@@ -267,7 +291,7 @@ type ProposalOpened = Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pic
 
 /** What one opened proposal to add a seat carries: its request id, its invitation, the seat that raised it, its coin key, salt and words. */
 interface AddSignerOpened {
-  readonly rec: ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>;
+  readonly rec: ProposalOpened & Partial<Pick<SealedProposal, 'chainId' | 'createdAt' | 'filedBy'>>;
   readonly signerId: unknown;
   readonly invited?: SignedSeatInvitation;
   readonly inviter?: Inviter;
@@ -280,7 +304,7 @@ interface AddSignerOpened {
 
 /** Every proposal to add a seat the key of its own epoch opens, with what it carries; one that key does not open names nothing. */
 const addSignersOpened = (
-  proposals: readonly (ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>)[], accountId: string, viewingKey: KeysHeld,
+  proposals: readonly (ProposalOpened & Partial<Pick<SealedProposal, 'chainId' | 'createdAt' | 'filedBy'>>)[], accountId: string, viewingKey: KeysHeld,
 ): AddSignerOpened[] => proposals.flatMap((rec) => {
   try {
     const key = keyOf(viewingKey, rec.keyEpoch);
@@ -313,10 +337,16 @@ export const invitationsByAddressIn = (
   .map((x) => x.invited)
   .filter((x): x is SignedSeatInvitation => x !== undefined && x.terms.leaf === undefined && x.terms.invite !== undefined && x.terms.proposal !== undefined);
 
-/** One address the company's proposals invite to a seat: the proposal's id on the chain, and the coin key it names. */
+/**
+ * One address the company's proposals invite to a seat: the proposal's id on the chain, the coin key it names, the
+ * deadline its raise carries (`raiseByOf`), absent when its record does not say when it was written, and the signing
+ * key of the seat whose signed filing it is.
+ */
 export interface AddressInvited {
   readonly chainId: string;
   readonly coinPublicKey: Hex;
+  readonly raiseBy?: string;
+  readonly filedBy?: string;
 }
 
 /**
@@ -328,7 +358,7 @@ export interface AddressInvited {
  * took, is the chain's to say, never this list's.
  */
 export const addressesInvitedIn = (
-  proposals: readonly (ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>)[],
+  proposals: readonly (ProposalOpened & Partial<Pick<SealedProposal, 'chainId' | 'createdAt' | 'filedBy'>>)[],
   accountId: string, viewingKey: KeysHeld, inviteAddressOf: (coinPublicKey: Hex, salt: Hex) => Hex,
 ): AddressInvited[] => addSignersOpened(proposals, accountId, viewingKey).flatMap((x) => {
   const invite = x.invited?.terms.invite;
@@ -341,7 +371,18 @@ export const addressesInvitedIn = (
   } catch {
     return [];
   }
-  return made === invite.address.toLowerCase() ? [{ chainId: x.rec.chainId.toLowerCase(), coinPublicKey: coin as Hex }] : [];
+  if (made !== invite.address.toLowerCase()) return [];
+  let raiseBy: string | undefined;
+  try {
+    raiseBy = raiseByOf(x.rec.createdAt ?? '');
+  } catch {
+    raiseBy = undefined;
+  }
+  const filedBy = typeof x.rec.filedBy?.publicKey === 'string' ? x.rec.filedBy.publicKey.toLowerCase() : undefined;
+  return [{
+    chainId: x.rec.chainId.toLowerCase(), coinPublicKey: coin as Hex, ...(raiseBy === undefined ? {} : { raiseBy }),
+    ...(filedBy === undefined ? {} : { filedBy }),
+  }];
 });
 
 /** One proposal to add a seat by address, as a signer's device approves it or admits the seat it took. */

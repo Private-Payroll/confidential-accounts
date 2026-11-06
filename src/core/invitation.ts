@@ -177,7 +177,7 @@ export interface SignerOffer {
   readonly invited: SignedSeatInvitation;
   /**
    * Only on a seat offered by address: the address the inviter typed, and the salt of the proposal raised to seat
-   * it. With the address's salt and rights in `invited`, they are everything the invitee's wallet needs to take the
+   * it, which is the one `invited` makes (`invitationProposalSalt`). With the address's salt and rights in `invited`, they are everything the invitee's wallet needs to take the
    * seat with `seatInvited`, and none of it is held only at the service: the inviting device keeps the link.
    */
   readonly byAddress?: { readonly address: string; readonly proposalSalt: Hex };
@@ -229,7 +229,8 @@ export interface SeatInvitationTerms {
   readonly invite?: SeatInvitationAddress;
   /**
    * Only beside `invite`, on an invitation made by address: the identity on the chain of the proposal raised to seat
-   * the address. The seat the invitee's wallet takes with `seatInvited` is bound to this invitation by it: a device
+   * the address, made under the salt the rest of the invitation makes (`invitationProposalSalt`), so it commits to the
+   * whole invitation. The seat the invitee's wallet takes with `seatInvited` is bound to this invitation by it: a device
    * believes the leaf the account's history shows that proposal closed with, and no other.
    */
   readonly proposal?: Hex;
@@ -281,20 +282,97 @@ const seatInvitationMessage = (terms: SeatInvitationTerms): string => canonical(
 
 /** A seat invitation, signed on the inviting device by the filing key its directory entry names. */
 export const signSeatInvitation = (terms: SeatInvitationTerms, signingSecret: Hex): SignedSeatInvitation => {
-  const t: SeatInvitationTerms = {
-    company: terms.company, invitation: terms.invitation.toLowerCase() as Hex, person: terms.person, name: terms.name, role: terms.role,
-    ...(terms.leaf === undefined ? {} : { leaf: terms.leaf.toLowerCase() as Hex }),
-    ...(terms.invite === undefined ? {} : { invite: {
-      address: terms.invite.address.toLowerCase() as Hex, salt: terms.invite.salt.toLowerCase() as Hex, scope: terms.invite.scope.toLowerCase() as Hex,
-      ...(terms.invite.threshold === undefined ? {} : { threshold: terms.invite.threshold }),
-    } }),
-    ...(terms.proposal === undefined ? {} : { proposal: terms.proposal.toLowerCase() as Hex }),
-    ...(terms.replaces === undefined ? {} : { replaces: {
-      invitation: terms.replaces.invitation.toLowerCase() as Hex, signedBy: terms.replaces.signedBy.toLowerCase() as Hex, signature: terms.replaces.signature.toLowerCase() as Hex,
-    } }),
-  };
+  const t = termsAsSigned(terms);
   if (seatInvitationTermsRefusal(t) !== null) throw new Error('that is not a seat invitation this device can sign, so the invitation was not made.');
   return { terms: t, signedBy: signingPublicKeyOf(signingSecret), signature: sign(seatInvitationMessage(t), signingSecret) };
+};
+
+/** The terms as a signature covers them: every hex value in lower case, and nothing the terms do not name. */
+const termsAsSigned = (terms: SeatInvitationTerms): SeatInvitationTerms => ({
+  company: terms.company, invitation: terms.invitation.toLowerCase() as Hex, person: terms.person, name: terms.name, role: terms.role,
+  ...(terms.leaf === undefined ? {} : { leaf: terms.leaf.toLowerCase() as Hex }),
+  ...(terms.invite === undefined ? {} : { invite: {
+    address: terms.invite.address.toLowerCase() as Hex, salt: terms.invite.salt.toLowerCase() as Hex, scope: terms.invite.scope.toLowerCase() as Hex,
+    ...(terms.invite.threshold === undefined ? {} : { threshold: terms.invite.threshold }),
+  } }),
+  ...(terms.proposal === undefined ? {} : { proposal: terms.proposal.toLowerCase() as Hex }),
+  ...(terms.replaces === undefined ? {} : { replaces: {
+    invitation: terms.replaces.invitation.toLowerCase() as Hex, signedBy: terms.replaces.signedBy.toLowerCase() as Hex, signature: terms.replaces.signature.toLowerCase() as Hex,
+  } }),
+});
+
+const PROPOSAL_SALT_DOMAIN = 'confidential-accounts/seat-invitation-proposal-salt/v1';
+
+/**
+ * **THE SALT OF THE PROPOSAL RAISED TO SEAT AN INVITATION BY ADDRESS**: the
+ * digest of the invitation's terms, all but the `proposal` they name, and of
+ * the filing key that signs it. The proposal's identity on the chain is made
+ * from its change and this salt, so it commits to the whole invitation - the
+ * person, name and role as much as the address and rights - and no second
+ * invitation can name the same proposal. The terms leave `proposal` out
+ * because the proposal's identity is made from this salt, and the signature
+ * is left out because it covers `proposal`. The inviting device makes the salt
+ * before it signs; every device that raises, approves, admits or believes a
+ * claim on such an invitation makes it again from the invitation alone.
+ */
+export const invitationProposalSalt = (invited: Pick<SignedSeatInvitation, 'terms' | 'signedBy'>): Hex => {
+  const { proposal: _named, ...terms } = termsAsSigned(invited.terms);
+  return toHex(sha256(utf8(canonical({ domain: PROPOSAL_SALT_DOMAIN, terms, signedBy: invited.signedBy.toLowerCase() }))));
+};
+
+/** The change a proposal to seat an address makes on the account: the address's commitment, its rights and any threshold it sets. */
+export interface SeatByAddressChange {
+  readonly kind: 'add-signer';
+  readonly address: string;
+  readonly scope: string;
+  readonly threshold?: string;
+}
+
+/** The change an invitation by address asks the account to make, as its proposal binds it. */
+export const seatByAddressChangeOf = (invite: SeatInvitationAddress): SeatByAddressChange => ({
+  kind: 'add-signer', address: invite.address.toLowerCase(), scope: invite.scope.toLowerCase(),
+  ...(invite.threshold === undefined ? {} : { threshold: invite.threshold }),
+});
+
+/** A proposal's identity on the chain, from its change and its salt, as the account's own functions make it on this device. */
+export type ProposalIdentityOf = (change: SeatByAddressChange, salt: string) => Promise<{ readonly chainId: string }>;
+
+/**
+ * **WHETHER AN INVITATION BY ADDRESS MAKES THE PROPOSAL IT NAMES**: the
+ * identity its change and its own salt (`invitationProposalSalt`) make is the
+ * `proposal` its terms name. False for any invitation not made by address. A
+ * device believes a seat taken on such a proposal, and the role it carries,
+ * only on an invitation for which this holds, so an invitation filed or
+ * claimed beside the approved one under the same identity is never believed.
+ */
+export const invitationMakesItsProposal = async (invited: SignedSeatInvitation, identity: ProposalIdentityOf): Promise<boolean> => {
+  const t = invited.terms;
+  if (t.invite === undefined || t.proposal === undefined || t.leaf !== undefined) return false;
+  const made = await identity(seatByAddressChangeOf(t.invite), invitationProposalSalt(invited));
+  return String(made.chainId).toLowerCase() === t.proposal.toLowerCase();
+};
+
+/**
+ * **WHICH OF THESE INVITATIONS MADE BY ADDRESS MAKE THE PROPOSAL THEY NAME**
+ * (`invitationMakesItsProposal`), each worked out once, up front, so a reader
+ * that must stay synchronous can ask afterwards. One not asked about, one not
+ * signed as it says, or any where no `identity` is given, makes none. A
+ * working-out that fails is thrown, never taken as a refusal.
+ */
+export const invitationsMakingTheirProposal = async (
+  invitations: readonly SignedSeatInvitation[], identity: ProposalIdentityOf | undefined,
+): Promise<(invited: SignedSeatInvitation) => boolean> => {
+  const keyOf = (i: SignedSeatInvitation): string => canonical({ terms: i.terms, signedBy: String(i.signedBy).toLowerCase() });
+  const asked = [...new Map(invitations.filter((i) => seatInvitationRefusal(i) === null).map((i) => [keyOf(i), i])).values()];
+  const made = new Set<string>();
+  if (identity !== undefined && asked.length > 0) {
+    const yes = await Promise.all(asked.map((i) => invitationMakesItsProposal(i, identity))).catch((e: unknown) => {
+      throw new Error(`the proposal an invitation by address names could not be worked out on this device (${(e as Error)?.message ?? String(e)}), `
+        + 'so no seat taken on one is believed. Reload the page');
+    });
+    asked.forEach((i, n) => { if (yes[n]) made.add(keyOf(i)); });
+  }
+  return (invited) => made.has(keyOf(invited));
 };
 
 const seatInvitationTermsRefusal = (t: Partial<SeatInvitationTerms> | null | undefined): string | null => {

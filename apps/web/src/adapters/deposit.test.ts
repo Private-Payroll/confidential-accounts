@@ -70,9 +70,12 @@ vi.mock('./keyring-person.js', () => ({ keyringFor: async () => st.signedIn }));
 vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ isTheBuilder: true }) }));
 vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
+  vaultServiceFor: (_api: unknown, companyId: string) => ({ isTheService: true, companyId }),
+}));
+vi.mock('vaults-web-shared/in-flight-in-this-browser.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/in-flight-in-this-browser.js')>()),
   browserInFlightRecords: () => ({ isThisBrowser: true }),
   browserDepositsInFlight: (opener: unknown) => ({ isDepositsInFlight: true, opener }),
-  vaultServiceFor: (_api: unknown, companyId: string) => ({ isTheService: true, companyId }),
 }));
 vi.mock('vaults-web-shared/vault-coins-kept-here.js', () => ({ coinsKeptOnThisDevice: (_r: unknown, opener: unknown) => ({ isCoinsKept: true, opener }) }));
 vi.mock('./vault-private-money.js', () => ({ seatAndRecordsHere: (...a: [string, string, (() => Promise<unknown>)?]) => st.seat!(...a) }));

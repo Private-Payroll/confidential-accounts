@@ -12,7 +12,8 @@ import { handedOver, notThroughOurService, ServiceNotReached, serviceNotReached 
 import { governedCallServiceFor, nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { vaultServiceFor } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import WORDS from '../locales/en.json';
-import { apiOver, FELL_ORDER, fellBackLine, handOverFor, type FellBack } from './company-reach.js';
+import { apiOver, handOverFor } from './company-reach.js';
+import { FELL_ORDER, fellBackLine, type FellBack } from './fall-back-line.js';
 import type { StepContext } from './definition.js';
 
 const ACCOUNT = 'ac'.repeat(32);

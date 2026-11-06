@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
-import { browserDepositsInFlight, browserInFlightRecords, browserPaymentsInFlight } from './vault-page-doors.js';
+import { browserDepositsInFlight, browserInFlightRecords, browserPaymentsInFlight } from './in-flight-in-this-browser.js';
 import { newWrappingKeypair } from '../../../src/core/crypto.js';
 import { openInFlight, sealInFlight, slotFor, type SealedInFlight } from './in-flight-on-this-device.js';
 

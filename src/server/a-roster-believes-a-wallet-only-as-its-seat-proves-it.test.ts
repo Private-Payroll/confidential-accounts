@@ -13,8 +13,12 @@
  * believes and has not seen retired names, whose opening makes that leaf, for
  * a seat the directory holds no entry for yet.
  *
+ * A seat taken on an invitation by address is entered only with the invitation
+ * its proposal commits to, and never with another naming that proposal.
+ *
  * Over real HTTP: Ada and Bo are seated and believed. The chain's read is the
- * test's. Bo is retired by the last case, so it runs last.
+ * test's. Bo is retired by the last roster case, so it runs after every case
+ * that needs him.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
@@ -24,23 +28,26 @@ import { newSigningKeypair, newWrappingKeypair, sign, signingPublicKeyOf, toHex,
 import { openAccount, sealAccount } from '../core/account.js';
 import { sealToInbox } from '../core/sealed-records.js';
 import { newSeatInvitation, proveSeatKeys } from '../core/seat-invite-proof.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
+import { invitationIdOf, invitationProposalSalt, newInvitationToken, seatByAddressChangeOf, signSeatInvitation } from '../core/invitation.js';
 import { signedFoundingRoster, sealRoster, type RosterSecrets } from '../core/roster-record.js';
 import { signVaultKeys, vaultKeyIndexOf } from '../core/vault-keys.js';
 import type { Account, PendingSignerPayload, SealedAccount, Signer } from '../core/types.js';
 import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
-import { directoryChangeMessage, type DirectoryChange } from '../midnight/seat-directory.js';
+import { directoryChangeMessage, directoryEntryMade, type DirectoryChange } from '../midnight/seat-directory.js';
 import {
-  admitSignerHere, foldOffersHere, offerVaultKeysHere, rosterBelievedHere, rosterHere, type RosterDoors,
+  admitSignerHere, foldOffersHere, offerVaultKeysHere, ROSTER_CHECK, rosterBelievedHere, rosterHere, RosterNotBelieved, type RosterDoors, type RosterReads,
 } from 'vaults-web-shared/roster-here.js';
-import { seatRequestFingerprint } from 'vaults-web-shared/invitation-on-device.js';
+import { NoIndexerToReadTheChain, SEAT_READ_STOP, SeatingRefusedOnTheChain, TWO_SEATINGS } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
+import { seatRequestFingerprint } from 'vaults-web-shared/seat-request-fingerprint.js';
 import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { directoryWithItsRecordsHere } from 'vaults-web-shared/vault-page-doors.js';
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { signerRoutes } from './signer-routes.js';
 import {
-  aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeReads, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, seatOf, sendAs, store,
+  aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeDirectoryWithItsFold, acmeReads, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, seatOf, seatsTakenByInvitation,
+  sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
@@ -106,8 +113,8 @@ const claims = (s: Seat) => {
 const served = async (): Promise<SealedAccount & { roster: SealedCompanyRecord | null }> =>
   (await sendAs('ada')(`/api/accounts/${CO}`, { method: 'GET' })).body as never;
 /** One person's device reading the roster: its own key and entry, the directory and its wallet's read of the chain. */
-const readOn = async (s: Seat) => rosterBelievedHere(await served(), KEY, {
-  accountId: CO, label: LABEL, account: ADDRESS, reads: acmeReads,
+const readOn = async (s: Seat, reads: RosterReads = acmeReads) => rosterBelievedHere(await served(), KEY, {
+  accountId: CO, label: LABEL, account: ADDRESS, reads,
   own: { signerId: `sgn_${s.person}`, signingPublicKey: signingPublicKeyOf(s.signingSecret as Hex) },
 });
 /** One seat's device, as it reads the roster to change it. */
@@ -324,5 +331,97 @@ describe('A SEAT THE CHAIN HOLDS THAT THE ROSTER DOES NOT NAME IS WAITED FOR ONL
     inboxHolds({ id: 'sgn_gen', userId: 'gen', payload: requestOf(GEN, { invitedBy: { signingSecret: newSigningKeypair().secret } as Seat }) });
     await expect(readOn(ADA)).rejects.toThrow(leftOut);
     inboxHolds();
+  });
+});
+
+describe('A SEAT TAKEN ON AN INVITATION BY ADDRESS IS ENTERED ONLY WITH THE INVITATION ITS PROPOSAL COMMITS TO', () => {
+  it('AN ENTRY CARRYING ANOTHER ROLE UNDER THE SAME PROPOSAL IS NOT BELIEVED, AND THE ONE THE PROPOSAL MAKES IS', async () => {
+    const HAL = seatOf('hal', 16);
+    /* Ada's seat invites an address as an approver: the proposal's id is made under the salt the invitation itself makes. */
+    const terms = {
+      company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'adr_00112233445566778899', name: 'hal', role: 'approver' as const,
+      invite: { address: 'c1'.repeat(32) as Hex, salt: 'c2'.repeat(32) as Hex, scope: 'c3'.repeat(32) as Hex },
+    };
+    const salt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(ADA.signingSecret as Hex) });
+    const proposal = (await acmeReads.proposalIdentity(seatByAddressChangeOf(terms.invite), salt)).chainId.toLowerCase() as Hex;
+    const approved = signSeatInvitation({ ...terms, proposal }, ADA.signingSecret as Hex);
+    /* Ada's seat signs another invitation naming the same proposal, address and rights, with another role. */
+    const anotherRole = signSeatInvitation({ ...terms, role: 'admin', proposal }, ADA.signingSecret as Hex);
+    seatsTakenByInvitation.set(proposal, HAL.seat.toLowerCase());
+    onChain(ADA, DEE, CY, HAL);
+    const entryWith = (invited: typeof approved) => directoryEntryMade({
+      company: CO, person: HAL.person, committeeKey: HAL.committeeKey as never, signed: HAL.statement, opening: HAL.opening,
+      signingSecret: HAL.signingSecret as Hex, viewingKey: KEY, invited,
+    });
+    const halsSeat = async () => (await acmeDirectoryWithItsFold()).dir.seats.find((x) => x.seat.toLowerCase() === HAL.seat.toLowerCase());
+    claims({ ...HAL, entry: entryWith(anotherRole) });
+    /* RED WHEN: an entry is believed on an invitation that does not make the proposal the chain shows took its seat, so with a role nobody approved. */
+    expect(await halsSeat()).toBeUndefined();
+    claims({ ...HAL, entry: entryWith(approved) });
+    /* RED WHEN: the entry carrying the invitation the proposal commits to is not believed. */
+    expect(await halsSeat()).toMatchObject({ role: 'approver', retired: null });
+    /* RED WHEN: a directory read whose chain could not be read for the seat an invitation by address took leaves that seat out, in place of stopping to read again. */
+    const unread = directoryWithItsRecordsHere({ ...acmeDirectoryDeps(), invitedSeats: async () => { throw new Error('the indexer did not answer'); } });
+    await expect(unread).rejects.toMatchObject({ name: SEAT_READ_STOP.notRead });
+    /* RED WHEN: a device given no door to read the seats invitations by address took believes the directory without that seat, in place of stopping. */
+    const { invitedSeats: _none, ...blind } = acmeDirectoryDeps();
+    await expect(directoryWithItsRecordsHere(blind)).rejects.toMatchObject({ name: SEAT_READ_STOP.notRead });
+    /* RED WHEN: a seating the chain shows that no reading again can settle is told as a read to make again, so its own words are lost. */
+    const refused = directoryWithItsRecordsHere({ ...acmeDirectoryDeps(), invitedSeats: async () => { throw new SeatingRefusedOnTheChain(TWO_SEATINGS); } });
+    await expect(refused).rejects.toMatchObject({ name: SEAT_READ_STOP.refused, message: TWO_SEATINGS });
+    /* RED WHEN: a wallet that names no indexer is told to press again, which cannot resolve it. */
+    const noIndexer = await directoryWithItsRecordsHere({ ...acmeDirectoryDeps(), invitedSeats: async () => { throw new NoIndexerToReadTheChain(); } })
+      .then(() => new Error('read'), (e: unknown) => e as Error);
+    expect([noIndexer.name, /check its network/u.test(noIndexer.message), /press again/iu.test(noIndexer.message)]).toEqual([SEAT_READ_STOP.noIndexer, true, false]);
+    /* RED WHEN: a roster read whose directory could not be read for that seat is not stopped as a filer not checked, naming what stopped it. */
+    const roster = await readOn(BO, { ...acmeReads, invitedSeats: async () => { throw new Error('the indexer did not answer'); } }).catch((e: unknown) => e);
+    expect(roster).toBeInstanceOf(RosterNotBelieved);
+    expect([(roster as RosterNotBelieved).check, (roster as RosterNotBelieved).stoppedBy]).toEqual([ROSTER_CHECK.filerNotChecked, [SEAT_READ_STOP.notRead]]);
+  });
+
+  it('A CLAIM CARRYING AN INVITATION THAT IS NOT ONE SIGNED FOR A PROPOSAL DOES NOT STOP THE DIRECTORY READ, AND EVERY OTHER SEAT IS STILL BELIEVED', async () => {
+    const JAN = seatOf('jan', 18);
+    const hals = (await acmeDirectoryWithItsFold()).dir.seats.filter((x) => x.role === 'approver' && x.retired === null).map((x) => x.seat);
+    expect(hals).toHaveLength(1);
+    /* An invitation by address naming a proposal that is no identity of thirty-two bytes, sealed into a seat's own claim, which the service cannot open. */
+    const malformed = {
+      terms: { company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'adr_00112233445566778899', name: 'jan', role: 'approver', proposal: 'zz',
+        invite: { address: 'd1'.repeat(32), salt: 'd2'.repeat(32), scope: 'd3'.repeat(32) } },
+      signedBy: signingPublicKeyOf(ADA.signingSecret as Hex), signature: 'ee'.repeat(64),
+    };
+    claims({ ...JAN, entry: directoryEntryMade({
+      company: CO, person: JAN.person, committeeKey: JAN.committeeKey as never, signed: JAN.statement, opening: JAN.opening,
+      signingSecret: JAN.signingSecret as Hex, viewingKey: KEY, invited: malformed as never,
+    }) });
+    /* RED WHEN: one claim's malformed invitation fails the read of which seat every invitation by address took, so every device's directory read stops for good. */
+    const read = await acmeDirectoryWithItsFold();
+    expect(read.dir.seats.filter((x) => x.role === 'approver' && x.retired === null).map((x) => x.seat)).toEqual(hals);
+  });
+
+  it('A ROSTER THAT NAMES EVERY SEAT THE CHAIN HOLDS IS BELIEVED THOUGH THE CHAIN COULD NOT BE READ FOR A REQUEST TAKEN BY ADDRESS', async () => {
+    const KIM = seatOf('kim', 19);
+    const was = chains.get(CO)!;
+    /* The chain holds the seats the roster names, and no seat taken by address. */
+    onChain(ADA, BO, DEE, CY);
+    const named = await readOn(BO);
+    /* A request for a seat the chain does not hold, on an invitation by address, whose check needs the chain read that fails. */
+    const request = requestOf(KIM, { invited: false });
+    request.invited = signSeatInvitation({
+      company: CO, invitation: invitationIdOf(newInvitationToken()), person: KIM.person, name: KIM.person, role: 'admin', proposal: 'd4'.repeat(32) as Hex,
+      invite: { address: 'd5'.repeat(32) as Hex, salt: 'd6'.repeat(32) as Hex, scope: 'd7'.repeat(32) as Hex },
+    }, ADA.signingSecret as Hex);
+    inboxHolds({ id: 'sgn_kim', userId: KIM.person, payload: request });
+    try {
+      /* RED WHEN: a read of the chain that failed for a request stops the roster though it leaves out no seat the chain holds. */
+      const read = await readOn(BO, { ...acmeReads, invitedSeats: async (asked) => {
+        if (asked.includes('d4'.repeat(32))) throw new Error('the indexer did not answer');
+        return acmeReads.invitedSeats(asked);
+      } });
+      const active = (r: typeof read) => r.account.signers.filter((x) => x.status === 'active').map((x) => x.id);
+      expect(active(read)).toEqual(active(named));
+    } finally {
+      inboxHolds();
+      chains.set(CO, was);
+    }
   });
 });

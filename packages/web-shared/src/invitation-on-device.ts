@@ -45,10 +45,10 @@ import { inboxPublicKey as inboxOf, openFromInbox, sealToInbox } from '../../../
 import { sealPerson } from '../../../src/core/person-record.js';
 import { openVendor, sealVendor, vendorTermsRefusal, type VendorRecord, type VendorTerms } from '../../../src/core/vendor-record.js';
 import { assets as defaultAssets, whyTheMoneyCannotReach } from '../../../src/core/assets.js';
-import { newSeatInvitation, proveSeatKeys, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
+import { invitationSecret, newSeatInvitation, proveSeatKeys, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
 import {
-  acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, invitationThresholdRefusal, newInvitationToken,
-  offerExpiredRefusal, openOffer,
+  acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, invitationProposalSalt,
+  invitationThresholdRefusal, newInvitationToken, offerExpiredRefusal, openOffer, seatByAddressChangeOf, type ProposalIdentityOf,
   replacedBy, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, signWithdrawal, SUPER_ADMIN_INVITED_BY_THE_COMMITTEE,
   SUPER_ADMIN_JOINS_BY_THE_COMMITTEE, tokenOfLink,
   utcMomentOf, whyThisOfferCannotBeMade,
@@ -60,15 +60,17 @@ import { seatInvitationIn, seatStillProposedFor } from '../../../src/core/propos
 import { mayInvite } from '../../../src/midnight/seat-directory.js';
 import type { AssetId } from '../../../src/core/assets.js';
 import {
-  companyWirePaths, fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord,
+  companyWirePaths, fromCompanyWire, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
-import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import { companyRecordEntry, signedWithItsEntry } from '../../../src/midnight/record-manifest.js';
 import { FiledNotEntered, type RecordsEntered } from './record-entered-here.js';
 import type { LeafScheme } from '../../../src/core/signer-leaf.js';
 import type { SealedHandover } from '../../../src/core/invite-handover.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { readJoinCode, writeJoinCode, JOIN_CODE_REFUSAL, type JoinCode, type PayeeParts, type SignerParts } from 'midnight-identity/profile/join-code';
-import { payeeCodeFingerprint, seatKeyFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
+import { payeeCodeFingerprint, seatKeyFingerprint } from 'midnight-identity/profile/fingerprint';
+
+import { seatRequestFingerprint } from './seat-request-fingerprint.js';
 import { acceptSeatOnThisDevice, type AcceptedSeat, type SeatDoors } from './accept-seat.js';
 import { walletKeyProvedBy, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
@@ -268,9 +270,7 @@ export interface SignerByAddressDoors {
   readonly network: NetworkName;
   readonly commitments: { inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex; allVaults(): Hex };
   readonly held: (coinPublicKey: Hex, except?: string) => Promise<string | null>;
-  readonly identity: (
-    change: { readonly kind: 'add-signer'; readonly address: string; readonly scope: string; readonly threshold?: string }, salt: string,
-  ) => Promise<{ readonly chainId: string }>;
+  readonly identity: ProposalIdentityOf;
   readonly raise: (input: {
     readonly invited: SignedSeatInvitation; readonly proposalSalt: string; readonly name: string; readonly inviter: Inviter; readonly coinPublicKey: Hex;
   }) => Promise<unknown>;
@@ -350,7 +350,7 @@ async function filePayeeInvitation(
     ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }), ...(spec.address === undefined ? {} : { address: spec.address }),
   };
   const token = tokenFor(given);
-  const signed = signCompanyFiling(sealPerson(person, 1, sealing.epoch, sealing.key), seat.signingSecret);
+  const signed = signedWithItsEntry(sealPerson(person, 1, sealing.epoch, sealing.key), seat.signingSecret);
   const invitation = await filed(company, seat, 'employee', offer, sealing, token, send, person.id, toCompanyWire(signed));
   await seat.entered.enter([companyRecordEntry(signed)]);
   return { token, id: invitation.id, person: person.id, sealing };
@@ -378,7 +378,7 @@ async function fileVendorInvitation(
   const vendor = vendorAddedHere(company, spec, offer.person, { madeBy: signingPublicKeyOf(seat.signingSecret), madeAt: utcMomentOf(Date.now()) });
   if (vendor.address !== null) await refuseAnAddressAVendorHolds(vendor.address.bech32, doors);
   const token = tokenFor(given);
-  const signed = signCompanyFiling(sealVendor(vendor, 1, sealing.epoch, sealing.key), seat.signingSecret);
+  const signed = signedWithItsEntry(sealVendor(vendor, 1, sealing.epoch, sealing.key), seat.signingSecret);
   const invitation = await filed(company, seat, 'vendor', asOffered, sealing, token, send, offer.person, toCompanyWire(signed));
   await seat.entered.enter([companyRecordEntry(signed)]);
   return { token, id: invitation.id, person: offer.person };
@@ -456,9 +456,10 @@ async function fileSignerInvitation(
 /**
  * **A SEAT OFFERED BY THE ADDRESS THE INVITER TYPED, RAISED BEFORE ANYBODY ACCEPTS.** A wallet already seated here,
  * or already invited by a proposal still open, is refused first (`doors.held`). The address's coin key is
- * committed to under a fresh salt; the proposal's identity is worked out first, under a salt chosen here, so the
- * signed invitation names the commitment, the seat's rights, the threshold it sets once taken (where one is asked)
- * and the proposal; the proposal is raised with this seat's
+ * committed to under a fresh salt; the proposal's identity is worked out first, under the salt the invitation's own
+ * terms and this seat's filing key make (`invitationProposalSalt`), so the signed invitation names the commitment,
+ * the seat's rights, the threshold it sets once taken (where one is asked) and the proposal, and that proposal
+ * commits to the whole invitation; the proposal is raised with this seat's
  * approval, carrying the coin key sealed; and only then is the offer filed, carrying the address, the proposal's salt
  * and the signed invitation, so the invitee's wallet can take the seat itself. Before the raise, this device keeps the
  * token and the offer it signed (`doors.keep`); nothing is raised when it cannot. If the filing fails after the raise,
@@ -490,15 +491,15 @@ async function fileSignerByAddress(
     address: doors.commitments.inviteAddressOf(coinPublicKey, addressSalt).toLowerCase() as Hex, salt: addressSalt, scope,
     ...(threshold === undefined ? {} : { threshold }),
   };
-  const proposalSalt = toHex(randomBytes(32));
-  const { chainId } = await doors.identity({ kind: 'add-signer', address: invite.address, scope, ...(threshold === undefined ? {} : { threshold }) }, proposalSalt);
+  const token = tokenFor(opts.token);
+  const terms = {
+    company: company.id, invitation: invitationIdOf(token), person: `adr_${toHex(randomBytes(10))}`, name: signer.name, role: signer.role, invite,
+  };
+  const proposalSalt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(seat.signingSecret) });
+  const { chainId } = await doors.identity(seatByAddressChangeOf(invite), proposalSalt);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role);
-  const token = tokenFor(opts.token);
-  const invited = signSeatInvitation({
-    company: company.id, invitation: invitationIdOf(token), person: `adr_${toHex(randomBytes(10))}`, name: signer.name, role: signer.role,
-    invite, proposal: chainId.toLowerCase() as Hex,
-  }, seat.signingSecret);
+  const invited = signSeatInvitation({ ...terms, proposal: chainId.toLowerCase() as Hex }, seat.signingSecret);
   const inviter: Inviter = { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening };
   const forWhom: InvitationOffer['for'] = {
     kind: 'signer', name: signer.name, role: signer.role, seat: { nonce: proved.nonce, secret: proved.secret }, invited,
@@ -669,8 +670,11 @@ export const INVITATION_UNDER_THIS_LINK_CLOSED = 'the invitation already filed u
  * (`firstAskRefusal`), so what is raised is what the press showed, must name its proposal, and must not have expired:
  * nobody could open an expired offer, so a seat raised for it could never be taken; the address's wallet is checked again against
  * every other proposal (`doors.held`, except this one's). The same proposal is raised again under its own salt, which
- * finds the one already raised when there is one, and the same signed offer is filed, so one address never gets two
- * proposals from one attempt.
+ * finds the one already raised when there is one, so one address never gets two proposals from one attempt. The offer
+ * filed names the inbox key and the seat proof's secret of the company key in force now: when the kept one was made
+ * from an older key, the offer is signed again with that key's inbox key and secret (the nonce, terms, proposal and
+ * expiry unchanged), and kept in place of the old one before anything is raised or filed, so a seat request is never
+ * sealed to a key a removed seat may hold, and is checked by the devices that hold the key in force.
  */
 async function resumeSignerByAddress(
   company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec & { readonly address: string }, coinPublicKey: Hex,
@@ -695,10 +699,17 @@ async function resumeSignerByAddress(
   }
   const held = await doors.held(coinPublicKey, forWhom.invited.terms.proposal);
   if (held !== null) throw new InvitationNotMade(held);
+  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
+  const inbox = inboxOf(sealing.key, company.id);
+  const secret = invitationSecret(sealing.key, company.id, forWhom.seat.nonce, forWhom.name, forWhom.role);
+  let resumed = kept;
+  if (offer.inboxPublicKey !== inbox || forWhom.seat.secret !== secret) {
+    resumed = { ...kept, offer: signOffer({ ...offer, inboxPublicKey: inbox, for: { ...forWhom, seat: { nonce: forWhom.seat.nonce, secret } } }, seat.signingSecret) };
+    await doors.keep(resumed);
+  }
   await doors.raise({ invited: forWhom.invited, proposalSalt: forWhom.byAddress.proposalSalt, name: forWhom.name, inviter: offer.inviter, coinPublicKey });
   try {
-    const sealing = sealingWith(company.viewingKey, company.keyEpoch);
-    const invitation = await filed(company, seat, 'signer', forWhom, sealing, kept.token, send, undefined, undefined, kept.offer);
+    const invitation = await filed(company, seat, 'signer', forWhom, sealing, kept.token, send, undefined, undefined, resumed.offer);
     return { link: kept.link, id: invitation.id };
   } catch (e) {
     throw new InvitationRaisedNotFiled(kept.link, (e as Error).message);
@@ -1051,25 +1062,6 @@ export async function addPayeeFromCodeHere(
   return { person: made.person, fingerprint: payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }) };
 }
 
-/** Thrown when the fingerprint a joiner reads out is not the one of the keys about to be seated. */
-export class FingerprintsDiffer extends Error {
-  constructor() {
-    super('The fingerprint the person read out is not the fingerprint of the keys about to be seated, so what reached this company is not what their device made. Do not seat them: ask them for a new code or a new link.');
-    this.name = 'FingerprintsDiffer';
-  }
-}
-
-/** The fingerprint of the keys a seat request would seat, as a device about to seat it works it out. */
-export const seatRequestFingerprint = (waiting: Pick<PendingSignerPayload, 'signingPublicKey' | 'wrappingPublicKey' | 'leafCommitment'>): string =>
-  seatKeyFingerprint(waiting);
-
-/** Refuses unless the fingerprint the joiner read out, however typed, is the one of the keys about to be seated. */
-export function refuseASeatWhoseFingerprintIsNotTheJoiners(
-  waiting: Pick<PendingSignerPayload, 'signingPublicKey' | 'wrappingPublicKey' | 'leafCommitment'>, readOut: string,
-): void {
-  if (tidyFingerprint(readOut) !== seatRequestFingerprint(waiting)) throw new FingerprintsDiffer();
-}
-
 /* ------------------------------------------------------------------ an inviter who left */
 
 /**
@@ -1195,12 +1187,14 @@ interface WaitingReads {
  * person can accept a new invitation. The request is opened here with any
  * key of the company this device holds, so one sealed before the key changed
  * is withdrawn too, and refused - before anything is signed - while the chain
- * holds its leaf, or holds a proposal to seat it open (as this device's own
- * read of the chain says, never the service), since either may still seat it:
- * that proposal is withdrawn first. The withdrawal names the request, the
- * invitation it answered and its leaf, signed by this seat's filing key; the
- * service lets the request go only while the chain holds this seat and not
- * that leaf.
+ * holds a proposal to seat it open (as this device's own read of the chain
+ * says, never the service), since it may still seat them: that proposal is
+ * withdrawn first. The withdrawal names the request, the invitation it
+ * answered and its leaf, signed by this seat's filing key. This device also
+ * refuses a seat that may not invite and a seat the chain does not hold; the
+ * service decides the rest, and for a leaf the chain holds it lets go only a
+ * request filed after its invitation closed, which leaves the invitation open
+ * to the person it seated.
  */
 export async function withdrawWaitingSignerHere(
   company: Pick<InvitingCompany, 'id' | 'viewingKey'>, seat: Pick<InvitingSeat, 'signingSecret' | 'held' | 'statement'>, signerId: string,
@@ -1218,15 +1212,11 @@ export async function withdrawWaitingSignerHere(
   if (invitation === undefined) {
     throw new Error('This seat request names no invitation, so it cannot be withdrawn by its invitation. Nothing was signed or sent.');
   }
-  if (reads.onTheChain.some((x) => x.toLowerCase() === waiting.leafCommitment.toLowerCase())) {
-    throw new Error('The chain already holds this person\'s seat, so they are not withdrawn: they are admitted, or removed by '
-      + 'a removal. Nothing was signed or sent.');
-  }
   if (seatStillProposedFor(reads.proposals, company.id, company.viewingKey, signerId, reads.openOnTheChain)) {
     throw new Error('A proposal to seat this person is still open, and could still seat them. Withdraw that proposal first. '
       + 'Nothing was signed or sent.');
   }
-  /* The leaf travels with it, so the service lets nothing go once its own read of the chain shows that leaf seated. */
+  /* The leaf travels with it, so the service can tell a request for a seat the chain already holds from one filed late, and lets only the late one go. */
   const withdrawal = signWithdrawal({ company: company.id, signerId, invitation, leaf: waiting.leafCommitment }, seat.signingSecret);
   answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/signers/${encodeURIComponent(signerId)}/withdraw`, {
     method: 'POST', body: JSON.stringify({ withdrawal }),

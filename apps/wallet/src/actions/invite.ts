@@ -14,7 +14,7 @@ import {
   openTheFiledOffer, type InvitationSend, type InviteOptions, type InviteSpecs, type InvitingCompany, type InvitingSeat, type KeptSeatInvitation,
 } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { InvitationNotBound, nothingWasSentBy, signerByAddressDoorsOf, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import { withSeatInvitationKept } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { keptSeatInvitationForAddress, withoutSeatInvitationsKept, withSeatInvitationKept } from '../../../../packages/web-shared/src/kept-seat-invitations.js';
 import { FiledNotEntered, manifestServiceFor } from '../../../../packages/web-shared/src/record-entered-here.js';
 import { seatHereIn } from '../../../../packages/web-shared/src/vault-operation.js';
 import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
@@ -24,8 +24,10 @@ import type { Identity } from 'midnight-identity/keys/derivation';
 import { addressFor } from 'midnight-identity';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
+import { chainTimeOf } from './chain-time.js';
 import {
-  approversHere, companyReachFor, enteredFor, governanceDoorsFor, keptReach, runsOutrunHere, type CompanyChain, type CompanyReach, type Handed,
+  approversHere, companyReachFor, enteredFor, governanceDoorsFor, keptReach, runsOutrunHere, type CompanyChain, type CompanyReach,
+  type Handed,
 } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
@@ -223,8 +225,6 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
           const asked = askedOf(intent, network, registry);
           if ('key' in asked) throw new StepRefused(asked);
           if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
-          const token = intent.fields['token']!.toLowerCase() as Hex;
-          const id = invitationIdOf(token);
           const send: InvitationSend = (path, init) => ctx.call(init.method, path, init.body);
           const vendors = () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
             send: r.send, directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster), network, claimRefusal: signedClaimRefusal,
@@ -237,7 +237,10 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
           const all = (await reach.commitments()).allVaults().toLowerCase() as Hex;
           const notTheFirstAsk = (no: string): StepRefused => new StepRefused(why('not-made', { says: said(new InvitationNotMade(no)) }));
           const notEntered = (e: FiledNotEntered): StepRefused => new StepRefused(why('filed-not-entered', { says: e.why }));
-          const kept = ctx.keyring.open().read().seatInvitationsKept?.[id];
+          const found = await keptInvitationFor(ctx, r, reach.now(), send, asked, intent.fields['token']!.toLowerCase() as Hex);
+          if ('refused' in found) throw notTheFirstAsk(found.refused);
+          const { kept, token } = found;
+          const id = invitationIdOf(token);
           if (kept !== undefined) {
             const no = firstAskRefusal(kept.offer.offer.for, asked.kind, asked.spec as never, all);
             if (no !== null) throw notTheFirstAsk(no);
@@ -331,6 +334,42 @@ const holdsTheCoinKeyOf = (identity: Identity, network: NetworkName, address: st
  * proposal is raised, and one kept by an earlier attempt for this token is taken up again instead of made anew (the
  * step has already refused one kept for another ask).
  */
+/**
+ * The invitation this wallet kept for a press, and the token it goes on under. The page's own token names its own; when
+ * nothing is kept under it, a signer's press takes up the one invitation kept for the same company and address that can
+ * still be taken, and goes on under that one's token, which the page is told, so a page that lost its token does not
+ * start a second invitation for an address whose first proposal is still open and gives the link that was filed. One
+ * whose link the service says is used, expired or withdrawn, or whose proposal the chain holds closed, is passed over
+ * and let go of. Nothing kept: the page's token, to make a new one.
+ */
+async function keptInvitationFor(
+  ctx: StepContext, r: CompanyReach, now: number, send: InvitationSend, asked: Asked, pageToken: Hex,
+): Promise<{ readonly kept: KeptSeatInvitation | undefined; readonly token: Hex } | { readonly refused: string }> {
+  const keyring = ctx.keyring!;
+  const byToken = keyring.open().read().seatInvitationsKept?.[invitationIdOf(pageToken)];
+  if (byToken !== undefined || asked.kind !== 'signer') return { kept: byToken, token: pageToken };
+  const stillOpen = async (x: KeptSeatInvitation): Promise<boolean> => {
+    const answer = await send(`/api/invites/${x.id}/offer`, { method: 'GET' });
+    if (answer.status === 410) return false;
+    if (answer.status !== 200 && answer.status !== 404) throw new StepRefused(why('offer-not-read', { status: answer.status }));
+    const forWhom = x.offer.offer.for;
+    const proposal = forWhom.kind === 'signer' ? String(forWhom.invited.terms.proposal ?? '').toLowerCase() : '';
+    if (proposal === '') return true;
+    try {
+      const round = (await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [proposal] }))[proposal];
+      return round?.held !== 'closed';
+    } catch (e) {
+      throw new StepRefused(why('not-made', { says: `the chain could not be read for the proposal kept for this address (${said(e)}): press again` }));
+    }
+  };
+  const found = await keptSeatInvitationForAddress(keyring.open().read(), r.accountId, asked.spec.address, now, stillOpen);
+  if (found.passedOver.length > 0) await keyring.keep((k) => withoutSeatInvitationsKept(k, found.passedOver));
+  if (found.refused !== null) return { refused: found.refused };
+  if (found.kept === null) return { kept: undefined, token: pageToken };
+  ctx.tell({ token: found.kept.token });
+  return { kept: found.kept, token: found.kept.token };
+}
+
 async function inviteASigner(
   ctx: StepContext, r: CompanyReach, reach: InviteReach, company: InvitingCompany, inviting: InvitingSeat,
   spec: InviteSpecs['signer'] & { readonly address: string }, token: Hex, send: InvitationSend, handed: Handed,
@@ -353,7 +392,7 @@ async function inviteASigner(
   });
   const resume = ctx.keyring?.open().read().seatInvitationsKept?.[invitationIdOf(token)];
   const opts: InviteOptions = { token, ...(resume === undefined ? {} : { resume }) };
-  await inviteHere(company, inviting, 'signer', spec, ctx.asker.origin, send, signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep), opts);
+  await inviteHere(company, inviting, 'signer', spec, ctx.asker.origin, send, signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep, chainTimeOf(r)), opts);
 }
 
 /**

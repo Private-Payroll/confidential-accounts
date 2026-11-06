@@ -23,7 +23,7 @@
  * left is refused unless a quorum's retirement names it, and the server's word
  * is never what makes a version believed.
  */
-import { companyRecordEntry, vaultRecordEntry, type RecordRead } from '../../../src/midnight/record-manifest.js';
+import { companyRecordEntry, signedWithItsEntry, vaultRecordEntry, type RecordRead } from '../../../src/midnight/record-manifest.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import type { RecordsAsked } from '../../../src/midnight/records-held.js';
 import {
@@ -37,7 +37,7 @@ import type { Hex } from '../../../src/core/crypto.js';
 import { ServiceNotReached } from './hand-over.js';
 import { companyRecordKey, vaultRecordKey, type FiledKind } from '../../../src/midnight/seat-directory.js';
 import {
-  companyWirePaths, fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler,
+  companyWirePaths, fromCompanyWire, toCompanyWire, verifiedCompanyFiler,
   SEALED_UNDER_PURPOSE, type CompanyRecordKind, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
 
@@ -465,7 +465,7 @@ export class HttpCompanyRecordStore {
   async put(rec: SealedCompanyRecord): Promise<void> {
     if (rec.company !== this.company) throw new Error('that record is another company\'s, so nothing is filed.');
     if (this.signWith === null) throw new ReadFilesNothing(rec.kind, rec.version);
-    const wire = toCompanyWire(signCompanyFiling(rec, this.signWith));
+    const wire = toCompanyWire(signedWithItsEntry(rec, this.signWith));
     let r: { status: number; body: unknown };
     try {
       r = await this.send(companyWirePaths.one(this.company, rec.kind, rec.id, rec.version), { method: 'PUT', body: JSON.stringify(wire) });

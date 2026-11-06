@@ -22,8 +22,9 @@ import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from '../../../
 import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here.js';
 import { ownEntryFiled, rosterFollowed } from '../../../../packages/web-shared/src/vault-keys-given.js';
 import { withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import {
-  browserInFlightRecords, deviceRecordsFor, deviceSignerFrom, directoryFilingsFrom, fileDirectoryFiling, giveEachVaultSecretHere, readersIn,
+  deviceRecordsFor, deviceSignerFrom, directoryFilingsFrom, fileDirectoryFiling, giveEachVaultSecretHere, readersIn,
   type DirectoryHere, type DirectoryRead,
 } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-operation.js';

@@ -35,7 +35,7 @@ import { canonical, sign, signingPublicKeyOf, verify, type Hex } from '../core/c
 import { RUN_ID, runFilingMessage, type RunToFile } from '../core/run-filing.js';
 import { PROPOSAL_ID, proposalFilingMessage, type ProposalFiling } from '../core/proposal-filing.js';
 import {
-  COMPANY_RECORD_KINDS, companyFilingMessage, digestOfBody, filingMessage, WIRE_RECORDS,
+  COMPANY_RECORD_KINDS, companyFilingMessage, digestOfBody, filingMessage, signCompanyFiling, WIRE_RECORDS,
   type CompanyRecordKind, type SealedCompanyRecord, type WireRecord,
 } from './sealed-record-wire.js';
 import type { SealedPool } from './vault-pool.js';
@@ -201,6 +201,16 @@ export const signManifestEntry = (company: string, e: ManifestEntryBody, signing
   ...bodyOf(e),
   filedBy: { publicKey: signingPublicKeyOf(signingSecret), signature: sign(manifestEntryMessage(company, e), signingSecret) },
 });
+
+/**
+ * A company record signed by the seat filing it, carrying that seat's signed
+ * entry for exactly this version, so any seat's device can enter the version
+ * should its entry never reach the company's records (`carriedEntryRefusal`).
+ */
+export const signedWithItsEntry = (rec: SealedCompanyRecord, signingSecret: Hex): SealedCompanyRecord => {
+  const signed = signCompanyFiling(rec, signingSecret);
+  return { ...signed, entry: signManifestEntry(signed.company, companyRecordEntry(signed), signingSecret) };
+};
 
 /** An entry's id: the SHA-256 of the entry and its signature, which is what a batch names. */
 /** The words that mark an entry refused because a later version of its record is already entered: superseded, never anchored. */

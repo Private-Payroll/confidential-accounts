@@ -20,13 +20,14 @@ import { invitationThresholdRefusal } from '../../../../src/core/invitation.js';
 import { addSignerByAddressIn } from '../../../../src/core/proposal-filing.js';
 import type { RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import {
-  ApprovalNotOwed, approveSeatInvitationOnDevice, governedCallServiceFor, InvitationNotBound, nothingWasSentBy, NothingToApprove,
+  ApprovalNotOwed, approveSeatInvitationOnDevice, governedCallServiceFor, InvitationNotBound, InvitationOutrun, nothingWasSentBy, NothingToApprove,
   WithdrawnWhileSent, withCompanyKeys,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { thresholdKind } from './change-threshold.js';
 import { removalKind, type RemoveSignerReach } from './remove-signer.js';
 import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
+import { chainTimeOf } from './chain-time.js';
 import { governanceDoorsFor, type CompanyChain, type CompanyReach, type Handed } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { oneOffKind, type OneOffPaymentReach } from './one-off-payment.js';
@@ -105,7 +106,7 @@ export interface ProposalKind {
   /** Its own checks against the chain, then this seat's approval. `handed.over` is set once anything is handed over to be sent. */
   approve(ctx: StepContext, r: CompanyReach, intent: ActIntent, round: RoundHere, handed: Handed): Promise<void>;
   /** What the page is told it is at: once at its bar, or short of it. */
-  stateAt(atItsBar: boolean, approvedNow: boolean): string | null;
+  stateAt(atItsBar: boolean, approvedNow: boolean, outrun: boolean): string | null;
   /** The steps that carry it out once approved, sharing `here`; absent when another carries it out (the invitee, for a seat). */
   carry?(here: Approving, read: ReadCompany, intent: ActIntent): readonly ActionStep[];
   /**
@@ -190,7 +191,7 @@ export function approveStep(kind: ProposalKind, intent: ActIntent, read: ReadCom
       const after = approvedNow ? (await onTheChain(r, here.round.chainId)) ?? before : before;
       here.standing = after;
       here.needed = kind.needed(after, await r.holders(), intent);
-      const state = kind.stateAt(atTheBar(after, here.needed), approvedNow);
+      const state = kind.stateAt(atTheBar(after, here.needed), approvedNow, after.outrun === true);
       ctx.tell({ ...(state === null ? {} : { state }), approvals: after.approvals, ...(here.needed === null ? {} : { needed: here.needed }) });
     },
   };
@@ -280,15 +281,17 @@ export function addSignerKind(reach: AddSignerReach): ProposalKind {
             proposal: f['proposal']!, name: f['personName']!, role: roleOf(f['role'])!, address: f['address']!, scope: f['scope']!, coinPublicKey: f['coinKey']!,
             ...(threshold === null ? {} : { threshold }),
           },
+          chainTime: chainTimeOf(r),
         }, r.companyKeys), (c, salt) => commitments.inviteAddressOf(c, salt), { allVaults: String(commitments.allVaults()).toLowerCase() });
       } catch (e) {
+        if (e instanceof InvitationOutrun) throw new StepRefused(addSignerWhy('outrun'), codeOfError(e));
         if (e instanceof NothingToApprove || e instanceof InvitationNotBound || e instanceof NotOpenedOnThisDevice) {
           throw new StepRefused(addSignerWhy(handed.over ? 'may-be-sent' : 'not-approved', { says: said(e) }), codeOfError(e));
         }
         throw e;
       }
     },
-    stateAt: (atItsBar) => (atItsBar ? 'waiting-for-the-invitee' : 'waiting-for-approvals'),
+    stateAt: (atItsBar, _approvedNow, outrun) => (outrun ? 'outrun' : atItsBar ? 'waiting-for-the-invitee' : 'waiting-for-approvals'),
     why: addSignerWhy,
   };
 }

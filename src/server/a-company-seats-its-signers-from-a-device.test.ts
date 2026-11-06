@@ -87,8 +87,9 @@ const { signedFoundingState } = await import('../core/founding-state.js');
 const { signedFoundingRoster } = await import('../core/roster-record.js');
 const { signVaultKeys } = await import('../core/vault-keys.js');
 const {
-  inviteHere, openInvitationHere, acceptAsSignerHere, FingerprintsDiffer, makeSignerCodeHere, addSignerFromCodeHere,
+  inviteHere, openInvitationHere, acceptAsSignerHere, makeSignerCodeHere, addSignerFromCodeHere,
 } = await import('vaults-web-shared/invitation-on-device.js');
+const { FingerprintsDiffer } = await import('vaults-web-shared/seat-request-fingerprint.js');
 const { admitSignerHere, foldOffersHere, offerVaultKeysHere, rosterHere } = await import('vaults-web-shared/roster-here.js');
 const { directoryHere } = await import('vaults-web-shared/vault-page-doors.js');
 const { identityFromSecret } = await import('midnight-identity');

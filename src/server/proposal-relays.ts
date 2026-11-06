@@ -41,7 +41,7 @@ import { z } from 'zod';
 import type { Ledger, LedgerStatus } from '../core/ledger.js';
 import type { Invite, SealedAccount, SealedProposal, SealedRun } from '../core/types.js';
 import { runFilingRefusal, type SignedRunFiling } from '../core/run-filing.js';
-import { proposalFilingRefusal, raiseByOf, type SignedProposalFiling } from '../core/proposal-filing.js';
+import { proposalFilingRefusal, raiseByOf, raiseMayStillLandAt, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION, reloadThePage } from '../core/device-raise.js';
@@ -372,7 +372,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
       throw new Error(`${mayStillArrive} until ${until}, by the chain's time, and the chain's time could not be read just now, so `
         + 'it is not withdrawn here. Try again in a minute');
     }
-    if (chainNow < raiseByMs) throw new Error(`${mayStillArrive} until ${until}, by the chain's time. ${sendItAgain}, or after that time`);
+    if (raiseMayStillLandAt(raiseByOf(p.createdAt), chainNow)) throw new Error(`${mayStillArrive} until ${until}, by the chain's time. ${sendItAgain}, or after that time`);
     const read = await deps.closedOnChain(p.accountId, p.chainId).catch((): ClosedOnChain => 'unknown');
     if (read === 'unknown') {
       throw new Error('the chain\'s history could not be read to show whether this proposal ever reached it, so it is not '

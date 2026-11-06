@@ -681,9 +681,10 @@ export interface VaultBuilderClient {
    */
   runsOutrun(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<Record<string, number>>;
   /**
-   * **THE SEAT EACH INVITATION'S PROPOSAL TOOK**, by the proposal's identity on chain: the one leaf the account's
-   * history shows entering with the one `seatInvited` call that closed it, or null (`seatsInvitedIn`). Read in this
-   * worker from the history at the indexer the person's own wallet names, and from nowhere else.
+   * **THE SEAT EACH INVITATION'S PROPOSAL TOOK**, by the proposal's identity on chain: the one leaf the `seatInvited`
+   * call that closed it put into the account's signers, read from that call's own transaction, or null where no such
+   * call closed it (`seatsInvitedIn`). Read in this worker from the history at the indexer the person's own wallet
+   * names, and from nowhere else; a seating it cannot read is refused, never answered as no seat.
    */
   invitedSeats(input: {
     account: string; indexer: { indexerUri: string; indexerWsUri: string }; proposals: readonly string[];

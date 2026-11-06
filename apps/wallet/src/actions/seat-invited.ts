@@ -80,6 +80,33 @@ interface Seat {
 const leafOfKept = (p: PendingSeat, C: Parameters<typeof storedSignerLeaf>[1]): string =>
   storedSignerLeaf({ signingSecret: p.signingSecret, blinding: p.blinding, scope: p.scope }, C).toLowerCase();
 
+/** The words for an invitation the service says is closed, by the reason it gives: none of them is cured by trying again. */
+const CLOSED_INVITATION: Readonly<Record<string, string>> = { withdrawn: 'withdrawn', expired: 'expired', used: 'used' };
+
+/** A seat number tried for this company: the secret it signs with and the leaf it makes at the invitation's rights and at all vaults. */
+interface Tried { readonly signingSecret: Hex; readonly leaf: Hex; readonly leafAtAll: Hex }
+
+/**
+ * Which of the leaves and signing keys the numbers tried would make that an entry of the company's directory already
+ * names, retired seats included, as the service answers for exactly those asked. An answer that is an error or a
+ * refusal refuses the seat: a number is never picked without knowing.
+ */
+const namedByTheCompany = async (ctx: StepContext, o: Opened, tried: readonly Tried[]): Promise<ReadonlySet<string>> => {
+  const leaves = [...new Set(tried.flatMap((d) => [d.leaf, d.leafAtAll]))];
+  const keys = tried.map((d) => signingPublicKeyOf(d.signingSecret).toLowerCase());
+  let answer: Awaited<ReturnType<StepContext['call']>>;
+  try {
+    answer = await ctx.call('POST', `/api/invites/${o.invitation}/seats-named`, JSON.stringify({ acceptance: o.acceptance, leaves, keys }));
+  } catch {
+    return refuse('no-slots');
+  }
+  const body = answer.body as { leaves?: unknown; keys?: unknown; refused?: unknown } | null;
+  const closed = answer.status === 410 ? CLOSED_INVITATION[String(body?.refused)] : undefined;
+  if (closed !== undefined) return refuse(closed);
+  if (answer.status !== 200 || !Array.isArray(body?.leaves) || !Array.isArray(body?.keys)) return refuse('no-slots');
+  return new Set([...body.leaves, ...body.keys].map((x) => String(x).toLowerCase()));
+};
+
 /**
  * The action. Each step works out what is done from the network, the invitation and the saved keys, never from a
  * count: a seat the account's history shows this invitation took is not taken again, a seat kept for this invitation
@@ -87,6 +114,26 @@ const leafOfKept = (p: PendingSeat, C: Parameters<typeof storedSignerLeaf>[1]): 
  * run's alone: `steps` makes it afresh for the intent it is given.
  */
 export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
+  /*
+   * The first seat number whose pay-key slot is empty, that no other kept seat holds, and whose leaf (at the invitation's
+   * rights or at all vaults) and signing key no entry of the company's directory names, retired seats included.
+   */
+  const freeSeatOf = async <T extends Tried>(ctx: StepContext, o: Opened, mine: readonly T[], keptByAnother: ReadonlySet<string>): Promise<T | undefined> => {
+    const account = readAccountAddress(ctx.intent.fields['account'])!;
+    const label = readCompanyLabel(ctx.intent.fields['company'])!;
+    const chain = reach.chain();
+    if (chain.roles === undefined) return refuse('no-slots');
+    const slotKeyOf = await reach.payKeyWrapKeyOf();
+    const accountBytes = fromHex(String(account).toLowerCase() as Hex);
+    const slots = mine.map((d) => toHex(slotKeyOf(accountBytes, fromHex(d.signingSecret), 0n)).toLowerCase());
+    const read = await chain.roles(account, label, slots);
+    if (!Array.isArray(read)) throw new StepRefused(read as Words);
+    const filled = new Set((read as ReadonlyArray<{ key: string; value: string | null }>).filter((r) => r.value !== null).map((r) => r.key.toLowerCase()));
+    const named = await namedByTheCompany(ctx, o, mine);
+    return mine.find((d, n) => !filled.has(slots[n]!) && !keptByAnother.has(signingPublicKeyOf(d.signingSecret).toLowerCase())
+      && !named.has(d.leaf) && !named.has(d.leafAtAll) && !named.has(signingPublicKeyOf(d.signingSecret).toLowerCase()));
+  };
+
   const stepsFor = (): readonly ActionStep[] => {
     let opened: Opened | null = null;
     let seat: Seat | null = null;
@@ -112,6 +159,8 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
       };
       const got = await ctx.call('GET', `/api/invites/${invitation}/offer`);
       const sealed = (got.body as { offer?: Sealed } | null)?.offer;
+      // A company that took the invitation back is believed even when a seat for it is kept (and then the words say that seat may be taken); any other closed or unreadable answer resumes from the kept offer.
+      if (got.status === 410 && (got.body as { refused?: unknown } | null)?.refused === 'withdrawn') return refuse(fromKept() === null ? 'withdrawn' : 'withdrawn-kept');
       if (got.status !== 200 || sealed === undefined) return fromKept() ?? refuse('no-offer');
       let signed: ReturnType<typeof openOffer>;
       try { signed = openOffer(sealed, token); } catch { return fromKept() ?? refuse('no-offer'); }
@@ -195,15 +244,7 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
       /* A seat number another invitation's kept seat holds is not chosen: its keys are the same, and a kept seat is never written over. */
       const keptByAnother = new Set(Object.values(held.pendingSeats ?? {}).filter((p) => p !== keptForThis).map((p) => p.signingPublicKey.toLowerCase()));
 
-      const chain = reach.chain();
-      if (chain.roles === undefined) return refuse('no-slots');
-      const slotKeyOf = await reach.payKeyWrapKeyOf();
-      const accountBytes = fromHex(String(account).toLowerCase() as Hex);
-      const slots = mine.map((d) => toHex(slotKeyOf(accountBytes, fromHex(d.signingSecret), 0n)).toLowerCase());
-      const read = await chain.roles(account, label, slots);
-      if (!Array.isArray(read)) throw new StepRefused(read as Words);
-      const filled = new Set((read as ReadonlyArray<{ key: string; value: string | null }>).filter((r) => r.value !== null).map((r) => r.key.toLowerCase()));
-      const free = mine.find((d, n) => !filled.has(slots[n]!) && !keptByAnother.has(signingPublicKeyOf(d.signingSecret).toLowerCase()));
+      const free = await freeSeatOf(ctx, o, mine, keptByAnother);
       if (free === undefined) return refuse('no-free-seat');
       seat = asSeat(free);
       return seat;
@@ -314,7 +355,7 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
             } as PendingSignerPayload;
             /* Asked again after an answer that never came back, the service gives back the id it gave the first time. */
             const asked = await ctx.call('POST', `/api/invites/${o.invitation}/accept-signer`,
-              JSON.stringify({ acceptance: o.acceptance, waiting: sealToInbox(waiting, o.inbox) }));
+              JSON.stringify({ acceptance: o.acceptance, waiting: sealToInbox(waiting, o.inbox), leaf: s.leaf }));
             const id = (asked.body as { id?: unknown } | null)?.id;
             if (asked.status !== 201 || typeof id !== 'string') {
               /* Already asked (the invitation reads used: the request was filed, and may already be admitted) or the

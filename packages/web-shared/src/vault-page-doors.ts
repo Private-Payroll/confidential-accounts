@@ -21,16 +21,14 @@ import {
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import type { OwedDirectoryEntry } from './keyring-blob.js';
 import { openSeatProof, type LeafOf, type SeatOpening } from '../../../src/core/seat-opening.js';
-import type { SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { invitationsMakingTheirProposal, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { seatsTakenAsked, type InvitedSeatsRead } from './seat-not-read-on-the-chain.js';
+
 import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
-import type {
-  DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight, VaultService,
-} from './vault-operation.js';
-import { sealedOnThisDevice, type InFlightOpener, type InFlightRecords, type SealedInFlight } from './in-flight-on-this-device.js';
+import type { VaultService } from './vault-operation.js';
 import type { AccountDeployed } from './governed-call-builder.js';
-import type { ChargeInFlight, ChargesInFlight } from './run-charged-here.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import { companyRecordEntry, directoryEntry, proposalEntry, recordKeyOf, runEntry, type RecordRead } from '../../../src/midnight/record-manifest.js';
 import { transitionStopSaid, type CheckedHead, type TransitionStop } from '../../../src/midnight/record-tree.js';
@@ -183,10 +181,17 @@ export interface DirectoryHereDeps {
   readonly leaves: (openings: readonly SeatOpening[]) => Promise<readonly (string | null)[]>;
   /**
    * The seat each invitation made by address took, by its proposal's identity on chain, read in this device's vault
-   * worker from the account's own history (`seatsInvitedIn`): null where the history shows none, or cannot tell which.
-   * Absent on a device that cannot read the history, where no seat is believed from an invitation made by address.
+   * worker from the account's own history (`seatsInvitedIn`): null where no seating call closed it; a seating the
+   * worker cannot read is refused. Absent, asking it is a read not made (`seatsTakenAsked`), which stops the read.
    */
-  readonly invitedSeats?: (proposals: readonly string[]) => Promise<Readonly<Record<string, string | null>>>;
+  readonly invitedSeats?: InvitedSeatsRead;
+  /**
+   * A proposal's identity on the chain from its change and salt, worked out in this device's vault worker with the
+   * account's own functions: what an invitation made by address is checked to make before the seat it took is
+   * believed (`invitationMakesItsProposal`). Absent on a device that cannot work it out, where no seat is believed from
+   * an invitation made by address.
+   */
+  readonly proposalIdentity?: ProposalIdentityOf;
   /**
    * **THE COMPANY'S RECORDS AS THE HEAD ON CHAIN HOLDS THEM, FOR WHAT THIS READ
    * ASKED** (`recordsHeldHere`), read with the directory just believed: every
@@ -375,6 +380,9 @@ const pastAStop = (stop: TransitionStop): string =>
 const leafKeyOf = (o: Pick<SeatOpening, 'publicKey' | 'blinding' | 'scope'>): string =>
   `${String(o.publicKey).toLowerCase()}:${String(o.blinding).toLowerCase()}:${String(o.scope).toLowerCase()}`;
 
+/** Why no seat of a directory is believed when the chain could not be read for the seats its invitations by address took. */
+const SEATS_NOT_READ = 'this page could not check the network for the seat each invitation by address took, so it shows no signers from that list. Nothing was changed. Reload the page';
+
 /**
  * **HOW THIS DEVICE JUDGES EVERY ENTRY, AS A MEMBER**: each entry's proof
  * opened with each of the company's keys this device holds, and what this device's vault worker
@@ -383,24 +391,34 @@ const leafKeyOf = (o: Pick<SeatOpening, 'publicKey' | 'blinding' | 'scope'>): st
  * against these leaves, so the leaf of an opening the worker was not asked
  * about is null and proves nothing. A worker answer of the wrong length is
  * refused. `leafAt` gives, per filing in order, the leaf of the opening its
- * entry's proof opened to, and undefined for a filing with none.
+ * entry's proof opened to, and undefined for a filing with none. Every
+ * invitation made by address an entry carries is held to the proposal it
+ * names the same way, before the replay (`invitationsMakingTheirProposal`).
+ * Only a signed seat invitation naming a proposal of thirty-two bytes
+ * (`seatInvitationRefusal`) is asked about: the chain is asked about every
+ * claim's invitation at once, so one claim's malformed invitation must not
+ * fail the read of every seat. Any other proves no seat. Throws
+ * `SeatNotReadOnTheChain` when the chain's history cannot be read for the
+ * seats those invitations took: a read not made is never taken as no seat.
  */
 const memberHere = async (
-  deps: Pick<DirectoryHereDeps, 'leaves' | 'accountId' | 'viewingKey' | 'invitedSeats'>, filings: readonly DirectoryFiling[],
+  deps: Pick<DirectoryHereDeps, 'leaves' | 'accountId' | 'viewingKey' | 'invitedSeats' | 'proposalIdentity'>, filings: readonly DirectoryFiling[],
   /** The seat the account's deploy seated, as the person's own wallet read it: the one entry believed without an invitation. */
   founding: string | null,
 ): Promise<{ judge: EntryJudge; leafOf: LeafOf; leafAt: (index: number) => string | null | undefined }> => {
   const proofOf = proofsOpenedWith(deps.accountId, keysHeld(deps.viewingKey));
   const openings = new Map<string, SeatOpening>();
   const openedAt: (string | undefined)[] = [];
-  const proposals = new Set<string>();
+  const byAddress: SignedSeatInvitation[] = [];
   for (const f of filings) {
-    const terms = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.invited?.terms : undefined;
-    if (terms?.leaf === undefined && terms?.invite !== undefined && typeof terms.proposal === 'string') proposals.add(terms.proposal.toLowerCase());
+    const invited = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.invited : undefined;
+    if (invited !== undefined && seatInvitationRefusal(invited) === null && invited.terms.leaf === undefined && invited.terms.invite !== undefined
+      && typeof invited.terms.proposal === 'string') byAddress.push(invited);
     const o = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.opening : undefined;
     openedAt.push(o === undefined ? undefined : leafKeyOf(o));
     if (o !== undefined) openings.set(leafKeyOf(o), o);
   }
+  const proposals = new Set(byAddress.map((i) => i.terms.proposal!.toLowerCase()));
   const asked = [...openings.values()];
   const leaves = asked.length === 0 ? [] : await deps.leaves(asked);
   if (!Array.isArray(leaves) || leaves.length !== asked.length) {
@@ -409,14 +427,14 @@ const memberHere = async (
   const made = new Map(asked.map((o, i) => [leafKeyOf(o), typeof leaves[i] === 'string' ? leaves[i]!.toLowerCase() : null]));
   const leafOf: LeafOf = (o) => made.get(leafKeyOf(o)) ?? null;
   const leafAt = (i: number) => (openedAt[i] === undefined ? undefined : made.get(openedAt[i]!) ?? null);
-  /* A history that cannot be read leaves those seats unbelieved on this read, and every other seat as it is. */
-  const seated = proposals.size === 0 || deps.invitedSeats === undefined ? {}
-    : await deps.invitedSeats([...proposals]).catch((): Readonly<Record<string, string | null>> => ({}));
+  /* A history that cannot be read stops the read, so a seat taken by address is never left out for a read not made. */
+  const seated = proposals.size === 0 ? {} : await seatsTakenAsked(deps.invitedSeats, [...proposals], SEATS_NOT_READ);
   const invitedLeafOf = (proposal: string): string | null => {
     const leaf = Object.hasOwn(seated, proposal) ? seated[proposal] : null;
     return typeof leaf === 'string' ? leaf.toLowerCase() : null;
   };
-  return { judge: asAMember(proofOf, leafOf, founding, invitedLeafOf), leafOf, leafAt };
+  const makesItsProposal = await invitationsMakingTheirProposal(byAddress, deps.proposalIdentity);
+  return { judge: asAMember(proofOf, leafOf, founding, invitedLeafOf, makesItsProposal), leafOf, leafAt };
 };
 
 /** The replays of each company's directory this page keeps, for a read given no `kept` of its own. */
@@ -1011,7 +1029,6 @@ export const sealedToARetiredSeat = (
   return dir.seats.some((x) => x.retired !== null && readers.has(x.seat.toLowerCase()));
 };
 
-
 /**
  * **WHY A RECORD THE SERVICE DID NOT GIVE AT ALL IS NOT READ AS ABSENT**: a
  * version of it is anchored, or entered and not yet anchored, or a header this
@@ -1389,70 +1406,3 @@ export const fileTheOwedDirectoryEntry = async (
   await owed.settle();
   return done;
 };
-
-/**
- * **WHERE THIS BROWSER KEEPS A DEPOSIT OR A PAYMENT ON ITS WAY: SEALED RECORDS
- * IN INDEXEDDB, EACH CHANGE ONE TRANSACTION.**
- *
- * Every record is sealed before it reaches here (`in-flight-on-this-device.ts`),
- * so this store holds nothing it could read. Keeping a record where none is,
- * replacing one under its claim, and forgetting one under its claim each read
- * and write inside one IndexedDB transaction, and IndexedDB runs two
- * transactions on one store one after the other, so two tabs cannot both keep
- * a record in one place or lose each other's.
- */
-export function browserInFlightRecords(factory: IDBFactory = indexedDB): InFlightRecords {
-  const STORE = 'sealed';
-  const open = () => new Promise<IDBDatabase>((resolve, reject) => {
-    const req = factory.open('vault-operations-in-flight', 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(new Error('this browser would not open its record of deposits and payments on their way, '
-      + 'so nothing was sent and no money moved. Check that this browser lets this site store data (a private window '
-      + 'may not), then try again.', { cause: req.error }));
-  });
-  /** One read, then at most one write, inside one transaction. */
-  const step = async <T>(slot: string, decide: (there: SealedInFlight | null) => { write?: SealedInFlight | 'delete'; answer: T }): Promise<T> => {
-    const db = await open();
-    try {
-      return await new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(STORE, 'readwrite');
-        const store = tx.objectStore(STORE);
-        let answer: T;
-        const read = store.get(slot);
-        read.onsuccess = () => {
-          const decided = decide((read.result as SealedInFlight | undefined) ?? null);
-          answer = decided.answer;
-          if (decided.write === 'delete') store.delete(slot);
-          else if (decided.write !== undefined) store.put({ ...decided.write }, slot);
-        };
-        tx.oncomplete = () => resolve(answer);
-        const failed = () => reject(new Error('this browser could not read or keep its record of a deposit or a payment on '
-          + 'its way, so nothing was sent and no money moved. Check that this browser lets this site store data (a '
-          + 'private window may not), then try again.', { cause: tx.error }));
-        tx.onerror = failed;
-        tx.onabort = failed;
-      });
-    } finally {
-      db.close();
-    }
-  };
-  return {
-    get: (slot) => step(slot, (there) => ({ answer: there })),
-    add: (slot, record) => step(slot, (there) => (there === null ? { write: record, answer: true } : { answer: false })),
-    replace: (slot, claim, record) => step(slot, (there) => (there?.claim === claim ? { write: record, answer: true } : { answer: false })),
-    remove: async (slot, claim) => { await step(slot, (there) => (there?.claim === claim ? { write: 'delete' as const, answer: undefined } : { answer: undefined })); },
-  };
-}
-
-/** A deposit this signer sent from this browser and has not yet seen land, sealed under their own key. */
-export const browserDepositsInFlight = (me: InFlightOpener, factory: IDBFactory = indexedDB): DepositsInFlight =>
-  sealedOnThisDevice<DepositInFlight>(browserInFlightRecords(factory), me, 'deposit');
-
-/** A payment this signer sent from this browser and has not yet seen land, sealed under their own key. */
-export const browserPaymentsInFlight = (me: InFlightOpener, factory: IDBFactory = indexedDB): PaymentsInFlight =>
-  sealedOnThisDevice<PaymentInFlight>(browserInFlightRecords(factory), me, 'payment');
-
-/** A charge of a run to its vault's period this signer sent from this browser and has not yet seen land, sealed under their own key. */
-export const browserChargesInFlight = (me: InFlightOpener, factory: IDBFactory = indexedDB): ChargesInFlight =>
-  sealedOnThisDevice<ChargeInFlight>(browserInFlightRecords(factory), me, 'charge');

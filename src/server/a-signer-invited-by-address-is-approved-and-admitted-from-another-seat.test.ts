@@ -6,16 +6,22 @@
  * the roster keeps. A signer opening the company through the page's own read of its signers, while a seat taken by
  * address waits for Finish adding, reads that seat as waited for and as no believed signer; a seat the chain holds that
  * nobody waits for is still refused there, and so is one waited for on an invitation for another company, on one a key
- * that is no seat signed, or on a proposal the chain shows took a seat whose own entry the directory holds.
+ * that is no seat signed, or on a proposal the chain shows took a seat whose own entry the directory holds. The
+ * proposal's id is made under the salt its invitation makes, so another invitation filed under that id is never believed
+ * beside it, and a proposal raised under any other salt is refused.
  */
 import { describe, it, expect } from 'vitest';
-import { x25519 } from '@noble/curves/ed25519.js';
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
+import { sha512 } from '@noble/hashes/sha2.js';
 import { addressFor, identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
-import { canonical, parseCanonical, seal, signingPublicKeyOf, toHex, unseal, type Hex } from '../core/crypto.js';
-import { acceptanceProofOf, invitationIdOf, signSeatInvitation, tokenOfLink, type SignerOffer } from '../core/invitation.js';
+import { canonical, fromHex, parseCanonical, seal, signingPublicKeyOf, toHex, unseal, utf8, type Hex } from '../core/crypto.js';
+import {
+  acceptanceProofOf, invitationIdOf, invitationProposalSalt, seatByAddressChangeOf, signSeatInvitation, tokenOfLink, type SeatByAddressChange,
+  seatInvitationRefusal, type SignedSeatInvitation, type SignerOffer,
+} from '../core/invitation.js';
 import { addSignerByAddressIn, signProposalFiling } from '../core/proposal-filing.js';
 import { openRecord, sealRecord, sealToInbox } from '../core/sealed-records.js';
 import { newSeatInvitation, proveSeatKeys, SeatKeyNotFromTheInvitee } from '../core/seat-invite-proof.js';
@@ -31,16 +37,20 @@ import { vaultKeyIndexOf } from '../core/vault-keys.js';
 import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry, proposalEntry } from '../midnight/record-manifest.js';
 import {
-  addressSeatedOrInvitedRefusal, approveSeatInvitationOnDevice, governOnDevice, InvitationNotBound, NothingToApprove, raiseSeatInvitationOnDevice,
+  approveSeatInvitationOnDevice, governOnDevice, InvitationNotBound, InvitationOutrun, NothingToApprove,
+  raiseSeatInvitationOnDevice,
   signerByAddressDoorsOf, type SeatInvitationShown,
 } from 'vaults-web-shared/governed-call-on-device.js';
+import { addressSeatedOrInvitedRefusal } from 'vaults-web-shared/address-seated-or-invited.js';
 import {
-  admitSignerHere, fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere, rosterHere, RosterNotBelieved, SeatNotReadOnTheChain, seatingOf,
+  admitSignerHere, fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere, rosterHere, RosterNotBelieved, seatingOf,
   WaitingIdTaken, waitingHere,
 } from 'vaults-web-shared/roster-here.js';
+import { SeatNotReadOnTheChain } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
 import { companyJudges, openAccountWith } from 'vaults-web-shared/company-judges.js';
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
+import { PROPOSALS_NOT_READ, SEAT_READ_STOP, SeatingRefusedOnTheChain, TWO_SEATINGS } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
 import { FiledNotEntered } from 'vaults-web-shared/record-entered-here.js';
 import { ACME, ORIGIN, acmeReads, fromAda, seatsTakenByInvitation, store } from './a-company-of-two-seats.test-support.js';
 import {
@@ -68,6 +78,9 @@ const PAT = { name: 'pat', fill: 73 };
 const ROY = { name: 'roy', fill: 74 };
 const SAM = { name: 'sam', fill: 75 };
 const TOM = { name: 'tom', fill: 76 };
+const VAL = { name: 'val', fill: 78 };
+const WES = { name: 'wes', fill: 79 };
+const XAN = { name: 'xan', fill: 80 };
 /*
  * The company as a seat's page opens it: the judges every device reads a company with (`companyJudges`), whose
  * `openedHere` hands the roster read its doors. The wallet's chain reads are this test's chain: the account's holders,
@@ -160,14 +173,34 @@ const seatTaken = async (
   return (asked.body as { id: string }).id;
 };
 
-/** A second record under `i`'s id on the network, its invitation naming `role`, its filing and invitation signed by `signer`. */
-const secondRecordFor = async (i: Awaited<ReturnType<typeof invited>>, role: string, signer: Hex, id: string) => {
+/**
+ * The same seat invitation signed again by the same key under another nonce: a second valid signature over the very same
+ * terms, which ed25519 allows to whoever holds the key.
+ */
+const signedAgain = (i: SignedSeatInvitation, secret: Hex): SignedSeatInvitation => {
+  const { scalar, pointBytes } = ed25519.utils.getExtendedPublicKey(fromHex(secret));
+  const order = ed25519.Point.Fn.ORDER;
+  const le = (b: Uint8Array): bigint => b.reduceRight((n, x) => (n << 8n) | BigInt(x), 0n);
+  const bytes = (n: bigint): Uint8Array => Uint8Array.from({ length: 32 }, (_, k) => Number((n >> BigInt(8 * k)) & 0xffn));
+  const r = 0x5eed5eedn;
+  const at = ed25519.Point.BASE.multiply(r).toBytes();
+  const message = utf8(canonical({ domain: 'confidential-accounts/seat-invitation/v1', terms: i.terms }));
+  const k = le(sha512(Uint8Array.from([...at, ...pointBytes, ...message]))) % order;
+  return { ...i, signature: toHex(Uint8Array.from([...at, ...bytes((r + k * scalar) % order)])) as Hex };
+};
+
+/**
+ * A second record under `i`'s id on the network, its invitation naming `role`, its filing and invitation signed by
+ * `signer`, and raised under the salt that other invitation makes, as a filer would carry it.
+ */
+const secondRecordFor = async (i: Awaited<ReturnType<typeof invited>>, role: string, signer: Hex, id: string, o: { signedAgain?: boolean } = {}) => {
   const rec = (await store.listProposals(CO) as SealedProposal[]).find((p) => p.id === i.proposal.id)!;
   const key = keyOf(KEY as never, rec.keyEpoch);
   const env = openRecord<{ sealedPayload: string }>('proposals', CO, rec.sealed, key);
-  const body = parseCanonical<{ invited: { terms: Record<string, unknown> } }>(unseal(env.sealedPayload as never, key));
-  const other = signSeatInvitation({ ...body.invited.terms, role } as never, signer);
-  const sealed = sealRecord('proposals', CO, { ...env, sealedPayload: seal(canonical({ ...body, invited: other }), key) }, key);
+  const body = parseCanonical<{ invited: { terms: Record<string, unknown> }; __change?: Record<string, unknown> }>(unseal(env.sealedPayload as never, key));
+  const other = o.signedAgain === true ? signedAgain(body.invited as never, signer) : signSeatInvitation({ ...body.invited.terms, role } as never, signer);
+  const carried = { ...body, invited: other, __change: { ...body.__change, salt: invitationProposalSalt(other) } };
+  const sealed = sealRecord('proposals', CO, { ...env, sealedPayload: seal(canonical(carried), key) }, key);
   const filing = signProposalFiling(CO, { id, digest: rec.digest, chainId: rec.chainId, keyEpoch: rec.keyEpoch, createdAt: rec.createdAt, sealed } as never, signer);
   return { rec, filing };
 };
@@ -190,6 +223,8 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     await expect(approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: eve.shown }, () => '00'.repeat(32) as Hex))
       .rejects.toThrow(/not the one its invitation's address commits to/u);
     expect(events.slice(before)).toEqual([]);
+    /* RED WHEN: the inviting device raises the proposal under a salt of its own choosing, not the one the invitation makes. */
+    expect(eve.offer.byAddress!.proposalSalt).toBe(invitationProposalSalt(eve.offer.invited));
     const done = await approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: eve.shown }, inviteAddressOf);
     expect(done.state).toBe('waiting-for-the-invitee');
     /* RED WHEN: the approving device sends anything but its one approval, a raise among it. */
@@ -203,6 +238,23 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     })).rejects.toThrow(NothingToApprove);
     await expect(approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: { ...eve.shown, proposal: 'prp_nonexistent0' } }, inviteAddressOf))
       .rejects.toThrow(InvitationNotBound);
+    expect(events.slice(before)).toEqual([]);
+  });
+
+  it('RED WHEN: an invitation a removal outran on the chain is approved, though it can never seat anyone', { timeout: 120_000 }, async () => {
+    const uma = await invited({ name: 'uma', fill: 77 });
+    const bo = seatingDevice(BO);
+    const chainId = String(uma.proposal.chainId).toLowerCase();
+    const outran = {
+      ...bo,
+      records: {
+        ...bo.records!,
+        roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(Object.entries(await bo.records!.roundsOnChain!(ids))
+          .map(([id, r]) => [id, id === chainId ? { ...r, outrun: true as const } : r])),
+      },
+    };
+    const before = events.length;
+    await expect(approveSeatInvitationOnDevice(outran as never, { viewingKey: KEY, shown: uma.shown }, inviteAddressOf)).rejects.toThrow(InvitationOutrun);
     expect(events.slice(before)).toEqual([]);
   });
 
@@ -224,10 +276,11 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
 
   it('RED WHEN: a wallet the roster records as seated is invited or approved for a second seat, though the proposals say nothing of it', async () => {
     const ada = seatingDevice(ADA);
-    const reads = { ...ada.records, invitedSeats: async () => ({}), holders: acmeReads.holders };
+    /* The chain shows no seat taken by any proposal asked about. */
+    const reads = { ...ada.records, invitedSeats: async (asked: readonly string[]) => Object.fromEntries(asked.map((x) => [x, null])) };
     await expect(addressSeatedOrInvitedRefusal(reads, CO, KEY, inviteAddressOf, coinKeyAt(addressOf(EVE.fill)))).resolves.toBeNull();
     await expect(addressSeatedOrInvitedRefusal({ ...reads, seated: async () => [coinKeyAt(addressOf(EVE.fill))] }, CO, KEY, inviteAddressOf,
-      coinKeyAt(addressOf(EVE.fill)))).resolves.toMatch(/already holds a seat on this company/u);
+      coinKeyAt(addressOf(EVE.fill)))).resolves.toMatch(/that address already has a seat on this company/u);
   });
 
   it('RED WHEN: a proposal that invites a wallet the roster records as seated is approved, though it is the one the window showed', { timeout: 120_000 }, async () => {
@@ -236,7 +289,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     const before = events.length;
     const refused = await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: again.shown }, inviteAddressOf).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(InvitationNotBound);
-    expect(String((refused as Error).message)).toMatch(/not approved, and nothing was sent: the wallet at this address already holds a seat on this company/u);
+    expect(String((refused as Error).message)).toMatch(/not approved, and nothing was sent: that address already has a seat on this company/u);
     /* RED WHEN: the approving device sends its approval of a second seat for a wallet already seated. */
     expect(events.slice(before)).toEqual([]);
   });
@@ -280,21 +333,21 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(companyNow().signers.some((x) => x.id === ID[CY.person] && x.status === 'active')).toBe(true);
   });
 
-  it('an admission whose entry in the records was lost is entered again by the admitting seat, and every device reads the roster again', { timeout: 120_000 }, async () => {
+  it('an admission whose entry in the records was lost is entered again from another seat\'s device with the entry its filer signed, and every device reads the roster', { timeout: 120_000 }, async () => {
     const gus = await invited(GUS);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: gus.shown }, inviteAddressOf);
     const signerId = await seatTaken(GUS, gus);
     const lost = { enter: async () => { throw new FiledNotEntered('the connection dropped'); } };
     await expect(admitSignerHere({ ...withCommitments(BO), entered: lost }, { signerId, readOut: '', name: GUS.name })).rejects.toThrow(FiledNotEntered);
-    /* The service holds the admission; the records name nothing of it, so no device believes the roster. */
+    /* The service holds the admission and the entry Bo's seat signed with it; the records name nothing of it yet. */
     expect(companyNow().signers.find((x) => x.name === GUS.name)?.status).toBe('active');
-    await expect(rosterHere(rosterDoorsOf(ADA))).rejects.toThrow();
-    /* RED WHEN: the seat that filed the admission cannot read the roster again, so no act on any device can repair it. */
+    /* RED WHEN: only the seat that filed the admission can enter it again, so every other device refuses the roster until that seat acts. */
+    const adas = await rosterHere(rosterDoorsOf(ADA));
+    expect(adas.followed).toBeNull();
+    expect(adas.opened.signers.find((x) => x.name === GUS.name)?.status).toBe('active');
+    /* RED WHEN: once another device has entered it, the seat that filed the admission refuses the roster. */
     const bos = await rosterHere(rosterDoorsOf(BO));
     expect(bos.opened.signers.find((x) => x.name === GUS.name)?.status).toBe('active');
-    /* RED WHEN: once the admitting seat has read it again, another device still refuses the roster. */
-    const adas = await rosterHere(rosterDoorsOf(ADA));
-    expect(adas.opened.signers.find((x) => x.name === GUS.name)?.status).toBe('active');
     expect(coinOf(GUS.name)).toBe(coinKeyAt(addressOf(GUS.fill)));
   });
 
@@ -334,18 +387,27 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect(companyNow().signers.find((x) => x.name === IVY.name)).toMatchObject({ status: 'active', role: 'approver' });
   });
 
-  it('RED WHEN: a proposal is approved while another the company holds under its id on the network, filed and signed by a seat that may invite, carries another invitation', { timeout: 120_000 }, async () => {
+  it('a proposal is approved as shown though a seat that may invite files another invitation under its id on the network, which no device believes', { timeout: 120_000 }, async () => {
     const jo = await invited(JO);
     const { rec, filing } = await secondRecordFor(jo, 'admin', ADA.signingSecret as Hex, 'prp_secondrecord');
     store.putProposal({ ...rec, ...filing, id: 'prp_secondrecord' } as never);
     await ADA.entered.enter([proposalEntry(CO, filing as never)]);
+    const bo = seatingDevice(BO);
+    /* A device that took every invitation as making the id it names would believe both records. */
+    const takesAny = { ...bo, builder: { ...bo.builder, proposalIdentity: async (change: SeatByAddressChange, salt: string) => ({
+      ...(await bo.builder.proposalIdentity!(change, salt)), chainId: String(jo.proposal.chainId).toLowerCase() }) } };
     const before = events.length;
-    await expect(approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: jo.shown }, inviteAddressOf))
+    /* RED WHEN: two records the device believes under one id carry different invitations, and the approval is still sent. */
+    await expect(approveSeatInvitationOnDevice(takesAny, { viewingKey: KEY, shown: jo.shown }, inviteAddressOf))
       .rejects.toThrow(/Another proposal the company holds under the same id on the network carries another invitation/u);
     expect(events.slice(before)).toEqual([]);
+    /* RED WHEN: a record whose invitation does not make the id it is filed under is believed beside the approved one, so the approval is refused for good. */
+    const done = await approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: jo.shown }, inviteAddressOf);
+    expect(done.state).toBe('waiting-for-the-invitee');
+    expect(events.slice(before)).toEqual(['chain approve']);
   });
 
-  it('RED WHEN: a seat is admitted on one of two invitations under its id that seats which may invite filed, and so with a role the approvers may not have approved', { timeout: 120_000 }, async () => {
+  it('a seat is admitted with the role the approvers approved though, after the network seated it, a seat that may invite files another invitation under its id', { timeout: 120_000 }, async () => {
     const kit = await invited(KIT);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: kit.shown }, inviteAddressOf);
     const signerId = await seatTaken(KIT, kit);
@@ -353,9 +415,99 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     const { rec, filing } = await secondRecordFor(kit, 'admin', ADA.signingSecret as Hex, 'prp_secondrecor2');
     store.putProposal({ ...rec, ...filing, id: 'prp_secondrecor2', status: 'executed' } as never);
     await ADA.entered.enter([proposalEntry(CO, filing as never)]);
-    await expect(admitSignerHere(withCommitments(BO), { signerId, readOut: '', name: KIT.name }))
+    const doors = withCommitments(BO);
+    const takesAny = { ...doors, reads: { ...doors.reads, proposalIdentity: async (change: SeatByAddressChange, salt: string) => ({
+      ...(await acmeReads.proposalIdentity(change, salt)), chainId: String(kit.proposal.chainId).toLowerCase() }) } };
+    /* RED WHEN: two invitations believed under the seated id are told apart by a choice, and the person is seated with one of them. */
+    await expect(admitSignerHere(takesAny, { signerId, readOut: '', name: KIT.name }))
       .rejects.toThrow(/Two proposals this device believes, each filed and signed by a seat that may invite, carry different invitations/u);
     expect(companyNow().signers.find((x) => x.name === KIT.name)?.status).not.toBe('active');
+    /* RED WHEN: a record filed after the seat, whose invitation does not make the seated id, is believed, so the person is never admitted. */
+    await admitSignerHere(doors, { signerId, readOut: '', name: KIT.name });
+    expect(companyNow().signers.find((x) => x.name === KIT.name)).toMatchObject({ status: 'active', role: 'approver' });
+  });
+
+  it('RED WHEN: a proposal to seat an address is raised under a salt the inviting seat chose, so its id commits to the address and rights and not to the person and role', { timeout: 120_000 }, async () => {
+    const ada = seatingDevice(ADA);
+    const { proposal: _id, ...terms } = eve.offer.invited.terms;
+    const salt = toHex(new Uint8Array(32).fill(0x5e)) as Hex;
+    const { chainId } = await ada.builder.proposalIdentity!(seatByAddressChangeOf(terms.invite!), salt);
+    const chosen = signSeatInvitation({ ...terms, invitation: invitationIdOf(toHex(new Uint8Array(32).fill(0x5f)) as Hex), proposal: chainId as Hex }, ADA.signingSecret as Hex);
+    /* RED WHEN: the salt leaves out the threshold, the rights or the address, so another invitation naming them differently makes the same proposal. */
+    const signedBy = eve.offer.invited.signedBy;
+    for (const invite of [{ ...terms.invite!, threshold: '3' }, { ...terms.invite!, scope: '5d'.repeat(32) as Hex }, { ...terms.invite!, address: '5e'.repeat(32) as Hex }]) {
+      expect(invitationProposalSalt({ terms: { ...terms, invite }, signedBy })).not.toBe(invitationProposalSalt({ terms, signedBy }));
+    }
+    /* RED WHEN: the salt leaves out the key that signed the invitation, so any seat that may invite can make the same proposal. */
+    expect(invitationProposalSalt({ terms, signedBy: '5f'.repeat(32) as Hex })).not.toBe(invitationProposalSalt({ terms, signedBy }));
+    const before = events.length;
+    await expect(raiseSeatInvitationOnDevice(ada, {
+      viewingKey: KEY, invited: chosen, proposalSalt: salt, name: EVE.name, coinPublicKey: coinKeyAt(addressOf(EVE.fill)),
+    }, inviteAddressOf)).rejects.toThrow(/salt this proposal is raised under is not the one its invitation makes/u);
+    /* RED WHEN: an invitation raised under its own salt is raised though it names another proposal than its change and that salt make. */
+    const misnamed = signSeatInvitation({ ...eve.offer.invited.terms, proposal: 'ab'.repeat(32) as Hex }, ADA.signingSecret as Hex);
+    await expect(raiseSeatInvitationOnDevice(ada, {
+      viewingKey: KEY, invited: misnamed, proposalSalt: eve.offer.byAddress!.proposalSalt, name: EVE.name, coinPublicKey: coinKeyAt(addressOf(EVE.fill)),
+    }, inviteAddressOf)).rejects.toThrow(/not the one its address, rights, threshold and salt make/u);
+    expect(events.slice(before)).toEqual([]);
+  });
+
+  it('RED WHEN: an invitation by address taken up again raises another seat\'s record for the same address and rights, naming another role, in place of its own', { timeout: 120_000 }, async () => {
+    const coin = coinKeyAt(addressOf(VAL.fill));
+    const addressSalt = toHex(new Uint8Array(32).fill(0x6a)) as Hex;
+    const invite = { address: inviteAddressOf(coin, addressSalt).toLowerCase() as Hex, salt: addressSalt, scope: MidnightCommitments.allVaults().toLowerCase() as Hex };
+    const made = async (s: Seat, role: 'approver' | 'admin', fill: number) => {
+      const terms = { company: CO, invitation: invitationIdOf(toHex(new Uint8Array(32).fill(fill)) as Hex), person: `adr_${fill}`, name: VAL.name, role, invite };
+      const proposalSalt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(s.signingSecret as Hex) });
+      const { chainId } = await seatingDevice(s).builder.proposalIdentity!(seatByAddressChangeOf(invite), proposalSalt);
+      return { invited: signSeatInvitation({ ...terms, proposal: String(chainId).toLowerCase() as Hex }, s.signingSecret as Hex), proposalSalt };
+    };
+    /* `s`'s device makes its filing, and the connection drops before the service is reached; the filing is handed back. */
+    const filedNotRaised = async (s: Seat, x: Awaited<ReturnType<typeof made>>): Promise<{ id: string }> => {
+      const device = seatingDevice(s);
+      let filed: { id: string } | null = null;
+      const dropped = { ...device, service: { ...device.service, file: async (_account: string, body: { proposal: { id: string } }) => {
+        filed = body.proposal;
+        throw new Error('the connection dropped');
+      } } };
+      await expect(raiseSeatInvitationOnDevice(dropped as never, { viewingKey: KEY, ...x, name: VAL.name, coinPublicKey: coin }, inviteAddressOf))
+        .rejects.toThrow(/connection dropped/u);
+      return filed!;
+    };
+    const adas = await made(ADA, 'approver', 0x71);
+    const first = await filedNotRaised(ADA, adas);
+    expect((await fromAda(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify({ proposal: first, salt: adas.proposalSalt }) })).status).toBe(200);
+    const held = (await store.listProposals(CO) as SealedProposal[]).find((p) => p.id === first.id)!;
+    /* Another seat's filing of its own invitation for the same address and rights, naming another role, is served beside Ada's, never raised. */
+    const bos = await made(BO, 'admin', 0x72);
+    const other = await filedNotRaised(BO, bos);
+    store.putProposal({ ...held, ...other, status: 'open' } as never);
+    await BO.entered.enter([proposalEntry(CO, other as never)]);
+    const done = await raiseSeatInvitationOnDevice(seatingDevice(ADA), { viewingKey: KEY, ...adas, name: VAL.name, coinPublicKey: coin }, inviteAddressOf);
+    expect(String(done.round?.chainId).toLowerCase()).toBe(adas.invited.terms.proposal);
+  });
+
+  it('a proposal is approved and its seat admitted though the same invitation is filed again under its id with another signature', { timeout: 120_000 }, async () => {
+    const wes = await invited(WES);
+    const again = await secondRecordFor(wes, 'approver', ADA.signingSecret as Hex, 'prp_signedagain1', { signedAgain: true });
+    store.putProposal({ ...again.rec, ...again.filing, id: 'prp_signedagain1' } as never);
+    await ADA.entered.enter([proposalEntry(CO, again.filing as never)]);
+    const before = events.length;
+    /* RED WHEN: two records whose invitations differ only in their signature are told apart, so every approver is refused for good. */
+    const done = await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: wes.shown }, inviteAddressOf);
+    expect([done.state, events.slice(before)]).toEqual(['waiting-for-the-invitee', ['chain approve']]);
+    const signerId = await seatTaken(WES, wes);
+    const late = await secondRecordFor(wes, 'approver', ADA.signingSecret as Hex, 'prp_signedagain2', { signedAgain: true });
+    store.putProposal({ ...late.rec, ...late.filing, id: 'prp_signedagain2', status: 'executed' } as never);
+    await ADA.entered.enter([proposalEntry(CO, late.filing as never)]);
+    /* RED WHEN: a copy of the approved invitation signed again, filed after the seat, stops the person from ever being admitted. */
+    await admitSignerHere(withCommitments(BO), { signerId, readOut: '', name: WES.name });
+    expect(companyNow().signers.find((x) => x.name === WES.name)).toMatchObject({ status: 'active', role: 'approver' });
+  });
+
+  it('a seat invitation signed again over the same terms is another valid signature', () => {
+    const copy = signedAgain(eve.offer.invited, ADA.signingSecret as Hex);
+    expect([seatInvitationRefusal(copy), copy.signature === eve.offer.invited.signature]).toEqual([null, false]);
   });
 
   it('RED WHEN: a request the service names with a seated signer\'s id is filed as that signer at the joiner\'s seat, and every device then refuses the roster', { timeout: 120_000 }, async () => {
@@ -412,15 +564,40 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     const sam = await invited(SAM);
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: sam.shown }, inviteAddressOf);
     const signerId = await seatTaken(SAM, sam);
-    const unread = await openedOnThePage(ADA, { noIndexer: true })().catch((e: unknown) => e);
-    expect(unread).toBeInstanceOf(RosterNotBelieved);
+    const stop = async (o: Parameters<typeof openedOnThePage>[1]) => {
+      const e = await openedOnThePage(ADA, o)().catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(RosterNotBelieved);
+      const r = e as RosterNotBelieved;
+      return { check: r.check, followable: r.followable, stoppedBy: r.stoppedBy, said: r.message };
+    };
+    const unread = await stop({ took: async () => { throw new Error('the indexer did not answer'); } });
     /* RED WHEN: a signer's page that cannot read which seat an invitation's proposal took refuses the roster without saying what stopped it. */
-    expect((unread as RosterNotBelieved).stoppedBy).toContain('SeatNotReadOnTheChain');
+    expect(unread.stoppedBy).toContain(SEAT_READ_STOP.notRead);
+    /* RED WHEN: a page that could not read the chain refuses the roster as leaving a seat out, sending the signer to ask another device, in place of reading again. */
+    expect([unread.check, unread.followable]).toEqual(['chain-unread', null]);
+    expect(unread.said).toMatch(/Reload the page to check again/u);
+    /* RED WHEN: a wallet that names no indexer is told to read again, which cannot resolve it, in place of what can. */
+    const noIndexerRead = await stop({ noIndexer: true });
+    expect([noIndexerRead.check, noIndexerRead.followable, noIndexerRead.stoppedBy.includes(SEAT_READ_STOP.noIndexer)]).toEqual(['chain-unread', null, true]);
+    expect([/check its network/u.test(noIndexerRead.said), /to read again|press again/iu.test(noIndexerRead.said)]).toEqual([true, false]);
+    /* RED WHEN: two seats taken under one invitation's proposal are told as a read to make again, which never clears it, or the roster is followed past them. */
+    const refused = await stop({ took: async () => { throw new SeatingRefusedOnTheChain(TWO_SEATINGS); } });
+    expect([refused.check, refused.followable, refused.stoppedBy.includes(SEAT_READ_STOP.refused)]).toEqual(['seating-refused', null, true]);
+    expect([/will not change it/u.test(refused.said), /Reload the page/u.test(refused.said)]).toEqual([true, false]);
+    /* RED WHEN: a wallet that names no indexer is read as an answer that no invitation's proposal took a seat. */
+    const noIndexer = companyJudges({
+      api: api(ADA.person), keysFor: () => null, servedKeyFor: () => KEY as Hex, holders: async () => acmeReads.holders() as never, indexer: async () => null,
+      builder: async () => ({ invitedSeats: async () => ({}) }) as never, released: () => null, askReleased: async () => null, treeKept: () => treeKeptInMemory() as never,
+      openAccount: async () => null, seatsAdmittedFor: async () => new Set(), noAccount: () => { throw new Error('unused'); },
+    }).rosterReadsFor(CO, LABEL, '00'.repeat(32) as never).invitedSeats!([sam.offer.invited.terms.proposal!.toLowerCase()]);
+    await expect(noIndexer).rejects.toMatchObject({ name: SEAT_READ_STOP.noIndexer });
     /* RED WHEN: a signer's page reads a seat the chain holds, taken on an invitation by address whose request waits for Finish adding, as a seat the roster leaves out. */
     const waiting = await openedOnThePage(ADA)();
     expect(waiting?.signers.some((x) => x.name === SAM.name && x.status === 'active')).toBe(false);
     /* RED WHEN: the seat that waits is read as a believed signer, so a committee or a reader list is built from a roster that does not name it. */
     expect(waiting?.notBelieved).toContain(seatsTakenByInvitation.get(sam.offer.invited.terms.proposal!.toLowerCase()));
+    /* RED WHEN: the company the page opens does not carry the seats its roster read waits for, so the page cannot list them. */
+    expect(waiting?.waited).toContain(seatsTakenByInvitation.get(sam.offer.invited.terms.proposal!.toLowerCase()));
     expect(waiting?.signers.find((x) => x.id === ID[ADA.person])?.status).toBe('active');
     await admitSignerHere(withCommitments(ADA), { signerId, readOut: '', name: SAM.name });
     /* RED WHEN: a signer's page refuses the whole roster once Finish adding admits a seat taken by address, before its signer files their own entry. */
@@ -465,6 +642,34 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
       expect(refused).toBeInstanceOf(RosterNotBelieved);
       expect((refused as RosterNotBelieved).check).toBe('seat-unnamed');
     }
+  });
+
+  /* Raises a proposal, approves it and seats a signer through the simulated chain: about 7 s alone, so it has the longest limit this folder uses. */
+  it('a signer\'s page whose read of the company\'s proposals, or of the seat an invitation by address took, failed stops in place of reading the seat as left out', { timeout: 120_000 }, async () => {
+    const xan = await invited(XAN);
+    await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: xan.shown }, inviteAddressOf);
+    await seatTaken(XAN, xan);
+    const proposal = xan.offer.invited.terms.proposal!.toLowerCase();
+    /* The request Xan's wallet filed is not served, so the seat is waited for only through the proposal that seated it. */
+    const noRequest = (proposals: (body: unknown) => unknown) => (path: string, body: any) => {
+      if (path === `/api/accounts/${CO}`) return { ...body, pendingSigners: [] };
+      return path === `/api/accounts/${CO}/proposals` ? proposals(body) : body;
+    };
+    const stopped = async (o: Parameters<typeof openedOnThePage>[1]) => {
+      const e = await openedOnThePage(ADA, o)().catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(RosterNotBelieved);
+      return [(e as RosterNotBelieved).check, (e as RosterNotBelieved).followable, (e as RosterNotBelieved).stoppedBy];
+    };
+    /* RED WHEN: a read of the company's proposals that failed is taken as no invitation, so the roster is refused as leaving the seat out and followed. */
+    expect(await stopped({ served: noRequest(() => { throw new Error('the service answered with an error'); }) })).toEqual(['chain-unread', null, [PROPOSALS_NOT_READ]]);
+    /* RED WHEN: a read of the seat the served invitation's proposal took that failed is taken as no seat taken, with no request waiting to say so. */
+    const took = async (asked: readonly string[]) => {
+      if (asked.includes(proposal)) throw new Error('the indexer did not answer');
+      return acmeReads.invitedSeats(asked);
+    };
+    expect(await stopped({ served: noRequest((body) => body), took })).toEqual(['chain-unread', null, [SEAT_READ_STOP.notRead]]);
+    /* Read whole, the seat is waited for. */
+    expect((await openedOnThePage(ADA, { served: noRequest((body) => body) })())?.waited).toContain(seatsTakenByInvitation.get(proposal));
   });
 
   it('RED WHEN: a signer\'s page reads a seat whose own entry the directory holds as waited for, because the chain shows a proposal by address took it', async () => {

@@ -557,8 +557,8 @@ describe('each read, on its own', () => {
     const was = kr.account;
     kr.account = { id: 'c1', name: 'Northwind', signers: [
       { id: 's1', name: 'Priya', status: 'active', leafCommitment: leaf(1) }, { id: 's2', name: 'Sam', status: 'pending', leafCommitment: leaf(2) },
-    ] };
-    kr.seats = [leaf(1), leaf(2)];
+    ], waited: [leaf(2), leaf(3)] };
+    kr.seats = [leaf(1), leaf(2), leaf(3)];
     kr.approvals = 2;
     kr.policyBar = 3;
     kr.vaultThresholds = [{ vault: 'ab'.repeat(32), threshold: 3 }];
@@ -568,8 +568,10 @@ describe('each read, on its own', () => {
     expect(c.signerStandings).toEqual({ of: 'read', value: [
       { id: 's1', name: 'Priya', accepted: false, seatOnChain: true, you: false, entryFiled: null },
       { id: 's2', name: 'Sam', accepted: true, seatOnChain: true, you: false, entryFiled: null },
+      /* RED WHEN: the page builds where each signer stands without the seats the roster read waits for, so a seat the network holds is left off. */
+      { id: leaf(3), name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, waiting: true },
     ] });
-    expect(c.approvalsForSigners).toEqual({ of: 'read', value: { count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: ['ab'.repeat(32)], seated: 2 } });
+    expect(c.approvalsForSigners).toEqual({ of: 'read', value: { count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: ['ab'.repeat(32)], seated: 3 } });
     expect(c.approvalsNeeded).toEqual({ of: 'read', value: 2 });
   });
 
@@ -1764,34 +1766,41 @@ describe('the signers invited by address', () => {
   /* RED WHEN: a seat request the chain does not show the proposal took, filed by the service or another invitee, hides Approve; or the seat the chain says it took does not reach the signers page, so Approve stays on an invitation carried out. */
   it('reads the seat each invitation took from the chain alone, with the entry waiting at that seat, and never from a request naming it', async () => {
     const SEAT = '5e'.repeat(32);
-    bya.bodies['p1'] = body('Sam');
-    const forged = { name: 'Sam', role: 'approver', signingPublicKey: 'b1'.repeat(32), wrappingPublicKey: 'b2'.repeat(32), leafCommitment: SEAT, invited: { terms: { proposal: 'CC' } } };
+    /* Both proposals carry one identity on the chain of thirty-two bytes, the only kind the chain is asked about. */
+    const CC = 'cc'.repeat(32); chain.rounds = { [CC]: chain.rounds['cc'] }; bya.bodies['p1'] = { ...body('Sam'), chainId: CC };
+    kr.answers[ROUTE('/proposals')] = (kr.answers[ROUTE('/proposals')] as Array<Record<string, unknown>>).map((p) => ({ ...p, chainId: CC }));
+    const forged = { name: 'Sam', role: 'approver', signingPublicKey: 'b1'.repeat(32), wrappingPublicKey: 'b2'.repeat(32), leafCommitment: SEAT, invited: { terms: { proposal: CC.toUpperCase() } } };
     kr.answers[ROUTE()] = { ...(kr.answers[ROUTE()] as object), pendingSigners: [{ id: 'sX', userId: 'u8', createdAt: 'x', sealed: sealToInbox(forged, inboxPublicKey(VK, 'c1')) }] };
-    const was = kr.account;
-    kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active' }, { id: 'sB', name: 'Sam', status: 'pending', leafCommitment: SEAT }] };
-    chainSeats.took = {}; chainSeats.asked = []; chainSeats.fails = false;
+    const was = kr.account; kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active' }, { id: 'sB', name: 'Sam', status: 'pending', leafCommitment: SEAT }] };
+    chainSeats.took = { [CC]: null }; chainSeats.asked = []; chainSeats.fails = false;
     try {
       const asked = await open();
       expect(asked.signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: null }] });
-      expect(chainSeats.asked).toEqual([['cc']]);
-      chainSeats.took = { cc: SEAT.toUpperCase() };
-      expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: 'sB' } }] });
-      chainSeats.took = { cc: '6f'.repeat(32) };
-      expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: null } }] });
-      chainSeats.fails = true;
-      expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: null }] });
-      chainSeats.fails = false;
-      chainSeats.took = { cc: SEAT };
+      /* The seats taken are read once for the page, for both the standings and the invitations. */
+      expect(chainSeats.asked).toEqual([[CC]]);
+      chainSeats.took = { [CC]: SEAT.toUpperCase() }; expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: 'sB' } }] });
+      chainSeats.took = { [CC]: '6f'.repeat(32) }; expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: null } }] });
+      chainSeats.fails = true; const failed = await open();
+      /* RED WHEN: a read of the seats taken that failed is shown as no seat taken, so one seat is listed twice: as an invitation with no seat and as a seat someone invited took. */
+      expect([failed.signersInvited, failed.signerStandings]).toEqual([{ of: 'unreadable' }, { of: 'unreadable' }]);
+      /* RED WHEN: an answer that leaves out a proposal asked about is read as no seat taken by it. */
+      chainSeats.fails = false; chainSeats.took = {}; expect((await open()).signersInvited).toEqual({ of: 'unreadable' });
+      /* The seat the proposal took, which the roster read waits for and no roster entry names yet, is listed once, under its invitation. */
+      chainSeats.took = { [CC]: SEAT }; kr.seats = [SEAT];
+      kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active' }], waited: [SEAT] };
+      const once = await open();
+      expect(once.signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: null } }] });
+      /* RED WHEN: the page does not hand the seats invitations by address took to where each signer stands, so that seat is also listed as someone invited. */
+      expect(once.signerStandings?.of === 'read' && once.signerStandings.value.filter((x) => x.waiting === true)).toEqual([]);
       kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active' }, { id: 'sB', name: 'Sam', status: 'active', leafCommitment: SEAT.toUpperCase() }] };
       /* RED WHEN: an invitation stays waiting after the chain shows its seat taken and the believed roster holds an active signer at that seat. */
       expect((await open()).signersInvited).toEqual({ of: 'read', value: [] });
       kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya', status: 'active', leafCommitment: SEAT }] };
-      chainSeats.took = { cc: '6f'.repeat(32) };
+      chainSeats.took = { [CC]: '6f'.repeat(32) };
       /* RED WHEN: an active signer at another seat than the one the chain says the proposal took ends the invitation's wait. */
       expect((await open()).signersInvited).toMatchObject({ of: 'read', value: [{ proposal: 'p1', seat: { signer: null } }] });
     } finally {
-      kr.account = was;
-      chainSeats.took = {}; chainSeats.fails = false;
+      kr.account = was; chainSeats.took = {}; chainSeats.fails = false;
     }
   });
 

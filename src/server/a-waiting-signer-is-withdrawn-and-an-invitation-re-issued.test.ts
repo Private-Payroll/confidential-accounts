@@ -36,7 +36,7 @@ import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-s
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
 import {
-  aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat,
+  aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chainRead, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
 aCompanyOfTwoSeats();
@@ -148,7 +148,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
       expect([r.status, (r.body as { refused?: string }).refused], what).toEqual([status, refused]);
     }
     expect([isWaiting(max.signerId), isWaiting(pat.signerId)]).toEqual([true, true]);
-    /* RED WHEN: the service lets a request go once its own read of the chain shows that request's leaf seated: nobody could admit them. */
+    /* RED WHEN: the service lets a request go once its own read of the chain shows that request's leaf seated, when it was not filed late: nobody could admit them. */
     const was = chains.get(CO)!;
     chains.set(CO, { ...was, seats: { ...was.seats, seats: [...was.seats.seats, leafOf(max.signerId)] } });
     try {
@@ -170,11 +170,6 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     await expect(withdraw({ ...ADA, held: { role: 'admin', retired: true } })).rejects.toThrow(SeatMayNotInvite);
     /* RED WHEN: a seat the chain no longer holds withdraws somebody. */
     await expect(withdraw(ADA, { ...adasReads(), onTheChain: [BO.seat] })).rejects.toThrow(/not one the company's account holds now/u);
-    /* RED WHEN: a person the chain has already seated is withdrawn, leaving a seat nobody can admit. */
-    const box = store.getAccount(CO)!.pendingSigners.find((p) => p.id === ned.signerId)!;
-    const { openFromInbox } = await import('../core/sealed-records.js');
-    const leaf = openFromInbox<{ leafCommitment: string }>(box.sealed, CO, KEY).leafCommitment;
-    await expect(withdraw(ADA, { ...adasReads(), onTheChain: [...onTheChain(), leaf] })).rejects.toThrow(/already holds this person's seat/u);
     /* RED WHEN: a person a proposal could still seat is withdrawn while the chain holds that proposal open, approved or not. */
     const chainId = '0f'.repeat(32) as Hex;
     const seating = anAddSigner({ signerId: ned.signerId }, chainId);
@@ -186,6 +181,33 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     /* A proposal the chain no longer holds open seats nobody, whatever the service says of it: the request is withdrawn. */
     await withdraw(ADA, adasReads([{ ...seating, status: 'open' }], ['1e'.repeat(32)]));
     expect(isWaiting(ned.signerId)).toBe(false);
+  });
+
+  it('a request for a seat the chain holds is withdrawn from a device only when it was filed after its invitation closed', async () => {
+    const ned = await waitingFor('ned');
+    const leaf = leafOf(ned.signerId);
+    const was = chains.get(CO)!;
+    chains.set(CO, { ...was, seats: { ...was.seats, seats: [...was.seats.seats, leaf] } });
+    const withdraw = () => withdrawWaitingSignerHere({ id: CO, viewingKey: KEY }, ADA, ned.signerId, adasReads(), fromAda);
+    try {
+      /* RED WHEN: the test chain's read answers seats nobody asked about, as the service's own read never does, so a route that forgets to ask about the seat it decides on still sees it. */
+      expect([(await chainRead(CO, []))?.seats.seats, (await chainRead(CO, [leaf.toUpperCase()]))?.seats.seats]).toEqual([[], [leaf]]);
+      /* RED WHEN: a person the chain has already seated is withdrawn from a device, leaving a seat nobody can admit. */
+      await expect(withdraw()).rejects.toThrow(/already taken their seat on the network/u);
+      expect(isWaiting(ned.signerId)).toBe(true);
+      const invite = store.invitationById(ned.invitation)!;
+      /* RED WHEN: another request filed late on the same invitation lets this one, which was not, go though the chain has seated it. */
+      store.putInvite({ ...invite, lateSeatRequests: [{ leaf: 'c9'.repeat(32), userId: 'other', id: 'sgn_another' }] });
+      await expect(withdraw()).rejects.toThrow(/already taken their seat on the network/u);
+      expect(isWaiting(ned.signerId)).toBe(true);
+      /* The same request as one filed after the invitation closed, for the seat the chain holds. */
+      store.putInvite({ ...invite, lateSeatRequests: [{ leaf, userId: 'ned', id: ned.signerId }] });
+      /* RED WHEN: an admin's device refuses to withdraw a request filed late for a seat the chain holds, so a junk one waits for good. */
+      await withdraw();
+      expect(isWaiting(ned.signerId)).toBe(false);
+    } finally {
+      chains.set(CO, was);
+    }
   });
 
   it('a seat whose role may not file a proposal invites nobody', async () => {

@@ -7,8 +7,9 @@ import type { DepositMoney } from '../../../../src/midnight/deposit-nonce.js';
 import {
   depositIntoCompanyVault, DepositLandedNotYetRecorded, DepositNotYetSeen, type DepositDoors, type DepositsInFlight, type VaultService,
 } from '../../../../packages/web-shared/src/vault-operation.js';
+import { browserDepositsInFlight, browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import {
-  browserDepositsInFlight, browserInFlightRecords, deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,
+  deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,
 } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';

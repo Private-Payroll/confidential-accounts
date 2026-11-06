@@ -564,7 +564,9 @@ export const ACT_INTENTS = Object.freeze({
    * once the seat is taken, bound in the proposal. `token` is the page's own token for the link, so the page
    * makes the link itself and nothing secret comes back. The person's details are the page's words, and never reach
    * the service but sealed. It tells the page where the invitation got to, for a signer the approvals the proposal
-   * holds and needs as the chain shows them, whether the upkeep was all done and how many records it anchored.
+   * holds and needs as the chain shows them, whether the upkeep was all done and how many records it anchored. When a press goes
+   * on under the invitation kept for the same address, not under the token the page sent, it names that invitation's own token
+   * (sixty-four hex characters, the token the page made the link from before it lost it), so the page gives the link filed.
    */
   invite: Object.freeze({
     fields: Object.freeze({
@@ -579,18 +581,20 @@ export const ACT_INTENTS = Object.freeze({
       'threshold',
     ]),
     calls: INVITE_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, token: 'vault' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
    * A signer invited by address takes the seat from their own wallet: the wallet opens the offer with the link's
    * `token`, checks the address is its own, derives its seat for the company, proves `seatInvited` with the address's
-   * coin key, hands the transaction to the invitation's relay and asks to be admitted with its seat's public halves.
+   * coin key, hands the transaction to the invitation's relay and asks to be admitted with its seat's public halves. Before
+   * it picks a seat number it asks the invitation's route which of its seats and keys the company's directory already names.
    */
   'seat-invited': Object.freeze({
     fields: Object.freeze({ company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const }),
     calls: Object.freeze([
       Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/seat', sends: true }),
+      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/seats-named' }),
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-signer' }),
     ]),
   }),

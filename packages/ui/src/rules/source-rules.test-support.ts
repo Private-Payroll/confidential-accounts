@@ -1030,7 +1030,7 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/company-records.ts#SERVICE': 'the service\'s addresses, the purposes a record is sealed for, and the words of its answers, sent and compared, never shown',
   'apps/web/src/adapters/reads.ts#OPENED': 'whether a company\'s records opened, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/company-records.ts#UNREADABLE': 'what a proposal that could not be read is marked as, compared by the code and turned into words by a screen',
-  'apps/web/src/adapters/company-records.ts#PROPOSAL_STANDING': 'the service\'s words for a proposal that waits for approvals and one that has them, compared and returned, never shown',
+  'apps/web/src/adapters/proposal-standing-on-chain.ts#PROPOSAL_STANDING': 'the service\'s words for a proposal that waits for approvals and one that has them, compared and returned, never shown',
   'apps/web/src/adapters/company-records.ts#PAID': 'how a payment is made, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/company-records.ts#STANDING': 'where a person on the payroll stands, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/company-records.ts#ADMIT_BY': 'what admits a person, the fingerprint they read out or their wallet\'s signed claim, compared by the code and chosen by the address they were added at',

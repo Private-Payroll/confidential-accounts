@@ -23,6 +23,7 @@ import {
   governedCallServiceFor, nothingWasSentBy, SentAndNotYetSeen, withCompanyKeys, WithdrawalRefused, withdrawOnDevice, type WithdrawalOutcome,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
+import { chainTimeOf } from './chain-time.js';
 import { companyReachFor, companyRecordsFor, keptReach, pureCircuits, type Handed } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { governedDoorsFor, type OneOffPaymentReach } from './one-off-payment.js';
@@ -114,10 +115,7 @@ export function withdrawProposalAction(reach: WithdrawProposalReach): ActionDefi
           const proposal = intent.fields['proposal']!;
           const handed: Handed = { over: false };
           /* The chain's time, from the newest block at the indexer this wallet names; a run is refused when it is not read. */
-          const chainTime = async (): Promise<number> => {
-            if (r.builder.accountPresence === undefined) throw new Error('this wallet cannot read the chain\'s time.');
-            return (await r.builder.accountPresence({ account: r.account, indexer: r.chain.indexer, transactions: [] })).blockTime;
-          };
+          const chainTime = chainTimeOf(r);
           let state: WithdrawalOutcome;
           try {
             const records = companyRecordsFor(r, reach, await pureCircuits());

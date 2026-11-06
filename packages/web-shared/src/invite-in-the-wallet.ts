@@ -41,7 +41,9 @@ export type InviteAsk = { readonly record: string; readonly company: CompanyLabe
  * action says the invitation was filed (or, raised and not filed, to give them by hand).
  * `opts.token`, when given, is used as it is (and the link is made from it), so a press again of an invitation the wallet
  * kept carries on that same invitation; it must be what `newInvitationToken` gives, sixty-four lower-case hex characters,
- * and anything else is refused before the wallet is asked. Without it a fresh token is made.
+ * and anything else is refused before the wallet is asked. Without it a fresh token is made. When the wallet went on under the
+ * token of an invitation it kept for the same address, it says so, and the link and id are made from that token, which is the
+ * one filed.
  */
 export async function inviteInTheWallet(
   ask: InviteAsk,
@@ -65,5 +67,7 @@ export async function inviteInTheWallet(
     put('threshold', ask.threshold === undefined ? undefined : String(ask.threshold));
   }
   const ended = await actOnACompanyInTheWallet({ name: 'invite', ...fields }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
-  return { ended, link: invitationLink(opts.origin ?? window.location.origin, token), id: invitationIdOf(token) };
+  const told = ended.outcome?.['token'];
+  const filedUnder = (typeof told === 'string' && TOKEN.test(told) ? told : token) as Hex;
+  return { ended, link: invitationLink(opts.origin ?? window.location.origin, filedUnder), id: invitationIdOf(filedUnder) };
 }

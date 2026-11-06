@@ -29,6 +29,13 @@ const t = vi.hoisted(() => ({
   enters: 0,
   order: [] as string[],
   called: [] as string[],
+  /* What the sweep of a record's lost entries was asked, and what it does; by default it enters nothing. */
+  swept: [] as any[][],
+  sweep: null as null | (() => Promise<{ entered: number; refused: string | null }>),
+}));
+vi.mock('../../../../packages/web-shared/src/carried-entries-entered.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/carried-entries-entered.js')>()),
+  recordEnteredHere: async (...a: any[]) => { t.calls.push('sweep'); t.swept.push(a); return t.sweep === null ? { entered: 0, refused: null } : t.sweep(); },
 }));
 vi.mock('../../../../packages/web-shared/src/record-entered-here.js', async (real) => {
   const actual = await real<typeof import('../../../../packages/web-shared/src/record-entered-here.js')>();
@@ -152,6 +159,8 @@ beforeEach(() => {
   t.raised = ['2026-10'];
   t.failEntries = 0;
   t.enters = 0;
+  t.swept.length = 0;
+  t.sweep = null;
 });
 
 describe('A PERSON OR A VENDOR IS ADMITTED IN THE WALLET, ON THE FINGERPRINT THEY READ OUT OR ON THEIR SIGNED CLAIM', () => {
@@ -215,6 +224,21 @@ describe('A PERSON OR A VENDOR IS ADMITTED IN THE WALLET, ON THE FINGERPRINT THE
     expect(await refusedWith(run(admitPersonAction(admitReach()), intent('admit-person', ADMIT_ADA), ctxOf(intent('admit-person', ADMIT_ADA)).ctx))).toBe('act.admit-person.why.not-believed');
     t.people = peopleWith();
     expect(await refusedWith(run(admitPersonAction(admitReach()), intent('admit-person', ADMIT_ADA), ctxOf(intent('admit-person', ADMIT_ADA), null).ctx))).toBe('act.admit-person.why.no-person');
+    expect(t.calls).not.toContain('admit');
+  });
+
+  it('a person whose admission\'s entry was lost is entered from this device, then read again and told already admitted', async () => {
+    t.people = peopleWith({ people: [], notBelieved: ['emp_ada'] });
+    t.sweep = async () => {
+      t.people = peopleWith({ people: [{ person: { ...ADA, status: 'active' }, version: 2, handedOver: false }] });
+      return { entered: 1, refused: null };
+    };
+    const { ctx, told } = ctxOf(intent('admit-person', ADMIT_ADA));
+    await run(admitPersonAction(admitReach()), intent('admit-person', ADMIT_ADA), ctx);
+    /* RED WHEN: a person whose record is not believed only because its entry was lost is refused rather than entered and read again. */
+    expect(told).toContainEqual({ state: ADMIT_PERSON_STATE.alreadyAdmitted });
+    /* RED WHEN: the sweep is asked for another record than the person's own. */
+    expect(t.swept.map(([, kind, id]) => [kind, id])).toEqual([['person', 'emp_ada']]);
     expect(t.calls).not.toContain('admit');
   });
 

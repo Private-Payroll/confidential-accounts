@@ -11,6 +11,9 @@
  *   · the person is signed in and a member of the company;
  *   · the signature covers exactly this company, kind, id, version, key epoch
  *     and bytes;
+ *   · an entry in the company's records the version carries is its own filer's
+ *     signature over exactly it (`carriedEntryRefusal`); it is kept and served
+ *     with the version;
  *   · the key that signed is the one the company's seat directory holds for
  *     this person, for a seat the account holds now (`filerSeatOf`). Whether
  *     that seat's role may file this kind is each member's device's to judge;
@@ -34,6 +37,7 @@ import { FILING_REFUSAL } from '../midnight/seat-directory.js';
 import { CHAIN_UNREAD, filerSeatNow, type DirectoryNow } from './seat-directory-route.js';
 import { assertTheNextVersion, VaultPoolVersionAlreadyFiled } from '../midnight/vault-pool.js';
 import { ROSTER_ID } from '../core/roster-record.js';
+import { carriedEntryRefusal } from '../midnight/carried-entry.js';
 
 export { CompanyRecordIdTaken, type PeopleRecords };
 
@@ -186,6 +190,11 @@ export const fileCompanyRecord = async (
       refused: 'not-signed',
       error: 'a company record is signed by the seat that files it, over exactly this record, and this one is not. Nothing was filed.',
     } };
+  }
+  /* Kept with the record and served with it, so any seat's device can enter a version whose entry never reached the records. */
+  const carried = rec.entry === undefined ? null : carriedEntryRefusal(rec);
+  if (carried !== null) {
+    return { status: 422, body: { refused: 'not-its-entry', error: `this record was not filed, because ${carried}. File it again from your own device. Nothing was filed.` } };
   }
   let now: DirectoryNow;
   try { now = await deps.directoryOf(n.company); } catch (e) { return { status: 503, body: { error: CHAIN_UNREAD(e) } }; }

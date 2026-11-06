@@ -8,7 +8,8 @@ import {
   api, companyKeyReleasedFor, companyKeysForVaults, holdersFromTheWallet, payIntoAVaultFromTheWallet, privateDepositInTheWallet,
 } from 'vaults-web-shared/keyring.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-sign-in.js';
-import { browserDepositsInFlight, browserInFlightRecords, vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
+import { browserDepositsInFlight, browserInFlightRecords } from 'vaults-web-shared/in-flight-in-this-browser.js';
+import { vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
 import { privateTokenFromTheWallet, publicTokenFromTheWallet } from 'vaults-web-shared/deposit-source.js';
 import {
