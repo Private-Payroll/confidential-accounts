@@ -105,7 +105,40 @@ export class ReadFilesNothing extends Error {
   }
 }
 
-export class HttpSealedPoolStore implements SealedPoolStore {
+/**
+ * A store that can list the versions of a vault's record the company's records believe, and name each one they refuse,
+ * with why (`HttpSealedPoolStore.versionsBelieved`).
+ */
+interface ListsBelieved {
+  versionsBelieved(vault: string): Promise<{
+    readonly versions: readonly (FiledPoolVersion | PassedOverVersion)[];
+    readonly refused: readonly { readonly version: number; readonly why: string }[];
+  }>;
+}
+
+/**
+ * **EVERY VERSION OF A VAULT'S RECORD THE COMPANY'S RECORDS BELIEVE, EACH REFUSED ONE NAMED**, from a store that can say
+ * so (`HttpSealedPoolStore.versionsBelieved`). A store that cannot, the memory and database stores, holds only what was
+ * filed through it, so its every version is taken and none is named refused.
+ */
+export async function versionsBelievedOf(
+  store: SealedPoolStore & Partial<ListsBelieved>, vault: string,
+): ReturnType<ListsBelieved['versionsBelieved']> {
+  return typeof store.versionsBelieved === 'function' ? store.versionsBelieved(vault) : { versions: await store.versions(vault), refused: [] };
+}
+
+/**
+ * **EVERY VERSION OF A VAULT'S RECORD AS FILED, NOT CHECKED FOR WHO FILED IT** (`HttpSealedPoolStore.versionsAsFiled`),
+ * for a reader that uses nothing in it before the chain vouches for it. A store that cannot list them so, the memory
+ * and database stores, gives its every version.
+ */
+export async function versionsAsFiledOf(
+  store: SealedPoolStore & { versionsAsFiled?(vault: string): Promise<readonly FiledPoolVersion[]> }, vault: string,
+): Promise<readonly (FiledPoolVersion | PassedOverVersion)[]> {
+  return typeof store.versionsAsFiled === 'function' ? store.versionsAsFiled(vault) : store.versions(vault);
+}
+
+export class HttpSealedPoolStore implements SealedPoolStore, ListsBelieved {
   constructor(
     private readonly record: WireRecord,
     private readonly send: WireSend,
@@ -203,11 +236,17 @@ export class HttpSealedPoolStore implements SealedPoolStore {
     return (await this.listed(vault)).map((f) => ({ version: f.wire.version, sealed: f.sealed }));
   }
 
-  async versions(vault: string): Promise<readonly (FiledPoolVersion | PassedOverVersion)[]> {
+  /**
+   * **EVERY VERSION OF THIS VAULT'S RECORD, THE BELIEVED ONES KEPT AND EACH REFUSED ONE NAMED WITH WHY.** As
+   * `versions`, except that a version the company's records do not believe (`FilingNotBelieved`) is left out of
+   * `versions` and named in `refused`, so a reader that can do without it keeps every other version. For a rebuild of
+   * the vault's notes, which says each refused version; every other reader takes `versions`, which refuses.
+   */
+  async versionsBelieved(vault: string): ReturnType<ListsBelieved['versionsBelieved']> {
     const filed = await this.listed(vault);
     const judge = await this.judge(this.asked(vault));
     /* No version given, where the company's records name one, is a list withheld, not an empty one. */
-    if (filed.length === 0) return this.absent(vault, judge) ?? [];
+    if (filed.length === 0) return { versions: this.absent(vault, judge) ?? [], refused: [] };
     /*
      * Every version as one the anchor holds, and the last that stands as the newest: a list the service cut short is
      * refused. A version the company's records passed over is said as such, without its bytes; never the newest. So is
@@ -219,9 +258,25 @@ export class HttpSealedPoolStore implements SealedPoolStore {
     const newest = passed.lastIndexOf(false);
     if (newest < filed.length - 1) this.passedTo.set(vault, filed[filed.length - 1]!.wire.version);
     else this.passedTo.delete(vault);
-    return filed.map((f, i): FiledPoolVersion | PassedOverVersion => (passed[i]
-      ? { version: f.wire.version, neverEntered: true as const }
-      : { version: f.wire.version, sealed: this.believed(f.sealed, judge, i === newest) }));
+    const versions: (FiledPoolVersion | PassedOverVersion)[] = [];
+    const refused: { version: number; why: string }[] = [];
+    filed.forEach((f, i) => {
+      if (passed[i]) { versions.push({ version: f.wire.version, neverEntered: true as const }); return; }
+      try {
+        versions.push({ version: f.wire.version, sealed: this.believed(f.sealed, judge, i === newest) });
+      } catch (e) {
+        if (!(e instanceof FilingNotBelieved)) throw e;
+        refused.push({ version: e.version, why: e.why });
+      }
+    });
+    return { versions, refused };
+  }
+
+  /** Every version of this vault's record, as `versionsBelieved` reads them; refused whole when any one is not believed. */
+  async versions(vault: string): Promise<readonly (FiledPoolVersion | PassedOverVersion)[]> {
+    const { versions, refused } = await this.versionsBelieved(vault);
+    if (refused.length > 0) throw new FilingNotBelieved(this.record, refused[0]!.version, refused[0]!.why);
+    return versions;
   }
 
   private async listed(vault: string) {
@@ -370,13 +425,6 @@ export class FilingNotBelieved extends Error {
 }
 
 /**
- * **A COMPANY'S OWN RECORDS, REACHED OVER HTTP**: filed signed by this
- * device's seat, and read back believed only when a seat the directory names
- * filed them, by the same fresh check as a vault's records. Given no signing
- * key it only reads, and refuses to file (`ReadFilesNothing`), as a page that
- * holds no seat secret reads.
- */
-/**
  * **A VERSION OF A COMPANY RECORD THE COMPANY'S RECORDS PASSED OVER**, as a
  * list of its versions says it: filed, its entry never entered, a later version
  * anchored past it. Its bytes are not given, so nothing opens it.
@@ -389,6 +437,13 @@ interface CompanyVersionPassedOver {
   readonly neverEntered: true;
 }
 
+/**
+ * **A COMPANY'S OWN RECORDS, REACHED OVER HTTP**: filed signed by this
+ * device's seat, and read back believed only when a seat the directory names
+ * filed them, by the same fresh check as a vault's records. Given no signing
+ * key it only reads, and refuses to file (`ReadFilesNothing`), as a page that
+ * holds no seat secret reads.
+ */
 export class HttpCompanyRecordStore {
   constructor(
     private readonly company: string,

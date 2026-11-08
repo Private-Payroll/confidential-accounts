@@ -31,20 +31,21 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       .toBe('/params/bls_midnight_2p9');
   });
 
-  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault OR approveVaultChange, AND A SIGNER\'S DEVICE PROVES propose, approve, cancel, removeSignerAndSetThreshold, setThreshold, setVaultThreshold, adopt, setPolicy, setPolicyBar, clearRun, anchor AND recoverAnchor ARE SERVED, AND THE ACCOUNT\'S CIRCUITS NO DEVICE PROVES ARE NOT (THE WHOLE SERVED LIST IS PINNED IN vault-worker-routing.test.ts)', () => {
+  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault, approveVaultChange OR retireVault, AND A SIGNER\'S DEVICE PROVES propose, approve, cancel, removeSignerAndSetThreshold, setThreshold, setVaultThreshold, adopt, setPolicy, setPolicyBar, clearRun, anchor AND recoverAnchor ARE SERVED, AND THE ACCOUNT\'S CIRCUITS NO DEVICE PROVES ARE NOT (THE WHOLE SERVED LIST IS PINNED IN vault-worker-routing.test.ts)', () => {
     /* RED WHEN: the account's folder is not served (a payment out, a raise, an approval, a seat or a threshold change then cannot be
      * proved on a device, nor a vault's adoption when it is created), or it serves any other circuit of the account's, or a vault name reaches it. */
     /* A withdrawal, a vault's own approvals needed, a vault's spending policy and the approvals a policy change needs are proved on a signer's device too: RED WHEN any is not served. */
     /* Charging an approved run to its vault's period is proved on the paying signer's device: RED WHEN clearRun is not served. */
     /* The company's record anchor and its recovery are proved on a signer's device: RED WHEN anchor or recoverAnchor is not served. */
-    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'propose', 'approve', 'cancel', 'removeSignerAndSetThreshold', 'setThreshold', 'setVaultThreshold', 'adopt', 'setPolicy', 'setPolicyBar', 'clearRun', 'anchor', 'recoverAnchor']) {
+    /* A vault's retire calls the account's retireVault in the same transaction: RED WHEN it is not served, so no retire is proved on a device. */
+    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'retireVault', 'propose', 'approve', 'cancel', 'removeSignerAndSetThreshold', 'setThreshold', 'setVaultThreshold', 'adopt', 'setPolicy', 'setPolicyBar', 'clearRun', 'anchor', 'recoverAnchor']) {
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.prover`)).toBe(`/repo/contracts/managed/keys/${circuit}.prover`);
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`)).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
       expect(vaultArtefactFile(places, `/account/zkir/${circuit}.bzkir`)).toBe(`/repo/contracts/managed/zkir/${circuit}.bzkir`);
     }
     for (const path of [
       '/account/keys/closeExpiredRun.prover', '/account/keys/holdRun.prover',
-      '/account/keys/retireVault.prover', '/account/keys/payout.prover', '/account/keys/recordPayment.prover',
+      '/account/keys/payout.prover', '/account/keys/recordPayment.prover',
       '/account/zkir/recordPayment.prover', '/account/keys/recordPayment.bzkir', '/account/keys/../keys/recordPayment.prover',
       '/keys/recordPayment.prover', '/keys/propose.prover', '/keys/approve.prover',
       '/account/params/bls_midnight_2p13', '/account/keys/recordpayment.prover', '/account/keys/Propose.prover',

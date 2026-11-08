@@ -22,7 +22,11 @@
  *   - **is its signer one of the company's signers now?** The seat their
  *     wallet signed for must be one the account holds now, as this signer's
  *     own wallet read it just before the secret run, each seat signed for
- *     once, and every seat the account holds must have a reader.
+ *     once, and every seat the account holds must have a signer on the roster;
+ *   - **is it exactly the readers this device seals to?** The keys expected are
+ *     the directory's readers as this device believes them (`readersIn`: each
+ *     seat believed, not retired and held by the chain, under the key its entry
+ *     names), handed in with the directory; a read without them is refused.
  *
  * **NO COMMITTEE IS READ HERE.** The account's committee, and a vault's,
  * holds the super admins' keys, and a reader need not be one: who may read a
@@ -51,12 +55,15 @@ export interface VaultAsTheWalletRead {
 
 /**
  * The company's directory as this device believes it: each seat's entry with
- * the opening this device opened from it, and what this device's vault worker
- * made of each opening with the account's own `signerLeaf`.
+ * the opening this device opened from it, what this device's vault worker
+ * made of each opening with the account's own `signerLeaf`, and the records
+ * keys a vault's secret is sealed to: one per seat this device believes and the
+ * chain holds now (`readersIn`), never the roster's own list.
  */
 export interface DirectoryAsBelieved {
   readonly seats: readonly { readonly seat: string; readonly opening?: SeatOpening; readonly retired: unknown }[];
   readonly leafOf: LeafOf | null;
+  readonly readers: readonly string[];
 }
 
 /** Who holds the company's account, as this signer's own wallet read it from the chain: every seat. */
@@ -92,9 +99,8 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
  * **WHAT KIND OF THING STOPPED A SECRET RUN**, so a screen can say it in a
  * person's own language and point at what resolves it: the wallet reading the
  * account again, a signer giving their keys from their own wallet, or nothing
- * a person here can do.
+ * a person here can do. One of a fixed set, which is why a set of readers is refused.
  */
-/** Why a set of readers is refused, one of a fixed set a screen turns into its own words. */
 export const READER_REFUSAL = {
   walletReadNothing: 'wallet-read-nothing', keysNotGiven: 'keys-not-given', notSigned: 'not-signed',
   seatNotHeld: 'seat-not-held', rosterNotTheChains: 'roster-not-the-chains', readerNotASigner: 'reader-not-a-signer',
@@ -110,7 +116,10 @@ export interface ReaderRefusal {
 const refused = (code: ReaderRefusalCode, says: string): ReaderRefusal => ({ code, says });
 
 /** What the roster check reads: the vault-free half of what the first secret's readers are checked against. */
-export type RosterToCheck = Pick<SecretReadersToCheck, 'company' | 'roster' | 'directory' | 'account'> & { readonly seats: Pick<SeatsAsTheWalletRead, 'seats'> | null };
+export type RosterToCheck = Pick<SecretReadersToCheck, 'company' | 'roster' | 'account'> & {
+  readonly seats: Pick<SeatsAsTheWalletRead, 'seats'> | null;
+  readonly directory: Pick<DirectoryAsBelieved, 'seats' | 'leafOf'> | null;
+};
 
 /**
  * THE SIGNERS OF A COMPANY AGAINST ITS ACCOUNT, the half of the first secret's check that names no vault: each signer's vault
@@ -189,7 +198,7 @@ export function rosterRefusalOf(input: RosterToCheck): ReaderRefusal | null {
   return null;
 }
 
-/** The same check, with the kind of refusal beside its sentence. */
+/** The same check and the run's own readers against the directory's, with the kind of refusal beside its sentence. */
 export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | null {
   const rosterRefused = rosterRefusalOf(input);
   if (rosterRefused !== null) return rosterRefused;
@@ -202,12 +211,18 @@ export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | nu
     return refused('vault-not-the-companys', 'this vault, as your wallet read it on the chain, belongs to a different company account '
       + 'from this one, so its secret is not approved from here. Nothing is approved; contact support.');
   }
+  const believed = input.directory?.readers;
+  if (!Array.isArray(believed)) {
+    return refused(READER_REFUSAL.directoryUnread, 'the company\'s directory was read without the seats it believes, so who this vault\'s '
+      + 'secret is sealed to cannot be checked. Reload the page, then try again.');
+  }
   const readers = input.readers.map(fold);
-  const expected = new Map(input.roster.map((e) => [fold(e.keys!.recordsKey), e.name]));
-  if (expected.size !== input.roster.length) {
+  const named = new Map(input.roster.map((e) => [fold(e.keys!.recordsKey), e.name]));
+  if (named.size !== input.roster.length || new Set(believed.map(fold)).size !== believed.length) {
     return refused('roster-not-the-chains', 'two signers give the same records key, so one copy of the secret would stand '
       + 'for two people. Nothing is approved; contact support.');
   }
+  const expected = new Map(believed.map((k) => [fold(k), named.get(fold(k)) ?? fold(k)]));
   const extra = readers.filter((r) => !expected.has(r)).length;
   if (extra > 0) {
     return refused('reader-not-a-signer', `this secret would also be sealed to ${plural(extra, 'key', 'keys')} that no signer of this company signed `

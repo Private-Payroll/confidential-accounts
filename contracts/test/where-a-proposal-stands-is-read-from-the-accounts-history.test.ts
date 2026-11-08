@@ -209,6 +209,12 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     /* RED WHEN: the marker is made over another account than the one asked about. */
     expect((await standingAsked('ad'.repeat(32), A.secretKey)).approvedHere).toBe(false);
     expect('approvedHere' in (await standingAsked(account))).toBe(false);
+    const whole = ((await answerVaultAsk(async () => ({
+      accountPure: pureCircuits, accountLedger: (accountModule as any).ledger, runtimeState: (runtime as any).ContractState,
+      vault: { pureCircuits: {}, ledger: () => ({}) },
+    }) as never, { id: 2, network: 'undeployed', ask: 'start-standing', vault: VAULT, account, accountState: state, vaultState: state, now: '1' } as never)) as any).standing;
+    /* RED WHEN: the worker drops the account's count of removals, so no device can tell a secret a leaver may open. */
+    expect(whole.removals).toBe(0);
   });
 
   it('A CLOSE IS READ FROM THE CALLS THAT SUCCEEDED; AN IDENTITY HELD AGAIN IS READ FROM ITS LATEST TIME; ONE OPENED AND CLOSED IN A BLOCK IS NEVER SEEN', async () => {

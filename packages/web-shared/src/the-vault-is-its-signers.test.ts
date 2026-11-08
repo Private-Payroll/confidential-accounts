@@ -257,9 +257,10 @@ describe('A PAYMENT THE LEAVING SIGNER CARRIES OUT AFTER THEIR REMOVAL IS RAISED
   /**
    * One vault: Bo files its pool (`first`) before his removal is raised; after it his device files the pool `after`
    * and, where `pays`, first the journal line of a payment spending `spent` for 40. Ada's device then reads it with
-   * Bo retired. `held` is the chain's set of notes.
+   * Bo retired. `held` is the chain's set of notes. Where `deposits` is given, his device also files a deposit journal
+   * holding those coins after the raise.
    */
-  const aVault = async (first: Note[], after: Note[] | null, pays: boolean) => {
+  const aVault = async (first: Note[], after: Note[] | null, pays: boolean, deposits?: Note[]) => {
     const kept = new Map<WireRecord, MemorySealedPoolStore>();
     const wrapping = newWrappingKeypair();
     const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
@@ -273,6 +274,7 @@ describe('A PAYMENT THE LEAVING SIGNER CARRIES OUT AFTER THEIR REMOVAL IS RAISED
     }
     /* What his device files after the raise is filed as it is, whatever it holds. */
     if (after !== null) await bosRecords('pool').put(VAULT, sealPool(VAULT, { notes: after }, await signers(), 2, 'pool'));
+    if (deposits !== undefined) await bosRecords('deposit-journal').put(VAULT, sealPool(VAULT, { notes: deposits }, await signers(), 1, 'deposit-journal'));
     const adas = deviceOf(ADA, kept, () => seatsNow(ADA), { n: 0 }, everySeatAttested, [...filings, retire()]);
     return { kept, signers, as, opener, adas };
   };
@@ -329,6 +331,27 @@ describe('A PAYMENT THE LEAVING SIGNER CARRIES OUT AFTER THEIR REMOVAL IS RAISED
     const again = await pool.load(VAULT);
     await pool.save(VAULT, { notes: [...again.notes, dep] }, again.readAt);
     expect((await pool.load(VAULT)).notes).toEqual([change, dep]);
+  });
+
+  it('A JOURNAL THAT CANNOT BE FILED AGAIN IS SAID, WITH WHY AND WHAT CLEARS IT, AND IS NOT LISTED AS FILED', async () => {
+    const { signers, as, opener, adas } = await aVault([spent], [change], true, [dep]);
+    /* This device's filing of both journals is refused; its pool files as before. */
+    const refusing = (r: WireRecord) => {
+      const store = adas(r);
+      if (r !== 'payment-journal' && r !== 'deposit-journal') return store;
+      return new Proxy(store, {
+        get: (target, key) => (key === 'put' ? async () => { throw new Error('the service refused the filing'); }
+          : (typeof Reflect.get(target, key) === 'function' ? Reflect.get(target, key).bind(target) : Reflect.get(target, key))),
+      });
+    };
+    const done = await fileThePoolTheChainHolds({ vault: VAULT, me: as, records: refusing, signers, held: heldIn([change, dep]) });
+    /* RED WHEN: a journal the chain vouches for that could not be filed again is dropped without a word. */
+    expect(done.said).toEqual(['payment', 'deposit'].map((which) => expect.stringMatching(new RegExp(`${which} journal could not be filed again from what `
+      + 'the chain vouches for \\(the service refused the filing\\).*the next read of this vault by a seat that may file its records tries again', 'u'))));
+    expect(done.journals, 'RED WHEN: a journal that was not filed is reported as filed').toEqual([]);
+    /* The next read files it, and the line the chain shows landed is kept. */
+    expect((await fileThePoolTheChainHolds({ vault: VAULT, me: as, records: adas, signers, held: heldIn([change, dep]) })).journals).toEqual(['payment-journal', 'deposit-journal']);
+    expect((await new PaymentJournalInStore(adas('payment-journal'), VAULT, opener, signers).open()).attempts.map((a) => a.spent.nonce)).toEqual([spent.nonce]);
   });
 
   it('A RE-FILE TAKES ONLY WHAT THE CHAIN HOLDS, NOTHING FROM A VERSION THAT IS NOT A POOL, AND SAYS A LANDED PAYMENT\'S CHANGE IT CANNOT FIND', async () => {

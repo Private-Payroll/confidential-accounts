@@ -3,6 +3,11 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { VaultSecretBeingChanged } from '../../../../packages/web-shared/src/deposit-on-device.js';
+import { DepositLineNotEnded } from '../../../../packages/web-shared/src/deposit-line-ended.js';
+import { createTranslator } from '../../../../packages/ui/src/i18n/provider.js';
+import { ActionStopped } from './run.js';
+import { readFileSync } from 'node:fs';
 
 /*
  * **A PRIVATE DEPOSIT IS MADE WHOLE IN THE WALLET, AND NOTHING THE PAGE ANSWERS CAN MAKE IT LOSE TRACK OF ONE IT
@@ -259,6 +264,65 @@ describe('the deposit step tells the page only where it got to', () => {
     expect(refused).toBeInstanceOf(StepRefused);
     expect((refused as StepRefused).words).toMatchObject({ key: 'act.private-deposit.why.not-made', values: { says: expect.stringMatching(/your wallet handed back a deposit other than the one this device built/) } });
     expect(seen).toEqual({ vault: VAULT });
+  });
+
+  it('a deposit refused while the vault\'s secret is being changed after a removal says so in the wallet\'s own words', async () => {
+    t.run = async () => { throw new VaultSecretBeingChanged(VAULT as never); };
+    const { ctx } = ctxWith();
+    const action = privateDepositAction({
+      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
+      reachFor: async () => reachOf(),
+    } as never);
+    let refused: unknown = null;
+    for (const s of ownSteps(action)) await s.run(ctx).catch((x: unknown) => { refused = x; });
+    /* RED WHEN: the refusal reaches the page as the device's raw words, or as a deposit that may be on its way. */
+    expect((refused as StepRefused).words).toEqual({ key: 'act.private-deposit.why.secret-being-changed' });
+    const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    expect(en['act.private-deposit.why.secret-being-changed'], 'RED WHEN: the refusal has no words').toMatch(/deposits into this vault resume/iu);
+  });
+
+  describe('a stop whose journal line could not be marked keeps its own words and code, and says the line beside them', () => {
+    const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    const t18 = createTranslator([{ tag: 'en', messages: en }] as never, 'en');
+    const said = (w: { key: string; values?: Record<string, unknown> }) => t18.t(w.key, { ...(w.values ?? {}) });
+    const LINE = /This deposit's line in the vault's deposit journal could not be marked as never sent/u;
+    const stoppedWith = async (stop: Error) => {
+      t.run = async () => { throw new DepositLineNotEnded(stop, 'the service did not answer'); };
+      const { ctx } = ctxWith();
+      const action = privateDepositAction({
+        chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
+        reachFor: async () => reachOf(),
+      } as never);
+      let refused: unknown = null;
+      for (const s of ownSteps(action)) await s.run(ctx).catch((x: unknown) => { refused = x; });
+      return refused;
+    };
+
+    it('a refusal of the wallet\'s own keeps its words and its code', async () => {
+      const refused = await stoppedWith(new StepRefused({ key: 'act.private-deposit.why.not-as-built' }));
+      /* RED WHEN: a refusal of the wallet's own whose line could not be marked falls to the device's raw words, or loses its code. */
+      expect(refused).toBeInstanceOf(StepRefused);
+      expect((refused as StepRefused).code).toBe('not-as-built');
+      const text = said((refused as StepRefused).words);
+      expect(text.startsWith(en['act.private-deposit.why.not-as-built']!), text).toBe(true);
+      expect(text).toMatch(LINE);
+    });
+
+    it('a deposit refused while the vault\'s secret is being changed keeps its words and says the line', async () => {
+      const refused = await stoppedWith(new VaultSecretBeingChanged(VAULT as never));
+      /* RED WHEN: the secret's refusal whose line could not be marked reaches the person as the device's raw words. */
+      expect(refused).toBeInstanceOf(StepRefused);
+      expect((refused as StepRefused).code).toBe('secret-being-changed');
+      const text = said((refused as StepRefused).words);
+      expect(text).toMatch(/deposits into this vault resume/iu);
+      expect(text).toMatch(LINE);
+    });
+
+    it('a stop of the action itself stays that stop', async () => {
+      const stop = new ActionStopped('stopped');
+      /* RED WHEN: the person's own stop, whose line could not be marked, ends as a refusal instead of a stop. */
+      expect(await stoppedWith(stop)).toBe(stop);
+    });
   });
 
   it('a deposit not yet seen, or landed and not yet recorded, says so and refuses, so the page says it may have been sent', async () => {

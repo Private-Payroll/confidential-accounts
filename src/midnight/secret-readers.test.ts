@@ -46,9 +46,15 @@ const vaultRead = (over: Partial<{ vault: string; account: string }> = {}) => ({
 /* The seats the account holds and the vault, as one wallet read them. */
 const seatsOf = (seats: readonly string[]) => ({ seats, vault: vaultRead() });
 
-/* The company's directory as this device believes it: each seat's entry with its opening, and the compiled `signerLeaf`. */
-const directoryOf = (seats: readonly { seat: string; opening: (typeof ada)['opening'] }[]) =>
-  ({ seats: seats.map((s) => ({ seat: s.seat, opening: s.opening, retired: null })), leafOf: leafOfTheContract });
+/*
+ * The company's directory as this device believes it: each seat's entry with its opening, the compiled `signerLeaf`,
+ * and the records keys of the seats it believes and the chain holds - every signer here whose statement it holds.
+ */
+const directoryOf = (seats: readonly { seat: string; opening: (typeof ada)['opening']; statement?: (typeof ada)['statement'] }[]) =>
+  ({
+    seats: seats.map((s) => ({ seat: s.seat, opening: s.opening, retired: null })), leafOf: leafOfTheContract,
+    readers: seats.flatMap((s) => (s.statement === undefined ? [] : [s.statement.recordsKey])),
+  });
 const good = (): SecretReadersToCheck => ({
   company: CO,
   readers: all.map((s) => s.statement.recordsKey),
@@ -111,8 +117,9 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
   it('A SIGNER WHO HAS LEFT IS REFUSED AS A READER, BY THE SEATS THE ACCOUNT HOLDS', () => {
     /* Cy has left: the account seats two. */
     const seats = seatsOf([ada.seat, bo.seat]);
-    /* RED WHEN: the two who remain are refused. */
-    expect(whyNot({ ...good(), seats, roster: [ada.entry, bo.entry], readers: [ada.statement.recordsKey, bo.statement.recordsKey] })).toBeNull();
+    /* RED WHEN: the two who remain are refused. The directory's readers are the seats the chain holds, so Cy is not one. */
+    const remain = { ...good().directory!, readers: [ada.statement.recordsKey, bo.statement.recordsKey] };
+    expect(whyNot({ ...good(), seats, roster: [ada.entry, bo.entry], readers: [ada.statement.recordsKey, bo.statement.recordsKey], directory: remain })).toBeNull();
     /* RED WHEN: a signer who has left is still a reader. */
     expect(readerRefusalOf({ ...good(), seats })?.code).toBe('seat-not-held');
     const updated = seats;
@@ -247,5 +254,23 @@ describe('A READER IS THE WALLET KEY ITS SEAT WAS MADE FOR, AS ITS ENTRY\'S OPEN
     expect(readerRefusalOf({ ...good(), directory: retired })?.code).toBe('not-signed');
     /* RED WHEN: with nothing to work the leaves out, an opening proves its key. */
     expect(readerRefusalOf({ ...good(), directory: { ...good().directory!, leafOf: null } })?.code).toBe('not-signed');
+  });
+});
+
+describe('A SECRET RUN\'S READERS ARE THE SEATS THIS DEVICE\'S DIRECTORY BELIEVES AND THE CHAIN HOLDS, NOT THE ROSTER\'S LIST', () => {
+  /* Bo's seat is not one this device believes (say its wallet's statement names another key than its entry), so the directory's readers leave Bo out. */
+  const withoutBo = (): SecretReadersToCheck => ({ ...good(), directory: { ...good().directory!, readers: [ada, cy].map((s) => s.statement.recordsKey) } });
+
+  it('passes a run sealed to the readers the directory believes, though the roster names one more', () => {
+    /* RED WHEN: the readers expected are the roster's, so a run sealed to the readers every device seals to is refused as leaving Bo out. */
+    expect(whyNot({ ...withoutBo(), readers: [ada, cy].map((s) => s.statement.recordsKey) })).toBeNull();
+  });
+
+  it('refuses a reader the directory does not believe, and a directory read that names no readers', () => {
+    /* RED WHEN: a key the roster names but this device's directory does not believe is let read the secret. */
+    expect(readerRefusalOf(withoutBo())?.code).toBe(READER_REFUSAL.readerNotASigner);
+    /* RED WHEN: a directory read that carries no readers is taken as expecting the roster's, or nobody. */
+    const { readers: _dropped, ...unread } = good().directory!;
+    expect(readerRefusalOf({ ...good(), directory: unread as never })?.code).toBe(READER_REFUSAL.directoryUnread);
   });
 });

@@ -54,7 +54,7 @@ import { refusalForDeposit } from '../../../src/wiring/vault-submission.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../../../src/midnight/company-nonce-secret.js';
-import { newWrappingKeypair, toHex, type Hex } from '../../../src/core/crypto.js';
+import { toHex, type Hex } from '../../../src/core/crypto.js';
 import { StaticAssetRegistry } from '../../../src/core/assets.js';
 import { depositFromSource, privateTokenFromTheWallet } from './deposit-source.js';
 import * as ShieldedV1 from '@midnightntwrk/wallet-sdk-shielded/v1';
@@ -343,6 +343,8 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
         return { blockHash: 'b1'.repeat(32), vaultState: state, zswapState: '', parameters: Buffer.from(CHAIN_PARAMETERS).toString('base64'), accountState: '' };
       },
       eventsOf: async () => { throw new Error('no events'); },
+      /* The account's count of removals, read at the same block: none here. */
+      startStanding: async () => ({ standing: { adopted: true, removals: 0 } }) as never,
       /* The vault's history, asked by the output the send could not name: one transaction, which made it. */
       createdBy: async (i: { vault: string; commitment: string; indexer: unknown }) => {
         catching('device created-by', [i.vault, i.commitment, i.indexer]);
@@ -392,8 +394,8 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       replace: (slot, claim, record) => { catching('browser in-flight', [slot, claim, record]); return sealedStore.replace(slot, claim, record); },
       remove: (slot, claim) => sealedStore.remove(slot, claim),
     };
-    const wrapping = newWrappingKeypair();
     const companyKey = new Uint8Array(32).map((_, i) => 200 - i);
+    const wrapping = recordsKeypairFrom(companyKey);
     const me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey };
     const doors = {
       sleep: async () => {}, waitMs: 3, everyMs: 1, service, me, records,

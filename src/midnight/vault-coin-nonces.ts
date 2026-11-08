@@ -56,8 +56,10 @@ export interface VaultNonceCircuits {
 
 /**
  * **THE VAULT'S NONCE SECRETS, AS A DEVICE SUPPLIES THEM**: every secret the
- * company's nonce-secret record holds (`OpenedNonceSecrets.secrets`), oldest
- * first, and the commitment the vault holds on chain now (`nonceCommitment`).
+ * company's nonce-secret record holds (`OpenedNonceSecrets.secrets`), and any
+ * the vault itself gives back (a signer's own sealed copy of its current secret
+ * and every earlier secret the vault links to it, `secretsWalkedBack`), with the
+ * commitment the vault holds on chain now (`nonceCommitment`).
  */
 export interface VaultNonceSecrets {
   readonly secrets: readonly Hex[];
@@ -117,7 +119,7 @@ export const nonceCircuitsFrom = (c: Partial<VaultNonceCircuits> | undefined): V
 
 /**
  * **THE SECRETS TO NAME COINS WITH, ONCE ONE OF THEM IS SHOWN TO BE THE VAULT'S
- * CURRENT SECRET.** Oldest first, as given. Throws `NonceSecretNotTheVaults`
+ * CURRENT SECRET.** In the order given. Throws `NonceSecretNotTheVaults`
  * when none is.
  */
 export const secretsOfTheVault = (circuits: VaultNonceCircuits, vault: Hex, given: VaultNonceSecrets): readonly Hex[] => {

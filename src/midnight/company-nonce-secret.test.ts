@@ -8,8 +8,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  recordsKeypairFrom, startNonceSecret, openNonceSecrets, admitToNonceSecret, rotateNonceSecret,
+  recordsKeypairFrom, startNonceSecret, openNonceSecrets, admitToNonceSecret, rotateNonceSecret, newNonceSecret,
   openNewestNonceSecrets, depositNonceKeysOf, currentDepositNonceKey, NonceSecretUnreadable,
+  refileNonceSecret, secretBehindTheChain, keepsEveryEpochOf,
 } from './company-nonce-secret.js';
 import { payslipKeypairFrom } from '../core/payslip-key-derive.js';
 import { depositNonceKeyFor } from './deposit-nonce.js';
@@ -74,7 +75,7 @@ describe('a vault\'s nonce secret', () => {
       const started = openNonceSecrets(startNonceSecret(VAULT, [reader(A)]), VAULT, A).secrets;
       /* RED WHEN a new secret's last byte is left random: the vault refuses it, and a later secret could not carry it. */
       expect(started[0]!.slice(-2)).toBe('00');
-      const rotated = openNonceSecrets(rotateNonceSecret(startNonceSecret(VAULT, [reader(A), reader(B)]), VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }), VAULT, A).secrets;
+      const rotated = openNonceSecrets(rotateNonceSecret(startNonceSecret(VAULT, [reader(A), reader(B)]), VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }, newNonceSecret(), 0), VAULT, A).secrets;
       expect(rotated[rotated.length - 1]!.slice(-2)).toBe('00');
     }
   });
@@ -105,8 +106,8 @@ describe('a vault\'s nonce secret', () => {
   it('its length says nothing about how many epochs there have been', () => {
     let rec = startNonceSecret(VAULT, [reader(A), reader(B), reader(C)]);
     const one = rec.sealed.body.length;
-    rec = rotateNonceSecret(rec, VAULT, A, { remaining: [reader(A), reader(C)], leaving: [reader(B)] });
-    rec = rotateNonceSecret(rec, VAULT, A, { remaining: [reader(A)], leaving: [reader(C)] });
+    rec = rotateNonceSecret(rec, VAULT, A, { remaining: [reader(A), reader(C)], leaving: [reader(B)] }, newNonceSecret(), 0);
+    rec = rotateNonceSecret(rec, VAULT, A, { remaining: [reader(A)], leaving: [reader(C)] }, newNonceSecret(), 0);
     expect(rec.sealed.body.length, 'RED WHEN: the store can count how many signers have left from the record\'s length').toBe(one);
   });
 
@@ -123,7 +124,7 @@ describe('a vault\'s nonce secret', () => {
   it('A SIGNER LEAVING STARTS A NEW EPOCH: those who remain open every secret, the leaver keeps only what they had', () => {
     const one = startNonceSecret(VAULT, [reader(A), reader(B)]);
     const before = openNonceSecrets(one, VAULT, B).secrets;
-    const two = rotateNonceSecret(one, VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] });
+    const two = rotateNonceSecret(one, VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }, newNonceSecret(), 0);
     const a = openNonceSecrets(two, VAULT, A);
     expect(a.epoch).toBe(2);
     expect(a.secrets[0], 'RED WHEN: rotating forgets the secret old deposits were made under').toBe(before[0]);
@@ -138,24 +139,77 @@ describe('a vault\'s nonce secret', () => {
 
   it('A ROTATION NAMES EVERY SIGNER, and takes nobody\'s access without being told to', () => {
     const one = startNonceSecret(VAULT, [reader(A), reader(B), reader(C)]);
-    expect(() => rotateNonceSecret(one, VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }),
+    expect(() => rotateNonceSecret(one, VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }, newNonceSecret(), 0),
       'RED WHEN: a signer who is neither leaving nor remaining is dropped silently').toThrow(/named neither as remaining nor as leaving/);
-    expect(() => rotateNonceSecret(one, VAULT, A, { remaining: [reader(A), reader(B), reader(C)], leaving: [] }),
-      'RED WHEN: an epoch starts with nobody leaving').toThrow(/nobody is named as leaving/);
-    expect(() => rotateNonceSecret(one, VAULT, A, { remaining: [reader(A), reader(B)], leaving: [reader(B), reader(C)] }),
+    expect(openNonceSecrets(rotateNonceSecret(one, VAULT, A, { remaining: [reader(A), reader(B), reader(C)], leaving: [] }, newNonceSecret(), 0), VAULT, C).epoch,
+      'RED WHEN: the secret the chain holds cannot be filed because nobody is leaving').toBe(2);
+    expect(() => rotateNonceSecret(one, VAULT, A, { remaining: [reader(A), reader(B)], leaving: [reader(B), reader(C)] }, newNonceSecret(), 0),
       'RED WHEN: a signer both leaves and remains').toThrow(/both leaving and remaining/);
-    expect(() => rotateNonceSecret(one, VAULT, A, { remaining: [], leaving: [reader(A), reader(B), reader(C)] }),
+    expect(() => rotateNonceSecret(one, VAULT, A, { remaining: [], leaving: [reader(A), reader(B), reader(C)] }, newNonceSecret(), 0),
       'RED WHEN: an epoch nobody can open is written').toThrow(/wrapped to nobody/);
   });
 
   it('GIVES ONE DEPOSIT KEY PER EPOCH, oldest first, and deposits are made under the newest', () => {
     const one = startNonceSecret(VAULT, [reader(A), reader(B)]);
-    const two = rotateNonceSecret(one, VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] });
+    const two = rotateNonceSecret(one, VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }, newNonceSecret(), 0);
     const opened = openNonceSecrets(two, VAULT, A);
     const keys = depositNonceKeysOf(opened).map(toHex);
     expect(keys, 'RED WHEN: an epoch\'s key is not the vault\'s deposit key for that epoch\'s secret')
       .toEqual(opened.secrets.map((s) => toHex(depositNonceKeyFor(fromHex(s), VAULT))));
     expect(toHex(currentDepositNonceKey(opened)), 'RED WHEN: deposits are made under an epoch a leaver knows').toBe(keys[1]);
     expect(keys[0]).not.toBe(keys[1]);
+  });
+});
+
+describe('the secret the chain holds, filed as the next epoch, and the removals a record counts', () => {
+  it('TAKES THE NEW SECRET IN: the epoch filed is the one given, every earlier secret kept, and the count carried', () => {
+    const one = startNonceSecret(VAULT, [reader(A), reader(B)], 2);
+    const given = newNonceSecret();
+    const two = openNonceSecrets(rotateNonceSecret(one, VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }, given, 3), VAULT, A);
+    expect(two.secrets, 'RED WHEN: the record files a secret of its own instead of the one the chain holds')
+      .toEqual([...openNonceSecrets(one, VAULT, A).secrets, given]);
+    expect(two.removals, 'RED WHEN: the record is not good for the count it was filed with').toBe(3);
+    expect(openNonceSecrets(one, VAULT, B).removals, 'RED WHEN: the first record does not carry the count it was started at').toBe(2);
+  });
+
+  it('REFUSES A SECRET THE VAULT WOULD NOT TAKE, AND ONE ALREADY AN EPOCH', () => {
+    const one = startNonceSecret(VAULT, [reader(A)]);
+    const who = { remaining: [reader(A)], leaving: [] };
+    expect(() => rotateNonceSecret(one, VAULT, A, who, 'cd'.repeat(32), 0), 'RED WHEN: a secret not ending in a zero byte is filed')
+      .toThrow(/thirty-one bytes and a zero/);
+    expect(() => rotateNonceSecret(one, VAULT, A, who, '00'.repeat(32), 0), 'RED WHEN: a secret of zeros is filed').toThrow(/thirty-one bytes and a zero/);
+    expect(() => rotateNonceSecret(one, VAULT, A, who, openNonceSecrets(one, VAULT, A).secrets[0]!, 0),
+      'RED WHEN: an epoch is started with a secret the vault already had').toThrow(/already one of this vault/);
+    expect(() => rotateNonceSecret(one, VAULT, A, who, newNonceSecret(), -1), 'RED WHEN: a count below zero is filed').toThrow(/whole number/);
+  });
+
+  it('A RECORD FILED BEFORE THE COUNT OPENS AS 0, a malformed count does not open, and admit and re-file carry it', () => {
+    const s = newNonceSecret();
+    const old = handMade({ record: 'nonce-secret', vault: VAULT, version: 1, epoch: 1, secrets: [s] }, s, s);
+    expect(openNonceSecrets(old, VAULT, A).removals, 'RED WHEN: a record without the count opens as good for any count').toBe(0);
+    const bad = handMade({ record: 'nonce-secret', vault: VAULT, version: 1, epoch: 1, secrets: [s], removals: 1.5 }, s, s);
+    expect(() => openNonceSecrets(bad, VAULT, A), 'RED WHEN: a count that is not a whole number opens').toThrow(/count of removals/);
+    const one = startNonceSecret(VAULT, [reader(A), reader(B)], 4);
+    expect(openNonceSecrets(admitToNonceSecret(one, VAULT, A, [reader(C)]), VAULT, C).removals, 'RED WHEN: giving a signer a copy drops the count').toBe(4);
+    expect(openNonceSecrets(refileNonceSecret(one, VAULT, A, 2), VAULT, A).removals, 'RED WHEN: a re-file drops the count').toBe(4);
+    const counted = openNonceSecrets(refileNonceSecret(one, VAULT, A, 2, 6), VAULT, B);
+    expect(counted.removals, 'RED WHEN: the count-only re-file does not carry the count given').toBe(6);
+    expect(counted.secrets, 'RED WHEN: the count-only re-file changes the secrets').toEqual(openNonceSecrets(one, VAULT, A).secrets);
+  });
+
+  it('IS BEHIND THE CHAIN ONLY WHILE THE ACCOUNT HAS COUNTED MORE', () => {
+    expect(secretBehindTheChain({ removals: 1 }, 2), 'RED WHEN: a removal the secret is not good for lets a deposit through').toBe(true);
+    expect(secretBehindTheChain({ removals: 2 }, 2), 'RED WHEN: a secret good for the count refuses deposits').toBe(false);
+    expect(secretBehindTheChain({ removals: 0 }, 0), 'RED WHEN: a company that never removed anyone is refused').toBe(false);
+  });
+
+  it('A RE-FILE KEEPS EVERY EPOCH: never fewer, never a different earlier one; only the newest may differ', () => {
+    const [s1, s2, s3, s4] = [newNonceSecret(), newNonceSecret(), newNonceSecret(), newNonceSecret()];
+    expect(keepsEveryEpochOf({ secrets: [s1] }, { secrets: [s1, s2] }), 'RED WHEN: a re-file drops the rotated epoch').toBe(false);
+    expect(keepsEveryEpochOf({ secrets: [s1, s3] }, { secrets: [s2, s4] }),
+      'RED WHEN: a record of the same count with a different earlier secret is filed over the newest').toBe(false);
+    expect(keepsEveryEpochOf({ secrets: [s1] }, { secrets: [s2] }),
+      'RED WHEN: the first secret the chain holds cannot replace a fresh one it never held').toBe(true);
+    expect(keepsEveryEpochOf({ secrets: [s1, s2, s3] }, { secrets: [s1, s2] }), 'RED WHEN: a record with an epoch more is refused').toBe(true);
   });
 });

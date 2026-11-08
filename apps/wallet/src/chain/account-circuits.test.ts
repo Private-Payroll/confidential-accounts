@@ -7,7 +7,7 @@ import { witnesses as accountWitnesses } from '../../../../contracts/src/witness
 import { AccountSimulator, change, payoutTreeOf, privateStateFor, vaultRunOf } from '../../../../contracts/test/simulator.js';
 import { noFurtherNote, notePlaces } from '../../../../src/midnight/vault-step-notes.js';
 import { startTheVault, TEST_VAULT_SECRET } from '../../../../contracts/test/start-a-vault.js';
-import { ACCOUNT_CIRCUITS_A_VAULT_CALLS } from '../../../../src/midnight/vault-contract.js';
+import { ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS, type VaultCircuit } from '../../../../src/midnight/vault-contract.js';
 import { fromHex, toHex } from '../../../../src/core/crypto.js';
 import {
   ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
@@ -111,6 +111,13 @@ describe('the account circuits the wallet holds keys for', () => {
     // RED WHEN: an account circuit no vault circuit calls is served to the wallet's prover as if a vault had called it
     for (const c of ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL) expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS, c).toContain(c);
     expect([...ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL].sort()).toEqual(['approveVaultChange', 'recordPaymentFromVault']);
+  });
+
+  it('are read from the vault\'s one list of its calls into the account, never kept beside it', () => {
+    /* RED WHEN: the wallet keeps its own copy of a vault circuit's calls, which goes stale the day the vault's list changes. */
+    for (const c of VAULT_CIRCUITS_THE_WALLET_PROVES) {
+      expect(ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS[c], c).toBe(ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS[c as VaultCircuit]);
+    }
   });
 
   it('hold keys only for circuits the compiled account has', () => {

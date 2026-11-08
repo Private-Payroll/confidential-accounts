@@ -1,5 +1,5 @@
 import { Alert, AlertDescription, AlertTitle, useText } from 'vaults-ui';
-import { ACT_REFUSAL, type ActRefusal } from './adapters/refusals.js';
+import { ACT_REFUSAL, type ActRefusal } from './adapters/refusal-codes.js';
 
 /** Why an action on a company did not happen, and what to do about it, in the person's language. */
 export function ActRefused({ why }: { why: ActRefusal }) {
@@ -45,6 +45,7 @@ export function ActRefused({ why }: { why: ActRefusal }) {
     [ACT_REFUSAL.vaultNotTheCompanys]: t('act.refused.vaultNotTheCompanys'),
     [ACT_REFUSAL.vaultInfoRefused]: t('act.refused.vaultInfoRefused'),
     [ACT_REFUSAL.rosterNotBelieved]: t('act.refused.rosterNotBelieved'),
+    [ACT_REFUSAL.notOpenedYet]: t('act.refused.notOpenedYet'),
   };
   return (
     <Alert data-refusal={why}>

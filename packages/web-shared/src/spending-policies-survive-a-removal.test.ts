@@ -316,6 +316,11 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     await expect(approve([])).resolves.toBeUndefined();
     /* RED WHEN: a policy version filed by a seat under a raised removal is approved, so a signer on their way out sets the terms the company keeps. */
     await expect(approve([BO])).rejects.toThrow(/filed by a signer whose removal is raised/u);
+    /* RED WHEN: a policy change is approved while who is leaving could not be read, or refused in words that do not say what holds it up. */
+    const blocked = new onDevice.LeavingNotRead('proposal prp_9 did not open on this device (sealed in a shape this device does not read). Only the signer who raised it can withdraw it');
+    await expect(refusePolicyChangeHere(doorsOf(w), VAULT, TEST_TOKEN, keys as never, {
+      commitment: commitmentOf(OTHER_TERMS, B2), leaving: async () => { throw blocked; },
+    })).rejects.toThrow(/proposal prp_9 did not open on this device .*Only the signer who raised it can withdraw it/u);
   });
 
   it('A REMOVAL WHOSE BOUNDARY LEAVES OUT A POLICY VERSION THE LEAVER FILED IS REFUSED', async () => {

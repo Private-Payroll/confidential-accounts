@@ -76,16 +76,20 @@ function useNotFinished(company: string): boolean {
  * of how many there are, once the person's own wallet has read that off the
  * chain; and, when the company's creation is not finished, a badge saying so.
  * The company switcher and the landing page both show a company this way.
- * Where its name did not open on this device, why is said under the word for it, wrapping within the row.
+ * Where its name did not open on this device, why is said under the word for it, wrapping within the row. A company
+ * the wallet has not opened is said in the words of a list (`inList`: one with no button of its own says where to open it).
  */
-export function CompanyFacts({ company, name = null, whyUnnamed = null }: { company: Company; name?: string | null; whyUnnamed?: ActRefusal | null }) {
+export function CompanyFacts({ company, name = null, whyUnnamed = null, inList = false }: {
+  company: Company; name?: string | null; whyUnnamed?: ActRefusal | null; inList?: boolean;
+}) {
   const words = useCompanyWords();
   const nameOf = useCompanyName();
   const t = useText();
   const notFinished = useNotFinished(company.id);
   /* Why the name did not open on this device, in the person's words; any other reason is said as an action that did not finish. */
   const unnamedBecause = whyUnnamed === null ? undefined : whyUnnamed === 'roster-not-believed' ? t('act.refused.rosterNotBelieved')
-    : whyUnnamed === 'no-keys-here' ? t('act.refused.noKeysHere') : t('act.refused.didNotFinish');
+    : whyUnnamed === 'no-keys-here' ? t('act.refused.noKeysHere')
+      : whyUnnamed === 'not-opened-yet' ? (inList ? t('company.notOpenedYet.switcher') : t('company.notOpenedYet')) : t('act.refused.didNotFinish');
   return (
     <span className="grid min-w-0 flex-1 text-start leading-tight">
       {name === null || name.trim() === ''

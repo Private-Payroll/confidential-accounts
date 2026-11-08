@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  sealSecretCopy, openSecretCopy, secretCopyOnTheChain, SecretCopyUnreadable,
+  sealSecretCopy, openSecretCopy, readersCopyOnTheChain, secretCopyOnTheChain, secretsWalkedBack, SecretCopyUnreadable,
   SEALED_COPY_BYTES, SEALED_COPY_USED_BYTES,
 } from './sealed-secret-copy.js';
 import { recordsKeypairFrom } from './company-nonce-secret.js';
@@ -77,5 +77,77 @@ describe('a sealed copy of a vault\'s secret', () => {
     expect(openSecretCopy({ vault: VAULT, parts: found!, reader: B })).toBe(SECRET);
     const stranger = recordsKeypairFrom(new Uint8Array(32).fill(9));
     expect(secretCopyOnTheChain(ledger, keyOf, { commitment: toHex(commitment), reader: stranger.publicKey, count: tree.count })).toBeNull();
+  });
+
+  it('IS READ UNDER THE COMMITMENT THE VAULT HOLDS NOW, OR THE ONE WHOSE COPIES WERE LAST ALL WRITTEN, AT THE PLACES THE VAULT\'S OWN COUNT NAMES', () => {
+    const EARLIER = '4d'.repeat(32);
+    const onChain = new Map<string, Uint8Array>();
+    /* Written as the vault writes them, with the number of copies under the vault's own key for it. */
+    const written = (secret: string) => {
+      const commitment = V.secretCommitmentOf(fromHex(VAULT), fromHex(secret));
+      [A, B].forEach((r, place) => sealSecretCopy({ vault: VAULT, secret, reader: r.publicKey })
+        .forEach((p, part) => onChain.set(toHex(V.copyKeyOf(commitment, fromHex(r.publicKey), BigInt(place), BigInt(part))), p)));
+      onChain.set(toHex(V.copiesCountKeyOf(commitment)), Uint8Array.of(2));
+      return commitment;
+    };
+    const earlier = written(EARLIER);
+    const now = written(SECRET);
+    onChain.set(toHex(V.copiesWrittenKey()), earlier);
+    const ledger = { nonceCommitment: now, secretCopies: { member: (k: Uint8Array) => onChain.has(toHex(k)), lookup: (k: Uint8Array) => onChain.get(toHex(k))! } };
+    const read = (of: 'commitment' | 'copies-written') => readersCopyOnTheChain(ledger, V as never, (c) => BigInt(c[0]!), { reader: B.publicKey, of });
+    /* RED WHEN: a signer's copy is read under any commitment but the one asked about, so a payment or a carry takes the wrong secret. */
+    expect(openSecretCopy({ vault: VAULT, parts: read('commitment').parts!, reader: B })).toBe(SECRET);
+    expect(openSecretCopy({ vault: VAULT, parts: read('copies-written').parts!, reader: B })).toBe(EARLIER);
+    expect([read('commitment').commitment, read('copies-written').commitment]).toEqual([toHex(now), toHex(earlier)]);
+    /* RED WHEN: a place past the vault's own count is looked at: a copy the vault does not count is not the secret's. */
+    onChain.set(toHex(V.copiesCountKeyOf(now)), Uint8Array.of(1));
+    expect(read('commitment')).toEqual({ commitment: toHex(now), parts: null });
+  });
+});
+
+describe('every secret that opened, walked back from the one the vault holds now', () => {
+  /* Three secrets in turn, each a field element, with its last byte zero as the product makes them (vault-start.ts:156-157). */
+  const FIRST = `${'11'.repeat(31)}00`;
+  const SECOND = `${'22'.repeat(31)}00`;
+  const THIRD = `${'33'.repeat(31)}00`;
+  const commitmentOf = (s: string) => toHex(V.secretCommitmentOf(fromHex(VAULT), fromHex(s)));
+  /* The links as the vault writes them when a secret is set over one that opened: the earlier one masked by the later. */
+  const chainOf = (links: Array<[earlier: string, later: string]>) => {
+    const onChain = new Map<string, Uint8Array>();
+    for (const [earlier, later] of links) {
+      onChain.set(toHex(V.earlierSecretKeyOf(fromHex(commitmentOf(later)))), V.sealedEarlierOf(fromHex(earlier), fromHex(later)));
+    }
+    return { member: (k: Uint8Array) => onChain.has(toHex(k)), lookup: (k: Uint8Array) => onChain.get(toHex(k))!, onChain };
+  };
+
+  it('AFTER TWO CHANGES, THE NEWEST SECRET ALONE OPENS THE ONE BEFORE IT AND THE FIRST, NEWEST FIRST', () => {
+    const chain = chainOf([[FIRST, SECOND], [SECOND, THIRD]]);
+    const walked = secretsWalkedBack(chain, V, { vault: VAULT, commitment: commitmentOf(THIRD), secrets: [THIRD] });
+    /* RED WHEN: the walk stops after one link, or lifts a link with another secret than the one it belongs to. */
+    expect(walked).toEqual({ secrets: [THIRD, SECOND, FIRST], repeated: false });
+  });
+
+  it('A FIRST SECRET WALKS TO ITSELF ONLY, AND SECRETS NONE OF WHICH IS THE VAULT\'S ARE ANSWERED AS GIVEN, WITH NOTHING WALKED', () => {
+    const chain = chainOf([[FIRST, SECOND]]);
+    expect(secretsWalkedBack(chain, V, { vault: VAULT, commitment: commitmentOf(FIRST), secrets: [FIRST] }))
+      .toEqual({ secrets: [FIRST], repeated: false });
+    /* RED WHEN: a walk starts from a secret the vault does not hold now, which would read a link it never wrote for it. */
+    expect(secretsWalkedBack(chain, V, { vault: VAULT, commitment: commitmentOf(THIRD), secrets: [SECOND] }))
+      .toEqual({ secrets: [SECOND], repeated: false });
+  });
+
+  it('KEEPS EVERY SECRET GIVEN AND ADDS ONLY THE EARLIER ONES NOT AMONG THEM, STARTING FROM WHICHEVER GIVEN SECRET IS THE VAULT\'S', () => {
+    const chain = chainOf([[FIRST, SECOND], [SECOND, THIRD]]);
+    /* RED WHEN: the walk starts from the first secret given rather than the vault's, or names a secret twice. */
+    expect(secretsWalkedBack(chain, V, { vault: VAULT, commitment: commitmentOf(THIRD), secrets: [SECOND, THIRD] }).secrets)
+      .toEqual([SECOND, THIRD, FIRST]);
+  });
+
+  it('A LEDGER WHOSE LINKS COME BACK TO A COMMITMENT ALREADY MET STOPS THERE AND SAYS SO, WITH WHAT IT WALKED', () => {
+    /* A link the vault never writes: the second's link lifts to the third, whose link was already followed. */
+    const chain = chainOf([[SECOND, THIRD], [THIRD, SECOND]]);
+    /* RED WHEN: the walk follows a link back to a secret already met and never ends. */
+    expect(secretsWalkedBack(chain, V, { vault: VAULT, commitment: commitmentOf(THIRD), secrets: [THIRD] }))
+      .toEqual({ secrets: [THIRD, SECOND], repeated: true });
   });
 });

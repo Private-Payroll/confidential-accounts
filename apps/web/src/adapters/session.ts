@@ -238,7 +238,7 @@ export async function companyNamesFor(personId: string): Promise<CompanyNames> {
   } catch {
     return names();
   }
-  const [{ keyringFor }, { openedHere, ACT_REFUSAL, refusalOf }] = modules;
+  const [{ keyringFor }, { openedQuietly, ACT_REFUSAL, refusalOf }] = modules;
   try {
     if (!(await keyringFor(personId))) {
       for (const id of ids) whyNot.set(id, ACT_REFUSAL.notSignedIn);
@@ -253,9 +253,9 @@ export async function companyNamesFor(personId: string): Promise<CompanyNames> {
       const id = (row as { id?: unknown } | null)?.id;
       if (typeof id !== 'string') continue;
       /* A company whose roster this device does not believe has no name shown, with why, and the others are still read. */
-      let opened: Awaited<ReturnType<typeof openedHere>> = null;
+      let opened: Awaited<ReturnType<typeof openedQuietly>> = null;
       try {
-        opened = await openedHere(row as SealedAccount);
+        opened = await openedQuietly(row as SealedAccount);
         if (opened === null) whyNot.set(id, ACT_REFUSAL.noKeysHere);
       } catch (e) {
         whyNot.set(id, refusalOf(e));

@@ -354,6 +354,15 @@ describe('the company switcher', () => {
     expect(document.querySelector('[data-company-switcher] [data-company-names]')).toBeNull();
   });
 
+  /* RED WHEN: a company the wallet has not opened is listed in the switcher as "Not opened yet" with no word of where to open it, there being no button in the menu. */
+  it('says, of a company not opened yet, where to open it', async () => {
+    names.opened = Object.assign(new Map<string, string>(), { whyNot: new Map([['c-2', 'not-opened-yet']]) });
+    await draw(sessionFor(signer), 'settingsAppearance');
+    await press({ key: '.', code: 'Period', metaKey: true });
+    expect(document.querySelector('[data-company-switcher] [data-company=c-2] [data-unnamed-why]')?.textContent).toBe(EN['company.notOpenedYet.switcher']);
+    expect(EN['company.notOpenedYet.switcher']).toBe('Not opened yet. Open it with your wallet from the home page.');
+  });
+
   /*
    * RED WHEN: a company the creation adapter marks not finished is listed in the switcher without the kit's badge saying so, or
    * another company carries it; or a company whose read is unknown or failed shows any mark; or a company is read more than once.

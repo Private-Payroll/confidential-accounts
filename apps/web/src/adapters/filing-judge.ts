@@ -64,6 +64,9 @@ const judges = companyJudges({
 export const rosterReadsFor: (companyId: string, company: CompanyLabel, account: AccountAddress) => RosterReads = judges.rosterReadsFor;
 /** The company as this page believes it, its signers read from its roster record only; a refusal is written to the console report, then thrown, and a company with no account yet is said once as that. */
 export const openedHere = (sealed: SealedAccount): Promise<OpenedAccount | null> => signersCheckNoted(() => judges.openedHere(sealed), sealed.id);
+/** The company opened as a page load reads it: the wallet is never asked (`openedQuietlyHere`). */
+export const openedQuietly = (sealed: SealedAccount): Promise<OpenedAccount | null> => signersCheckNoted(() => judges.openedQuietlyHere(sealed), sealed.id);
+
 /** Whether a filing's signer is one the company's directory believes, as this page reads it. */
 export const filingJudgeFor: (
   companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
@@ -80,3 +83,11 @@ export const directoryWithItsRecordsFor: (
 export const companyKeysFor: (
   companyId: string, sealed: SealedAccount, keys: { readonly signingPublicKey: Hex },
 ) => Promise<CompanyKeyHere> = judges.companyKeysFor;
+
+/** What the shared judges are told to keep the wallet out of the read. */
+const QUIETLY = 'not-opened';
+
+/** The company's keys as a page load reads them: the wallet is never asked, and a copy it has not released on this visit is named in `notOpened`. */
+export const companyKeysQuietlyFor = (
+  companyId: string, sealed: SealedAccount, keys: { readonly signingPublicKey: Hex },
+): Promise<CompanyKeyHere> => judges.companyKeysFor(companyId, sealed, keys, QUIETLY);

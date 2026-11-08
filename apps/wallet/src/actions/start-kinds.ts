@@ -19,7 +19,7 @@ import {
   ApprovalNotOwed, nothingWasSentBy, refuseARunALeaverRaisedHere,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import {
-  approveStartRoundHere, carryStartRoundHere, finishedFirstSecretHere, SAID, START_STOP, StartRoundRefused, startRoundOpenedHere, VaultStartOwed,
+  approveStartRoundHere, carryStartRoundHere, finishedSecretRunHere, SAID, START_STOP, StartRoundRefused, startRoundOpenedHere, VaultStartOwed,
   type CreateVaultDoors, type StartRoundKind, type StartRoundNamed,
 } from '../../../../packages/web-shared/src/vault-operation.js';
 import { approversHere, governanceDoorsFor, handOverMarked, runsOutrunHere, type CompanyChain, type CompanyReach, type Handed } from './company-reach.js';
@@ -66,8 +66,9 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string): never => {
 
 /**
  * One round of a vault's start: `adoption`, a change to the company judged at the higher of its hold and the account's
- * threshold and never carried out once a removal has outrun it, or `first-secret`, a run of the vault's judged at the
- * higher of its hold and the vault's bar, plus each signer removed since its raise.
+ * threshold and never carried out once a removal has outrun it, or `first-secret`, a secret run of the vault's (its
+ * first secret, or one replacing it) judged at the higher of its hold and the vault's bar, plus each signer removed since
+ * its raise, and never approved or carried once a signer has been removed since its raise.
  */
 function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind {
   const named = (intent: ActIntent): StartRoundNamed => ({ vault: vaultOf(intent)!, round, proposal: intent.fields['proposal']! });
@@ -168,9 +169,9 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
       /* A run closed by the set of its secret, with sealed copies still owed: they are written, and the run written down. */
       afterClosed: async (ctx: StepContext, r: CompanyReach, intent: ActIntent): Promise<string | null> => {
         const handed: Handed = { over: false };
-        let out: Awaited<ReturnType<typeof finishedFirstSecretHere>>;
+        let out: Awaited<ReturnType<typeof finishedSecretRunHere>>;
         try {
-          out = await finishedFirstSecretHere(doorsFor(ctx, r, handed), named(intent));
+          out = await finishedSecretRunHere(doorsFor(ctx, r, handed), named(intent));
         } catch (e) {
           return stoppedAs(e, handed, 'not-carried');
         }
@@ -188,5 +189,8 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
 /** **A NEW VAULT'S ADOPTION**, approved and carried out through the one approval. */
 export const adoptVaultKind = (reach: StartKindsReach): ProposalKind => startKind(reach, 'adoption');
 
-/** **A NEW VAULT'S FIRST SECRET RUN**, approved and carried out through the one approval: set, and every signer's copy written. */
+/**
+ * **A VAULT'S SECRET RUN**, its first or one replacing it, approved and carried out through the one approval: set, and
+ * every signer's copy written.
+ */
 export const vaultSecretKind = (reach: StartKindsReach): ProposalKind => startKind(reach, 'first-secret');

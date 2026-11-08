@@ -1094,9 +1094,9 @@ export async function buildMerge(
 /* ------------------------------------------------------------ starting a vault */
 
 /**
- * **THE FIRST SECRET RUN AS IT CROSSES BETWEEN THE PAGE AND THIS WORKER**: every
- * number as decimal digits and every value as hex. It is made in this worker
- * from the secret the page opened (`vault-start.ts`), and the page hands it back
+ * **A SECRET RUN AS IT CROSSES BETWEEN THE PAGE AND THIS WORKER**, a first secret
+ * or a replacement: every number as decimal digits and every value as hex. It is
+ * made in this worker from the secret the page opened (`vault-start.ts`), and the page hands it back
  * unchanged for each step it builds.
  */
 export interface SecretRunOnTheWire {
@@ -1130,11 +1130,14 @@ const hex32Of = (what: string, h: unknown): Uint8Array => {
 };
 
 /**
- * **THE VAULT'S FIRST NONCE SECRET SET, UNDER THE RUN ITS SIGNERS APPROVED.** The
- * vault asks the account's `approveVaultChange` inside the same call, against
- * the account's state as the same block saw it, and the account refuses unless
- * the run is open, approved at the vault's bar, and holds this change as its one
- * leaf. No coin moves; the vault mints the account one change receipt.
+ * **THE VAULT'S NONCE SECRET SET, UNDER THE RUN ITS SIGNERS APPROVED**, its first
+ * or one replacing it. The vault asks the account's `approveVaultChange` inside
+ * the same call, against the account's state as the same block saw it, and the
+ * account refuses unless the run is open, approved at the vault's bar, and holds
+ * this change as its one leaf. No coin moves; the vault mints the account one
+ * change receipt. A replacement passes `earlier`, the secret whose copies the
+ * vault last had all written, which it keeps sealed under the new one; without
+ * it zero is passed, as the first secret needs.
  */
 export async function buildSetNonceSecret(
   deps: VaultBuilderDeps,
@@ -1142,8 +1145,8 @@ export async function buildSetNonceSecret(
     readonly vault: string;
     readonly account: string;
     readonly run: SecretRunOnTheWire;
-    /** The secret the run sets, which the vault takes only from a device that holds it. */
-    readonly secret: string;
+    /** The secret the run sets, which the vault takes only from a device that holds it; `earlier` the one it carries. */
+    readonly secret: string; readonly earlier?: string;
     readonly proposal: string;
     readonly opensAt: string;
     readonly closesAt: string;
@@ -1183,7 +1186,7 @@ export async function buildSetNonceSecret(
       hex32Of('root of copies', r.copiesRoot), digitsOf('number of copies', r.count),
       r.edge.map((s) => ({ sibling: digitsOf('path', s.sibling), goesLeft: s.goesLeft === true })),
       /* A first secret replaces none, so there is no earlier secret to carry. */
-      hex32Of('secret', input.secret), new Uint8Array(32),
+      hex32Of('secret', input.secret), input.earlier === undefined ? new Uint8Array(32) : hex32Of('earlier secret', input.earlier),
     ],
   }, keys.encryptionPublicKey, {
     blockHash,

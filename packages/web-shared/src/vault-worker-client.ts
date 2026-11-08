@@ -11,9 +11,11 @@ import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wi
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire, TransactionRead } from './vault-builder.js';
+import type { OwnChainCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import type { VaultCallOnChain } from '../../../src/midnight/note-index.js';
 import type { RoundMadeOf, RoundStanding } from '../../../src/midnight/vault-start.js';
 import { PROOF_CEILING_MS } from './proof-ceiling.js';
+import { FAILED_BECAUSE, VaultAskFailed, type VaultAskFailure } from './vault-ask-failed.js';
 import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
 
 export type { SecretRunOnTheWire } from './vault-builder.js';
@@ -25,13 +27,13 @@ export type { SecretRunOnTheWire } from './vault-builder.js';
  * first secret run, the secret and each sealed copy stand.
  */
 export interface StartStandingOnTheWire {
-  readonly adopted: boolean;
+  readonly adopted: boolean; readonly removals: number;
   readonly adoption: RoundStanding & RoundMadeOf;
   readonly secret?: {
     readonly set: boolean;
-    readonly another: boolean;
+    readonly another: boolean; readonly held: string; readonly landed: readonly string[]; readonly earlier?: { readonly secret: string } | { readonly unheld: true } | null;
     readonly rootIsThisRuns: boolean;
-    readonly run: (RoundStanding & RoundMadeOf & { readonly opensAt: string; readonly closesAt: string; readonly inWindow: boolean }) | null;
+    readonly run: (RoundStanding & RoundMadeOf & { readonly opensAt: string; readonly closesAt: string; readonly inWindow: boolean; readonly beforeARemoval: boolean }) | null;
     readonly raise?: RoundMadeOf & { readonly proposal: string; readonly opensAt: string; readonly closesAt: string };
     readonly written: readonly boolean[];
     readonly started: boolean;
@@ -44,6 +46,8 @@ import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-poli
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { AddressClaimFor, UnshieldedAddressClaim } from 'midnight-identity/profile/address-claim';
 import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
+
+export { VaultAskFailed };
 
 /** An invitee's call taking an invited seat, as a wallet asks its worker for it: the chain's state as base64. */
 export interface InvitedSeatOnTheWire {
@@ -123,6 +127,8 @@ export type VaultAsk =
   /* A company's deploy and its signed second step, carried in fresh transactions: the same account, the same signature. */
   | { id: number; network: string; ask: 'creation-again'; deploy: string; insert: string; clockOffsetMs?: number }
   | { id: number; network: string; ask: 'secret-is-the-vaults'; vault: string; state: string; secret: string }
+  | { id: number; network: string; ask: 'own-chain-copy'; vault: string; state: string; reader: string; of: 'commitment' | 'copies-written' }
+  | { id: number; network: string; ask: 'secret-set-at'; vault: string; account: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'notes-for-payment'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
     id: number; network: string; ask: 'payments-fit'; notes: readonly NoteOnTheWire[];
@@ -154,18 +160,22 @@ export type VaultAsk =
     secret: string;
   }
   /*
-   * **A VAULT'S START.** The secret, when given, is the one the page opened from
-   * the company's filed record, handed to the worker on the same device so the
-   * first secret run is made with the contracts' own functions; it keeps none.
+   * **A VAULT'S START, OR A SECRET RUN REPLACING ITS SECRET.** The secret, when
+   * given, is the one the page opened from the company's filed record or from its
+   * own sealed copy in the run's record, handed to the worker on the same device
+   * so the run is made with the contracts' own functions over `previous`, the
+   * commitment it replaces; `earlier` are the secrets the device holds for the
+   * vault, among which the worker finds the one a replacement carries. It keeps
+   * none of them.
    */
   | {
     id: number; network: string; ask: 'start-standing'; vault: string; account: string;
     accountState: string; vaultState: string; secret?: string; readers?: readonly string[]; now: string;
-    window?: { opensAt: string; closesAt: string }; seat?: string;
+    window?: { opensAt: string; closesAt: string }; seat?: string; previous?: string; earlier?: readonly string[];
   }
   | {
     id: number; network: string; ask: 'set-nonce-secret'; vault: string; account: string; run: SecretRunOnTheWire;
-    secret: string; proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
+    secret: string; earlier?: string; proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
   }
   | {
     id: number; network: string; ask: 'write-secret-copy'; vault: string; run: SecretRunOnTheWire; place: number;
@@ -292,6 +302,8 @@ export type VaultAnswer =
   | Answered<'warm-proving', unknown>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
   | Answered<'secret-is-the-vaults', { matches: boolean }>
+  | Answered<'own-chain-copy', { copy: OwnChainCopy }>
+  | Answered<'secret-set-at', { removals: number }>
   | Answered<'notes-for-payment', { notes: NoteOnTheWire[] }>
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
@@ -383,6 +395,8 @@ export interface VaultRebuildAsked {
   };
   readonly secrets: readonly string[];
   readonly copyFor?: string;
+  /** The secret this signer's own sealed copy opened to on the page: named with first when it is the one the vault holds now, and said when it is not. */
+  readonly copySecret?: string;
   readonly versions: ReadonlyArray<{ readonly version: number; readonly notes: readonly CoinOnTheWire[] }>;
   readonly attempted: { readonly deposits: readonly CoinOnTheWire[]; readonly payments: readonly StepOnTheWire[] };
   readonly named?: readonly CoinOnTheWire[];
@@ -415,7 +429,7 @@ export interface VaultBuilderClient {
    * read off the worker's own word as each starts and ends. Every client this
    * file makes has it.
    */
-  readonly proofsInProgress?: () => readonly ProofInProgress[];
+  readonly proofsInProgress: () => readonly ProofInProgress[];
   deploy(account: string): Promise<{ vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>;
   /**
    * The company's account, deployed held by the founding signer's committee key
@@ -431,13 +445,11 @@ export interface VaultBuilderClient {
   /** A vault deployed held by the company's committee at its threshold from its first transaction, proved. */
   bornHeldVault?(input: { account: string; holders: Committee }): Promise<{ vault: string; tx: string }>;
   /**
-   * The vault as its deploy made it, read here: null when it was born held by
-   * `holders`, pinned to `account`, with this build's circuits and nothing
-   * written; otherwise the sentence that says what it is instead.
-   */
-  /**
    * The vault as its deploy made it, read in the worker from the deploy the
-   * chain holds for its address, at the indexer the person's own wallet names.
+   * chain holds for its address, at the indexer the person's own wallet names:
+   * null when it was born held by `holders`, pinned to `account`, with this
+   * build's circuits and nothing written; otherwise the sentence that says what
+   * it is instead.
    */
   vaultAsDeployed?(input: { vault: string; account: string; holders: Committee; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ refusal: string | null }>;
   handover(input: { vault: string; counter: bigint; temporaryKey: SigningKeyOnTheWire; to: Committee }): Promise<{ tx: string }>;
@@ -507,6 +519,18 @@ export interface VaultBuilderClient {
    * function, against the one the state holds.
    */
   secretIsTheVaults(input: { vault: string; state: string; secret: string }): Promise<boolean>;
+  /**
+   * This reader's sealed copy of the vault's secret, read off `state` (base64 of the vault's state) under the
+   * commitment `of` names: the one the vault holds now, or the one whose copies were last all written. Sealed: only
+   * the reader's own key opens it, on the page.
+   */
+  ownChainCopy?(input: { vault: string; state: string; reader: string; of: 'commitment' | 'copies-written' }): Promise<OwnChainCopy>;
+  /**
+   * The account's removal count before the block that set the vault's secret `commitment`, lowered to the count the run
+   * that set it was raised at (`removalsWhenTheSecretWasSet`). Read in this worker from the history of the vault and
+   * `account` at the indexer the person's own wallet names, and from nowhere else.
+   */
+  secretSetAt?(input: { vault: string; account: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<number>;
   /**
    * The notes a payment spends, by the one choice every payment makes: in place
    * order, the first the one the vault is offered and the rest the further notes
@@ -733,20 +757,21 @@ export interface VaultBuilderClient {
   accountPresence?(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] }): Promise<AccountPresenceOnTheWire>;
   /**
    * Where a vault's start stands, read off both contracts' states at one block
-   * (base64), and with `secret` the first secret run made from it. `now` is
-   * this device's clock in seconds, as digits.
+   * (base64), and with `secret` the secret run made from it over `previous` (the
+   * commitment it replaces; zero when absent), finding among `earlier` the secret
+   * a replacement carries. `now` is this device's clock in seconds, as digits.
    */
   startStanding(input: {
     vault: string; account: string; accountState: string; vaultState: string;
-    secret?: string; readers?: readonly string[]; now: string;
-    /** A window to make the first secret run's identity with, for a raise about to be built. */
+    secret?: string; readers?: readonly string[]; now: string; previous?: string; earlier?: readonly string[];
+    /** A window to make the secret run's identity with, for a raise about to be built. */
     window?: { opensAt: string; closesAt: string };
     /** This device's signing secret: each round then says whether this seat's approval is already counted (`approvedHere`). */
     seat?: string;
   }): Promise<{ standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>;
-  /** The vault's first secret set under its approved run, built against one block's view of both contracts. */
+  /** The vault's secret set under its approved run, carrying `earlier` when it replaces one, built against one block's view of both contracts. */
   setNonceSecret(input: {
-    vault: string; account: string; run: SecretRunOnTheWire; secret: string; proposal: string; opensAt: string; closesAt: string;
+    vault: string; account: string; run: SecretRunOnTheWire; secret: string; earlier?: string; proposal: string; opensAt: string; closesAt: string;
     chain: PayoutChainOnTheWire;
   }): Promise<{ tx: string }>;
   /** One sealed copy of the run's secret written into the vault, by its place in the approved tree. */
@@ -782,46 +807,6 @@ export interface ProofInProgress {
   readonly elapsedMs: number;
 }
 
-/**
- * Why an ask of the vault worker failed: the worker said nothing for the time
- * limit, it stopped, it sent an answer the page could not read, a new worker did
- * not start, or the worker answered with a refusal of its own.
- */
-type VaultAskFailure = 'took-too-long' | 'stopped' | 'unreadable-answer' | 'did-not-start' | 'answered';
-
-/**
- * **EVERY FAILED ASK OF THE VAULT WORKER, ONE CLASS.** `reason` says which kind
- * of failure it was. When the worker answered with a refusal, the message is the
- * worker's own, `name` and `workerName` are the name of the worker's error, and
- * `kind` is how proving material was refused when that was the refusal. The
- * message never says whether anything was sent: that is for the step that
- * asked, which alone knows whether it sent anything before.
- */
-export class VaultAskFailed extends Error {
-  readonly ask: string;
-  readonly reason: VaultAskFailure;
-  readonly workerName?: string;
-  readonly kind?: string;
-  constructor(ask: string, reason: VaultAskFailure, message: string, said: { name?: string; kind?: string } = {}) {
-    super(message);
-    this.ask = ask;
-    this.reason = reason;
-    this.name = said.name ?? 'VaultAskFailed';
-    if (said.name !== undefined) this.workerName = said.name;
-    if (said.kind !== undefined) this.kind = said.kind;
-  }
-}
-
-const MINUTES = Math.round(PROOF_CEILING_MS / 60_000);
-const WORKER = 'the part of this page that builds and proves vault transactions';
-const FAILED_BECAUSE: Record<Exclude<VaultAskFailure, 'answered'>, string> = {
-  'took-too-long': `${WORKER} said nothing for ${MINUTES} minutes, so this page stopped it. Try again with this page open `
-    + 'in front and other heavy work closed.',
-  stopped: `${WORKER} stopped before it answered. Try again; if it happens again, reload the page.`,
-  'unreadable-answer': `${WORKER} sent an answer this page could not read, so this page stopped it. Try again; if it `
-    + 'happens again, reload the page.',
-  'did-not-start': 'the part of this page that builds vault transactions did not start.',
-};
 const START_MS = 30_000;
 
 /**
@@ -830,7 +815,7 @@ const START_MS = 30_000;
  */
 export const CHAIN_READS: ReadonlySet<string> = new Set([
   'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'vault-call-on-chain', 'anchors-on-chain', 'rounds-on-chain',
-  'paid-leaves', 'runs-outrun', 'invited-seats', 'account-call-chain', 'account-presence',
+  'paid-leaves', 'runs-outrun', 'invited-seats', 'account-call-chain', 'account-presence', 'secret-set-at',
 ]);
 
 /** What the worker says when its code is loaded and it starts on an ask: a read's time limit starts here. */
@@ -1080,17 +1065,10 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
       return { vault: a.vault, tx: a.tx };
     },
     vaultAsDeployed: async (input) => ({ refusal: (await ask({ ask: 'vault-as-deployed', ...input })).refusal }),
-    handover: async (input) => {
-      const a = await ask({
-        ask: 'handover', vault: input.vault, counter: input.counter.toString(),
-        temporaryKey: input.temporaryKey, to: input.to,
-      });
-      return { tx: a.tx };
-    },
-    deposit: async (input) => {
-      const a = await ask({ ask: 'deposit', ...input });
-      return { tx: a.tx };
-    },
+    handover: async (input) => ({ tx: (await ask({
+      ask: 'handover', vault: input.vault, counter: input.counter.toString(), temporaryKey: input.temporaryKey, to: input.to,
+    })).tx }),
+    deposit: async (input) => ({ tx: (await ask({ ask: 'deposit', ...input })).tx }),
     publicDeposit: async (input) => ({ tx: (await ask({ ask: 'public-deposit', ...input })).tx }),
     commitments: async (input) => {
       const a = await ask({ ask: 'commitments', ...input });
@@ -1113,6 +1091,8 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
       return { account: a.account, deploy: a.deploy, insert: a.insert };
     },
     secretIsTheVaults: async (input) => (await ask({ ask: 'secret-is-the-vaults', ...input })).matches,
+    ownChainCopy: async (input) => (await ask({ ask: 'own-chain-copy', ...input })).copy,
+    secretSetAt: async (input) => (await ask({ ask: 'secret-set-at', ...input })).removals,
     notesForPayment: async (input) => (await ask({ ask: 'notes-for-payment', ...input })).notes,
     paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,
     afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,

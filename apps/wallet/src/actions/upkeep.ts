@@ -24,9 +24,10 @@ import { ownEntryFiled, rosterFollowed } from '../../../../packages/web-shared/s
 import { withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import {
-  deviceRecordsFor, deviceSignerFrom, directoryFilingsFrom, fileDirectoryFiling, giveEachVaultSecretHere, readersIn,
+  deviceRecordsFor, deviceSignerFrom, directoryFilingsFrom, fileDirectoryFiling, readersIn,
   type DirectoryHere, type DirectoryRead,
 } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { giveEachVaultSecretHere } from '../../../../packages/web-shared/src/vault-secret-given.js';
 import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-operation.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
@@ -35,10 +36,15 @@ import { apiOver, sendOver, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { mayFile } from '../../../../src/midnight/seat-directory.js';
+import { vaultSecretsKeptFor } from './vault-secret-kept.js';
+import type { VaultDoorsReach } from './vault-doors-here.js';
+import { stillOwed, vaultSecretsChangedHere } from './vault-secrets-changed-here.js';
 
 /** Where this wallet keeps the coins it put into a vault; absent where the browser keeps no database. */
 export interface UpkeepReach {
   readonly coins?: (opener: InFlightOpener) => CoinsKeptHere | undefined;
+  /** Where this wallet keeps a vault's new secret and its run, to finish a change of it; absent, the wallet's own store. */
+  readonly vaultSecrets?: VaultDoorsReach;
 }
 
 /** How a step finds the company it acts on, and forgets it so the next read sees what the head step filed or anchored. */
@@ -56,6 +62,19 @@ const why = (key: string, values?: Readonly<Record<string, string | number>>): W
 
 const keptInTheWallet = (opener: InFlightOpener): CoinsKeptHere | undefined =>
   ((globalThis as { indexedDB?: IDBFactory }).indexedDB === undefined ? undefined : coinsKeptOnThisDevice(browserInFlightRecords(), opener));
+
+/** A pause that ends early, as stopped, when the action is stopped. */
+const pauseUntil = (ms: number, signal: AbortSignal): Promise<void> => new Promise<void>((resolve, reject) => {
+  if (signal.aborted) { reject(new ActionStopped('stopped')); return; }
+  const timer = setTimeout(() => { signal.removeEventListener('abort', stopped); resolve(); }, ms);
+  const stopped = (): void => { clearTimeout(timer); reject(new ActionStopped('stopped')); };
+  signal.addEventListener('abort', stopped, { once: true });
+});
+
+/** The wallet's own store of a vault's new secret, where there is one; the change reads no indexer of its own. */
+const vaultSecretsInTheWallet = (): VaultDoorsReach | undefined =>
+  ((globalThis as { localStorage?: Storage }).localStorage === undefined ? undefined
+    : { secrets: (person) => vaultSecretsKeptFor(person), pause: pauseUntil, indexerHttp: '' });
 
 /**
  * The step's own calls, watched: a stop reaching any of them is kept so that code which swallows errors cannot swallow
@@ -214,13 +233,14 @@ export async function anchoredAtTheEnd(doors: AnchorDoors): Promise<{ readonly a
 
 /**
  * Each vault's secret given to every other seat the chain holds that lacks it, before the anchor so the copies filed
- * are anchored with the action's own records. Each seat and vault is tried alone with `giveEachVaultSecretHere`, which
- * wraps the secret to the records key the seat's believed directory entry names and gives nothing to a seat already
- * holding it. Only a seat this wallet believes, whose role may file a vault's nonce secret, gives: any other seat gives
- * nothing, since every device would refuse the version it filed. A seat with no believed entry yet, a vault this seat
- * holds no copy of, or a filing the service refused is left for the company's next seat action; only a stop ends the
- * step. A stop from a read made through the company's own calls reaches the catch as itself, so it is rethrown there;
- * one the record store wrapped is caught by the watched calls after each pair.
+ * are anchored with the action's own records. Each vault is tried alone with `giveEachVaultSecretHere`, which files
+ * one version per vault wrapping the secret to the records key each lacking seat's believed directory entry names, and
+ * gives nothing to a seat already holding it. Only a seat this wallet believes, whose role may file a vault's nonce
+ * secret, gives: any other seat gives nothing, since every device would refuse the version it filed. A seat the give
+ * skipped (no believed entry yet, or not one this device believes), a vault this seat holds no copy of, or a filing the
+ * service refused is left for the company's next seat action; only a stop ends the step. A stop from a read made
+ * through the company's own calls reaches the catch as itself, so it is rethrown there; one the record store wrapped is
+ * caught by the watched calls after each vault.
  */
 async function vaultSecretsGiven(
   ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedCalls>, reach: UpkeepReach,
@@ -246,17 +266,38 @@ async function vaultSecretsGiven(
     left();
     return;
   }
-  for (const seat of others) {
-    for (const vault of vaults) {
-      try {
-        await giveEachVaultSecretHere({ vaultIds: [vault.toLowerCase()], me: doors.me, seat, directory, records: doors.records });
-      } catch (e) {
-        if (e instanceof ActionStopped) throw e;
-        left();
-      }
-      w.rethrow();
+  for (const vault of vaults) {
+    try {
+      const done = await giveEachVaultSecretHere({ vaultIds: [vault.toLowerCase()], me: doors.me, seats: others, directory, records: doors.records });
+      if (done.skipped.length > 0) left();
+    } catch (e) {
+      if (e instanceof ActionStopped) throw e;
+      left();
     }
+    w.rethrow();
   }
+}
+
+/**
+ * **A VAULT SECRET'S CHANGE THAT STOPPED PART WAY IS FINISHED**: for each vault, the copies of a secret the chain holds
+ * are written, a secret the chain holds is filed, and a run this seat raised or approved, kept in this wallet and at its
+ * approvals, is carried (`vaultSecretsChangedHere` with `finish`). It raises nothing, approves nothing and refuses
+ * nothing: a vault still owed a change leaves the upkeep partial, and a signer who stays changes it by a press.
+ */
+async function vaultSecretsFinished(
+  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedCalls>, reach: UpkeepReach, vaults: readonly string[], left: () => void,
+): Promise<void> {
+  if (vaults.length === 0) return;
+  const kept = reach.vaultSecrets ?? vaultSecretsInTheWallet();
+  if (kept === undefined) { left(); return; }
+  try {
+    const here = { ...r, api: w.api, send: w.send };
+    if (stillOwed(await vaultSecretsChangedHere(ctx, here, kept, await rotationDoorsIn(here, w.api), 'finish'))) left();
+  } catch (e) {
+    if (e instanceof ActionStopped) throw e;
+    left();
+  }
+  w.rethrow();
 }
 
 const ROTATED: ReadonlySet<KeyRotated['state']> = new Set(['rotated', 'rotated-elsewhere']);
@@ -363,6 +404,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         w.rethrow();
         if ((notes.of !== 'as-filed' && notes.of !== 'filed') || (notes.unsealed ?? []).length > 0) left();
       }
+      await vaultSecretsFinished(ctx, r, w, reach, vaults, left);
       await vaultSecretsGiven(ctx, r, w, reach, vaults, seats, left);
       let anchored = 0;
       try {
@@ -388,6 +430,7 @@ export const upkeepShown = (o: { readonly ownEntry?: boolean } = {}): ShownLine[
   { key: 'act.upkeep.shown.rotation', from: 'action' },
   { key: 'act.upkeep.shown.roster', from: 'action' },
   { key: 'act.upkeep.shown.vaults', from: 'action' },
+  { key: 'act.upkeep.shown.finish', from: 'action' },
   { key: 'act.upkeep.shown.secrets', from: 'action' },
   { key: 'act.upkeep.shown.anchor', from: 'action' },
 ];

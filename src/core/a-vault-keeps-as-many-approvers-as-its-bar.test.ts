@@ -268,6 +268,13 @@ describe('a removal, with or without a new threshold, is refused on the device w
     const fiveBounds = { seats: ['1', '2', '3', '4', '5'], approvals: 2, policyBar: 4 };
     /* RED WHEN: one of the vault's four approvers is removed, four seats are left for a bar of four, and no run in the top band could be paid again. */
     expect(removalRefusal(banded, fiveBounds, '1' as never, 0, names)).toMatch(/Payroll \(its runs need 4 approvals and 3 signers could give them\)/u);
+    /* RED WHEN: with two policies on one vault the band kept is the last one handed in, not the highest, in either order and either case of the vault id. */
+    for (const inForce of [
+      [{ vault: V, band: 2 }, { vault: V.toUpperCase(), band: 4 }], [{ vault: V.toUpperCase(), band: 4 }, { vault: V, band: 2 }],
+    ]) {
+      expect(removalRefusal(withBandsInForce({ ...five, runVaults: [V, TREASURY] }, inForce), fiveBounds, '1' as never, 0, names))
+        .toMatch(/Payroll \(its runs need 4 approvals and 3 signers could give them\)/u);
+    }
     /* A top band of three: the three who stay can give it. */
     expect(removalRefusal(withBandsInForce({ ...five, runVaults: [V, TREASURY] }, [{ vault: V, band: 3 }]), fiveBounds, '1' as never, 0, names)).toBeNull();
   });
@@ -346,5 +353,20 @@ describe('a spending policy is refused on the device when a vault could no longe
     for (const bad of [-1, 1.5, Number.NaN]) {
       expect(policyChangeRefusal(two, [], { vault: PAYROLL, band: bad }, names), String(bad)).toMatch(/whole number/u);
     }
+  });
+});
+
+describe('A THRESHOLD IS COUNTED ONLY AS A WHOLE NUMBER OF AT LEAST ONE, BY ONE CHECK', () => {
+  it('a threshold of 0, a fraction, a negative number or one too large to count exactly is refused; 0 keeps the one in force only where a change may keep it', async () => {
+    const { wholeThreshold, thresholdCounted } = await import('./vault-approvers.js');
+    /* RED WHEN: a threshold no account can hold is taken as one, so a change is counted, approved or carried at it. */
+    expect([0, 1.5, -3, 1e21, Number.NaN, '2'].map((n) => wholeThreshold(n))).toEqual([false, false, false, false, false, false]);
+    expect([1, 2, 7].map((n) => wholeThreshold(n))).toEqual([true, true, true]);
+    for (const written of ['0', '1.5', '-3', '1e21', 'two', '', undefined]) expect(() => thresholdCounted(written)).toThrow(/not a whole number of at least one\. Nothing was sent\./u);
+    /* RED WHEN: a change that keeps the threshold in force is refused, or one that keeps it is read as any other number. */
+    expect([thresholdCounted(undefined, true), thresholdCounted('0', true), thresholdCounted('3', true), thresholdCounted('3')]).toEqual([0, 0, 3, 3]);
+    expect(() => thresholdCounted('1.5', true)).toThrow(/not a whole number/u);
+    /* RED WHEN: a whole number past what a number counts exactly is called not a whole number. */
+    expect(() => thresholdCounted('9007199254740993')).toThrow(/the approvals this change asks for, 9007199254740993, are more than any account can hold\. Nothing was sent\./u);
   });
 });

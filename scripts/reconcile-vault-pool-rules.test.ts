@@ -1,9 +1,8 @@
 /**
  * **THE REBUILD DOOR'S RULES, PINNED, BECAUSE THE DOOR ITSELF MAY NOT BE RUN.**
  *
- * Rule 1 forbids a session running a `.command`, including the one it has just
- * written, so the door's decisions live in an importable file and are measured
- * here with named mutations. The two worst defects ever found in a door in this
+ * A `.command` is never run by whoever wrote it, so the door's decisions live in an
+ * importable file and are measured here with named mutations. The two worst defects ever found in a door in this
  * project both lived in the half that was outside the typecheck and outside the
  * test glob, where nothing but text matching reached.
  */
@@ -15,7 +14,7 @@ import {
   nonceSecretsForTheRebuild, splitJournalFromTheChain,
 } from './reconcile-vault-pool-rules.js';
 import { newWrappingKeypair } from '../src/core/crypto.js';
-import { openNonceSecrets, rotateNonceSecret, startNonceSecret } from '../src/midnight/company-nonce-secret.js';
+import { openNonceSecrets, rotateNonceSecret, newNonceSecret, startNonceSecret } from '../src/midnight/company-nonce-secret.js';
 import { NoteDescribedTwice, type PoolRecovery } from '../src/midnight/vault-recovery.js';
 import type { Note } from '../src/midnight/vault-notes.js';
 import type { Hex } from '../src/core/crypto.js';
@@ -54,7 +53,7 @@ describe('whether a rebuild is written at all', () => {
     expect(d.why, 'RED WHEN: the refusal stops saying that this is ignorance rather than a balance of zero, which is the one distinction this whole area exists to keep')
       .toMatch(/empty pool is a claim/i);
     /*
-     * **RULE 19: A REFUSAL NAMES WHAT RESOLVES IT, IN TERMS THE READER CAN ACT ON.**
+     * **A REFUSAL NAMES WHAT RESOLVES IT, IN TERMS THE READER CAN ACT ON.**
      * Both halves, because either alone is a dead end: where a record might be
      * found, AND that no rebuild can invent one. A person told only the first goes
      * looking forever; told only the second, they stop looking at all.
@@ -90,11 +89,11 @@ describe('whether a rebuild is written at all', () => {
   });
 
   /**
-   * **THE CASE THE FIRST VERSION OF THIS FILE GOT WRONG, FOUND BY AN AUDIT OF
-   * THIS ROUND.** The refusal was keyed on the chain holding notes the rebuild
+   * **THE CASE THE FIRST VERSION OF THIS FILE GOT WRONG, FOUND WHEN THE
+   * DOOR WAS FIRST AUDITED.** The refusal was keyed on the chain holding notes the rebuild
    * could not explain. A chain read that answers ZERO notes leaves nothing
    * unexplained -- so the refusal did not fire, and the door wrote an empty pool
-   * over a funded vault. `C268`: a partial decode reads as an empty vault, and it
+   * over a funded vault. A partial decode reads as an empty vault, and it
    * reached the one door written to survive it.
    */
   it('REFUSES an empty result when the chain answered NOTHING and the pool claims notes', () => {
@@ -257,10 +256,10 @@ describe('what the operator is shown', () => {
     expect(lines, 'RED WHEN: it stops saying that a stale note costs two fees and then a refusal, which is why dropping it is worth a write')
       .toMatch(/refused inside the circuit/);
     /*
-     * **`C236` IS NOT GUARDED HERE, AND SAYING SO IS BETTER THAN PRETENDING.** The
+     * **THAT NO VAULT ADDRESS IS PRINTED IS NOT GUARDED HERE, AND SAYING SO IS BETTER THAN PRETENDING.** The
      * first version of this test asserted that these lines carry no vault address --
-     * which cannot fail, because `linesForAnOperator` is never given one. An
-     * auditor called it decorative and was right. What actually keeps a vault's
+     * which cannot fail, because `linesForAnOperator` is never given one. It
+     * proved nothing. What actually keeps a vault's
      * address off a screen is the `forbidden`/`createScreen` mechanism
      * (`scripts/deploy-report.ts`) in whatever program prints these lines, which
      * this file does not reach.
@@ -281,8 +280,8 @@ describe('what the operator is shown', () => {
      * **`recovered` IS IN THE FIXTURE NOW, AND IT IS THE LIST THAT WAS UNBOUNDED.**
      * The first version left it empty, so the one list the product printed in full
      * was the one nothing exercised -- and `toHaveLength(2)` below was right for the
-     * wrong reason: two was the number of populated BOUNDED lists. An auditor found
-     * both halves of that.
+     * wrong reason: two was the number of populated BOUNDED lists. Both halves of that
+     * were found only by reading the assertion against the fixture.
      */
     const lines = linesForAnOperator(recovery({
       held: many, recovered: many, stale: many, unexplained: many.map((n) => n.commitment),
@@ -295,7 +294,7 @@ describe('what the operator is shown', () => {
     /*
      * **THREE LISTS, EIGHT ENTRIES EACH, AND ONE LINE PER LIST SAYING HOW MANY WERE
      * LEFT OUT: TWENTY-SEVEN.** Written as the arithmetic rather than as a round
-     * number, because the round number was calibrated when the fixture exercised two
+     * number, because a round number would have been fitted when the fixture exercised two
      * lists and would have accepted a third one running to thirty.
      */
     expect(lines.filter((l) => l.startsWith('    ')).length,
@@ -303,7 +302,7 @@ describe('what the operator is shown', () => {
       .toBeLessThanOrEqual(3 * (8 + 1));
     /*
      * RED WHEN: any ONE of the lists is truncated silently. Asserting the phrase
-     * once would pass while two of the three under-reported -- which is `C188`'s
+     * once would pass while two of the three under-reported -- which is the
      * "guard on some of N" shape, and it is how this very assertion was written
      * the first time.
      */
@@ -738,7 +737,7 @@ describe('the nonce secret and the split journal a rebuild is handed', () => {
   });
 
   it('hands over every secret the record holds, oldest first, with the commitment the chain holds', () => {
-    const rotated = rotateNonceSecret(record, VAULT, ada, { remaining: [{ publicKey: ada.publicKey }], leaving: [{ publicKey: bo.publicKey }] });
+    const rotated = rotateNonceSecret(record, VAULT, ada, { remaining: [{ publicKey: ada.publicKey }], leaving: [{ publicKey: bo.publicKey }] }, newNonceSecret(), 0);
     const all = openNonceSecrets(rotated, VAULT, ada).secrets;
     const given = nonceSecretsForTheRebuild({
       sealed: rotated, where: 'the record', vault: VAULT, signer: { wrappingSecret: ada.secret }, commitment: COMMITMENT.toUpperCase(),

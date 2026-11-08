@@ -8,6 +8,8 @@ import {
   depositIntoCompanyVault, DepositLandedNotYetRecorded, DepositNotYetSeen, type DepositDoors, type DepositsInFlight, type VaultService,
 } from '../../../../packages/web-shared/src/vault-operation.js';
 import { browserDepositsInFlight, browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
+import { VaultSecretBeingChanged } from '../../../../packages/web-shared/src/deposit-on-device.js';
+import { DepositLineNotEnded } from '../../../../packages/web-shared/src/deposit-line-ended.js';
 import {
   deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,
 } from '../../../../packages/web-shared/src/vault-page-doors.js';
@@ -150,6 +152,15 @@ export function depositDoorsFor(
   };
 }
 
+/**
+ * A stop of the deposit whose line in the vault's deposit journal could not be marked as never sent: the stop's own
+ * words, with the line said after them (`act.private-deposit.why.line-not-ended` nests the stop's key), and the stop's
+ * own code, or its key's last part when it named none, so the page still reads which stop it was. A stop of the action
+ * itself (`ActionStopped`) carries no words and is thrown as it is.
+ */
+const lineNotEnded = (stop: Words, code: string | undefined): StepRefused =>
+  new StepRefused(why('line-not-ended', { ...(stop.values ?? {}), stop: stop.key }), code ?? stop.key.slice(stop.key.lastIndexOf('.') + 1));
+
 /** The one private deposit an act asks for, run whole in the wallet. */
 export function privateDepositAction(reach: PrivateDepositReach): ActionDefinition {
   return Object.freeze({
@@ -203,17 +214,24 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
             const done = await depositIntoCompanyVault(depositDoorsFor(ctx, r, reach, vault, money), vault as unknown as Hex, money);
             const created = typeof done.note.createdIn === 'string' && HEX64.test(bare(done.note.createdIn)) ? bare(done.note.createdIn) : null;
             ctx.tell({ state: done.notYetSpendable === undefined ? STATE.recorded : STATE.notYetSpendable, ...(created === null ? {} : { created }) });
-          } catch (e) {
-            if (e instanceof ActionStopped || e instanceof StepRefused) throw e;
+          } catch (thrown) {
+            /* A stop whose journal line could not be marked is sorted as the stop it wraps, and says the line beside its words. */
+            const notEnded = thrown instanceof DepositLineNotEnded ? thrown : null;
+            const e = notEnded === null ? thrown : notEnded.stopped;
+            if (e instanceof ActionStopped) throw e;
+            if (e instanceof StepRefused) throw notEnded === null ? e : lineNotEnded(e.words, e.code);
             if (e instanceof DepositNotYetSeen) {
               ctx.tell({ state: STATE.notYetSeen });
               throw new StepRefused(why('not-yet-seen'));
+            }
+            if (e instanceof VaultSecretBeingChanged) {
+              throw notEnded === null ? new StepRefused(why('secret-being-changed')) : lineNotEnded(why('secret-being-changed'), undefined);
             }
             if (e instanceof DepositLandedNotYetRecorded) {
               ctx.tell({ state: STATE.landedNotRecorded });
               throw new StepRefused(why('landed-not-recorded'));
             }
-            throw new StepRefused(why('not-made', { says: (e as Error)?.message ?? String(e) }));
+            throw new StepRefused(why('not-made', { says: (thrown as Error)?.message ?? String(thrown) }));
           }
         },
       };

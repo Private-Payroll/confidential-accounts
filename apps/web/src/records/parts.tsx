@@ -7,7 +7,7 @@ import { ADMIT_BY, companyPagesOpen, INVITED, OPENED, PAID, PAID_STATE, READ, re
 import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, watchPrivateMoneyReadable, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import { PERSON_KIND, type PersonKind } from '../adapters/person-acts.js';
-import type { ActRefusal } from '../adapters/refusals.js';
+import { ACT_REFUSAL, type ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
 import { AdmitPerson } from '../actions/admit.js';
 import { PAGE } from '../pages.js';
@@ -102,6 +102,34 @@ export function ReadOf<T>({ read, unreadable, children }: { read: Read<T>; unrea
   return <>{children(read.value)}</>;
 }
 
+/** Where the notice stands: in place of the records, or above those that did open. */
+const PART = { records: 'records', notice: 'notice' } as const;
+
+/**
+ * A COMPANY THE PERSON'S WALLET HAS NOT OPENED ON THIS VISIT: a page load never asks the wallet, so what is sealed under a
+ * key the wallet has not released is not opened yet. This says so, with the one press that asks the wallet (once), after
+ * which the records are read again with the key released. `part` is where it stands: in place of the records, or above those
+ * that did open.
+ */
+function OpenWithYourWallet({ part }: { part: (typeof PART)[keyof typeof PART] }) {
+  const t = useText();
+  const { openKeys } = useCompanyRecords();
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<ActRefusal | null>(null);
+  const press = async (): Promise<void> => {
+    setBusy(true); setRefused(null);
+    setRefused(await openKeys());
+    setBusy(false);
+  };
+  return (
+    <Alert className="max-w-xl" data-records={part === PART.records ? 'not-opened-yet' : undefined} data-records-notice={part === PART.notice ? 'not-opened-yet' : undefined}>
+      <AlertDescription>{part === PART.records ? t('records.notOpened.says') : t('records.notOpened.some')}</AlertDescription>
+      <div className="mt-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => { void press(); }} data-action="open-with-your-wallet">{t('records.notOpened.open')}</Button></div>
+      {refused === null ? null : <ActRefused why={refused} />}
+    </Alert>
+  );
+}
+
 /**
  * THE SHOWN COMPANY'S RECORDS, OPENED, handed to `children`; or why they are
  * not, and what opens them. The kit's page loading while they are read.
@@ -116,7 +144,10 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
   useEffect(() => (shown === null ? undefined : companyPagesOpen(shown)), [shown]);
   if (shown === null) return <p className="text-sm text-muted-foreground" data-no-company>{t('records.noCompany')}</p>;
   if (company === null) return <PageLoading data-reading="" />;
-  if (company.of === OPENED.open) return <>{children(company)}</>;
+  if (company.of === OPENED.open) {
+    return company.notOpened === undefined || company.notOpened.length === 0 ? <>{children(company)}</> : <><OpenWithYourWallet part={PART.notice} />{children(company)}</>;
+  }
+  if (company.of === OPENED.refused && company.why === ACT_REFUSAL.notOpenedYet) return <OpenWithYourWallet part={PART.records} />;
   if (company.of === OPENED.refused) {
     return (
       <div className="flex max-w-xl flex-col gap-3" data-records={company.of}>

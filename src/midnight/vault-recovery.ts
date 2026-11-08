@@ -440,7 +440,9 @@ export interface PoolRecoveryInput {
   circuits: VaultNoteCircuits & Partial<VaultNonceCircuits>;
   /**
    * **THE VAULT'S NONCE SECRETS, WHICH EVERY COIN A PAYMENT OR A SPLIT MADE IS
-   * NAMED WITH.** Every secret the company's record holds, oldest first, and the
+   * NAMED WITH.** Every secret the company's record holds and any the vault
+   * gives back (`VaultNonceSecrets`), in no order this relies on, since each is
+   * tried for every event, and the
    * commitment the vault holds now; refused by `NonceSecretNotTheVaults` when
    * none of them is the vault's. Without them only whole coins the history
    * carries are proposed, and every event that made a new coin is listed in

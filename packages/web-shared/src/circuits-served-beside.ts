@@ -20,11 +20,11 @@ export const networkCircuitsBeside = (vault: ArtefactSource, network: ArtefactSo
 };
 
 /**
- * **A PAYMENT OUT ALSO PROVES THE COMPANY ACCOUNT'S `recordPayment`**, which the
- * vault's `payout` calls inside the same transaction, **AND A RAISE OR AN
- * APPROVAL IS ONE OF THE ACCOUNT'S OWN CIRCUITS.** Their material is served
- * beside the vault's, and a location is sent there by the circuit it names: no
- * vault circuit shares a name with one of the account's served to a device.
+ * **A VAULT CIRCUIT THAT CALLS THE COMPANY ACCOUNT ALSO PROVES THE ACCOUNT'S CIRCUIT IT CALLS** (a payment out its
+ * `recordPaymentFromVault`, a change of secret or a split its `approveVaultChange`, a retire its `retireVault`, each
+ * from the vault's one list of its calls), **AND A RAISE OR AN APPROVAL IS ONE OF THE ACCOUNT'S OWN CIRCUITS.** Their
+ * material is served beside the vault's, and a location is sent there by the circuit it names: no vault circuit shares
+ * a name with one of the account's served to a device.
  */
 export const accountCircuitsBeside = (vault: ArtefactSource, account: ArtefactSource): ArtefactSource => {
   const which = (keyLocation: string) =>

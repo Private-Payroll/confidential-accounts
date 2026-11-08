@@ -29,6 +29,7 @@ import {
   NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads,
 } from './roster-here.js';
 import { invitationByAddressRefusal } from './invitation-signed-by-a-seat.js';
+import { wholeThreshold } from '../../../src/core/vault-approvers.js';
 import type { SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { runRebuiltHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';
@@ -415,13 +416,13 @@ export async function openTheRoundHere(
       ...(signed.threshold === undefined ? {} : { threshold: signed.threshold }),
     };
   } else if (envelope.kind === 'set-threshold') {
-    if (typeof body.newThreshold !== 'number') {
+    if (!wholeThreshold(body.newThreshold)) {
       throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '
         + 'change again.');
     }
     governance = { kind: 'threshold', threshold: String(body.newThreshold) };
   } else if (envelope.kind === 'set-vault-threshold') {
-    if (typeof body.newThreshold !== 'number' || typeof body.vault !== 'string' || !HEX64.test(body.vault)) {
+    if (!wholeThreshold(body.newThreshold) || typeof body.vault !== 'string' || !HEX64.test(body.vault)) {
       throw new NotOpenedOnThisDevice('This proposal does not say which vault it is for, or how many approvals that vault '
         + 'would need. Withdraw it and make the change again.');
     }

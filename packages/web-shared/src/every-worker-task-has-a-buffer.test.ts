@@ -64,6 +64,8 @@ const BARE: Record<string, Record<string, unknown>> = {
   'warm-proving': {},
   'creation-again': { deploy: '', insert: '' },
   'secret-is-the-vaults': { vault: 'ab'.repeat(32), state: '', secret: 'cd'.repeat(32) },
+  'own-chain-copy': { vault: 'ab'.repeat(32), state: '', reader: 'cd'.repeat(32), of: 'commitment' },
+  'secret-set-at': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), commitment: 'ef'.repeat(32), indexer: { indexerUri: '', indexerWsUri: '' } },
   'notes-for-payment': { notes: [], token: '00', amount: '1' },
   'payments-fit': { notes: [], payments: [] },
   'after-payment': { notes: [], spent: '', amount: '1', change: null, createdIn: '' },

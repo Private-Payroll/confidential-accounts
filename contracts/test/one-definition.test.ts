@@ -57,7 +57,7 @@ import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { SimulatedCommitments } from '../../src/core/ledger.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { payoutLeafOf, sumTreeOfLeaves } from '../../src/midnight/payout-tree.js';
-import { adoptionRoundOf, firstSecretRunOf, secretRunProposalOf } from '../../src/midnight/vault-start.js';
+import { adoptionRoundOf, secretRunOf, secretRunProposalOf } from '../../src/midnight/vault-start.js';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { TEST_TOKEN } from '../../src/testing/assets.js';
 
@@ -1187,7 +1187,7 @@ describe('A VAULT\'S START IS MADE BY THE CONTRACTS\' OWN FUNCTIONS, NOT A SECON
   });
 
   it('the first secret run\'s one leaf is the vault\'s own secret-run details, in the account\'s own leaf and tree', () => {
-    const run = firstSecretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never },
+    const run = secretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never },
       { vault: VAULT_HEX, secret: '5e'.repeat(31) + '00', readers: ['40'.repeat(32)] });
     const commitment = vaultCircuits.secretCommitmentOf(fromHex(VAULT_HEX), fromHex('5e'.repeat(31) + '00'));
     expect(run.commitment).toBe(toHex(commitment));

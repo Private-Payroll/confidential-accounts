@@ -45,7 +45,8 @@ import { companyKeyOf, companyReachFor, keptReach } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type StepContext } from './definition.js';
 import { inviteAction } from './invite.js';
 import { approveProposalAction } from './approve-proposal.js';
-import { AFTER_A_REMOVAL } from './after-a-removal.js';
+/* No removal is carried out in these tests: the hook that changes the vault secrets after one is never reached. */
+const AFTER_A_REMOVAL = { afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); } };
 import { seatInvitedAction } from './seat-invited.js';
 import { admitSignerAction } from './admit-signer.js';
 import { giveVaultKeysAction } from './give-vault-keys.js';

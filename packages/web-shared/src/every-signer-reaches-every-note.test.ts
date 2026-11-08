@@ -120,6 +120,32 @@ const aCompany = async (o: { signers?: PoolSigner[]; secretFiled?: boolean } = {
   return { service, stores, chain, doors, poolOf, deposited, secret };
 };
 
+/** The vault's state, as the chain would hand it over, with `entries` written into its map of sealed copies and links. */
+const vaultStateWith = async (entries: ReadonlyArray<readonly [Uint8Array, Uint8Array]>): Promise<string> => {
+  const made = await new V.Contract(new Proxy({}, { get: () => () => { throw new Error('no circuit runs here'); } })).initialState(
+    { initialPrivateState: {}, initialZswapLocalState: { coinPublicKey: new Uint8Array(32) } }, { bytes: bytes(ACCOUNT) });
+  const state = R.ContractState.deserialize(made.currentContractState.serialize());
+  const fields: any[] = state.data.state.asArray();
+  const b32 = new R.CompactTypeBytes(32);
+  const aligned = (b: Uint8Array) => ({ value: b32.toValue(b), alignment: b32.alignment() });
+  let copies = fields[7].asMap();
+  for (const [k, v] of entries) copies = copies.insert(aligned(k), R.StateValue.newCell(aligned(v)));
+  let array = R.StateValue.newArray();
+  for (const [i, f] of fields.entries()) array = array.arrayPush(i === 7 ? R.StateValue.newMap(copies) : f);
+  state.data = new R.ChargedState(array);
+  return Buffer.from(state.serialize()).toString('base64');
+};
+
+/** This signer's sealed copy of `secret` under `commitment`, at the tree's first place, with a count of one, as `setNonceSecret` and `writeSecretCopy` leave it. */
+const copyWritten = (secret: string, commitment: Uint8Array): Array<[Uint8Array, Uint8Array]> => {
+  const reader = bytes(recordsKeypairFrom(COMPANY_KEY).publicKey);
+  return [
+    ...sealSecretCopy({ vault: VAULT, secret, reader: toHex(reader) as Hex }).map((part, i): [Uint8Array, Uint8Array] =>
+      [V.pureCircuits.copyKeyOf(commitment, reader, 0n, BigInt(i)), part]),
+    [V.pureCircuits.copiesCountKeyOf(commitment), R.upgradeFromTransient(1n)],
+  ];
+};
+
 beforeEach(() => { /* each test makes its own company */ });
 
 describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
@@ -350,23 +376,7 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     c.chain.notes = [heldOf(change)];
     c.chain.everCreated = [outputOf(paidFrom), outputOf(change)];
     /* The vault's state, holding this signer's sealed copy of its secret under the secret's commitment. */
-    const made = await new V.Contract(new Proxy({}, { get: () => () => { throw new Error('no circuit runs here'); } })).initialState(
-      { initialPrivateState: {}, initialZswapLocalState: { coinPublicKey: new Uint8Array(32) } }, { bytes: bytes(ACCOUNT) });
-    const state = R.ContractState.deserialize(made.currentContractState.serialize());
-    const fields: any[] = state.data.state.asArray();
-    const b32 = new R.CompactTypeBytes(32);
-    const aligned = (b: Uint8Array) => ({ value: b32.toValue(b), alignment: b32.alignment() });
-    const commitment = bytes(c.chain.commitment);
-    const reader = bytes(recordsKeypairFrom(COMPANY_KEY).publicKey);
-    let copies = fields[7].asMap();
-    sealSecretCopy({ vault: VAULT, secret: c.secret, reader: toHex(reader) as Hex }).forEach((part, i) => {
-      copies = copies.insert(aligned(V.pureCircuits.copyKeyOf(commitment, reader, 0n, BigInt(i))), R.StateValue.newCell(aligned(part)));
-    });
-    copies = copies.insert(aligned(V.pureCircuits.copiesCountKeyOf(commitment)), R.StateValue.newCell(aligned(R.upgradeFromTransient(1n))));
-    let array = R.StateValue.newArray();
-    for (const [i, f] of fields.entries()) array = array.arrayPush(i === 7 ? R.StateValue.newMap(copies) : f);
-    state.data = new R.ChargedState(array);
-    c.chain.state = Buffer.from(state.serialize()).toString('base64');
+    c.chain.state = await vaultStateWith(copyWritten(c.secret, bytes(c.chain.commitment)));
     const secretWithheld = (r: WireRecord): SealedPoolStore => (r === 'nonce-secret'
       ? { get: async () => { throw new Error('this nonce-secret was not given'); }, put: async () => {}, versions: async () => [] }
       : c.stores(r));
@@ -374,6 +384,114 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     /* RED WHEN: with the secret's record withheld, nothing reads this signer's sealed copy on the chain, so the change stays unnamed. */
     expect(here.of !== 'not-read' && here.notes.map((n) => [n.nonce, n.value])).toEqual([[change.nonce, 700n]]);
     expect(here.of).toBe('filed');
+  });
+});
+
+describe('A SIGNER WITH ONLY THEIR WORDS AND THE CHAIN, AFTER THE VAULT\'S SECRET CHANGED TWICE, NAMES COINS UNDER EVERY SECRET THAT OPENED', () => {
+  /* Three secrets in turn, each a field element, with its last byte zero as the product makes them (vault-start.ts:156-157). */
+  const SECRETS = [`${'11'.repeat(31)}00`, `${'22'.repeat(31)}00`, `${'33'.repeat(31)}00`] as Hex[];
+  const commitmentOf = (secret: string) => V.pureCircuits.secretCommitmentOf(bytes(VAULT), bytes(secret)) as Uint8Array;
+  /* Each later secret keeps the one before it, masked, under its own commitment's link key, as `setNonceSecret` writes it. */
+  const linked = (earlier: string, later: string): [Uint8Array, Uint8Array] =>
+    [V.pureCircuits.earlierSecretKeyOf(commitmentOf(later)), V.pureCircuits.sealedEarlierOf(bytes(earlier), bytes(later))];
+
+  /** One payment under each secret, each leaving change the chain holds; the records hold no secret this signer can read. */
+  const aVaultPaidUnderEverySecret = async () => {
+    const c = await aCompany({ secretFiled: false });
+    const spent = SECRETS.map((_, i) => ({ nonce: `${(0x41 + i).toString(16)}`.repeat(32) as Hex, token: TOKEN, value: 1_000n, createdIn: TX as Hex }));
+    await c.poolOf(ADA).create(VAULT, { notes: spent });
+    await c.stores('payment-journal').put(VAULT, sealPool(VAULT, {
+      attempts: spent.map((s) => ({ spent: { nonce: s.nonce, token: TOKEN, value: 1_000n }, amount: 300n, step: 'payment', attemptedAt: 't' })),
+    } as never, BOTH, 1, 'payment-journal'));
+    const change = spent.map((s, i) => changeAfterSpending(s, 1_000n, 300n, { circuits: nonceCircuitsFrom(V.pureCircuits), vault: VAULT, secret: SECRETS[i]! })!);
+    c.chain.notes = change.map(heldOf);
+    c.chain.everCreated = [...spent, ...change].map(outputOf);
+    c.chain.commitment = toHex(commitmentOf(SECRETS[2]!));
+    return { c, change };
+  };
+
+  it('THE NEWEST SECRET, OPENED FROM THIS SIGNER\'S OWN COPY ON THE CHAIN, WALKS BACK TO THE TWO BEFORE IT, AND THE CHANGE MADE UNDER EACH IS NAMED AND FILED', async () => {
+    const { c, change } = await aVaultPaidUnderEverySecret();
+    c.chain.state = await vaultStateWith([
+      ...copyWritten(SECRETS[2]!, commitmentOf(SECRETS[2]!)), linked(SECRETS[1]!, SECRETS[2]!), linked(SECRETS[0]!, SECRETS[1]!),
+    ]);
+    const here = await vaultNotesHere(c.doors(ADA), VAULT);
+    /* RED WHEN: nothing reads the links the vault keeps, so only the change made under the newest secret is named. */
+    expect(here.of !== 'not-read' && here.notes.map((n) => n.nonce).sort()).toEqual(change.map((n) => n.nonce).sort());
+    expect(here.of).toBe('filed');
+  });
+
+  it('WITH THE RECORDS STILL ON THE SECRET BEFORE THE CHAIN\'S, THE CHANGE MADE UNDER THE CHAIN\'S IS NAMED FROM THIS SIGNER\'S OWN COPY', async () => {
+    /* The records hold the first secret; the vault was moved on to a new one, not yet filed. */
+    const c = await aCompany();
+    const paidFrom = { nonce: '51'.repeat(32) as Hex, token: TOKEN, value: 1_000n, createdIn: TX as Hex };
+    await c.poolOf(ADA).create(VAULT, { notes: [paidFrom] });
+    await c.stores('payment-journal').put(VAULT, sealPool(VAULT, {
+      attempts: [{ spent: { nonce: paidFrom.nonce, token: TOKEN, value: 1_000n }, amount: 300n, step: 'payment', attemptedAt: 't' }],
+    } as never, BOTH, 1, 'payment-journal'));
+    const change = changeAfterSpending(paidFrom, 1_000n, 300n, { circuits: nonceCircuitsFrom(V.pureCircuits), vault: VAULT, secret: SECRETS[1]! })!;
+    c.chain.notes = [heldOf(change)];
+    c.chain.everCreated = [outputOf(paidFrom), outputOf(change)];
+    c.chain.commitment = toHex(commitmentOf(SECRETS[1]!));
+    c.chain.state = await vaultStateWith(copyWritten(SECRETS[1]!, commitmentOf(SECRETS[1]!)));
+    const here = await vaultNotesHere(c.doors(ADA), VAULT);
+    /* RED WHEN: the copy is read only when the records gave no secret, so a change of secret not yet filed leaves the change unnamed. */
+    expect(here.of !== 'not-read' && here.notes.map((n) => [n.nonce, n.value])).toEqual([[change.nonce, 700n]]);
+  });
+});
+
+describe('A VERSION OF A RECORD THE COMPANY\'S RECORDS DO NOT BELIEVE IS SAID AND LEFT OUT, AND EVERY OTHER VERSION IS STILL READ', () => {
+  it('A DEPOSIT ONLY AN OLDER BELIEVED VERSION OF THE JOURNAL NAMES IS FOUND, WHILE A REFUSED VERSION BETWEEN THEM IS SAID AND NEVER OPENED', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    const [older, refusedOnly, newest] = [await c.deposited(400n, 1, false), await c.deposited(500n, 2, false), await c.deposited(600n, 3, false)];
+    /* The refused version's deposit is not on the chain: what it names is never taken. */
+    c.chain.notes = c.chain.notes.filter((n) => n !== heldOf(refusedOnly));
+    const journal = c.stores('deposit-journal');
+    for (const [i, coin] of [older, refusedOnly, newest].entries()) await journal.put(VAULT, sealPool(VAULT, { notes: [coin] } as never, BOTH, i + 1, 'deposit-journal'));
+    /* The page's own store answers this way when the company's records refuse version 2 (`HttpSealedPoolStore.versionsBelieved`). */
+    const believing = (r: WireRecord): SealedPoolStore => (r !== 'deposit-journal' ? c.stores(r) : {
+      get: (v: string) => journal.get(v), put: (v: string, x: never) => journal.put(v, x),
+      versions: async () => { throw new Error('version 2 of this deposit-journal is not believed, because its filer was not seated'); },
+      versionsBelieved: async (v: string) => ({ versions: (await journal.versions(v)).filter((x) => x.version !== 2), refused: [{ version: 2, why: 'its filer was not seated' }] }),
+    } as SealedPoolStore);
+    const here = await vaultNotesHere(c.doors(ADA, { records: believing }), VAULT);
+    /* RED WHEN: one refused version loses every version, so the deposit only the oldest names stays unnamed. */
+    expect(here.of !== 'not-read' && here.notes.map((n) => n.value).sort()).toEqual([400n, 600n]);
+    /* RED WHEN: the refused version is dropped without a word. */
+    expect(here.said.join(' ')).toMatch(/version 2 of this vault's deposit-journal is not believed, because its filer was not seated, so it is left out/);
+  });
+});
+
+describe('THIS SIGNER\'S OWN COPY THAT OPENS TO A SECRET THE VAULT DOES NOT HOLD IS SAID, NEVER NAMED WITH', () => {
+  it('WITH THE RECORDS ON THE VAULT\'S SECRET AND A COPY SEALING ANOTHER, THE RECORDS STILL NAME THE COINS AND THE COPY IS SAID', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    const coin = await c.deposited(400n);
+    /* The copy sealed to this signer holds a secret that is not the vault's, under the vault's commitment. */
+    c.chain.state = await vaultStateWith(copyWritten(`${'44'.repeat(31)}00`, bytes(c.chain.commitment)));
+    const here = await vaultNotesHere(c.doors(ADA), VAULT);
+    expect(here.of !== 'not-read' && here.notes.map((n) => n.nonce)).toEqual([coin.nonce]);
+    /* RED WHEN: a copy that is not the vault's secret is put first and nothing is said, so this signer never learns the copy they would recover from opens nothing. */
+    expect(here.said.join(' ')).toMatch(/own sealed copy of the vault's secret on the chain opens to a secret that is not the one the vault holds now/);
+  });
+});
+
+describe('THE SLOW PASS IS NEVER GIVEN LESS THAN THE FAST PASS', () => {
+  it('WHEN EVERY VERSION OF THE DEPOSIT JOURNAL CANNOT BE LISTED, THE DEPOSIT ITS NEWEST VERSION NAMES IS STILL HELD AFTER THE SLOW PASS', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    const coin = await c.deposited(400n);
+    /* A note no record names sends the read down the slow path. */
+    c.chain.notes.push('5c'.repeat(32));
+    const unlisted = (r: WireRecord): SealedPoolStore => (r !== 'deposit-journal' ? c.stores(r) : {
+      get: (v: string) => c.stores(r).get(v), put: (v: string, x: never) => c.stores(r).put(v, x),
+      versions: async () => { throw new Error('the list of versions was not given'); },
+    } as SealedPoolStore);
+    const here = await vaultNotesHere(c.doors(ADA, { records: unlisted }), VAULT);
+    expect(here.said.join(' ')).toMatch(/every version of this vault's deposit-journal was not read/);
+    /* RED WHEN: the slow pass is given no journal when the versions cannot be listed, so the deposit the fast pass named is dropped. */
+    expect(here.of !== 'not-read' && here.notes.map((n) => n.nonce)).toEqual([coin.nonce]);
   });
 });
 

@@ -246,7 +246,7 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
 }));
 
 const {
-  VAULT_CIRCUITS, assertVaultCircuitSet, addressVaultPrivateState,
+  VAULT_CIRCUITS, assertVaultCircuitSet, addressVaultPrivateState, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS,
   requireVaultMaintenanceAuthority, deployVaultContract, findDeployedVaultContract,
   requireHandBuiltVaultAuthority, vaultDeployCustody, buildVaultDeployState,
   submitHandBuiltVaultDeployTx,
@@ -776,6 +776,36 @@ describe('the vault\'s circuit list is the vault\'s', () => {
       .filter((c) => c.proof === true).map((c) => String(c.name)).sort();
     expect([...VAULT_CIRCUITS]).toEqual(provable);
     expect([...VAULT_CIRCUITS]).toEqual([...VAULT_CIRCUITS].sort());
+  });
+
+  it('THE ACCOUNT CIRCUITS A VAULT CALLS ARE ONE LIST, AND EXACTLY THE ONES THE COMPILER SAYS THE VAULT MAY CALL', () => {
+    const info = JSON.parse(readFileSync(
+      new URL('../../contracts/managed-vault/compiler/contract-info.json', import.meta.url),
+      'utf8'));
+    const callable = ((info.contracts as any[]).find((c) => c.name === 'Acct')?.circuits as any[]).map((c) => String(c.name)).sort();
+    /* RED WHEN: a vault circuit's call into the account is left out (a retire proved on a device would look its key up in the vault's set), or one is listed that no vault circuit can make. */
+    expect([...ACCOUNT_CIRCUITS_A_VAULT_CALLS]).toEqual(callable);
+    /* RED WHEN: a vault circuit has no entry, so which account circuits it calls is nobody's answer. */
+    expect(Object.keys(ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS).sort()).toEqual([...VAULT_CIRCUITS]);
+    expect(ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS.retire).toEqual(['retireVault']);
+  });
+
+  it('EACH VAULT CIRCUIT\'S CALLS INTO THE ACCOUNT ARE THE ONES ITS SOURCE MAKES, ONE BY ONE', () => {
+    /* RED WHEN: two circuits' entries are swapped, or a call is added to a circuit that makes none, which the union above cannot see: a device proving that circuit would fetch the wrong account key. */
+    /* Read off contracts/src/Vault.compact: payout :591, payoutUnshielded :729, batchPayout :667, splitNote :771 and setNonceSecret :820 (both through askForChange), retire :893. */
+    expect(ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS).toEqual({
+      batchPayout: ['recordBatchFromVault'],
+      deposit: [],
+      depositUnshielded: [],
+      forgetUnshielded: [],
+      mergeNotes: [],
+      payout: ['recordPaymentFromVault'],
+      payoutUnshielded: ['recordPaymentFromVault'],
+      retire: ['retireVault'],
+      setNonceSecret: ['approveVaultChange'],
+      splitNote: ['approveVaultChange'],
+      writeSecretCopy: [],
+    });
   });
 
   it('the account tells it refuses on are circuits the account ACTUALLY deploys', () => {

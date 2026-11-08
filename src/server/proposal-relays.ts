@@ -20,7 +20,7 @@
  * one approval per signer - and decides. What is written here afterwards is
  * only what the chain was read to say: that it holds the proposal, how many
  * approvals it counts for it, that it withdrew it, or, for a vault's adoption
- * or first secret run that the vault's own start step carried out, that the
+ * or a secret run (its first or one replacing it) carried out, that the
  * chain no longer holds it open and shows the vault adopted or holding the
  * very secret that run sets; and, for a proposal a signer's own wallet carried
  * out or withdrew straight on the chain, which of the two the account's history
@@ -101,7 +101,7 @@ export interface ProposalRelayDeps {
   /** The vaults the company's account lists on the chain now: the ones it adopted. Null when the chain did not answer. */
   readonly vaultsAdopted?: (accountId: string) => Promise<readonly string[] | null>;
   /**
-   * A vault's first secret run made again from its public parts, as the account's and the vault's own functions make
+   * A vault's secret run, its first or a replacement, made again from its public parts, as the account's and the vault's own functions make
    * it (`firstSecretRunCarriedOf`): its identity and payload, and the root such a run has under a secret's commitment.
    */
   readonly firstSecretRunOf?: (vault: Hex, parts: FirstSecretRunParts) => {
@@ -129,10 +129,10 @@ export interface ProposalRelayDeps {
 const HEX64 = /^[0-9a-f]{64}$/u;
 /** The filing key of the seat a device acts from, which it sends with every relay: the seat is found by its person and this key. */
 const FILER = z.string().regex(HEX64);
-/** A first secret run's public parts, as the call that set its secret disclosed them. */
+/** A secret run's public parts, as the call that set its secret disclosed them; `previous` only for one that replaced a secret. */
 const SECRET_RUN_PARTS = z.object({
   root: z.string().regex(HEX64), opensAt: z.string().regex(/^[0-9]{1,20}$/u), closesAt: z.string().regex(/^[0-9]{1,20}$/u),
-  salt: z.string().regex(HEX64), nonce: z.string().regex(HEX64), copiesRoot: z.string().regex(HEX64), count: z.string().regex(/^[0-9]{1,20}$/u),
+  salt: z.string().regex(HEX64), nonce: z.string().regex(HEX64), copiesRoot: z.string().regex(HEX64), count: z.string().regex(/^[0-9]{1,20}$/u), previous: z.string().regex(HEX64).optional(),
 }).strict();
 
 /** One proven transaction, as base64, held under the body limit. */
@@ -588,7 +588,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    *   · An adoption, named by its vault: its identity and payload are the ones
    *     the account's own functions make for that vault (`adoptionOf`), and the
    *     chain lists that vault adopted by the company's account.
-   *   · A first secret run, named by its vault and the run's public parts, which
+   *   · A secret run, its first or a replacement, named by its vault and the run's public parts, which
    *     the call that set its secret disclosed: its identity and payload are
    *     the ones the contracts' own functions make of them for that vault
    *     (`firstSecretRunOf`), and the vault holds, on this server's own read of
@@ -601,7 +601,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    */
   router.post('/api/proposals/:id/carried', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
     const b = parsed(res, z.object({ vault: z.string().regex(HEX64), filer: FILER, run: SECRET_RUN_PARTS.optional() }).strict(), req.body,
-      'a vault\'s adoption or first secret run carried out on the chain');
+      'a vault\'s adoption or secret run carried out on the chain');
     if (b === null) return;
     const p = deps.store.getProposal(String(req.params.id))!;
     const refuse = (status: number, error: string) => { res.status(status).json({ nothingWasSent: true, error }); };
@@ -613,7 +613,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     }
     if (p.status === 'executed') { res.json(standingOf(p)); return; }
     const vault = b.vault.toLowerCase() as Hex;
-    const what = b.run === undefined ? 'adoption' : 'first secret run';
+    const what = b.run === undefined ? 'adoption' : 'secret run';
     let shown: () => Promise<string | null>;
     if (b.run === undefined) {
       if (deps.adoptionOf === undefined || deps.vaultsAdopted === undefined) {
@@ -636,13 +636,13 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
       };
     } else {
       if (deps.firstSecretRunOf === undefined || deps.vaultSecretOf === undefined) {
-        refuse(409, 'this service cannot check which secret a vault holds, so it does not mark the first secret run done. The vault is not affected. '
+        refuse(409, 'this service cannot check which secret a vault holds, so it does not mark the secret run done. The vault is not affected. '
           + 'Tell whoever runs this service');
         return;
       }
       const made = deps.firstSecretRunOf(vault, b.run);
       if (made.proposal.toLowerCase() !== p.chainId.toLowerCase() || made.payload.toLowerCase() !== p.digest.toLowerCase()) {
-        refuse(409, 'this proposal is not the first secret run of that vault with those parts, so it is not marked done here. The vault is not affected');
+        refuse(409, 'this proposal is not the secret run of that vault with those parts, so it is not marked done here. The vault is not affected');
         return;
       }
       const vaultSecretOf = deps.vaultSecretOf;
@@ -652,14 +652,14 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         if (read === null) return null;
         const held = read.commitment;
         if (!/[1-9a-f]/u.test(held.toLowerCase())) {
-          return 'the service\'s read of the chain does not show this vault\'s secret set yet, so it does not mark the first secret run done. '
+          return 'the service\'s read of the chain does not show this vault\'s secret set yet, so it does not mark the secret run done. '
             + 'The vault is not affected. Press again in a minute';
         }
         if (made.rootUnder(held.toLowerCase()).toLowerCase() !== root) {
           return 'the secret this vault holds on the chain is not the one this run sets, so the run is not marked done. The vault is not affected';
         }
         return read.started ? 'shown'
-          : 'the service\'s read of the chain shows this vault\'s secret set and not every signer\'s sealed copy of it written, so the first '
+          : 'the service\'s read of the chain shows this vault\'s secret set and not every signer\'s sealed copy of it written, so the '
             + 'secret run is not marked done until it is. The vault is not affected. Approving it again from the wallet writes the copies';
       };
     }
@@ -822,7 +822,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     const b = parsed(res, z.object({
       proposal: z.unknown(), tx: TX.optional(), version: z.unknown().optional(),
       /*
-       * The proposal's salt: the service holds a change's or a vault's first secret run's identity on the chain to the
+       * The proposal's salt: the service holds a change's or a vault's secret run's identity on the chain to the
        * vault it names, or to none. A run's is not used here.
        */
       salt: z.string().regex(HEX64),
@@ -859,7 +859,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         /*
          * **A PROPOSAL FILED WITH NO RUN IS A CHANGE TO THE COMPANY**, raised for
          * no vault, or a run of one payee raised for the vault `vault` names: a
-         * new vault's first secret run, or a one-off payment from the vault,
+         * vault's secret run (its first or a replacement), or a one-off payment from the vault,
          * whose payment is sealed in a record of the company's this route never
          * reads. This route keeps no run record for either. That vault is not
          * signed: it is held only to the identity the filing signs, so it shows

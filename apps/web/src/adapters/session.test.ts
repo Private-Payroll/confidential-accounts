@@ -633,3 +633,41 @@ describe('the proving files, fetched quietly once somebody is signed in', () => 
     await settle();
   });
 });
+
+describe('the names of a person\'s companies, read as a page loads', () => {
+  /*
+   * RED WHEN: the names are read with the open that may ask the wallet, so a company that changed its key opens the wallet's
+   * window when the landing loads; or a company whose key the wallet has not released is told as unreadable, or left with no
+   * word, so the person is offered nothing to open it with.
+   */
+  it('opens each company without asking the wallet, and says one whose key is not released as not opened yet', async () => {
+    const asked = { quietly: [] as string[], withTheWallet: 0 };
+    vi.resetModules();
+    vi.doMock('./keyring-person.js', () => ({ keyringFor: async () => true }));
+    vi.doMock('./filing-judge.js', async () => {
+      const { ACT_REFUSAL, refusalOf } = await import('./refusals.js');
+      return {
+        ACT_REFUSAL, refusalOf,
+        openedHere: async () => { asked.withTheWallet += 1; return null; },
+        openedQuietly: async (row: { id: string }) => {
+          asked.quietly.push(row.id);
+          if (row.id === 'c_changed') throw Object.assign(new Error('not opened'), { name: 'CompanyKeyNotOpened' });
+          return { id: row.id, name: 'Acme' };
+        },
+      };
+    });
+    try {
+      const m = await load();
+      answers['/api/me'] = reply(200, { user: { id: 'u1', name: 'Priya' }, accounts: [{ id: 'c_plain' }, { id: 'c_changed' }] });
+      await m.whoIsSignedIn();
+      const names = await m.companyNamesFor('u1');
+      expect(asked).toEqual({ quietly: ['c_plain', 'c_changed'], withTheWallet: 0 });
+      expect(names.get('c_plain')).toBe('Acme');
+      expect(names.get('c_changed')).toBeUndefined();
+      expect(names.whyNot.get('c_changed')).toBe('not-opened-yet');
+    } finally {
+      vi.doUnmock('./keyring-person.js');
+      vi.doUnmock('./filing-judge.js');
+    }
+  });
+});

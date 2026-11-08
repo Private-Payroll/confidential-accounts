@@ -709,7 +709,7 @@ export interface Handed { over: boolean }
  * runs, the proposals the chain holds, by this wallet's own read, and the spending policies, read and never filed. A
  * payroll run's own records are not read for it.
  */
-const governanceRecordsFor = (r: CompanyReach): CompanyRecordsHere => {
+export const governanceRecordsFor = (r: CompanyReach): CompanyRecordsHere => {
   const notRead = (what: string) => (): never => { throw new Error(`a change to who is seated reads no ${what}.`); };
   return {
     directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster),

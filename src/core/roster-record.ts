@@ -231,6 +231,17 @@ export function oneEntryPerSeat(signers: readonly Signer[], w: RosterWitnesses):
   return signers.filter((s) => s.status !== 'active' || typeof s.leafCommitment !== 'string' || kept.has(s));
 }
 
+/**
+ * **A SEATED ENTRY FOR A SEAT THAT HAS LEFT**: whether `signers` holds an active entry for a seat a retirement the
+ * company's records anchor has retired and the chain no longer holds. Such a roster is still believed (the entry is
+ * only left out of what is read), but every count of its signers, the vault-key index's among them, still counts the
+ * seat that left, so the roster is filed again without it.
+ */
+export function retiredSeatStillNamed(signers: readonly Signer[], w: RosterWitnesses): boolean {
+  return signers.some((s) => s.status === 'active' && rosterEntryRefusal(s, w) === 'seat-retired'
+    && !w.seatsOnTheChain.some((x) => low(x) === low(s.leafCommitment)));
+}
+
 /** One roster entry a device did not believe: who it names, and why. */
 export interface RefusedEntry { readonly signerId: string; readonly name: string; readonly why: RosterEntryRefusal }
 

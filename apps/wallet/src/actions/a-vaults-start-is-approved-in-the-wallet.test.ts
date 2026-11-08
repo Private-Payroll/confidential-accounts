@@ -46,7 +46,7 @@ vi.mock('../../../../packages/web-shared/src/vault-operation.js', async (real) =
       t.shared.push({ act: 'carry', doors, named });
       return t.carried;
     },
-    finishedFirstSecretHere: async (doors: unknown, named: unknown) => {
+    finishedSecretRunHere: async (doors: unknown, named: unknown) => {
       t.shared.push({ act: 'finish', doors, named });
       return t.finished;
     },

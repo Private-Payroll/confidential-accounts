@@ -16,7 +16,10 @@
  * the key the approvers saw is the one sealed. Where the proposal stands, and
  * this seat's own approval, from the chain. The leaver check before every
  * approval and every carrying out. Approving files no record and raises
- * nothing; withdrawing it stays refused (`withdraw-proposal.ts`).
+ * nothing. One a signer's removal has outrun can be neither approved nor carried
+ * out on the chain: only its raiser withdraws it (`withdraw-proposal.ts`), and
+ * finishing the company raises it again under the same identity, which a signer
+ * who approved it before cannot approve again, so it may never be carried out.
  */
 import { x25519 } from '@noble/curves/ed25519.js';
 import type { ActIntent } from 'midnight-identity/profile/request';

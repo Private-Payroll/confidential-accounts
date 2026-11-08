@@ -19,6 +19,8 @@ export interface SignerStanding {
   seatOnChain: boolean;
   you: boolean;
   entryFiled: boolean | null;
+  /** The seat's leaf, as the roster names it (lower case), which a removal of this signer names to the wallet; null when the roster names none. */
+  leaf: string | null;
   waiting?: true;
 }
 
@@ -65,6 +67,7 @@ export function signerStandings(
       seatOnChain: leaf !== null && held.has(leaf),
       you: own !== null && s.id === own.id && typeof s.signingPublicKey === 'string' && s.signingPublicKey.toLowerCase() === own.key,
       entryFiled: entries === null || leaf === null ? null : entries.has(leaf),
+      leaf,
     };
   }), ...seatsWaitedUnlisted(here.waited ?? [], held, [...signers.map((s) => s.leafCommitment), ...(here.shown ?? [])])];
 }
@@ -76,7 +79,7 @@ export function signerStandings(
 const seatsWaitedUnlisted = (waited: readonly string[], held: ReadonlySet<string>, listed: readonly (string | null)[]): SignerStanding[] => {
   const named = new Set(listed.flatMap((x) => (typeof x === 'string' ? [x.toLowerCase()] : [])));
   return [...new Set(waited.map((x) => x.toLowerCase()))].filter((leaf) => held.has(leaf) && !named.has(leaf))
-    .map((leaf) => ({ id: leaf, name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, waiting: true as const }));
+    .map((leaf) => ({ id: leaf, name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, leaf, waiting: true as const }));
 };
 
 /**

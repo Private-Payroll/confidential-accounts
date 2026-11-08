@@ -8,9 +8,9 @@ import {
 } from 'vaults-web-shared/keyring.js';
 import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-here.js';
+import { vaultKeysOfferOpened } from 'vaults-web-shared/vault-keys-offer-opened.js';
 import type { Inviter } from '../../../../src/core/invitation.js';
-import { keyInForce, keysHeld } from '../../../../src/core/company-key.js';
-import { openVaultKeysOffer, vaultKeysOfferRefusal, type OpenedVaultKeysOffer, type VaultKeysOffer } from '../../../../src/core/vault-keys.js';
+import type { OpenedVaultKeysOffer, VaultKeysOffer } from '../../../../src/core/vault-keys.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { rosterReadsFor } from './filing-judge.js';
 import type { CompanyKeys } from '../../../../src/core/company-key.js';
@@ -131,7 +131,7 @@ export async function giveTheVaultKeys(
  * THE VAULT-KEY OFFERS OPEN ON THE SERVICE THIS DEVICE CAN OPEN, by the seat each is for: `served` is the service's answer
  * for the company's open offers. An offer counts only when it opens under a key the company holds, is the shape of an offer,
  * and carries a directory entry and vault keys the signer's own wallet and key signed for this company
- * (`vaultKeysOfferRefusal`): the same opening and checks the fold makes before it files one into the roster. Whose offer it
+ * (`vaultKeysOfferRefusal`): the one opening and check, `vaultKeysOfferOpened`, that the fold makes before it files one into the roster. Whose offer it
  * is, and whether its seat is believed, are for the reader to check.
  */
 export function offersOpenHere(
@@ -143,9 +143,8 @@ export function offersOpenHere(
   for (const offer of kept) {
     const seat = (offer?.seat ?? '').toLowerCase();
     try {
-      const opened = keysHeld(viewingKey).map((k) => openVaultKeysOffer(companyId, offer, k)).find((o) => typeof o !== 'string')
-        ?? openVaultKeysOffer(companyId, offer, keyInForce(viewingKey));
-      if (typeof opened === 'string' || vaultKeysOfferRefusal(label, account, companyId, opened) !== null) continue;
+      const opened = vaultKeysOfferOpened(companyId, offer, viewingKey, label, account);
+      if (typeof opened === 'string') continue;
       open.set(seat, opened);
     } catch {
       /* An offer this device cannot read is not counted. */

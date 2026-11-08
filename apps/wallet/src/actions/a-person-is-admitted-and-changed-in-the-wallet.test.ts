@@ -504,7 +504,8 @@ describe('EACH ACTION CALLS ONLY THE ROUTES ITS INTENT LISTS, AND HAS ITS WORDS'
     }
     /* RED WHEN: admitting or changing a person may hand a transaction to the chain or raise a proposal. */
     for (const shape of [admit, change]) {
-      expect((shape.calls ?? []).filter((c) => c.sends === true && !c.path.endsWith('/proven'))).toEqual([]);
+      /* Only the upkeep sends: the anchor, and the finish of a vault secret's change that stopped part way. */
+      expect((shape.calls ?? []).filter((c) => c.sends === true && !c.path.endsWith('/proven') && !/\/start\/(secret|copy)$/u.test(c.path))).toEqual([]);
       expect(routeOf(shape, 'POST', '/api/accounts/acc_1/proposals')).toBeNull();
     }
     expect(routeOf(admit, 'POST', '/api/people/emp_ada/details')).toBeNull();

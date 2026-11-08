@@ -533,19 +533,23 @@ export const sealPayrollProposal = (input: {
 }, input.viewingKey);
 
 /**
- * **A NEW VAULT'S FIRST SECRET RUN, SEALED AS A PROPOSAL OF THE COMPANY'S** on
- * the device raising it: the vault, and the run's root, payee count and window
- * with the salt in its change, which together make its identity on the chain
- * again (`proposalIdOf` over the run's payload, the vault and the salt), so any
- * signer's device can check the record is the run the chain holds. It is
- * sealed to every reader of the company's proposals, so it is given nothing
- * the run was made from: never the vault's secret, the run's nonce or a sealed
- * copy of the secret, none of which its input can carry.
+ * **A VAULT'S SECRET RUN, SEALED AS A PROPOSAL OF THE COMPANY'S** on the device
+ * raising it, for its first secret or one replacing it: the vault, the run's
+ * root, payee count and window with the salt in its change, which together make
+ * its identity on the chain again (`proposalIdOf` over the run's payload, the
+ * vault and the salt), so any signer's device can check the record is the run
+ * the chain holds. With them, `previous` (the commitment the run replaces, absent
+ * for a first secret) and every reader's sealed copy of the new secret, each
+ * sealed to that reader's own records key (`sealSecretCopy`): the copies the
+ * vault will write, public once written. A signer opens only their own copy, so
+ * every signer can approve and carry the run, and none is given the secret, the
+ * run's nonce or another reader's copy in a form they can open.
  */
 export const sealVaultSecretProposal = (input: {
   readonly accountId: string; readonly viewingKey: Hex; readonly summary: string;
   readonly run: {
     readonly vault: Hex; readonly root: Hex; readonly payees: string; readonly opensAt: string; readonly closesAt: string;
+    readonly previous?: Hex; readonly copies?: readonly { readonly reader: Hex; readonly parts: readonly Hex[] }[];
   };
   readonly change: { readonly asset: string; readonly amount: bigint; readonly batchDigest: Hex; readonly salt: Hex };
   readonly proposedBy: string;
@@ -553,6 +557,8 @@ export const sealVaultSecretProposal = (input: {
   vault: input.run.vault, kind: VAULT_SECRET, summary: input.summary,
   sealedPayload: seal(canonical({
     vault: input.run.vault, root: input.run.root, payees: input.run.payees, opensAt: input.run.opensAt, closesAt: input.run.closesAt,
+    ...(input.run.previous === undefined ? {} : { previous: input.run.previous }),
+    ...(input.run.copies === undefined ? {} : { copies: input.run.copies.map((c) => ({ reader: c.reader, parts: [...c.parts] })) }),
     __change: input.change,
   }), input.viewingKey),
   proposedBy: input.proposedBy, approvals: [],

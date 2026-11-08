@@ -11,7 +11,8 @@ import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identi
 import { StaticAssetRegistry, type Asset } from '../../../src/core/assets.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
-import { newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
+import type { Hex } from '../../../src/core/crypto.js';
+import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import {
   openCompanyVaultPool, type DepositInFlight, type DepositsInFlight, type VaultChainView, type ServedVaultChain, type VaultService,
 } from './vault-operation.js';
@@ -65,6 +66,7 @@ const setUp = async () => {
   };
   const refuse = async () => { throw new Error('a deposit never asks this'); };
   const builder: VaultBuilderClient = {
+    proofsInProgress: () => [],
     /* The vault as this device's worker reads it at the wallet's indexer: the chain moved by hand above. */
     vaultOnChain: async () => {
       const v = view();
@@ -82,7 +84,9 @@ const setUp = async () => {
       events: [{ transactionHash: 'e8'.repeat(32), details: { tag: 'zswapOutput', commitment: i.commitment, contract: i.vault, mtIndex: '0' } }],
     }),
     deploy: refuse, handover: refuse, notesForPayment: refuse, paymentsFit: refuse, afterPayment: refuse, stepKept: refuse,
-    confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, vouchedRunIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, mergeNotes: refuse, payoutPublicly: refuse, governedCall: refuse,
+    /* A deposit reads the account's count of removals at the block it is built on: none here. */
+    startStanding: async () => ({ standing: { adopted: true, removals: 0 } }) as never,
+    confirmPayment: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, vouchedRunIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, mergeNotes: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
     ownSeat: refuse, spendingPolicyKeys: refuse, policyBarKey: refuse, clearRun: refuse, periodTotal: refuse, runCharged: refuse, lastRecovery: refuse, anchorHeads: refuse, anchorTag: refuse, seatOpenings: refuse, anchorsOnChain: refuse, roundsOnChain: refuse, paidLeaves: refuse, runsOutrun: refuse, invitedSeats: refuse, seatInvited: refuse, anchor: refuse, recoverAnchor: refuse, accountCallChain: refuse,
     secretIsTheVaults: async () => true,
@@ -95,7 +99,7 @@ const setUp = async () => {
   } as VaultBuilderClient;
   const kept = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
-  const wrapping = newWrappingKeypair();
+  const wrapping = recordsKeypairFrom(new Uint8Array(32).fill(9));
   const inFlight = new Map<string, SealedInFlight>();
   const doors = {
     sleep: async () => {}, waitMs: 3, everyMs: 1, service, records,

@@ -24,6 +24,8 @@ const kr = vi.hoisted(() => ({
   foldFails: null as string | null,
   /* Another member has filed a claim on this person's seat first: the service keeps an offer only for a person whose own entry is filed. */
   squatted: false,
+  /* What the shared opening step answers for the offer of each seat. */
+  verdicts: {} as Record<string, unknown>,
   user: 'u1' as string | null,
   keys: { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
 }));
@@ -76,6 +78,10 @@ vi.mock('vaults-web-shared/roster-here.js', async (real) => ({
     if (kr.foldFails !== null) throw new Error(kr.foldFails);
     return { folded: [], refused: [{ seat: SEAT, why: 'the offer is refused: it is not an offer of vault keys' }] };
   },
+}));
+vi.mock('vaults-web-shared/vault-keys-offer-opened.js', () => ({
+  /* The shared step, stood in for by a verdict per seat: the opened offer, or the text of why it is refused. */
+  vaultKeysOfferOpened: (_id: string, kept: { seat: string }) => kr.verdicts[kept.seat.toLowerCase()] ?? 'it is not an offer of vault keys',
 }));
 vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
@@ -211,5 +217,18 @@ describe('an entry already on file, whatever the keys on this device hold', () =
     const answer = await fileTheOwedDirectoryEntry(filingsWith(ENTRY('cd'.repeat(32))) as never, 'c1', other.door, keys, founding);
     expect(answer).toMatchObject({ notYet: expect.stringMatching(/holds no opening of its seat/u) });
     expect(other.kept.settled).toBe(false);
+  });
+});
+
+describe('the offers readiness counts', () => {
+  /* RED WHEN: readiness opens and checks an offer by steps of its own, so it can count an offer the fold's step refuses, or leave out one it takes. */
+  it('counts exactly the offers the shared opening step opens, by seat, and none it refuses', async () => {
+    const m = await load();
+    const good = { keys: 'k' };
+    kr.verdicts = { aa: good };
+    const open = m.offersOpenHere('c1', { offers: [{ seat: 'AA' }, { seat: 'bb' }, { seat: 'cc' }] }, VIEWING, 'co' as never, 'ac' as never);
+    expect([...open.keys()]).toEqual(['aa']);
+    expect(open.get('aa')).toBe(good);
+    kr.verdicts = {};
   });
 });

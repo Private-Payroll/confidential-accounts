@@ -72,7 +72,9 @@ const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const PRIVATE = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
 const HEX = (n: number): string => n.toString(16).padStart(2, '0').repeat(32);
 
-const standing = (id: string, name: string, accepted: boolean, seatOnChain: boolean, over: Record<string, unknown> = {}) => ({ id, name, accepted, seatOnChain, ...over });
+const standing = (id: string, name: string, accepted: boolean, seatOnChain: boolean, over: Record<string, unknown> = {}) => ({
+  id, name, accepted, seatOnChain, leaf: seatOnChain ? HEX(Number(id.slice(1)) || 9) : null, ...over,
+});
 /* The founding seat saved under the create step's name for a person with none, and the seat this device holds, just added. */
 const youJustAdded = (entryFiled: boolean | null) => read([
   standing('s1', 'You', false, true, { you: false, entryFiled: true }), standing('s2', 'KC-Wallet 2', false, true, { you: true, entryFiled }),
@@ -366,23 +368,6 @@ describe('the approvals the company asks for, and a change waiting', () => {
 });
 
 describe('removing a signer', () => {
-  /* RED WHEN: a seated signer's row has no Remove, the Remove can be pressed, or pressing it asks the wallet for anything. */
-  it('shows Remove on a seated signer as Coming soon, not pressable, and asks the wallet for nothing', async () => {
-    await draw();
-    const soon = qa('[data-signer=s1] [data-slot="soon-action"]');
-    expect(soon).toHaveLength(1);
-    expect(soon[0]!.getAttribute('data-action')).toBe('remove-signer');
-    const button = soon[0]!.querySelector('button')!;
-    expect(button.textContent).toBe(en('signers.remove'));
-    expect(button.hasAttribute('disabled')).toBe(true);
-    fireEvent.click(button);
-    await settle();
-    expect(kr.acts).toEqual([]);
-    fireEvent.click(soon[0]!.querySelector('[data-slot=coming-soon]')!);
-    await settle();
-    expect(document.body.textContent).toContain(en('signers.remove.soon'));
-  });
-
   /* RED WHEN: Remove is offered on a signer whose seat the chain does not hold. */
   it('offers it on no signer whose seat the chain does not hold', async () => {
     await draw();
@@ -532,8 +517,13 @@ describe('approving an invitation', () => {
   it('gives each reason the wallet stops for its own words, and says to press again only after a stop that may have gone part of the way', async () => {
     const partly = new Set<string>([WHY.mayBeSent, WHY.filedNotEntered, WHY.stopped, WHY.other]);
     const giving = new Set<string>([WHY.recordsKeyRefused, WHY.entryNotFiled]);
+    /* The reasons only a removal or the vault secrets' change gives are tried in signers-remove.test.tsx, through those presses. */
+    const ofTheSwitch = new Set<string>([
+      WHY.notARemoval, WHY.removalRefused, WHY.notRaised, WHY.notCarried, WHY.notAsShown, WHY.notRead, WHY.notReadToRaise, WHY.noSuchSeat, WHY.noSuchSeatToRaise,
+      WHY.unreadSeatFirst, WHY.outrun, WHY.noPerson, WHY.notAVault,
+    ]);
     for (const [key, code] of Object.entries(WHY)) {
-      if (giving.has(code)) continue;
+      if (giving.has(code) || ofTheSwitch.has(code)) continue;
       cleanup(); kr.acts = [];
       const refused = code === WHY.stopped ? undefined : `act.approve-proposal.why.${code}`;
       kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', ...(refused === undefined ? {} : { refused }) };

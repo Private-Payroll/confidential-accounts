@@ -22,6 +22,22 @@
  */
 import type { Hex } from './crypto.js';
 
+/** Whether `n` could be a threshold at all: a whole number of at least one that is counted exactly. The chain further refuses one above the signers seated. */
+export const wholeThreshold = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 1;
+
+/**
+ * The threshold a change names, as a number, or 0 where `keeps` lets the change keep the one in force. Refuses anything
+ * else, so no count is made at a number no account can hold.
+ */
+export const thresholdCounted = (written: string | undefined, keeps = false): number => {
+  const n = Number(written ?? (keeps ? '0' : ''));
+  if ((keeps && n === 0) || wholeThreshold(n)) return n;
+  if (/^[0-9]+$/u.test(written ?? '') && n > Number.MAX_SAFE_INTEGER) {
+    throw new Error(`the approvals this change asks for, ${written}, are more than any account can hold. Nothing was sent.`);
+  }
+  throw new Error('the approvals this change asks for are not a whole number of at least one. Nothing was sent.');
+};
+
 /** What one seat may do, as far as approving runs goes. */
 export type SeatRights =
   /** A seat with every right on every vault. */
@@ -278,7 +294,7 @@ export const thresholdChangeRefusal = (
   roster: ApproverRoster, bounds: ThresholdBounds, change: ThresholdChange, nameOf: (vault: Hex) => string = (v) => v,
 ): string | null => {
   const wanted = change.threshold;
-  if (!Number.isSafeInteger(wanted) || wanted < 1) return 'the approvals needed must be a whole number, at least one.';
+  if (!wholeThreshold(wanted)) return 'the approvals needed must be a whole number, at least one.';
   if (wanted > bounds.seats) {
     return `the company cannot need more approvals than the ${bounds.seats} signers its account seats, or nothing could ever be `
       + 'approved. Seat more signers first, or choose a smaller number.';
@@ -320,6 +336,19 @@ export interface RemovalBounds {
 export const removalRefusal = (
   roster: ApproverRoster, bounds: RemovalBounds, leaf: Hex, newThreshold: number, nameOf: (vault: Hex) => string = (v) => v,
 ): string | null => {
+  const bound = removalThresholdRefusal(bounds, leaf, newThreshold);
+  if (bound !== null) return bound;
+  const change: GovernanceChange = newThreshold === 0 ? { kind: 'remove', leaf } : { kind: 'removeAndThreshold', leaf, threshold: newThreshold };
+  const short = vaultsLeftShort(roster, change);
+  return short.length === 0 ? null : leftShortSaid(short, nameOf, roster);
+};
+
+/**
+ * Why the chain would refuse to carry a removal out, from the seats, the threshold and the policy bar it holds: the seat is
+ * not one it holds, the threshold asked is not a whole number (0 keeps the one in force), or the signers left are fewer
+ * than the approvals the account or a policy change would then need. Null when the chain would carry it.
+ */
+export const removalThresholdRefusal = (bounds: RemovalBounds, leaf: Hex, newThreshold: number): string | null => {
   if (!bounds.seats.some((s) => same(s as Hex, leaf))) {
     return 'that signer does not hold a seat on the company\'s account, so there is nobody to remove. Reload the page to see who is seated.';
   }
@@ -337,9 +366,7 @@ export const removalRefusal = (
     return `once this signer is removed the company has ${signers} left, and a policy change needs ${bounds.policyBar} approvals: `
       + 'seat another signer first, or lower the approvals policy changes need.';
   }
-  const change: GovernanceChange = newThreshold === 0 ? { kind: 'remove', leaf } : { kind: 'removeAndThreshold', leaf, threshold: newThreshold };
-  const short = vaultsLeftShort(roster, change);
-  return short.length === 0 ? null : leftShortSaid(short, nameOf, roster);
+  return null;
 };
 
 /** A seat added that sets the threshold once taken. */
@@ -368,7 +395,7 @@ export const seatThresholdRefusal = (
   roster: ApproverRoster, bounds: { readonly seats: number }, change: SeatThresholdChange, nameOf: (vault: Hex) => string = (v) => v,
 ): string | null => {
   const wanted = change.threshold;
-  if (!Number.isSafeInteger(wanted) || wanted < 1) return 'the approvals needed once the seat is taken must be a whole number, at least one.';
+  if (!wholeThreshold(wanted)) return 'the approvals needed once the seat is taken must be a whole number, at least one.';
   const seated = bounds.seats + 1;
   if (wanted > seated) {
     return `once this seat is taken the company has ${seated} ${seated === 1 ? 'signer' : 'signers'}, so it cannot need ${wanted} approvals, `

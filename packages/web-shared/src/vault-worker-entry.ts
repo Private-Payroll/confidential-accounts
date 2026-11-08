@@ -22,7 +22,7 @@ import {
   type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
 import {
-  firstSecretRunOf, startStandingOf, type AccountLedgerForAStart, type AccountStartPure, type SecretRun,
+  secretRunOf, startStandingOf, type AccountLedgerForAStart, type AccountStartPure, type SecretRun,
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
 import {
@@ -57,6 +57,7 @@ import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
 import { startingLedgerFrom, vaultBornHeldRefusal } from '../../../src/midnight/vault-circuits.js';
 import { VAULT_CIRCUITS } from '../../../src/midnight/vault-contract.js';
 import type { Committee } from '../../../src/midnight/vault-committee.js';
+import type { AccountHolds } from './secret-set-on-the-chain.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 /** Where this application serves the vault's public proving material. */
@@ -476,11 +477,11 @@ const secretRunToWire = (r: SecretRun): SecretRunOnTheWire => ({
 
 /** Where a vault's start stands, as it crosses to the page. */
 const standingToWire = (s: StartStanding): StartStandingOnTheWire => {
-  if (s.secret === undefined) return { adopted: s.adopted, adoption: s.adoption };
+  if (s.secret === undefined) return { adopted: s.adopted, adoption: s.adoption, removals: s.removals };
   const { run, raise, written, ...rest } = s.secret;
   return {
     adopted: s.adopted,
-    adoption: s.adoption,
+    adoption: s.adoption, removals: s.removals,
     secret: {
       ...rest,
       run: run === null ? null : { ...run, opensAt: run.opensAt.toString(), closesAt: run.closesAt.toString() },
@@ -698,15 +699,88 @@ export const loadDeps = (scope: any) => {
 const giveTheRuntimeABuffer = (): void => ensureBuffer();
 
 type RebuildAsk = Extract<VaultAsk, { ask: 'vault-rebuilt' }> & VaultRebuildAsked;
+type CopiesHere = typeof import('../../../src/midnight/sealed-secret-copy.js');
+type CopyKeysHere = import('../../../src/midnight/sealed-secret-copy.js').CopyKeys & import('../../../src/midnight/sealed-secret-copy.js').EarlierKeys;
+const bytesToHex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+/** The vault's ledger, read out of the contract state the page handed in. */
+const ledgerHere = (d: WorkerDeps, state: string) =>
+  d.vault.ledger((d.runtimeState.deserialize(fromBase64(state)) as { data: unknown }).data) as Parameters<CopiesHere['readersCopyOnTheChain']>[0];
+
+/**
+ * **THIS READER'S SEALED COPY OF THE VAULT'S SECRET, READ OFF THE STATE HANDED IN** under the commitment the ask names.
+ * Only the page holds the key that opens it; nothing here can.
+ */
+async function ownChainCopyHere(d: WorkerDeps, ask: Extract<VaultAsk, { ask: 'own-chain-copy' }>) {
+  const [copies, runtime] = await Promise.all([import('../../../src/midnight/sealed-secret-copy.js'), import('@midnight-ntwrk/compact-runtime')]);
+  const found = copies.readersCopyOnTheChain(ledgerHere(d, ask.state), d.vault.pureCircuits as CopyKeysHere, (c) => BigInt(runtime.degradeToTransient(c)),
+    { reader: String(ask.reader).toLowerCase() as Hex, of: ask.of === 'copies-written' ? 'copies-written' : 'commitment' });
+  return { commitment: found.commitment, parts: found.parts === null ? null : found.parts.map(bytesToHex) };
+}
+/**
+ * **THE ACCOUNT'S REMOVAL COUNT BEFORE THE VAULT'S SECRET `commitment` WAS SET**, from the history of the vault and
+ * its account at the indexer the person's own wallet names (`removalsWhenTheSecretWasSet`), never from the company's
+ * records or its service.
+ */
+async function secretSetAtHere(d: WorkerDeps, ask: Extract<VaultAsk, { ask: 'secret-set-at' }>): Promise<number> {
+  const { removalsWhenTheSecretWasSet } = await import('./secret-set-on-the-chain.js');
+  const data = (state: Uint8Array) => (d.runtimeState.deserialize(state) as { data: unknown }).data;
+  const [vault, account] = await Promise.all([ask.vault, ask.account].map((a) => historyHere(d, { ...ask, account: a }, 'when the vault\'s secret was set was')));
+  return removalsWhenTheSecretWasSet({
+    vault: (state) => d.vault.ledger(data(state)), account: (state) => d.accountLedger(data(state)) as AccountHolds,
+    ...(d.accountPure as { removalCountKey?: () => Uint8Array }),
+  }, { vault: vault!.steps, account: account!.steps }, ask.commitment);
+}
+
+/** Whether the secret asked about is the one the vault's state commits to. */
+async function secretIsTheVaultsHere(d: WorkerDeps, ask: Extract<VaultAsk, { ask: 'secret-is-the-vaults' }>): Promise<Extract<VaultAnswer, { ask: 'secret-is-the-vaults' }>> {
+  /* The vault's own commitment function over the secret, against the commitment the vault's state holds. */
+  const hex = /^[0-9a-f]{64}$/iu;
+  if (!hex.test(ask.vault) || !hex.test(ask.secret)) throw new Error('that is not a vault and a secret, so nothing was compared.');
+  const bytes = (h: string) => Uint8Array.from(h.match(/../gu)!, (x) => Number.parseInt(x, 16));
+  const held = (d.vault.ledger((d.runtimeState.deserialize(fromBase64(ask.state)) as { data: unknown }).data) as { nonceCommitment: Uint8Array }).nonceCommitment;
+  const worked = (d.vault.pureCircuits as { secretCommitmentOf(v: Uint8Array, s: Uint8Array): Uint8Array })
+    .secretCommitmentOf(bytes(ask.vault), bytes(ask.secret));
+  const matches = held.length === worked.length && held.every((b, i) => b === worked[i]) && held.some((b) => b !== 0);
+  return { id: ask.id, ok: true, ask: 'secret-is-the-vaults', matches };
+}
 const HEX64_ASKED = /^[0-9a-f]{64}$/u;
+
+/**
+ * **HOW A REBUILD NAMES THE VAULT'S COINS: ITS SECRETS AND SPLIT JOURNAL, AND THIS SIGNER'S SEALED COPY.** With the
+ * vault's state handed in, the secrets given are joined by every earlier secret the vault links to the one it holds
+ * now, this signer's sealed copy is read when `copyFor` asks for it, and the secret the page opened it to
+ * (`copySecret`) is named with first only when it is the one the vault holds now (`secretsForARebuild`). No secret, no naming:
+ * a split journal left unnamed is said.
+ */
+async function namingForTheRebuild(d: WorkerDeps, ask: RebuildAsk, vault: Hex, said: string[]) {
+  const read = String(ask.chain.nonceCommitment ?? '');
+  const commitment = read.toLowerCase() as Hex;
+  const splitJournal = new Map<Hex, Hex>((ask.chain.splitJournal ?? []).map(([k, v]) => [String(k).toLowerCase() as Hex, String(v).toLowerCase() as Hex]));
+  let secrets: readonly Hex[] = ask.secrets.map((x) => String(x).toLowerCase() as Hex).filter((x) => HEX64_ASKED.test(x));
+  let copy: string[] | null = null;
+  if (ask.state !== undefined && HEX64_ASKED.test(read)) {
+    const [copies, runtime] = await Promise.all([import('../../../src/midnight/sealed-secret-copy.js'), import('@midnight-ntwrk/compact-runtime')]);
+    const state = ask.state;
+    const found = copies.secretsForARebuild(() => ledgerHere(d, state), d.vault.pureCircuits as CopyKeysHere, (c) => BigInt(runtime.degradeToTransient(c)),
+      { vault, commitment, secrets, ...(ask.copyFor === undefined ? {} : { copyFor: String(ask.copyFor).toLowerCase() as Hex }),
+        ...(HEX64_ASKED.test(String(ask.copySecret ?? '').toLowerCase()) ? { copySecret: String(ask.copySecret).toLowerCase() as Hex } : {}) });
+    said.push(...found.said);
+    ({ secrets } = found);
+    copy = found.copy === null ? null : found.copy.map(bytesToHex);
+  }
+  const naming = secrets.length > 0 && HEX64_ASKED.test(read) ? { nonceSecrets: { secrets: [...secrets], commitment }, splitJournal } : null;
+  if (naming === null && splitJournal.size > 0) said.push(`the vault's split journal holds ${splitJournal.size} split(s), and no secret was read to name their pieces`);
+  return { copy, naming };
+}
 
 /**
  * **THE VAULT'S NOTES, REBUILT IN THIS WORKER**, the one place the compact runtime and the vault's compiled circuits
  * are loaded. The records' coins are believed only where the chain holds their commitment (`reconcileVaultPool`), and
  * the walk's only where the chain made them (`walkCompanyRecords`). A secret that is not the vault's current one, a
- * note described two ways, or nothing to reconcile at all is said, never taken as a vault holding nothing. When
- * `copyFor` is given, this signer's sealed copy of the vault's secret is read off the vault's state and handed back
- * sealed: only the page holds the key that opens it.
+ * note described two ways, or nothing to reconcile at all is said, never taken as a vault holding nothing. The coins
+ * are named with the secrets given and every earlier one the vault links to its current secret; when `copyFor` is
+ * given, this signer's sealed copy of the vault's secret is read off the vault's state and handed back sealed: only
+ * the page holds the key that opens it (`namingForTheRebuild`).
  */
 async function vaultRebuiltHere(d: WorkerDeps, ask: RebuildAsk): Promise<VaultRebuilt> {
   const vault = String(ask.vault).toLowerCase() as Hex;
@@ -715,47 +789,19 @@ async function vaultRebuiltHere(d: WorkerDeps, ask: RebuildAsk): Promise<VaultRe
     throw new Error('the vault was read without its secret\'s commitment or its split journal, so nothing was rebuilt: a journal not read '
       + 'is not an empty one.');
   }
-  const [{ walkCompanyRecords, compiledOutputCommitment }, recovery, { depositNonceKeyFor }, copies, runtime] = await Promise.all([
+  const [{ walkCompanyRecords, compiledOutputCommitment }, recovery, { depositNonceKeyFor }] = await Promise.all([
     import('../../../src/midnight/rebuild-from-records.js'),
     import('../../../src/midnight/vault-recovery.js'),
     import('../../../src/midnight/deposit-nonce.js'),
-    import('../../../src/midnight/sealed-secret-copy.js'),
-    import('@midnight-ntwrk/compact-runtime'),
   ]);
   const said: string[] = [];
   const hexToBytes = (h: string) => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
-  const bytesToHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   const coinOf = (c: { nonce: string; token: string; value: string }) =>
     ({ nonce: String(c.nonce).toLowerCase(), token: c.token, value: BigInt(c.value) }) as { nonce: Hex; token: Hex; value: bigint };
   const circuits = d.vault.pureCircuits;
 
-  let copy: string[] | null = null;
-  if (ask.copyFor !== undefined && ask.state !== undefined && HEX64_ASKED.test(String(ask.chain.nonceCommitment ?? ''))) {
-    try {
-      const ledger = d.vault.ledger((d.runtimeState.deserialize(fromBase64(ask.state)) as { data: unknown }).data) as {
-        secretCopies: { member(k: Uint8Array): boolean; lookup(k: Uint8Array): Uint8Array };
-      };
-      const commitment = hexToBytes(ask.chain.nonceCommitment!);
-      const countKey = circuits.copiesCountKeyOf(commitment) as Uint8Array;
-      const count = ledger.secretCopies.member(countKey) ? runtime.degradeToTransient(ledger.secretCopies.lookup(countKey)) : 0n;
-      const parts = copies.secretCopyOnTheChain(ledger.secretCopies,
-        (c, r, place, part) => circuits.copyKeyOf(c, r, place, part) as Uint8Array,
-        { commitment: ask.chain.nonceCommitment as Hex, reader: String(ask.copyFor).toLowerCase() as Hex, count: BigInt(count) });
-      copy = parts === null ? null : parts.map(bytesToHex);
-    } catch (e) {
-      said.push(`this signer's sealed copy of the vault's secret could not be read off the chain: ${(e as Error)?.message ?? e}`);
-    }
-  }
-
+  const { copy, naming } = await namingForTheRebuild(d, ask, vault, said);
   const chainNotes = ask.chain.notes.map((n) => String(n).toLowerCase() as Hex);
-  const secrets = ask.secrets.map((x) => String(x).toLowerCase() as Hex).filter((x) => HEX64_ASKED.test(x));
-  const splitJournal = new Map<Hex, Hex>(ask.chain.splitJournal.map(([k, v]) => [String(k).toLowerCase() as Hex, String(v).toLowerCase() as Hex]));
-  const naming = secrets.length > 0 && HEX64_ASKED.test(String(ask.chain.nonceCommitment ?? ''))
-    ? { nonceSecrets: { secrets, commitment: String(ask.chain.nonceCommitment).toLowerCase() as Hex }, splitJournal }
-    : null;
-  if (naming === null && splitJournal.size > 0) {
-    said.push(`the vault's split journal holds ${splitJournal.size} split(s), and no secret was read to name their pieces`);
-  }
 
   const output = await compiledOutputCommitment();
   const rebuild = async (withNaming: typeof naming) => {
@@ -813,12 +859,8 @@ async function vaultRebuiltHere(d: WorkerDeps, ask: RebuildAsk): Promise<VaultRe
     said.push(`${result.unnamedWithoutTheSecret!.length} step(s) the journals name kept coins that are named only with the vault's secret, which was not read`);
   }
   return {
-    held: result.held.map((n) => ({
-      nonce: n.nonce, token: n.token, value: n.value.toString(), held: n.commitment, output: output(n, vault),
-    })),
-    unexplained: result.unexplained,
-    copy,
-    said,
+    held: result.held.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString(), held: n.commitment, output: output(n, vault) })),
+    unexplained: result.unexplained, copy, said,
   };
 }
 /** One answer for one ask, built with `deps`; `startVaultWorker` turns a throw into a failure carrying its whole chain of reasons. Exported so it can be driven without a Worker. */
@@ -1101,7 +1143,7 @@ export const answerVaultAsk = async (
       const circuits = { vault: d.vault.pureCircuits as VaultStartPure, account: d.accountPure as unknown as AccountStartPure };
       const run = ask.secret === undefined
         ? undefined
-        : firstSecretRunOf(circuits, { vault: ask.vault, secret: ask.secret, readers: ask.readers ?? [] });
+        : secretRunOf(circuits, { vault: ask.vault, secret: ask.secret, readers: ask.readers ?? [], ...(ask.previous === undefined ? {} : { previous: ask.previous }) });
       const ledgerOf = (b64: string, read: (data: unknown) => unknown) =>
         read((d.runtimeState.deserialize(fromBase64(b64)) as { data: unknown }).data);
       const account = ledgerOf(ask.accountState, d.accountLedger) as AccountLedgerForAStart & { readonly approvals: { member(m: Uint8Array): boolean } };
@@ -1111,7 +1153,7 @@ export const answerVaultAsk = async (
         vault: ask.vault,
         account,
         vaultLedger: ledgerOf(ask.vaultState, d.vault.ledger) as VaultLedgerForAStart,
-        ...(run === undefined ? {} : { run }),
+        ...(run === undefined ? {} : { run, ...(ask.earlier === undefined ? {} : { earlier: ask.earlier }) }),
         now: BigInt(ask.now),
         ...(ask.window === undefined ? {} : { window: { opensAt: BigInt(ask.window.opensAt), closesAt: BigInt(ask.window.closesAt) } }),
         ...(markerOf === undefined ? {} : { approvedHere: (id: Uint8Array) => account.approvals.member(markerOf(id)) }),
@@ -1123,7 +1165,7 @@ export const answerVaultAsk = async (
     }
     case 'set-nonce-secret': {
       const built = await buildSetNonceSecret(withNetwork, {
-        vault: ask.vault, account: ask.account, run: ask.run, secret: ask.secret, proposal: ask.proposal, opensAt: ask.opensAt, closesAt: ask.closesAt,
+        vault: ask.vault, account: ask.account, run: ask.run, secret: ask.secret, earlier: ask.earlier, proposal: ask.proposal, opensAt: ask.opensAt, closesAt: ask.closesAt,
         chain: {
           blockHash: ask.chain.blockHash,
           vaultState: fromBase64(ask.chain.vaultState),
@@ -1161,17 +1203,9 @@ export const answerVaultAsk = async (
       const again = await creationCarriedAgain(withNetwork, { deploy: fromBase64(ask.deploy), insert: fromBase64(ask.insert) });
       return { id: ask.id, ok: true, ask: 'creation-again', account: again.account, deploy: toBase64(again.deploy), insert: toBase64(again.insert) };
     }
-    case 'secret-is-the-vaults': {
-      /* The vault's own commitment function over the secret, against the commitment the vault's state holds. */
-      const hex = /^[0-9a-f]{64}$/iu;
-      if (!hex.test(ask.vault) || !hex.test(ask.secret)) throw new Error('that is not a vault and a secret, so nothing was compared.');
-      const bytes = (h: string) => Uint8Array.from(h.match(/../gu)!, (x) => Number.parseInt(x, 16));
-      const held = (d.vault.ledger((d.runtimeState.deserialize(fromBase64(ask.state)) as { data: unknown }).data) as { nonceCommitment: Uint8Array }).nonceCommitment;
-      const worked = (d.vault.pureCircuits as { secretCommitmentOf(v: Uint8Array, s: Uint8Array): Uint8Array })
-        .secretCommitmentOf(bytes(ask.vault), bytes(ask.secret));
-      const matches = held.length === worked.length && held.every((b, i) => b === worked[i]) && held.some((b) => b !== 0);
-      return { id: ask.id, ok: true, ask: 'secret-is-the-vaults', matches };
-    }
+    case 'own-chain-copy': return { id: ask.id, ok: true, ask: 'own-chain-copy', copy: await ownChainCopyHere(d, ask) };
+    case 'secret-set-at': return { id: ask.id, ok: true, ask: 'secret-set-at', removals: await secretSetAtHere(d, ask) };
+    case 'secret-is-the-vaults': return secretIsTheVaultsHere(d, ask);
     case 'vault-on-chain': {
       /*
        * The vault as the chain holds it, and with `account` that account's circuits, from the indexer the wallet names,
@@ -1255,8 +1289,7 @@ export const answerVaultAsk = async (
        * Every note the vault holds that the records handed in, the chain and the company's own amounts name: reconcile
        * over what was read, with the walk's coins named when the walk is asked. Only the chain decides what is held.
        */
-      const rebuilt = await vaultRebuiltHere(d, ask);
-      return { id: ask.id, ok: true, ask: 'vault-rebuilt', ...rebuilt };
+      return { id: ask.id, ok: true, ask: 'vault-rebuilt', ...(await vaultRebuiltHere(d, ask)) };
     }
     default:
       return { id: (ask as { id: number }).id, ok: false, error: 'this worker was asked for something it does not build.' };
