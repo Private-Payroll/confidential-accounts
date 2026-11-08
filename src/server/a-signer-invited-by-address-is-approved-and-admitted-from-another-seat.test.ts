@@ -51,6 +51,7 @@ import { companyJudges, openAccountWith } from 'vaults-web-shared/company-judges
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
 import { PROPOSALS_NOT_READ, SEAT_READ_STOP, SeatingRefusedOnTheChain, TWO_SEATINGS } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
+import { seatingRefusedRead } from 'vaults-web-shared/roster-seating-refused.js';
 import { FiledNotEntered } from 'vaults-web-shared/record-entered-here.js';
 import { ACME, ORIGIN, acmeReads, fromAda, seatsTakenByInvitation, store } from './a-company-of-two-seats.test-support.js';
 import {
@@ -568,7 +569,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
       const e = await openedOnThePage(ADA, o)().catch((x: unknown) => x);
       expect(e).toBeInstanceOf(RosterNotBelieved);
       const r = e as RosterNotBelieved;
-      return { check: r.check, followable: r.followable, stoppedBy: r.stoppedBy, said: r.message };
+      return { check: r.check, followable: r.followable, stoppedBy: r.stoppedBy, said: r.message, held: seatingRefusedRead(e) };
     };
     const unread = await stop({ took: async () => { throw new Error('the indexer did not answer'); } });
     /* RED WHEN: a signer's page that cannot read which seat an invitation's proposal took refuses the roster without saying what stopped it. */
@@ -584,6 +585,18 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     const refused = await stop({ took: async () => { throw new SeatingRefusedOnTheChain(TWO_SEATINGS); } });
     expect([refused.check, refused.followable, refused.stoppedBy.includes(SEAT_READ_STOP.refused)]).toEqual(['seating-refused', null, true]);
     expect([/will not change it/u.test(refused.said), /Reload the page/u.test(refused.said)]).toEqual([true, false]);
+    /* RED WHEN: the stop drops the seat it could not tell, so the removal that clears it cannot name the seat it may take. */
+    const samsSeat = seatsTakenByInvitation.get(sam.offer.invited.terms.proposal!.toLowerCase());
+    /*
+     * The seats it could not tell are every seat the chain holds that no active entry names: Sam's, and any seat an
+     * earlier test in this file left taken and never admitted (a second seat for one wallet, a role nobody approved).
+     */
+    const named = new Set(companyNow().signers.filter((x) => x.status === 'active').map((x) => String(x.leafCommitment).toLowerCase()));
+    const leftOut = [...seatsTakenByInvitation.values()].map((leaf) => leaf.toLowerCase()).filter((leaf) => !named.has(leaf));
+    expect(leftOut).toContain(samsSeat);
+    expect([...(refused.held?.unread ?? [])].sort()).toEqual(leftOut.sort());
+    /* RED WHEN: a stop for any other reason carries a read to count a removal from. */
+    expect([unread.held, noIndexerRead.held]).toEqual([null, null]);
     /* RED WHEN: a wallet that names no indexer is read as an answer that no invitation's proposal took a seat. */
     const noIndexer = companyJudges({
       api: api(ADA.person), keysFor: () => null, servedKeyFor: () => KEY as Hex, holders: async () => acmeReads.holders() as never, indexer: async () => null,
@@ -593,6 +606,12 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     await expect(noIndexer).rejects.toMatchObject({ name: SEAT_READ_STOP.noIndexer });
     /* RED WHEN: a signer's page reads a seat the chain holds, taken on an invitation by address whose request waits for Finish adding, as a seat the roster leaves out. */
     const waiting = await openedOnThePage(ADA)();
+    /* RED WHEN: the stop drops the signers it believed, or keeps one a read that does not stop refuses, so the removal that clears it miscounts who approves it. */
+    expect(refused.held?.account.signers.filter((x) => x.status === 'active').map((x) => x.name))
+      .toEqual(waiting?.signers.filter((x) => x.status === 'active').map((x) => x.name));
+    expect(refused.held?.account.signers.length).toBeGreaterThan(0);
+    /* RED WHEN: a seat on the chain no believed signer names is not listed as left out by the stop, so a count would go ahead past it. */
+    expect(refused.held?.account.notBelieved).toEqual(waiting?.notBelieved);
     expect(waiting?.signers.some((x) => x.name === SAM.name && x.status === 'active')).toBe(false);
     /* RED WHEN: the seat that waits is read as a believed signer, so a committee or a reader list is built from a roster that does not name it. */
     expect(waiting?.notBelieved).toContain(seatsTakenByInvitation.get(sam.offer.invited.terms.proposal!.toLowerCase()));

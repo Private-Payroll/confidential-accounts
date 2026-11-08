@@ -152,15 +152,33 @@ export const VAULT_CIRCUITS = [
 export type VaultCircuit = (typeof VAULT_CIRCUITS)[number];
 
 /**
- * **THE ACCOUNT'S CIRCUITS A VAULT'S OWN CIRCUITS CALL**, and so the only ones
- * of the account's a device proves beside a vault's: `payout` and
- * `payoutUnshielded` ask `recordPaymentFromVault`, `batchPayout` asks
- * `recordBatchFromVault`, and `splitNote` and
- * `setNonceSecret` ask `approveVaultChange`, inside the same transaction. No
- * vault circuit shares a name with one of these, which is what lets a prover be
- * pointed at the account's material by the circuit's name alone.
+ * **THE ACCOUNT'S CIRCUITS EACH VAULT CIRCUIT CALLS**, inside the same transaction, one entry for every vault circuit:
+ * `payout` and `payoutUnshielded` ask `recordPaymentFromVault`, `batchPayout` asks `recordBatchFromVault`, `splitNote`
+ * and `setNonceSecret` ask `approveVaultChange`, `retire` asks `retireVault`, and the rest call nothing. Each call is a
+ * proof of its own, made with the account's key for it. The one list of these calls: the device's routing, what the
+ * service serves and the wallet's keys are all read from it.
  */
-export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze(['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault']);
+export const ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS: Readonly<Record<VaultCircuit, readonly string[]>> = Object.freeze({
+  batchPayout: Object.freeze(['recordBatchFromVault']),
+  deposit: Object.freeze([]),
+  depositUnshielded: Object.freeze([]),
+  forgetUnshielded: Object.freeze([]),
+  mergeNotes: Object.freeze([]),
+  payout: Object.freeze(['recordPaymentFromVault']),
+  payoutUnshielded: Object.freeze(['recordPaymentFromVault']),
+  retire: Object.freeze(['retireVault']),
+  setNonceSecret: Object.freeze(['approveVaultChange']),
+  splitNote: Object.freeze(['approveVaultChange']),
+  writeSecretCopy: Object.freeze([]),
+});
+
+/**
+ * **THE ACCOUNT'S CIRCUITS A VAULT'S OWN CIRCUITS CALL**, every callee above once, sorted, and so the only ones of
+ * the account's a device proves beside a vault's. No vault circuit shares a name with one of these, which is what
+ * lets a prover be pointed at the account's material by the circuit's name alone.
+ */
+export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze(
+  [...new Set(Object.values(ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS).flat())].sort());
 
 /**
  * **THE ACCOUNT'S CIRCUITS A SIGNER'S OWN DEVICE BUILDS AND PROVES**: raising a

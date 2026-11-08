@@ -20,7 +20,7 @@ import {
 } from '../../../src/midnight/seat-directory.js';
 import type { Role } from '../../../src/core/types.js';
 import {
-  answerDigestOf, companyKeyHere, CompanyKeyBeingChanged, CompanyKeyNotBelieved, CompanyKeyNotOpened, keysInTheFilings, rotateTheCompanyKeyHere,
+  answerDigestOf, companyKeyHere, CompanyKeyBeingChanged, CompanyKeyNotBelieved, CompanyKeyNotOpened, keysInTheFilings, removalWaitsHere, rotateTheCompanyKeyHere,
   type RotationDoors, type SealedAnswer,
 } from './company-key-here.js';
 import { removeSignerOnDevice } from './governed-call-on-device.js';
@@ -85,10 +85,12 @@ const aWorld = (seated: readonly Person[], o: { onlyOnTheChain?: readonly Person
   const chain = new Set([...seated, ...(o.onlyOnTheChain ?? [])].map((p) => p.seat));
   /* Every change that reached the service, as `kind version`, whether or not the directory took it. */
   const filed: string[] = [];
+  /* The seats whose own wallet has not attested the records key their entry names, as the roster this device read shows. */
+  const unattested = new Set<string>();
   let anchors = true;
   const put = (f: DirectoryFiling, next: Directory) => { filings.push(f); dir = next; if (anchors) anchoredAt.add(f.version); };
   return {
-    chain, filed, filings,
+    chain, filed, filings, unattested,
     get dir() { return dir; },
     /** Each version filed from now on is filed and not anchored. */
     anchorsNot: () => { anchors = false; },
@@ -96,7 +98,7 @@ const aWorld = (seated: readonly Person[], o: { onlyOnTheChain?: readonly Person
     anchorsAgain: () => { anchors = true; },
     /** The company's directory and records as every device here reads them now. */
     here: () => ({
-      dir, holders: { seats: [...chain], approvals: o.approvals ?? 1, seatBar: o.seatBar ?? 1 },
+      dir, holders: { seats: [...chain], approvals: o.approvals ?? 1, seatBar: o.seatBar ?? 1 }, another: unattested,
       records: { directory: new Map([...anchoredAt].map((v) => [v, { digest: directoryEntry(filings[v - 1]!).digest }])) },
     }),
     /** `p`'s seat retired in the directory and anchored; with `off`, the chain takes its leaf off too. */
@@ -445,6 +447,53 @@ describe('the company\'s key on this device', () => {
     /* RED WHEN: a seat with its own copy in the newest rotation takes the served copy instead of opening its own. */
     await expect(served.key()).rejects.toThrow(CompanyKeyNotOpened);
     expect(served.asked.wallet).toBe(1);
+  });
+
+  it('A QUIET READ NEVER ASKS THE WALLET: WITH NO KEY RELEASED IT OPENS WHAT THE SERVED COPY LEADS BACK TO AND NAMES EACH EPOCH NOT OPENED', async () => {
+    const w = aWorld([ADA, BO, CY]);
+    w.retire(CY);
+    expect((await deviceOn(w, ADA).rotate()).state).toBe('rotated');
+    const bo = deviceOn(w, BO, { released: null, wallet: BO.released });
+    const quiet = await companyKeyHere(bo.doors, undefined, { unreleased: 'not-opened' });
+    /* RED WHEN: a quiet read asks the wallet, which opens a wallet window on a page load. */
+    expect(bo.asked.wallet).toBe(0);
+    /* RED WHEN: a quiet read refuses whole, or does not say which epoch this seat's copy was not opened at. */
+    expect([quiet.epoch, quiet.newest, quiet.key, quiet.keyAt(0), quiet.notOpened]).toEqual([0, 1, KEY0, KEY0, [1]]);
+    /* RED WHEN: an epoch a quiet read left unopened is refused with an untyped error, so its caller cannot tell "not opened yet" from any other failure. */
+    expect(() => quiet.keyAt(1)).toThrow(CompanyKeyNotOpened);
+    /* RED WHEN: the refusal says the wallet gave no key though a quiet read never asked it. */
+    expect(() => quiet.keyAt(1)).toThrow(/has not released one on this visit/u);
+    /* An epoch this seat never held a copy of keeps its own refusal. */
+    expect(() => quiet.keyAt(2)).toThrow(/no key of the company at epoch 2/u);
+    expect(() => quiet.keyAt(2)).not.toThrow(CompanyKeyNotOpened);
+    /* RED WHEN: a page that has not opened the newest key may seal under an older one, or is told it holds no copy. */
+    expect(quiet.notSealing).toMatch(/newest key is not opened on this page, because your wallet has not released/u);
+    expect(() => quiet.sealing()).toThrow(CompanyKeyBeingChanged);
+    /* A press on the same device keeps today's behaviour: it asks the wallet once and opens the newest key. */
+    const pressed = await bo.key();
+    expect([pressed.epoch, pressed.notOpened, bo.asked.wallet]).toEqual([1, [], 1]);
+  });
+
+  it('A QUIET READ WITH THE KEY ALREADY RELEASED ON THIS VISIT OPENS EVERY EPOCH, AS A PRESS DOES, WITHOUT ASKING', async () => {
+    const w = aWorld([ADA, BO, CY]);
+    w.retire(CY);
+    expect((await deviceOn(w, ADA).rotate()).state).toBe('rotated');
+    const bo = deviceOn(w, BO);
+    const quiet = await companyKeyHere(bo.doors, undefined, { unreleased: 'not-opened' });
+    /* RED WHEN: a key the wallet already released on this visit is not used by a quiet read. */
+    expect([quiet.epoch, quiet.notOpened, bo.asked.wallet]).toEqual([1, [], 0]);
+    expect(quiet.keyAt(1)).toBe((await bo.key()).keyAt(1));
+  });
+
+  it('A QUIET READ HOLDING NO KEY AT ALL, WITH NOTHING RELEASED AND NO SERVED COPY, IS A KEY NOT OPENED YET', async () => {
+    const w = aWorld([ADA, BO, CY]);
+    w.retire(CY);
+    expect((await deviceOn(w, ADA).rotate()).state).toBe('rotated');
+    const bo = deviceOn(w, BO, { released: null });
+    const doors = { ...bo.doors, served: async (): Promise<Hex> => { throw new Error('the service did not answer'); } };
+    /* RED WHEN: the quiet read's only failure is not the typed "not opened yet" the page offers to open with the wallet. */
+    await expect(companyKeyHere(doors, undefined, { unreleased: 'not-opened' })).rejects.toThrow(CompanyKeyNotOpened);
+    expect(bo.asked.wallet).toBe(0);
   });
 
   it('a rotation waits while the leaving seat\'s retirement is filed and not anchored', async () => {
@@ -819,4 +868,44 @@ describe('one removal on two staying seats\' devices ends with the company\'s ke
     expect(again).toMatchObject({ state: 'done', rotation: { state: 'not-this-seat' } });
     expect(store.directoryFilingsOf(CO).length).toBe(versions);
   }, 170_000);
+});
+
+describe('the company\'s key is changed for every seat that stays, after the waits every change after a removal shares', () => {
+  it('changes the key for a staying seat whose own wallet has not attested its records key yet, so sealing resumes on every device', async () => {
+    for (const [what, unattested] of [['one seat unattested', [DEE]], ['the roster unread, so no seat attested', [ADA, BO, DEE]]] as const) {
+      const w = aWorld([ADA, BO, CY, DEE]);
+      w.retire(CY);
+      for (const p of unattested) w.unattested.add(p.seat);
+      /* A seat attests its records key only by an offer and a fold, which both seal, and sealing is paused until the key changes. */
+      await expect((async () => (await deviceOn(w, DEE).key()).sealing())(), what).rejects.toThrow(CompanyKeyBeingChanged);
+      /* RED WHEN: the change waits for an attestation that can only be filed by sealing, so every device's sealing stays paused for good. */
+      expect(await deviceOn(w, ADA).rotate(CY), what).toMatchObject({ state: 'rotated', epoch: 1 });
+      /* RED WHEN: a seat that stays is left out of the new key's copies because its attestation is not filed yet. */
+      expect(newestRotation(w).wraps.map((x) => x.seat), what).toEqual([ADA.seat, BO.seat, DEE.seat]);
+      const ada = await deviceOn(w, ADA).key();
+      const dee = await deviceOn(w, DEE).key();
+      /* RED WHEN: sealing is still paused after the change on the device that made it, or on the unattested seat's own device, so its offer can never be filed. */
+      expect(ada.sealing().epoch, what).toBe(1);
+      expect(dee.sealing(), what).toEqual(ada.sealing());
+    }
+  });
+
+  it('the shared waits: not from the leaver\'s own wallet, the role check the caller passes, and what is owed once nothing waits', async () => {
+    const w = aWorld([ADA, BO, CY]);
+    w.retire(CY);
+    const here = w.here() as unknown as DirectoryHere;
+    const seatOf_ = (p: Person) => here.dir.seats.find((x) => x.seat === p.seat);
+    const doors = { leaving: async () => new Set<string>() };
+    /* RED WHEN: the leaving seat's own wallet makes a new key or a new secret for the seats that stay. */
+    expect(await removalWaitsHere(here, seatOf_(ADA), { leaf: ADA.seat }, () => null, doors)).toEqual({ state: 'not-this-seat', why: 'this seat is the one leaving' });
+    /* RED WHEN: the role check is not the caller's, so a vault's change asks the company key's role. */
+    expect(await removalWaitsHere(here, seatOf_(BO), {}, () => 'this seat may not file the vault\'s secret', doors))
+      .toEqual({ state: 'not-this-seat', why: 'this seat may not file the vault\'s secret' });
+    expect(await removalWaitsHere(here, undefined, {}, () => null, doors)).toMatchObject({ state: 'not-this-seat' });
+    /* RED WHEN: a removal carried out and anchored is not reported owed after the newest change of the key, with the seat that acts. */
+    expect(await removalWaitsHere(here, seatOf_(BO), {}, () => null, doors)).toEqual({ state: 'ready', seat: seatOf_(BO), owed: { after: 4, since: 0 } });
+    w.chain.add(DEE.seat);
+    /* RED WHEN: a seat the chain holds and the directory has no entry for does not make the change wait. */
+    expect(await removalWaitsHere(w.here() as unknown as DirectoryHere, seatOf_(BO), {}, () => null, doors)).toMatchObject({ state: 'waits' });
+  });
 });

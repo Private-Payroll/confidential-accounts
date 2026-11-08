@@ -110,7 +110,7 @@ const press = async (o: {
   const builder = {
     startStanding: async (i: { secret?: string }) => ({
       standing: {
-        adopted: true,
+        adopted: true, removals: 0,
         adoption: { proposal: 'a1'.repeat(32), payload: 'a2'.repeat(32), named: 'a3'.repeat(32), salt: 'a4'.repeat(32), open: false, approvals: 1, needed: 1, stale: false },
         ...(i.secret === undefined ? {} : { secret: {
           set: false, another: false, rootIsThisRuns: true, written: [], started: false,
@@ -158,7 +158,10 @@ const press = async (o: {
       }),
       roster: async () => o.roster ?? [ada.entry, bo.entry],
       /* The company's directory as Ada's device believes it: each seat's entry with its opening, and the compiled `signerLeaf`. */
-      directory: async () => ({ seats: [ada, bo].map((s) => ({ seat: s.seat, opening: s.opening, retired: null })), leafOf: leafOfTheContract }),
+      directory: async () => ({
+        seats: [ada, bo].map((s) => ({ seat: s.seat, opening: s.opening, retired: null })), leafOf: leafOfTheContract,
+        readers: [ada, bo].map((s) => s.recordsKey),
+      }),
     },
   }, VAULT as never).catch((e: unknown) => e);
   return { result, asked };

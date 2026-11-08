@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../../../contracts/managed-vault/contract/index.js';
-import { firstSecretRunOf } from '../../../src/midnight/vault-start.js';
+import { secretRunOf } from '../../../src/midnight/vault-start.js';
 import { buildPayoutTree, buildRun, paidOnceOfNonce, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import { payRecordNonceOf } from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
@@ -259,11 +259,11 @@ describe('WHAT THE PROPOSAL\'S SALT SAYS IT IS: A FIRST PAYMENT NAMES NO LEG, AN
   });
 });
 
-describe('AN APPROVAL OF A VAULT\'S FIRST SECRET', () => {
+describe('AN APPROVAL OF A VAULT\'S SECRET RUN', () => {
   const VAULT = 'd4'.repeat(32) as Hex;
   const READERS = ['e1'.repeat(32), 'e2'.repeat(32)] as Hex[];
   const secret = { kind: 'vault-secret' as const, vault: VAULT, secret: `${'5c'.repeat(31)}00`, readers: READERS, opensAt: '100', closesAt: '200' };
-  const madeRun = firstSecretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never }, { vault: VAULT, secret: secret.secret as Hex, readers: READERS });
+  const madeRun = secretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never }, { vault: VAULT, secret: secret.secret as Hex, readers: READERS });
   const payload = toHex(pureCircuits.runPayload(fromHex(madeRun.root), madeRun.payees, 100n, 200n, 0n));
   it('IS BUILT ONLY FOR THE RUN MADE AGAIN HERE FROM THE SECRET, THE VAULT AND ITS READERS', () => {
     /* RED WHEN: the secret run made again here is refused. */
@@ -276,6 +276,17 @@ describe('AN APPROVAL OF A VAULT\'S FIRST SECRET', () => {
     /* RED WHEN: a payroll run's payload passes as a vault's secret run: no secret makes a payroll run's root. */
     expect(check(secret, payloadOf(made()))).toThrow(/is not what this device rebuilt/);
     /* RED WHEN: a secret run is taken as made again where the page cannot make one. */
-    expect(check(secret, payload, chain(), { ...deps, secretRun: undefined })).toThrow(/cannot make a vault's first secret run again/);
+    expect(check(secret, payload, chain(), { ...deps, secretRun: undefined })).toThrow(/cannot make a vault's secret run again/);
+  });
+
+  it('A RUN REPLACING THE SECRET IS BUILT ONLY OVER THE COMMITMENT IT REPLACES', () => {
+    const previous = '9c'.repeat(32);
+    const replacing = secretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never }, { vault: VAULT, secret: secret.secret as Hex, readers: READERS, previous });
+    const replacingPayload = toHex(pureCircuits.runPayload(fromHex(replacing.root), replacing.payees, 100n, 200n, 0n));
+    /* RED WHEN: the run made again here drops the commitment it replaces, so no replacement is ever approved. */
+    expect(check({ ...secret, previous }, replacingPayload)).not.toThrow();
+    /* RED WHEN: a run over another commitment, or a first secret's run, passes for this replacement. */
+    expect(check({ ...secret, previous: '9d'.repeat(32) }, replacingPayload)).toThrow(/is not what this device rebuilt/);
+    expect(check(secret, replacingPayload)).toThrow(/is not what this device rebuilt/);
   });
 });

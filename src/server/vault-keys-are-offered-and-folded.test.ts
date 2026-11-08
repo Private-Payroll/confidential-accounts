@@ -23,6 +23,7 @@ import type { Account, SealedAccount } from '../core/types.js';
 import type { VaultKeysOffer } from '../core/vault-keys.js';
 import { directoryEntryMade, type ChainHolders } from '../midnight/seat-directory.js';
 import { foldOffersHere, offerVaultKeysHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { vaultKeysOfferOpened } from 'vaults-web-shared/vault-keys-offer-opened.js';
 import { sealRoster, signedFoundingRoster } from '../core/roster-record.js';
 import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
@@ -307,6 +308,22 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     const bo = (await rosterNow()).account.signers.find((x) => x.id === ID.bo)!;
     expect(bo.directoryEntry?.statement).toEqual(BO.statement);
     store.dropVaultKeysOffers(CO, [{ seat: ADA.seat, person: 'bo' }]);
+  });
+
+  it('AN OFFER NO KEY THIS DEVICE HOLDS OPENS IS REFUSED FOR THE REASON THE SHARED OPENING STEP GIVES, AND STAYS OPEN', async () => {
+    await offerVaultKeysHere(api('bo'), CO, {
+      signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, ...walletOf(BO),
+      companyKey: walletOf(BO).companyKey as Hex, entry: BO.statement, viewingKey: 'd4'.repeat(32) as Hex,
+    });
+    const kept = store.vaultKeysOffersOf(CO).find((o) => o.seat === BO.seat)! as VaultKeysOffer;
+    const why = vaultKeysOfferOpened(CO, kept, KEY as Hex, LABEL, ADDRESS);
+    expect(typeof why).toBe('string');
+    const before = (await rosterNow()).version;
+    const folded = await foldOffersHere(deviceOf(ADA));
+    /* RED WHEN: the fold gives a reason of its own for an offer it cannot open, so the page's readiness and the fold can part on one offer. */
+    expect(folded).toEqual({ folded: [], refused: [{ seat: BO.seat, why: `the offer is refused: ${why}.` }] });
+    expect((await rosterNow()).version).toBe(before);
+    store.dropVaultKeysOffers(CO, [{ seat: BO.seat, person: 'bo' }]);
   });
 
   it('AN OFFER IS NEVER FOLDED INTO AN ENTRY REFUSED FOR GOOD: THE VERSION FILED NEXT TAKES THE SIGNER\'S ENTRY FROM AN OLDER VERSION', async () => {

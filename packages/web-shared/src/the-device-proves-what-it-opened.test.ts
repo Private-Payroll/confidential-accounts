@@ -484,6 +484,11 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       /does not say which threshold it leaves the company at/u],
     ['a threshold change that names no threshold', 'prp_x', [aRecord('prp_x', { kind: 'set-threshold' })],
       /does not say how many approvals it requires/u],
+    /* RED WHEN: a threshold change opens with a threshold that is not a whole number of at least one, so it is approved at a number no account can hold. */
+    ...[0, 1.5, -3, 1e21].map((n) => [`a threshold change to ${n}`, 'prp_x', [aRecord('prp_x', { kind: 'set-threshold', payload: { newThreshold: n } })],
+      /does not say how many approvals it requires/u] as const),
+    ...[0, 1.5, -3, 1e21].map((n) => [`a vault's threshold change to ${n}`, 'prp_x', [aRecord('prp_x', { kind: 'set-vault-threshold', payload: { vault: 'aa'.repeat(32), newThreshold: n } })],
+      /does not say which vault it is for, or how many approvals that vault would need/u] as const),
     /* RED WHEN: a spending policy's vault, currency key or commitment is taken from its record unchecked - or a policy bar that is not a whole number of at least one. */
     ['a spending policy naming a vault one byte short', 'prp_x', [aRecord('prp_x', { kind: 'set-spending-policy', payload: { ...{ vault: 'aa'.repeat(32), assetKey: 'bb'.repeat(32), commitment: 'cc'.repeat(32) }, vault: 'aa'.repeat(31) } })],
       /does not say which vault and currency its spending policy is for, or which policy/u],

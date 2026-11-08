@@ -45,6 +45,17 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
     ]);
   });
 
+  it('A RETIRE PROVED ON A DEVICE TAKES THE ACCOUNT\'S retireVault MATERIAL FROM THE ACCOUNT\'S FOLDER, AND THE VAULT\'S retire FROM THE VAULT\'S', async () => {
+    /* RED WHEN: the account's retireVault, which the vault's retire calls in the same transaction, is asked of the vault's folder, which has none, so no retire is ever proved on a device. */
+    const log: string[] = [];
+    const routed = networkCircuitsBeside(accountCircuitsBeside(source('vault', log), source('account', log)), source('network', log));
+    await routed.lookupKey(at('retire'));
+    await routed.lookupKey(at('retireVault', 'c0'.repeat(32)));
+    await routed.artefact('prover', at('retireVault', 'c0'.repeat(32)));
+    await routed.artefact('ir', at('retireVault', 'c0'.repeat(32)));
+    expect(log.map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual(['vault key', 'account key', 'account prover', 'account ir']);
+  });
+
   it('an anchor and its recovery are the account\'s own circuits and are fetched from the account\'s folder', async () => {
     /* RED WHEN: anchor or recoverAnchor is asked of the vault's folder, which has neither, so no record is ever anchored from a device. */
     const log: string[] = [];
@@ -65,13 +76,13 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
     expect(ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS).toEqual(['anchor', 'recoverAnchor']);
     /* The seat a person invited takes is proved on their own device, by their own wallet. */
     expect(ACCOUNT_CIRCUITS_AN_INVITEE_PROVES).toEqual(['seatInvited']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'removeSignerAndSetThreshold', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'removeSignerAndSetThreshold', 'retireVault', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT A VAULT CALLS, which is what routing by name rests on', () => {
     /* RED WHEN: a vault circuit is named like one of these - its proof would then be made with the account's key. */
-    expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS).toEqual(['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault']);
+    expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS).toEqual(['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_A_VAULT_CALLS.includes(c))).toEqual([]);
   });
 });

@@ -15,6 +15,8 @@ describe('a signer who accepted is told from one who is seated', () => {
     expect(read.map((s) => [s.id, s.accepted, s.seatOnChain])).toEqual([
       ['s1', false, true], ['s2', true, true], ['s3', true, false], ['s4', false, false],
     ]);
+    /* RED WHEN: a standing does not carry the seat's leaf in lower case for a removal to name, or invents one for a signer the roster gives none. */
+    expect(read.map((s) => s.leaf)).toEqual([LEAF(1), LEAF(2), null, LEAF(4)]);
   });
 
   it('lists once each seat the chain holds that someone invited waits to be admitted to, and no entry or invitation by address names', () => {

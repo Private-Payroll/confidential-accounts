@@ -28,8 +28,9 @@ export const ownEntryFiled = (
 
 /**
  * Files the company's roster again from this seat when no device believes the
- * version filed (`fileTheRosterFollowedHere`): the version filed, or null when
- * the roster filed is believed and nothing was filed.
+ * version filed, or when it still seats a signer whose removal is anchored and
+ * carried out on the chain (`fileTheRosterFollowedHere`): the version filed, or
+ * null when the roster filed is believed, seats nobody who left, and nothing was filed.
  */
 export const rosterFollowed = (input: {
   readonly api: Api; readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress;

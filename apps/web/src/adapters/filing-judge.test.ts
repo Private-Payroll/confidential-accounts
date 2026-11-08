@@ -144,7 +144,7 @@ describe('THE KEY EVERY PAGE OPENS AND SEALS WITH', () => {
      * RED WHEN: a page passes a bare key - the served copy, a key the wallet released, a literal - where the company's keys go.
      */
     const handed = code.flatMap((l) => [...l.text.matchAll(/\b(viewingKey|companyKeys)\s*[:=]\s*([^,;)}]+)/gu)].map((m) => ({ ...l, value: m[2]!.trim() })));
-    const fromTheDirectory = /^(await companyKeysFor\(|CompanyKeys\b|CompanyKeyHere\b)/u;
+    const fromTheDirectory = /^(await companyKeys(?:Quietly)?For\(|CompanyKeys\b|CompanyKeyHere\b)/u;
     expect(handed.filter((h) => !fromTheDirectory.test(h.value)).map((h) => `${h.file}:${h.line} ${h.value}`)).toEqual([]);
     expect(handed.length).toBeGreaterThan(5);
   });

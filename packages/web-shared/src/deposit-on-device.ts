@@ -41,11 +41,13 @@ import {
   claimNewDepositCoin, type DepositCoin, type DepositMoney,
 } from '../../../src/midnight/deposit-nonce.js';
 import {
-  currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, refileNonceSecret, startNonceSecret, startNonceSecretAgain,
-  type NonceSecretReader,
+  currentDepositNonceKey, keepsEveryEpochOf, openNonceSecrets, recordsKeypairFrom, refileNonceSecret,
+  startNonceSecret, startNonceSecretAgain, type NonceSecretReader, type OpenedNonceSecrets,
 } from '../../../src/midnight/company-nonce-secret.js';
 import type { FiledPoolVersion, PassedOverVersion } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { secretMustChange } from './who-holds-the-vaults-secret.js';
+import { versionsAsFiledOf } from './http-sealed-pool-store.js';
 
 /** The signer this device acts for, with what their device holds. */
 export interface DeviceSigner {
@@ -73,6 +75,29 @@ export interface VaultAsRead {
   readonly secretIsTheVaults: (secret: Hex) => Promise<boolean> | boolean;
   /** Whether the vault holds this coin now. */
   readonly heldNow: (coin: DepositCoin) => Promise<boolean> | boolean;
+  /** The removals and re-seats the company's account has counted, read after the vault. */
+  readonly removals: number;
+  /** The account's removal count before the block that set the vault's secret (`whenTheSecretWasSetHere`). */
+  readonly secretSet: () => Promise<number>;
+}
+
+/**
+ * **NO DEPOSIT WHILE THE VAULT'S SECRET IS BEING CHANGED.** The company's
+ * account has counted a removal or re-seat since the vault's secret was set, so
+ * a signer who left may hold it, or the newest version of its record is not
+ * good for the count. Nothing is filed or deposited. It clears once the vault's
+ * new secret is set and filed, or, where the secret was set after every removal,
+ * once its record is filed again with the account's count; a signer who stays
+ * does either in their wallet.
+ */
+export class VaultSecretBeingChanged extends Error {
+  constructor(readonly vault: Hex) {
+    super('a signer has left this company since this vault\'s secret was last changed, so a deposit made under it could be '
+      + 'recognised by them. Nothing is filed or deposited. Deposits into this vault resume once its new secret is set and '
+      + 'filed. A signer who stays presses Change vault secrets on the Signers page to start it. Once the other signers '
+      + 'approve it, the next action a signer who stays takes in their wallet files it.');
+    this.name = 'VaultSecretBeingChanged';
+  }
 }
 
 /** The public half of this signer's records key, which is what other signers wrap the vault's nonce secret to. */
@@ -81,12 +106,13 @@ export const recordsReaderOf = (companyKey: Uint8Array): NonceSecretReader =>
 
 /**
  * **STARTS A VAULT'S NONCE SECRET**, made here and filed only sealed, wrapped
- * to every signer given (this one included).
+ * to every signer given (this one included), good for the account's removal
+ * count `removals`.
  */
 export async function startVaultNonceSecretOnThisDevice(
   vault: Hex, me: DeviceSigner, others: readonly NonceSecretReader[], records: DeviceRecords,
   /** Every coin the chain has ever created for the vault, as read now. */
-  everCreated: ReadonlySet<string>,
+  everCreated: ReadonlySet<string>, removals = 0,
 ): Promise<SealedPool> {
   const store = records('nonce-secret');
   if (await store.get(vault)) {
@@ -107,7 +133,7 @@ export async function startVaultNonceSecretOnThisDevice(
       + 'file that copy again. A vault funded before nonce secrets existed has none, and cannot take a '
       + 'private deposit from this device: deposit into a new vault instead.');
   }
-  const made = startNonceSecret(vault, [recordsReaderOf(me.companyKey), ...others]);
+  const made = startNonceSecret(vault, [recordsReaderOf(me.companyKey), ...others], removals);
   await store.put(vault, made);
   return made;
 }
@@ -132,7 +158,8 @@ type ChainsSecret =
  * first whose secret the vault's commitment names is filed again as the newest
  * version, unchanged but for its version, signed by this device's own seat. A
  * version the chain does not vouch for is never filed again and nothing is
- * built from it.
+ * built from it, and neither is one that would drop an epoch a newer version
+ * holds (`keepsEveryEpochOf`): a rotation filed after it is never undone.
  *
  * This is also how a version filed by a signer who has since left is read
  * again: its content is filed again only because the chain vouches for it.
@@ -164,15 +191,26 @@ export async function fileTheChainsSecretAsTheNewest(input: {
     const s = newestSecretOf(believed);
     if (s !== null && await input.secretIsTheVaults(s)) return 'the-newest';
   }
-  const lister = store as SealedPoolStore & Partial<ListsAsFiled>;
-  const all = typeof lister.versionsAsFiled === 'function' ? await lister.versionsAsFiled(input.vault) : await store.versions(input.vault);
+  const all = await versionsAsFiledOf(store, input.vault);
   if (all.length === 0) return 'none-names-it';
   const newestVersion = all[all.length - 1]!.version;
+  const openedOf = (rec: SealedPool): OpenedNonceSecrets | null => {
+    try {
+      return openNonceSecrets(rec, input.vault, opener);
+    } catch {
+      return null; // a version this signer cannot open says nothing about which epochs a re-file keeps
+    }
+  };
+  const believedOpened = believed === null ? null : openedOf(believed);
+  const newer: OpenedNonceSecrets[] = believedOpened === null ? [] : [believedOpened];
   for (let i = all.length - 1; i >= 0; i -= 1) {
     /* A version the company's records passed over carries no bytes here. */
     const v: FiledPoolVersion | PassedOverVersion = all[i]!;
     if (v.neverEntered === true) continue;
-    const s = newestSecretOf(v.sealed);
+    const candidate = openedOf(v.sealed);
+    const s = candidate === null ? null : candidate.secrets[candidate.secrets.length - 1]! as Hex;
+    if (candidate !== null && newer.some((n) => !keepsEveryEpochOf(candidate, n))) continue;
+    if (candidate !== null) newer.push(candidate);
     if (s === null || !(await input.secretIsTheVaults(s))) continue;
     await store.put(input.vault, refileNonceSecret(v.sealed, input.vault, opener, newestVersion + 1));
     return 'filed-again';
@@ -193,11 +231,21 @@ export interface PoolTheChainHolds {
   readonly journals: readonly ('payment-journal' | 'deposit-journal')[];
   /**
    * What this device could not take from a passed-over version, in words a person can act on: a version that is not a
-   * pool, or a payment the chain shows landed whose change no version this device can take holds. Never empty when a
-   * landed payment's change is missing from what was filed.
+   * pool, a payment the chain shows landed whose change no version this device can take holds, or a journal that could
+   * not be filed again. Never empty when a landed payment's change is missing from what was filed, or when a journal
+   * could not be filed again.
    */
   readonly said: readonly string[];
 }
+
+/**
+ * Words for a journal this device could not file again from what the chain vouches for: what failed, and what clears
+ * it. While a version filed above the one believed is passed over, nothing is added to that journal.
+ */
+const notFiledAgain = (record: 'payment-journal' | 'deposit-journal', e: unknown): string =>
+  `this vault's ${record === 'deposit-journal' ? 'deposit' : 'payment'} journal could not be filed again from what the chain `
+  + `vouches for (${e instanceof Error ? e.message : String(e)}), so no line is added to it while a version a seat that `
+  + 'left filed sits above the one believed; the next read of this vault by a seat that may file its records tries again';
 
 /** One step a payment journal line names, with every note it spends. */
 type JournalStep = { readonly spent: Note; readonly further?: readonly Note[]; readonly step?: string; readonly amount: bigint };
@@ -305,7 +353,7 @@ export async function fileThePoolTheChainHolds(input: {
   };
   /*
    * Each journal with a version passed over above the one believed is filed again; a journal this device cannot read
-   * now is left as it is, and no line is appended to it until it is (`passedOverAbove`).
+   * or file now is left as it is and said, and no line is appended to it until it is filed (`passedOverAbove`).
    */
   try {
     const payments = await believedOf('payment-journal');
@@ -315,7 +363,7 @@ export async function fileThePoolTheChainHolds(input: {
       await refile(payments.store, payments.believed, { attempts: carried }, (await passedOverIn(payments.store)).newest + 1, 'payment-journal');
       journals.push('payment-journal');
     }
-  } catch { /* said to whoever appends next, by the refusal itself */ }
+  } catch (e) { said.push(notFiledAgain('payment-journal', e)); }
   try {
     const deposits = await believedOf('deposit-journal');
     if (deposits.above) {
@@ -332,7 +380,7 @@ export async function fileThePoolTheChainHolds(input: {
       await refile(deposits.store, deposits.believed, { notes: carried }, newest + 1, 'deposit-journal');
       journals.push('deposit-journal');
     }
-  } catch { /* said to whoever appends next, by the refusal itself */ }
+  } catch (e) { said.push(notFiledAgain('deposit-journal', e)); }
 
   const believedPool = await believedOf('pool');
   const believedNotes = (believedPool.believed === null ? [] : opened(believedPool.believed, 'pool', believedPool.store)?.notes ?? []) as Note[];
@@ -389,7 +437,7 @@ export async function fileThePoolTheChainHolds(input: {
  */
 export async function startVaultNonceSecretAgainOnThisDevice(
   vault: Hex, me: DeviceSigner, others: readonly NonceSecretReader[], records: DeviceRecords,
-  everCreated: ReadonlySet<string>, filed: SealedPool,
+  everCreated: ReadonlySet<string>, filed: SealedPool, removals = 0,
 ): Promise<SealedPool> {
   if (everCreated.size > 0) {
     throw new Error(
@@ -400,7 +448,7 @@ export async function startVaultNonceSecretAgainOnThisDevice(
   if (newest === null || newest.version !== filed.version) {
     throw new Error('another secret was filed for this vault while this one was being checked. Nothing is written; try again.');
   }
-  const made = startNonceSecretAgain(filed, vault, [recordsReaderOf(me.companyKey), ...others]);
+  const made = startNonceSecretAgain(filed, vault, [recordsReaderOf(me.companyKey), ...others], removals);
   await store.put(vault, made);
   return made;
 }
@@ -434,6 +482,14 @@ export async function depositCoinOnThisDevice(input: {
       + 'again. Nothing is filed or deposited. Start the vault\x27s nonce secret first.');
   }
   const secrets = openNonceSecrets(newest, vault, opener);
+  if (!Number.isSafeInteger(input.chain.removals) || input.chain.removals < 0) {
+    throw new Error('how many signers the company has removed was not read from the chain, so nothing is filed or deposited. Try again.');
+  }
+  /*
+   * **NO DEPOSIT UNDER A SECRET A LEAVER MAY HOLD, CHECKED BEFORE THE JOURNAL AND THE CLAIM**, so a refused deposit
+   * leaves no line. It rests on the chain's counts, never on what a version says of itself (`secretMustChange`).
+   */
+  if (await secretMustChange({ opened: secrets, chainRemovals: input.chain.removals, set: input.chain.secretSet }) !== null) throw new VaultSecretBeingChanged(vault);
   if (!(await input.chain.secretIsTheVaults(secrets.secrets[secrets.secrets.length - 1]! as Hex))) {
     throw new Error(
       'the secret the company\x27s records hold for this vault is not the one the vault holds on the chain, so a '

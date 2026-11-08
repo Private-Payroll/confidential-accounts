@@ -147,6 +147,24 @@ describe('a journal over any store', () => {
     expect((await j.open()).attempts.map((l) => l.nonce)).toEqual([kept.coin.nonce, stopped.coin.nonce]);
   });
 
+  it('A MARK THAT ANOTHER WRITER BEATS ON EVERY ATTEMPT IS REFUSED, NEVER READ AS A LINE WITH NOTHING TO MARK', async () => {
+    const a = signer('ada');
+    const store = new MemorySealedPoolStore();
+    const opener = { id: 'ada', wrappingSecret: a.secret };
+    const j = new DepositJournalInStore(store, VAULT, opener, async () => [a.who], KEY);
+    const stopped = await j.claim(VAULT, { token: GBP, value: 70n }, 1, 'x');
+    let tries = 0;
+    const beaten: SealedPoolStore = {
+      get: (v) => store.get(v), versions: (v) => store.versions(v), at: (v, n) => store.at(v, n),
+      put: async () => { tries += 1; throw Object.assign(new Error('another writer filed this version first'), { name: 'VaultPoolVersionAlreadyFiled' }); },
+    };
+    /* RED WHEN: a line that was never marked is answered as one that needed no mark, so nobody is told it still reads as on its way. */
+    await expect(endDepositNeverHandedOver(beaten, VAULT, opener, async () => [a.who], stopped.coin.nonce))
+      .rejects.toThrow(new RegExp(`filed its next version first on all ${JOURNAL_WRITE_ATTEMPTS} attempts, so nothing was written`, 'u'));
+    expect(tries).toBe(JOURNAL_WRITE_ATTEMPTS);
+    expect((await store.versions(VAULT)).map((v) => v.version)).toEqual([1]);
+  });
+
   it('A CLAIM DERIVES ITS NONCE FROM THE SLOT IT IS GIVEN, whatever version it files', async () => {
     const a = signer('ada');
     const store = new MemorySealedPoolStore();

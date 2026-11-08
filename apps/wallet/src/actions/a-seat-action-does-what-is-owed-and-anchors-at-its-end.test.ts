@@ -5,7 +5,10 @@ import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profil
 import { StepRefused, type StepContext } from './definition.js';
 import { ActionStopped } from './run.js';
 import { NOT_SEALED } from '../../../../packages/web-shared/src/vault-operation.js';
-import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
+import { fromHex, signingPublicKeyOf } from '../../../../src/core/crypto.js';
+import { openNonceSecrets, recordsKeypairFrom, startNonceSecret } from '../../../../src/midnight/company-nonce-secret.js';
+import { MemorySealedPoolStore } from '../../../../src/midnight/vault-pool.js';
+import { recordsReaderOf } from '../../../../packages/web-shared/src/deposit-on-device.js';
 
 /*
  * **A SEAT ACTION DOES WHAT THE COMPANY IS OWED OF ITS SEAT, IN ITS OWN WINDOW, AND ANCHORS WHAT IT FILED AT ITS END.**
@@ -28,7 +31,18 @@ const t = vi.hoisted(() => ({
   notes: { of: 'as-filed', notes: [], unexplained: 0, said: [] } as unknown,
   owedFiled: [] as unknown[],
   gives: [] as Record<string, any>[],
-  give: null as null | ((input: Record<string, any>) => Promise<unknown>),
+  give: null as null | 'real' | ((input: Record<string, any>) => Promise<unknown>),
+  /** The sealed-pool records a vault's secret is given through, in memory, when a test drives the real give. */
+  store: null as null | ((record: string) => unknown),
+  /** What each real give returned, in order. */
+  givenOut: [] as Awaited<ReturnType<typeof import('../../../../packages/web-shared/src/vault-secret-given.js').giveEachVaultSecretHere>>[],
+  /** Each change of the vault secrets the upkeep asked for, and what each answers. */
+  changed: [] as { may: unknown; o: unknown }[],
+  change: [] as unknown[],
+}));
+vi.mock('./vault-secrets-changed-here.js', async (real) => ({
+  ...(await real<typeof import('./vault-secrets-changed-here.js')>()),
+  vaultSecretsChangedHere: async (...a: unknown[]) => { t.order.push('finish'); t.changed.push({ may: a[4], o: a[5] }); return t.change; },
 }));
 vi.mock('../../../../packages/web-shared/src/company-key-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/company-key-here.js')>()),
@@ -51,15 +65,27 @@ vi.mock('../../../../packages/web-shared/src/records-anchored-here.js', async (r
   anchorTheRecordsHere: async () => { t.order.push('anchor now'); return t.anchorNow; },
   directoryChangeFiledHere: async (_doors: unknown, _change: unknown, signedFor: number) => { t.order.push(`filed the change ${signedFor}`); return { version: signedFor, anchor: {} }; },
 }));
-vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>()),
-  giveEachVaultSecretHere: async (input: Record<string, any>) => {
-    t.order.push(`give ${String(input['seat']).slice(0, 4)} ${String(input['vaultIds'][0]).slice(0, 4)}`);
-    t.gives.push(input);
-    if (t.give !== null) return t.give(input);
-    return { given: input['vaultIds'], had: [] };
-  },
-}));
+vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => {
+  const doors = await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>();
+  return { ...doors, deviceRecordsFor: (...a: Parameters<typeof doors.deviceRecordsFor>) => (t.store === null ? doors.deviceRecordsFor(...a) : t.store) };
+});
+vi.mock('../../../../packages/web-shared/src/vault-secret-given.js', async (real) => {
+  const given = await real<typeof import('../../../../packages/web-shared/src/vault-secret-given.js')>();
+  return {
+    ...given,
+    giveEachVaultSecretHere: async (input: Record<string, any>) => {
+      t.order.push(`give ${(input['seats'] as string[]).map((s) => s.slice(0, 4)).join('+')} ${String(input['vaultIds'][0]).slice(0, 4)}`);
+      t.gives.push(input);
+      if (t.give === 'real') {
+        const out = await given.giveEachVaultSecretHere(input as never);
+        t.givenOut.push(out);
+        return out;
+      }
+      if (t.give !== null) return t.give(input);
+      return { given: input['vaultIds'], had: [], skipped: [] };
+    },
+  };
+});
 vi.mock('../../../../packages/web-shared/src/vault-keys-given.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-keys-given.js')>()),
   ownEntryFiled: async (_api: unknown, _id: string, owed: { read(): unknown; settle(): Promise<void> }) => {
@@ -157,7 +183,9 @@ const company = (reaches = [reachWith()]) => {
 };
 
 beforeEach(() => {
-  t.order = []; t.rotated = []; t.rotationDoors = null; t.anchorDoors = []; t.rebuilt = []; t.owedFiled = []; t.gives = []; t.give = null;
+  vi.stubGlobal('localStorage', {});
+  t.changed = []; t.change = [];
+  t.order = []; t.rotated = []; t.rotationDoors = null; t.anchorDoors = []; t.rebuilt = []; t.owedFiled = []; t.gives = []; t.give = null; t.store = null; t.givenOut = [];
   t.onTheWayIn = { anchored: 2, head: '00' }; t.anchorNow = { anchored: 3, head: '00' };
   t.roster = async () => null; t.notes = { of: 'as-filed', notes: [], unexplained: 0, said: [] };
 });
@@ -306,6 +334,29 @@ describe('a private deposit made after the head filed something', () => {
   });
 });
 
+describe('the tail finishes a change of a vault secret that stopped part way, and raises, approves and refuses nothing', () => {
+  it('finishes each vault\'s change after filing the vaults again and before giving their secrets, only as a finish', async () => {
+    t.change = [{ vault: VAULTS[0], did: ['copies written'], state: 'rotated' }, { vault: VAULTS[1], did: [], state: 'not-owed' }];
+    const { ctx, told } = ctxWith('private-deposit');
+    await upkeepSteps(company().doors, {}).last.run(ctx);
+    /* RED WHEN: the upkeep raises or approves a vault secret's run, which only a person's press may do. */
+    expect(t.changed.map((x) => x.may)).toEqual(['finish']);
+    /* RED WHEN: a change stopped after its secret was set waits for a press, though the upkeep can finish it. */
+    const at = t.order.indexOf('finish');
+    expect(at).toBeGreaterThan(Math.max(...t.order.map((x, at) => (x.startsWith('refile') ? at : -1))));
+    expect(at).toBeLessThan(t.order.indexOf('anchor'));
+    expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
+  });
+
+  it('a vault still owed its change leaves the upkeep partial and refuses nothing', async () => {
+    t.change = [{ vault: VAULTS[0], did: [], state: 'owed', why: 'a signer who stays changes it by pressing' }];
+    const { ctx, told } = ctxWith('private-deposit');
+    /* RED WHEN: a change the upkeep cannot finish stops the action, or is told as all done. */
+    await expect(upkeepSteps(company().doors, {}).last.run(ctx)).resolves.toBeUndefined();
+    expect(told).toEqual({ upkeep: UPKEEP.partial, anchored: 2 });
+  });
+});
+
 describe('the tail files each vault again with this seat, then anchors what the action filed', () => {
   it('files again every vault the chain names, with this seat and the coins this wallet kept', async () => {
     const coins = { isTheWalletsCoins: true };
@@ -359,32 +410,33 @@ describe('the tail files each vault again with this seat, then anchors what the 
     }
   });
 
-  it('gives each vault\'s secret to each other seat the chain holds, one seat and one vault at a time, before the anchor', async () => {
+  it('gives each vault\'s secret to every other seat the chain holds, one vault at a time, before the anchor', async () => {
     let reads = 0;
     const base = givingReach() as any;
     const r = reachWith({
       holders: async () => ({ seats: [LEAF, JOINER.toUpperCase()], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: VAULTS, account: ACCOUNT, founding: LEAF }),
       judges: { ...base.judges, directoryHereFor: () => async () => { reads += 1; return base.judges.directoryHereFor()(); } },
     });
-    t.give = async (input) => { await input['directory'](); return { given: input['vaultIds'], had: [] }; };
+    t.give = async (input) => { await input['directory'](); return { given: input['vaultIds'], had: [], skipped: [] }; };
     const { ctx, told } = ctxWith('give-vault-keys');
     await upkeepSteps(company([r]).doors, {}).last.run(ctx);
     /* RED WHEN: the vaults' secrets are not given in the action's last step, are given after the anchor so a copy is filed and never anchored, or this seat gives one to itself. */
-    expect(t.order).toEqual([`refile d1d1`, `refile d2d2`, `give bbbb d1d1`, `give bbbb d2d2`, 'anchor']);
+    expect(t.gives.map((g) => g['seats'])).toEqual([[JOINER], [JOINER]]);
+    expect(t.order).toEqual([`refile d1d1`, `refile d2d2`, `finish`, `give bbbb d1d1`, `give bbbb d2d2`, 'anchor']);
     for (const g of t.gives) {
       expect(g['me'].signerId).toBe(LEAF);
       expect(typeof g['records']).toBe('function');
     }
-    /* RED WHEN: the directory is read again for every seat and vault instead of once for the step. */
+    /* RED WHEN: the directory is read again for every vault instead of once for the step. */
     expect(reads).toBe(1);
     expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
   });
 
-  it('leaves for the next action, never refuses, a seat with no directory entry this wallet believes yet', async () => {
+  it('leaves for the next action, never refuses, a seat the give skipped because this wallet does not believe it yet', async () => {
     const r = givingReach();
-    t.give = async () => { throw new Error('the new signer has no entry in the company\'s directory that this device believes yet'); };
+    t.give = async (input) => ({ given: [], had: input['vaultIds'], skipped: [{ seat: JOINER, why: 'they have no entry in the company\'s directory that this device believes yet' }] });
     const { ctx, told } = ctxWith('admit-signer');
-    /* RED WHEN: a joiner who has not filed their entry yet makes the action fail after what it sent, or is reported as given. */
+    /* RED WHEN: a joiner who has not filed their entry yet makes the action fail after what it sent, or the act says it did everything. */
     await expect(upkeepSteps(company([r]).doors, {}).last.run(ctx)).resolves.toBeUndefined();
     expect(t.order.at(-1)).toBe('anchor');
     expect(told).toEqual({ upkeep: UPKEEP.partial, anchored: 2 });
@@ -394,13 +446,66 @@ describe('the tail files each vault again with this seat, then anchors what the 
     const r = givingReach();
     t.give = async (input) => {
       if (input['vaultIds'][0] === VAULTS[0]) throw new Error('no copy is wrapped to this signer\'s records key');
-      return { given: input['vaultIds'], had: [] };
+      return { given: input['vaultIds'], had: [], skipped: [] };
     };
     const { ctx, told } = ctxWith('approve-proposal');
     await upkeepSteps(company([r]).doors, {}).last.run(ctx);
     /* RED WHEN: the vaults are given as one batch that stops at the first it cannot give. */
     expect(t.gives.map((g) => g['vaultIds'])).toEqual([[VAULTS[0]], [VAULTS[1]]]);
     expect(told).toMatchObject({ upkeep: UPKEEP.partial });
+  });
+
+  it('files one version per vault for every other seat that lacks its secret, through the real give, finding each seat by the chain\'s spelling', async () => {
+    const leafKey = fromHex('11'.repeat(32));
+    const joinerKey = new Uint8Array(32).fill(7);
+    const secondKey = new Uint8Array(32).fill(8);
+    const SECOND = 'cc'.repeat(32);
+    const UNENTERED = 'dd'.repeat(32);
+    const cases = [
+      { what: 'every other seat believed', chain: [LEAF, JOINER.toUpperCase(), SECOND.toUpperCase()], unattested: [] as string[], skipped: [] as string[] },
+      { what: 'the joiner unattested and a seat with no entry', chain: [LEAF, JOINER.toUpperCase(), SECOND, UNENTERED], unattested: [JOINER], skipped: [JOINER, UNENTERED] },
+    ];
+    for (const c of cases) {
+      const pools = new MemorySealedPoolStore();
+      for (const v of VAULTS) await pools.put(v, startNonceSecret(v, [recordsReaderOf(leafKey)]));
+      const puts: string[] = [];
+      t.order = []; t.gives = []; t.givenOut = []; t.give = 'real';
+      t.store = () => Object.assign(Object.create(pools), { put: async (v: string, rec: never) => { puts.push(v); return pools.put(v, rec); } });
+      const entry = (seat: string, key: Uint8Array, role: string | null) =>
+        ({ seat, signingKey: seat, wrappingKey: recordsKeypairFrom(key).publicKey, role, retired: null });
+      const here = {
+        dir: { seats: [{ ...entry(LEAF, leafKey, 'admin'), signingKey: signingPublicKeyOf(SEAT.signingSecret).toLowerCase() }, entry(JOINER, joinerKey, 'approver'), entry(SECOND, secondKey, 'approver')] },
+        another: new Set(c.unattested), holders: { seats: c.chain.map((s) => s.toLowerCase()) }, leafOf: () => null,
+      };
+      const r = reachWith({
+        holders: async () => ({ seats: c.chain, committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: VAULTS, account: ACCOUNT, founding: LEAF }),
+        judges: { ...(reachWith() as any).judges, directoryHereFor: () => async () => here },
+      });
+      const { ctx, told } = ctxWith('give-vault-keys');
+      await upkeepSteps(company([r]).doors, {}).last.run(ctx);
+      /* RED WHEN: this seat is handed to the give as a seat to be given its own vault's secret. */
+      for (const g of t.gives) expect(g['seats'], c.what).not.toContain(LEAF);
+      /* RED WHEN: each seat lacking a vault's secret is given it in a version of its own, so two seats file two versions of each vault. */
+      expect(puts, c.what).toEqual(VAULTS);
+      expect(t.order.at(-1), c.what).toBe('anchor');
+      for (const v of VAULTS) {
+        const rec = (await pools.get(v))!;
+        const secrets = openNonceSecrets(rec, v, recordsKeypairFrom(leafKey)).secrets;
+        /* RED WHEN: a seat the chain names in upper case is not found by its lower-case directory entry, or a copy opens to another secret. */
+        expect(openNonceSecrets(rec, v, recordsKeypairFrom(secondKey)).secrets, c.what).toEqual(secrets);
+        /* RED WHEN: a seat whose own wallet never attested the records key its entry names is given a copy under that key. */
+        if (c.skipped.length === 0) expect(openNonceSecrets(rec, v, recordsKeypairFrom(joinerKey)).secrets, c.what).toEqual(secrets);
+        else expect(() => openNonceSecrets(rec, v, recordsKeypairFrom(joinerKey)), c.what).toThrow();
+      }
+      /* RED WHEN: a seat the give skipped is not named with why, so nothing says who still lacks a copy. */
+      expect(t.givenOut.length, c.what).toBe(VAULTS.length);
+      for (const out of t.givenOut) {
+        expect(out.skipped.map((s) => s.seat), c.what).toEqual(c.skipped);
+        for (const s of out.skipped) expect(s.why, c.what).toMatch(s.seat === UNENTERED ? /no entry in the company's directory/u : /has not attested the records key/u);
+      }
+      /* RED WHEN: a seat the give skipped is not left for the next action, so the act says it gave every copy. */
+      expect(told, c.what).toEqual({ upkeep: c.skipped.length === 0 ? UPKEEP.done : UPKEEP.partial, anchored: 2 });
+    }
   });
 
   it('asks for a vault\'s secret by the vault\'s lower-case name when the chain names the vault in upper case', async () => {

@@ -37,9 +37,16 @@
  * the record carries every earlier secret sealed under the new one: old
  * deposits keep their names, and anybody who can open the newest epoch can
  * name every coin the vault ever made. A new signer is given the current
- * epoch, and with it every earlier one (`admitToNonceSecret`). These are the
- * operations a signer's device runs when somebody leaves or joins; the screens
- * that run them are not built yet.
+ * epoch, and with it every earlier one (`admitToNonceSecret`). The new secret
+ * is made on a staying signer's device (`newNonceSecret`), set on the chain by
+ * the vault's secret run, and filed here only once the chain holds it
+ * (`rotateNonceSecret` takes it in).
+ *
+ * **THE REMOVALS A RECORD COUNTS.** Every version carries `removals`: the
+ * account's count of removals and re-seats that no reader of its newest secret
+ * was the leaver of. A record filed before the field existed opens as 0. While
+ * the chain counts more (`secretBehindTheChain`), this product's devices make no
+ * private deposit under it.
  *
  * **WHAT THE RECORD SAYS ABOUT ITSELF IS SEALED INSIDE IT.** The vault, the
  * version and the epoch are part of the sealed body and are checked when it is
@@ -119,6 +126,8 @@ export interface OpenedNonceSecrets {
   readonly secrets: readonly Hex[];
   /** Who the opened version is wrapped to, by records public key. */
   readonly readers: readonly Hex[];
+  /** The account's removal count this version's newest secret is good for; 0 for a version filed without one. */
+  readonly removals: number;
 }
 
 interface Body {
@@ -127,6 +136,7 @@ interface Body {
   readonly version: number;
   readonly epoch: number;
   readonly secrets: readonly Hex[];
+  readonly removals?: number;
 }
 
 /** Thrown for a record that does not open as what it says it is. Nothing is derived from it. */
@@ -160,7 +170,7 @@ const sealKeyOf = (secret: Hex): Hex => toHex(hkdf(sha256, fromHex(secret), SEAL
  * Thirty-one random bytes and a zero: the vault takes a secret only in this shape, one field
  * element exactly, so a later secret can carry it, sealed, on the chain.
  */
-const newSecret = (): Hex => {
+export const newNonceSecret = (): Hex => {
   for (;;) {
     const s = randomBytes(KEY_BYTES);
     s[KEY_BYTES - 1] = 0;
@@ -168,7 +178,15 @@ const newSecret = (): Hex => {
   }
 };
 
+const countOf = (removals: number): number => {
+  if (!Number.isSafeInteger(removals) || removals < 0) {
+    throw new Error('the count of removals a nonce secret is good for is a whole number, never below zero, and this is not one. Nothing is written.');
+  }
+  return removals;
+};
+
 const build = (body: Body, readers: readonly Hex[]): SealedPool => {
+  countOf(body.removals ?? 0);
   if (readers.length === 0) {
     throw new Error(
       'a nonce secret wrapped to nobody is a secret no device anywhere can open, and every deposit '
@@ -187,10 +205,10 @@ const build = (body: Body, readers: readonly Hex[]): SealedPool => {
 
 /**
  * **THE FIRST RECORD OF A VAULT'S NONCE SECRET**: epoch 1, version 1, wrapped
- * to every signer given.
+ * to every signer given, good for the account's removal count `removals`.
  */
-export const startNonceSecret = (vault: string, readers: readonly NonceSecretReader[]): SealedPool =>
-  build({ record: NONCE_SECRET_RECORD, vault: vaultOf(vault), version: 1, epoch: 1, secrets: [newSecret()] },
+export const startNonceSecret = (vault: string, readers: readonly NonceSecretReader[], removals = 0): SealedPool =>
+  build({ record: NONCE_SECRET_RECORD, vault: vaultOf(vault), version: 1, epoch: 1, secrets: [newNonceSecret()], removals },
     readers.map(publicKeyOf));
 
 /**
@@ -203,13 +221,13 @@ export const startNonceSecret = (vault: string, readers: readonly NonceSecretRea
  * one to keep.
  */
 export const startNonceSecretAgain = (
-  filed: SealedPool, vault: string, readers: readonly NonceSecretReader[],
+  filed: SealedPool, vault: string, readers: readonly NonceSecretReader[], removals = 0,
 ): SealedPool => {
   const expected = vaultOf(vault);
   if (filed?.vault !== expected || !Number.isSafeInteger(filed.version) || filed.version < 1) {
     throw new Error('the record a fresh secret would follow is not this vault\x27s, so nothing is written.');
   }
-  return build({ record: NONCE_SECRET_RECORD, vault: expected, version: filed.version + 1, epoch: 1, secrets: [newSecret()] },
+  return build({ record: NONCE_SECRET_RECORD, vault: expected, version: filed.version + 1, epoch: 1, secrets: [newNonceSecret()], removals },
     readers.map(publicKeyOf));
 };
 
@@ -257,9 +275,12 @@ export const openNonceSecrets = (rec: SealedPool, vault: string, me: NonceSecret
   if (body.secrets[body.secrets.length - 1] !== current) {
     throw new NonceSecretUnreadable('the copy carried a secret that is not the one this record is sealed under');
   }
+  if (body.removals !== undefined && (!Number.isSafeInteger(body.removals) || body.removals < 0)) {
+    throw new NonceSecretUnreadable('the count of removals sealed inside is not a whole number');
+  }
   return {
     vault: body.vault, version: body.version, epoch: body.epoch,
-    secrets: [...body.secrets], readers: rec.wrapped.map((w) => w.signerId),
+    secrets: [...body.secrets], readers: rec.wrapped.map((w) => w.signerId), removals: body.removals ?? 0,
   };
 };
 
@@ -269,17 +290,21 @@ export const openNonceSecrets = (rec: SealedPool, vault: string, me: NonceSecret
  * the version it will be filed as. For a version whose secret the vault's own
  * commitment names, filed again by a signer who opened it so that the
  * records' newest version is the chain's. Nothing in it changes but the
- * version.
+ * version, and the count of removals when `removals` is given: the re-file
+ * that carries the chain's count once no reader of the newest secret has left.
  */
 export const refileNonceSecret = (
-  rec: SealedPool, vault: string, by: NonceSecretOpener, version: number,
+  rec: SealedPool, vault: string, by: NonceSecretOpener, version: number, removals?: number,
 ): SealedPool => {
   const opened = openNonceSecrets(rec, vault, by);
   if (!Number.isSafeInteger(version) || version <= opened.version) {
     throw new Error('a version is filed again only as a later one. Nothing is written.');
   }
   return build(
-    { record: NONCE_SECRET_RECORD, vault: opened.vault, version, epoch: opened.epoch, secrets: opened.secrets },
+    {
+      record: NONCE_SECRET_RECORD, vault: opened.vault, version, epoch: opened.epoch, secrets: opened.secrets,
+      removals: removals === undefined ? opened.removals : countOf(removals),
+    },
     opened.readers);
 };
 
@@ -292,31 +317,36 @@ export const admitToNonceSecret = (
 ): SealedPool => {
   const opened = openNonceSecrets(rec, vault, by);
   return build(
-    { record: NONCE_SECRET_RECORD, vault: opened.vault, version: opened.version + 1, epoch: opened.epoch, secrets: opened.secrets },
+    {
+      record: NONCE_SECRET_RECORD, vault: opened.vault, version: opened.version + 1, epoch: opened.epoch, secrets: opened.secrets,
+      removals: opened.removals,
+    },
     [...opened.readers, ...added.map(publicKeyOf)]);
 };
 
 /**
- * **STARTS A NEW EPOCH BECAUSE SIGNERS ARE LEAVING**, as the next version,
- * wrapped to the signers who remain and carrying every earlier secret.
+ * **STARTS A NEW EPOCH WITH THE SECRET THE CHAIN NOW HOLDS**, as the next
+ * version, wrapped to the signers who remain and carrying every earlier secret.
+ * `secret` is made on a staying signer's device (`newNonceSecret`) and filed
+ * here once the vault's secret run has set it; `removals` is the account's
+ * count it is good for.
  *
  * Every signer the current version is wrapped to must be named, either as
- * remaining or as leaving, so a rotation never drops somebody it was not told
+ * remaining or as leaving, so a new epoch never drops somebody it was not told
  * about. Somebody who is leaving keeps what they already had and gets nothing
- * made from here on.
+ * made from here on. Nobody need be leaving: the chain may hold a new secret
+ * raised for another reason.
  */
 export const rotateNonceSecret = (
   rec: SealedPool, vault: string, by: NonceSecretOpener,
   who: { readonly remaining: readonly NonceSecretReader[]; readonly leaving: readonly NonceSecretReader[] },
+  secret: Hex, removals: number,
 ): SealedPool => {
   const opened = openNonceSecrets(rec, vault, by);
   const remaining = new Set(who.remaining.map(publicKeyOf));
   const leaving = new Set(who.leaving.map(publicKeyOf));
   for (const pk of leaving) {
     if (remaining.has(pk)) throw new Error('a signer cannot be both leaving and remaining. Nothing is written.');
-  }
-  if (leaving.size === 0) {
-    throw new Error('a new epoch is started because somebody is leaving, and nobody is named as leaving. Nothing is written.');
   }
   const unnamed = opened.readers.filter((pk) => !remaining.has(pk) && !leaving.has(pk));
   if (unnamed.length > 0) {
@@ -325,13 +355,41 @@ export const rotateNonceSecret = (
       + 'leaving. A new epoch wrapped without them would take their access away without anybody '
       + 'deciding it. Nothing is written. Name every signer.');
   }
+  const next = typeof secret === 'string' ? secret.toLowerCase() as Hex : secret;
+  if (typeof next !== 'string' || !HEX32.test(next) || !next.endsWith('00') || /^0+$/u.test(next)) {
+    throw new Error('a vault\x27s secret is thirty-one bytes and a zero, and this is not one. Nothing is written.');
+  }
+  if (opened.secrets.some((s) => s.toLowerCase() === next)) {
+    throw new Error('that secret is already one of this vault\x27s epochs, so it starts no new one. Nothing is written.');
+  }
   return build(
     {
       record: NONCE_SECRET_RECORD, vault: opened.vault, version: opened.version + 1,
-      epoch: opened.epoch + 1, secrets: [...opened.secrets, newSecret()],
+      epoch: opened.epoch + 1, secrets: [...opened.secrets, next], removals: countOf(removals),
     },
     [...remaining]);
 };
+
+/**
+ * **THE ONE COUNT PREDICATE.** True while the account has counted a removal or
+ * re-seat that the record's newest secret is not good for: this product's
+ * devices then make no private deposit under it, and a vault's secret change is
+ * owed until a record good for the chain's count is filed.
+ */
+export const secretBehindTheChain = (opened: Pick<OpenedNonceSecrets, 'removals'>, chainRemovals: number): boolean =>
+  opened.removals < chainRemovals;
+
+/**
+ * **WHETHER FILING `candidate` OVER `newest` KEEPS EVERY EPOCH.** It must hold
+ * at least as many secrets, and every secret of `newest` but its newest, in
+ * the same places. Only the newest may differ: a fresh first secret the chain
+ * never held is replaced by the one it holds, and nothing a rotation filed is
+ * undone.
+ */
+export const keepsEveryEpochOf = (
+  candidate: Pick<OpenedNonceSecrets, 'secrets'>, newest: Pick<OpenedNonceSecrets, 'secrets'>,
+): boolean => candidate.secrets.length >= newest.secrets.length
+  && newest.secrets.slice(0, -1).every((s, i) => s.toLowerCase() === candidate.secrets[i]?.toLowerCase());
 
 /**
  * **THE KEYS A VAULT'S DEPOSITS ARE NAMED WITH**: one per epoch, oldest first.

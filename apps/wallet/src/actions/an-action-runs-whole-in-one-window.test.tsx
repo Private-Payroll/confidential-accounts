@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
+/* Every wait gets the same five seconds, so a slow batch cannot fail the file and a real hang still does. */
+const until = (check: () => void): Promise<void> => waitFor(check, { timeout: 5000 });
+
 /*
  * **AN ACTION RUNS WHOLE IN ONE WINDOW, ON ONE PASSKEY.** The whole wallet is mounted - session, routes, the locked
  * window, the runner - over real storage, in a window opened by a page that re-sends its ask whenever the wallet says
@@ -190,8 +193,8 @@ function Phase(): null {
 const runFromTheWindow = async (name?: string): Promise<void> => {
   asking = name === undefined ? actAsk() : { ...actAsk(), intent: { name, vault: VAULT } };
   render(<SessionProvider><App /><Phase /></SessionProvider>);
-  await waitFor(() => expect(document.querySelector('[data-ask-window="act"]')).not.toBeNull());
-  await waitFor(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
+  await until(() => expect(document.querySelector('[data-ask-window="act"]')).not.toBeNull());
+  await until(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
   passkeyAnswers('cred-a');
   fireEvent.click(document.querySelector('[data-approve-window]') as HTMLElement);
 };
@@ -221,7 +224,7 @@ describe('an action runs whole in one window, on one passkey', () => {
   it('the window shows what the action does before the passkey, marking the page\'s own words', async () => {
     asking = actAsk();
     render(<SessionProvider><App /></SessionProvider>);
-    await waitFor(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
+    await until(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
     /* RED WHEN: a line only the page says is shown as if this wallet had read it. */
     expect(document.querySelector('[data-shown-from="page"]')?.textContent).toContain('Only the page says this');
     expect(document.querySelector('[data-shown-from="page"]')?.textContent).toContain(VAULT);
@@ -240,7 +243,7 @@ describe('an action runs whole in one window, on one passkey', () => {
 
   it('three steps hand the page three transactions, with each step said, through one window and one passkey', async () => {
     await runFromTheWindow();
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     /* RED WHEN: the action asks for a passkey per step, or a second press, rather than running on the one Approve. */
     expect(mockUsePasskey).toHaveBeenCalledTimes(1);
     /* RED WHEN: the transactions are not handed over one each, in order, numbered for the page to answer. */
@@ -254,12 +257,12 @@ describe('an action runs whole in one window, on one passkey', () => {
 
   it('the opened wallet is locked again when the action ends, and the window says how it ended', async () => {
     await runFromTheWindow();
-    await waitFor(() => expect(phaseNow).toBe('unlocked'));
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(phaseNow).toBe('unlocked'));
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     /* RED WHEN: the seed the passkey opened is still held once the action has ended. */
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(phaseNow).toBe('locked'));
     /* RED WHEN: the locked window forgets the action, and shows the unlock screen or a waiting line instead. */
-    await waitFor(() => expect(document.querySelector('[data-act-ended="done"]')).not.toBeNull());
+    await until(() => expect(document.querySelector('[data-act-ended="done"]')).not.toBeNull());
     /* RED WHEN: what a done action gave its window to show, a fingerprint to read out, is not shown there. */
     expect(document.querySelector('[data-act-shown-at-the-end]')?.textContent).toContain('K7QM-2XRT-9VBN-4HCD-PW3S');
     /* RED WHEN: what a done action shows in its window is also sent to the page. */
@@ -269,19 +272,19 @@ describe('an action runs whole in one window, on one passkey', () => {
   it('Stop between two steps leaves "step 2 of 3", and nothing more is handed to the page', async () => {
     answer = (n) => (n === 1 ? 'hold' : 'relayed');
     await runFromTheWindow();
-    await waitFor(() => expect(of(ACT_RELAY_SCHEMA)).toHaveLength(1), { timeout: 5000 });
-    await waitFor(() => expect(document.querySelector('[data-act-stop]')).not.toBeNull());
+    await until(() => expect(of(ACT_RELAY_SCHEMA)).toHaveLength(1));
+    await until(() => expect(document.querySelector('[data-act-stop]')).not.toBeNull());
     fireEvent.click(document.querySelector('[data-act-stop]') as HTMLElement);
     /* The page now says what it did with the first transaction: it was handed over before Stop. */
     held.shift()!();
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     /* RED WHEN: Stop does not stop, or the step after it starts and hands the page another transaction. */
     expect(of(ACT_RELAY_SCHEMA)).toHaveLength(1);
     expect(gate.built).toEqual([1]);
     /* RED WHEN: the page is not told where the action stopped, or the transaction already handed over is not counted. */
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'stopped', step: 2, steps: 3, relayed: 1 });
-    await waitFor(() => expect(phaseNow).toBe('locked'));
-    await waitFor(() => expect(document.querySelector('[data-act-ended="stopped"]')).not.toBeNull());
+    await until(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(document.querySelector('[data-act-ended="stopped"]')).not.toBeNull());
     /* RED WHEN: the stopped screen does not say how many transactions had already gone. */
     expect(document.querySelector('[data-act-relayed]')?.textContent).toContain('1');
     expect(document.querySelector('[data-ask-over]')?.textContent).toContain('Stopped at step 2 of 3');
@@ -290,13 +293,13 @@ describe('an action runs whole in one window, on one passkey', () => {
   it('a transaction the page refuses stops the action at that step, and nothing more is handed over', async () => {
     answer = (n) => (n === 2 ? 'refused' : 'relayed');
     await runFromTheWindow();
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     /* RED WHEN: a refused relay is taken as sent, and the next step is built on it. */
     expect(of(ACT_RELAY_SCHEMA).map((m) => m['n'])).toEqual([1, 2]);
     expect(gate.built).toEqual([1, 2]);
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'relay-refused', step: 2, steps: 3, relayed: 1, unconfirmed: 1 });
-    await waitFor(() => expect(phaseNow).toBe('locked'));
-    await waitFor(() => expect(document.querySelector('[data-act-ended="stopped"]')).not.toBeNull());
+    await until(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(document.querySelector('[data-act-ended="stopped"]')).not.toBeNull());
     /* RED WHEN: the window says, as its own fact, that the page did not send what it refused. */
     expect(document.body.textContent).toContain('The page says it did not send');
     /* RED WHEN: the transaction the page was handed and did not confirm is not said, or not with what to do. */
@@ -310,75 +313,75 @@ describe('an action runs whole in one window, on one passkey', () => {
    */
   it('an action that reads what it approves shows it in the same window after the one passkey, and hands nothing over before Confirm', async () => {
     await runFromTheWindow('read-then-sign');
-    await waitFor(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull(), { timeout: 5000 });
+    await until(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull());
     expect(document.querySelector('[data-act-read]')?.textContent).toContain('read with the seat keys');
     expect(of(ACT_RELAY_SCHEMA)).toEqual([]);
     expect(gate.built).toEqual([0]);
     expect(phaseNow).toBe('unlocked');
     fireEvent.click(document.querySelector('[data-act-confirm-button]') as HTMLElement);
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'done', step: 2, steps: 2, relayed: 2, intent: 'read-then-sign' });
     expect(of(ACT_RELAY_SCHEMA).map((m) => m['transaction'])).toEqual(['dHg1', 'dHg2']);
     /* RED WHEN: confirming asks for the passkey again. */
     expect(mockUsePasskey).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(phaseNow).toBe('locked'));
   });
 
   /* RED WHEN: Stop at the window's Confirm lets the step go on, or anything is handed to the page after it. */
   it('Stop at the Confirm signs nothing and hands nothing to the page', async () => {
     await runFromTheWindow('read-then-sign');
-    await waitFor(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull(), { timeout: 5000 });
+    await until(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull());
     fireEvent.click(document.querySelector('[data-act-stop]') as HTMLElement);
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'stopped', step: 1, relayed: 0, unconfirmed: 0 });
     expect(of(ACT_RELAY_SCHEMA)).toEqual([]);
     expect(gate.built).toEqual([0]);
     expect(mockUsePasskey).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(phaseNow).toBe('locked'));
   });
 
   /* RED WHEN: a read that failed still asks for the Confirm, or anything is handed to the page after it. */
   it('a read that fails signs nothing, asks no Confirm, and says why', async () => {
     await runFromTheWindow('read-fails');
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'check-failed', step: 1, relayed: 0 });
     expect(of(ACT_RELAY_SCHEMA)).toEqual([]);
     expect(document.querySelector('[data-act-confirm]')).toBeNull();
-    await waitFor(() => expect(document.querySelector('[data-act-ended="stopped"]')).not.toBeNull());
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(document.querySelector('[data-act-ended="stopped"]')).not.toBeNull());
+    await until(() => expect(phaseNow).toBe('locked'));
   });
 
   /* RED WHEN: a step can ask for the Confirm after it has handed something to the page, so the person confirms what has already gone. */
   it('a Confirm asked after anything was handed over stops the action, and nothing more is handed over', async () => {
     await runFromTheWindow('confirm-after-a-send');
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1, relayed: 1 });
     expect(of(ACT_RELAY_SCHEMA)).toHaveLength(1);
     expect(gate.built).toEqual([]);
     expect(document.querySelector('[data-act-confirm]')).toBeNull();
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(phaseNow).toBe('locked'));
   });
 
   /* RED WHEN: a step can write to the service, sending nothing to the chain, and still ask the person to confirm afterwards. */
   it('a Confirm asked after a write that sends nothing to the chain stops the action too', async () => {
     await runFromTheWindow('confirm-after-a-write');
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     expect(of(ACT_CALL_SCHEMA).map((m) => [m['method'], m['path']])).toEqual([['PUT', '/api/notes/1']]);
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
     expect(gate.built).toEqual([]);
     expect(document.querySelector('[data-act-confirm]')).toBeNull();
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(phaseNow).toBe('locked'));
   });
 
   /* RED WHEN: an action can ask the person to confirm twice, so a second question could follow what the first one showed. */
   it('a second Confirm in one action stops it', async () => {
     await runFromTheWindow('confirms-twice');
-    await waitFor(() => expect(document.querySelector('[data-act-confirm-button]')).not.toBeNull(), { timeout: 5000 });
+    await until(() => expect(document.querySelector('[data-act-confirm-button]')).not.toBeNull());
     fireEvent.click(document.querySelector('[data-act-confirm-button]') as HTMLElement);
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1, relayed: 0 });
     expect(gate.built).toEqual([1]);
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(phaseNow).toBe('locked'));
   });
 
   /*
@@ -388,7 +391,7 @@ describe('an action runs whole in one window, on one passkey', () => {
    */
   it('the Confirm window keeps Stop where it was, puts focus on its heading, and says Confirm is a button, not a passkey', async () => {
     await runFromTheWindow('read-then-sign');
-    await waitFor(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull(), { timeout: 5000 });
+    await until(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull());
     const bar = document.querySelector('[data-ask-actions]')!;
     expect(bar.querySelector('button')?.hasAttribute('data-act-stop')).toBe(true);
     expect(document.activeElement).toBe(document.querySelector('[data-act-confirm]'));
@@ -396,8 +399,8 @@ describe('an action runs whole in one window, on one passkey', () => {
     expect(document.querySelector('[data-act-confirm-lede]')?.textContent).toContain('Nothing has been approved, signed or sent to the network yet');
     for (const li of document.querySelectorAll('[data-act-read] li')) expect(li.className).toContain('break-all');
     fireEvent.click(document.querySelector('[data-act-stop]') as HTMLElement);
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
-    await waitFor(() => expect(phaseNow).toBe('locked'));
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
+    await until(() => expect(phaseNow).toBe('locked'));
   });
 
   it('an action that ended with a step still running never says its keys and work are over', () => {
@@ -416,7 +419,7 @@ describe('the window before the passkey shows only what is being approved, never
   const shownFor = async (path?: string): Promise<string> => {
     asking = { ...actAsk(), intent: { name: 'three-transfers-sent', vault: VAULT, ...(path === undefined ? {} : { path }) } };
     render(<SessionProvider><App /></SessionProvider>);
-    await waitFor(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
+    await until(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
     return document.querySelector('[data-act-shown]')?.textContent ?? '';
   };
 
@@ -556,7 +559,7 @@ describe('a framed wallet\'s Confirm is held like its Approve, from the moment i
     await settled();
     await pause(DWELL_MS + 100);
     fireEvent.click(document.querySelector('[data-approve]') as HTMLElement);
-    await waitFor(() => expect(document.querySelector('[data-act-confirm-button]')).not.toBeNull(), { timeout: 5000 });
+    await until(() => expect(document.querySelector('[data-act-confirm-button]')).not.toBeNull());
     return document.querySelector<HTMLButtonElement>('[data-act-confirm-button]')!;
   };
 
@@ -568,7 +571,7 @@ describe('a framed wallet\'s Confirm is held like its Approve, from the moment i
     await pause(DWELL_MS + 100);
     expect(confirm.disabled).toBe(false);
     fireEvent.click(confirm);
-    await waitFor(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1), { timeout: 5000 });
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'done' });
   });
 

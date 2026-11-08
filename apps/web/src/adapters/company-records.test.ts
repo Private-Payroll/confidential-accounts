@@ -27,7 +27,7 @@ const NIGHT_PUBLICLY = `${NIGHT.code}:unshielded`;
 const PRIVATE_ADDRESS = 'mn_shield-addr_preview1qqqq';
 const PUBLIC_ADDRESS = 'mn_addr_preview1qqqq';
 const kr = vi.hoisted(() => ({
-  answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0,
+  answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0, asking: 0, quiet: async () => ({ epoch: 0, newest: 0, key: VK, keyAt: () => VK, sealing: () => ({ key: VK, epoch: 0 }) }),
   /* The signing key of the seat this device holds, as the wallet read it for the tab. */
   ownKey: 'a1'.repeat(32),
   /* The company each opening of the saved keys named, as the company opened with them. */
@@ -113,7 +113,8 @@ vi.mock('./filing-judge.js', async (real) => ({
     records: { history: new Map(kr.named.proposal?.map((id) => [`proposal:proposal:${id}`, []]) ?? []), notYetAnchored: [] },
     ...(kr.entries === null ? {} : { dir: { seats: kr.entries.map((seat) => ({ seat })) } }),
   }),
-  companyKeysFor: async () => ({ epoch: 0, newest: 0, key: VK, keyAt: () => VK, sealing: () => ({ key: VK, epoch: 0 }) }),
+  /* The asking judge counts its use (`kr.asking`): a page load uses only the quiet one. */
+  companyKeysQuietlyFor: kr.quiet, companyKeysFor: async () => { kr.asking += 1; return kr.quiet(); },
 }));
 /* What this device reads of the people: the real read, unless a test hands it an answer the real read never gives (a refused record named nowhere else). */
 const peopleAre = vi.hoisted(() => ({ answer: null as null | (() => unknown) }));
@@ -301,7 +302,7 @@ function strings(value: unknown, at = 'answer'): string[] {
   return [];
 }
 
-beforeEach(() => { info.answer = { state: 'none' }; info.asked = []; info.fails = false; kr.anchoring = []; kr.seats = []; kr.policyBar = null; kr.vaultThresholds = []; kr.named = {}; kr.unbelieved = []; kr.leftOut = []; kr.listedFrom = []; kr.claims = []; kr.claimAnswer = null; kr.claimCheck = true; kr.entries = null; kr.ownKey = 'a1'.repeat(32); kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
+beforeEach(() => { kr.asking = 0; info.answer = { state: 'none' }; info.asked = []; info.fails = false; kr.anchoring = []; kr.seats = []; kr.policyBar = null; kr.vaultThresholds = []; kr.named = {}; kr.unbelieved = []; kr.leftOut = []; kr.listedFrom = []; kr.claims = []; kr.claimAnswer = null; kr.claimCheck = true; kr.entries = null; kr.ownKey = 'a1'.repeat(32); kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('opening a company', () => {
@@ -566,10 +567,10 @@ describe('each read, on its own', () => {
     kr.account = was;
     if (c.of !== 'open') throw new Error('not open');
     expect(c.signerStandings).toEqual({ of: 'read', value: [
-      { id: 's1', name: 'Priya', accepted: false, seatOnChain: true, you: false, entryFiled: null },
-      { id: 's2', name: 'Sam', accepted: true, seatOnChain: true, you: false, entryFiled: null },
+      { id: 's1', name: 'Priya', accepted: false, seatOnChain: true, you: false, entryFiled: null, leaf: leaf(1) },
+      { id: 's2', name: 'Sam', accepted: true, seatOnChain: true, you: false, entryFiled: null, leaf: leaf(2) },
       /* RED WHEN: the page builds where each signer stands without the seats the roster read waits for, so a seat the network holds is left off. */
-      { id: leaf(3), name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, waiting: true },
+      { id: leaf(3), name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, leaf: leaf(3), waiting: true },
     ] });
     expect(c.approvalsForSigners).toEqual({ of: 'read', value: { count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: ['ab'.repeat(32)], seated: 3 } });
     expect(c.approvalsNeeded).toEqual({ of: 'read', value: 2 });
@@ -1297,7 +1298,8 @@ describe('proposals, vaults and invitations', () => {
     const vault = 'ab'.repeat(32);
     info.answer = { state: 'named', name: 'Treasury', description: 'The reserve', version: 2 };
     expect(await readVaultName('u1', 'c1', vault)).toBe('Treasury');
-    expect(info.asked).toEqual([{ vault, keys: expect.objectContaining({ key: VK }), account: 'c1' }]);
+    /* RED WHEN: the name is read through the judge that may open the wallet's window (`companyKeysFor`): the second count is its uses. */
+    expect([info.asked, kr.asking]).toEqual([[{ vault, keys: expect.objectContaining({ key: VK }), account: 'c1' }], 0]);
     for (const answer of [{ state: 'none' }, { state: 'unread', why: 'not believed', version: 3 }, { state: 'named', name: '  ', description: '', version: 1 }]) {
       info.answer = answer;
       expect(await readVaultName('u1', 'c1', vault), JSON.stringify(answer)).toBeNull();

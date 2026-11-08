@@ -39,7 +39,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * page's characters need. A build whose first download is larger than the
  * budget stops, and so does one with any file other than a font over the
  * size at which the bundler warns. The budget is the first download as it
- * was last measured (725,700 bytes, from the built application, on 3 Nov IST); a
+ * was last measured (730,766 bytes, from the built application, on 8 Nov IST); a
  * test holds it within a kilobyte of what is built, so when the download falls
  * the budget is lowered with it.
  *
@@ -48,7 +48,12 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * loads the curve library that checks a committee key is a point on its curve,
  * 36,633 bytes that sign-in itself never uses.
  *
- * The budget is the measured 725,700 bytes (3 Nov). It grew by 266 bytes from 725,434 when the recovery page's entry
+ * The budget is the measured 730,766 bytes (8 Nov). It grew by 5,066 bytes from 725,700 when the first page began to
+ * show a company the wallet has not opened on this visit as "Not opened yet", with an "Open with your wallet" press, the
+ * refusal under it and their words, and the refusal codes moved to a module of their own so the first page names them
+ * without loading the keyring. Of the first download, 4,824 bytes are the lists of files the bundler preloads for what
+ * the first page opens later; the records pages' own words for a company not opened load only with those pages.
+ * Earlier: it grew by 266 bytes from 725,434 when the recovery page's entry
  * in the page list and its
  * name in the first download's words were added; the page's screen and its words load only when it is opened. Earlier: it grew by 148 bytes
  * from 725,286 when the company's proposals began to be read with what the wallet is asked to check before it approves each one: for a one-off
@@ -61,7 +66,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * they use. Earlier: it grew by 46 bytes from 724,929 when apps/web/src/records/parts.tsx, records/counts.ts and screens/proposals.tsx
  * changed.
  */
-export const FIRST_DOWNLOAD_BUDGET = 725_700;
+export const FIRST_DOWNLOAD_BUDGET = 730_766;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

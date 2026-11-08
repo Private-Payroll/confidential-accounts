@@ -171,9 +171,11 @@ const COMPANY_RECORD_CALLS: readonly CallRoute[] = Object.freeze([
  * What every seat action adds for the upkeep it does in the same window: the
  * company's people and the answers waiting in their handovers, read to carry
  * them across a change of the company's key; that change, a roster followed and
- * each vault's records filed again; the header of the records anchored, and the
- * one call that sends the anchor; and the fee sponsorship for a call the
- * company's own service or the person's wallet submits.
+ * each vault's records filed again; a vault secret's change that stopped part way
+ * finished (its secret set, its copies written, and the proposal written down as
+ * carried out); the header of the records anchored, and the one call that sends
+ * the anchor; and the fee sponsorship for a call the company's own service or the
+ * person's wallet submits.
  */
 const UPKEEP_CALLS: readonly CallRoute[] = Object.freeze([
   { method: 'POST', path: '/api/accounts/:record/fee' },
@@ -189,6 +191,9 @@ const UPKEEP_CALLS: readonly CallRoute[] = Object.freeze([
   { method: 'GET', path: '/api/vaults/:vault/records/:kind/versions' },
   { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
   { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/secret', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/copy', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/carried' },
 ].map((r) => Object.freeze(r)) as CallRoute[]);
 
 /** What a seat action's upkeep says it did: all done, or some left for the next action; and how many records it anchored. */
@@ -300,12 +305,16 @@ const INVITE_CALLS: readonly CallRoute[] = Object.freeze([
  * run, the vendors' handovers its list is read with; for a new vault's adoption or first secret run, the call each
  * step of the vault's start is sent by and the one that writes the proposal down as carried out once the chain shows it;
  * for the pay-record key, the creation's own route its approval and its carrying out are sent by;
- * plus the upkeep's routes. No route that files or raises a proposal is listed: the wallet approves only one the chain
- * has raised.
+ * plus the upkeep's routes. The routes that file, raise and send a raise are listed for one use only: once this press
+ * has carried a removal out (`done` on the chain), the removal's hook raises each vault's secret run through them, so
+ * the signer who left cannot open what comes next. No approval of any other kind raises anything, and neither does an
+ * approval of a removal that does not carry it out.
  */
 const APPROVE_PROPOSAL_CALLS: readonly CallRoute[] = Object.freeze([
   ...COMPANY_RECORD_CALLS,
   ...ONE_OFF_PAYMENT_CALLS.filter((o) => !(o.method === 'POST' && o.path === '/api/accounts/:record/proposals')),
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/carry', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/retirement' },
   { method: 'GET', path: '/api/accounts/:record/vendors/:vendor/handover' },
@@ -394,14 +403,39 @@ const WITHDRAW_PROPOSAL_CALLS: readonly CallRoute[] = Object.freeze([
 ].map((r) => Object.freeze(r)) as CallRoute[]);
 
 /**
- * Removing a signer (the wallet's `remove-signer` action): what changing the approvals needed calls, and the route that
+ * Removing a signer (the wallet's `remove-signer` action): what changing the approvals needed calls, the route that
  * takes this seat's signature over the leaving seat's retirement on its own (kept beside the proposal; it relays
- * nothing, so it does not send).
+ * nothing, so it does not send), and, once it is carried out, what changing each vault's secret calls.
  */
 const REMOVE_SIGNER_CALLS: readonly CallRoute[] = Object.freeze([
   ...CHANGE_THRESHOLD_CALLS,
   { method: 'POST', path: '/api/proposals/:proposal/retirement' },
-].map((r) => Object.freeze({ ...r })) as CallRoute[]);
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/secret', sends: true },
+  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/copy', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/carried' },
+].filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
+  .map((r) => Object.freeze({ ...r })) as CallRoute[]);
+
+/**
+ * Changing the company's vault secrets after a removal (the wallet's `rotate-vault-secrets` action): the company's
+ * records, a vault secret's run raised, sent, approved and its standing read, its secret set and its copies written,
+ * the proposal written down as carried out, the vault's records read and filed, and the upkeep's routes.
+ */
+const ROTATE_VAULT_SECRETS_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  ...UPKEEP_CALLS,
+].filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
+  .map((r) => Object.freeze({ ...r })) as CallRoute[]);
+
+/** What changing the vault secrets tells the page: how many vaults ended in each state, never which. */
+const VAULTS_CHANGED_OUTCOME = Object.freeze({
+  vaultsRotated: 'count' as const, vaultsAwaiting: 'count' as const, vaultsOwed: 'count' as const, vaultsWaiting: 'count' as const,
+  vaultsNotChanged: 'count' as const,
+});
 
 /*
  * What admitting a signer seated by address reads and writes: the company, its roster and its proposals read, the
@@ -652,6 +686,7 @@ export const ACT_INTENTS = Object.freeze({
     calls: APPROVE_PROPOSAL_CALLS,
     outcome: Object.freeze({
       state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, charge: 'code' as const, said: 'code' as const,
+      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME,
       ...UPKEEP_OUTCOME,
     }),
   }),
@@ -750,7 +785,7 @@ export const ACT_INTENTS = Object.freeze({
   /**
    * Removing a signer, from the wallet: the leaf the chain takes off and, where it changes, the approvals the account
    * needs once they are gone (none or 0 keeps the number in force). Raised, and carried out at a bar of one; the others
-   * approve it through `approve-proposal` (kind `removal`). No page asks for it yet.
+   * approve it through `approve-proposal` (kind `removal`). The Signers screen asks for it.
    */
   'remove-signer': Object.freeze({
     fields: Object.freeze({
@@ -758,7 +793,22 @@ export const ACT_INTENTS = Object.freeze({
     }),
     optional: Object.freeze(['threshold']),
     calls: REMOVE_SIGNER_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const,
+      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...UPKEEP_OUTCOME,
+    }),
+  }),
+  /*
+   * Changing the company's vault secrets after a signer is removed, from a signer who stays: for `vault`, or for every
+   * vault the company's account has adopted, a new secret is made and kept in this wallet, its run raised, and, when the
+   * approvals it needs are met on this press, set and its copies written. A run already open on the chain is never
+   * raised again. It tells the page how many vaults ended in each state. The Signers screen asks for it.
+   */
+  'rotate-vault-secrets': Object.freeze({
+    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const }),
+    optional: Object.freeze(['vault']),
+    calls: ROTATE_VAULT_SECRETS_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...UPKEEP_OUTCOME }),
   }),
   /*
    * Admit, with the seat this wallet holds, the signer waiting under `signer` whose own wallet took their seat by

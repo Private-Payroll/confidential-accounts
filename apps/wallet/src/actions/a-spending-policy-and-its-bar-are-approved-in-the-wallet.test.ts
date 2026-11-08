@@ -28,6 +28,12 @@ const t = vi.hoisted(() => ({
   events: [] as string[],
   /* Whether the person presses Stop at the window's Confirm instead of Confirm. */
   stops: false,
+  /* Each read of who is leaving: whether it was asked strictly. */
+  leavingAsked: [] as unknown[],
+}));
+vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+  seatsUnderARaisedRemovalHere: async (_doors: unknown, _key: unknown, strict?: unknown) => { t.leavingAsked.push(strict); return new Set<string>(); },
 }));
 const CHAIN_ID = 'dd'.repeat(32);
 vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (real) => {
@@ -216,6 +222,10 @@ describe('A SPENDING POLICY ANOTHER SIGNER RAISED IS APPROVED AND CARRIED OUT IN
       await expect(c.doors.records.spendingPolicies.file({})).rejects.toThrow();
       /* RED WHEN: a policy filed by a signer whose removal is raised is approved, because the leaving seats are never read. */
       expect(typeof c.doors.leaving).toBe('function');
+      t.leavingAsked.length = 0;
+      await c.doors.leaving();
+      /* RED WHEN: who is leaving is read loosely, so a removal this wallet cannot open is read as nobody leaving and a policy they filed is approved. */
+      expect(t.leavingAsked).toEqual([true]);
     }
   });
 

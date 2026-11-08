@@ -303,6 +303,8 @@ export function addSignerKind(reach: AddSignerReach): ProposalKind {
  */
 export type CarryOut = (
   ctx: StepContext, r: CompanyReach, intent: ActIntent, round: RoundHere, handed: Handed,
+  /** The company read again from the chain and its records, for what runs after a carrying out that changed it. */
+  renewed: () => Promise<CompanyReach>,
 ) => Promise<void | { readonly state: string }>;
 
 /** What the page is told the carry step got to. */
@@ -337,7 +339,7 @@ export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompa
       const handed: Handed = { over: false };
       let carried: void | { readonly state: string };
       try {
-        carried = await carryOut(ctx, r, intent, round, handed);
+        carried = await carryOut(ctx, r, intent, round, handed, async () => { read.renew(); return read.at(ctx); });
       } catch (e) {
         if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
         throw new StepRefused(kind.why(!handed.over || nothingWasSentBy(e) ? 'not-carried' : 'may-be-sent', { says: said(e) }), codeOfError(e));

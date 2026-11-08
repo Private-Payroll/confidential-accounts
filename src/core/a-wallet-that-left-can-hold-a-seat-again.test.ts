@@ -13,7 +13,7 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { newSigningKeypair, type Hex } from './crypto.js';
-import { believedSigners, rosterEntryRefusal, seatsNotBelieved, seatsStaying, type RosterWitnesses } from './roster-record.js';
+import { believedSigners, retiredSeatStillNamed, rosterEntryRefusal, seatsNotBelieved, seatsStaying, type RosterWitnesses } from './roster-record.js';
 import type { Signer } from './types.js';
 import { seatOpenedFor } from '../testing/directory-seats.js';
 
@@ -86,5 +86,21 @@ describe('A SEAT AN ANCHORED RETIREMENT RETIRED HAS NO ROSTER ENTRY, AND IS NOT 
     expect(seatsNotBelieved([ADA.signer], seatsStaying(stillHeld))).toEqual([]);
     /* The control: with no retirement anchored, the same roster leaves Bo's seat out. */
     expect(seatsNotBelieved([ADA.signer], seatsStaying({ ...stillHeld, retired: [] }))).toEqual([BO_BEFORE.seat.toLowerCase()]);
+  });
+});
+
+describe('A ROSTER THAT STILL SEATS A SIGNER WHO LEFT IS FILED AGAIN, ONCE THE CHAIN NO LONGER HOLDS THE SEAT', () => {
+  const left: RosterWitnesses = { ...witnesses(true, false), seatsOnTheChain: [ADA.seat], retired: [BO_BEFORE.seat] };
+
+  it('NAMES THE ROSTER THAT SEATS A RETIRED SEAT THE CHAIN DROPPED, AND NO OTHER', () => {
+    /* RED WHEN: a roster still seating a signer whose removal is carried out is not filed again, so every count of its signers counts them. */
+    expect(retiredSeatStillNamed([ADA.signer, BO_BEFORE.signer], left)).toBe(true);
+    /* RED WHEN: a roster is filed again while the chain still holds the retired seat, before the removal is carried out. */
+    expect(retiredSeatStillNamed([ADA.signer, BO_BEFORE.signer], { ...left, seatsOnTheChain: [ADA.seat, BO_BEFORE.seat.toUpperCase()] })).toBe(false);
+    /* RED WHEN: a roster is filed again for an entry already waiting rather than seated, or one with no retired seat at all. */
+    expect(retiredSeatStillNamed([ADA.signer, { ...BO_BEFORE.signer, status: 'pending' }], left)).toBe(false);
+    expect(retiredSeatStillNamed([ADA.signer], left)).toBe(false);
+    /* RED WHEN: a seat the chain dropped and no anchored retirement retired is taken as one that left. */
+    expect(retiredSeatStillNamed([ADA.signer, BO_BEFORE.signer], { ...left, retired: [] })).toBe(false);
   });
 });

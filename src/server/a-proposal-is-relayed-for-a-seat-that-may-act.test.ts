@@ -27,7 +27,8 @@ import type { ClosedOnChain } from './proposal-closed-on-chain.js';
 import type { Hex } from '../core/crypto.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { acceptanceHashOf } from '../core/invitation.js';
-import { adoptionRoundOf, firstSecretRunCarriedOf, firstSecretRunOf, secretRunWindowFrom, type AccountStartPure } from '../midnight/vault-start.js';
+import { adoptionRoundOf, firstSecretRunCarriedOf, secretRunOf, type AccountStartPure } from '../midnight/vault-start.js';
+import { secretRunWindowFrom } from '../midnight/secret-run-window.js';
 import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { pureCircuits as vaultPure } from '../../contracts/managed-vault/contract/index.js';
@@ -446,7 +447,7 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
   describe('A VAULT\'S FIRST SECRET RUN IS WRITTEN DOWN AS CARRIED OUT ONLY ONCE THE CHAIN SHOWS ITS SECRET SET', () => {
     const V = 'ab'.repeat(32) as Hex;
     const S = 'prp_secretRunAAA';
-    const run = firstSecretRunOf({ vault: vaultPure as never, account: pureCircuits as never }, {
+    const run = secretRunOf({ vault: vaultPure as never, account: pureCircuits as never }, {
       vault: V, secret: `${'5e'.repeat(31)}00`, readers: [recordsKeypairFrom(new Uint8Array(32).fill(1)).publicKey],
     });
     const window = secretRunWindowFrom(1_800_000_000n);
@@ -467,7 +468,7 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       /* RED WHEN: a run the chain still holds open is written down as carried out on the device's word. */
       const stillOpen = await carried('ada');
       expect(stillOpen).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-      expect(stillOpen.body.error).toMatch(/still shows this first secret run open/u);
+      expect(stillOpen.body.error).toMatch(/still shows this secret run open/u);
       open.delete(made.proposal);
       secrets.delete(V);
       /* RED WHEN: a run closed on the chain is written down as carried out while the vault holds no secret: closed unpaid, never set. */
@@ -496,12 +497,32 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       expect(sent).toEqual([]);
     });
 
+    it('writes down a run that replaced the vault\'s secret from its parts with the commitment it replaced, a value the chain disclosed', async () => {
+      const held = '9c'.repeat(32);
+      const next = secretRunOf({ vault: vaultPure as never, account: pureCircuits as never }, {
+        vault: V, secret: `${'6e'.repeat(31)}00`, readers: [recordsKeypairFrom(new Uint8Array(32).fill(1)).publicKey], previous: held,
+      });
+      const nextParts = {
+        root: next.root, opensAt: String(window.opensAt), closesAt: String(window.closesAt), salt: next.salt, nonce: next.nonce,
+        copiesRoot: next.copiesRoot, count: String(next.count), previous: held,
+      };
+      const nextMade = firstSecretRunCarriedOf({ vault: vaultPure as never, account: pureCircuits as never }, V, nextParts);
+      store.putProposal(proposal({ id: 'prp_secretRunNXT', chainId: nextMade.proposal, digest: nextMade.payload, raisedAt }));
+      secrets.set(V, next.commitment);
+      started.add(V);
+      /* RED WHEN: the parts are made again over zero whatever they replaced, so a replacement's root never matches and it stays open. */
+      expect((await carried('ada', { vault: V, run: { ...nextParts, previous: undefined } }, 'prp_secretRunNXT')).status).toBe(409);
+      expect((await carried('ada', { vault: V, run: nextParts }, 'prp_secretRunNXT')).body).toMatchObject({ status: 'executed' });
+      /* RED WHEN: a field the parts do not name is taken: `previous` is a 64-hex commitment or nothing. */
+      expect((await carried('ada', { vault: V, run: { ...nextParts, previous: 'zz' } }, 'prp_secretRunNXT')).status).toBe(400);
+    });
+
     it('refuses parts that are not this proposal\'s run, a run of another vault, one withdrawn, and one the chain never showed raised', async () => {
       secrets.set(V, run.commitment);
       store.putProposal(secretRun());
       /* RED WHEN: the device's parts are taken for the run whatever window they name, so a record is closed under another run. */
       expect((await carried('ada', { vault: V, run: { ...parts, closesAt: String(window.closesAt + 1n) } })).body.error)
-        .toMatch(/not the first secret run of that vault/u);
+        .toMatch(/not the secret run of that vault/u);
       /* RED WHEN: a run is written down for a vault it is not the run of. */
       secrets.set('cd'.repeat(32), run.commitment);
       expect((await carried('ada', { vault: 'cd'.repeat(32), run: parts })).status).toBe(409);

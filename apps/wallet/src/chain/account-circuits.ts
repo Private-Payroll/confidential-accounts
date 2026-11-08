@@ -1,6 +1,7 @@
 import {
   ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS,
-  ACCOUNT_CIRCUITS_AN_INVITEE_PROVES, VAULT_CIRCUITS,
+  ACCOUNT_CIRCUITS_AN_INVITEE_PROVES, ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS,
+  VAULT_CIRCUITS, type VaultCircuit,
 } from '../../../../src/midnight/vault-contract.js';
 
 /**
@@ -38,22 +39,21 @@ export const VAULT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze
 
 /**
  * THE COMPANY ACCOUNT'S CIRCUITS EACH VAULT CIRCUIT THIS WALLET PROVES CALLS,
- * inside the same transaction. Setting a vault's secret asks the account to
- * approve the change, and that call is a proof of its own, made with the
- * account's key for it; a payment out, private or public, asks the account to
- * record it against the approved run; writing a sealed copy, a private
- * deposit and a merge call nothing. A call missing here is a proof the wallet cannot make, so the whole
- * transaction stops at it; one listed here that the circuit does not make is a
- * proving key held for nothing.
+ * inside the same transaction, taken from the vault's one list of its calls
+ * into the account (`ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS` in
+ * vault-contract.ts) for the vault circuits above, never retyped. Setting a
+ * vault's secret asks the account to approve the change, and that call is a
+ * proof of its own, made with the account's key for it; a payment out, private
+ * or public, asks the account to record it against the approved run; writing a
+ * sealed copy, a private deposit and a merge call nothing. A call missing here
+ * is a proof the wallet cannot make, so the whole transaction stops at it.
  */
-export const ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  setNonceSecret: Object.freeze(['approveVaultChange']),
-  writeSecretCopy: Object.freeze([]),
-  deposit: Object.freeze([]),
-  payout: Object.freeze(['recordPaymentFromVault']),
-  payoutUnshielded: Object.freeze(['recordPaymentFromVault']),
-  mergeNotes: Object.freeze([]),
-});
+export const ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS: Readonly<Record<string, readonly string[]>> = Object.freeze(Object.fromEntries(
+  VAULT_CIRCUITS_THE_WALLET_PROVES.map((c) => {
+    const calls: readonly string[] | undefined = ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS[c as VaultCircuit];
+    if (calls === undefined) throw new Error(`${c} is not one of the vault's circuits, so which account circuits it calls is not known.`);
+    return [c, calls];
+  })));
 
 /** The account circuits a vault circuit this wallet proves calls: the wallet proves each, only as that call. */
 export const ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL: readonly string[] = Object.freeze([

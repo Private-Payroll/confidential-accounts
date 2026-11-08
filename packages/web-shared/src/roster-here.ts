@@ -12,7 +12,9 @@
  * shown; a filing from here carries it on as it was filed, never changed,
  * unless it is refused for good (`carriedHere`). A version every device
  * refuses for who filed it, or for a signer it leaves out, is followed by the
- * next version filed from here (`rosterHere`).
+ * next version filed from here (`rosterHere`), and so is a believed version that
+ * still seats a signer whose removal is anchored and carried out on the chain
+ * (`fileTheRosterFollowedHere`).
  *
  * Three changes are made here, each checked here first:
  *
@@ -28,25 +30,26 @@
  *   · every open offer is **folded** into the roster by a seat already believed,
  *     each checked against the signing key the roster holds for that signer.
  */
-import { keyInForce, keyOf, keysHeld, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { keyOf, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import { canonical, fromHex, signingPublicKeyOf, wrapKey, type Hex } from '../../../src/core/crypto.js';
 import { openAccount } from '../../../src/core/account.js';
 import {
-  believedSigners, foundingRosterRefusal, oneEntryPerSeat, openRoster, ROSTER_ENTRY_REFUSAL, ROSTER_ID, rosterEntryRefusal, sealRoster, seatsNotBelieved,
+  believedSigners, foundingRosterRefusal, oneEntryPerSeat, openRoster, retiredSeatStillNamed, ROSTER_ENTRY_REFUSAL, ROSTER_ID, rosterEntryRefusal, sealRoster, seatsNotBelieved,
   seatsStaying as stayingIn,
   type DirectoryWitness, type RefusedEntry, type RosterEntryRefusal, type RosterSecrets, type RosterWitnesses,
 } from '../../../src/core/roster-record.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
 import { invitationMakesItsProposal, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { vaultKeysOfferOpened } from './vault-keys-offer-opened.js';
 import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import {
   addSignerByAddressIn, invitationsByAddressIn, proposalFilingRefusal, seatInvitationIn, type AddSignerByAddress,
 } from '../../../src/core/proposal-filing.js';
 import { seatOpeningRefusal, walletKeyProvedBy } from '../../../src/core/seat-opening.js';
 import {
-  openVaultKeysOffer, rosterWithVaultKeys, sealVaultKeysOffer, signVaultKeys, vaultKeyIndexOf, vaultKeysOfferRefusal,
+  rosterWithVaultKeys, sealVaultKeysOffer, signVaultKeys, vaultKeyIndexOf,
   type VaultKey, type VaultKeysOffer,
 } from '../../../src/core/vault-keys.js';
 import type { Account, PendingSigner, PendingSignerPayload, SealedAccount, SealedProposal, Signer } from '../../../src/core/types.js';
@@ -60,6 +63,7 @@ import { manifestServiceFor, type RecordsEntered } from './record-entered-here.j
 import { carriedEntriesEntered } from './carried-entries-entered.js';
 import { aReadNotMade, PROPOSALS_NOT_READ, SEAT_READ_STOP, seatsTakenAsked } from './seat-not-read-on-the-chain.js';
 import { signedByASeatHeld } from './invitation-signed-by-a-seat.js';
+import { seatingRefusedHolding } from './roster-seating-refused.js';
 import { companyRecordKey, filingRefusalOf, mayInvite, seatsWithAnotherRecordsKey, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { refuseASeatWhoseFingerprintIsNotTheJoiners } from './seat-request-fingerprint.js';
@@ -373,7 +377,7 @@ export const provedSeatsOf = (seats: readonly DirectorySeat[]): DirectoryWitness
  * made again (`chain-unread`): a read not made is never taken as nobody
  * waiting. Where the chain shows a seating this device must not tell as any
  * seat, it stops with words that reading again will not change it
- * (`seating-refused`).
+ * (`seating-refused`), keeping the signers it believed for the removal that clears it.
  */
 export async function rosterBelievedHere(
   sealed: SealedAccount & { readonly roster?: SealedCompanyRecord | null }, viewingKey: KeysHeld,
@@ -431,9 +435,8 @@ export async function rosterBelievedHere(
       ownFilingNeverEntered(here, roster, d.own ?? null), { check: ROSTER_CHECK.filerNotBelieved, because: filingRefusalCodeOf(why), records: here.records });
   }
   const missing = unnamedIn(opened.signers, stayingIn(witnesses), waited);
-  if (missing.length > 0 && stopped.includes(SEAT_READ_STOP.refused)) {
-    throw new RosterNotBelieved(SEATING_REFUSED, null, null, { check: ROSTER_CHECK.seatingRefused, stoppedBy: stopped });
-  }
+  if (missing.length > 0 && stopped.includes(SEAT_READ_STOP.refused))
+    throw seatingRefusedHolding(new RosterNotBelieved(SEATING_REFUSED, null, null, { check: ROSTER_CHECK.seatingRefused, stoppedBy: stopped }), held, missing);
   if (missing.length > 0 && aReadNotMade(stopped)) {
     throw new RosterNotBelieved(stopped.includes(SEAT_READ_STOP.noIndexer) ? NO_INDEXER_TO_READ : CHAIN_UNREAD, null, null,
       { check: ROSTER_CHECK.chainUnread, stoppedBy: stopped });
@@ -716,15 +719,19 @@ const boundFrom = (b: Signer, refused: readonly Signer[], w: RosterWitnesses): S
 };
 
 /**
- * **THE VERSION THAT FOLLOWS ONE EVERY DEVICE REFUSES, FILED FROM HERE**: the
- * entries `rosterHere` carries, filed above every version served, and entered
- * in the company's records. Returns the version filed; null, with nothing
- * filed, when the newest version is believed, or when this seat may not file a
- * roster (`filingRefusalOf`): a version it filed would be refused in turn.
+ * **THE VERSION THAT FOLLOWS ONE EVERY DEVICE REFUSES, OR ONE THAT STILL SEATS A
+ * SIGNER WHO LEFT, FILED FROM HERE**: the entries `rosterHere` carries, filed above
+ * every version served, and entered in the company's records. A believed version
+ * is followed too while it holds an active entry for a seat an anchored retirement
+ * retired and the chain no longer holds (`retiredSeatStillNamed`): the carried
+ * entries leave that seat out, so the vault-key index filed with them counts only
+ * the seats that stay. Returns the version filed; null, with nothing filed, when
+ * the newest version is believed and seats nobody who left, or when this seat may
+ * not file a roster (`filingRefusalOf`): a version it filed would be refused in turn.
  */
 export async function fileTheRosterFollowedHere(d: RosterDoors): Promise<number | null> {
   const read = await rosterHere(d);
-  if (read.followed === null) return null;
+  if (read.followed === null && !retiredSeatStillNamed(read.opened.signers, read.witnesses)) return null;
   if (filerRefusedHere(read.held.here, signingPublicKeyOf(d.signingSecret), read.version + 1)) return null;
   const { filing, entry } = nextFiling(d, read.sealed.keyEpoch, seatedOf(read.carried), read.version);
   const entries = await withTheFoundingFirst(d, nothingAnchoredIn(read.held), entry);
@@ -1174,7 +1181,7 @@ export interface Folded {
 
 /**
  * **EVERY OPEN OFFER OF VAULT KEYS, FOLDED INTO THE ROSTER FROM THIS DEVICE.**
- * Each is opened under the company's roster key (`openVaultKeysOffer`) and
+ * Each is opened under the company's roster key (`vaultKeysOfferOpened`) and
  * checked against the roster this device opened (`rosterWithVaultKeys`):
  * signed for its signer's entry by the signing key that entry holds, and its
  * records-key statement verifying for the seat that entry holds. An offer is
@@ -1195,12 +1202,8 @@ export async function foldOffersHere(d: RosterDoors): Promise<Folded> {
     const seat = String(kept?.seat ?? '').toLowerCase();
     try {
       /* An offer names no epoch: it is opened with each key held, newest first, and believed for its signatures and entry. */
-      const offer = keysHeld(d.viewingKey).map((k) => openVaultKeysOffer(d.accountId, kept, k)).find((o) => typeof o !== 'string')
-        ?? openVaultKeysOffer(d.accountId, kept, keyInForce(d.viewingKey));
+      const offer = vaultKeysOfferOpened(d.accountId, kept, d.viewingKey, d.label, d.account);
       if (typeof offer === 'string') throw new Error(`the offer is refused: ${offer}.`);
-      /* The entry its own wallet signed: for this company, naming the keys it gives, for the seat and signing key the roster holds. */
-      const notKept = vaultKeysOfferRefusal(d.label, d.account, d.accountId, offer);
-      if (notKept !== null) throw new Error(`the offer is refused: ${notKept}.`);
       const entry = roster.signers.find((x) => x.id === offer.signerId && x.status === 'active');
       if (entry === undefined || (entry.leafCommitment ?? '').toLowerCase() !== seat
         || entry.signingPublicKey.toLowerCase() !== String(offer.entry.statement.signingKey).toLowerCase()) {

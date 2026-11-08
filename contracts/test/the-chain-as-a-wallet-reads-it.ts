@@ -15,7 +15,7 @@ import { directoryOf, filerSeatNow, type DirectoryChainRead, type DirectoryStore
 import type { MayFileUnder } from '../../src/server/vault-records-authority.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
 import {
-  attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, fileTheOwedDirectoryEntry, type DirectoryHereDeps, type DirectoryRead,
+  attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, fileTheOwedDirectoryEntry, readersIn, type DirectoryHereDeps, type DirectoryRead,
   type OwedDirectoryEntry,
 } from 'vaults-web-shared/vault-page-doors.js';
 import { anchoredOver } from '../../src/testing/record-tree-double.js';
@@ -100,10 +100,11 @@ export const judgeOver = (deps: DeviceReads): FreshJudge => directoryJudge(direc
 /** The company's directory as a device believes it, with the records each read asks for: where a vault's start finds its proposals. */
 export const directoryHereOver = (deps: DeviceReads): DirectoryRead => (asked) => directoryHere(directoryDepsOver(deps), asked);
 
-/** The company's directory as a device believes it, read afresh: where each reader of a vault's secret is read from. */
+/** The company's directory as a device believes it, read afresh: where each reader of a vault's secret is read from, and who they are (`readersIn`). */
 export const directoryBelievedOver = (deps: DeviceReads) => async () => {
   const here = await directoryHere(directoryDepsOver(deps));
-  return { seats: here.dir.seats, leafOf: here.leafOf };
+  const readers = (await readersIn(async () => here).signers()).map((x) => x.wrappingPublicKey.toLowerCase());
+  return { seats: here.dir.seats, leafOf: here.leafOf, readers };
 };
 
 /** A seat's own entry, signed by its wallet for its filing key and filed from its device, as the page files one; a refusal is thrown. */

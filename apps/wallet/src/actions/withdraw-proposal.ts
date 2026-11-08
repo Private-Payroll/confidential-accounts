@@ -17,7 +17,7 @@
  * company's list of proposals.
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
-import { ADOPT_VAULT, VAULT_SECRET } from '../../../../src/core/proposal-filing.js';
+import { ADOPT_VAULT, PAY_KEY, VAULT_SECRET } from '../../../../src/core/proposal-filing.js';
 import type { RoundOnChain, OpenedRound } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import {
   governedCallServiceFor, nothingWasSentBy, SentAndNotYetSeen, withCompanyKeys, WithdrawalRefused, withdrawOnDevice, type WithdrawalOutcome,
@@ -52,7 +52,7 @@ export const WITHDRAWN_KINDS: Readonly<Record<string, { readonly sealedAs: strin
   'one-off': { sealedAs: 'transfer' },
   'adopt-vault': { never: 'never-adopt-vault' },
   'vault-secret': { never: 'never-vault-secret' },
-  'pay-key': { never: 'never-pay-key' },
+  'pay-key': { sealedAs: PAY_KEY },
   recovery: { never: 'never-recovery' },
 });
 /** Kinds sealed for a vault's set-up: whatever the page called them, never withdrawn here. */
@@ -66,13 +66,16 @@ const kindAsked = (intent: ActIntent) => {
 
 /**
  * The refusal of the kind opened, run inside the withdrawal before anything is built or sent: a kind of a vault's set-up
- * is never withdrawn, the kind the record names must be the one shown, and a one-off the chain holds is not withdrawn.
+ * is never withdrawn, the kind the record names must be the one shown, a one-off the chain holds is not withdrawn, and
+ * the company's pay-record key is withdrawn only once the chain shows a removal has outrun it: until then it can still be
+ * carried out, and raised again it would carry the same identity, whose approvals given before cannot be given again.
  */
 const kindRefusal = (shown: string) => (opened: OpenedRound, onChain: RoundOnChain): void => {
   const sealed = String(opened.kind ?? '');
   if (SEALED_NEVER[sealed] !== undefined) throw new StepRefused(why(SEALED_NEVER[sealed]!));
   if (sealed !== shown) throw new StepRefused(why('not-as-shown'));
   if (sealed === 'transfer' && onChain.held !== 'never') throw new StepRefused(why('one-off-held'));
+  if (sealed === PAY_KEY && onChain.outrun !== true) throw new StepRefused(why('never-pay-key'));
 };
 
 /**

@@ -12,7 +12,7 @@ import { whyNotTheReaders, type Roster } from './handover-check.js';
 import type { Account, SealedProposal, SealedRun } from '../../../src/core/types.js';
 import { digestOfBody, type WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
-import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
+import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
 import {
   asAMember, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, mayFile, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
@@ -27,7 +27,7 @@ import { seatsTakenAsked, type InvitedSeatsRead } from './seat-not-read-on-the-c
 import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
-import type { VaultService } from './vault-operation.js';
+import type { VaultService } from './vault-service.js';
 import type { AccountDeployed } from './governed-call-builder.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import { companyRecordEntry, directoryEntry, proposalEntry, recordKeyOf, runEntry, type RecordRead } from '../../../src/midnight/record-manifest.js';
@@ -1154,7 +1154,6 @@ const otherBytesRefusal = (here: DirectoryHere, store: 'run' | 'proposal', x: Li
   }
 };
 
-/** A run or a proposal as the service lists it: its id, and the key its filer signed it with. */
 /**
  * The one refusal a listed record is left out for, alone (`sealedUnderAnOlderKey`): its bytes are the ones the
  * company's records name, and it was sealed under an older company key than the one in force when it was entered.
@@ -1166,6 +1165,7 @@ const olderKeyRefusal = (here: DirectoryHere, store: 'run' | 'proposal', x: List
   return sealedUnderAnOlderKey(here, { store, kind: store, id: x.id }, s.version ?? 1, x.keyEpoch);
 };
 
+/** A run or a proposal as the service lists it: its id, and the key its filer signed it with. */
 interface ListedRecord { readonly id: string; readonly filedBy?: { readonly publicKey: string }; readonly keyEpoch?: number }
 
 /** What a read asks to have one store's records of one kind listed: the kind whole. */
@@ -1198,50 +1198,6 @@ export const directoryJudge = (deps: DirectoryHereDeps): FreshJudge => async (as
   }
   return judgeIn(here);
 };
-
-/**
- * **A NEW SIGNER'S COPY OF EACH VAULT'S NONCE SECRET, GIVEN FROM A SIGNER'S
- * OWN DEVICE.** Every vault named is opened here with this signer's records
- * key, and the next version is filed wrapped to everybody who could open it
- * and to the new signer too (`admitToNonceSecret`): nothing about the secret
- * changes. The new signer's copy is sealed to the records key their own
- * directory entry names - the key their wallet signed for the seat the account
- * holds - and to nothing the roster says, so it is given only once this device
- * believes that seat, by the one rule it wraps a vault's records by
- * (`seatNotBelievedHere`), whatever its role: an entry not
- * yet filed, or not believed, gives nothing. A vault whose newest version the
- * new signer can already open is left as it is.
- */
-export async function giveEachVaultSecretHere(input: {
-  /** Each vault by the id its nonce secret is filed under. */
-  readonly vaultIds: readonly string[];
-  readonly me: DeviceSigner;
-  /** The seat being given its copies. */
-  readonly seat: string;
-  readonly directory: DirectoryRead;
-  readonly records: DeviceRecords;
-}): Promise<{ readonly given: readonly string[]; readonly had: readonly string[] }> {
-  const here = await input.directory();
-  const entry = here.dir.seats.find((x) => x.seat === input.seat.toLowerCase());
-  if (entry === undefined) {
-    throw new Error('the new signer has no entry in the company\'s directory that this device believes yet, so there is no '
-      + 'key of theirs to give a copy to. Nothing was filed. Their entry is filed from their own device once they are seated.');
-  }
-  const store = input.records('nonce-secret');
-  const opener = recordsKeypairFrom(input.me.companyKey);
-  const given: string[] = [];
-  const had: string[] = [];
-  const why = seatNotBelievedHere(here, entry);
-  if (why !== null) throw new Error(`the new signer is not given a copy, because their seat is not one this device believes: ${why}. Nothing was filed.`);
-  for (const vault of input.vaultIds) {
-    const rec = await store.get(vault);
-    if (rec === null) throw new Error(`vault ${vault} has no nonce secret filed, so there is no copy to give. Nothing more was filed.`);
-    if (openNonceSecrets(rec, vault, opener).readers.includes(entry.wrappingKey)) { had.push(vault); continue; }
-    await store.put(vault, admitToNonceSecret(rec, vault, opener, [{ publicKey: entry.wrappingKey }]));
-    given.push(vault);
-  }
-  return { given, had };
-}
 
 /**
  * Each vault record this seat files and reads, signed with its filing key,

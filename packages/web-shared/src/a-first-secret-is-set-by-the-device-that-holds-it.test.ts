@@ -52,7 +52,7 @@ const CHAIN = {
 };
 const hex = (b: unknown) => Buffer.from(b as Uint8Array).toString('hex');
 
-describe('setting a vault\'s first secret from the device', () => {
+describe('setting a vault\'s secret from the device, its first or a replacement', () => {
   it('BUILDS THE CALL WITH THE EDGE, THE SECRET ITSELF AND NO EARLIER SECRET, in the places the circuit reads them', async () => {
     const { deps, asked } = standIns();
     await buildSetNonceSecret(deps, {
@@ -70,6 +70,20 @@ describe('setting a vault\'s first secret from the device', () => {
     /* RED WHEN a first secret is built to carry anything: there is no earlier one. */
     expect(hex(args[7])).toBe('00'.repeat(32));
     expect(args).toHaveLength(8);
+  });
+
+  it('BUILDS A REPLACEMENT CARRYING THE EARLIER SECRET IN THE PLACE THE CIRCUIT READS IT, and refuses one that is not thirty-two bytes', async () => {
+    const { deps, asked } = standIns();
+    const earlier = `${'7c'.repeat(31)}00`;
+    await buildSetNonceSecret(deps, {
+      vault: VAULT, account: ACCOUNT, run: RUN, secret: SECRET, earlier, proposal: 'aa'.repeat(32), opensAt: '1', closesAt: '2', chain: CHAIN,
+    });
+    /* RED WHEN a replacement is built with zero as its earlier secret: the vault refuses it once a secret took money. */
+    expect(hex(asked[0]!.args[7])).toBe(earlier);
+    expect(hex(asked[0]!.args[6])).toBe(SECRET);
+    await expect(buildSetNonceSecret(deps, {
+      vault: VAULT, account: ACCOUNT, run: RUN, secret: SECRET, earlier: 'zz', proposal: 'aa'.repeat(32), opensAt: '1', closesAt: '2', chain: CHAIN,
+    })).rejects.toThrow(/earlier secret is not thirty-two bytes/);
   });
 
   it('REFUSES A RUN THAT DOES NOT SHOW WHERE ITS COPIES END, and builds nothing', async () => {

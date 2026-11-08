@@ -25,7 +25,11 @@ import { inviteAction } from './invite.js';
 import { approveProposalAction } from './approve-proposal.js';
 import { changeThresholdAction } from './change-threshold.js';
 import { removeSignerAction } from './remove-signer.js';
-import { AFTER_A_REMOVAL } from './after-a-removal.js';
+import type { RemoveSignerReach } from './remove-signer.js';
+import { rotationDoorsIn } from './upkeep.js';
+import type { VaultDoorsReach } from './vault-doors-here.js';
+import { toldOf, vaultSecretsChangedHere } from './vault-secrets-changed-here.js';
+import { rotateVaultSecretsAction } from './rotate-vault-secrets.js';
 import { admitSignerAction } from './admit-signer.js';
 import { admitPersonAction } from './admit-person.js';
 import { changePersonAction } from './change-person.js';
@@ -44,6 +48,18 @@ export const pause = (ms: number, signal: AbortSignal): Promise<void> => new Pro
   const timer = setTimeout(() => { signal.removeEventListener('abort', stopped); resolve(); }, ms);
   const stopped = (): void => { clearTimeout(timer); reject(new Error('stopped')); };
   signal.addEventListener('abort', stopped, { once: true });
+});
+
+/**
+ * **WHAT RUNS ONCE THE CHAIN HAS CARRIED A REMOVAL OUT**, for the removal action and the one approval alike
+ * (`AfterRemovalCarried`, remove-signer.ts): every vault's secret is changed from this wallet so the signer who left
+ * cannot open what comes next (`vaultSecretsChangedHere`, as a person's press: it raises a new secret's run and carries
+ * it when the approvals are met). The wallet of the seat that left makes nothing. It is handed the company as read again
+ * after the company key's change, and answers how many vaults ended in each state.
+ */
+export const afterARemoval = (reach: VaultDoorsReach): Pick<RemoveSignerReach, 'afterCarried'> => Object.freeze({
+  afterCarried: async (ctx, r, removed) =>
+    toldOf(await vaultSecretsChangedHere(ctx, r, reach, await rotationDoorsIn(r, r.api), 'raise', { leaf: removed.leaf })),
 });
 
 /**
@@ -122,12 +138,13 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
   }),
   'approve-proposal': approveProposalAction({
     ...VAULTS,
-    ...AFTER_A_REMOVAL,
+    ...afterARemoval(VAULTS),
     commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
     recovery: RECOVERY,
   }),
   'change-threshold': changeThresholdAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
-  'remove-signer': removeSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause, ...AFTER_A_REMOVAL }),
+  'remove-signer': removeSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause, ...afterARemoval(VAULTS) }),
+  'rotate-vault-secrets': rotateVaultSecretsAction(VAULTS),
   'raise-run': raiseRunAction(VAULTS),
   'pay-run': payRunAction(VAULTS),
   'withdraw-proposal': withdrawProposalAction(VAULTS),

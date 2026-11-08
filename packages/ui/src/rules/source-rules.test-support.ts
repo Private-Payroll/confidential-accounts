@@ -1014,8 +1014,8 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/setup/step-ids.ts#STEP': 'the id of each setup step, which is its key in the list of steps',
   'apps/web/src/setup/steps.ts#SETUP_STEPS': 'each setup step\'s id and the page it is also done from; its name, line and what it will be are asked for by key',
   'apps/web/src/setup/standing.ts#STANDING': 'where a setup step stands, compared by the code and set as a mark tests find it by',
-  'apps/web/src/adapters/refusals.ts#ACT_REFUSAL': 'why an action on a company did not happen, one of a fixed set that a screen turns into its own phrase',
-  'apps/web/src/adapters/refusals.ts#ACTED': 'what an action\'s answer is, compared by the code',
+  'apps/web/src/adapters/refusal-codes.ts#ACT_REFUSAL': 'why an action on a company did not happen, one of a fixed set that a screen turns into its own phrase',
+  'apps/web/src/adapters/refusal-codes.ts#ACTED': 'what an action\'s answer is, compared by the code',
   'apps/web/src/adapters/handover-state.ts#HANDOVER': 'where a company stands on being held by its committee, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/handover-state.ts#SERVICE': 'the service\'s addresses and the words of its answer, sent and compared, never shown',
   'apps/web/src/adapters/create-company.ts#FIRST_SIGNER': 'the role of the person creating a company, on its roster, a word of the service\'s protocol',
@@ -1131,6 +1131,14 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/shell/account-frame.tsx#BROWSER': 'the attributes an open panel\'s library marks the rest of the page hidden with, and the name of the event a focus guard hears, both read by the browser',
   'apps/web/src/shell/right-panel.tsx#HEARD': 'the names of the browser events about focus the panel hears before its own library does',
   'apps/web/src/adapters/vault-private-money.ts#COULD_NOT_READ': 'why a vault\'s private money could not be read, one of a fixed set that a screen turns into its own phrase',
+  'apps/web/src/actions/signers.tsx#VAULTS': 'the mark the vault secrets\' press is found by, which tests read and a person never sees',
+  'apps/web/src/actions/signers.tsx#ROTATED_PARTLY': 'the state the wallet gives a press of the vault secrets that left some vault owing its change, compared by the code',
+  'apps/web/src/actions/signers.tsx#COUNT': 'the marks the lines of how many vaults ended in each state are found by, which tests read and a person never sees',
+  'apps/web/src/adapters/signer-acts.ts#REMOVAL_STATE': 'where the wallet says a removal stands, compared by the code and never shown',
+  'apps/web/src/adapters/signer-acts.ts#ROTATION': 'the codes the wallet gives for the change of the vault secrets after a removal, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/signer-acts.ts#VAULT_SECRETS_NOT_STARTED': 'the code the wallet gives when the vault secrets\' change could not start, compared by the code',
+  'apps/web/src/adapters/filing-judge.ts#QUIETLY': 'the way the shared judges are told not to ask the wallet on a page load, a word of theirs that is never shown',
+  'apps/web/src/records/parts.tsx#PART': 'where the notice of a company the wallet has not opened stands, compared by the code and set as a mark tests find it by',
 };
 
 /** The part of `CODES` naming declarations in files under `dir`. Each package's check holds its own entries to declarations it has. */

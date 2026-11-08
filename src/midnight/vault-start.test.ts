@@ -10,9 +10,10 @@ import { pureCircuits as P } from '../../contracts/managed/contract/index.js';
 import { pureCircuits as V } from '../../contracts/managed-vault/contract/index.js';
 import { fromHex, toHex } from '../core/crypto.js';
 import {
-  adoptionRoundOf, firstSecretRunCarriedOf, firstSecretRunOf, secretRunProposalOf, startStandingOf, secretRunWindowFrom,
+  adoptionRoundOf, firstSecretRunCarriedOf, secretRunOf, secretRunProposalOf, startStandingOf,
   type AccountLedgerForAStart, type VaultLedgerForAStart,
 } from './vault-start.js';
+import { secretRunWindowFrom } from './secret-run-window.js';
 import { openSecretCopy } from './sealed-secret-copy.js';
 import { recordsKeypairFrom } from './company-nonce-secret.js';
 
@@ -42,17 +43,17 @@ const accountLedger = (over: {
     runWindow: (over.windows ?? []).map(([id, w]) => [fromHex(id), w] as [Uint8Array, { opensAt: bigint; closesAt: bigint }]),
   };
 };
-const vaultLedger = (entries: Array<[Uint8Array, Uint8Array]> = [], commitment = new Uint8Array(32)): VaultLedgerForAStart => {
+const vaultLedger = (entries: Array<[Uint8Array, Uint8Array]> = [], commitment: Uint8Array = new Uint8Array(32)): VaultLedgerForAStart => {
   const m = new Map(entries.map(([k, v]) => [key(k), v]));
   return { nonceCommitment: commitment, secretCopies: { member: (k) => m.has(key(k)), lookup: (k) => m.get(key(k))! } };
 };
 
 describe('A VAULT\'S START', () => {
-  const run = firstSecretRunOf(circuits, { vault: VAULT, secret: SECRET, readers: [B.publicKey, A.publicKey, A.publicKey] });
+  const run = secretRunOf(circuits, { vault: VAULT, secret: SECRET, readers: [B.publicKey, A.publicKey, A.publicKey] });
 
   it('IS MADE THE SAME WAY EVERY TIME, FROM THE SECRET AND ITS READERS, WHATEVER ORDER THE READERS ARE GIVEN IN', () => {
     /* RED WHEN: a start run again makes another run than the one its signers approved. */
-    expect(firstSecretRunOf(circuits, { vault: VAULT, secret: SECRET, readers: [A.publicKey, B.publicKey] })).toEqual(run);
+    expect(secretRunOf(circuits, { vault: VAULT, secret: SECRET, readers: [A.publicKey, B.publicKey] })).toEqual(run);
     expect(run.copies.map((c) => c.reader)).toEqual([A.publicKey, B.publicKey].sort());
     expect(run.count).toBe(2n);
     /* Every reader's copy opens to the secret with their own records key. */
@@ -61,7 +62,7 @@ describe('A VAULT\'S START', () => {
       expect(openSecretCopy({ vault: VAULT, parts: copy.parts.map(fromHex), reader: r })).toBe(SECRET);
     }
     /* RED WHEN: another secret makes the same run - its identity would say nothing about which secret was approved. */
-    expect(firstSecretRunOf(circuits, { vault: VAULT, secret: '5f'.repeat(31) + '00', readers: [A.publicKey] }).salt).not.toBe(run.salt);
+    expect(secretRunOf(circuits, { vault: VAULT, secret: '5f'.repeat(31) + '00', readers: [A.publicKey] }).salt).not.toBe(run.salt);
   });
 
   it('CARRIES THE EDGE THE VAULT CHECKS, and refuses a secret the vault would refuse, before anything is built', () => {
@@ -69,7 +70,7 @@ describe('A VAULT\'S START', () => {
     expect(V.emptyFrom(fromHex(run.copiesRoot), run.count, run.edge as never)).toBe(true);
     expect(V.emptyFrom(fromHex(run.copiesRoot), run.count - 1n, run.edge as never)).toBe(false);
     /* RED WHEN a secret whose last byte is not zero is made into a run: the vault would refuse it after the approvals. */
-    expect(() => firstSecretRunOf(circuits, { vault: VAULT, secret: '5e'.repeat(32), readers: [A.publicKey] }))
+    expect(() => secretRunOf(circuits, { vault: VAULT, secret: '5e'.repeat(32), readers: [A.publicKey] }))
       .toThrow(/ends in a zero byte/);
   });
 
@@ -169,5 +170,76 @@ describe('A VAULT\'S START', () => {
     /* RED WHEN: a vault holding another secret is read as one whose first secret is still to set. */
     const another = startStandingOf(circuits, { vault: VAULT, account, run, now: 1n, vaultLedger: vaultLedger([], new Uint8Array(32).fill(9)) });
     expect(another.secret).toMatchObject({ set: false, another: true });
+  });
+
+  describe('A SECRET RUN REPLACING THE VAULT\'S SECRET', () => {
+    const HELD = '9c'.repeat(32);
+    const NEXT = '6e'.repeat(31) + '00';
+    const replacing = secretRunOf(circuits, { vault: VAULT, secret: NEXT, readers: [A.publicKey, B.publicKey], previous: HELD });
+
+    it('IS MADE OVER THE COMMITMENT THE VAULT HOLDS, SO IT IS ANOTHER RUN THAN THE SAME SECRET AS A FIRST, AND IS NOT READ AS ANOTHER SECRET', () => {
+      /* RED WHEN: the run's leaf binds zero whatever it replaces, as the first secret's does: the vault refuses it (that run replaces a secret this vault no longer holds). */
+      expect(replacing.previous).toBe(HELD);
+      expect(replacing.details).not.toBe(secretRunOf(circuits, { vault: VAULT, secret: NEXT, readers: [A.publicKey, B.publicKey] }).details);
+      expect(() => secretRunOf(circuits, { vault: VAULT, secret: NEXT, readers: [A.publicKey], previous: 'zz' })).toThrow(/the commitment a secret run replaces/u);
+      const read = startStandingOf(circuits, { vault: VAULT, account: accountLedger({ vaults: [VAULT] }), vaultLedger: vaultLedger([], fromHex(HELD)), run: replacing, now: 1n });
+      /* RED WHEN: the vault holding the very secret the run replaces is read as holding another, so no replacement is ever approved. */
+      expect(read.secret).toMatchObject({ set: false, another: false, held: HELD });
+      const parts = {
+        root: replacing.root, opensAt: '1', closesAt: '2', salt: replacing.salt, nonce: replacing.nonce,
+        copiesRoot: replacing.copiesRoot, count: String(replacing.count), previous: HELD,
+      };
+      /* RED WHEN: the run made again from its public parts drops the commitment it replaced, so the service cannot write it down. */
+      expect(firstSecretRunCarriedOf(circuits, VAULT, parts).rootUnder(replacing.commitment)).toBe(replacing.root);
+    });
+
+    it('FINDS THE SECRET IT MUST CARRY: THE ONE THE VAULT LAST HAD EVERY COPY WRITTEN FOR, AMONG THOSE THIS DEVICE HOLDS', () => {
+      const oldest = '1a'.repeat(31) + '00';
+      const last = '2b'.repeat(31) + '00';
+      const written = V.secretCommitmentOf(fromHex(VAULT), fromHex(last));
+      const ledger = vaultLedger([[V.copiesWrittenKey(), written]], fromHex(HELD));
+      const read = (earlier: string[]) => startStandingOf(circuits, { vault: VAULT, account: accountLedger({ vaults: [VAULT] }), vaultLedger: ledger, run: replacing, now: 1n, earlier }).secret?.earlier;
+      /* RED WHEN: the newest secret held is passed as the earlier one, which is not always the one whose copies were last all written. */
+      expect(read([oldest, last, NEXT])).toEqual({ secret: last });
+      /* RED WHEN: a device holding none of them builds the call anyway, which the vault refuses. */
+      expect(read([oldest])).toEqual({ unheld: true });
+      /* RED WHEN: a vault no secret's copies were all written for is asked to carry one. */
+      expect(startStandingOf(circuits, { vault: VAULT, account: accountLedger({ vaults: [VAULT] }), vaultLedger: vaultLedger(), run: replacing, now: 1n, earlier: [oldest] }).secret?.earlier).toBeNull();
+    });
+
+    it('WITH TWO RUNS OF ONE SECRET OPEN, READS THE ONE UNDER THE WINDOW IT IS ASKED ABOUT, WHICHEVER THE LEDGER LISTS FIRST', () => {
+      const w1 = { opensAt: 0n, closesAt: 99_999n };
+      const w2 = secretRunWindowFrom(10_000n, true);
+      const id1 = secretRunProposalOf(P as never, replacing, w1);
+      const id2 = secretRunProposalOf(P as never, replacing, w2);
+      for (const windows of [[[id1, w1], [id2, w2]], [[id2, w2], [id1, w1]]] as Array<Array<[string, { opensAt: bigint; closesAt: bigint }]>>) {
+        const account = accountLedger({ vaults: [VAULT], open: { [id1]: { approvals: 1n, needed: 1n, removals: 0n }, [id2]: { approvals: 1n, needed: 1n, removals: 1n } }, windows, removals: 1n });
+        const read = (window?: { opensAt: bigint; closesAt: bigint }) => startStandingOf(circuits, {
+          vault: VAULT, account, vaultLedger: vaultLedger([], fromHex(HELD)), run: replacing, now: 10_000n, ...(window === undefined ? {} : { window }),
+        }).secret?.run;
+        /* RED WHEN: the run the ledger lists first is reported whatever window the read names, so the run raised before the removal is approved or carried. */
+        expect(read(w2)).toMatchObject({ proposal: id2, beforeARemoval: false });
+        expect(read(w1)).toMatchObject({ proposal: id1, beforeARemoval: true });
+      }
+    });
+
+    it('LISTS EVERY IDENTITY THE ACCOUNT HOLDS THE RUN UNDER, AND READS ONE RAISED BEFORE A REMOVAL AS SUCH', () => {
+      const w1 = { opensAt: 0n, closesAt: 5n };
+      const w2 = secretRunWindowFrom(10_000n, true);
+      const id1 = secretRunProposalOf(P as never, replacing, w1);
+      const id2 = secretRunProposalOf(P as never, replacing, w2);
+      const account = accountLedger({ vaults: [VAULT], open: { [id2]: { approvals: 1n, needed: 1n, removals: 0n } }, windows: [[id1, w1], [id2, w2]], removals: 1n });
+      const read = startStandingOf(circuits, { vault: VAULT, account, vaultLedger: vaultLedger([], fromHex(HELD)), run: replacing, now: 10_000n });
+      /* RED WHEN: only the run reported is looked for, so a landed run over another window is called dead. */
+      expect(read.secret?.landed).toEqual([id1, id2]);
+      expect(read.secret?.run).toMatchObject({ proposal: id2, inWindow: true });
+      /* RED WHEN: a run raised at a removal count below the account's is read as raised after it. */
+      expect(read.secret?.run?.beforeARemoval).toBe(true);
+      /* RED WHEN: the account's count of removals is not read, so a device cannot tell a secret a leaver may open. */
+      expect(read.removals).toBe(1);
+      /* The window a replacement is raised with: open from just before now, for the day a raise is given to land in. */
+      expect(w2).toEqual({ opensAt: 10_000n - 600n, closesAt: 10_000n + 86_400n });
+      expect(secretRunWindowFrom(10_000n)).toEqual({ opensAt: 10_000n - 600n, closesAt: 10_000n + 14n * 86_400n });
+    });
   });
 });

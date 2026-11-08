@@ -181,9 +181,12 @@ export class SealedJournal<Line> {
    * Files the next version holding the lines `change` makes of the lines as
    * filed, asked again after every lost race; `change` answering null writes
    * nothing. Answers whether a version was filed. Sealed to every signer and
-   * refused for a signer it would drop, exactly as `append` is.
+   * refused for a signer it would drop, exactly as `append` is; and, as
+   * `append` does, refused when another writer filed first on every attempt,
+   * so a change that was not filed is never read as one there was no need for.
    */
   async rewrite(change: (lines: readonly Line[]) => readonly Line[] | null): Promise<boolean> {
+    let lost: unknown;
     for (let i = 1; i <= JOURNAL_WRITE_ATTEMPTS; i += 1) {
       const now = await this.open();
       const lines = change(now.lines);
@@ -196,9 +199,12 @@ export class SealedJournal<Line> {
         return true;
       } catch (cause) {
         if (!(cause instanceof Error && cause.name === 'VaultPoolVersionAlreadyFiled')) throw cause;
+        lost = cause;
       }
     }
-    return false;
+    throw new Error(
+      `${this.page.called} could not be changed: another writer filed its next version first on all `
+      + `${JOURNAL_WRITE_ATTEMPTS} attempts, so nothing was written.`, { cause: lost });
   }
 }
 
@@ -325,7 +331,8 @@ export class DepositJournalInStore implements DepositJournal {
  * transaction never reached anything that could send it, so its coin can never
  * be made. The newest line naming the coin stays, whole, with `ended` set; a line
  * already ended, or no line naming the coin, writes nothing. Answers whether a
- * version was filed.
+ * version was filed, and throws when the line could not be marked, so the caller
+ * can say so.
  */
 export async function endDepositNeverHandedOver(
   store: SealedPoolStore, vault: string, me: JournalOpener, signers: () => Promise<readonly PoolSigner[]>, nonce: string,

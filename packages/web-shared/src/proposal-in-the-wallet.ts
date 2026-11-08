@@ -1,6 +1,7 @@
 /*
- * APPROVING AND WITHDRAWING A PROPOSAL FROM THE PAGE, AND RAISING A RUN OR A ONE-OFF PAYMENT: the approve-proposal,
- * withdraw-proposal, raise-run and one-off-payment actions asked of the person's wallet, as every action on a company is
+ * APPROVING AND WITHDRAWING A PROPOSAL FROM THE PAGE, RAISING A RUN OR A ONE-OFF PAYMENT, REMOVING A SIGNER AND CHANGING THE
+ * VAULT SECRETS AFTER ONE LEAVES: the approve-proposal, withdraw-proposal, raise-run, one-off-payment, remove-signer and
+ * rotate-vault-secrets actions asked of the person's wallet, as every action on a company is
  * (`actOnACompanyInTheWallet`). What the page read of the proposal for
  * the wallet to show and check is handed on as the action carries it, a count or an amount as a whole number in decimal;
  * the wallet opens the proposal itself and refuses one that says otherwise.
@@ -349,5 +350,59 @@ export function oneOffInTheWallet(
     name: ONE_OFF, record: ask.record, company: ask.company, account: ask.account, vault: ask.vault, token: ask.token, amount: ask.amount.toString(),
     payee: ask.payee, reason: ask.reason,
     ...(ask.payeeName === undefined ? {} : { payeeName: ask.payeeName }), ...(ask.vendor === undefined ? {} : { vendor: ask.vendor }),
+  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/** The wallet's names for removing a signer and for changing the company's vault secrets after one leaves. */
+export const REMOVE_SIGNER = 'remove-signer';
+export const ROTATE_VAULT_SECRETS = 'rotate-vault-secrets';
+
+/** How many vaults ended in each state on a press of the wallet's vault secret change, as it counts them; a vault that owed nothing is in none. */
+export interface VaultsTold { readonly rotated: number; readonly awaiting: number; readonly owed: number; readonly waiting: number; readonly notChanged: number }
+
+/** The five counts together, or null where the wallet told none (a removal not yet carried out) or told only some. */
+function vaultsTold(ended: ActOutcome): VaultsTold | null {
+  const c = [count(ended.outcome?.['vaultsRotated']), count(ended.outcome?.['vaultsAwaiting']), count(ended.outcome?.['vaultsOwed']),
+    count(ended.outcome?.['vaultsWaiting']), count(ended.outcome?.['vaultsNotChanged'])];
+  return c.some((n) => n === null) ? null : { rotated: c[0]!, awaiting: c[1]!, owed: c[2]!, waiting: c[3]!, notChanged: c[4]! };
+}
+
+/** What the wallet told the page when a removal ended: where it stands, its approvals and bar, the company key's change and the vault secrets' (a code, or counts). */
+export function removalOutcomeOf(ended: ActOutcome): {
+  readonly state: string | null; readonly approvals: number | null; readonly needed: number | null;
+  readonly rotation: string | null; readonly vaultSecrets: string | null; readonly vaultSecretsWhy: string | null; readonly vaults: VaultsTold | null;
+} {
+  const code = (k: string): string | null => { const v = ended.outcome?.[k]; return typeof v === 'string' ? v : null; };
+  return { ...proposalOutcomeOf(ended), rotation: code('rotation'), vaultSecrets: code('vaultSecrets'), vaultSecretsWhy: code('vaultSecretsWhy'), vaults: vaultsTold(ended) };
+}
+
+/** What the wallet told the page when the vault secrets' change ended: `done`, or `partial` where some vault still owes its change, and the counts. */
+export function rotationOutcomeOf(ended: ActOutcome): { readonly state: string | null; readonly vaults: VaultsTold | null } {
+  const state = ended.outcome?.['state'];
+  return { state: typeof state === 'string' ? state : null, vaults: vaultsTold(ended) };
+}
+
+/**
+ * **ASKS THE PERSON'S WALLET TO REMOVE A SIGNER**: the seat by its leaf, and where it should change, the approvals the account asks
+ * for once they are gone (none keeps the number in force). The wallet reads whose seat it is from the company's list, shows it,
+ * and raises the removal only when the person confirms there; it carries it out once the network counts the approvals it needs.
+ */
+export function removeSignerInTheWallet(
+  ask: { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress; readonly leaf: string; readonly threshold?: number },
+  walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  return actOnACompanyInTheWallet({
+    name: REMOVE_SIGNER, record: ask.record, company: ask.company, account: ask.account, leaf: ask.leaf,
+    ...(ask.threshold === undefined ? {} : { threshold: ask.threshold.toString() }),
+  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/** **ASKS THE PERSON'S WALLET TO CHANGE THE COMPANY'S VAULT SECRETS** after a signer left, from a signer who stays, for every vault whose change is owed. */
+export function rotateVaultSecretsInTheWallet(
+  ask: { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress },
+  walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  return actOnACompanyInTheWallet({
+    name: ROTATE_VAULT_SECRETS, record: ask.record, company: ask.company, account: ask.account,
   }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
 }

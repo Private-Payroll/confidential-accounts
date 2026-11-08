@@ -48,8 +48,19 @@ import { judgeIn, pastTheRaisedBoundary, type DirectoryHere } from './vault-page
 import { FiledNotEntered, recordsEnteredFor } from './record-entered-here.js';
 import { believedFilerHere, NotOpenedOnThisDevice } from './round-opened-here.js';
 
+/** A step expected to refuse that did not: the test fails here, naming it. */
+const notARefusal = (): never => { throw new Error('the step went ahead where a refusal was expected'); };
+
 /* What each proposal opens as on this device: what its raise sealed, read back with the viewing key. */
-const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string, onlyKind?: string) => Promise<OpenedRound> }));
+const seams = vi.hoisted(() => ({
+  opens: undefined as unknown as (proposalId: string, onlyKind?: string) => Promise<OpenedRound>,
+  /* The bands of the spending policies in force, as the company's records and the chain name them: none unless a test sets one. */
+  bands: [] as { vault: string; band: number }[],
+}));
+vi.mock('./spending-policy-here.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./spending-policy-here.js')>()),
+  bandsInForceHere: async () => seams.bands,
+}));
 vi.mock('./round-opened-here.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./round-opened-here.js')>()),
   openTheRoundHere: (...a: unknown[]) => seams.opens(a[2] as string, a[8] as string | undefined),
@@ -178,6 +189,8 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
   });
   seams.opens = async (id) => rounds.get(id)!.opened;
   /* A retirement filed is judged by the directory's own judge against the chain now, then anchored at once. */
+  /* Whether a retirement filed is anchored at once; when not, it is filed and left waiting for the anchor. */
+  let retirementAnchored = true;
   const fileTheRetirement = async (change: SignedChange, signedFor: number): Promise<void> => {
     log.push(`file ${change.kind === 'rotate' ? 'rotation' : 'retirement'} ${signedFor}`);
     filedAt.set(signedFor, { company: ACC, version: signedFor, change });
@@ -185,6 +198,7 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
       label: LABEL, account: ACCOUNT, chain: null, judge: asAMember(() => null, () => null, ADA.seat),
       now: { approvals: 1, seats: [...chain], seatBar: bar },
     });
+    if (!retirementAnchored) return;
     anchored = dir.version;
     log.push('anchor the records');
   };
@@ -281,7 +295,7 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
       accountId: ACC,
       records: {
         directory: async () => here() as never,
-        /* The company's spending policies: the chain holds none in force, so a removal counts no band. */
+        /* The company's spending policies: the bands in force are stood in (`seams.bands`), none unless a test sets one. */
         spendingPolicies: {
           versions: async () => [], me: { signerId: p.seat, wrappingSecret: '00'.repeat(32) },
           file: async () => { throw new Error('no policy is filed here'); }, keys: async () => { throw new Error('no policy is in force here'); },
@@ -419,6 +433,8 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
     servesNoFilings: () => { noFilings = true; },
     /** The person's wallet answers without the approvals a change of who is seated needs. */
     seatBarUnread: () => { barUnread = true; },
+    /** A retirement filed from here is left filed and not anchored. */
+    retirementNotAnchored: () => { retirementAnchored = false; },
     /** The newest proposal raised has `approvals` on the chain (by default the seat bar), however they were given. */
     approvedOnTheChain: (approvals = bar) => { const [id, r] = [...rounds.entries()].at(-1)!; rounds.set(id, { ...r, approvalCount: approvals }); },
     /** The chain's hold for the newest proposal raised says it needed `n` approvals when it was raised. */
@@ -561,11 +577,11 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     await expect(co.deviceOf(CY, { statement: STATEMENT }).remove(BO)).rejects.toThrow(/records-key statement/u);
     await expect(co.deviceOf(CY, { statement: { ...STATEMENT, signature: '8c'.repeat(64) } }).remove(BO)).rejects.toThrow(/records-key statement/u);
     expect(co.log).toEqual(['raise remove bo', 'ada signs the retirement for 4']);
-    /* The control: raised with the statement, the same device approves it. */
-    const again = aCompany({ bar: 3 });
+    /* The control: raised with the statement, the same device approves it (four seats, so three stay for a bar of three). */
+    const again = aCompany({ seated: [ADA, BO, CY, DEE], bar: 3 });
     await again.deviceOf(ADA, { statement: STATEMENT }).remove(BO);
     expect((await again.deviceOf(CY, { statement: STATEMENT }).remove(BO)).state).toBe('waiting-for-approvals');
-    expect(again.log).toContain('approve by cy signing the retirement for 4');
+    expect(again.log).toContain('approve by cy signing the retirement for 5');
   });
 
   it('THE BOUNDARY SIGNED AT THE RAISE IS FINAL: THE LEAVER FILING BEFORE EACH APPROVAL AND BEFORE THE CARRYING OUT VOIDS NOTHING; WHAT THEY FILE BEFORE THE APPROVAL IS ANCHORED, AND NOTHING FROM THE APPROVAL ON; NONE OF IT IS BELIEVED ONCE THEY LEAVE', async () => {
@@ -1181,7 +1197,7 @@ describe('A REMOVAL FREEZES NOTHING UNTIL IT IS APPROVED', () => {
         return opens(id);
       };
       /* RED WHEN: an open proposal this device cannot open at all is read as no removal where who is leaving must be known. */
-      await expect(approveOnDevice(cy, { round: ours, viewingKey: KEY })).rejects.toThrow(/Read the chain again/u);
+      await expect(approveOnDevice(cy, { round: ours, viewingKey: KEY })).rejects.toThrow(/could not be read in full: proposal \S+ did not open on this device .*Nothing was sent\.$/u);
     } finally {
       seams.opens = opens;
     }
@@ -1475,5 +1491,163 @@ describe('NOTHING IN THE REMOVAL READS THE SUPER ADMINS', () => {
     expect(removal.length).toBeGreaterThan(1000);
     /* RED WHEN: a check, rule or refusal of a signer's removal reads the account's committee or the super admin role. */
     expect(removal.match(/committee|super.?admin/giu) ?? []).toEqual([]);
+  });
+});
+
+describe('A REMOVAL IS COUNTED AT THE BANDS OF THE SPENDING POLICIES IN FORCE, ON THE DEVICE', () => {
+  it('a removal leaving a vault short of the approvals its policy band asks for is refused before anything is sent, and one that leaves enough is raised', async () => {
+    const wide = 'cc'.repeat(32);
+    try {
+      seams.bands = [{ vault: wide, band: 3 }];
+      const short = aCompany();
+      /* RED WHEN: the device counts a removal's approvers with no bands, so a vault is left unable to pay a run its policy band holds. */
+      await expect(short.deviceOf(ADA).remove(BO)).rejects.toThrow(/leave a vault unable to pay: company-wide runs \(its runs need 3 approvals and 2 signers could give them\)/u);
+      expect(short.log).toEqual([]);
+      seams.bands = [{ vault: wide, band: 2 }];
+      const enough = aCompany();
+      /* RED WHEN: a band the stayers still meet refuses the removal. */
+      expect((await enough.deviceOf(ADA).remove(BO)).state).toBe('waiting-for-approvals');
+      expect(enough.log[0]).toBe('raise remove bo');
+    } finally {
+      seams.bands = [];
+    }
+  });
+});
+
+describe('A REMOVAL STOPPED AFTER ITS APPROVAL WAS SENT IN THE SAME PRESS SAYS IT MAY HAVE BEEN SENT', () => {
+  it('an approval whose page cannot file the retirement, or cannot anchor the directory first, is never told as nothing sent', async () => {
+    const { nothingWasSentBy } = await import('./governed-call-on-device.js');
+    const co = aCompany();
+    await co.deviceOf(ADA).remove(BO);
+    const unfiled = await co.deviceOf(CY, { files: false }).remove(BO).then(notARefusal, (e: unknown) => e as Error);
+    /* RED WHEN: a press that sent its approval and then could not file the retirement is told as one that sent nothing. */
+    expect(unfiled.message).toMatch(/cannot file a retirement.*may have gone through and stands; nothing more is sent\./u);
+    /* RED WHEN: the words claim an approval was sent by a press that may only carry out. */
+    expect(unfiled.message).not.toMatch(/your approval/u);
+    expect(nothingWasSentBy(unfiled)).toBe(false);
+    const waiting = aCompany({ waiting: true });
+    await waiting.deviceOf(ADA).remove(BO);
+    const unanchored = await waiting.deviceOf(CY, { anchors: false }).remove(BO).then(notARefusal, (e: unknown) => e as Error);
+    /* RED WHEN: a press that sent its approval and then found the directory not anchored is told as one that sent nothing. */
+    expect(unanchored.message).toMatch(/not yet anchored.*may have gone through and stands; nothing more is sent\./u);
+    expect(nothingWasSentBy(unanchored)).toBe(false);
+    const unlanded = aCompany();
+    await unlanded.deviceOf(ADA).remove(BO);
+    unlanded.retirementNotAnchored();
+    const filed = await unlanded.deviceOf(CY).remove(BO).then(notARefusal, (e: unknown) => e as Error);
+    /* RED WHEN: a press that filed the retirement, which then waits for the anchor, is told as one that sent nothing. */
+    expect(filed.message).toMatch(/retirement of the leaving seat is filed and not yet anchored.*may have gone through and stand; nothing more is sent\./u);
+    expect(nothingWasSentBy(filed)).toBe(false);
+  });
+});
+
+describe('A REMOVAL THE CHAIN WOULD REFUSE FOR ITS NEW THRESHOLD IS REFUSED AT THE RAISE, ON THE DEVICE', () => {
+  it('a removal leaving fewer signers than a new threshold or a policy change needs is refused before anything is sent; one the stayers can meet is raised', async () => {
+    const co = aCompany();
+    /* RED WHEN: the device raises a removal whose new threshold is above the signers left, which the chain refuses at the carrying out. */
+    await expect(co.deviceOf(ADA).remove(BO, 3)).rejects.toThrow(/Nothing was (sent|approved)\.$/u);
+    expect(co.log).toEqual([]);
+    const policy = aCompany({ bar: 3 });
+    /* RED WHEN: the device raises a removal leaving fewer signers than a policy change needs, which the chain refuses at the carrying out. */
+    await expect(policy.deviceOf(ADA).remove(BO)).rejects.toThrow(/not raised from this device: once this signer is removed the company has 2 signers left, and a policy change needs 3 approvals.*Nothing was sent\.$/u);
+    expect(policy.log).toEqual([]);
+    /* A company made last is the one whose proposals this file's device opens. */
+    expect((await aCompany().deviceOf(ADA).remove(BO, 2)).state).toBe('waiting-for-approvals');
+  });
+});
+
+describe('A PROPOSAL THIS DEVICE CANNOT OPEN IS NAMED WITH THE SEAT THAT RAISED IT, WHICH ALONE CAN WITHDRAW IT', () => {
+  it('an approval held up by a proposal that does not open names it, the seat that raised it, and that only that signer withdraws it', async () => {
+    const opens = seams.opens;
+    try {
+      const co = aCompany({ bar: 2 });
+      const blocking = co.raisedBy(BO, { kind: 'remove-signer', leaf: CY.seat }, { anchored: true });
+      const run = co.raisedBy(ADA, undefined, { anchored: true });
+      seams.opens = async (id) => {
+        if (id === blocking.id) throw new NotOpenedOnThisDevice('its removal is sealed in a shape this device does not read.', { kind: 'remove-signer' });
+        return co.rounds.get(id)!.opened;
+      };
+      const said = await approveOnDevice(co.deviceOf(CY).doors, { round: run, viewingKey: KEY }).then(notARefusal, (e: unknown) => e as Error);
+      /* RED WHEN: the refusal does not say which proposal holds it up, which seat raised it, or that only that signer can withdraw it. */
+      expect(said.message).toMatch(new RegExp(`proposal ${blocking.id} did not open on this device \\(its removal is sealed in a shape this device does not read\\. .*\\)\\. `
+        + `Only the signer who raised it, seat ${BO.seat}, can withdraw it, and until then it stays open, since a proposal of the company never expires`, 'u'));
+      /* RED WHEN: a refusal that reading again never clears tells the person to read again. */
+      expect(said.message).toMatch(/Nothing was sent\.$/u);
+      seams.opens = async (id) => {
+        if (id === blocking.id) throw new Error('its record is sealed in a shape this device does not read');
+        return co.rounds.get(id)!.opened;
+      };
+      const unknown = await approveOnDevice(co.deviceOf(CY).doors, { round: run, viewingKey: KEY }).then(notARefusal, (e: unknown) => e as Error);
+      /* RED WHEN: a proposal whose kind was never read is said to be withdrawn only by its raiser and never to expire, though a payroll run is neither. */
+      expect(unknown.message).toMatch(/Its kind could not be read\. If it is a payroll run, any signer can withdraw it before its window opens, and it closes once its window has passed/u);
+      expect(unknown.message).not.toMatch(/never expires/u);
+      seams.opens = async (id) => {
+        if (id === blocking.id) throw new NotOpenedOnThisDevice('its removal is sealed in a shape this device does not read.', { kind: 'remove-signer' });
+        return co.rounds.get(id)!.opened;
+      };
+      co.dir = { ...co.dir, seats: co.dir.seats.map((x) => (x.seat === BO.seat ? { ...x, retired: {} } : x)) };
+      const left = await approveOnDevice(co.deviceOf(CY).doors, { round: run, viewingKey: KEY }).then(notARefusal, (e: unknown) => e as Error);
+      /* RED WHEN: the company is sent to a raiser who is no longer seated, and so can never withdraw it, rather than to its super admins. */
+      expect(left.message).toMatch(new RegExp(`The signer who raised it, seat ${BO.seat}, is no longer seated, so no signer can withdraw it, and it never expires: the company's super admins clear it on the network`, 'u'));
+    } finally {
+      seams.opens = opens;
+    }
+  });
+
+  it('a removal is refused while an invitation that does not open is open, naming it and its raiser; one that opens as another kind is passed over', async () => {
+    const opens = seams.opens;
+    try {
+      const co = aCompany({ bar: 2 });
+      const invitation = co.raisedBy(CY, { kind: 'add-signer', address: 'ad'.repeat(32), scope: 'cc'.repeat(32), threshold: '2' } as never, { anchored: true });
+      seams.opens = async (id, onlyKind) => {
+        if (id === invitation.id && onlyKind === 'add-signer') throw new NotOpenedOnThisDevice('its invitation is signed by no seat this device believes.', { kind: 'add-signer' });
+        if (id === invitation.id) throw new NotOpenedOnThisDevice('not a removal', { kind: 'add-signer' });
+        return co.rounds.get(id)!.opened;
+      };
+      /* RED WHEN: an invitation that does not open is read as none, so a removal goes ahead though that seat may raise its bar for good. */
+      await expect(co.deviceOf(ADA).remove(BO)).rejects.toThrow(new RegExp(`Proposal ${invitation.id} did not open on this device .*Only the signer who raised it, seat ${CY.seat}, can withdraw it.*Whether it raises the approvals this removal needs cannot be told\\. Anything this press already sent may have gone through and stands; nothing more is sent\\.`, 'u'));
+      expect(co.log).toEqual([]);
+      seams.opens = async (id, onlyKind) => {
+        if (id === invitation.id) throw new NotOpenedOnThisDevice('not an invitation', { kind: onlyKind === 'add-signer' ? 'set-threshold' : 'add-signer' });
+        return co.rounds.get(id)!.opened;
+      };
+      /* RED WHEN: a proposal of another kind holds a removal up. */
+      expect((await co.deviceOf(ADA).remove(BO)).state).toBe('waiting-for-approvals');
+      const fraction = aCompany({ bar: 2 });
+      const odd = fraction.raisedBy(CY, { kind: 'add-signer', address: 'ad'.repeat(32), scope: 'cc'.repeat(32), threshold: '2.5' } as never, { anchored: true });
+      seams.opens = async (id) => fraction.rounds.get(id)!.opened;
+      /* RED WHEN: an invitation setting a threshold that is not a whole number is compared with the bar as a number, and the removal goes ahead. */
+      await expect(fraction.deviceOf(ADA).remove(BO)).rejects.toThrow(new RegExp(`Proposal ${odd.id} adds a signer whose seat sets the approvals the company needs to 2\\.5, which is not a whole number`, 'u'));
+      expect([fraction.log, odd.id.length > 0]).toEqual([[], true]);
+      const huge = aCompany({ bar: 2 });
+      const big = huge.raisedBy(CY, { kind: 'add-signer', address: 'ad'.repeat(32), scope: 'cc'.repeat(32), threshold: '9007199254740993' } as never, { anchored: true });
+      seams.opens = async (id) => huge.rounds.get(id)!.opened;
+      const tooBig = await huge.deviceOf(ADA).remove(BO).then(notARefusal, (e: unknown) => e as Error);
+      /* RED WHEN: an invitation setting a whole number past what a number counts exactly refuses every removal in words that name no proposal. */
+      expect(tooBig.message).toMatch(new RegExp(`Proposal ${big.id} adds a signer whose seat sets the approvals the company needs to 9007199254740993 once it is taken, above the 2 .*may have gone through and stands; nothing more is sent\\.`, 'u'));
+      const { nothingWasSentBy } = await import('./governed-call-on-device.js');
+      /* RED WHEN: a refusal the carrying out's check may reach after this press sent its approval is told as nothing sent. */
+      expect(nothingWasSentBy(tooBig)).toBe(false);
+    } finally {
+      seams.opens = opens;
+    }
+  });
+});
+
+describe('A REMOVAL OF A SEAT WITHDRAWN BEFORE IS FOUND, SO THE PERSON RAISING IT AGAIN IS TOLD', () => {
+  it('a removal the chain closed by a withdrawal is listed for its seat; an open one, or one of another seat, is not', async () => {
+    const { removalsOpenHere } = await import('./governed-call-on-device.js');
+    const withdrawnOf = async (doors: Parameters<typeof removalsOpenHere>[0], leaf: string) =>
+      (await removalsOpenHere(doors, KEY, false)).filter((x) => x.leaf === leaf && x.status === 'cancelled').map((x) => x.id);
+    const co = aCompany({ bar: 2 });
+    await co.deviceOf(ADA).remove(BO);
+    const [first] = [...co.rounds.values()];
+    const ada = co.deviceOf(ADA).doors;
+    /* RED WHEN: a removal still open is told as withdrawn. */
+    expect(await withdrawnOf(ada, BO.seat)).toEqual([]);
+    co.withdrawnOnTheChain(first!.chainId);
+    /* RED WHEN: a removal of this seat the chain closed by a withdrawal is not found, so it is raised again with nothing said. */
+    expect(await withdrawnOf(ada, BO.seat)).toEqual([first!.id]);
+    expect(await withdrawnOf(ada, CY.seat)).toEqual([]);
   });
 });

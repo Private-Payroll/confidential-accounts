@@ -69,4 +69,26 @@ describe('a new vault\'s secret kept in the wallet', () => {
     store.m.set([...store.m.keys()][0]!, JSON.stringify(FILED));
     expect(await vaultSecretsKeptFor('usr_ada', store, await sealWith()).held(V)).toBeNull();
   });
+
+  it('keeps a secret run\'s copies tree for the person, the vault and the commitment it sets, sealed, and refuses when the store will not', async () => {
+    const store = storeOf();
+    const seal = await sealWith();
+    const ada = vaultSecretsKeptFor('usr_ada', store, seal);
+    const RUN = { vault: 'ab'.repeat(32), commitment: 'c3'.repeat(32), previous: '00'.repeat(32), copies: [{ reader: 'e1'.repeat(32), parts: ['f1'.repeat(32)], path: [] }] };
+    await ada.keepRun!(V, RUN);
+    // RED WHEN: the copies tree lies in the store as plain text
+    expect([...store.m.values()].join()).not.toContain('f1f1');
+    // RED WHEN: the tree is not given back, or given back for another person, vault or commitment
+    expect(await ada.runHeld!(V, 'c3'.repeat(32) as never)).toEqual(RUN);
+    expect(await ada.runHeld!(V, 'c4'.repeat(32) as never)).toBeNull();
+    expect(await vaultSecretsKeptFor('usr_bo', store, seal).runHeld!(V, 'c3'.repeat(32) as never)).toBeNull();
+    // RED WHEN: a later run of the same secret overwrites the earlier one, so who the earlier one sealed it to is lost
+    const LATER = { ...RUN, copies: [{ reader: 'e2'.repeat(32), parts: ['f2'.repeat(32)], path: [] }] };
+    await ada.keepRun!(V, LATER);
+    await ada.keepRun!(V, LATER);
+    expect(await ada.runsHeld!(V, 'c3'.repeat(32) as never)).toEqual([RUN, LATER]);
+    expect(await ada.runHeld!(V, 'c3'.repeat(32) as never)).toEqual(LATER);
+    // RED WHEN: a tree the store refused is reported kept, so the approval would go out with no copy in the wallet
+    await expect(vaultSecretsKeptFor('usr_ada', storeOf(true), seal).keepRun!(V, RUN)).rejects.toThrow(/could not keep the run/);
+  });
 });

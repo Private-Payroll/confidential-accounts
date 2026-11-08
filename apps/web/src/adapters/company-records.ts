@@ -8,7 +8,7 @@ import { typedAddressIsShielded } from 'midnight-identity/profile/address-claim'
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, RosterEmployee, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
 import type { RefusedEntry, RosterEntryRefusal } from '../../../../src/core/roster-record.js';
 import { api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
-import { companyKeysFor, directoryHereFor, filingJudgeFor, openedHere, rosterReadsFor, walletIndexerFor } from './filing-judge.js';
+import { companyKeysQuietlyFor, directoryHereFor, filingJudgeFor, openedQuietly, rosterReadsFor, walletIndexerFor } from './filing-judge.js';
 import { KIND_FIELD, NEVER_WITHDRAWN, POLICY_KINDS, RUN_FORM, RUN_LIST, WALLET_KIND, type RunForm, type RunList } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import type { RoundOnChain } from 'vaults-web-shared/governed-call-builder.js';
 import { VAULT, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
@@ -494,6 +494,8 @@ export interface CompanyRecords {
   of: typeof OPENED.open;
   id: string;
   name: string;
+  /** The epochs of the company's key this seat holds a copy of that the wallet has not released on this visit, so what is sealed under them shows as not opened yet; absent or empty when none. */
+  notOpened?: readonly number[];
   signers: readonly SignerRow[];
   /** How many signers must approve, as the person's own wallet reads it off the chain; not readable when the wallet cannot say. */
   approvalsNeeded: Read<number>;
@@ -1054,7 +1056,7 @@ async function oneOffHereFor(
 export async function readCompany(personId: string, companyId: string): Promise<Company> {
   let sealed: SealedAccount;
   let account: Account & { readonly refused?: readonly RefusedEntry[]; readonly waited?: readonly string[] };
-  let viewingKey: CompanyKeys;
+  let viewingKey: CompanyKeys & { readonly notOpened?: readonly number[] };
   let ownSeat: { readonly signerId: string; readonly signingPublicKey: string };
   try {
     if (!(await keyringFor(personId))) return { of: OPENED.refused, why: ACT_REFUSAL.notSignedIn };
@@ -1062,10 +1064,10 @@ export async function readCompany(personId: string, companyId: string): Promise<
     /* Keys saved in another tab since are read first, so a person who opened them there is not asked again here. */
     const keys = await keysOnTheWayIn(companyId);
     if (keys === null) return { of: canOpenCompanies(companyId) ? OPENED.noKeysHere : OPENED.locked };
-    const opened = await openedHere(sealed);
+    const opened = await openedQuietly(sealed);
     if (opened === null) return { of: OPENED.noKeysHere };
     account = opened;
-    viewingKey = await companyKeysFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey });
+    viewingKey = await companyKeysQuietlyFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey });
     ownSeat = { signerId: keys.signerId, signingPublicKey: keys.signingPublicKey };
   } catch (e) {
     return { of: OPENED.refused, why: refusalOf(e) };
@@ -1191,7 +1193,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
       waiting: account.signers.filter((s) => s.status === 'pending'), seated: account.signers.filter((s) => s.status === 'active'),
     }));
   return {
-    of: OPENED.open, id: companyId, name: account.name, signers, approvalsNeeded: chain.approvals,
+    of: OPENED.open, id: companyId, name: account.name, notOpened: viewingKey.notOpened ?? [], signers, approvalsNeeded: chain.approvals,
     proposals, runs: rows, people, vaults: chain.vaults, invitations,
     peopleBelief, vendors, vendorsBelief, signerStandings: standings, approvalsForSigners: forSigners, signersInvited,
   };
@@ -1265,9 +1267,9 @@ export async function readVaultName(
     if (label === null || address === null) return notRead;
     const keys = await keysOnTheWayIn(companyId);
     if (keys === null) return notRead;
-    const account = await openedHere(sealed);
+    const account = await openedQuietly(sealed);
     if (account === null) return notRead;
-    const companyKeys: CompanyKeys = await companyKeysFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey });
+    const companyKeys: CompanyKeys = await companyKeysQuietlyFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey });
     const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, companyKeys, async () => account);
     const { vaultInfoHere, vaultInfoRecordsFor } = await import('vaults-web-shared/vault-info-here.js');
     const filed = await vaultInfoHere({ companyKeys, records: vaultInfoRecordsFor(companyId, null, judge, () => currentUser()?.id ?? null) }, vault);

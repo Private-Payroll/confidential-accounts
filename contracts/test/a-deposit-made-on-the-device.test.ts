@@ -62,7 +62,7 @@ import {
   walkCompanyRecords, compiledOutputCommitment, type CompanyRecords,
 } from '../../src/midnight/rebuild-from-records.js';
 import {
-  openNewestNonceSecrets, depositNonceKeysOf, rotateNonceSecret, admitToNonceSecret, recordsKeypairFrom,
+  openNewestNonceSecrets, depositNonceKeysOf, rotateNonceSecret, newNonceSecret, admitToNonceSecret, recordsKeypairFrom,
 } from '../../src/midnight/company-nonce-secret.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
 import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
@@ -313,6 +313,10 @@ describe('a deposit whose record is made on the device', () => {
         signers: async () => poolSigners(), records,
         chain: {
           everCreated, outputCommitmentOf: outputCommitment, heldNow: (c) => chainNotes().includes(held(c)),
+          /* No removal is carried out on this account's chain: Bo leaves only the company's records here. */
+          removals: 0,
+          /* With no removal counted, when the secret was set is never asked. */
+          secretSet: async () => 0,
           /* The vault's own commitment to the secret, against the one its state holds now. */
           secretIsTheVaults: (s) => toHex(vaultCircuits.secretCommitmentOf(fromHex(vaultAddr), fromHex(s)))
             === toHex(vaultLedger(charged() as never).nonceCommitment),
@@ -411,7 +415,7 @@ describe('a deposit whose record is made on the device', () => {
     const secrets = adas.records('nonce-secret');
     const adasKey = recordsKeypairFrom(ada.device.companyKey);
     const rotated = rotateNonceSecret((await secrets.get(vaultAddr))!, vaultAddr, adasKey,
-      { remaining: [recordsReaderOf(ada.device.companyKey)], leaving: [recordsReaderOf(bo.device.companyKey)] });
+      { remaining: [recordsReaderOf(ada.device.companyKey)], leaving: [recordsReaderOf(bo.device.companyKey)] }, newNonceSecret(), 0);
     await secrets.put(vaultAddr, rotated);
     members = ['ada', 'carol'];
     poolReaders = ['ada', 'bo', 'carol'];

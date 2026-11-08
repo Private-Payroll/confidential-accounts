@@ -163,13 +163,10 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     expect(sent()).toHaveLength(2);
   });
 
-  it('a removal is withdrawn while every removal is otherwise refused until the vault secrets are rotated', async () => {
+  it('a removal raised elsewhere can be withdrawn through the registered withdrawal', async () => {
     vi.stubGlobal('window', { location: { hostname: 'localhost', origin: 'http://localhost' } });
     const { ACTIONS, actionFor } = await import('./registry.js').finally(() => vi.unstubAllGlobals());
-    /* The marker holds: the registered removal is refused before anything is sent. */
-    expect((await ACTIONS['remove-signer'].check({ name: 'remove-signer', fields: { ...BASE, leaf: 'a4'.repeat(32) } } as never, {} as never))?.key)
-      .toBe('act.remove-signer.why.waits-for-the-rotation');
-    /* RED WHEN: the wallet registers no withdrawal, so a removal raised elsewhere stands stuck while the marker holds. */
+    /* RED WHEN: the wallet registers no withdrawal, so a removal raised elsewhere stands stuck until its window passes. */
     expect(actionFor('withdraw-proposal')).toBe(ACTIONS['withdraw-proposal']);
     t.opened = opened('remove-signer');
     t.chain[CHAIN_ID] = held({ raisedHere: true });
@@ -287,9 +284,27 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
   });
 });
 
+describe('THE COMPANY\'S PAY-RECORD KEY IS WITHDRAWN ONLY ONCE A REMOVAL HAS OUTRUN IT', () => {
+  it('a pay key the chain can still carry out is refused with its words and nothing sent; one a removal outran is withdrawn by its raiser', async () => {
+    t.opened = opened('pay-key');
+    t.chain[CHAIN_ID] = held({ raisedHere: true });
+    /* RED WHEN: a pay key the chain can still carry out is withdrawn, so its approvals are spent and it can never be carried out. */
+    expect(await refusalOf('pay-key')).toBe('act.withdraw-proposal.why.never-pay-key');
+    expect(sent()).toEqual([]);
+    expect(WORDS['act.withdraw-proposal.why.never-pay-key']).toMatch(/Nothing was signed or sent\.$/u);
+    /* RED WHEN: the words promise that raising it again will pass, where a signer who approved it before cannot approve it again. */
+    expect(WORDS['act.withdraw-proposal.why.never-pay-key']).toMatch(/a signer who approved it before cannot approve it again, so the new raise may never reach the approvals it needs/u);
+    expect(WORDS['act.withdraw-proposal.why.never-pay-key']).not.toMatch(/afresh/u);
+    t.chain[CHAIN_ID] = held({ raisedHere: true, outrun: true });
+    /* RED WHEN: a pay key a removal outran cannot be withdrawn, so the company can never raise it again and finish. */
+    expect(await withdrawn('pay-key')).toEqual([{ state: 'withdrawn', proposal: 'prp_1' }]);
+    expect(sent()).toEqual([`build cancel ${CHAIN_ID}`, 'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}']);
+  });
+});
+
 describe('THE KINDS THE WALLET NEVER WITHDRAWS, AND WHAT THE ACTION ASKS THE PAGE FOR', () => {
   it.each([
-    ['adopt-vault', 'never-adopt-vault'], ['vault-secret', 'never-vault-secret'], ['pay-key', 'never-pay-key'], ['recovery', 'never-recovery'],
+    ['adopt-vault', 'never-adopt-vault'], ['vault-secret', 'never-vault-secret'], ['recovery', 'never-recovery'],
   ])('%s is refused before anything is opened, with words that say why', async (kind, key) => {
     const def = withdrawProposalAction(reach());
     /* RED WHEN: a kind the wallet never withdraws reaches a step, or is refused with no words of its own. */
@@ -308,7 +323,7 @@ describe('THE KINDS THE WALLET NEVER WITHDRAWS, AND WHAT THE ACTION ASKS THE PAG
       def.headline, ...(await def.shown(intent('threshold'))).map((l) => l.key), ...def.checks.map((c) => c.key),
       ...def.steps(intent('threshold')).map((s) => s.title.key),
       ...Object.values(WITHDRAWN_KINDS).flatMap((k) => ('never' in k ? [`act.withdraw-proposal.why.${k.never}`] : [])),
-      ...['not-a-proposal', 'not-as-shown', 'one-off-held', 'closed', 'started', 'sent-not-yet-seen', 'filed-by-another', 'not-raised-here',
+      ...['not-a-proposal', 'not-as-shown', 'one-off-held', 'never-pay-key', 'closed', 'started', 'sent-not-yet-seen', 'filed-by-another', 'not-raised-here',
         'raiser-not-read', 'chain-time-not-read', 'started-may-be-paid', 'started-charged', 'clock-ahead', 'may-still-land', 'retirement-filed', 'not-withdrawn', 'may-be-sent', 'not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain',
         'roster-not-opened'].map((k) => `act.withdraw-proposal.why.${k}`),
     ];

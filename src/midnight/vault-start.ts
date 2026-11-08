@@ -6,10 +6,13 @@
  *   1. its company's account has ADOPTED it: a governance round over
  *      `adoptVaultPayload(vault)`, approved at the account's threshold, carried
  *      out by `adopt`;
- *   2. its first NONCE SECRET is set: a run for this vault alone, whose one leaf
- *      is `secretRunDetails(vault, previous, commitment, copiesRoot, count)` at
- *      an amount of nothing, approved at the vault's bar, after which the
- *      vault's `setNonceSecret` asks the account's `approveVaultChange`;
+ *   2. a NONCE SECRET is set: a run for this vault alone, whose one leaf is
+ *      `secretRunDetails(vault, previous, commitment, copiesRoot, count)` at an
+ *      amount of nothing, approved at the vault's bar, after which the vault's
+ *      `setNonceSecret` asks the account's `approveVaultChange`. `previous` is
+ *      zero for the first secret and the commitment the vault holds for one that
+ *      replaces it; a replacement also carries the last secret every copy was
+ *      written for (`earlier`), which the vault keeps sealed under the new one;
  *   3. EVERY SIGNER'S SEALED COPY of that secret is written (`writeSecretCopy`).
  *
  * This module makes everything those calls are built from, with the contracts'
@@ -53,11 +56,6 @@ const ZERO = new Uint8Array(32);
 const ADOPTION_SALT = utf8('confidential-accounts/vault-adoption-salt/v1');
 const RUN_SALT = utf8('confidential-accounts/vault-secret-run/salt/v1');
 const RUN_NONCE = utf8('confidential-accounts/vault-secret-run/nonce/v1');
-
-/** How long a secret run raised now stays open for its approvals, in seconds. */
-export const SECRET_RUN_OPEN_FOR = 14n * 24n * 3_600n;
-/** How far before now a secret run's window opens, so a block a little behind this device's clock is inside it. */
-export const SECRET_RUN_OPENS_BEFORE = 600n;
 
 /** The vault's own functions a start is made from. */
 export interface VaultStartPure extends CopiesTreeCircuits {
@@ -133,13 +131,15 @@ export interface SecretRun {
 }
 
 /**
- * **THE FIRST SECRET RUN FOR A VAULT**, from the secret the company's filed
- * record holds and the readers it is wrapped to. `readers` are the public halves
- * of the signers' records keys; each gets one sealed copy.
+ * **A SECRET RUN FOR A VAULT**, from the secret it sets, the readers it is sealed
+ * to and the commitment it replaces. `readers` are the public halves of the
+ * signers' records keys; each gets one sealed copy. `previous` is the commitment
+ * the vault holds when the run is raised, zero (or absent) for its first secret;
+ * the run's leaf binds it, so the run sets its secret only over that one.
  */
-export function firstSecretRunOf(
+export function secretRunOf(
   circuits: { readonly vault: VaultStartPure; readonly account: AccountStartPure },
-  input: { readonly vault: Hex; readonly secret: Hex; readonly readers: readonly Hex[] },
+  input: { readonly vault: Hex; readonly secret: Hex; readonly readers: readonly Hex[]; readonly previous?: string },
 ): SecretRun {
   const V = circuits.vault;
   const P = circuits.account;
@@ -155,13 +155,17 @@ export function firstSecretRunOf(
   if (readers.length === 0 || readers.some((r) => !HEX32.test(r))) {
     throw new Error('a secret is sealed to every signer\x27s records key, and none was given that is one. Nothing was built.');
   }
+  if (input.previous !== undefined && (typeof input.previous !== 'string' || !HEX32.test(input.previous))) {
+    throw new Error('the commitment a secret run replaces is 64 lower-case hex characters, and this is not one. Nothing was built.');
+  }
+  const previous = input.previous === undefined ? ZERO : fromHex(input.previous);
   const secret = fromHex(input.secret);
   const commitment = V.secretCommitmentOf(v, secret);
   const sealed = readers.map((reader) => ({
     reader, parts: sealSecretCopy({ vault: input.vault, secret: input.secret, reader }),
   }));
   const tree = copiesTreeOf(V, commitment, sealed.map((c) => ({ reader: fromHex(c.reader), parts: c.parts })));
-  const details = V.secretRunDetails(v, ZERO, commitment, tree.root, tree.count);
+  const details = V.secretRunDetails(v, previous, commitment, tree.root, tree.count);
   const salt = hkdf(sha256, secret, RUN_SALT, v, 32);
   const nonce = hkdf(sha256, secret, RUN_NONCE, v, 32);
   const leaf = toHex(P.payoutLeaf(details, nonce));
@@ -169,7 +173,7 @@ export function firstSecretRunOf(
   const sum = sumTreeOfLeaves([leaf], [0n], asset);
   return {
     vault: input.vault,
-    previous: toHex(ZERO),
+    previous: toHex(previous),
     commitment: toHex(commitment),
     copies: sealed.map((c, i) => ({ reader: c.reader, parts: c.parts.map(toHex), path: tree.paths[i]! })),
     copiesRoot: toHex(tree.root),
@@ -194,7 +198,10 @@ export const secretRunProposalOf = (
 ): Hex => toHex(P.proposalIdOf(
   P.runPayload(fromHex(run.root), run.payees, window.opensAt, window.closesAt, 0n), fromHex(run.vault), fromHex(run.salt)));
 
-/** The public parts of a vault's first secret run, as the transaction that set its secret discloses them; numbers in decimal digits. */
+/**
+ * The public parts of a vault's secret run, as the transaction that set its secret discloses them; numbers in decimal
+ * digits. `previous`, the commitment the run replaced, is absent for a first secret.
+ */
 export interface FirstSecretRunParts {
   readonly root: string;
   readonly opensAt: string;
@@ -203,14 +210,15 @@ export interface FirstSecretRunParts {
   readonly nonce: string;
   readonly copiesRoot: string;
   readonly count: string;
+  readonly previous?: string;
 }
 
 const DIGITS = /^[0-9]{1,20}$/u;
 
 /**
- * **A VAULT'S FIRST SECRET RUN, MADE AGAIN FROM ITS PUBLIC PARTS** once its secret is set, with the contracts' own
- * functions: its identity on the chain and its payload, and the root a first secret run of these parts has under a
- * secret's commitment. The run's one leaf names the commitment it sets (`secretRunDetails`), so the run whose root is
+ * **A VAULT'S SECRET RUN, MADE AGAIN FROM ITS PUBLIC PARTS** once its secret is set, with the contracts' own
+ * functions: its identity on the chain and its payload, and the root a secret run of these parts has under a
+ * secret's commitment, over the commitment it replaced (zero for a first secret). The run's one leaf names the commitment it sets (`secretRunDetails`), so the run whose root is
  * the one made under the commitment a vault holds is a run that set that secret. Nothing here is a key: every part is
  * disclosed on the chain by the call that set the secret. Refuses a part that is not one.
  */
@@ -221,24 +229,22 @@ export function firstSecretRunCarriedOf(
   const P = circuits.account;
   const v = vaultBytes(vault);
   const hexes = [parts.root, parts.salt, parts.nonce, parts.copiesRoot];
+  if (parts.previous !== undefined) hexes.push(parts.previous);
   if (hexes.some((h) => typeof h !== 'string' || !HEX32.test(h)) || [parts.opensAt, parts.closesAt, parts.count].some((n) => typeof n !== 'string' || !DIGITS.test(n))) {
-    throw new Error('these are not the public parts of a first secret run: four values of 64 lower-case hex characters and three whole numbers.');
+    throw new Error('these are not the public parts of a secret run: four or five values of 64 lower-case hex characters and three whole numbers.');
   }
+  const previous = parts.previous === undefined ? ZERO : fromHex(parts.previous);
   const payload = P.runPayload(fromHex(parts.root), 1n, BigInt(parts.opensAt), BigInt(parts.closesAt), 0n);
   return {
     proposal: toHex(P.proposalIdOf(payload, v, fromHex(parts.salt))),
     payload: toHex(payload),
     rootUnder: (commitment) => {
       if (typeof commitment !== 'string' || !HEX32.test(commitment)) throw new Error('a secret\x27s commitment is 64 lower-case hex characters, and this is not one.');
-      const details = V.secretRunDetails(v, ZERO, fromHex(commitment), fromHex(parts.copiesRoot), BigInt(parts.count));
+      const details = V.secretRunDetails(v, previous, fromHex(commitment), fromHex(parts.copiesRoot), BigInt(parts.count));
       return sumTreeOfLeaves([toHex(P.payoutLeaf(details, fromHex(parts.nonce)))], [0n], NO_ASSET).root;
     },
   };
 }
-
-/** The window a secret run raised at `now` (seconds) is given. */
-export const secretRunWindowFrom = (now: bigint): { opensAt: bigint; closesAt: bigint } =>
-  ({ opensAt: now - SECRET_RUN_OPENS_BEFORE, closesAt: now + SECRET_RUN_OPEN_FOR });
 
 /* ------------------------------------------------------------ reading the chain */
 
@@ -276,7 +282,11 @@ export interface RoundStanding {
   readonly approvals: number;
   /** How many approvals carrying it out needs now. */
   readonly needed: number;
-  /** A signer was removed since it was raised, so it can never be carried out. */
+  /**
+   * A governance round a signer was removed since it was raised: the account never carries it out. Always false for a
+   * run, whose bar only rises by one per removal since its raise (`needed`); a device's own rule on a secret run raised
+   * before a removal is `beforeARemoval`.
+   */
   readonly stale: boolean;
   /** Read for a seat: the account holds that seat's approval marker for it, so the account refuses the seat's approve. */
   readonly approvedHere?: boolean;
@@ -294,16 +304,27 @@ export interface RoundMadeOf {
 export interface StartStanding {
   readonly adopted: boolean;
   readonly adoption: RoundStanding & RoundMadeOf;
-  /** Absent until the secret run is known: the secret is read from the company's record first. */
+  /** The removals and re-seats the account has counted, as the same block shows them. */
+  readonly removals: number;
+  /** Absent until the secret run is known: the secret is opened first, from the company's record or this seat's copy. */
   readonly secret?: {
     /** The vault holds this run's secret. */
     readonly set: boolean;
-    /** The vault holds another secret: this is not a first start. */
+    /** The vault holds a secret that is neither this run's nor the one it replaces. */
     readonly another: boolean;
+    /** The commitment the vault holds now, zero before its first secret. */
+    readonly held: Hex;
+    /** Every identity the account holds this run under, over any window, landed whether or not in its window now. */
+    readonly landed: readonly Hex[];
+    /**
+     * Only when the device handed secrets to try: the one whose copies were last all written (`copiesWrittenKey`), which
+     * a replacement must carry; null when none was ever written, `unheld` when none of those handed over is it.
+     */
+    readonly earlier?: { readonly secret: Hex } | { readonly unheld: true } | null;
     /** The approved root of copies on the chain is this run's. */
     readonly rootIsThisRuns: boolean;
     /** The run, when the account holds it under one of its windows. */
-    readonly run: (RoundStanding & RoundMadeOf & { readonly opensAt: bigint; readonly closesAt: bigint; readonly inWindow: boolean }) | null;
+    readonly run: (RoundStanding & RoundMadeOf & { readonly opensAt: bigint; readonly closesAt: bigint; readonly inWindow: boolean; readonly beforeARemoval: boolean }) | null;
     /** The run as it would be raised with the window asked about, when one was. */
     readonly raise?: RoundMadeOf & { readonly proposal: Hex; readonly opensAt: bigint; readonly closesAt: bigint };
     /** For each copy, in the run's order, whether the vault holds it. */
@@ -315,7 +336,7 @@ export interface StartStanding {
 
 const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
-const removalsSoFar = (P: Pick<AccountStartPure, 'removalCountKey'>, a: Pick<AccountLedgerForAStart, 'proposalHolds'>): bigint => {
+export const removalsSoFar = (P: Pick<AccountStartPure, 'removalCountKey'>, a: Pick<AccountLedgerForAStart, 'proposalHolds'>): bigint => {
   const key = P.removalCountKey();
   return a.proposalHolds.member(key) ? a.proposalHolds.lookup(key).removals : 0n;
 };
@@ -346,9 +367,12 @@ export const standingOf = (
 };
 
 /**
- * **HOW FAR A VAULT'S START HAS GOT**, read off the account's and the vault's
- * ledgers as one block holds them. `run` is the first secret run when the
- * company's record of the secret has been read; `now` is in seconds.
+ * **HOW FAR A VAULT'S START OR SECRET RUN HAS GOT**, read off the account's and
+ * the vault's ledgers as one block holds them. `run` is the secret run once its
+ * secret has been opened; `now` is in seconds. A run raised before a signer was
+ * removed (`beforeARemoval`: the removals the account counts now are more than
+ * when the run was raised) seals copies to whoever held seats then, so the
+ * device never approves or carries it.
  */
 export function startStandingOf(
   circuits: { readonly vault: VaultStartPure; readonly account: AccountStartPure },
@@ -359,6 +383,8 @@ export function startStandingOf(
     readonly window?: { readonly opensAt: bigint; readonly closesAt: bigint };
     /** Whether the account holds this device's seat's approval marker for a proposal: each round then says so. */
     readonly approvedHere?: (id: Uint8Array) => boolean;
+    /** Secrets this device holds for the vault, to find the one a replacement carries among (`earlier`). */
+    readonly earlier?: readonly string[];
   },
 ): StartStanding {
   const V = circuits.vault;
@@ -369,7 +395,7 @@ export function startStandingOf(
   const adoption = adoptionRoundOf(P, input.vault);
   const adopted = adoptedSetOf(a).member(v);
   const out: StartStanding = {
-    adopted,
+    adopted, removals: Number(removalsSoFar(P, a)),
     adoption: {
       ...standingOf(P, a, adoption.proposal, a.threshold, false, mine),
       payload: adoption.payload, named: toHex(P.noVault()), salt: adoption.salt,
@@ -380,7 +406,7 @@ export function startStandingOf(
   const commitment = fromHex(run.commitment);
   const onChain = input.vaultLedger.nonceCommitment;
   const set = sameBytes(onChain, commitment);
-  const another = !set && onChain.some((b) => b !== 0);
+  const another = !set && onChain.some((b) => b !== 0) && !sameBytes(onChain, fromHex(run.previous));
   const rootKey = V.copiesRootKeyOf(commitment);
   const copies = input.vaultLedger.secretCopies;
   const rootIsThisRuns = copies.member(rootKey) && sameBytes(copies.lookup(rootKey), fromHex(run.copiesRoot));
@@ -388,22 +414,54 @@ export function startStandingOf(
   const writtenKey = V.copiesWrittenKey();
   const started = set && copies.member(writtenKey) && sameBytes(copies.lookup(writtenKey), commitment);
   const bar = a.thresholds.member(v) ? a.thresholds.lookup(v) : a.threshold;
-  let found: NonNullable<StartStanding['secret']>['run'] = null;
+  const runs: NonNullable<NonNullable<StartStanding['secret']>['run']>[] = [];
   for (const [id, window] of a.runWindow) {
     if (toHex(id) !== secretRunProposalOf(P, run, window)) continue;
-    found = {
+    runs.push({
       ...standingOf(P, a, toHex(id), bar, true, mine),
       payload: payloadOf(P, run, window), named: run.vault, salt: run.salt,
       opensAt: window.opensAt, closesAt: window.closesAt,
       inWindow: window.opensAt <= input.now && input.now < window.closesAt,
-    };
-    if (found.inWindow) break;
+      beforeARemoval: removedSinceRaised(P, a, id),
+    });
   }
+  const landed = runs.map((r) => r.proposal);
+  const found = runFor(runs, input.window === undefined ? undefined : secretRunProposalOf(P, run, input.window));
   const raise = input.window === undefined ? {} : {
     raise: {
       proposal: secretRunProposalOf(P, run, input.window), payload: payloadOf(P, run, input.window), named: run.vault,
       salt: run.salt, opensAt: input.window.opensAt, closesAt: input.window.closesAt,
     },
   };
-  return { ...out, secret: { set, another, rootIsThisRuns, run: found, written, started, ...raise } };
+  const earlier = input.earlier === undefined ? {} : { earlier: earlierOf(V, v, copies, input.earlier) };
+  return { ...out, secret: { set, another, held: toHex(onChain), landed, rootIsThisRuns, run: found, written, started, ...raise, ...earlier } };
 }
+
+/**
+ * **WHICH OF A SECRET'S RUNS A READ REPORTS**, of all the account holds for it (`runs`, in the ledger's order): the one
+ * under `wanted` when the read names its window, so a device approving or carrying a run reads that run and no other;
+ * otherwise the first in its window, else the last. Two runs of one secret can be open at once (one raised before a
+ * removal, one after); which the ledger lists first must not decide which is read.
+ */
+export const runFor = <R extends { readonly proposal: Hex; readonly inWindow: boolean }>(runs: readonly R[], wanted?: Hex): R | null =>
+  (wanted === undefined ? undefined : runs.find((r) => r.proposal.toLowerCase() === wanted.toLowerCase()))
+  ?? runs.find((r) => r.inWindow) ?? runs[runs.length - 1] ?? null;
+
+/** Whether a signer was removed after the proposal `id` was raised: the account's removals now exceed those it held at the raise. */
+const removedSinceRaised = (P: Pick<AccountStartPure, 'removalCountKey'>, a: Pick<AccountLedgerForAStart, 'proposalHolds'>, id: Uint8Array): boolean =>
+  a.proposalHolds.member(id) && removalsSoFar(P, a) > a.proposalHolds.lookup(id).removals;
+
+/**
+ * The secret a replacement must carry: the one whose commitment the vault keeps as its last fully written
+ * (`copiesWrittenKey`, which the contract checks `earlier` against), found among `held`. Null when that key is absent
+ * or zero (no secret's copies were ever all written, so none is carried).
+ */
+const earlierOf = (
+  V: Pick<VaultStartPure, 'copiesWrittenKey' | 'secretCommitmentOf'>, v: Uint8Array, copies: VaultLedgerForAStart['secretCopies'], held: readonly string[],
+): { readonly secret: Hex } | { readonly unheld: true } | null => {
+  const key = V.copiesWrittenKey();
+  const written = copies.member(key) ? copies.lookup(key) : ZERO;
+  if (written.every((b) => b === 0)) return null;
+  const secret = held.map((s) => String(s).toLowerCase()).find((s) => HEX32.test(s) && sameBytes(V.secretCommitmentOf(v, fromHex(s)), written));
+  return secret === undefined ? { unheld: true } : { secret: secret as Hex };
+};

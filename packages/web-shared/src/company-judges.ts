@@ -5,7 +5,7 @@ import type { Hex } from '../../../src/core/crypto.js';
 import type { Account, SealedAccount } from '../../../src/core/types.js';
 import type { CompanyKeys, KeysHeld } from '../../../src/core/company-key.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import { companyKeyHere, keysInTheFilings, type CompanyKeyHere } from './company-key-here.js';
+import { CompanyKeyNotOpened, companyKeyHere, keysInTheFilings, type CompanyKeyHere, type CompanyKeyHereOptions } from './company-key-here.js';
 import { vouchedRunsHere } from './run-rebuilt-here.js';
 import { governedCallServiceFor } from './governed-call-on-device.js';
 import { ROSTER_CHECK, rosterBelievedHere, RosterNotBelieved, seatsAdmittedHere, type BelievedAccount, type RosterReads } from './roster-here.js';
@@ -158,6 +158,12 @@ export async function seatsAdmittedWith(
   return seatsAdmittedHere(...read);
 }
 
+/** Whether an error, or any error it was thrown from, is the refusal for a copy of the company's key the wallet has not released. */
+const notOpenedIn = (e: unknown): boolean => {
+  for (let at: unknown = e, depth = 0; at instanceof Error && depth < 8; at = at.cause, depth += 1) if (at instanceof CompanyKeyNotOpened) return true;
+  return false;
+};
+
 /** The judges a device reads a company with, every one built from `d`. */
 export function companyJudges(d: CompanyJudgeDoors) {
   /**
@@ -255,11 +261,14 @@ export function companyJudges(d: CompanyJudgeDoors) {
    */
   const companyKeysFor = async (
     companyId: string, sealed: SealedAccount, keys: Pick<AccountKeys, 'signingSecret'> | { readonly signingPublicKey: Hex },
+    unreleased?: CompanyKeyHereOptions['unreleased'],
   ): Promise<CompanyKeyHere> => {
+    const quietly = unreleased === 'not-opened';
     const company = sealed.companyLabel as CompanyLabel | undefined | null;
     const account = sealed.contractAddress as AccountAddress | undefined | null;
     if (company === undefined || company === null || account === undefined || account === null) return d.noAccount();
-    const released = releasedOnceHere(companyId);
+    /* A quiet read (a page loading) never asks the wallet: it uses the key released on this visit, if any. */
+    const released = quietly ? async (): Promise<Hex | null> => d.released(companyId) : releasedOnceHere(companyId);
     const found = await keysFoundFor(companyId, sealed, released);
     return companyKeyHere({
       accountId: companyId, material: 'signingPublicKey' in keys ? { signingPublicKey: keys.signingPublicKey } : { signingSecret: keys.signingSecret },
@@ -267,19 +276,37 @@ export function companyJudges(d: CompanyJudgeDoors) {
       filings: () => directoryFilingsFrom(d.api, companyId),
       served: async () => d.servedKeyFor(sealed),
       released: () => d.released(companyId),
-      askTheWallet: released,
-    });
+      askTheWallet: quietly ? async () => null : released,
+    }, undefined, unreleased === undefined ? {} : { unreleased });
   };
 
-  const companyKeysOf = (rec: SealedAccount): Promise<CompanyKeyHere> => {
+  const companyKeysOf = (rec: SealedAccount, unreleased?: CompanyKeyHereOptions['unreleased']): Promise<CompanyKeyHere> => {
     const keys = d.keysFor(rec.id);
     if (keys === null) throw new Error('this device holds no keys for the company, so it cannot open its key.');
-    return companyKeysFor(rec.id, rec, { signingPublicKey: keys.signingPublicKey.toLowerCase() as Hex });
+    return companyKeysFor(rec.id, rec, { signingPublicKey: keys.signingPublicKey.toLowerCase() as Hex }, unreleased);
   };
 
-  /** The company as this device believes it, its signers read from its roster record only, under the keys its directory believes. */
-  const openedHere = (sealed: SealedAccount): Promise<OpenedAccount | null> =>
-    d.openAccount(sealed, d.holders, anchoredHere, (_company, account) => leavesFor(account), companyKeysOf, invitedSeatsFor, identityHere);
+
+  /** The company opened with the doors every read here shares, its keys read as `keysOf` reads them. */
+  const openedWith = (sealed: SealedAccount, keysOf: (rec: SealedAccount) => Promise<CompanyKeyHere>): Promise<OpenedAccount | null> =>
+    d.openAccount(sealed, d.holders, anchoredHere, (_company, account) => leavesFor(account), keysOf, invitedSeatsFor, identityHere);
+
+  const openedHere = (sealed: SealedAccount): Promise<OpenedAccount | null> => openedWith(sealed, companyKeysOf);
+
+  /**
+   * The company opened as a page load reads it: the wallet is never asked. A copy of the company's key the wallet has not
+   * released on this visit is left unopened; when that is why the company cannot be read (the error, or one it was thrown
+   * from, is `CompanyKeyNotOpened`), it is told as that. Any other error, a roster the device does not believe included, is told as itself.
+   */
+  const openedQuietlyHere = async (sealed: SealedAccount): Promise<OpenedAccount | null> => {
+    try {
+      return await openedWith(sealed, (rec) => companyKeysOf(rec, 'not-opened'));
+    } catch (e) {
+      if (notOpenedIn(e)) throw e instanceof CompanyKeyNotOpened ? e : new CompanyKeyNotOpened();
+      throw e;
+    }
+  };
+
 
   /** The seats the company's roster admitted, read afresh with the same doors as `openedHere`. */
   const seatsAdmittedOn = (sealed: SealedAccount): Promise<ReadonlySet<string>> =>
@@ -304,7 +331,7 @@ export function companyJudges(d: CompanyJudgeDoors) {
 
   return Object.freeze({
     anchorsOnChainFor, keysFoundFor, vouchingFor, tagSeatsFor, anchoredHere, leavesFor, rosterReadsFor, releasedOnceHere,
-    companyKeysFor, openedHere, seatsAdmittedOn, filingJudgeFor, directoryHereFor, directoryWithItsRecordsFor,
+    companyKeysFor, openedHere, openedQuietlyHere, seatsAdmittedOn, filingJudgeFor, directoryHereFor, directoryWithItsRecordsFor,
   });
 }
 

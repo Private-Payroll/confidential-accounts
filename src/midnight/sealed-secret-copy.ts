@@ -40,6 +40,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { gcm } from '@noble/ciphers/aes.js';
 import { fromHex, toHex, utf8, type Hex, type WrappingKeypair } from '../core/crypto.js';
+import { recordsKeypairFrom } from './company-nonce-secret.js';
 
 /** How many parts a copy is written in, and how wide each one is: what `writeSecretCopy` takes. */
 export const SEALED_COPY_PARTS = 4;
@@ -168,3 +169,162 @@ export function secretCopyOnTheChain(
   }
   return null;
 }
+
+/** A reader's sealed copy as it crosses from the worker: the commitment looked under and the copy's parts, as hex; null when absent. */
+export interface OwnChainCopy {
+  readonly commitment: string | null;
+  readonly parts: readonly string[] | null;
+}
+
+/** The vault's own key functions a reader's copy is found under. */
+export interface CopyKeys {
+  copyKeyOf: CopyKeyOf;
+  copiesCountKeyOf(commitment: Uint8Array): Uint8Array;
+  copiesWrittenKey(): Uint8Array;
+}
+
+/**
+ * **THIS SIGNER'S SECRET FROM A LIST OF SEALED COPIES**: the copy sealed to the records key `companyKey` gives, opened,
+ * in lower case. Null when no copy is sealed to that key or the one that is does not open (`SecretCopyUnreadable`);
+ * anything else is a fault and is thrown. Each caller decides what null means for it.
+ */
+export function ownCopyOpened(
+  companyKey: Uint8Array, vault: Hex, copies: readonly { readonly reader: string; readonly parts: readonly string[] }[],
+): Hex | null {
+  const mine = recordsKeypairFrom(companyKey);
+  const copy = copies.find((c) => String(c.reader).toLowerCase() === mine.publicKey.toLowerCase());
+  if (copy === undefined) return null;
+  try {
+    return openSecretCopy({ vault, parts: copy.parts.map((p) => fromHex(p as Hex)), reader: mine }).toLowerCase() as Hex;
+  } catch (e) {
+    if (e instanceof SecretCopyUnreadable) return null;
+    throw e;
+  }
+}
+
+/**
+ * **A READER'S COPY OF THE VAULT'S SECRET, READ OFF THE VAULT'S LEDGER** under one commitment: the one `commitment`
+ * names when given; else the one the vault holds now (`of: 'commitment'`), or the one whose copies were last all
+ * written (`of: 'copies-written'`, the secret a replacement carries). The number of copies is the vault's own, read
+ * with `countOf`. Answers the commitment looked under (null when the ledger names none) and the copy's sealed parts
+ * (null when no copy for this reader is there). Opening a copy needs the reader's own key, which this never holds.
+ */
+export function readersCopyOnTheChain(
+  ledger: { readonly nonceCommitment?: Uint8Array; readonly secretCopies: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array } },
+  keys: CopyKeys, countOf: (cell: Uint8Array) => bigint,
+  input: { readonly reader: Hex; readonly of: 'commitment' | 'copies-written'; readonly commitment?: Hex },
+): { readonly commitment: Hex | null; readonly parts: Uint8Array[] | null } {
+  const copies = ledger.secretCopies;
+  const written = keys.copiesWrittenKey();
+  const under = input.commitment !== undefined ? bytes32('secret\x27s commitment', input.commitment)
+    : input.of === 'commitment' ? ledger.nonceCommitment ?? null
+      : copies.member(written) ? copies.lookup(written) : null;
+  if (under === null || under.every((b) => b === 0)) return { commitment: null, parts: null };
+  const countKey = keys.copiesCountKeyOf(under);
+  const count = copies.member(countKey) ? countOf(copies.lookup(countKey)) : 0n;
+  const commitment = toHex(under);
+  return { commitment, parts: secretCopyOnTheChain(copies, keys.copyKeyOf, { commitment, reader: input.reader, count }) };
+}
+
+/** The vault's own circuits for the link each secret keeps to the one before it. */
+export interface EarlierKeys {
+  earlierSecretKeyOf(commitment: Uint8Array): Uint8Array;
+  earlierSecretOf(kept: Uint8Array, secret: Uint8Array): Uint8Array;
+  secretCommitmentOf(vault: Uint8Array, secret: Uint8Array): Uint8Array;
+}
+
+/** What a walk back found: every secret given and every earlier one the chain links, and whether a link repeated. */
+export interface SecretsWalkedBack {
+  readonly secrets: readonly Hex[];
+  readonly repeated: boolean;
+}
+
+/**
+ * **EVERY SECRET THAT OPENED, WALKED BACK FROM THE ONE THE VAULT HOLDS NOW.** A secret opens once every signer's sealed
+ * copy of it is written. Each secret set while an earlier one had opened keeps the last secret that opened under its
+ * own commitment's link key, masked so only a holder of the later secret lifts it (`earlierSecretKeyOf`,
+ * `earlierSecretOf`). Starting from the given secret whose commitment is the vault's `commitment`, this lifts each link
+ * in turn, working out each earlier secret's commitment to find the next link, and stops where a secret keeps none: the
+ * first secret that opened.
+ * A secret that never opened is never linked, and no coin was made under it.
+ * Answers the secrets given, then each earlier secret not among them, newest first; when no given secret is the
+ * vault's, the secrets given and nothing more. A commitment met twice stops the walk and is answered as `repeated`: the
+ * vault never sets one commitment twice, so a ledger that links back to one is not read further.
+ */
+export function secretsWalkedBack(
+  copies: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array },
+  keys: EarlierKeys,
+  input: { readonly vault: Hex; readonly commitment: Hex; readonly secrets: readonly Hex[] },
+): SecretsWalkedBack {
+  const vault = bytes32('vault', input.vault);
+  const commitmentOf = (secret: Uint8Array) => toHex(keys.secretCommitmentOf(vault, secret));
+  const now = input.commitment.toLowerCase();
+  const start = input.secrets.find((s) => commitmentOf(bytes32('secret', s)) === now);
+  const out: Hex[] = [...input.secrets];
+  if (start === undefined) return { secrets: out, repeated: false };
+  const seen = new Set<string>([now]);
+  let secret = bytes32('secret', start);
+  let link = keys.earlierSecretKeyOf(bytes32('secret\x27s commitment', now));
+  while (copies.member(link)) {
+    secret = keys.earlierSecretOf(copies.lookup(link), secret);
+    const commitment = commitmentOf(secret);
+    if (seen.has(commitment)) return { secrets: out, repeated: true };
+    seen.add(commitment);
+    const hex = toHex(secret);
+    if (!out.includes(hex)) out.push(hex);
+    link = keys.earlierSecretKeyOf(bytes32('secret\x27s commitment', commitment));
+  }
+  return { secrets: out, repeated: false };
+}
+
+/**
+ * **THE SECRETS A REBUILD NAMES A VAULT'S COINS WITH, AND THIS SIGNER'S SEALED COPY, READ OFF THE VAULT'S LEDGER.**
+ * When `copyFor` is given, that reader's sealed copy of the secret the vault holds now (`commitment`) is read and
+ * handed back sealed: opening it needs the reader's own key, which this never holds. When the page has opened it,
+ * `copySecret` is put first if it is the one the vault holds now and said if it is not (`ownCopyFirst`). The secrets
+ * given are kept, and when one of them is the one the vault holds now, every earlier secret that opened is added
+ * from the links the vault keeps (`secretsWalkedBack`). Each read that fails is said, and the secrets given are kept
+ * as they are.
+ */
+export function secretsForARebuild(
+  ledger: () => Parameters<typeof readersCopyOnTheChain>[0],
+  keys: CopyKeys & EarlierKeys, countOf: (cell: Uint8Array) => bigint,
+  input: { readonly vault: Hex; readonly commitment: Hex; readonly secrets: readonly Hex[]; readonly copyFor?: Hex; readonly copySecret?: Hex },
+): { readonly copy: Uint8Array[] | null; readonly secrets: readonly Hex[]; readonly said: readonly string[] } {
+  const said: string[] = [];
+  const given = input.copySecret === undefined ? input.secrets : ownCopyFirst(keys, input, input.copySecret.toLowerCase() as Hex, said);
+  let copy: Uint8Array[] | null = null;
+  if (input.copyFor !== undefined) {
+    try {
+      copy = readersCopyOnTheChain(ledger(), keys, countOf, { reader: input.copyFor, of: 'commitment', commitment: input.commitment }).parts;
+    } catch (e) {
+      said.push(`this signer's sealed copy of the vault's secret could not be read off the chain: ${(e as Error)?.message ?? e}`);
+    }
+  }
+  try {
+    const walked = secretsWalkedBack(ledger().secretCopies, keys, { ...input, secrets: given });
+    if (walked.repeated) said.push('the vault\x27s links back to its earlier secrets come back to a secret already met, so they are read no further');
+    return { copy, secrets: walked.secrets, said };
+  } catch (e) {
+    said.push(`the vault's earlier secrets could not be read off the chain, so only the secrets given name its coins: ${(e as Error)?.message ?? e}`);
+    return { copy, secrets: given, said };
+  }
+}
+
+/**
+ * The secrets given with this signer's own copy's secret first, when that secret is the one the vault holds now. A
+ * copy opens under its reader's key whatever secret was sealed in it, and nothing on the chain checks what it holds,
+ * so one that is not the vault's is said, never named with: it is the copy this signer would recover from.
+ */
+const ownCopyFirst = (
+  keys: EarlierKeys, input: { readonly vault: Hex; readonly commitment: Hex; readonly secrets: readonly Hex[] }, own: Hex,
+  said: string[],
+): readonly Hex[] => {
+  if (toHex(keys.secretCommitmentOf(bytes32('vault', input.vault), bytes32('secret', own))) === input.commitment.toLowerCase()) {
+    return [own, ...input.secrets.filter((s) => s !== own)];
+  }
+  said.push('this signer\x27s own sealed copy of the vault\x27s secret on the chain opens to a secret that is not the one the vault holds now, '
+    + 'so nothing is named with it, and this signer could not recover the vault\x27s coins from that copy alone. The vault\x27s next '
+    + 'change of secret, approved by its signers, seals this signer a new copy');
+  return input.secrets;
+};

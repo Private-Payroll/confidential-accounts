@@ -80,6 +80,12 @@ export interface CompanyKeyHere {
    * or of the payout seed of the newest change that is no repair, so no run is raised under an older seed.
    */
   readonly notSealing: string | null;
+  /**
+   * With `unreleased: 'not-opened'`: the epochs this seat holds a copy of that were not opened, because the wallet has
+   * not released the company's key on this visit, in order. `keyAt` throws `CompanyKeyNotOpened` for each; nothing else is refused. Absent
+   * or empty when every copy this seat holds was opened.
+   */
+  readonly notOpened?: readonly number[];
   /** The key and epoch to seal under now; throws `CompanyKeyBeingChanged` while `notSealing` says why not. */
   readonly sealing: () => { readonly key: Hex; readonly epoch: number };
 }
@@ -92,10 +98,13 @@ export class CompanyKeyBeingChanged extends Error {
   }
 }
 
-/** The person's wallet gave no key for the company, so this device opens no key above the first. */
+/**
+ * No key of the company was released by the person's wallet on this visit, whether it was asked and gave none (a press)
+ * or deliberately not asked (a quiet read), so this device opens no key it needs above the first.
+ */
 export class CompanyKeyNotOpened extends Error {
   constructor() {
-    super('this device opens the company\'s key with the key your wallet releases for the company, and your wallet gave none. '
+    super('this device opens the company\'s key with the key your wallet releases for the company, and your wallet has not released one on this visit. '
       + 'Nothing was changed. Open the company with your wallet, then try again.');
     this.name = 'CompanyKeyNotOpened';
   }
@@ -119,6 +128,22 @@ export class CompanyKeyNotBelieved extends Error {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/u;
+
+/** How `companyKeyHere` takes a wallet that has not released the company's key on this visit. */
+export interface CompanyKeyHereOptions {
+  /**
+   * `'refuse'` (the default, every press): the wallet is asked once, and a key not given refuses with
+   * `CompanyKeyNotOpened`. `'not-opened'` (a quiet read, which opens no wallet window): the wallet is never asked, only
+   * a key already released on this visit is used, and each epoch it would have opened is named in `notOpened`.
+   */
+  readonly unreleased?: 'refuse' | 'not-opened';
+}
+
+/** The company's key the wallet already released on this visit, or null; never asks the wallet. */
+const heldRelease = (doors: Pick<CompanyKeyDoors, 'released'>): Hex | null => {
+  const held = doors.released();
+  return typeof held === 'string' && HEX64.test(held.toLowerCase()) ? held.toLowerCase() as Hex : null;
+};
 
 /** The wallet's released key, asked for at most once per use. */
 const releasedOnce = (doors: Pick<CompanyKeyDoors, 'released' | 'askTheWallet'>): (() => Promise<Hex>) => {
@@ -189,57 +214,20 @@ const ownSeatIn = (here: DirectoryHere, material: CompanyKeyDoors['material']): 
 };
 
 /**
- * **EVERY KEY OF THE COMPANY THIS DEVICE HOLDS, FROM ONE READ OF THE DIRECTORY.**
- * With no anchored rotation, the key is epoch 0's, from the copy the service serves this seat. Otherwise this seat's
- * own copy in every rotation it was given one in is opened with its wallet's released key (asked for once when this
- * tab holds none), and each must open to its rotation's key check; a copy that does not is passed over. The served
- * copy is the key of the rotation whose check it matches (a seat seated after it), or else epoch 0's. From each key
- * held, the key its rotation replaces is opened: the one just before, or the older one it names (`replaces`), which
- * must match that epoch's check, or at epoch 0 this seat's served copy. A rotation whose replaced key does not open or
- * does not match, whose key is one an earlier epoch had, or whose payout seed does not open or is one an earlier epoch
- * had, is not believed: its epoch's key is not held, and every key below it still is. So a seat whose copy of the
- * newest key does not open, or that is retired, or that reads a newest rotation it does not believe, holds the keys
- * below and seals nothing new. Refuses with `CompanyKeyNotOpened` when the wallet gives no key, and
- * `CompanyKeyNotBelieved` when the service serves other bytes than the anchor holds, or no key at all leads back.
+ * The keys held that lead back, and the payout seeds they open: back through the key each change replaces, newest
+ * first, then each change's key and seed checked against every earlier one. A change not believed is named with why,
+ * and its epoch's key is taken out of `keys`; every key below it is kept.
  */
-export async function companyKeyHere(doors: CompanyKeyDoors, released = releasedOnce(doors)): Promise<CompanyKeyHere> {
-  const here = await doors.records.directory();
-  const rotations = anchoredRotationsIn(here, (here.dir.rotations ?? []).length === 0 ? [] : await doors.filings());
-  const own = ownSeatIn(here, doors.material);
-  const newest = rotations.length === 0 ? 0 : rotations[rotations.length - 1]!.rotation.epoch;
-  const lastRotated = rotations.length === 0 ? 0 : rotations[rotations.length - 1]!.rotation.version;
-  const keys = new Map<number, Hex>();
-  const checkAt = new Map<number, Hex>(rotations.map(({ rotation }) => [rotation.epoch, rotation.keyCheck]));
-  /* This seat's own copy in every change it was given one in, each opening to its change's key check. */
-  let unopened = false;
-  for (let i = rotations.length - 1; i >= 0 && own !== undefined; i -= 1) {
-    const wrap = rotations[i]!.change.wraps.find((w) => w.seat === own.seat);
-    if (wrap === undefined) continue;
-    const key = openedWrap(wrap.wrap as WrappedCompanyKey, recordsKeyOf(await released()).secret);
-    const { epoch, keyCheck } = rotations[i]!.rotation;
-    if (key === null || keyCheckOf(doors.accountId, epoch, key) !== keyCheck) {
-      unopened ||= i === rotations.length - 1;
-      continue;
-    }
-    keys.set(epoch, key);
-  }
-  const staying = own !== undefined && own.retired === null;
-  /* The copy the service serves this seat: the key of the change whose key check it matches, or else epoch 0's. */
-  let served: Hex | null = null;
-  if (keys.size === 0) {
-    served = (await doors.served()).toLowerCase();
-  } else if (staying) {
-    try { served = (await doors.served()).toLowerCase(); } catch { served = null; }
-  }
-  const servedAt = served === null ? 0
-    : rotations.find(({ rotation }) => keyCheckOf(doors.accountId, rotation.epoch, served!) === rotation.keyCheck)?.rotation.epoch ?? 0;
-  if (served !== null && !keys.has(servedAt)) keys.set(servedAt, served);
-  const servedAtZero = servedAt === 0 ? served : null;
+const keysBelievedIn = (
+  accountId: string, rotations: readonly { readonly rotation: DirectoryRotation; readonly change: RotateChange }[],
+  keys: Map<number, Hex>, servedAtZero: Hex | null,
+): { readonly notBelieved: ReadonlyMap<number, string>; readonly seeds: readonly PayoutSeed[] } => {
   /*
    * Back through the key each change replaces, newest first. A change whose replaced key does not open, or does not
    * match the key check of the epoch it names (at epoch 0, this seat's served copy), does not lead back.
    */
   const notBelieved = new Map<number, string>();
+  const checkAt = new Map<number, Hex>(rotations.map(({ rotation }) => [rotation.epoch, rotation.keyCheck]));
   for (let i = rotations.length - 1; i >= 0; i -= 1) {
     const { rotation, change } = rotations[i]!;
     const key = keys.get(rotation.epoch);
@@ -250,7 +238,7 @@ export async function companyKeyHere(doors: CompanyKeyDoors, released = released
       notBelieved.set(rotation.epoch, 'the key it replaces does not open under it');
       continue;
     }
-    const matches = below === 0 ? servedAtZero === null || before === servedAtZero : keyCheckOf(doors.accountId, below, before) === checkAt.get(below);
+    const matches = below === 0 ? servedAtZero === null || before === servedAtZero : keyCheckOf(accountId, below, before) === checkAt.get(below);
     if (!matches) {
       notBelieved.set(rotation.epoch, 'the key it replaces does not match the key check of the epoch it names');
       continue;
@@ -277,12 +265,79 @@ export async function companyKeyHere(doors: CompanyKeyDoors, released = released
     }
   }
   for (const e of notBelieved.keys()) keys.delete(e);
+  return { notBelieved, seeds };
+};
+
+/**
+ * **EVERY KEY OF THE COMPANY THIS DEVICE HOLDS, FROM ONE READ OF THE DIRECTORY.**
+ * With no anchored rotation, the key is epoch 0's, from the copy the service serves this seat. Otherwise this seat's
+ * own copy in every rotation it was given one in is opened with its wallet's released key (asked for once when this
+ * tab holds none), and each must open to its rotation's key check; a copy that does not is passed over. The served
+ * copy is the key of the rotation whose check it matches (a seat seated after it), or else epoch 0's. From each key
+ * held, the key its rotation replaces is opened: the one just before, or the older one it names (`replaces`), which
+ * must match that epoch's check, or at epoch 0 this seat's served copy. A rotation whose replaced key does not open or
+ * does not match, whose key is one an earlier epoch had, or whose payout seed does not open or is one an earlier epoch
+ * had, is not believed: its epoch's key is not held, and every key below it still is. So a seat whose copy of the
+ * newest key does not open, or that is retired, or that reads a newest rotation it does not believe, holds the keys
+ * below and seals nothing new. Refuses with `CompanyKeyNotOpened` when the wallet gives no key, and
+ * `CompanyKeyNotBelieved` when the service serves other bytes than the anchor holds, or no key at all leads back.
+ * With `unreleased: 'not-opened'` (a quiet read) the wallet is never asked: a copy is opened only with a key already
+ * released on this visit, each epoch left unopened is named in `notOpened`, and what the served copy leads back to
+ * is held as above; it refuses with `CompanyKeyNotOpened` only when it holds no key at all.
+ */
+export async function companyKeyHere(
+  doors: CompanyKeyDoors, released = releasedOnce(doors), options: { readonly unreleased?: CompanyKeyHereOptions['unreleased'] } = {},
+): Promise<CompanyKeyHere> {
+  const quiet = options.unreleased === 'not-opened';
+  const opener = quiet ? async () => heldRelease(doors) : released;
+  const here = await doors.records.directory();
+  const rotations = anchoredRotationsIn(here, (here.dir.rotations ?? []).length === 0 ? [] : await doors.filings());
+  const own = ownSeatIn(here, doors.material);
+  const newest = rotations.length === 0 ? 0 : rotations[rotations.length - 1]!.rotation.epoch;
+  const lastRotated = rotations.length === 0 ? 0 : rotations[rotations.length - 1]!.rotation.version;
+  const keys = new Map<number, Hex>();
+  /* This seat's own copy in every change it was given one in, each opening to its change's key check. */
+  let unopened = false;
+  const notOpened: number[] = [];
+  for (let i = rotations.length - 1; i >= 0 && own !== undefined; i -= 1) {
+    const wrap = rotations[i]!.change.wraps.find((w) => w.seat === own.seat);
+    if (wrap === undefined) continue;
+    const { epoch, keyCheck } = rotations[i]!.rotation;
+    const releasedKey = await opener();
+    if (releasedKey === null) { notOpened.unshift(epoch); continue; }
+    const key = openedWrap(wrap.wrap as WrappedCompanyKey, recordsKeyOf(releasedKey).secret);
+    if (key === null || keyCheckOf(doors.accountId, epoch, key) !== keyCheck) {
+      unopened ||= i === rotations.length - 1;
+      continue;
+    }
+    keys.set(epoch, key);
+  }
+  const staying = own !== undefined && own.retired === null;
+  /* The copy the service serves this seat: the key of the change whose key check it matches, or else epoch 0's. */
+  let served: Hex | null = null;
+  if (keys.size === 0) {
+    served = await doors.served().then((k) => k.toLowerCase(), (e: unknown) => {
+      /* A quiet read with nothing opened and no served copy holds no key at all: it is a key not opened yet. */
+      throw quiet && notOpened.length > 0 ? new CompanyKeyNotOpened() : e;
+    });
+  } else if (staying) {
+    try { served = (await doors.served()).toLowerCase(); } catch { served = null; }
+  }
+  const servedAt = served === null ? 0
+    : rotations.find(({ rotation }) => keyCheckOf(doors.accountId, rotation.epoch, served!) === rotation.keyCheck)?.rotation.epoch ?? 0;
+  if (served !== null && !keys.has(servedAt)) keys.set(servedAt, served);
+  const servedAtZero = servedAt === 0 ? served : null;
+  const { notBelieved, seeds } = keysBelievedIn(doors.accountId, rotations, keys, servedAtZero);
   if (keys.size === 0) throw new CompanyKeyNotBelieved(newest, 'no key of the company that this seat holds leads back to the keys before it');
   const epoch = Math.max(...keys.keys());
   const key = keys.get(epoch)!;
   const seeded = [...rotations].reverse().find(({ rotation }) => rotation.repairs === undefined)?.rotation.epoch;
   const newestNotBelieved = notBelieved.get(newest);
-  const notSealing = epoch < newest && newestNotBelieved !== undefined
+  const notOpenedNow = notOpened.filter((e) => !keys.has(e));
+  const notSealing = notOpenedNow.includes(newest)
+    ? 'the company\'s newest key is not opened on this page, because your wallet has not released the company\'s key on this '
+      + 'visit, so this page seals nothing new. Open the company with your wallet to open it'
+    : epoch < newest && newestNotBelieved !== undefined
     ? `the company's newest change of its key is not believed on this device, because ${newestNotBelieved}, so this device `
       + `seals nothing new. ${CLEARED}`
     : epoch < newest && unopened
@@ -296,9 +351,11 @@ export async function companyKeyHere(doors: CompanyKeyDoors, released = released
   const answered = new Map<number, ReadonlySet<string>>(
     rotations.map(({ rotation, change }) => [change.replaces ?? rotation.epoch - 1, new Set(change.waiting.map((d) => d.toLowerCase()))]));
   return Object.freeze({
-    epoch, key, newest, seeds: Object.freeze(seeds), notSealing, answered,
+    epoch, key, newest, seeds: Object.freeze(seeds), notSealing, answered, notOpened: Object.freeze(notOpenedNow),
     keyAt: (e: number): Hex => {
       const k = keys.get(e);
+      /* An epoch a quiet read left unopened is the typed "not opened yet", which its caller offers to open with the wallet. */
+      if (k === undefined && notOpenedNow.includes(e)) throw new CompanyKeyNotOpened();
       if (k === undefined) throw new Error(`this device holds no key of the company at epoch ${e}, so nothing sealed under it opens here.`);
       return k;
     },
@@ -372,20 +429,15 @@ const stayersApproveAlone = (here: DirectoryHere): boolean => {
 /**
  * **THE COMPANY'S KEY CHANGED FROM THIS DEVICE, ONCE A SIGNER'S REMOVAL IS CARRIED OUT
  * ON THE CHAIN AND ANCHORED.** A new random key and payout seed, a copy of the key
- * for every seat the directory holds and has not retired, the key it replaces
- * sealed under it, and the digest of each waiting request and handover this
+ * for every seat the directory holds and has not retired, the key it
+ * replaces sealed under it, and the digest of each waiting request and handover this
  * device opened, filed as the directory's next version and anchored at once.
- * Nothing is filed by a seat that is not in the directory, is retired, is the
- * one leaving (`leaf`) or under an approved removal, or may not file a proposal;
- * nothing is filed while who is under an approved removal cannot be read, another
- * change of the key is filed and not anchored, the retirement is not anchored, the chain still holds
- * a retired seat while the seats that stay could not meet the chain's approvals without it
- * (`stayersApproveAlone`), the chain holds a seat the directory has no entry for that the
- * company's roster admitted (a seat never admitted holds no key, gets no copy and is
- * admitted afterwards with the new one), or
- * the directory holds a seat that stays and the chain no longer holds - each
- * would leave a copy of the key with a seat that should not hold one, or none
- * with one that should. A device that loses the race to another reads the
+ * Nothing is filed until what every change after a removal waits for has passed
+ * (`removalWaitsHere`, with a seat that may file a proposal as the one that acts; a
+ * seat never admitted holds no key, gets no copy and is admitted afterwards with the
+ * new one): each would leave a copy of the key with a seat that should not hold
+ * one, or none with one that should, and the directory takes a change only when
+ * it is wrapped to every seat that stays. A device that loses the race to another reads the
  * other's change and files nothing more. A seat that does not hold the newest key
  * (its copy did not open, or this device does not believe that change) changes the key
  * from the newest key it holds (`replaces`) once every newer change was filed by a seat
@@ -397,14 +449,33 @@ export async function rotateTheCompanyKeyHere(doors: RotationDoors, o: { readonl
   return outcome;
 }
 
-const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }): Promise<KeyRotated> => {
-  const here = await doors.records.directory();
-  const seat = ownSeatIn(here, doors.material);
+/** Where a seat's device stands after a removal, before it changes the company's key or a vault's secret. */
+type RemovalWaited =
+  | { readonly state: 'waits' | 'not-this-seat'; readonly why: string }
+  | { readonly state: 'not-needed' }
+  | { readonly state: 'ready'; readonly seat: DirectorySeat; readonly owed: { readonly after: number; readonly since: number } };
+
+/**
+ * **WHAT EVERY CHANGE AFTER A REMOVAL WAITS FOR, IN ONE PLACE.** `seat` is this device's own entry (`ownSeatIn`).
+ * Nothing is made by a seat that is not in the directory, is retired, is the one leaving (`leaf`: the leaver's own
+ * wallet makes nothing for the seats that stay), is no longer held by the chain or under an approved removal, or whose
+ * role `mayAct` refuses (it returns why, in the caller's words); and nothing while who is under an approved removal
+ * cannot be read, a change of the company's key is filed and not anchored, the retirement is not anchored, the chain
+ * still holds a retired seat while the seats that stay could not meet the chain's approvals without it
+ * (`stayersApproveAlone`), the chain holds a seat the directory has no entry for that the company's roster admitted,
+ * or the directory holds a seat that stays and the chain no longer holds. `not-needed` is a company whose key is not
+ * owed a change; `ready` names the seat that acts and what is owed (`owedIn`).
+ */
+export async function removalWaitsHere(
+  here: DirectoryHere, seat: DirectorySeat | undefined, o: { readonly leaf?: string },
+  mayAct: (seat: DirectorySeat) => string | null, doors: Pick<RotationDoors, 'leaving' | 'admitted'>,
+): Promise<RemovalWaited> {
   if (seat === undefined) return { state: 'not-this-seat', why: 'this device\'s seat has no entry in the company\'s directory' };
   if (seat.retired !== null) return { state: 'not-this-seat', why: 'this seat is retired from the company' };
   if (typeof o.leaf === 'string' && o.leaf.toLowerCase() === seat.seat) return { state: 'not-this-seat', why: 'this seat is the one leaving' };
   if (!here.holders.seats.includes(seat.seat)) return { state: 'not-this-seat', why: 'the chain no longer holds this seat' };
-  if (!mayInvite(seat)) return { state: 'not-this-seat', why: 'this seat\'s role files no proposal, so it does not change the company\'s key' };
+  const roleMayNot = mayAct(seat);
+  if (roleMayNot !== null) return { state: 'not-this-seat', why: roleMayNot };
   let leaving: ReadonlySet<string>;
   try {
     leaving = await doors.leaving();
@@ -437,6 +508,15 @@ const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }):
   if (here.dir.seats.some((x) => x.retired === null && !here.holders.seats.includes(x.seat))) {
     return { state: 'waits', why: 'the chain no longer holds a seat the directory has not retired; its retirement is filed and anchored first' };
   }
+  return { state: 'ready', seat, owed };
+}
+
+const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }): Promise<KeyRotated> => {
+  const here = await doors.records.directory();
+  const waited = await removalWaitsHere(here, ownSeatIn(here, doors.material), o,
+    (s) => (mayInvite(s) ? null : 'this seat\'s role files no proposal, so it does not change the company\'s key'), doors);
+  if (waited.state !== 'ready') return waited;
+  const { seat, owed } = waited;
   const released = releasedOnce(doors);
   let now: CompanyKeyHere;
   let records: { readonly secret: Hex; readonly publicKey: Hex };
@@ -454,8 +534,16 @@ const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }):
   }
   const epoch = now.newest + 1;
   const key = newSymmetricKey().toLowerCase();
+  /*
+   * The new key goes to every seat the directory holds and has not retired, believed or not, never to `readersIn`'s
+   * list alone: a seat's records key is attested only by its vault-keys offer and a fold of it, and both seal under
+   * the company's key, which is paused until this change. A seat left out here could never attest, and every device's
+   * sealing would stay paused. The waits above make these exactly the seats the chain holds.
+   */
   const wraps = wrapsFor(key, here.dir.seats.filter((x) => x.retired === null).map((x) => ({ seat: x.seat, wrappingKey: x.wrappingKey })));
-  if (openedWrap(wraps.find((w) => w.seat === seat.seat)!.wrap, records.secret) !== key) {
+  const own = wraps.find((w) => w.seat === seat.seat);
+  if (own === undefined) return { state: 'not-rotated', why: 'this seat is not among the seats given a copy of the new key' };
+  if (openedWrap(own.wrap, records.secret) !== key) {
     return { state: 'not-rotated', why: 'this seat could not open its own copy of the new key' };
   }
   const waiting: Hex[] = [];

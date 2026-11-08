@@ -55,7 +55,8 @@ vi.mock('./upkeep.js', async (real) => {
 });
 
 const { approveProposalAction } = await import('./approve-proposal.js');
-const { AFTER_A_REMOVAL } = await import('./after-a-removal.js');
+/* No removal is carried out in these tests: the hook that changes the vault secrets after one is never reached. */
+const AFTER_A_REMOVAL = { afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); } };
 const { addSignerKind } = await import('./proposal-kinds.js');
 const { admitSignerAction, ADMIT_STATE } = await import('./admit-signer.js');
 const { ApprovalNotOwed, InvitationNotBound, NothingToApprove } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
@@ -429,6 +430,8 @@ describe('EACH ACTION CALLS ONLY THE ROUTES ITS INTENT LISTS, AND HAS ITS WORDS'
     let doors: any = null;
     t.approve = async (...a: any[]) => { doors = a[0]; return { state: 'waiting-for-the-invitee', round: { id: 'p', approvalCount: 2 } }; };
     await run(approveProposalAction(reach()), intent('approve-proposal', APPROVE), ctxOf(intent('approve-proposal', APPROVE)).ctx);
+    /* RED WHEN: an approval of a kind other than a removal files, raises or sends a proposal. */
+    expect(t.called.filter((c) => /^POST \/api\/accounts\/[^\/]+\/proposals$|^POST \/api\/proposals\/[^\/]+\/send$/u.test(c))).toEqual([]);
     /* The doors the approval is handed are the action's own: the routes they reach are read by calling the ones an approval goes through. */
     await doors.service.approve(APPROVE.proposal, {});
     await doors.service.standing(APPROVE.proposal);
@@ -444,15 +447,15 @@ describe('EACH ACTION CALLS ONLY THE ROUTES ITS INTENT LISTS, AND HAS ITS WORDS'
     }
   });
 
-  it('the routes each intent lists are the ones the shared code uses, an approval lists none that raises a proposal, and every stop and line has its words', async () => {
+  it('the routes each intent lists are the ones the shared code uses, an approval lists the raise only for the vault secrets after a removal, and every stop and line has its words', async () => {
     const approve = intentShapeOf('approve-proposal')!;
     for (const [m, p] of [['POST', '/api/proposals/prp_abcdefghijkl/approve'], ['POST', '/api/proposals/prp_abcdefghijkl/standing'],
       ['GET', '/api/accounts/acc_1/proposals'], ['POST', '/api/accounts/acc_1/manifest/entries']] as const) {
       expect(routeOf(approve, m, p), `${m} ${p}`).not.toBeNull();
     }
-    /* RED WHEN: the approving wallet may file or send a raise, so a page could make it raise a proposal it did not mean to. */
-    expect(routeOf(approve, 'POST', '/api/accounts/acc_1/proposals')).toBeNull();
-    expect(routeOf(approve, 'POST', '/api/proposals/prp_abcdefghijkl/send')).toBeNull();
+    /* The raise routes are listed only for a removal's hook, which raises each vault's secret run once this press carried the removal out. */
+    expect(routeOf(approve, 'POST', '/api/accounts/acc_1/proposals')).not.toBeNull();
+    expect(routeOf(approve, 'POST', '/api/proposals/prp_abcdefghijkl/send')).not.toBeNull();
     expect(routeOf(intentShapeOf('admit-signer')!, 'POST', '/api/accounts/acc_1/signers/sig_eve/admit')).not.toBeNull();
     const keys = new Set<string>();
     for (const [name, a, i] of [

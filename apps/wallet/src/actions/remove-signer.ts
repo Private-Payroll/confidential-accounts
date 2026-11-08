@@ -13,14 +13,13 @@
  * Every fact a check rests on is read from the chain through this wallet's own indexer (the seats, the threshold, the
  * bars, the vaults the account holds, and every open run a removal has outrun) or from the company's records this wallet
  * opens (who may approve each vault's runs), never from the service. A removal the chain would refuse when it is carried
- * out, or one that would leave a vault unable to pay, is refused before anything is built, and again before every send:
- * the raise, an approval and the carrying out (`refuseARemovalHere`).
+ * out, or one that would leave a vault unable to pay, is refused before anything is built (`refuseARemovalHere`, at the
+ * first step), and the shared code checks it again before the raise, every approval and the carrying out.
  *
- * **WHERE THE VAULT SECRET'S ROTATION PLUGS IN**: `RemoveSignerReach.afterCarried`, run by the removal's carrying out
- * once the chain has taken the leaf off, from this action and from the one approval alike. Until a rotation is given it
- * holds `WAITS_FOR_THE_ROTATION`, and both this action's check and the one approval's check of a removal refuse before
- * anything is sent: a removal carried out without the rotation would leave the leaving signer holding the vault secrets.
- * No page asks for this action either.
+ * **WHERE THE VAULT SECRETS' CHANGE PLUGS IN**: `RemoveSignerReach.afterCarried`, run by the removal's carrying out
+ * once the chain has taken the leaf off, from this action and from the one approval alike, on the company read again
+ * after its key change; the page is told the key change's state and how many vaults ended in each state. No page asks
+ * for this action yet.
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
@@ -28,42 +27,38 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { removalRefusal } from '../../../../src/core/vault-approvers.js';
 import type { GovernanceOnTheWire } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import {
-  ApprovalNotOwed, nothingWasSentBy, removeSignerOnDevice, withCompanyKeys, WithdrawnWhileSent,
+  ApprovalNotOwed, nothingWasSentBy, removalsOpenHere, removeSignerOnDevice, withCompanyKeys, WithdrawnWhileSent,
   type RemovalDoors, type RemovalOutcome, type ThresholdChangeSteps,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { anchorTheRecordsHere, directoryChangeFiledHere } from '../../../../packages/web-shared/src/records-anchored-here.js';
 import { openTheRoundHere } from '../../../../packages/web-shared/src/round-opened-here.js';
 import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here.js';
+import { removalApproversHere } from '../../../../packages/web-shared/src/removal-approvers-here.js';
 import { attestedIn, leaversStatementIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import {
-  approversHere, companyReachFor, governanceDoorsFor, keptReach, runsOutrunHere,
+  approversHere, companyReachFor, governanceDoorsFor, governanceRecordsFor, keptReach, runsOutrunHere,
   type CompanyChain, type CompanyReach, type Handed,
 } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import type { VaultsChangedTold } from './vault-secrets-changed-here.js';
 import { approving, carryStep, onTheChain, type ApprovalStop, type CarryOut, type ProposalKind, type RoundHere } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
+import { removalReachFor, rosterForARemovalHere, UNREAD_SEAT_NAME } from './roster-for-a-removal.js';
 import { anchorDoorsIn, rotationDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
 /**
- * **THE POINT THE VAULT SECRET'S ROTATION PLUGS IN.** Run once for a removal this wallet found carried out on the chain
+ * **THE POINT THE VAULT SECRETS' CHANGE PLUGS IN.** Run once for a removal this wallet found carried out on the chain
  * (the leaf taken off, its retirement filed and anchored), after the company's key change was tried, before the step
- * reports. It gets the step's context, the company as this wallet read it, the leaf removed and the proposal that
- * removed it, and `handed`, which it sets once it hands anything over to be sent. A throw stops the step as a carrying
- * out that may have been sent; the removal on the chain stands either way.
+ * reports. It gets the step's context, the company as this wallet reads it again after that key change, and the leaf
+ * removed with the proposal that removed it, and answers how many vaults ended in each state. The removal on the chain
+ * stands whatever it answers or throws.
  */
 export type AfterRemovalCarried = (
-  ctx: StepContext, r: CompanyReach, removed: { readonly leaf: Hex; readonly round: { readonly id: string; readonly chainId: string } }, handed: Handed,
-) => Promise<void>;
+  ctx: StepContext, r: CompanyReach, removed: { readonly leaf: Hex; readonly round: { readonly id: string; readonly chainId: string } },
+) => Promise<VaultsChangedTold>;
 
-/**
- * What `afterCarried` holds while the wallet has no rotation of the vault secrets: every removal is refused at its check,
- * and again by the raise, an approval and the carrying out, before anything is built or sent, so none is raised,
- * approved or carried out that would leave the leaver holding them.
- */
-export const WAITS_FOR_THE_ROTATION = 'waits-for-the-rotation' as const;
-
-/** What the removal reads: the company's chain and builder, the wallet's pause, and the hook the vault secret's rotation takes. */
+/** What the removal reads: the company's chain and builder, the wallet's pause, and the hook that changes the vault secrets. */
 export interface RemoveSignerReach {
   readonly chain: () => CompanyChain;
   readonly builder: () => VaultBuilderClient;
@@ -72,8 +67,8 @@ export interface RemoveSignerReach {
   readonly everyMs?: number;
   /** Tests stand in the company read here; the wallet reads it from the chain and the keyring. */
   readonly reachFor?: (ctx: StepContext) => Promise<CompanyReach>;
-  /** Run once the chain has carried a removal out (`AfterRemovalCarried`); `WAITS_FOR_THE_ROTATION` refuses every removal instead. */
-  readonly afterCarried: AfterRemovalCarried | typeof WAITS_FOR_THE_ROTATION;
+  /** Run once the chain has carried a removal out (`AfterRemovalCarried`): changes the vault secrets the signer who left holds. */
+  readonly afterCarried: AfterRemovalCarried;
 }
 
 /** Where the page is told the removal got to. */
@@ -93,17 +88,6 @@ export class RemovalRefused extends Error {
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
   key: `act.remove-signer.why.${key}`, ...(values === undefined ? {} : { values }),
 });
-/** The refusal every removal gets while the wallet has no rotation of the vault secrets to run after it; null once it has. */
-const waitsForTheRotation = (reach: Pick<RemoveSignerReach, 'afterCarried'>): Words | null =>
-  reach.afterCarried === WAITS_FOR_THE_ROTATION ? why('waits-for-the-rotation') : null;
-/**
- * The same refusal, thrown by the raise, an approval and the carrying out before they build anything, so a removal is
- * never sent without the rotation even by a caller that skipped the check.
- */
-const refuseUntilTheRotation = (reach: Pick<RemoveSignerReach, 'afterCarried'>): void => {
-  const notYet = waitsForTheRotation(reach);
-  if (notYet !== null) throw new StepRefused(notYet);
-};
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const LEAF = /^[0-9a-f]{64}$/u;
 const WHOLE = /^(0|[1-9][0-9]{0,8})$/u;
@@ -125,10 +109,15 @@ const isAsked = (g: GovernanceOnTheWire | undefined, a: Asked): boolean =>
 /**
  * **A REMOVAL THE CHAIN WOULD REFUSE, OR ONE THAT WOULD LEAVE A VAULT UNABLE TO PAY, IS REFUSED HERE** (`removalRefusal`),
  * from the seats, the threshold and the bars the chain holds, the vaults the account holds, who may approve each vault's
- * runs as the company's roster says, and every open run a removal has outrun.
+ * runs as the company's roster says, counted at the bands of the spending policies in force exactly as the device's check
+ * before each send counts them (`removalApproversHere`), and every open run a removal has outrun. The roster is read as
+ * a removal reads it (`rosterForARemovalHere`), so a seat it names no one for can still be removed.
  */
 export const refuseARemovalHere = async (r: CompanyReach, a: Asked): Promise<void> => {
-  const [roster, held] = await Promise.all([approversHere(r, () => runsOutrunHere(r), { removal: true }), r.holders()]);
+  const rr = removalReachFor(r, a.leaf);
+  const [roster, held] = await Promise.all([removalApproversHere({
+    approvers: () => approversHere(rr, () => runsOutrunHere(rr), { removal: true }), records: governanceRecordsFor(rr), accountId: r.accountId,
+  }, r.companyKeys), r.holders()]);
   const no = removalRefusal(roster, { seats: held.seats, approvals: held.approvals, policyBar: held.policyBar }, a.leaf, a.threshold);
   if (no !== null) throw new RemovalRefused(no);
 };
@@ -138,21 +127,46 @@ type Leaving = { readonly name: string };
 
 /**
  * Reads whose seat `a` takes from the company's list of signers this wallet opens with the seat's keys, and the lines
- * the window shows for the person to confirm: the name and the leaf, and the threshold it leaves the company at.
- * Refuses a leaf that list holds no seat for, before anything is sent.
+ * the window shows for the person to confirm: the name and the leaf, and the threshold it leaves the company at. A seat
+ * the network shows and the list names no one for (`rosterForARemovalHere`) is named by fixed words and its leaf, and
+ * those words are the name sealed. Refuses a leaf that list holds no seat for, before anything is sent.
  */
-const leavingRead = async (r: CompanyReach, a: Asked, whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words): Promise<{ read: Leaving; confirm: Words[] }> => {
-  const leaving = (await r.roster()).signers.find((x) => String(x.leafCommitment ?? '').toLowerCase() === a.leaf);
+const leavingRead = async (
+  r: CompanyReach, a: Asked, whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words,
+): Promise<{ read: Leaving; confirm: Words[]; over: Words }> => {
+  const roster = await rosterForARemovalHere(r, a.leaf);
+  const leaving = roster.leavingUnread ? { name: UNREAD_SEAT_NAME } : roster.signers.find((x) => String(x.leafCommitment ?? '').toLowerCase() === a.leaf);
   if (leaving === undefined || typeof leaving.name !== 'string') throw new StepRefused(whyOf('no-such-seat', { leaf: a.leaf }));
+  const named: { readonly confirm: string; readonly over: string; readonly values: Readonly<Record<string, string>> } = roster.leavingUnread
+    ? { confirm: 'act.remove-signer.confirm.removing-unread', over: 'act.remove-signer.over.removing-unread', values: { leaf: a.leaf } }
+    : { confirm: 'act.remove-signer.confirm.removing', over: 'act.remove-signer.over.removing', values: { name: leaving.name, leaf: a.leaf } };
   return {
     read: { name: leaving.name },
+    over: { key: named.over, values: named.values },
     confirm: [
-      { key: 'act.remove-signer.confirm.removing', values: { name: leaving.name, leaf: a.leaf } },
+      { key: named.confirm, values: named.values },
       a.threshold === 0
         ? { key: 'act.remove-signer.shown.keeps-the-threshold' }
         : { key: 'act.remove-signer.shown.threshold', values: { threshold: a.threshold } },
     ],
   };
+};
+
+/**
+ * The line the window adds where a removal of this seat was raised before and closed without being carried out, so the
+ * person knows confirming raises a new one. Only words: where that read cannot be made no line is added and nothing is
+ * refused, since the device checks the removal in full before every send.
+ */
+const withdrawnBeforeOf = async (doors: RemovalDoors, r: CompanyReach, a: Asked): Promise<Words[]> => {
+  let ids: string[];
+  try {
+    ids = (await removalsOpenHere(doors, r.companyKeys, false)).filter((x) => x.leaf === a.leaf && x.status === 'cancelled').map((x) => x.id);
+  } catch (e) {
+    if (e instanceof ActionStopped) throw e;
+    /* Passed over on purpose: this read only adds words to the Confirm, and a stop here would hold up a removal nothing else holds up. */
+    return [];
+  }
+  return ids.length === 0 ? [] : [{ key: 'act.remove-signer.confirm.withdrawn-before', values: { proposals: ids.join(', ') } }];
 };
 
 /** Whose seat the person confirmed, as the first step read it; refused when nothing was read. */
@@ -198,19 +212,18 @@ export function removalDoorsFor(
   };
 }
 
-const doorsOf = (r: CompanyReach, reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, handed: Handed) =>
-  removalDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
+/** The wallet's doors for the removal of `leaf`, with the roster read as that removal reads it (`removalReachFor`). */
+const doorsOf = (r: CompanyReach, reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, handed: Handed, leaf: Hex) =>
+  removalDoorsFor(removalReachFor(r, leaf), (ms) => reach.pause(ms, ctx.signal), handed, {
     ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
   });
 
 /**
- * The shared code's removal, with this wallet's check run again before every send. `leaving` is whose seat the person
+ * The shared code's removal, which checks the company itself before every send. `leaving` is whose seat the person
  * confirmed, read once in the first step: the name the raise seals in its summary, never read again here.
  */
 const onDevice = async (doors: RemovalDoors, r: CompanyReach, a: Asked, leaving: Leaving, steps: ThresholdChangeSteps): Promise<RemovalOutcome> =>
-  removeSignerOnDevice(doors, withCompanyKeys({
-    leaf: a.leaf, name: leaving.name, newThreshold: a.threshold, ...steps, before: () => refuseARemovalHere(r, a),
-  }, r.companyKeys));
+  removeSignerOnDevice(doors, withCompanyKeys({ leaf: a.leaf, name: leaving.name, newThreshold: a.threshold, ...steps }, r.companyKeys));
 
 /** A stop, worded for what was handed over by then. */
 const stoppedAs = (e: unknown, handed: Handed, notSent: string, whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words): never => {
@@ -219,18 +232,32 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string, whyOf: (k: strin
   throw new StepRefused(whyOf(!handed.over || nothingWasSentBy(e) ? notSent : 'may-be-sent', { says: said(e) }), codeOfError(e));
 };
 
-/** Carries the removal out, once the carry step has read it at its bar; then the vault secret's rotation. */
-const carryOutFor = (reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried'>): CarryOut => async (ctx, r, intent, round, handed) => {
-  refuseUntilTheRotation(reach);
+/**
+ * Carries the removal out, once the carry step has read it at its bar; then changes the vault secrets on the company read
+ * again, and tells the page the company key's change and how many vaults ended in each state. A change that could not
+ * start is told as `not-started`: the removal stands, and the next upkeep or a press of the change finishes it.
+ */
+const carryOutFor = (reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried'>): CarryOut => async (ctx, r, intent, round, handed, renewed) => {
   const a = askedOf(intent);
   if ('key' in a) throw new StepRefused(a);
-  const out = await onDevice(doorsOf(r, reach, ctx, handed), r, a, leavingOf(round, why), { approveOnly: round.chainId, carryOnly: true });
+  const out = await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, why), { approveOnly: round.chainId, carryOnly: true });
   if (out.state === 'waiting-for-the-retirement') return { state: REMOVE_SIGNER_STATE.retirement };
   if (out.state !== 'done') {
     throw Object.assign(new Error('the company\'s records do not show this removal at the approvals it needs yet, so it was not carried out.'), { nothingWasSent: true });
   }
-  /* THE VAULT SECRET'S ROTATION RUNS HERE (`AfterRemovalCarried`). The marker never reaches this line: it is refused above. */
-  if (typeof reach.afterCarried === 'function') await reach.afterCarried(ctx, r, { leaf: a.leaf, round: { id: round.id, chainId: round.chainId } }, handed);
+  ctx.tell({ rotation: out.rotation?.state ?? 'not-tried' });
+  try {
+    ctx.tell({ ...(await reach.afterCarried(ctx, await renewed(), { leaf: a.leaf, round: { id: round.id, chainId: round.chainId } })) });
+  } catch (e) {
+    /*
+     * The chain has carried the removal out, so nothing here undoes it or hides it: whatever stopped the change, a person's
+     * Stop included, the removal is told as carried out and the change as not started. A Stop still ends the action at
+     * the next step; the change is made by a staying signer's press, or finished by the upkeep where it was raised.
+     * What kind of stop it was is told as a code, never its message, which the page's outcome cannot carry; a Stop
+     * the person pressed is told with none.
+     */
+    ctx.tell(e instanceof ActionStopped ? { vaultSecrets: 'not-started' } : { vaultSecrets: 'not-started', vaultSecretsWhy: codeOfError(e) });
+  }
   return undefined;
 };
 
@@ -246,6 +273,7 @@ const removalShown = (intent: ActIntent): ShownLine[] => {
       : { key: 'act.remove-signer.shown.threshold', values: { threshold }, from: 'page' },
     { key: 'act.remove-signer.shown.retirement', from: 'action' },
     { key: 'act.remove-signer.shown.checks', from: 'action' },
+    { key: 'act.remove-signer.shown.vault-secrets', from: 'action' },
   ];
 };
 
@@ -256,9 +284,8 @@ const removalShown = (intent: ActIntent): ShownLine[] => {
  * word, in the first step and before anything is sent, and goes on only on the person's Confirm; the approval and the
  * carrying out seal the name confirmed. A seat the list does not hold is approved by nobody here; it is judged at the approvals a change of
  * who is seated needs, the higher of that and what the chain's hold says it needed when raised; approving it signs the
- * retirement it carries; it is carried out by the one carry step. While `afterCarried` holds `WAITS_FOR_THE_ROTATION`
- * its check, its approval and its carrying out refuse, so this wallet neither approves nor carries out a removal raised
- * anywhere.
+ * retirement it carries; it is carried out by the one carry step, which then changes the vault secrets
+ * (`afterCarried`).
  */
 export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried'>): ProposalKind {
   const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => why(KIND_WHY[stop] ?? stop, values);
@@ -273,8 +300,6 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       { key: 'act.remove-signer.shown.approve', from: 'action' },
     ],
     check: (intent) => {
-      const notYet = waitsForTheRotation(reach);
-      if (notYet !== null) return notYet;
       const a = askedOf(intent);
       return 'key' in a ? a : null;
     },
@@ -282,7 +307,7 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       const a = askedOf(intent);
       if ('key' in a) throw new StepRefused(a);
       const id = intent.fields['proposal']!;
-      const doors = doorsOf(r, reach, ctx, { over: false });
+      const doors = doorsOf(r, reach, ctx, { over: false }, a.leaf);
       let governance: GovernanceOnTheWire | undefined;
       let chainId: string;
       try {
@@ -295,17 +320,16 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       }
       if (!isAsked(governance, a)) throw new StepRefused(kindWhy('not-as-shown'));
       /* Whose seat it is comes from the company's list of signers as this wallet opened it, never from the page. */
-      const { read, confirm } = await leavingRead(r, a, kindWhy);
-      ctx.show({ key: 'act.remove-signer.over.removing', values: { name: read.name, leaf: a.leaf } });
+      const { read, confirm, over } = await leavingRead(r, a, kindWhy);
+      ctx.show(over);
       return { id, chainId, read, confirm };
     },
     needed: (round, held: AccountGovernance) => Math.max(round.needed ?? 0, held.approvals, held.seatBar),
     approve: async (ctx, r, intent, round, handed) => {
-      refuseUntilTheRotation(reach);
-      const a = askedOf(intent);
+          const a = askedOf(intent);
       if ('key' in a) throw new StepRefused(a);
       try {
-        await onDevice(doorsOf(r, reach, ctx, handed), r, a, leavingOf(round, kindWhy), { approveOnly: round.chainId, stopBeforeCarry: true });
+        await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, kindWhy), { approveOnly: round.chainId, stopBeforeCarry: true });
       } catch (e) {
         if (e instanceof ApprovalNotOwed || e instanceof WithdrawnWhileSent) throw e;
         stoppedAs(e, handed, 'not-approved', kindWhy);
@@ -323,8 +347,8 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
  * signers, which the window shows for the person to confirm before anything is sent; the upkeep, the raise (checked first, then proposed, with this
  * seat's signature over the retirement handed at once), the one carry step, the upkeep again. The page names the
  * company, the leaf and, where it changes, the threshold; it is told where the removal got to, its approvals and the
- * approvals it needs, read from the chain. While `afterCarried` holds `WAITS_FOR_THE_ROTATION` its check refuses
- * before any step, and the raise and the carrying out refuse again, so nothing is raised.
+ * approvals it needs, read from the chain, and, once it is carried out, the company key's change and how many vaults
+ * ended in each state of their secret's change.
  */
 export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
   return Object.freeze({
@@ -342,8 +366,6 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
       UPKEEP_CHECK,
     ],
     check: async (intent) => {
-      const notYet = waitsForTheRotation(reach);
-      if (notYet !== null) return notYet;
       if (intent.fields['record'] === undefined) return why('not-a-company');
       const a = askedOf(intent);
       return 'key' in a ? a : null;
@@ -367,7 +389,7 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
             stoppedAs(e, { over: false }, 'not-raised', why);
           }
           const named = await leavingRead(r, a, (k, v) => why(k === 'no-such-seat' ? 'no-such-seat-to-raise' : k, v));
-          await ctx.confirm(named.confirm);
+          await ctx.confirm([...named.confirm, ...await withdrawnBeforeOf(doorsOf(r, reach, ctx, { over: false }, a.leaf), r, a)]);
           leaving = named.read;
         },
       };
@@ -375,16 +397,14 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
       const raise: ActionStep = {
         title: { key: 'act.remove-signer.step.raise' },
         run: async (ctx) => {
-          refuseUntilTheRotation(reach);
-          const r = await read.at(ctx);
+                  const r = await read.at(ctx);
           const a = askedOf(intent);
           if ('key' in a) throw new StepRefused(a);
           const handed: Handed = { over: false };
           let out: RemovalOutcome;
           try {
             if (leaving === null) throw new StepRefused(why('not-read-to-raise'));
-            await refuseARemovalHere(r, a);
-            out = await onDevice(doorsOf(r, reach, ctx, handed), r, a, leaving, { stopBeforeCarry: true });
+            out = await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leaving, { stopBeforeCarry: true });
           } catch (e) {
             return stoppedAs(e, handed, 'not-raised', why);
           }

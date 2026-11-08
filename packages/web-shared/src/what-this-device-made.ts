@@ -37,7 +37,7 @@
 import { buildOneOffRun, buildRetryRun, buildRun, paidOnceOfNonce, type DetailsOfKind, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import { oneOffEntryOf, oneOffSaltOf, oneOffSecretsOf, payRecordNonceOf, type PayoutSeed, type PayRecord, type RunIdentity } from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
-import { firstSecretRunOf, type AccountStartPure, type VaultStartPure } from '../../../src/midnight/vault-start.js';
+import { secretRunOf, type AccountStartPure, type VaultStartPure } from '../../../src/midnight/vault-start.js';
 import { NO_LEG } from '../../../src/midnight/spending-policy-record.js';
 import { vouchedFreshOf, vouchedRefusal, type Vouched } from '../../../src/midnight/record-tree.js';
 
@@ -116,12 +116,14 @@ export interface RaisingHere {
   readonly confirmed?: { readonly of: readonly string[]; readonly chainPayments?: number };
 }
 
-/** A vault's first secret run: what it is made from, so it is made again where the approval is built. */
+/** A vault's secret run, its first or a replacement: what it is made from, so it is made again where the approval is built. */
 interface SecretRunMadeHere {
   readonly kind: 'vault-secret';
   readonly vault: string;
   readonly secret: string;
   readonly readers: readonly string[];
+  /** The commitment the run replaces; absent for a vault's first secret. */
+  readonly previous?: string;
   readonly opensAt: string;
   readonly closesAt: string;
 }
@@ -232,11 +234,11 @@ export function refuseWhatThisDeviceDidNotMake(
   let required = 0n;
   if (made.kind === 'vault-secret') {
     if (deps.secretRun === undefined) {
-      throw new NotMadeOnThisDevice('This page cannot make a vault\'s first secret run again, so it will not approve one. '
+      throw new NotMadeOnThisDevice('This page cannot make a vault\'s secret run again, so it will not approve one. '
         + 'Reload the page to get the current version.');
     }
-    const secretRun = firstSecretRunOf(deps.secretRun, {
-      vault: made.vault.toLowerCase() as Hex, secret: made.secret.toLowerCase() as Hex, readers: made.readers.map((r) => r.toLowerCase() as Hex),
+    const secretRun = secretRunOf(deps.secretRun, {
+      vault: made.vault.toLowerCase() as Hex, secret: made.secret.toLowerCase() as Hex, readers: made.readers.map((r) => r.toLowerCase() as Hex), ...(made.previous === undefined ? {} : { previous: made.previous.toLowerCase() }),
     });
     root = secretRun.root;
     payees = secretRun.payees;
