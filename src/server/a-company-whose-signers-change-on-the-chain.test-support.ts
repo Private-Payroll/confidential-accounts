@@ -26,23 +26,23 @@ import type express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { SealedAnswer } from '../core/answer-opened.js';
-import { newBlinding, sign, signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
+import { newBlinding, signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
 import { openAccount, sealAccount } from '../core/account.js';
 import { signVaultKeys } from '../core/vault-keys.js';
-import { approverRosterFrom } from '../core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../core/vault-approvers.js';
 import { newProposalId } from '../core/proposal-filing.js';
 import { signedFoundingRoster } from '../core/roster-record.js';
 import type { Account, RetirementSignature, SealedAccount } from '../core/types.js';
 import type { LedgerStatus } from '../core/ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { policyBarKey } from '../midnight/spending-policy.js';
-import { directoryChangeMessage, type ChainHolders, type CommitteeKey } from '../midnight/seat-directory.js';
+import type { ChainHolders, CommitteeKey } from '../midnight/seat-directory.js';
 import type { RecordsAsked } from '../midnight/records-held.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { assetIdHex, type AssetId } from '../core/assets.js';
 import { aVaultHolding, registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
-import { signCompanyFiling } from '../midnight/sealed-record-wire.js';
+import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { sealSpendingPolicy } from '../midnight/spending-policy-record.js';
 import { signedStateHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
@@ -65,12 +65,17 @@ import {
 import { attestedIn, directoryHere, directoryWithItsRecordsHere, judgeIn, leaversStatementIn, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
 import { foldOffersHere, offerVaultKeysHere, rosterHere, seatsAdmittedHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
+import { grantsHere, policyReadersIn, revokedAtHere } from 'vaults-web-shared/purpose-wraps.js';
+import { GRANTS_RECORD } from '../midnight/grants-record.js';
 import { governedCallServiceFor, type RemovalDoors } from 'vaults-web-shared/governed-call-on-device.js';
 import type { GovernedCallOrder } from 'vaults-web-shared/governed-call-builder.js';
 import {
-  aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeReads, ACME_STATE, seatsTakenByInvitation, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, peopleRecords, seatOf, sendAs, store,
+  aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeReads, ACME_STATE, seatsTakenByInvitation, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, peopleRecords, seatBoAs, seatOf, sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
+
+/* Bo holds an admin's seat here, as his invitation gave it. */
+seatBoAs('admin');
 
 const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, identityOfAChange, spendingPolicyKeysOf } = await import('vaults-web-shared/governed-call-builder.js');
 const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
@@ -253,6 +258,9 @@ export const attestedByTheRoster = (s: Pick<Seat, 'person' | 'signingSecret' | '
 export const directoryOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>) => (asked?: RecordsAsked): Promise<DirectoryHere> =>
   directoryHere({ ...acmeDirectoryDeps(), attested: attestedByTheRoster(s) }, asked);
 
+/** Every version of the company's read grants as the service keeps them. */
+export const grantsKept = (): Promise<readonly SealedCompanyRecord[]> => peopleRecords.versions(CO, GRANTS_RECORD.kind, GRANTS_RECORD.id);
+
 /** What `s`'s device anchors and files a directory change through, against the test's chain. */
 export const anchorDoorsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>, kept = treeKeptInMemory()): AnchorDoors => ({
   accountId: CO,
@@ -307,6 +315,11 @@ export const companyKeyDoorsOf = (
     });
   },
   file: (change, signedFor) => directoryChangeFiledHere(anchor, change, signedFor),
+  /* The read grants as the service keeps them, judged by this device as a seat: the key epoch a taking-away was filed at. */
+  revoked: () => revokedAtHere({
+    accountId: CO, versions: grantsKept, directory: directoryOf(s),
+    signingPublicKey: signingPublicKeyOf(s.signingSecret as Hex), released: async () => walletOf(s).companyKey,
+  }),
 });
 
 /**
@@ -347,7 +360,7 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
     } as never,
     filing: { seat: s.seat, keyEpoch: 0, salt: () => newBlinding(), newId: () => newProposalId(), entered: s.entered },
     approvers: async () => approverRosterFrom({
-      threshold: holdingNow().approvals, vaultThresholds: [], seated: seatsOnTheChain().map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+      threshold: holdingNow().approvals, vaultThresholds: [], seated: seatsOnTheChain().map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
     }),
     vaultName: () => 'company-wide runs',
     leaves: leavesOfTheContract,
@@ -369,8 +382,8 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
 /**
  * Mounts the company before a file's tests run: the two-seat company's routes, and beside them the proposal relays,
  * the roster and vault-key routes and the company's proposal list. Then Cy's entry is filed, Bo and Cy offer their
- * vault keys and Ada's device folds them into the roster, Ada's seat makes Bo an admin, every version is anchored from
- * Ada's device while the account asks one approval, and the test's chain then holds the three seats at `seatBar`.
+ * vault keys and Ada's device folds them into the roster, every version is anchored from Ada's device while the
+ * account asks one approval, and the test's chain then holds the three seats at `seatBar`.
  */
 export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] = []): void {
   more = after;
@@ -408,10 +421,9 @@ export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] =
     store.putAccount(sealAccount(account, KEY, [], 0));
     chains.set(CO, holdingOf([ADA, BO, CY, ...more]));
     for (const [i, s] of [CY, ...more].entries()) {
-      const r = await sendAs(s.person)(`/api/accounts/${CO}/directory/${4 + i}`, { method: 'POST', body: JSON.stringify({ company: CO, version: 4 + i, change: { kind: 'claim', entry: s.entry } }) });
+      const r = await sendAs(s.person)(`/api/accounts/${CO}/directory/${3 + i}`, { method: 'POST', body: JSON.stringify({ company: CO, version: 3 + i, change: { kind: 'claim', entry: s.entry } }) });
       expect(r.status, JSON.stringify(r.body)).toBe(201);
     }
-    const roleAt = 5 + more.length;
     for (const s of [BO, CY, ...more]) {
       await offerVaultKeysHere(api(s.person), CO, {
         signerId: ID[s.person]!, signingSecret: s.signingSecret as Hex, committeeKey: s.committeeKey as never,
@@ -420,13 +432,6 @@ export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] =
     }
     await anchorTheRecordsHere(anchorDoorsOf(ADA));
     expect(await foldOffersHere(rosterDoorsOf(ADA))).toEqual({ folded: [BO.seat, CY.seat, ...more.map((m) => m.seat)], refused: [] });
-    /* Bo, an approver until now, is made an admin by Ada's seat while the account asks one approval of a change of who holds it. */
-    const unsigned = { kind: 'role', seat: BO.seat, role: 'admin', threshold: 1, signatures: [] } as const;
-    const message = directoryChangeMessage(CO, roleAt, unsigned as never);
-    const role = await sendAs('ada')(`/api/accounts/${CO}/directory/${roleAt}`, { method: 'POST', body: JSON.stringify({ company: CO, version: roleAt, change: {
-      ...unsigned, signatures: [{ publicKey: ADA.statement.signingKey as Hex, signature: sign(message, ADA.signingSecret) }] } }) });
-    expect(role.status, JSON.stringify(role.body)).toBe(201);
-    await anchorTheRecordsHere(anchorDoorsOf(ADA));
     chains.set(CO, holdingOf([ADA, BO, CY, ...more], 1, seatBar));
     events.length = 0;
   });
@@ -451,13 +456,17 @@ const policyKeys = async (records: CompanyRecordsHere, opening?: { terms: typeof
   { vault: VAULT, asset: assetIdHex(asset), assetBlinding: (await signedStateHere(records, CO, KEY)).assetBlinding, ...(opening === undefined ? {} : { policy: opening as never }) },
 );
 /** `s`'s device's company records, with the vault's spending policies read as its own seat. */
-function policiesReadBy(s: Pick<Seat, 'n' | 'seat'>): NonNullable<CompanyRecordsHere['spendingPolicies']> {
+function policiesReadBy(s: Pick<Seat, 'n' | 'seat' | 'person' | 'signingSecret' | 'entered'>): NonNullable<CompanyRecordsHere['spendingPolicies']> {
   return {
     versions: (id) => peopleRecords.versions(CO, 'spending-policy', id),
     file: async () => { throw new Error('no policy is filed through this read'); },
     me: { signerId: s.seat, wrappingSecret: recordsSecretOf(s) },
     keys: async (i) => spendingPolicyKeysOf({ accountPure: pureCircuits as never }, i),
     onChain: async (keys) => new Map(keys.map((k) => [k.toLowerCase(), policyOnChain.get(k.toLowerCase()) ?? null])),
+    /* The read grants as the service keeps them, judged by this seat's device: the readers given `policy`. */
+    grantReaders: async () => policyReadersIn(await grantsHere({
+      accountId: CO, versions: grantsKept, directory: directoryOf(s), me: { signerId: s.seat, wrappingSecret: recordsSecretOf(s) },
+    })),
   };
 }
 const policyRecordsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>): CompanyRecordsHere => ({

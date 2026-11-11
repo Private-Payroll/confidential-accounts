@@ -300,6 +300,8 @@ interface AddSignerOpened {
   readonly salt?: unknown;
   /** The words the raising device wrote for it. */
   readonly summary?: unknown;
+  /** Why the invitation it carries is not believed, where it carries one that is not. */
+  readonly invitationRefused?: string;
 }
 
 /** Every proposal to add a seat the key of its own epoch opens, with what it carries; one that key does not open names nothing. */
@@ -313,13 +315,14 @@ const addSignersOpened = (
     const body = parseCanonical<{
       signerId?: unknown; invited?: unknown; inviter?: unknown; coinPublicKey?: unknown; __change?: { salt?: unknown } | null;
     }>(unseal(envelope.sealedPayload, key));
-    const invited = seatInvitationRefusal(body.invited) === null ? body.invited as SignedSeatInvitation : undefined;
+    const refused = body.invited === undefined ? null : seatInvitationRefusal(body.invited);
+    const invited = refused === null && body.invited !== undefined ? body.invited as SignedSeatInvitation : undefined;
     const inviter = body.inviter as Inviter | undefined;
     return [{
       rec, signerId: body.signerId, ...(invited === undefined ? {} : { invited }), ...(typeof inviter === 'object' && inviter !== null ? { inviter } : {}),
       ...(body.coinPublicKey === undefined ? {} : { coinPublicKey: body.coinPublicKey }),
       ...(typeof body.__change === 'object' && body.__change !== null && body.__change.salt !== undefined ? { salt: body.__change.salt } : {}),
-      ...(envelope.summary === undefined ? {} : { summary: envelope.summary }),
+      ...(envelope.summary === undefined ? {} : { summary: envelope.summary }), ...(refused === null ? {} : { invitationRefused: refused }),
     }];
   } catch {
     /* A record its epoch's key does not open, or whose epoch this device cannot reach, names no seat of this company's. */
@@ -405,6 +408,16 @@ export interface AddSignerByAddress {
  * signed the invitation may invite, and whether the coin key makes the commitment the invitation names, are the
  * caller's to check, against the company's directory and the account's commitments.
  */
+/**
+ * Why the proposal `rec` to add a seat carries an invitation no device believes, as a sentence saying what clears it,
+ * or null where it carries none or one that is believed.
+ */
+export const addSignerInvitationRefusalIn = (rec: ProposalOpened, accountId: string, viewingKey: KeysHeld): string | null => {
+  const why = addSignersOpened([rec], accountId, viewingKey)[0]?.invitationRefused;
+  return why === undefined ? null : `The proposal the company holds under that name carries an invitation this device does not believe: ${why}. `
+    + 'Nothing was approved. Nothing was sent.';
+};
+
 export const addSignerByAddressIn = (
   rec: ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>, accountId: string, viewingKey: KeysHeld,
 ): AddSignerByAddress | null => {

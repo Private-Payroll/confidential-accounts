@@ -32,13 +32,13 @@ import {
   type ListVerdict, type Marked,
 } from '../core/provenance.js';
 import { assets as assetRegistry } from '../core/assets.js';
-import { bigintJsonReplacer } from '../core/crypto.js';
+import { bigintJsonReplacer, type Hex } from '../core/crypto.js';
+import { isRole, type Role } from '../core/roles.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, isCurrentPayslipPage } from '../core/payslip-page.js';
 import {
   answerCarriesToken, clearedSessionCookie, cookieScopeFor, credentialOf, sessionCookie,
 } from './session-cookie.js';
 import { authedBy } from './authed.js';
-import type { Hex } from '../core/crypto.js';
 import { theNetwork } from '../midnight/network.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
@@ -51,6 +51,7 @@ import {
   type VaultAccountReader,
 } from './vault-records-authority.js';
 import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
+import { memberOrReaderReading, readersRoutes } from './readers-route.js';
 import { companyRecordsRoutes, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
 import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
@@ -577,6 +578,8 @@ app.use(cors());
     accountOf: (accountId) => store.getAccount(accountId),
     directoryOf: directoryNow,
   }));
+  /* A company's readers, kept only when its signers at the seat bar signed them (`readers-route.ts`). */
+  app.use(readersRoutes({ signedIn: (req, res, next) => authed(req, res, next), member: (req, res, next) => member(req, res, next), store, directoryOf: directoryNow }));
   app.use(invitationRoutes({
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
@@ -917,18 +920,11 @@ const authed: express.RequestHandler = authedBy({
 /**
  * Membership gate. Every account-scoped route goes through this, so authorisation
  * is not a thing each handler remembers to do. A route that forgets `authed` and
- * `member` simply has no access to req.userId and cannot resolve an account.
+ * `member` simply has no access to req.userId and cannot resolve an account. The
+ * company's readers pass on the reads their grant needs only (`memberOrReaderReading`). Deliberately the
+ * same 404 whether the account is missing or simply not yours, so no id is enumerated.
  */
-const member: express.RequestHandler = (req, res, next) => {
-  try {
-    accounts.requireMember(String(req.params.id), req.userId!);
-    next();
-  } catch {
-    // Deliberately the same 404 whether the account is missing or simply not
-    // yours. Otherwise this endpoint enumerates account ids.
-    res.status(404).json({ error: 'account not found' });
-  }
-};
+const member: express.RequestHandler = memberOrReaderReading((id, user) => accounts.membership(id, user), (id) => store.getAccount(id));
 
 /**
  * The same gate for routes keyed by a child record rather than an account:
@@ -1329,7 +1325,7 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
     name: z.string().min(1),
     signers: z.array(z.object({
       name: z.string().min(1),
-      role: z.enum(['admin', 'approver', 'initiator', 'viewer']),
+      role: z.custom<Role>(isRole),
     })).min(1),
     threshold: z.number().int().min(1),
     /*
@@ -1730,7 +1726,7 @@ app.get('/api/accounts/:id/invites', authed, member, wrap(async (req, res) => {
    *
    * This returned raw `Invite` objects, tokens in the clear, to anybody
    * `member` lets through — and `member` checks membership, not role, so a
-   * `viewer` seat could read every unaccepted employee's token and redeem it
+   * seat of any role, a reader role included, could read every unaccepted employee's token and redeem it
    * with an address they control. **A list of who has been invited is a
    * reasonable thing for a member to see; the bearer credential is not.**
    *

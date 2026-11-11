@@ -30,20 +30,20 @@
  * Filed once: a one-off raised again is a new record.
  */
 import { canonical, parseCanonical, randomBytes, seal, toHex, unseal, type Hex } from '../core/crypto.js';
-import { purposeKey } from '../core/sealed-records.js';
+import { keyForThePurpose, type RecordsKey } from '../core/sealed-records.js';
 import { assets as theAssets, ledgerTokenOf, type AssetId, type AssetRegistry } from '../core/assets.js';
 import { privacyOf, type Privacy } from '../core/movement.js';
 import { PROPOSAL_ID } from '../core/proposal-filing.js';
 import { isNetworkName, type NetworkName } from './network.js';
 import { payeeOf, type Payee } from './payee-address.js';
-import type { SealedCompanyRecord } from './sealed-record-wire.js';
+import { PURPOSE_OF_KIND, type SealedCompanyRecord } from './sealed-record-wire.js';
 import { ONE_OFF_KIND, ONE_OFF_VERSION, OneOffRefused } from './one-off-kind.js';
 import { VENDOR_ID } from '../core/invitation.js';
 
 export { ONE_OFF_KIND, ONE_OFF_VERSION, OneOffRefused };
 
 /** The purpose of the company's key a one-off is sealed under: its own, never payroll's. */
-export const ONE_OFF_PURPOSE = 'one-offs' as const;
+export const ONE_OFF_PURPOSE = PURPOSE_OF_KIND.transfer;
 
 /** The most characters a payee's name, its address and a one-off's reason may take. */
 export const ONE_OFF_NAME_MOST = 128;
@@ -227,21 +227,21 @@ export const sealOneOff = (input: {
   const label: OneOffLabel = { record: ONE_OFF_KIND, company: input.company, id: input.id, version: ONE_OFF_VERSION };
   return {
     company: input.company, kind: ONE_OFF_KIND, id: input.id, version: ONE_OFF_VERSION, keyEpoch: input.keyEpoch,
-    sealed: seal(bodyOf(tidied, label), purposeKey(input.key, input.company, ONE_OFF_PURPOSE)),
+    sealed: seal(bodyOf(tidied, label), keyForThePurpose(input.key, input.company, ONE_OFF_PURPOSE)),
     wrapped: [],
   };
 };
 
 /**
- * **A ONE-OFF, AS ONE SIGNER'S DEVICE OPENS IT**, with the company's key at the
- * epoch the record names, or refused with the reason. A record sealed for
+ * **A ONE-OFF, AS ONE SIGNER'S DEVICE OPENS IT**, with the one-offs key its reader
+ * holds at the epoch the record names, or refused with the reason. A record sealed for
  * another id, company or version is refused.
  */
-export const openOneOff = (rec: SealedCompanyRecord, key: Hex, registry: AssetRegistry = theAssets): OneOffOpened => {
+export const openOneOff = (rec: SealedCompanyRecord, key: RecordsKey, registry: AssetRegistry = theAssets): OneOffOpened => {
   if (rec.kind !== ONE_OFF_KIND) throw new OneOffRefused('This record is not a one-off payment.');
   let body: Record<string, unknown>;
   try {
-    body = parseCanonical<Record<string, unknown>>(unseal(rec.sealed, purposeKey(key, rec.company, ONE_OFF_PURPOSE)));
+    body = parseCanonical<Record<string, unknown>>(unseal(rec.sealed, keyForThePurpose(key, rec.company, ONE_OFF_PURPOSE)));
   } catch (e) {
     throw new OneOffRefused('This one-off payment does not open with the company\'s key this device holds, so it is damaged or not '
       + 'this company\'s.', { cause: e });

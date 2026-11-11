@@ -1,7 +1,6 @@
 import { privateAmount, publicAmount, type TokenAmount } from 'vaults-ui';
 import { reviveBigints } from '../../../../src/core/crypto.js';
 import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
-import { openRecord } from '../../../../src/core/sealed-records.js';
 import { classificationOn, payLineOn, payLinesOf } from '../../../../src/core/person-record.js';
 import type { EmployeeClassification } from '../../../../src/core/invitation.js';
 import { typedAddressIsShielded } from 'midnight-identity/profile/address-claim';
@@ -15,7 +14,7 @@ import { VAULT, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
 import type { ClosedAs } from 'vaults-web-shared/run-rebuilt-here.js';
 import { PROPOSAL_STANDING, shownStatus, statusOnChain, type ClosingRead, type ProposalStanding } from './proposal-standing-on-chain.js';
 import type { DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
-import { keyOf, type CompanyKeys } from '../../../../src/core/company-key.js';
+import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import { theVaultBuilder } from './vault-builder.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { paidPublicly } from 'vaults-web-shared/public-payment.js';
@@ -28,6 +27,7 @@ import { seatsTakenAsked } from 'vaults-web-shared/seat-not-read-on-the-chain.js
 import { Fault, FAULT } from '../faults.js';
 import { readPeopleHere, type PeopleReader } from 'vaults-web-shared/people-read-here.js';
 import { readVendorsHere, type VendorHere } from 'vaults-web-shared/vendors-read-here.js';
+import { openProposal, openRun } from './runs-and-proposals-opened.js';
 import { NETWORK } from 'midnight-identity/network';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { addSignerByAddressIn, type AddSignerByAddress } from '../../../../src/core/proposal-filing.js';
@@ -48,7 +48,7 @@ export { OPENED, READ, type Read };
  * person's wallet reads the keys saved for them and opens this seat's copy of each company's viewing key
  * (`openKeysWithWallet`, after the person approves in their account); this page derives the company's keys from its
  * directory (`companyKeysFor`), opens the company's record (`openAccount`), and opens each run, proposal and person with
- * the key of the epoch it was sealed at (`openRecord`, shared with src/web). Nothing here decides who may read what:
+ * the key it holds for that record's purpose, of the epoch it was sealed at (`openRun`, `openProposal`, `readPeopleHere`). Nothing here decides who may read what:
  * the service answers only a member, and only this device opens.
  *
  * NO READ SENDS THE VIEWING KEY TO THE SERVICE. The people on the payroll come as their signed person records and
@@ -569,24 +569,6 @@ function legOf(key: string): { asset: string; paid: Paid } {
   if (at < 0) return { asset: key, paid: PAID.notKnown };
   const form = key.slice(at + 1);
   return { asset: key.slice(0, at), paid: form === 'shielded' ? PAID.privately : form === 'unshielded' ? PAID.publicly : PAID.notKnown };
-}
-
-/**
- * A run as this device reads it: the service's plain fields and its sealed ones, opened, the marker the record carries
- * kept. What a run seals (its people, totals, proposals, payout, skips, repeats and list) is read from the seal alone: the
- * same field served beside it is dropped, never used where the seal holds none.
- */
-function openRun(rec: SealedRun, viewingKey: CompanyKeys): PayrollRun {
-  const {
-    sealed, keyEpoch, proposalIds: _flat, employees: _e, totals: _t, payout: _p, skips: _s, repeats: _r, list: _l, ...operational
-  } = rec as SealedRun & Partial<Pick<PayrollRun, 'employees' | 'totals' | 'payout' | 'skips' | 'repeats' | 'list'>>;
-  return { ...operational, ...openRecord<Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>>(SERVICE.runsRecord, rec.accountId, sealed, keyOf(viewingKey, keyEpoch)) } as PayrollRun;
-}
-
-/** A proposal as this device reads it, the plain fields put back last so the envelope cannot override them. */
-function openProposal(rec: SealedProposal, viewingKey: CompanyKeys): Proposal {
-  const { sealed, keyEpoch, approvalCount: _count, wiring: _wiring, ...open } = rec;
-  return { ...openRecord<Omit<Proposal, 'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>>(SERVICE.proposalsRecord, rec.accountId, sealed, keyOf(viewingKey, keyEpoch)), ...open } as Proposal;
 }
 
 /** A run for a screen: its people and amounts, each token split by how it is paid. */

@@ -8,7 +8,7 @@
  * A round is judged against the ceiling of the ROLE that raised it -
  * `AccountService.recordStanding` reads the proposer's role and hands it to the
  * policy. So a caller free to name any seat is not merely filing under a
- * colleague's name: **they are choosing which ceiling applies.** A viewer
+ * colleague's name: **they are choosing which ceiling applies.** A limited seat
  * naming an admin's seat raises a round the policy would otherwise have
  * refused, and every screen afterwards says an admin raised it.
  *
@@ -136,7 +136,7 @@ const aCompany = async (token: string) => {
       name: 'Northwind',
       signers: [
         { name: 'Ada', role: 'admin' },
-        { name: 'Bo', role: 'viewer' },
+        { name: 'Bo', role: 'limited' },
       ],
       threshold: 1,
     },

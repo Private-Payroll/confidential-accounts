@@ -39,26 +39,29 @@
  *     claims from the wallet that holds the address (`claimIntentOf`), with no
  *     fingerprint read out.
  */
-import { keyOf, openedWithAnyKey, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import { canonical, randomBytes, signingPublicKeyOf, toHex, type Hex, type Sealed } from '../../../src/core/crypto.js';
-import { inboxPublicKey as inboxOf, openFromInbox, sealToInbox } from '../../../src/core/sealed-records.js';
+import { inboxPublicKey as inboxOf, sealToInbox } from '../../../src/core/sealed-records.js';
 import { sealPerson } from '../../../src/core/person-record.js';
 import { openVendor, sealVendor, vendorTermsRefusal, type VendorRecord, type VendorTerms } from '../../../src/core/vendor-record.js';
-import { assets as defaultAssets, whyTheMoneyCannotReach } from '../../../src/core/assets.js';
+import { assets as defaultAssets, whyTheMoneyCannotReach, type AssetId } from '../../../src/core/assets.js';
 import { invitationSecret, newSeatInvitation, proveSeatKeys, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
 import {
   acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, invitationProposalSalt,
   invitationThresholdRefusal, newInvitationToken, offerExpiredRefusal, openOffer, seatByAddressChangeOf, type ProposalIdentityOf,
-  replacedBy, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, signWithdrawal, SUPER_ADMIN_INVITED_BY_THE_COMMITTEE,
+  replacedBy, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, SUPER_ADMIN_INVITED_BY_THE_COMMITTEE,
   SUPER_ADMIN_JOINS_BY_THE_COMMITTEE, tokenOfLink,
   utcMomentOf, whyThisOfferCannotBeMade,
   type EmployeeClassification, type EmployeeOffer, type InvitationFiling, type InvitationKind, type InvitationOffer, type Inviter, type SignedOffer,
   type SeatInvitationAddress, type SignedSeatInvitation, type VendorOffer,
 } from '../../../src/core/invitation.js';
-import type { PendingSignerPayload, Role, RosterEmployee, SealedAccount, SealedProposal } from '../../../src/core/types.js';
-import { seatInvitationIn, seatStillProposedFor } from '../../../src/core/proposal-filing.js';
+import type { PendingSignerPayload, Role, RosterEmployee, SealedProposal } from '../../../src/core/types.js';
+import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
 import { mayInvite } from '../../../src/midnight/seat-directory.js';
-import type { AssetId } from '../../../src/core/assets.js';
+import { isSignerRole } from '../../../src/core/roles.js';
+import { NO_VAULT_COUNTED, scopeOfRole, seatScopeRefusal, vaultsOfferedRefusal, vaultsRefusal } from '../../../src/core/seat-rights.js';
+import type { SeatRights } from '../../../src/core/vault-approvers.js';
 import {
   companyWirePaths, fromCompanyWire, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
@@ -101,12 +104,13 @@ export interface InvitingSeat extends Inviter {
   /** The one filing call, bound to this company and this seat: a person record filed here is entered in the company's records. */
   readonly entered: RecordsEntered;
   /**
-   * This seat as this device's own read of the company's directory holds it: its signer role, and whether a quorum
-   * retired it. Only a seat not retired whose role may file a proposal invites a signer, re-issues an invitation or
-   * withdraws somebody waiting (`mayInvite`), and a seat this device cannot say that of does none of them; every
-   * member's device refuses what any other seat signs. A payee's invitation does not ask it.
+   * This seat as this device's own read of the company's directory holds it: its signer role, whether a quorum
+   * retired it, and the rights it was seated with. Only a seat not retired whose role may file a proposal invites a
+   * signer, re-issues an invitation or withdraws somebody waiting (`mayInvite`), offering only vaults within its own
+   * (`vaultsOfferedRefusal`), and a seat this device cannot say that of does none of them; every member's device
+   * refuses what any other seat signs. A payee's invitation does not ask it.
    */
-  readonly held?: { readonly role: Role | null; readonly retired: boolean };
+  readonly held?: { readonly role: Role | null; readonly retired: boolean; readonly rights: SeatRights };
 }
 
 /** An invitation made: the link to send the person, and the ids the service knows it by. */
@@ -125,7 +129,7 @@ export class InvitationRefused extends Error {
   }
 }
 
-const answered = (r: { status: number; body: unknown }, ok: number): Record<string, unknown> => {
+export const answered = (r: { status: number; body: unknown }, ok: number): Record<string, unknown> => {
   const b = (r.body ?? {}) as Record<string, unknown>;
   if (r.status !== ok) {
     throw new InvitationRefused(r.status, typeof b.refused === 'string' ? b.refused : null,
@@ -143,7 +147,13 @@ export class SeatMayNotInvite extends Error {
 }
 
 /** Refuses unless this device's seat is one not retired whose role may file a proposal: the one rule every member's device holds it to. */
-const refuseASeatThatMayNotInvite = (seat: Pick<InvitingSeat, 'held'>): void => {
+/** Refused, with nothing signed, when this seat would offer vaults beyond its own (`vaultsOfferedRefusal`); `instead` says what else clears it. */
+const refuseVaultsBeyondTheSeat = (seat: Pick<InvitingSeat, 'held'>, vaults: readonly Hex[] | undefined, instead = ''): void => {
+  const why = vaultsOfferedRefusal(seat.held?.rights ?? NO_VAULT_COUNTED, vaults);
+  if (why !== null) throw new SeatMayNotInvite(`This invitation was not made: ${why}${instead}.`);
+};
+
+export const refuseASeatThatMayNotInvite = (seat: Pick<InvitingSeat, 'held'>): void => {
   if (seat.held === undefined) {
     throw new SeatMayNotInvite('This device has not read your seat\'s role from the company\'s directory, so it invites and withdraws nobody. Reload the page.');
   }
@@ -235,8 +245,8 @@ interface SignerSpec {
   readonly person: string;
   /** The shielded address typed, for a seat offered by address: the proposal is raised for it before anybody accepts. */
   readonly address?: string;
-  /** The rights the seat carries, for a seat offered by address: every vault unless given. */
-  readonly scope?: Hex;
+  /** The vaults the seat's rights name, at most four; every vault when left out. Its rights are its role's on them. */
+  readonly vaults?: readonly Hex[];
   /**
    * For a seat offered by address: the approvals the account needs once the seat is taken, as digits. Left out, the
    * threshold in force is kept. The signed invitation names it and the proposal binds it.
@@ -268,7 +278,7 @@ export interface KeptSeatInvitation {
 export interface SignerByAddressDoors {
   readonly keep: (kept: KeptSeatInvitation) => Promise<void>;
   readonly network: NetworkName;
-  readonly commitments: { inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex; allVaults(): Hex };
+  readonly commitments: { inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex };
   readonly held: (coinPublicKey: Hex, except?: string) => Promise<string | null>;
   readonly identity: ProposalIdentityOf;
   readonly raise: (input: {
@@ -440,12 +450,13 @@ async function fileSignerInvitation(
   company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec, send: InvitationSend, leaf?: Hex, given?: Hex,
 ): Promise<{ token: Hex; id: Hex; proved: SeatInvitation; invited: SignedSeatInvitation; sealing: Sealing }> {
   refuseASeatThatMayNotInvite(seat);
+  refuseVaultsBeyondTheSeat(seat, signer.vaults);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role);
   const token = tokenFor(given);
   const invited = signSeatInvitation({
     company: company.id, invitation: invitationIdOf(token), person: signer.person, name: signer.name, role: signer.role,
-    ...(leaf === undefined ? {} : { leaf }),
+    ...(signer.vaults === undefined ? {} : { vaults: signer.vaults }), ...(leaf === undefined ? {} : { leaf }),
   }, seat.signingSecret);
   const invitation = await filed(company, seat, 'signer', {
     kind: 'signer', name: signer.name, role: signer.role, seat: { nonce: proved.nonce, secret: proved.secret }, invited,
@@ -467,6 +478,14 @@ async function fileSignerInvitation(
  * Taken up again with the invitation kept (`resume`), it raises and files that same invitation, never a new one, and
  * only for the same ask (`resumeSignerByAddress`).
  */
+/** The scope a seat offered at `signer.role` on `signer.vaults` commits to; refused for a role no signer holds. */
+const rightsScopeOffered = (signer: Pick<SignerSpec, 'role' | 'vaults'>): Hex => {
+  if (!isSignerRole(signer.role)) throw new InvitationNotMade(seatScopeRefusal(signer.role, signer.vaults, '') ?? 'that role holds no seat');
+  const why = vaultsRefusal(signer.vaults);
+  if (why !== null) throw new InvitationNotMade(why);
+  return scopeOfRole(signer.role, signer.vaults);
+};
+
 async function fileSignerByAddress(
   company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec & { readonly address: string }, origin: string, send: InvitationSend,
   doors: SignerByAddressDoors, opts: InviteOptions = {},
@@ -482,7 +501,7 @@ async function fileSignerByAddress(
   const held = await doors.held(coinPublicKey);
   if (held !== null) throw new InvitationNotMade(held);
   const addressSalt = toHex(randomBytes(32));
-  const scope = (signer.scope ?? doors.commitments.allVaults()).toLowerCase() as Hex;
+  const scope = rightsScopeOffered(signer);
   const threshold = signer.threshold;
   if (threshold !== undefined && invitationThresholdRefusal(threshold) !== null) {
     throw new InvitationNotMade('the approvals needed once the seat is taken must be a whole number of at least one: leave it out to keep the number in force');
@@ -493,7 +512,8 @@ async function fileSignerByAddress(
   };
   const token = tokenFor(opts.token);
   const terms = {
-    company: company.id, invitation: invitationIdOf(token), person: `adr_${toHex(randomBytes(10))}`, name: signer.name, role: signer.role, invite,
+    company: company.id, invitation: invitationIdOf(token), person: `adr_${toHex(randomBytes(10))}`, name: signer.name, role: signer.role,
+    ...(signer.vaults === undefined ? {} : { vaults: signer.vaults }), invite,
   };
   const proposalSalt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(seat.signingSecret) });
   const { chainId } = await doors.identity(seatByAddressChangeOf(invite), proposalSalt);
@@ -533,11 +553,11 @@ const lower = (x: unknown): unknown => (typeof x === 'string' ? x.toLowerCase() 
  * first offer carries is equal: for an employee their name, title, email, currency, pay, dates, classification and
  * address (an address on one side only is another way of inviting); for a vendor their name, email, dates and
  * address (their terms are in their entry, compared by `filedRecordEnteredHere`); for a signer the name and role, on the
- * offer and on the invitation it signs, the address it is offered at, its rights (`spec.scope`, or every vault,
- * `allVaults`) and the threshold it sets once taken (none on both sides keeps the one in force). Returns null for the same ask, or why it is not, naming what resolves it; no value is repeated.
+ * offer and on the invitation it signs, the address it is offered at, the vaults its rights name (`spec.vaults`, or every
+ * vault) and the threshold it sets once taken (none on both sides keeps the one in force). Returns null for the same ask, or why it is not, naming what resolves it; no value is repeated.
  */
 export function firstAskRefusal<K extends InvitationKind>(
-  first: InvitationOffer['for'], kind: K, spec: InviteSpecs[K], allVaults: Hex,
+  first: InvitationOffer['for'], kind: K, spec: InviteSpecs[K],
 ): string | null {
   if (first.kind !== kind) {
     return `the invitation already made under this link is for ${KIND_SAID[first.kind] ?? 'another kind'}, not ${KIND_SAID[kind] ?? 'this kind'}: ${SAME_ASK}`;
@@ -556,7 +576,7 @@ export function firstAskRefusal<K extends InvitationKind>(
     const t = first.invited.terms;
     pairs = [['name', first.name, s.name], ['name', t.name, s.name], ['role', first.role, s.role], ['role', t.role, s.role],
       ['address', lower(first.byAddress?.address), lower(s.address)],
-      ['rights', lower(t.invite?.scope), t.invite === undefined && s.address === undefined ? undefined : lower(s.scope ?? allVaults)],
+      ['rights', t.vaults ?? null, (s.vaults as readonly Hex[] | undefined)?.map((v) => v.toLowerCase()) ?? null],
       ['threshold', t.invite?.threshold, s.threshold]];
   } else {
     return `the invitation already made under this link is ${KIND_SAID[first.kind] ?? 'of another kind'}, not ${KIND_SAID[kind] ?? 'this kind'}: ${SAME_ASK}`;
@@ -575,7 +595,7 @@ export function firstAskRefusal<K extends InvitationKind>(
  * resolves it. An employee's or a vendor's record filed with it is checked and entered by `filedRecordEnteredHere`.
  */
 export function openTheFiledOffer<K extends InvitationKind>(
-  sealed: unknown, token: Hex, company: string, kind: K, spec: InviteSpecs[K], allVaults: Hex,
+  sealed: unknown, token: Hex, company: string, kind: K, spec: InviteSpecs[K],
   o: { readonly kept?: KeptSeatInvitation } = {},
 ): { readonly refused: string } | { readonly filed: SignedOffer } {
   let signed: SignedOffer;
@@ -591,7 +611,7 @@ export function openTheFiledOffer<K extends InvitationKind>(
     return { refused: 'the invitation filed under this link is not the one this wallet kept for it, so it is not taken as this one: start a new '
       + 'invitation, which has a new link, and withdraw the proposal raised for the kept one if it is still open' };
   }
-  const differs = firstAskRefusal(signed.offer.for, kind, spec, allVaults);
+  const differs = firstAskRefusal(signed.offer.for, kind, spec);
   return differs === null ? { filed: signed } : { refused: differs };
 }
 
@@ -639,7 +659,7 @@ export async function filedRecordEnteredHere<K extends 'employee' | 'vendor'>(
   if (kind === 'vendor') {
     let terms: VendorTerms;
     try {
-      terms = openVendor(first, keyOf(company.viewingKey, first.keyEpoch)).terms;
+      terms = openVendor(first, keysByPurpose(company.viewingKey).at(first.keyEpoch)).terms;
     } catch {
       return 'the vendor entry filed with the invitation under this link does not open with the company\'s key, so it cannot be said '
         + 'to be on these terms: start a new invitation, which has a new link';
@@ -691,7 +711,7 @@ async function resumeSignerByAddress(
     || forWhom.invited.terms.proposal === undefined || forWhom.byAddress.address.toLowerCase() !== signer.address.toLowerCase()) {
     throw new InvitationNotMade('the invitation kept on this device to take up again is not a seat offered at this address');
   }
-  const differs = firstAskRefusal(forWhom, 'signer', signer, doors.commitments.allVaults());
+  const differs = firstAskRefusal(forWhom, 'signer', signer);
   if (differs !== null) throw new InvitationNotMade(differs);
   if (offerExpiredRefusal(offer, Date.now()) !== null) {
     throw new InvitationNotMade('the invitation kept on this device has expired, so its proposal is not raised again: withdraw it if '
@@ -935,7 +955,7 @@ export async function acceptAsSignerHere(
       if (typeof b.id !== 'string') throw new Error('the service did not say which seat request it filed, so this device cannot finish it.');
       return { id: b.id };
     },
-  }, key, { accountId: o.company, nonce: offer.seat.nonce, secret: offer.seat.secret });
+  }, key, { accountId: o.company, nonce: offer.seat.nonce, secret: offer.seat.secret }, offer.invited.terms);
   return { ...seated, fingerprint };
 }
 
@@ -1022,6 +1042,15 @@ export async function addSignerFromCodeHere(
     throw new CodeNotTaken('This code does not show that its seat is made for the wallet that signed it, so nobody can be added '
       + 'from it. Ask the person to make a new code.');
   }
+  /*
+   * A code's seat is made before anybody chose its role, for every right on every vault (`makeSignerCodeHere`): it is
+   * added only as an admin, whose rights those are. Any other role is given by address, where the seat is made for it.
+   */
+  if (signer.role !== 'admin') {
+    throw new CodeNotTaken(`A seat joined by a code is made for every right on every vault, so it can be added only as an admin, `
+      + `not as an ${signer.role}. Invite this person by their address to give them that role.`);
+  }
+  refuseVaultsBeyondTheSeat(seat, undefined, '; invite this person by their address instead, naming vaults within your own');
   /* The invitation names the leaf the joiner's wallet signed, and the person it signed for. */
   const made = await fileSignerInvitation(company, seat, { ...signer, person: code.person }, send, parts.leafCommitment);
   /*
@@ -1104,14 +1133,15 @@ const replacedFor = (proposals: Reissued['proposals'], accountId: string, viewin
  * **AN INVITATION RE-ISSUED FROM THIS DEVICE FOR A PERSON WHOSE INVITER LEFT.**
  * For somebody the chain already seats: the invitation their seat was proposed
  * under - the one the proposal that seated their leaf carries, read by that
- * leaf - is signed again by this seat, for the same person, name and role and
- * the same leaf, naming the invitation it replaces, under a new link, with
- * this seat as their inviter. Their
+ * leaf - is signed again by this seat with every term it carries (the person,
+ * name, role, vaults, leaf, address and proposal), naming the invitation it
+ * replaces, under a new link, with this seat as their inviter. Their
  * device keeps both in place of what it kept (`takeTheReissueHere`), so their
  * wallet keeps the company's account on a seat it holds, and their own entry
  * carries an invitation from a seat not retired. Refused before anything is
- * signed when this seat may not invite, when the invitation names no leaf or
- * another company, or when the chain does not hold that leaf now.
+ * signed when this seat may not invite, when the invitation offers vaults
+ * beyond this seat's own, when it names no leaf or another company, or when
+ * the chain does not hold that leaf now.
  */
 export async function reissueInvitationHere(
   company: InvitingCompany, seat: InvitingSeat, reissued: Reissued, origin: string, send: InvitationSend,
@@ -1127,12 +1157,16 @@ export async function reissueInvitationHere(
     throw new SeatMayNotInvite('The seat that invitation names is not one the company\'s account holds now, so it is not re-issued: '
       + 'somebody waiting for a seat is withdrawn and invited again instead.');
   }
+  refuseVaultsBeyondTheSeat(seat, t.vaults);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const token = newInvitationToken();
-  /* Exactly the person, name, role and seat the signers approved, and the invitation it replaces, for every member's device to hold it to. */
+  /*
+   * Every term the signers approved - the person, name, role, vaults, seat, address and proposal - and the invitation
+   * it replaces, for every member's device to hold it to: only the invitation's id is new.
+   */
+  const { replaces: _none, ...approved } = t;
   const invited = signSeatInvitation({
-    company: company.id, invitation: invitationIdOf(token), person: t.person, name: t.name, role: t.role, leaf,
-    replaces: { invitation: t.invitation, signedBy: original.signedBy, signature: original.signature },
+    ...approved, invitation: invitationIdOf(token), replaces: { invitation: t.invitation, signedBy: original.signedBy, signature: original.signature },
   }, seat.signingSecret);
   const invitation = await filed(company, seat, 'signer', { kind: 'reissue', name: t.name, role: t.role, invited }, sealing, token, send);
   return { link: invitationLink(origin, token), id: invitation.id };
@@ -1170,55 +1204,5 @@ export async function takeTheReissueHere(
   await keep({ inviter: o.inviter, invited: o.for.invited });
 }
 
-/* ------------------------------------------------------------------ withdrawing somebody waiting */
-
-/** What this device reads to withdraw a seat request: the company's inbox and proposals, and the chain's seats now. */
-interface WaitingReads {
-  readonly sealed: SealedAccount;
-  readonly proposals: readonly SealedProposal[];
-  /** Every seat the company's account holds now, as this person's own wallet read it. */
-  readonly onTheChain: readonly string[];
-  /** The ids of every proposal the company's account holds open now, approved or not, as this device's own read of the chain gives them. */
-  readonly openOnTheChain: readonly string[];
-}
-
-/**
- * **SOMEBODY WAITING FOR A SEAT, WITHDRAWN FROM THIS DEVICE**, so the same
- * person can accept a new invitation. The request is opened here with any
- * key of the company this device holds, so one sealed before the key changed
- * is withdrawn too, and refused - before anything is signed - while the chain
- * holds a proposal to seat it open (as this device's own read of the chain
- * says, never the service), since it may still seat them: that proposal is
- * withdrawn first. The withdrawal names the request, the invitation it
- * answered and its leaf, signed by this seat's filing key. This device also
- * refuses a seat that may not invite and a seat the chain does not hold; the
- * service decides the rest, and for a leaf the chain holds it lets go only a
- * request filed after its invitation closed, which leaves the invitation open
- * to the person it seated.
- */
-export async function withdrawWaitingSignerHere(
-  company: Pick<InvitingCompany, 'id' | 'viewingKey'>, seat: Pick<InvitingSeat, 'signingSecret' | 'held' | 'statement'>, signerId: string,
-  reads: WaitingReads, send: InvitationSend,
-): Promise<void> {
-  refuseASeatThatMayNotInvite(seat);
-  if (!reads.onTheChain.some((x) => x.toLowerCase() === seat.statement.seat.toLowerCase())) {
-    throw new SeatMayNotInvite('Your seat is not one the company\'s account holds now, so it withdraws nobody.');
-  }
-  const box = reads.sealed.pendingSigners.find((p) => p.id === signerId);
-  if (box === undefined) throw new Error('That person is no longer waiting for a seat. Reload the page. Nothing was signed or sent.');
-  /* Any key this device holds reads which invitation a request answers: withdrawing one believes nothing in it. */
-  const waiting = openedWithAnyKey(company.viewingKey, (key) => openFromInbox<PendingSignerPayload>(box.sealed, company.id, key));
-  const invitation = waiting.invited?.terms.invitation;
-  if (invitation === undefined) {
-    throw new Error('This seat request names no invitation, so it cannot be withdrawn by its invitation. Nothing was signed or sent.');
-  }
-  if (seatStillProposedFor(reads.proposals, company.id, company.viewingKey, signerId, reads.openOnTheChain)) {
-    throw new Error('A proposal to seat this person is still open, and could still seat them. Withdraw that proposal first. '
-      + 'Nothing was signed or sent.');
-  }
-  /* The leaf travels with it, so the service can tell a request for a seat the chain already holds from one filed late, and lets only the late one go. */
-  const withdrawal = signWithdrawal({ company: company.id, signerId, invitation, leaf: waiting.leafCommitment }, seat.signingSecret);
-  answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/signers/${encodeURIComponent(signerId)}/withdraw`, {
-    method: 'POST', body: JSON.stringify({ withdrawal }),
-  }), 200);
-}
+/* Withdrawing somebody waiting for a seat is kept in its own file. */
+export { withdrawWaitingSignerHere } from './waiting-signer-withdrawn.js';

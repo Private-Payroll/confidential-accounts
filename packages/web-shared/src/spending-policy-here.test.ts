@@ -97,6 +97,7 @@ const recordsWith = (chain: Map<string, string>, filed: SealedCompanyRecord[], s
       file: async (rec) => { filed.push(signCompanyFiling(rec, founder.secret)); },
       me: { signerId: SEAT, wrappingSecret: me.secret },
       keys: async (i) => keysOf(i),
+      grantReaders: async () => [],
       onChain: async (keys) => new Map(keys.map((k) => [k, chain.get(k) ?? null])),
     },
   };

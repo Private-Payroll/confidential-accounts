@@ -27,10 +27,9 @@ import {
 } from '../../../../src/midnight/company-service-record.js';
 import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
-import { mayFile } from '../../../../src/midnight/seat-directory.js';
 import { VaultPoolVersionAlreadyFiled } from '../../../../src/midnight/vault-pool.js';
 import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
-import { seatHereIn } from '../../../../packages/web-shared/src/vault-operation.js';
+import { mayFileHere } from '../../../../packages/web-shared/src/may-file-here.js';
 import { readersIn, type DirectoryHere } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { CompanyKeyBeingChanged } from '../../../../packages/web-shared/src/company-key-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
@@ -102,9 +101,8 @@ async function filedHere(r: CompanyReach, choice: CompanyService, filed: Service
   let once: Promise<DirectoryHere> | null = null;
   const directory = (): Promise<DirectoryHere> => (once ??= read());
   const signingSecret = r.seat.signingSecret as Hex;
-  const mine = await seatHereIn(directory, signingSecret);
-  if (mine === null) throw new StepRefused(why('seat-not-believed'));
-  if (!mayFile(mine).includes(COMPANY_SERVICE_RECORD.kind)) throw new StepRefused(why('role-may-not-file'));
+  const not = await mayFileHere(directory, signingPublicKeyOf(signingSecret), COMPANY_SERVICE_RECORD.kind);
+  if (not !== null) throw new StepRefused(why(not.why === 'role' ? 'role-may-not-file' : 'seat-not-believed'));
   const signers = await readersIn(directory).signers();
   if (!signers.some((s) => s.id.toLowerCase() === r.leaf.toLowerCase())) throw new StepRefused(why('seat-not-believed'));
   const filer = signingPublicKeyOf(signingSecret).toLowerCase() as Hex;

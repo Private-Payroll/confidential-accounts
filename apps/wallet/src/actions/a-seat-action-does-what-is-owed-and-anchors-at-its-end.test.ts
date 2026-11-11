@@ -93,7 +93,11 @@ vi.mock('../../../../packages/web-shared/src/vault-keys-given.js', async (real) 
     await owed.settle();
     return 'filed';
   },
-  rosterFollowed: async (d: Record<string, any>) => { t.order.push('roster'); return t.roster(d); },
+  rosterFollowed: async (d: Record<string, any>) => {
+    t.order.push('roster');
+    const r = await t.roster(d);
+    return typeof r === 'object' && r !== null && 'refused' in r ? r : { changed: Boolean(r), refused: [] };
+  },
 }));
 
 const { anchorDoorsIn, rebuildDoorsIn, rotationDoorsIn, upkeepSteps, UPKEEP } = await import('./upkeep.js');
@@ -239,6 +243,30 @@ describe('the head changes the company\'s key first, then follows the roster, al
     /* RED WHEN: the roster is sealed with the keys read before the change rather than read again after it. */
     expect(followed!['companyKeys']).toEqual({ isAfterTheChange: true });
     expect(followed!['reads']).toEqual({ isTheWalletsRead: true });
+    expect(told).toEqual({ upkeep: UPKEEP.done });
+  });
+
+  /* RED WHEN: an offer of vault keys the fold refused is dropped, so the upkeep says done while that seat can sign for no vault. */
+  it('names each offer of vault keys the fold refused, seat and why, and tells the page what is left', async () => {
+    t.roster = async () => ({ changed: false, refused: [{ seat: 'cd'.repeat(32), why: 'the offer is refused: it does not open.' }] });
+    const { ctx, told } = ctxWith('give-vault-keys');
+    const shown: unknown[] = [];
+    await upkeepSteps(company().doors, {}).first.run(Object.assign(ctx, { show: (w: unknown) => { shown.push(w); } }));
+    expect(told).toEqual({ upkeep: UPKEEP.partial });
+    expect(shown).toEqual([{ key: 'act.upkeep.left.vault-keys-refused', values: { offers: `seat ${'cd'.repeat(32)}: the offer is refused: it does not open.` } }]);
+  });
+
+  /* RED WHEN: a seat the account holds whose rights this wallet cannot read is counted on no vault without anybody being told which seat, or how it clears. */
+  it('names each seat the account holds whose rights this wallet cannot read yet', async () => {
+    const reach = reachWith({
+      holders: async () => ({ seats: [LEAF, JOINER], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: VAULTS, account: ACCOUNT, founding: LEAF }),
+      roster: async () => ({ id: 'acc_1', signers: [{ id: 's1', status: 'active', leafCommitment: LEAF }, { id: 's2', status: 'active', leafCommitment: JOINER }] }),
+      judges: { ...(reachWith() as any).judges, directoryHereFor: () => async () => ({ dir: { seats: [{ seat: LEAF, retired: null, rights: { every: true } }] } }) },
+    });
+    const { ctx, told } = ctxWith('give-vault-keys');
+    const shown: unknown[] = [];
+    await upkeepSteps(company([reach]).doors, {}).first.run(Object.assign(ctx, { show: (w: unknown) => { shown.push(w); } }));
+    expect(shown).toEqual([{ key: 'act.upkeep.left.seat-rights-unread', values: { seats: JOINER } }]);
     expect(told).toEqual({ upkeep: UPKEEP.done });
   });
 
@@ -519,11 +547,11 @@ describe('the tail files each vault again with this seat, then anchors what the 
   });
 
   it('gives nothing from a seat whose role may not file a vault\'s secret, or that this wallet does not believe, and says so', async () => {
-    for (const role of ['viewer', null]) {
+    for (const role of ['limited', null]) {
       t.order = []; t.gives = [];
       const { ctx, told } = ctxWith('give-vault-keys');
       await upkeepSteps(company([givingReach(role)]).doors, {}).last.run(ctx);
-      /* RED WHEN: a viewer, or a seat this wallet does not believe, files a version of a vault's secret that every device then refuses. */
+      /* RED WHEN: a limited seat, or a seat this wallet does not believe, files a version of a vault's secret that every device then refuses. */
       expect(t.gives, String(role)).toEqual([]);
       expect(t.order.at(-1), String(role)).toBe('anchor');
       expect(told, String(role)).toEqual({ upkeep: UPKEEP.partial, anchored: 2 });

@@ -255,6 +255,7 @@ const seeded = await (async () => {
         file: async () => { throw new Error('no spending policy is set in this file'); },
         me: { signerId: '4e'.repeat(32), wrappingSecret: '00'.repeat(32) as never },
         keys: async (input) => spendingPolicyKeysOf({ accountPure: pureCircuits as never }, input),
+        grantReaders: async () => [],
         onChain: chainReadThroughTheWallet(async (asked) => ({ roles: asked.map((key) => ({ key, value: null })) })),
       },
     /* Founded on the chain by that seat, its first anchor holding the first state. */

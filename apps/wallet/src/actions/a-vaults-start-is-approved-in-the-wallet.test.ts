@@ -108,7 +108,8 @@ const reachOf = () => ({
     vaultThresholds: company.vaultThresholds, adoptedVaults: [PAYROLL], account: ACCOUNT,
   }),
   judges: {
-    directoryHereFor: () => async () => ({ dir: { seats: [] }, records: { history: new Map() } }),
+    /* The directory as this wallet believes it: every seat the chain holds, with every right. */
+    directoryHereFor: () => async () => ({ dir: { seats: SEATS.map((seat) => ({ seat, retired: null, rights: { every: true } })) }, records: { history: new Map() } }),
     leavesFor: () => async () => [],
     rosterReadsFor: () => ({}),
   },

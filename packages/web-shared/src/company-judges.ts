@@ -1,7 +1,7 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
-import type { Hex } from '../../../src/core/crypto.js';
+import { signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import type { Account, SealedAccount } from '../../../src/core/types.js';
 import type { CompanyKeys, KeysHeld } from '../../../src/core/company-key.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -18,6 +18,7 @@ import { manifestServiceFor, treeServiceFor } from './record-entered-here.js';
 import type { TreeKept } from './tree-kept-here.js';
 import { anchorsOnChainAt, heldFor, type AnchorDoors } from './records-anchored-here.js';
 import { tagSeatsHere } from './seat-openings-here.js';
+import { grantsServedBy, revokedAtHere } from './purpose-wraps.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import type { AccountKeys } from './keyring-blob.js';
 import type { RefusedEntry } from '../../../src/core/roster-record.js';
@@ -270,13 +271,17 @@ export function companyJudges(d: CompanyJudgeDoors) {
     /* A quiet read (a page loading) never asks the wallet: it uses the key released on this visit, if any. */
     const released = quietly ? async (): Promise<Hex | null> => d.released(companyId) : releasedOnceHere(companyId);
     const found = await keysFoundFor(companyId, sealed, released);
+    const material = 'signingPublicKey' in keys ? { signingPublicKey: keys.signingPublicKey } : { signingSecret: keys.signingSecret };
+    const signingPublicKey = 'signingPublicKey' in keys ? keys.signingPublicKey : signingPublicKeyOf(keys.signingSecret as Hex);
+    const directory = directoryHereFor(companyId, company, account, found, async () => ({ signers: [] }));
     return companyKeyHere({
-      accountId: companyId, material: 'signingPublicKey' in keys ? { signingPublicKey: keys.signingPublicKey } : { signingSecret: keys.signingSecret },
-      records: { directory: directoryHereFor(companyId, company, account, found, async () => ({ signers: [] })) },
+      accountId: companyId, material, records: { directory },
       filings: () => directoryFilingsFrom(d.api, companyId),
       served: async () => d.servedKeyFor(sealed),
       released: () => d.released(companyId),
       askTheWallet: quietly ? async () => null : released,
+      /* A press asks the wallet for the key the grants open with; a quiet read uses the one released, and pauses without it. */
+      revoked: () => revokedAtHere({ accountId: companyId, versions: grantsServedBy(d.api, companyId), directory, released, signingPublicKey }),
     }, undefined, unreleased === undefined ? {} : { unreleased });
   };
 

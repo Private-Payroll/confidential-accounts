@@ -18,8 +18,9 @@ import { ENGLISH } from '../english.test-support.js';
 vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
 const kr = vi.hoisted(() => ({
   acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } } as unknown, steps: [] as { step: number; steps: number }[],
-  hold: null as Promise<void> | null, company: null as unknown, reads: 0,
+  hold: null as Promise<void> | null, company: null as unknown, reads: 0, refusal: null as string | null,
 }));
+vi.mock('../adapters/approvers-on-page.js', () => ({ seatThresholdRefusedOnThePage: async () => kr.refusal }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => ({ id: 'u1' }),
@@ -166,7 +167,9 @@ describe('what is shown and refused before anything is sent', () => {
     await settle(); await openPanel();
     pick('data-kind=signer');
     for (const role of ['limited', 'accountant']) expect((q(`[data-role=${role}]`) as HTMLButtonElement).disabled, role).toBe(true);
-    for (const role of ['admin', 'approver', 'initiator', 'viewer']) expect((q(`[data-role=${role}]`) as HTMLButtonElement).disabled, role).toBe(false);
+    for (const role of ['admin', 'approver', 'initiator']) expect((q(`[data-role=${role}]`) as HTMLButtonElement).disabled, role).toBe(false);
+    /* RED WHEN: a role no seat can hold any more is still offered beside the three a signer is invited to. */
+    expect(q('[data-role=viewer]')).toBeNull();
     expect((q('[data-scope=chosen]') as HTMLButtonElement).disabled).toBe(true);
     expect(q('[data-invite-later=roles]')!.textContent).toBe(EN['invite.role.later']);
     expect(q('[data-invite-later=scope]')!.textContent).toBe(EN['invite.scope.chosen.why']);
@@ -420,7 +423,7 @@ describe('the panel words, controls and sent state', () => {
       expect(q('[data-invite-closing]')!.textContent, why).toBe(EN[words]);
     }
     expect(EN['invite.stopped.closingSigner']).not.toMatch(/new one/u);
-    expect(EN['invite.stopped.closingSigner']).toMatch(/cannot be invited again until it is withdrawn/);
+    expect(EN['invite.stopped.closingSigner']).toMatch(/cannot be invited again until it is withdrawn.*Proposals page/);
   });
 
   /* RED WHEN: the sent link is not drawn by the kit's copy control, says nothing of being shown once, or a browser that would not copy leaves no word. */
@@ -469,6 +472,21 @@ describe('the panel words, controls and sent state', () => {
     expect(kr.acts).toHaveLength(1);
     expect(kr.acts[0]).toMatchObject({ kind: 'signer', threshold: '3' });
     expect(q('[data-invite-threshold]')!.textContent).toBe(EN['invite.done.threshold_other']!.replace('{name}', 'Sam').replace('{count}', '3'));
+  });
+
+  /* RED WHEN: a threshold the per-vault check refuses reaches the wallet, or the sentence naming the vault is not shown at the threshold field. */
+  it('shows the check\'s sentence at the threshold field and asks the wallet for nothing', async () => {
+    const SAID = 'This change would leave a vault unable to pay: Payroll (its runs need 3 approvals and 2 signers could give them). Invite another approver or admin first, or ask for fewer approvals on that vault.';
+    kr.company = company(SIGNERS_APPROVALS({ count: 2, seated: 3 }));
+    kr.refusal = SAID;
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer'); type('name', 'Sam'); type('address', PRIVATE);
+    pick('data-action=threshold-more');
+    await press();
+    kr.refusal = null;
+    expect(kr.acts).toHaveLength(0);
+    expect(q('[data-problem=threshold]')!.textContent).toBe(SAID);
   });
 
   /* RED WHEN: a signer invited with nothing chosen carries a threshold to the wallet (the company's number would change with every invitation), the default is not the number now, or the sent panel promises a change. */
@@ -584,11 +602,11 @@ describe('the panel words, controls and sent state', () => {
     inPanel(<InvitePeople />);
     await settle(); await openPanel();
     pick('data-kind=signer');
-    expect(q('[data-invite-later=roles]')!.textContent).toMatch(/Admin, Approver, Initiator or Viewer/u);
+    expect(q('[data-invite-later=roles]')!.textContent).toMatch(/Admin, Approver or Initiator\./u);
     expect(q('[data-invite-later=roles]')!.textContent).toMatch(/cannot be given from here/u);
     expect(q('[data-invite-later=scope]')!.textContent).toMatch(/cannot choose vaults yet/u);
     expect(q('[data-invite-later=scope]')!.textContent).toMatch(/wait before inviting/u);
-    expect(EN['invite.problem.role-later']).toMatch(/Admin, Approver, Initiator or Viewer/u);
+    expect(EN['invite.problem.role-later']).toMatch(/Admin, Approver or Initiator\./u);
   });
 
   /* RED WHEN: a role has no line, or its line is not the one drawn from the seat directory's rule of what each role may file. */
@@ -596,13 +614,12 @@ describe('the panel words, controls and sent state', () => {
     inPanel(<InvitePeople />);
     await settle(); await openPanel();
     pick('data-kind=signer');
-    for (const role of ['admin', 'approver', 'initiator', 'viewer']) {
+    for (const role of ['admin', 'approver', 'initiator']) {
       expect(q(`[data-role-says=${role}]`)!.textContent, role).toBe(EN[`invite.role.${role}.says`]);
     }
-    expect(EN['invite.role.admin.says']).toMatch(/every kind of company record/u);
-    expect(EN['invite.role.approver.says']).toMatch(/proposals/u);
-    expect(EN['invite.role.initiator.says']).toMatch(/pay runs, transfers and proposals/u);
-    expect(EN['invite.role.viewer.says']).toMatch(/none/u);
+    expect(EN['invite.role.admin.says']).toMatch(/Files every kind of company record/u);
+    expect(EN['invite.role.approver.says']).toMatch(/Cannot raise one/u);
+    expect(EN['invite.role.initiator.says']).toMatch(/Cannot approve them, and does not count toward the approvals/u);
   });
 
   /* RED WHEN: the super admin's reason sits away from its own option, or the disabled options are drawn at half strength. */

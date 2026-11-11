@@ -31,7 +31,7 @@ import { assets as defaultAssets, ledgerFormOf, symbolOf, whyTheMoneyCannotReach
 import type { RunLeg } from './types.js';
 import type { Employee, PayrollRun, SealedRun, ShieldedEntry, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunRetry, RunRepeatRecord, Proposal } from './types.js';
 import { sealRecord, sealToInbox, openFromInbox } from './sealed-records.js';
-import { openEmployeeRow, type PersonSecrets } from './person-record.js';
+import { openEmployeeRow, PERSON_PURPOSE, type PersonSecrets } from './person-record.js';
 import { INVITATION_LIFETIME_MS } from './invitation.js';
 import {
   sealHandover, openHandover, type SealedHandover,
@@ -1774,7 +1774,7 @@ export class PayrollService {
     this.store.putEmployee({
       id, accountId, status, keyEpoch: this.accounts.keyEpochOf(accountId),
       inbox: inbox === undefined ? (this.store.getEmployee(id)?.inbox ?? null) : inbox,
-      sealed: sealRecord('payroll', accountId, secrets satisfies EmployeeSecrets, viewingKey),
+      sealed: sealRecord(PERSON_PURPOSE, accountId, secrets satisfies EmployeeSecrets, viewingKey),
     });
   }
 

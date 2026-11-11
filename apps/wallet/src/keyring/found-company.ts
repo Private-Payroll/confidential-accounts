@@ -63,7 +63,7 @@ export async function foundTheCompanyInTheWallet(input: {
   const seat = await foundingSeatOf(identity, label);
   const founded = foundTheCompanyHere({
     name: request.founding.name,
-    signer: { name: request.founding.signer.name, role: request.founding.signer.role },
+    signer: { name: request.founding.signer.name },
     userId: request.person,
     label,
     seat: { signingPublicKey: seat.signingPublicKey, wrappingPublicKey: seat.wrappingPublicKey, leaf: seat.leaf },

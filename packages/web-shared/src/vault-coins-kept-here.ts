@@ -25,8 +25,9 @@
  * opens only with this company's key.
  */
 import { canonical, parseCanonical, seal, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
-import { purposeKey } from '../../../src/core/sealed-records.js';
-import { openedWithAnyKey, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { keyForThePurpose, type Purpose } from '../../../src/core/sealed-records.js';
+import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose, openedWithAnyEpoch } from './keys-by-purpose.js';
 import { openInFlight, sealInFlight, slotFor, type InFlightOpener, type InFlightRecords } from './in-flight-on-this-device.js';
 
 /** One coin as it is kept and handed over: its nonce and token as 64 lower-case hex characters, its value in decimal digits. */
@@ -106,13 +107,13 @@ export interface CoinsFileCompany {
   readonly keys: KeysHeld;
 }
 
-const COINS_PURPOSE = 'vaults' as const;
+const COINS_PURPOSE: Purpose = 'vaults';
 
 /** The text of a file of a vault's coins, sealed for the company's signers, for the signer to save and hand to another signer. */
 export const coinsFileText = (vault: Hex, coins: readonly CoinKept[], company: CoinsFileCompany): string => {
   const { key, epoch } = sealingWith(company.keys, 0);
   const body = { format: COINS_FILE_FORMAT, vault: String(vault).toLowerCase(), coins: coins.map((c) => coinKept(c)).filter((c) => c !== null) };
-  return `${JSON.stringify({ format: COINS_FILE_FORMAT, epoch, sealed: seal(canonical(body), purposeKey(key, company.id, COINS_PURPOSE)) }, null, 2)}\n`;
+  return `${JSON.stringify({ format: COINS_FILE_FORMAT, epoch, sealed: seal(canonical(body), keyForThePurpose(key, company.id, COINS_PURPOSE)) }, null, 2)}\n`;
 };
 
 /** The coins a file names for this vault, each in the one spelling; a file of another company, vault or format is refused. */
@@ -128,7 +129,7 @@ export function coinsFileRead(text: string, vault: Hex, company: CoinsFileCompan
   }
   let parsed: { format?: unknown; vault?: unknown; coins?: unknown };
   try {
-    parsed = openedWithAnyKey(company.keys, (key) => parseCanonical<typeof parsed>(unseal(outer.sealed as Sealed, purposeKey(key, company.id, COINS_PURPOSE))));
+    parsed = openedWithAnyEpoch(keysByPurpose(company.keys), (keys) => parseCanonical<typeof parsed>(unseal(outer.sealed as Sealed, keyForThePurpose(keys, company.id, COINS_PURPOSE))));
   } catch {
     throw new CoinsFileUnreadable('it does not open with this company\'s key: it was sealed for another company, or under a key this device does not hold');
   }

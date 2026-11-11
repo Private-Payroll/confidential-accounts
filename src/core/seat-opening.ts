@@ -25,7 +25,7 @@
  * Pure: the page and the service both import it.
  */
 import { newBlinding, type Hex, type Sealed } from './crypto.js';
-import { openRecord, sealRecord } from './sealed-records.js';
+import { openRecord, sealRecord, type RecordsKey } from './sealed-records.js';
 import type { SignedSeatInvitation } from './invitation.js';
 import {
   seatBlinding, walletKeyProvedBy, type LeafOf, type SeatOpening, type WalletKey,
@@ -96,11 +96,11 @@ export const sealSeatProof = (company: string, proof: SeatProof, viewingKey: Hex
   }, viewingKey);
 
 /**
- * A seat's proof, opened with the company's viewing key; null when it does not
- * open under that key or is not one in its shape. Whether it proves anything is
+ * A seat's proof, opened with the roster key its reader holds; null when it does not
+ * open under that key, the reader holds none, or is not one in its shape. Whether it proves anything is
  * the directory's to say.
  */
-export const openSeatProof = (company: string, sealed: Sealed, viewingKey: Hex): SeatProof | null => {
+export const openSeatProof = (company: string, sealed: Sealed, viewingKey: RecordsKey): SeatProof | null => {
   let p: Partial<SeatProof> | null;
   try {
     p = openRecord<Partial<SeatProof>>('roster', company, sealed, viewingKey);

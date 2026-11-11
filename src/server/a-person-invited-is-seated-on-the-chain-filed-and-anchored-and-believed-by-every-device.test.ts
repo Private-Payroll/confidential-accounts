@@ -32,7 +32,9 @@ import { leafOfTheContract, leavesOfTheContract, seatOpenedFor } from '../testin
 import { anAddress } from '../testing/an-invitee.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
-import { seatSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { seatSignerOnDevice } from 'vaults-web-shared/signer-by-link.js';
+import { seatInvitationIn } from '../core/proposal-filing.js';
+import { proposalMadeByHere } from '../testing/invitation-approved.js';
 import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { admitSignerHere, foldOffersHere, offerVaultKeysHere, refuseASeatNotForTheInvited, rosterHere, seatingOf } from 'vaults-web-shared/roster-here.js';
 import { recordsEnteredFor, manifestServiceFor } from 'vaults-web-shared/record-entered-here.js';
@@ -87,9 +89,16 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
      * wallet then takes the seat, and Bo's device admits her.
      */
     const at = anAddress(MidnightCommitments, 41);
-    const invite = { address: at.address, salt: at.addressSalt, scope: MidnightCommitments.allVaults() };
+    /* At the rights Dee's own seat was made with: an approver's, as her invitation offers. */
+    const invite = { address: at.address, salt: at.addressSalt, scope: dee.scope };
     const raised = await seatSignerOnDevice(seatingDevice(ADA), { viewingKey: KEY, signerId, readOut: accepted.fingerprint, invite });
     expect(raised.state).toBe('waiting-for-approvals');
+    /*
+     * RED WHEN: the proposal Bo approves is raised under a salt that does not commit to the invitation it carries, so the
+     * approvers would agree to an address and rights and never to the role Dee was invited at.
+     */
+    const raisedUnder = seatInvitationIn(store.listProposals(CO), CO, KEY, leaf)!;
+    expect([raisedUnder.terms.role, raisedUnder.terms.proposal, proposalMadeByHere(raisedUnder)]).toEqual(['approver', raised.round!.chainId.toLowerCase(), raised.round!.chainId.toLowerCase()]);
     /* RED WHEN: the approved proposal is carried out by a signer's device, and not left for the person invited. */
     expect((await seatSignerOnDevice(seatingDevice(BO), { viewingKey: KEY, signerId, readOut: accepted.fingerprint, invite })).state)
       .toBe('waiting-for-the-invitee');

@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { fromHex, newSigningKeypair, newSymmetricKey, parseCanonical, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { openRecord } from '../../../src/core/sealed-records.js';
-import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../../src/core/vault-approvers.js';
 import type { RetirementSignature, SealedProposal } from '../../../src/core/types.js';
 import {
   applyFiling, asAMember, emptyDirectory, type Directory, type DirectoryFiling, type DirectorySeat, type RotateChange, type SignedChange,
@@ -154,6 +154,8 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
   /* The account's count of signers removed, and whether the next carrying out fails as a fee paid for nothing. */
   let removals = 0;
   let failsOnce = false;
+  /* Seats the chain holds that the roster this device believes has not admitted: counted by no vault check, and as no admin. */
+  const notAdmitted = new Set<string>();
   /* Whether every proposal the service keeps was filed and never raised on the chain. */
   let neverRaised = false;
   let withholds = false;
@@ -321,7 +323,7 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
         seat: p.seat, keyEpoch: 0, salt: () => SALT, newId: () => `prp_removal${String(rounds.size + 1).padStart(5, '0')}`,
         entered: { enter: async () => {} },
       },
-      approvers: async () => approverRosterFrom({ threshold: 1, vaultThresholds: [], seated: [...chain].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32) }),
+      approvers: async () => approverRosterFrom({ threshold: 1, vaultThresholds: [], seated: [...chain].filter((leaf) => !notAdmitted.has(leaf)).map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32) }),
       vaultName: () => 'company-wide runs',
       sleep: async () => {}, waitMs: 3, everyMs: 1,
       ...(d.anchors === false ? {} : { anchorDirectory: async () => {
@@ -349,7 +351,7 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
           filings: async () => filings(),
           served: async () => KEY,
           released: () => p.released,
-          askTheWallet: async () => p.released,
+          askTheWallet: async () => p.released, revoked: async () => null,
           file: d.keyFiling ?? (async (change: RotateChange, signedFor: number) => { await fileTheRetirement(change, signedFor); return { version: signedFor, anchor: { anchored: 1 } }; }),
         },
       }),
@@ -378,6 +380,7 @@ const aCompany = (o: { seated?: readonly Person[]; bar?: number; onlyOnTheChain?
     get dir() { return dir; },
     set dir(d: Directory) { dir = d; },
     /** Another change filed to the directory, taking the version a signature was made for. */
+    notAdmitted: (who: Person) => { notAdmitted.add(who.seat); },
     anotherVersion: () => { dir = { ...dir, version: dir.version + 1 }; anchored = dir.version; },
     /** The leaving seat files a version of the spending policy after the removal is raised. */
     leaverFilesPool: (version: number) => { pending.push({ store: 'vault', kind: 'pool', id: 'ff'.repeat(32), version, digest: '03'.repeat(32), filedBy: { publicKey: BO.signing.publicKey, signature: 'aa'.repeat(64) } } as ManifestEntry); },
@@ -567,6 +570,24 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     /* RED WHEN: a second removal is raised while another seat is retired and still seated. */
     await expect(co.deviceOf(ADA).remove(BO)).rejects.toThrow(/another signer's removal is under way/u);
     expect(co.log).toEqual([]);
+  });
+
+  it('A REMOVAL THAT WOULD LEAVE NO ADMIN IS NOT RAISED, AND SAYS TO INVITE ANOTHER ADMIN FIRST', async () => {
+    const co = aCompany();
+    co.dir = { ...co.dir, seats: co.dir.seats.map((x) => (x.seat === ADA.seat ? x : { ...x, role: 'approver' as const })) };
+    /* RED WHEN: the last admin's seat is removed while only seats that may not admit a new signer stay. */
+    await expect(co.deviceOf(BO).remove(ADA)).rejects.toThrow(/nobody left is an admin in the company's records.*Invite another admin first/u);
+    expect(co.log).toEqual([]);
+    /* RED WHEN: an admin the roster has not admitted counts as staying, though only an admitted admin can admit anybody. */
+    co.dir = { ...co.dir, seats: co.dir.seats.map((x) => (x.seat === CY.seat ? { ...x, role: 'admin' as const } : x)) };
+    co.notAdmitted(CY);
+    await expect(co.deviceOf(BO).remove(ADA)).rejects.toThrow(/nobody left is an admin in the company's records/u);
+    expect(co.log).toEqual([]);
+    /* With another admitted admin staying, the same removal is raised. */
+    const admitted = aCompany();
+    admitted.dir = { ...admitted.dir, seats: admitted.dir.seats.map((x) => (x.seat === BO.seat ? { ...x, role: 'approver' as const } : x)) };
+    await admitted.deviceOf(BO).remove(ADA);
+    expect(admitted.log).not.toEqual([]);
   });
 
   it('AN APPROVER WHOSE ROSTER HOLDS THE LEAVER\'S STATEMENT REFUSES A RETIREMENT THAT LEAVES IT OUT OR CHANGES IT', async () => {

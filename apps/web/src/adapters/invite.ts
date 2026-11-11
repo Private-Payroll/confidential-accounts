@@ -4,9 +4,11 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import { inviteInTheWallet, type InviteAsk } from 'vaults-web-shared/invite-in-the-wallet.js';
 import { assets, type Asset, type AssetRegistry } from '../../../../src/core/assets.js';
 import { EMPLOYEE_CLASSIFICATIONS, tokenOfLink } from '../../../../src/core/invitation.js';
+import { READER_ROLES, ROLES, SIGNER_ROLES, type Role } from '../../../../src/core/roles.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { namedFor } from './create-vault.js';
+import { seatThresholdRefusedOnThePage } from './approvers-on-page.js';
 import { keyringFor } from './keyring-person.js';
 import { READ, type Read } from './reads.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
@@ -20,10 +22,9 @@ export type InviteKind = (typeof INVITE_KIND)[keyof typeof INVITE_KIND];
 export const INVITE_WAY = { link: 'link', address: 'address' } as const;
 type InviteWay = (typeof INVITE_WAY)[keyof typeof INVITE_WAY];
 
-/** The roles a signer can be invited to now, and the two shown for later. */
-export const ROLE = { admin: 'admin', approver: 'approver', initiator: 'initiator', viewer: 'viewer', limited: 'limited', accountant: 'accountant' } as const;
-export const SIGNER_ROLES = [ROLE.admin, ROLE.approver, ROLE.initiator, ROLE.viewer] as const;
-export const SIGNER_ROLES_LATER = [ROLE.limited, ROLE.accountant] as const;
+/** The roles an invitation can give (`SIGNER_ROLES`), and the reader roles the form shows but does not offer (`READER_ROLES`): a reader is given a read grant, not an invitation. `ROLES` is both, signer roles first. */
+export const ROLE = Object.freeze(Object.fromEntries(ROLES.map((r) => [r, r])) as { readonly [R in Role]: R });
+export { READER_ROLES, ROLES, SIGNER_ROLES };
 /** The on-screen keypad an amount field asks a phone for. */
 export const DECIMAL_KEYPAD = 'decimal';
 export const TERMS = { oneOff: 'one-off', monthly: 'monthly' } as const;
@@ -65,7 +66,7 @@ export const PROBLEM = {
   noName: 'no-name', noStart: 'no-start', badStart: 'bad-start', badEnd: 'bad-end', endBeforeStart: 'end-before-start', badEmail: 'bad-email',
   noAsset: 'no-asset', noAmount: 'no-amount', badAmount: 'bad-amount', zeroAmount: 'zero-amount', tooManyDecimals: 'too-many-decimals',
   noAddress: 'no-address', badAddress: 'bad-address', notPrivateAddress: 'not-private-address', noRole: 'no-role', roleLater: 'role-later',
-  superAdmin: 'super-admin', badThreshold: 'bad-threshold', thresholdTooHigh: 'threshold-too-high',
+  superAdmin: 'super-admin', badThreshold: 'bad-threshold', thresholdTooHigh: 'threshold-too-high', thresholdRefused: 'threshold-refused',
 } as const;
 export type InviteProblem = (typeof PROBLEM)[keyof typeof PROBLEM];
 
@@ -127,7 +128,7 @@ export function askOf(
   const company = { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
   if (d.kind === INVITE_KIND.signer) {
     if (!(SIGNER_ROLES as readonly string[]).includes(d.role)) {
-      return problem(FIELD.role, (SIGNER_ROLES_LATER as readonly string[]).includes(d.role) ? PROBLEM.roleLater : PROBLEM.noRole);
+      return problem(FIELD.role, (READER_ROLES as readonly string[]).includes(d.role) ? PROBLEM.roleLater : PROBLEM.noRole);
     }
     const wrong = addressProblem(d.address, true, network);
     if (wrong !== null) return problem(FIELD.address, wrong);
@@ -225,7 +226,7 @@ export type Invited =
   | { readonly of: typeof INVITED.done; readonly link: string; readonly token: string; readonly already: boolean }
   | { readonly of: typeof INVITED.stopped; readonly why: InviteWhy; readonly token: string; readonly keeps: boolean; readonly link: string | null; readonly handedOver: boolean }
   | { readonly of: typeof INVITED.refused; readonly why: ActRefusal }
-  | { readonly of: typeof INVITED.problem; readonly problem: InviteProblem; readonly field: keyof InviteDraft; readonly most?: number };
+  | { readonly of: typeof INVITED.problem; readonly problem: InviteProblem; readonly field: keyof InviteDraft; readonly most?: number; readonly says?: string };
 
 /** What the wallet's end answer is called when it is done, and the outcome it names and says when the invitation was filed before. */
 const DONE = 'done';
@@ -247,6 +248,11 @@ export async function sendInvite(
     if (named === null) return { of: INVITED.refused, why: ACT_REFUSAL.didNotFinish };
     const made = askOf(draft, named, undefined, undefined, seated);
     if (made.of === MADE.problem) return { of: INVITED.problem, problem: made.problem, field: made.field, ...(made.most === undefined ? {} : { most: made.most }) };
+    if (made.ask.kind === INVITE_KIND.signer && made.ask.threshold !== undefined) {
+      /* The wallet's own per-vault check, made here first: a threshold that would leave a vault short is refused at its field, in the sentence that names the vault. */
+      const says = await seatThresholdRefusedOnThePage(companyId, { role: made.ask.role, threshold: made.ask.threshold });
+      if (says !== null) return { of: INVITED.problem, problem: PROBLEM.thresholdRefused, field: FIELD.threshold, says };
+    }
     const sent = await inviteInTheWallet(made.ask, ACCOUNT_ORIGIN, {
       ...(onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) }),
       ...(token === undefined ? {} : { token }),

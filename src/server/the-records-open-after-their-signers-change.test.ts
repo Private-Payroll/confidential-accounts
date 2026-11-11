@@ -2,9 +2,9 @@
  * **THE COMPANY'S RECORDS STILL OPEN AFTER ITS SIGNERS CHANGE.** A batch of the
  * company's records is judged by the directory as it was anchored with that
  * batch: the role each seat held then, and whether it had retired then. So a
- * signer removed from the account, retired from the directory or given another
- * role after it anchored and filed changes nothing about what it anchored, and
- * every device still opens every batch.
+ * signer removed from the account or retired from the directory after it
+ * anchored and filed changes nothing about what it anchored, and every device
+ * still opens every batch.
  *
  * Over real HTTP with the company's manifest and directory as the service keeps
  * them. The chain is the test's: one head, moved on only by a call naming the
@@ -55,7 +55,7 @@ const filed = async (s: Seat, id: string): Promise<ManifestEntryBody> => {
 };
 /** The next directory version: a change signed by `by` as a quorum of one, the account's approvals. */
 const changed = async (
-  change: { kind: 'role'; seat: string; role: Role } | { kind: 'retire'; seat: string; filedUpTo: Record<string, number>; statement: RecordsKeyStatement }, by: Seat,
+  change: { kind: 'retire'; seat: string; filedUpTo: Record<string, number>; statement: RecordsKeyStatement }, by: Seat,
 ) => {
   const version = store.directoryFilingsOf(CO).length + 1;
   const unsigned = { ...change, threshold: 1, signatures: [] } as unknown as DirectoryChange;
@@ -70,7 +70,7 @@ const heldNow = async () => (await recordsHeldHere(doorsOf(ADA), ASKED)).records
 /** The newest version a read holds of a record, with the digest it holds it at. */
 const newestOf = (f: RecordsHeld, key: string) => { const v = f.history.get(key)?.at(-1); return v === undefined ? undefined : { version: v.version, digest: v.digest }; };
 
-describe('A SIGNER REMOVED, RETIRED OR GIVEN ANOTHER ROLE AFTER IT ANCHORED AND FILED', () => {
+describe('A SIGNER REMOVED OR RETIRED AFTER IT ANCHORED AND FILED', () => {
   it('EVERY BATCH STILL OPENS, AND WHAT EACH ANCHORED IS STILL ANCHORED', async () => {
     const bos = await filed(BO, 'prp_filed_by_bo');
     const adas = await filed(ADA, 'pol_filed_by_ada');
@@ -88,14 +88,6 @@ describe('A SIGNER REMOVED, RETIRED OR GIVEN ANOTHER ROLE AFTER IT ANCHORED AND 
     };
     await opensBoth('before anything changes');
 
-    /* RED WHEN: an entry is judged by its filer's role now - Ada, who filed policies, may now only approve. */
-    await changed({ kind: 'role', seat: ADA.seat, role: 'approver' }, ADA);
-    await opensBoth('Ada given a role that may not file a policy');
-
-    /* RED WHEN: a batch is judged by the anchoring seat's role now - Bo, who anchored the first batch, may now only view. */
-    await changed({ kind: 'role', seat: BO.seat, role: 'viewer' }, ADA);
-    await opensBoth('Bo given a role that may not anchor');
-
     /* RED WHEN: a retired seat's filings are judged by its boundary now - Ada retires naming no last version of anything, Bo still seated beside her. */
     const adasStatement = signRecordsKey(identityFromSecret(new Uint8Array(32).fill(ADA.n)), LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), ADA.seat);
     await changed({ kind: 'retire', seat: ADA.seat, filedUpTo: {}, statement: adasStatement }, ADA);
@@ -108,18 +100,19 @@ describe('A SIGNER REMOVED, RETIRED OR GIVEN ANOTHER ROLE AFTER IT ANCHORED AND 
 
   it('A DIRECTORY SERVED WITH OTHER BYTES THAN THE VERSION ANCHORED WITH A BATCH STOPS THE CHECK AT THAT BATCH, AS NOT GIVEN', async () => {
     const served = store.directoryFilingsOf(CO);
-    /* The service serves Bo's claim with his role change gone: the directory's version 3 is now another filing. */
-    const lying = async () => acmeDirectoryFrom([...served.slice(0, 2), { ...served[3]!, version: 3 }, ...served.slice(3)]);
+    /* The service serves Ada's retirement in place of Bo's claim: the directory's version 2 is now another filing. */
+    const otherBytes = [served[0]!, { ...served[2]!, version: 2 }, ...served.slice(2)];
+    const lying = async () => acmeDirectoryFrom(otherBytes);
     /* A device that checks the records from the first header: Acme held by more than one key, none of its runs vouching. */
     const f = (await heldByMoreThanOneKey(() => recordsHeldHere({ ...doorsOf(ADA), directory: lying }, ASKED))).records;
     /*
      * RED WHEN: a batch is judged by a directory whose versions are not the bytes anchored with it: the first batch naming
-     * version 3, after Acme's founding batch. The header is honest; the directory it was judged by was not given whole.
+     * version 2, after Acme's founding batch. The header is honest; the directory it was judged by was not given whole.
      */
     expect(f.stopped).toMatchObject({ stop: 'not-given', seq: 1 });
     /* And a device reading that directory with the company's records checked refuses it outright. */
-    await expect(directoryHere({ accountId: CO, label: LABEL, ...acmeReads, filings: async () => [...served.slice(0, 2), { ...served[3]!, version: 3 }, ...served.slice(3)], attested: async () => [] }))
-      .rejects.toThrow(/served with other bytes at version 3, which the company's records anchor on chain/u);
+    await expect(directoryHere({ accountId: CO, label: LABEL, ...acmeReads, filings: async () => otherBytes, attested: async () => [] }))
+      .rejects.toThrow(/served with other bytes at version 2, which the company's records anchor on chain/u);
   });
 });
 

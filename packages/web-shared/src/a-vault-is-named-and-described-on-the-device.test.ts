@@ -17,9 +17,8 @@ import { sealVaultInfo } from '../../../src/midnight/vault-info-record.js';
 import { judgeIn, type DirectoryHere } from './vault-page-doors.js';
 import { HttpCompanyRecordStore } from './http-sealed-pool-store.js';
 import { carriedEntryRefusal } from '../../../src/midnight/carried-entry.js';
-import {
-  fileVaultInfoHere, VaultInfoChanged, vaultInfoHere, VaultInfoNotFiled, VaultInfoRefused, type VaultInfoDoors, type VaultInfoRead,
-} from './vault-info-here.js';
+import { vaultInfoHere, VaultInfoRefused, type VaultInfoDoors, type VaultInfoRead } from './vault-info-here.js';
+import { fileVaultInfoHere, VaultInfoChanged, VaultInfoNotFiled } from './vault-info-filed-here.js';
 
 const ACC = 'acc_vault_info';
 const VAULT = 'ab'.repeat(32) as Hex;

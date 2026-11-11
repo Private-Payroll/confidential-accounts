@@ -245,7 +245,16 @@ describe('every route an action may ask for is answered by the service and its r
     /* RED WHEN: an intent lists a route the service no longer answers, or finish-company relays through a route it lacks. */
     expect(answers.size, 'no route of the service could be read').toBeGreaterThan(50);
     expect(listed.size, 'no listed route could be read').toBeGreaterThan(0);
-    const missing = [...listed].filter(([k]) => !answers.has(k)).map(([k, v]) => `${k} (listed by ${[...new Set(v.by)].join(', ')})`);
+    const kinds = [...readFileSync(path.join(REPO, 'src/midnight/sealed-record-wire.ts'), 'utf8')
+      .match(/COMPANY_RECORD_KINDS\s*=\s*\[([^\]]*)\]/u)![1]!.matchAll(/'([a-z-]+)'/gu)].map((m) => m[1]!);
+    expect(kinds, 'the company record kinds could not be read').toContain('roster');
+    const answeredAs = (k: string): boolean => answers.has(k) || [...answers.keys()].some((a) => {
+      const [am, ap] = [a.slice(0, a.indexOf(' ')), a.slice(a.indexOf(' ') + 1).split('/')];
+      const [km, kp] = [k.slice(0, k.indexOf(' ')), k.slice(k.indexOf(' ') + 1).split('/')];
+      return am === km && ap.length === kp.length
+        && ap.every((seg, i) => seg === kp[i] || (seg === ':' && (kp[i] === ':' || (kp[i - 1] === 'records' && kinds.includes(kp[i]!)))));
+    });
+    const missing = [...listed].filter(([k]) => !answeredAs(k)).map(([k, v]) => `${k} (listed by ${[...new Set(v.by)].join(', ')})`);
     expect(missing).toEqual([]);
     const lost = relayed.filter((r) => FINISH_ROUTE[r.split(':')[1]!] === undefined || !answers.has(key('POST', FINISH_ROUTE[r.split(':')[1]!]!)));
     expect(lost).toEqual([]);

@@ -26,6 +26,7 @@ import type { AssetRegistry } from '../../../src/core/assets.js';
 import type { Hex, Sealed } from '../../../src/core/crypto.js';
 import { openRecord } from '../../../src/core/sealed-records.js';
 import { keyOf, rotationSeedsOf, type KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import { fromHex, parseCanonical, toHex, unseal } from '../../../src/core/crypto.js';
 import { payrollRoundOf } from '../../../src/core/retry-cover.js';
 import type { PayrollRound } from '../../../src/core/account.js';
@@ -40,7 +41,7 @@ import {
   CREATED_BEFORE_SIGNED_STATE, FOUNDING_KEY_EPOCH, foundingStateRefusal, openStateRecord, stateRecordId,
 } from '../../../src/core/founding-state.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import type { VaultBuilderClient } from './vault-worker-client.js';
+import type { SpendingPoliciesHere } from './spending-policy-here.js';
 import type { RoundOnChain } from './governed-call-builder.js';
 import {
   FOUNDING_ASKED, foundingRecordRefusalHere, judgeIn, kindAsked, listedHere, refusedForItsKey, withLeftOut, type DirectoryRead, type Listed,
@@ -119,27 +120,6 @@ export interface CompanyRecordsHere {
   readonly spendingPolicies?: SpendingPoliciesHere;
   /** The company's one-off payments from its vaults, read beside payroll's records and never among them (`one-off-here.ts`). */
   readonly oneOffs: OneOffsHere;
-}
-
-/**
- * **A VAULT'S SPENDING POLICIES, AS THIS DEVICE READS AND FILES THEM.** Every
- * version the company's store serves under one policy's key, each believed
- * only as `spending-policy-here.ts` judges it against the directory this
- * device believes; filing a new version, signed by this device's seat; this
- * signer's own seat and wrapping secret, which open it; the contract's own keys
- * for a policy, made in the worker; and what the company's account holds under
- * given keys, read by the person's own wallet (`chainReadThroughTheWallet`) -
- * never an answer the company's service made. Who a version is sealed to is
- * never a door: it is the seats this device believes (`readersIn`).
- */
-export interface SpendingPoliciesHere {
-  readonly versions: (id: string) => Promise<readonly SealedCompanyRecord[]>;
-  readonly file: (rec: SealedCompanyRecord) => Promise<void>;
-  readonly me: { readonly signerId: string; readonly wrappingSecret: Hex };
-  /** The worker's `spending-policy-keys` ask (`VaultBuilderClient.spendingPolicyKeys`). */
-  readonly keys: VaultBuilderClient['spendingPolicyKeys'];
-  /** For each key asked, lower-cased, what the account's map of roles holds under it, or null for nothing. */
-  readonly onChain: (keys: readonly string[]) => Promise<ReadonlyMap<string, string | null>>;
 }
 
 /**
@@ -312,7 +292,7 @@ export const seedsOfEveryEpoch = (
 /** A run of the company opened here with the key of the epoch it was sealed at, or refused by name. */
 const openedHere = (sealed: SealedRun, viewingKey: KeysHeld, what: string): PayrollRun => {
   try {
-    return openSealedRun(sealed, keyOf(viewingKey, sealed.keyEpoch));
+    return openSealedRun(sealed, keysByPurpose(viewingKey).at(sealed.keyEpoch));
   } catch (e) {
     throw new RunNotReadHere(`This device cannot open ${what}. Reload the page and try again. ${IF_AGAIN}`, { cause: e });
   }
@@ -481,7 +461,7 @@ export async function periodsPastDraftHere(
       continue;
     }
     let paysIt = true;
-    try { paysIt = listOfRun(openSealedRun(sealed, keyOf(viewingKey, sealed.keyEpoch))) === list; } catch { /* unread: counted */ }
+    try { paysIt = listOfRun(openSealedRun(sealed, keysByPurpose(viewingKey).at(sealed.keyEpoch))) === list; } catch { /* unread: counted */ }
     if (paysIt) believed.push(sealed);
   }
   const rounds = payrollRoundsHere(await proposalsListedHere(records), accountId, viewingKey, {

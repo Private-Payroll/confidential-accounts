@@ -8,6 +8,7 @@ import {
   invitationIdOf, newInvitationToken, sealOffer, signOffer, signSeatInvitation, utcMomentOf, type InvitationOffer,
 } from '../../../../src/core/invitation.js';
 import { inboxPublicKey } from '../../../../src/core/sealed-records.js';
+import { scopeOfRole } from '../../../../src/core/seat-rights.js';
 
 /*
  * REAL SEALED OFFERS FOR THE JOIN PAGE'S TESTS: signed by an inviting seat's filing key and sealed with the link's token,
@@ -46,7 +47,8 @@ export function anInvitation(kind: Kind, over: Options = {}): Invitation {
   const id = invitationIdOf(token);
   const at = over.address === undefined ? {} : { address: over.address };
   const seatTerms = { company: RECORD, invitation: id, person: 'adr_00000000000000000000', name: 'Dee', role: 'approver' as const };
-  const address = { address: '11'.repeat(32) as Hex, salt: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex };
+  /* Dee is invited as an approver, so the address she is offered carries an approver's rights. */
+  const address = { address: '11'.repeat(32) as Hex, salt: '22'.repeat(32) as Hex, scope: scopeOfRole('approver') };
   const forWhom = kind === 'employee'
     ? {
       kind, person: 'emp_0123456789abcdef0123', name: 'Priya Rao', title: 'Engineer', email: null, asset: 'night', baseAmount: 500000n,

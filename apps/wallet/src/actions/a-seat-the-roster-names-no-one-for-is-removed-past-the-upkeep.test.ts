@@ -66,7 +66,11 @@ const reachOf = () => ({
   holders: async () => ({ seats: SEATS, committee: [], approvals: 1, seatBar: 1, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
   roster: async () => { throw seatingStop(); },
   judges: {
-    directoryHereFor: (_c: unknown, _l: unknown, _a: unknown, _k: unknown, roster: () => Promise<unknown>) => async () => { await roster(); return { dir: { seats: [] } }; },
+    /* The directory as the wallet believes it: every seat with every right. */
+    directoryHereFor: (_c: unknown, _l: unknown, _a: unknown, _k: unknown, roster: () => Promise<unknown>) => async () => {
+      await roster();
+      return { dir: { seats: SEATS.map((seat) => ({ seat, retired: null, rights: { every: true } })) } };
+    },
     leavesFor: () => async () => [],
     /* The roster's own reads, each of which stops when it is made. */
     rosterReadsFor: () => ({ filings: async () => { throw seatingStop(); }, holders: async () => { throw seatingStop(); } }),

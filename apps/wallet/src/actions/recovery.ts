@@ -43,6 +43,7 @@ import { ActionStopped } from './run.js';
 export {
   moreThanTheFeeRefusal, notOneCallRefusal, ownWalletFrom, type OwnWalletDoors, type OwnWalletFacade,
 } from '../chain/sent-straight-to-the-chain.js';
+import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 /** What a recovery asks of this wallet: the chain, its builder, the heads it kept, and the person's own wallet to pay. */
 export interface RecoveryReach {
@@ -94,7 +95,7 @@ async function chainOnlyReachFor(ctx: StepContext, reach: RecoveryReach): Promis
     if ('key' in now) throw new StepRefused(now);
     return now;
   };
-  const material: SignerMaterial = { signingSecret: seat.signingSecret as Hex, blinding: seat.blinding as Hex, scope };
+  const material: SignerMaterial = signerMaterialOf({ ...seat, scope });
   const leaf = (await builder.ownSeat(material)).toLowerCase();
   if (!(await holders()).seats.some((s) => s.toLowerCase() === leaf)) refuse('seat-not-held');
   return { accountId, label, account, material, holders, builder, chain };

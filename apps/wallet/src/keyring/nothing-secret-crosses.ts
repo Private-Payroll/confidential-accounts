@@ -57,9 +57,9 @@ export function watchFor(secret: Uint8Array | string): void {
 
 type SeatLike = { signingSecret?: unknown; wrappingSecret?: unknown; blinding?: unknown; opening?: { blinding?: unknown; salt?: unknown } };
 
-/** Watches every seat's secrets in saved keys: the seats held and the seats sealed before their leaf. */
+/** Watches every seat's secrets in saved keys: the seats held, the seats sealed before their leaf and the seats set aside. */
 export function watchTheSavedKeys(k: Keyring): void {
-  const seats = [...Object.values(k.accounts ?? {}), ...Object.values(k.pendingSeats ?? {})] as SeatLike[];
+  const seats = [...Object.values(k.accounts ?? {}), ...Object.values(k.pendingSeats ?? {}), ...Object.values(k.formerSeats ?? {})] as SeatLike[];
   for (const seat of seats) {
     for (const v of [seat.signingSecret, seat.wrappingSecret, seat.blinding, seat.opening?.blinding, seat.opening?.salt]) {
       if (typeof v === 'string') watchFor(v);

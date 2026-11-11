@@ -18,13 +18,13 @@
  * screens show a vault as.
  */
 import { canonical, parseCanonical, seal, unseal, type Hex } from '../core/crypto.js';
-import { purposeKey } from '../core/sealed-records.js';
-import type { SealedCompanyRecord } from './sealed-record-wire.js';
+import { keyForThePurpose, type RecordsKey } from '../core/sealed-records.js';
+import { PURPOSE_OF_KIND, type SealedCompanyRecord } from './sealed-record-wire.js';
 
 /** The kind of company record a vault's name and description are filed as. */
 export const VAULT_INFO_KIND = 'vault-info' as const;
 /** The company key's purpose the record is sealed under. */
-export const VAULT_INFO_PURPOSE = 'vaults' as const;
+export const VAULT_INFO_PURPOSE = PURPOSE_OF_KIND['vault-info'];
 /** The longest name a vault is given, in characters. */
 export const VAULT_NAME_MOST = 64;
 /** The longest description a vault is given, in characters. */
@@ -117,22 +117,22 @@ export const sealVaultInfo = (input: {
   return {
     company: input.company, kind: VAULT_INFO_KIND, id: vault, version: input.version, keyEpoch: input.keyEpoch,
     sealed: seal(paddedToTheOneSize(canonical({ name: info.name, description: info.description, [LABEL]: label })),
-      purposeKey(input.key, input.company, VAULT_INFO_PURPOSE)),
+      keyForThePurpose(input.key, input.company, VAULT_INFO_PURPOSE)),
     wrapped: [],
   };
 };
 
 /**
- * Opens a vault's name and description with `key`, the company's key at the
- * epoch the record names. Refuses a record that will not open, one whose
+ * Opens a vault's name and description with `key`, the vaults key its reader
+ * holds at the epoch the record names. Refuses a record that will not open, one whose
  * sealed label names another company, vault or version than it is filed as,
  * and text the check would refuse.
  */
-export const openVaultInfo = (rec: SealedCompanyRecord, key: Hex): VaultInfo => {
+export const openVaultInfo = (rec: SealedCompanyRecord, key: RecordsKey): VaultInfo => {
   if (rec.kind !== VAULT_INFO_KIND) throw new VaultInfoRefused('This record is not a vault\'s name and description.');
   let body: Record<string, unknown>;
   try {
-    body = parseCanonical<Record<string, unknown>>(unseal(rec.sealed, purposeKey(key, rec.company, VAULT_INFO_PURPOSE)));
+    body = parseCanonical<Record<string, unknown>>(unseal(rec.sealed, keyForThePurpose(key, rec.company, VAULT_INFO_PURPOSE)));
   } catch (e) {
     throw new VaultInfoRefused('This vault\'s name does not open with the company\'s key this device holds.', { cause: e });
   }

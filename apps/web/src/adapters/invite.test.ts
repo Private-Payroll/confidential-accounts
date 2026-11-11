@@ -15,6 +15,10 @@ import { ACT_REFUSAL } from './refusals.js';
 const kr = vi.hoisted(() => ({
   user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
   named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, calls: 0,
+  refusal: null as string | null, asked: [] as unknown[],
+}));
+vi.mock('./approvers-on-page.js', () => ({
+  seatThresholdRefusedOnThePage: async (_company: string, asked: unknown) => { kr.asked.push(asked); return kr.refusal; },
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -59,7 +63,7 @@ describe('the ask made from the form', () => {
   it('refuses a super admin and the roles shown for later, and sends nothing for them', async () => {
     const m = await load();
     expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' }, NAMED)).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });
-    for (const role of m.SIGNER_ROLES_LATER) {
+    for (const role of m.READER_ROLES) {
       expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', role, address: PRIVATE }, NAMED), role).toEqual({ of: 'problem', problem: 'role-later', field: 'role' });
     }
     kr.calls = 0;
@@ -246,5 +250,37 @@ describe('the approvals needed once a signer is seated', () => {
     const m = await load();
     const e = m.askOf({ ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '1', threshold: 2 }, NAMED);
     expect((e as { ask: Record<string, unknown> }).ask).not.toHaveProperty('threshold');
+  });
+});
+
+describe('an invitation the wallet would refuse for its threshold is refused here first', () => {
+  const signer = (m: Awaited<ReturnType<typeof load>>, threshold: number | null) => ({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: PRIVATE, threshold });
+  const SAID = 'This change would leave a vault unable to pay: Payroll (its runs need 3 approvals and 2 signers could give them). Invite another approver or admin first, or ask for fewer approvals on that vault.';
+
+  /* RED WHEN: the page sends to the wallet an invitation whose threshold the per-vault check refuses, or loses the vault it names. */
+  it('stops at the threshold field with the check\'s own sentence, and asks the wallet nothing', async () => {
+    const m = await load();
+    kr.calls = 0; kr.asked.length = 0; kr.refusal = SAID;
+    expect(await m.sendInvite('u1', 'acc_Company00001', signer(m, 3))).toEqual({ of: 'problem', problem: 'threshold-refused', field: 'threshold', says: SAID });
+    expect(kr.calls).toBe(0);
+    expect(kr.asked).toEqual([{ role: 'approver', threshold: 3 }]);
+  });
+
+  /* RED WHEN: an invitation the check passes is held back, or the wallet is asked for one the page has not checked. */
+  it('sends on to the wallet what the check passes', async () => {
+    const m = await load();
+    kr.calls = 0; kr.refusal = null; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
+    expect(await m.sendInvite('u1', 'acc_Company00001', signer(m, 3))).toMatchObject({ of: 'done' });
+    expect(kr.calls).toBe(1);
+  });
+
+  /* RED WHEN: the check is asked for an invitation that sets no threshold, or for an employee or a vendor, none of which can leave a vault short. */
+  it('asks nothing of the check when no threshold is chosen or the person is not a signer', async () => {
+    const m = await load();
+    kr.asked.length = 0; kr.refusal = SAID; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
+    expect(await m.sendInvite('u1', 'acc_Company00001', signer(m, null))).toMatchObject({ of: 'done' });
+    expect(await m.sendInvite('u1', 'acc_Company00001', { ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '10', threshold: 2 })).toMatchObject({ of: 'done' });
+    expect(kr.asked).toEqual([]);
+    kr.refusal = null;
   });
 });

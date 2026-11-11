@@ -6,7 +6,7 @@ import { judgeIn } from 'vaults-web-shared/vault-page-doors.js';
 import { installErrorSink, type SinkPost, type SinkWindow } from 'vaults-web-shared/error-sink.js';
 import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import { fromHex, type Hex } from '../core/crypto.js';
-import { purposeKey, type Purpose } from '../core/sealed-records.js';
+import { purposeKey, PURPOSES } from '../core/sealed-records.js';
 import { companyRecordKey, FILING_REFUSAL } from '../midnight/seat-directory.js';
 import { COMPANY_RECORD_KINDS } from '../midnight/sealed-record-wire.js';
 import type { RecordsAsked } from '../midnight/records-held.js';
@@ -39,7 +39,6 @@ aCompanyWhoseSignersChange();
 
 const EVERY_POLICY: RecordsAsked = { kinds: [{ store: 'company', kind: 'spending-policy' }] };
 const EVERY_KIND: RecordsAsked = { kinds: COMPANY_RECORD_KINDS.map((kind) => ({ store: 'company' as const, kind })), everyPending: true };
-const PURPOSES: readonly Purpose[] = ['roster', 'policy', 'payroll', 'inbox', 'proposals'];
 const STAYING: readonly Seat[] = [ADA, BO];
 
 /** Every error text and refusal the devices produced in the trace, as written. */
@@ -73,19 +72,19 @@ describe('A SIGNER REMOVED AND THE COMPANY\'S KEY CHANGED, TRACED FROM THE SIGNE
     expect(await removeSignerOnDevice(deviceOf(ADA, { changesTheKey: true }), remove)).toMatchObject({ state: 'waiting-for-approvals' });
     const carried = await removeSignerOnDevice(deviceOf(BO, { changesTheKey: true }), remove);
     /* RED WHEN: the device that finishes a removal does not change the company's key, or files the change of the key before the retirement is anchored. */
-    expect(carried).toMatchObject({ state: 'done', rotation: { state: 'rotated', epoch: 1, version: 7 } });
+    expect(carried).toMatchObject({ state: 'done', rotation: { state: 'rotated', epoch: 1, version: 5 } });
     expect(events).toEqual([
-      'anchored', 'chain propose', 'chain approve', 'directory 6 retire', 'anchored', `chain removeSignerAndSetThreshold removing ${CY.seat}`,
-      'directory 7 rotate', 'anchored',
+      'anchored', 'chain propose', 'chain approve', 'directory 4 retire', 'anchored', `chain removeSignerAndSetThreshold removing ${CY.seat}`,
+      'directory 5 rotate', 'anchored',
     ]);
     expect(seatsOnTheChain()).toEqual([ADA.seat, BO.seat]);
 
     for (const s of STAYING) {
       const here = await directoryOf(s)();
-      expect(here.dir.seats.find((x) => x.seat === CY.seat)!.retiredAt, s.person).toBe(6);
+      expect(here.dir.seats.find((x) => x.seat === CY.seat)!.retiredAt, s.person).toBe(4);
       /* RED WHEN: a change of the key filed after a retirement is not anchored with the company's records, so a device would not believe it. */
-      expect(here.dir.rotations?.map((r) => [r.version, r.epoch]), s.person).toEqual([[7, 1]]);
-      expect(here.records.directory.has(7), s.person).toBe(true);
+      expect(here.dir.rotations?.map((r) => [r.version, r.epoch]), s.person).toEqual([[5, 1]]);
+      expect(here.records.directory.has(5), s.person).toBe(true);
     }
 
     /* RED WHEN: the change of the key is wrapped to the signer who left, so they would open the new key. */

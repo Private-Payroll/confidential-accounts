@@ -60,10 +60,11 @@ import { anchoredEntering, everyRunAndProposalEntered, heldEntering, type Founde
 import { leavesOfTheContract } from '../testing/directory-seats.js';
 import { seatBlinding, type SeatOpening } from '../core/seat-opening.js';
 import { directoryChangeMessage, directoryEntryMade } from '../midnight/seat-directory.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
+import { invitationIdOf, newInvitationToken } from '../core/invitation.js';
 import type { DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import { sign } from '../core/crypto.js';
 import { noOneOffsHere } from '../testing/no-one-offs.js';
+import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../testing/invitation-approved.js';
 
 const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
 const LABEL = companyLabelOf(COMPANY_LABEL);
@@ -338,7 +339,7 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
     if (read.of !== 'read') throw new Error(`the wallet did not read the account: ${JSON.stringify(read)}`);
     const here = await directoryHere({
       accountId: CO, label: LABEL, viewingKey: KEY, filings: async () => store.directoryFilingsOf(CO),
-      holders: async () => ({ ...read.holders, account: ACCOUNT }), attested: async () => [], leaves: leavesOfTheContract,
+      holders: async () => ({ ...read.holders, account: ACCOUNT }), attested: async () => [], leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
       /* F's founding batch anchored F's entry with the first state, judged by the committee F's wallet alone held then. */
       anchored: anchoredEntering(CO, () => [], foundedByF(hex(sim.leafOf(F)), {
         directory: store.directoryFilingsOf(CO).slice(0, 1), committee: [committee('F')],
@@ -377,7 +378,7 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
       version: number, person: string, committeeKey: { tag: string; value: string }, signed: DirectoryEntryStatement, opening: SeatOpening, signingSecret: Hex,
     ): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry: directoryEntryMade({
       company: CO, person, committeeKey, signed, opening, signingSecret, viewingKey: KEY,
-      ...(person === 'b' || person === 'c' ? { invited: signSeatInvitation({
+      ...(person === 'b' || person === 'c' ? { invited: invitedAsRaised({
         company: CO, invitation: invitationIdOf(newInvitationToken()), person, name: person, role: 'admin', leaf: signed.seat as Hex,
       }, signing.F.secret) } : {}),
     }) } });
@@ -405,7 +406,7 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
     if (read.of !== 'read') throw new Error(`the wallet did not read the account: ${JSON.stringify(read)}`);
     const here = await directoryHere({
       accountId: CO, label: LABEL, viewingKey: KEY, filings: async () => filings,
-      holders: async () => ({ ...read.holders, account: ACCOUNT }), attested: async () => [], leaves: leavesOfTheContract,
+      holders: async () => ({ ...read.holders, account: ACCOUNT }), attested: async () => [], leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
       /* F's founding device witnessed both claims in the first batch, judged by the committee F's wallet alone held then. */
       anchored: anchoredEntering(CO, () => [], foundedByF(leafOf(F), { directory: filings.slice(0, 2), committee: [committee('F')] })),
     }, { founding: true });

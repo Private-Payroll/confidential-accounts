@@ -34,14 +34,14 @@ const whole = (n: unknown, from: number): boolean => Number.isSafeInteger(n) && 
 export const rotateShaped = (c: RotateChange): boolean => {
   const keys = Object.keys(c);
   return ROTATE_FIELDS.every((k) => keys.includes(k)) && keys.every((k) => ROTATE_FIELDS.includes(k) || ROTATE_OPTIONAL.includes(k))
-    && whole(c.epoch, 1) && typeof c.keyCheck === 'string' && HEX64.test(c.keyCheck) && whole(c.after, 1)
+    && whole(c.epoch, 1) && typeof c.keyCheck === 'string' && HEX64.test(c.keyCheck) && whole(c.after, 0)
     && Array.isArray(c.wraps) && c.wraps.every((w) => typeof w === 'object' && w !== null && exactly(w, ['seat', 'wrap'])
       && typeof w.seat === 'string' && HEX64.test(w.seat) && sealedShaped(w.wrap, WRAP_FIELDS))
     && sealedShaped(c.previous)
     && (c.seed === undefined || (typeof c.seed === 'object' && c.seed !== null && exactly(c.seed, ['epoch', 'sealed'])
       && whole(c.seed.epoch, 1) && sealedShaped(c.seed.sealed)))
     && Array.isArray(c.waiting) && c.waiting.every((d) => typeof d === 'string' && HEX64.test(d))
-    && (c.repairs === undefined || whole(c.repairs, 1))
+    && (c.repairs === undefined || whole(c.repairs, 0))
     && (c.replaces === undefined || whole(c.replaces, 0))
     && Array.isArray(c.signatures) && c.signatures.length === 1;
 };

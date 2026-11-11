@@ -23,6 +23,7 @@ import { metadataOf, type Keyring } from '../../../../packages/web-shared/src/ke
 import { withSeatInvitationKept } from '../../../../packages/web-shared/src/kept-seat-invitations.js';
 import type { KeptSeatInvitation } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { scopeOfRole } from '../../../../src/core/seat-rights.js';
 
 /*
  * **SOMEBODY IS INVITED FROM THE WALLET, IN ONE WINDOW, WITH THE WALLET'S OWN SEAT.** What the action asks of the
@@ -44,6 +45,8 @@ const t = vi.hoisted(() => ({
   enterFails: false,
   /* How the chain holds the proposal every kept seat offer names: open, cleared, closed or never raised (the default). */
   held: 'never' as string,
+  /* Whether the wallet's own seat, as its directory believes it, is held on no vault, whatever its saved keys say. */
+  seatOnNoVault: false,
 }));
 vi.mock('../../../../packages/web-shared/src/invitation-on-device.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/invitation-on-device.js')>()),
@@ -108,7 +111,7 @@ const seatFor = (o: { name?: string; role?: Role; scope?: string; address?: stri
   const role = o.role ?? 'approver';
   const invited = signSeatInvitation({
     company: 'acc_1', invitation: invitationIdOf(TOKEN), person: 'adr_00000000000000000000', name, role,
-    invite: { address: '0a'.repeat(32) as Hex, salt: '0b'.repeat(32) as Hex, scope: (o.scope ?? ALL) as Hex }, proposal: '0c'.repeat(32) as Hex,
+    invite: { address: '0a'.repeat(32) as Hex, salt: '0b'.repeat(32) as Hex, scope: (o.scope ?? scopeOfRole(role as 'admin')) as Hex }, proposal: '0c'.repeat(32) as Hex,
   }, SIGNING);
   return { kind: 'signer', name, role, seat: { nonce: '0d'.repeat(32) as Hex, secret: '0e'.repeat(32) as Hex }, invited,
     byAddress: { address: o.address ?? DEES_ADDRESS, proposalSalt: '0f'.repeat(32) as Hex } };
@@ -190,7 +193,14 @@ const reachOf = (scope = ALL) => ({
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: ['aa'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
   judges: {
-    directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null, records: { history: new Map() } }),
+    /* The wallet's own seat as its directory believes it: every right at every vault, or none outside the vaults it holds. */
+    directoryHereFor: () => async () => ({
+      dir: { seats: [{
+        seat: 'aa'.repeat(32), signingKey: signingPublicKeyOf(SIGNING).toLowerCase(), role: 'admin', retired: null, person: 'ada',
+        rights: scope === ALL && !t.seatOnNoVault ? { every: true } : { mayApprove: true, everyVault: false, onVaults: [] },
+      }] },
+      another: new Set(), holders: { seats: ['aa'.repeat(32)] }, leafOf: () => null, records: { history: new Map() },
+    }),
     filingJudgeFor: () => async () => null, leavesFor: () => async () => [],
     rosterReadsFor: () => ({ filings: async () => [], holders: async () => ({ seats: [] }), anchored: async () => ({}), leaves: async () => [], invitedSeats: async () => ({}) }),
   },
@@ -227,6 +237,7 @@ beforeEach(() => {
   t.entries.length = 0;
   t.enterFails = false;
   t.held = 'never';
+  t.seatOnNoVault = false;
 });
 
 describe('SOMEBODY IS INVITED FROM THE WALLET, WITH ITS OWN SEAT', () => {
@@ -302,15 +313,22 @@ describe('SOMEBODY IS INVITED FROM THE WALLET, WITH ITS OWN SEAT', () => {
     expect(t.calls.some((c) => c.startsWith('invite'))).toBe(false);
   });
 
-  it('RED WHEN: a signer is offered rights wider than the inviting seat\'s own', async () => {
+  it('RED WHEN: a signer is offered rights wider than the inviting seat\'s own, or other than the ones their role gives', async () => {
     const narrow = '04'.repeat(32);
+    /* A seat whose rights do not cover every vault offers no seat on every vault. */
     expect(await refusedWith(run(intent({ ...SIGNER }), ctxWith(intent(SIGNER)).ctx, narrow))).toBe('act.invite.why.wider-scope');
-    expect(await refusedWith(run(intent({ ...SIGNER, scope: '09'.repeat(32) }), ctxWith(intent(SIGNER)).ctx, narrow))).toBe('act.invite.why.wider-scope');
+    /* RED WHEN: the inviting seat's rights are read from its saved keys and not from the directory every device believes. */
+    t.seatOnNoVault = true;
+    expect(await refusedWith(run(intent({ ...SIGNER }), ctxWith(intent(SIGNER)).ctx))).toBe('act.invite.why.wider-scope');
+    t.seatOnNoVault = false;
+    /* A scope the page names that is not the rights the role gives is refused. */
+    expect(await refusedWith(run(intent({ ...SIGNER, scope: '09'.repeat(32) }), ctxWith(intent(SIGNER)).ctx))).toBe('act.invite.why.wider-scope');
     expect(t.calls.some((c) => c.startsWith('invite'))).toBe(false);
-    /* Its own rights it may offer, and a seat of every vault may offer any. */
-    await run(intent({ ...SIGNER, scope: narrow }), ctxWith(intent(SIGNER)).ctx, narrow);
-    await run(intent({ ...SIGNER, scope: '09'.repeat(32) }), ctxWith(intent(SIGNER)).ctx);
+    /* A seat on every vault offers the role's own rights, whether the page names them or not. */
+    await run(intent({ ...SIGNER, scope: scopeOfRole('approver') }), ctxWith(intent(SIGNER)).ctx);
+    await run(intent({ ...SIGNER }), ctxWith(intent(SIGNER)).ctx);
     expect(t.calls.filter((c) => c === 'invite signer')).toHaveLength(2);
+
   });
 
   it('RED WHEN: a signer is invited at an address this wallet holds itself, and one wallet would hold two seats', async () => {
@@ -467,7 +485,7 @@ describe('A PRESS AGAIN WITH THE SAME TOKEN CARRIES THE FIRST PRESS\'S ASK, OR I
   };
 
   it('a signer pressed again under a kept seat offer\'s token goes on only with the name, role, rights and address it was kept with', async () => {
-    for (const other of [{ role: 'admin' }, { personName: 'Dee Two' }, { scope: '09'.repeat(32) }, { address: OTHER_ADDRESS }]) {
+    for (const other of [{ role: 'admin' }, { personName: 'Dee Two' }, { address: OTHER_ADDRESS }]) {
       t.calls.length = 0;
       const i = intent({ ...SIGNER, ...other });
       const e = await refused(run(i, ctxWith(i, { keyring: keptHere() }).ctx));

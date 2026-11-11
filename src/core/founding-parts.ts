@@ -31,8 +31,12 @@ export const defaultPolicy = (): Policy => ({
   limitsByRole: {},
 });
 
-/** Who a seat is founded for: their name, their role and the person's id. */
-export interface SignerSpec { name: string; role: Role; userId?: string | null; }
+/**
+ * Who a seat is founded for: their name and the person's id, and a role only
+ * where the service's own account code founds it; a seat founded on a device
+ * carries none, since its role is the one the company's directory holds.
+ */
+export interface SignerSpec { name: string; role?: Role; userId?: string | null; }
 
 /* ---------------- a company as it is founded ---------------- */
 
@@ -54,7 +58,7 @@ export function seatAtFounding(
   id: string, spec: SignerSpec, keys: { signingPublicKey: Hex; wrappingPublicKey: Hex; leaf: Hex },
 ): Signer {
   return {
-    id, name: spec.name, role: spec.role, status: 'active', userId: spec.userId ?? null,
+    id, name: spec.name, ...(spec.role === undefined ? {} : { role: spec.role }), status: 'active', userId: spec.userId ?? null,
     signingPublicKey: keys.signingPublicKey, wrappingPublicKey: keys.wrappingPublicKey,
     leafCommitment: keys.leaf,
   };

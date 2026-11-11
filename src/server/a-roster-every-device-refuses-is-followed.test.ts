@@ -48,6 +48,7 @@ import { companyRecordEntry } from '../midnight/record-manifest.js';
 import {
   fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere, rosterBelievedHere, rosterHere, type RosterDoors,
 } from 'vaults-web-shared/roster-here.js';
+import { attestedIn } from 'vaults-web-shared/vault-page-doors.js';
 import { signerRoutes } from './signer-routes.js';
 import {
   aCompanyOfTwoSeats, acmeReads, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, seatOf, sendAs, store, type Seat,
@@ -165,12 +166,12 @@ describe('A VERSION EVERY DEVICE REFUSES IS FOLLOWED', () => {
 });
 
 describe('A VERSION REFUSED FOR WHO FILED IT CARRIES ONLY WHAT EACH ENTRY BINDS', () => {
-  it('TAKES EACH SIGNER\'S NAME, ROLE AND WRAPPING KEY FROM THE NEWEST VERSION FILED BY A SEAT THAT MAY FILE ONE', async () => {
-    const pick = (xs: readonly Signer[]) => xs.map((x) => ({ id: x.id, name: x.name, userId: x.userId, role: x.role, wrapping: x.wrappingPublicKey }));
+  it('TAKES EACH SIGNER\'S NAME AND WRAPPING KEY FROM THE NEWEST VERSION FILED BY A SEAT THAT MAY FILE ONE', async () => {
+    const pick = (xs: readonly Signer[]) => xs.map((x) => ({ id: x.id, name: x.name, userId: x.userId, wrapping: x.wrappingPublicKey }));
     const believed = pick(newest().signers);
-    /* Bo's seat, whose role files no roster, renames Ada, makes Cy a viewer and gives him another wrapping key. */
+    /* Bo's seat, whose role files no roster, renames Ada and gives Cy another wrapping key. */
     const altered = newest().signers.map((x) => (x.id === 'sgn_ada' ? { ...x, name: 'mallory' }
-      : x.id === 'sgn_cy' ? { ...x, role: 'viewer' as const, wrappingPublicKey: 'cd'.repeat(32) as Hex } : x));
+      : x.id === 'sgn_cy' ? { ...x, wrappingPublicKey: 'cd'.repeat(32) as Hex } : x));
     const bos = await files(BO, { name: 'Acme', signers: altered });
     for (const s of [ADA, BO, CY]) await expect(readOn(s), s.person).rejects.toThrow(/does not believe the company's roster/u);
     expect(await fileTheRosterFollowedHere(doorsOf(ADA))).toBe(bos + 1);
@@ -180,19 +181,25 @@ describe('A VERSION REFUSED FOR WHO FILED IT CARRIES ONLY WHAT EACH ENTRY BINDS'
 });
 
 describe('THE VERSION FILED NEXT DROPS ONLY ENTRIES REFUSED FOR GOOD', () => {
-  it('CARRIES AN ENTRY WAITING FOR ITS SIGNER\'S OWN DIRECTORY ENTRY, AND DROPS ONE GIVING RIGHTS THE CHAIN NEVER GAVE OR NAMING ANOTHER PERSON', async () => {
+  it('CARRIES AN ENTRY WAITING FOR ITS SIGNER\'S OWN DIRECTORY ENTRY, AND DROPS ONE NAMING ANOTHER PERSON', async () => {
     /* Dee is admitted: her entry is believed only on her own device until her own device files her directory entry. */
     onChain(ADA, BO, CY, DEE);
-    const junk: Signer = { ...entryOf(CY, 'sgn_junk'), name: 'junk', rights: { mayApprove: false, everyVault: false, onVaults: [] } as never };
+    const junk: Signer = { ...entryOf(CY, 'sgn_junk'), name: 'junk', userId: 'mallory' };
     await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(BO), entryOf(CY), entryOf(DEE, 'sgn_dee', false), junk] });
-    expect((await readOn(BO)).refused.map((r) => r.why)).toEqual(['no-entry-of-their-own', 'rights-not-the-chains']);
+    expect((await readOn(BO)).refused.map((r) => r.why)).toEqual(['no-entry-of-their-own', 'not-their-person']);
     /* Bo gives his vault keys again, and Ada's device folds them in: the one filing a fold makes. */
     await offerVaultKeysHere(apiAs('bo'), CO, {
       signerId: 'sgn_bo', signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, viewingKey: KEY as Hex,
       companyKey: toHex(new Uint8Array(32).fill(BO.n + 100)) as Hex, entry: BO.statement,
       recordsKey: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(BO.n)), LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), BO.seat),
     });
+    const before = store.newestRoster(CO)!.version;
+    /* RED WHEN: a seat whose role files no roster folds an offer into a version every device then refuses for who filed it. */
+    await expect(foldOffersHere(doorsOf(BO))).rejects.toThrow(/may not file the company's roster.*Nothing was filed/su);
+    expect(store.newestRoster(CO)!.version).toBe(before);
     expect((await foldOffersHere(doorsOf(ADA))).folded).toEqual([BO.seat]);
+    /* RED WHEN: a version a device files carries a role in an entry, a second place a seat's role is held beside the directory. */
+    expect(newest().signers.filter((x) => 'role' in x).map((x) => x.id)).toEqual([]);
     const ids = newest().signers.map((x) => x.id);
     /* RED WHEN: a just-admitted signer's entry is dropped by another device's filing before their own directory entry is filed. */
     expect(ids).toContain('sgn_dee');
@@ -205,6 +212,11 @@ describe('THE VERSION FILED NEXT DROPS ONLY ENTRIES REFUSED FOR GOOD', () => {
     const carried = (await rosterHere(doorsOf(ADA))).carried.signers.filter((x) => x.leafCommitment === CY.seat).map((x) => x.id);
     /* RED WHEN: an entry naming another person than the directory holds its seat for is carried on, in place of the entry an earlier version holds for that seat. */
     expect(carried).toEqual(['sgn_cy']);
+    /* That entry carries the records key Cy's own wallet signed for his seat. */
+    const read = await readOn(BO);
+    /* RED WHEN: a seat whose only entry names another person reads as holding another records key, so every filing of that seat is refused. */
+    expect(read.held.here.another.has(CY.seat)).toBe(false);
+    expect(attestedIn(read.account).map((a) => a.statement.seat)).toContain(CY.seat);
   });
 });
 

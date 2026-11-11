@@ -58,7 +58,7 @@ const BASE = { record: 'acc_1', company: LABEL, account: ACCOUNT };
 const raiserOnly = { mayApprove: false, everyVault: true, onVaults: [] };
 const intent = (name: string, fields: Record<string, string>): ActIntent => ({ name, fields }) as ActIntent;
 
-/* The company as this wallet reads it: three seats on the chain, the roster's rights for each, and the bars. */
+/* The company as this wallet reads it: three seats on the chain, the rights its directory holds for each, and the bars. */
 let company: { approvals: number; policyBar: number | null; seatBar: number; vaultThresholds: { vault: string; threshold: number }[]; rights: (unknown | undefined)[]; proposals: unknown[] };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
@@ -73,7 +73,10 @@ const reachOf = () => ({
     vaultThresholds: company.vaultThresholds, adoptedVaults: [PAYROLL], account: ACCOUNT,
   }),
   judges: {
-    directoryHereFor: () => async () => ({ dir: { seats: [] }, records: { history: new Map() } }),
+    /* Each seat believed with the rights the company gave it: every right unless a case gives it fewer. */
+    directoryHereFor: () => async () => ({
+      dir: { seats: SEATS.map((seat, i) => ({ seat, retired: null, rights: company.rights[i] ?? { every: true } })) }, records: { history: new Map() },
+    }),
     leavesFor: () => async () => [],
     rosterReadsFor: () => ({}),
   },

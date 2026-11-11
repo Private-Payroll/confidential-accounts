@@ -28,9 +28,9 @@ import { judgeIn, kindAsked, listedHere, refusedForItsKey } from './vault-page-d
 import {
   NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads,
 } from './roster-here.js';
-import { invitationByAddressRefusal } from './invitation-signed-by-a-seat.js';
+import { invitationByAddressRefusal, linkInvitationRefusal, NOT_APPROVED_SAID } from './invitation-signed-by-a-seat.js';
 import { wholeThreshold } from '../../../src/core/vault-approvers.js';
-import type { SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { approvedInvitationRefusal, seatByAddressChangeOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { runRebuiltHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';
 import { oneOffMadeHere, OneOffRefused } from './one-off-here.js';
@@ -173,6 +173,138 @@ const VAULT_START_HERE_NOT = 'This proposal sets up one of the company\'s vaults
   + 'approved here. Approve it from the vault\'s set-up step instead; it is never withdrawn.';
 
 /**
+ * **THE PERSON WAITING FOR THE SEAT A LINK OR CODE PROPOSAL ADDS**, read from
+ * the company's inbox for `signerId` and held to everything a waiting request
+ * is held to (`refuseASeatNotForTheInvited`), or refused before anything is
+ * built or approved.
+ */
+async function waitingForTheSeatHere(
+  service: GovernedCallService, accountId: string, viewingKey: KeysHeld, signerId: unknown,
+  records: RecordsForTheRound | undefined, leaves: SeatingReads['leaves'] | undefined,
+): Promise<PendingSignerPayload> {
+  if (!service.sealedAccount) {
+    throw new NotOpenedOnThisDevice('This page cannot read the company\'s list of signers, so it cannot check this '
+      + 'proposal. Reload the page to get the current version.');
+  }
+  let found: PendingSignerPayload | undefined;
+  try {
+    const sealedAccount = await service.sealedAccount!(accountId) as SealedAccount & { roster?: SealedCompanyRecord | null };
+    /* The signers are read only from the company's roster record, never from a list on its account record. */
+    if ((sealedAccount.roster ?? null) === null) throw new NotOpenedOnThisDevice(NO_ROSTER_RECORD);
+    const signers = openAccount(sealedAccount, viewingKey, sealedAccount.roster).signers;
+    const named = signers.find((x) => x.id === signerId);
+    /*
+     * **ONLY A PERSON WAITING FOR A SEAT IS INVITED, WITH THE LEAF THEIR OWN
+     * PROOF CARRIES.** A roster entry is filed whole by any seat, so a person
+     * read from one is not taken as the person to invite.
+     */
+    /*
+     * **A PERSON WAITING FOR A SEAT IS READ FROM THE INBOX, AND THE INBOX
+     * TAKES ANYBODY'S WRITE.** So the keys found there are seated only if
+     * they carry the invitee's proof, made with the secret in their link,
+     * which this device works out again from the key whose inbox opened the
+     * request (one sealed to an inbox from before the company's key changed
+     * is believed only when that change named it), and only for
+     * the person a seat this device believes invited, at a leaf their
+     * opening makes for their wallet. A key put there by somebody without
+     * that key carries no proof that passes, and is refused here, before
+     * anything is built or approved.
+     */
+    if (named?.status === 'pending') {
+      const box = sealedAccount.pendingSigners.find((p) => p.id === named.id);
+      if (!box) {
+        throw new SeatKeyNotFromTheInvitee('This person\'s acceptance could not be found. Access was not granted and '
+          + 'nothing was sent. Reload the page; if they are still shown as waiting, press Grant access again.');
+      }
+      let opened: { readonly value: PendingSignerPayload; readonly key: Hex };
+      try {
+        opened = answerOpenedWith<PendingSignerPayload>(viewingKey, box.sealed, accountId);
+      } catch (e) {
+        throw new SeatKeyNotFromTheInvitee((e as Error)?.message ?? String(e));
+      }
+      const waiting = opened.value;
+      refuseASeatKeyNotFromTheInvitee(opened.key, accountId, waiting);
+      /* The person invited, by a seat this device believes, and a leaf made for their wallet: checked again on every open. */
+      if (records === undefined || leaves === undefined) {
+        throw new NotOpenedOnThisDevice('This page cannot check who this seat is for, or that its keys are made for their '
+          + 'wallet, so it cannot act on it. Reload the page to get the current version.');
+      }
+      const believed = await records.directory();
+      await refuseASeatNotForTheInvited(sealedAccount, viewingKey, box, waiting, {
+        seats: provedSeatsOf(believed.dir.seats), onTheChain: believed.holders.seats, leaves,
+      });
+      /* The same keys as somebody already on the list is the same person twice, or a copy. */
+      if (signers.some((x) => x.id !== named.id && (x.signingPublicKey === waiting.signingPublicKey
+        || (x.leafCommitment ?? '').toLowerCase() === waiting.leafCommitment.toLowerCase()))) {
+        throw new SeatKeyNotFromTheInvitee('These keys already belong to another signer on this company, so they '
+          + 'cannot be given access under this name. Access was not granted and nothing was sent. Do not give this '
+          + 'person access: they need a new invitation, and check with them that they were the one who accepted.');
+      }
+      found = waiting;
+    }
+  } catch (e) {
+    if (e instanceof SeatKeyNotFromTheInvitee || e instanceof NotOpenedOnThisDevice) throw e;
+    throw new NotOpenedOnThisDevice('This device cannot read the company\'s list of signers, so it cannot check this '
+      + 'proposal. Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
+  }
+  if (found === undefined) {
+    throw new NotOpenedOnThisDevice('The person this proposal gives access to is not waiting for a seat on the company\'s '
+      + 'list of signers. Withdraw this proposal, then grant access again.');
+  }
+  return found;
+}
+
+/**
+ * **AN ADD-SIGNER PROPOSAL OPENED ON THIS DEVICE**: the change its signers
+ * approve, made from the invitation the proposal carries
+ * (`seatByAddressChangeOf`), or refused before anything is built or approved.
+ * Whichever way the signer joined, the invitation is held to one set of
+ * checks: signed by a seat this device believes may invite, offering only
+ * vaults within that seat's own, and naming the address the proposal invites
+ * (`invitationByAddressRefusal`); and the one rule (`approvedInvitationRefusal`):
+ * its salt (`salt`) is the one its signed terms make and the proposal its
+ * identity on the chain, so the approvers agree to the role, the vaults and
+ * the threshold invited. A seat that joined by a link or a code also has a
+ * person waiting, read and checked here (`waitingForTheSeatHere`), whom the
+ * invitation must be for: their leaf, and the role, vaults, person and name
+ * they accepted (`linkInvitationRefusal`).
+ */
+async function addSignerOpenedHere(
+  service: GovernedCallService, accountId: string, viewingKey: KeysHeld, rec: { readonly chainId: string },
+  body: { readonly signerId?: unknown; readonly invite?: unknown; readonly invited?: unknown }, salt: string,
+  records: RecordsForTheRound | undefined, leaves: SeatingReads['leaves'] | undefined,
+): Promise<GovernanceOnTheWire> {
+  const invite = body.invite as { address?: unknown; scope?: unknown } | undefined;
+  if (typeof invite?.address !== 'string' || !HEX64.test(invite.address.toLowerCase())
+    || typeof invite.scope !== 'string' || !HEX64.test(invite.scope.toLowerCase())) {
+    throw new NotOpenedOnThisDevice('This proposal does not say which address it invites, or with which rights. Withdraw it '
+      + 'and invite the person again.');
+  }
+  /* A proposal that seats somebody waiting, or whose invitation names a leaf, is for the person waiting under that name. */
+  const forOneWaiting = body.signerId !== undefined || (body.invited as { terms?: { leaf?: unknown } } | undefined)?.terms?.leaf !== undefined;
+  const waiting = forOneWaiting ? await waitingForTheSeatHere(service, accountId, viewingKey, body.signerId, records, leaves) : null;
+  if (records === undefined) {
+    throw new NotOpenedOnThisDevice('This page cannot check which seat signed this invitation, so it cannot act on it. Reload '
+      + 'the page to get the current version.');
+  }
+  /*
+   * The address and rights sealed beside the invitation are the raiser's word; the invitation is the inviting seat's.
+   * The two must agree, and what this device approves is made from the signed one.
+   */
+  const why = invitationByAddressRefusal(accountId, body.invited, invite, provedSeatsOf((await records.directory()).dir.seats));
+  if (why !== null) throw new NotOpenedOnThisDevice(why);
+  const invited = body.invited as SignedSeatInvitation;
+  const unbound = approvedInvitationRefusal(invited, { salt, chainId: rec.chainId });
+  if (unbound !== null) {
+    throw new NotOpenedOnThisDevice(`${NOT_APPROVED_SAID[unbound]}, so this device does not approve it. Do not approve it. Withdraw it, and invite the person again.`);
+  }
+  const notTheirs = waiting === null ? null : linkInvitationRefusal(invited, waiting);
+  if (notTheirs !== null) throw new NotOpenedOnThisDevice(notTheirs);
+  /* The threshold the seat sets once taken is the signed invitation's too: none keeps the one in force. */
+  return seatByAddressChangeOf(invited.terms.invite!);
+}
+
+/**
  * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS.**
  *
  * The proposal's record is opened with the company's key of the epoch it was
@@ -302,119 +434,7 @@ export async function openTheRoundHere(
     }
     governance = { kind: 'remove-signer', leaf: body.leaf.toLowerCase(), ...(t === undefined || t === 0 ? {} : { threshold: String(t) }) };
   } else if (envelope.kind === 'add-signer') {
-    /*
-     * **WHAT THE SIGNERS APPROVE IS THE INVITATION THE SEAT THAT INVITED
-     * SIGNED**: the commitment to the invitee's address, the rights their
-     * seat will carry and the threshold it sets once taken, as that signed
-     * invitation names them, and the proposal's
-     * payload must be the one made from them. The leaf is the invitee's to put
-     * on the chain when they take the seat from their own wallet; for an
-     * invitation answered by link, the person named is still held, below, to
-     * being the one waiting, with keys their own proof carries.
-     */
-    const invite = body.invite as { address?: unknown; scope?: unknown } | undefined;
-    if (typeof invite?.address !== 'string' || !HEX64.test(invite.address.toLowerCase())
-      || typeof invite.scope !== 'string' || !HEX64.test(invite.scope.toLowerCase())) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which address it invites, or with which rights. Withdraw it '
-        + 'and invite the person again.');
-    }
-    const terms = (body.invited as { terms?: { proposal?: unknown; leaf?: unknown } } | undefined)?.terms;
-    const byAddress = typeof terms?.proposal === 'string' && terms.leaf === undefined;
-    if (byAddress && String(terms!.proposal).toLowerCase() !== String(rec.chainId).toLowerCase()) {
-      throw new NotOpenedOnThisDevice('The invitation this proposal carries names another proposal than this one, so this device does not '
-        + 'act on it. Do not approve it. Withdraw it, and invite the person again.');
-    }
-    if (!byAddress && !service.sealedAccount) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s list of signers, so it cannot check this '
-        + 'proposal. Reload the page to get the current version.');
-    }
-    /*
-     * An invitation made by address waits for nobody: the invitee's wallet takes the seat itself, proving the address,
-     * and the seat is bound to this invitation by the proposal it names. Only an invitation answered first by link is
-     * held to a person waiting, with keys their own proof carries.
-     */
-    let leaf: string | null | undefined = byAddress ? null : undefined;
-    if (!byAddress) try {
-      const sealedAccount = await service.sealedAccount!(accountId) as SealedAccount & { roster?: SealedCompanyRecord | null };
-      /* The signers are read only from the company's roster record, never from a list on its account record. */
-      if ((sealedAccount.roster ?? null) === null) throw new NotOpenedOnThisDevice(NO_ROSTER_RECORD);
-      const signers = openAccount(sealedAccount, viewingKey, sealedAccount.roster).signers;
-      const named = signers.find((x) => x.id === body.signerId);
-      /*
-       * **ONLY A PERSON WAITING FOR A SEAT IS INVITED, WITH THE LEAF THEIR OWN
-       * PROOF CARRIES.** A roster entry is filed whole by any seat, so a person
-       * read from one is not taken as the person to invite.
-       */
-      leaf = undefined;
-      /*
-       * **A PERSON WAITING FOR A SEAT IS READ FROM THE INBOX, AND THE INBOX
-       * TAKES ANYBODY'S WRITE.** So the keys found there are seated only if
-       * they carry the invitee's proof, made with the secret in their link,
-       * which this device works out again from the key whose inbox opened the
-       * request (one sealed to an inbox from before the company's key changed
-       * is believed only when that change named it), and only for
-       * the person a seat this device believes invited, at a leaf their
-       * opening makes for their wallet. A key put there by somebody without
-       * that key carries no proof that passes, and is refused here, before
-       * anything is built or approved.
-       */
-      if (named?.status === 'pending') {
-        const box = sealedAccount.pendingSigners.find((p) => p.id === named.id);
-        if (!box) {
-          throw new SeatKeyNotFromTheInvitee('This person\'s acceptance could not be found. Access was not granted and '
-            + 'nothing was sent. Reload the page; if they are still shown as waiting, press Grant access again.');
-        }
-        let opened: { readonly value: PendingSignerPayload; readonly key: Hex };
-        try {
-          opened = answerOpenedWith<PendingSignerPayload>(viewingKey, box.sealed, accountId);
-        } catch (e) {
-          throw new SeatKeyNotFromTheInvitee((e as Error)?.message ?? String(e));
-        }
-        const waiting = opened.value;
-        refuseASeatKeyNotFromTheInvitee(opened.key, accountId, waiting);
-        /* The person invited, by a seat this device believes, and a leaf made for their wallet: checked again on every open. */
-        if (records === undefined || leaves === undefined) {
-          throw new NotOpenedOnThisDevice('This page cannot check who this seat is for, or that its keys are made for their '
-            + 'wallet, so it cannot act on it. Reload the page to get the current version.');
-        }
-        const believed = await records.directory();
-        await refuseASeatNotForTheInvited(sealedAccount, viewingKey, box, waiting, {
-          seats: provedSeatsOf(believed.dir.seats), onTheChain: believed.holders.seats, leaves,
-        });
-        /* The same keys as somebody already on the list is the same person twice, or a copy. */
-        if (signers.some((x) => x.id !== named.id && (x.signingPublicKey === waiting.signingPublicKey
-          || (x.leafCommitment ?? '').toLowerCase() === waiting.leafCommitment.toLowerCase()))) {
-          throw new SeatKeyNotFromTheInvitee('These keys already belong to another signer on this company, so they '
-            + 'cannot be given access under this name. Access was not granted and nothing was sent. Do not give this '
-            + 'person access: they need a new invitation, and check with them that they were the one who accepted.');
-        }
-        leaf = waiting.leafCommitment;
-      }
-    } catch (e) {
-      if (e instanceof SeatKeyNotFromTheInvitee || e instanceof NotOpenedOnThisDevice) throw e;
-      throw new NotOpenedOnThisDevice('This device cannot read the company\'s list of signers, so it cannot check this '
-        + 'proposal. Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
-    }
-    if (!byAddress && typeof leaf !== 'string') {
-      throw new NotOpenedOnThisDevice('The person this proposal gives access to is not waiting for a seat on the company\'s '
-        + 'list of signers. Withdraw this proposal, then grant access again.');
-    }
-    /*
-     * The address and rights sealed beside the invitation are the raiser's word; the invitation is the inviting seat's.
-     * The two must agree, and what this device approves is made from the signed one.
-     */
-    if (records === undefined) {
-      throw new NotOpenedOnThisDevice('This page cannot check which seat signed this invitation, so it cannot act on it. Reload '
-        + 'the page to get the current version.');
-    }
-    const why = invitationByAddressRefusal(accountId, body.invited, invite, provedSeatsOf((await records.directory()).dir.seats));
-    if (why !== null) throw new NotOpenedOnThisDevice(why);
-    const signed = (body.invited as SignedSeatInvitation).terms.invite!;
-    /* The threshold the seat sets once taken is the signed invitation's too: none keeps the one in force. */
-    governance = {
-      kind: 'add-signer', address: signed.address.toLowerCase(), scope: signed.scope.toLowerCase(),
-      ...(signed.threshold === undefined ? {} : { threshold: signed.threshold }),
-    };
+    governance = await addSignerOpenedHere(service, accountId, viewingKey, rec, body, change.salt, records, leaves);
   } else if (envelope.kind === 'set-threshold') {
     if (!wholeThreshold(body.newThreshold)) {
       throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '

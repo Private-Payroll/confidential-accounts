@@ -2,28 +2,22 @@
  * **A PROPOSAL'S RAISE, APPROVAL, WITHDRAWAL AND CARRYING OUT ARE RELAYED WITH
  * NO KEY, ONLY FOR A SEAT THAT MAY ACT, OVER REAL HTTP.**
  *
- * The proposal routes (`proposal-relays.ts`) are mounted beside the directory
- * and records routes of one company of two seats (`a-company-of-two-seats`):
- * Ada holds a seat whose role is not named, Bo an approver's, Eve the only seat
- * of another company, and Cy is a member of Ada's company with no seat. The
- * ledger is a stand-in, and named: its door for a proven call reads which call
- * and which proposal a stand-in transaction carries and does to its open
- * proposals what that call would; its read of the account answers from them.
+ * The proposal routes run over a stand-in chain
+ * (`a-proposal-relayed-on-a-stand-in-chain.test-support.ts`), beside the
+ * directory and records routes of one company of two seats
+ * (`a-company-of-two-seats`): Ada holds a seat whose role is not named, Bo an
+ * approver's, Eve the only seat of another company, and Cy is a member of Ada's
+ * company with no seat. How a raise is sent and where a proposal stands are
+ * pinned in `a-raise-is-sent-and-its-standing-read-for-a-seat.test.ts`.
  *
  * Every assertion names the change that turns it red.
  */
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
-import express from 'express';
-import { aCompanyOfTwoSeats, store, chains, CO, OTHER, ADA, BO, EVE, seatOf, sendAs } from './a-company-of-two-seats.test-support.js';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { store, chains, CO, OTHER, ADA, BO, seatOf, sendAs } from './a-company-of-two-seats.test-support.js';
 import { signingPublicKeyOf } from '../core/crypto.js';
-import { proposalRelayRoutes } from './proposal-relays.js';
 import { batchDigestOf, sealTransferProposal, signProposalFiling, type ProposalFiling } from '../core/proposal-filing.js';
-import { NothingWasSent } from '../core/jobs.js';
-import { FeeNotPaid } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION } from '../core/device-raise.js';
-import type { LedgerStatus } from '../core/ledger.js';
 import type { SealedProposal } from '../core/types.js';
-import type { ClosedOnChain } from './proposal-closed-on-chain.js';
 import type { Hex } from '../core/crypto.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { acceptanceHashOf } from '../core/invitation.js';
@@ -32,101 +26,7 @@ import { secretRunWindowFrom } from '../midnight/secret-run-window.js';
 import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { pureCircuits as vaultPure } from '../../contracts/managed-vault/contract/index.js';
-
-/* ── the chain, stood in ─────────────────────────────────────────────────── */
-
-const open = new Map<string, number>();
-/* The vaults the company's account lists on the stand-in chain: those it adopted. */
-const adopted = new Set<string>();
-/* The commitment of the secret each vault holds on the stand-in chain; a vault not named holds none. */
-const secrets = new Map<string, string>();
-/* The vaults whose every sealed copy is written on the stand-in chain; the others are not started. */
-const started = new Set<string>();
-let unreadable = false;
-let refuseAtTheDoor: string | null = null;
-/* A fee the fee payer could not pay, refused before anything reached the chain. */
-let feeNotPaid = false;
-/* The time of the newest block the stand-in indexer names, in milliseconds; null when it does not answer. */
-let chainTime: number | null = null;
-/* How the stand-in account's history shows a proposal closed, or that it never held it. */
-let history: ClosedOnChain = 'never';
-/* The stand-in history behind the chain's own read: it has not yet seen the raise that read holds open. */
-let historyBehind = false;
-const sent: Array<{ accountId: string; circuit: string; proposal: string }> = [];
-const tx = (circuit: string, proposal: string): string => Buffer.from(JSON.stringify({ circuit, proposal })).toString('base64');
-
-const ledger = {
-  wiring: 'simulated' as const,
-  status: async (): Promise<LedgerStatus | null> => (unreadable ? null : {
-    assets: [], openProposals: [...open].map(([id, approvals]) => ({ id: id as Hex, change: '00'.repeat(32) as Hex, approvals })),
-    threshold: 2, vaultThresholds: [], signerCount: 2,
-  } as unknown as LedgerStatus),
-  submitProvenCall: async (accountId: string, bytes: Uint8Array, circuit: string) => {
-    const o = JSON.parse(Buffer.from(bytes).toString('utf8')) as { circuit: string; proposal: string };
-    if (refuseAtTheDoor !== null) throw new NothingWasSent(refuseAtTheDoor);
-    if (feeNotPaid) throw new FeeNotPaid('the fee for this call could not be paid just now. Nothing was sent.');
-    if (o.circuit !== circuit) throw new NothingWasSent(`the door was told ${circuit} and handed ${o.circuit}. Nothing was sent.`);
-    sent.push({ accountId, circuit, proposal: o.proposal });
-    /* A raise counts its raiser, who here may approve on every vault, as the account's `propose` counts it. */
-    if (circuit === 'propose') open.set(o.proposal, 1);
-    else if (circuit === 'approve') open.set(o.proposal, (open.get(o.proposal) ?? 0) + 1);
-    /* A charge leaves the run's proposal open, to be paid; every other call closes the one it carries out. */
-    else if (circuit !== 'clearRun') open.delete(o.proposal);
-    return { ref: `ref-${sent.length}`, at: new Date().toISOString() };
-  },
-};
-
-aCompanyOfTwoSeats((app, deps) => {
-  const ownsProposal: express.RequestHandler = (req, res, next) => {
-    const p = store.getProposal(String(req.params.id));
-    return p !== null && store.getAccount(p.accountId)?.memberUserIds.includes(req.userId!) ? next() : res.status(404).json({ error: 'not found' });
-  };
-  const refuseSigningSecret: express.RequestHandler = (req, res, next) =>
-    (req.body && typeof req.body === 'object' && 'signingSecret' in req.body ? res.status(400).json({ code: 'signing-secret-refused' }) : next());
-  app.use(proposalRelayRoutes({
-    signedIn: deps.signedIn, member: deps.member, ownsProposal, refuseSigningSecret,
-    store, ledger, directoryOf: deps.directoryOf, recordRefusal: () => undefined,
-    proposalIdOf: (h, salt, vault) => MidnightCommitments.proposalId(h as Hex, salt as Hex, vault as Hex | undefined),
-    adoptionOf: (vault) => adoptionRoundOf(pureCircuits as unknown as AccountStartPure, vault),
-    vaultsAdopted: async () => (unreadable ? null : [...adopted]),
-    firstSecretRunOf: (vault, parts) => firstSecretRunCarriedOf({ vault: vaultPure as never, account: pureCircuits as never }, vault, parts),
-    vaultSecretOf: async (vault) => (unreadable ? null : { commitment: secrets.get(vault) ?? '00'.repeat(32), started: started.has(vault) }),
-    closedOnChain: async (_accountId, chainId) => (open.has(chainId) && !historyBehind ? 'open' : history),
-    chainTimeOf: async () => {
-      if (chainTime === null) throw new Error('the indexer did not answer');
-      return chainTime;
-    },
-  }));
-});
-
-beforeAll(() => {
-  /* Cy is a member of Ada's company and holds no seat on it. */
-  const acme = store.getAccount(CO)!;
-  store.putAccount({ ...acme, memberUserIds: [...acme.memberUserIds, 'cy'] });
-});
-
-const P = 'prp_relayedAAAAA';
-const CHAIN = '22'.repeat(32);
-const proposal = (over: Partial<SealedProposal> = {}): SealedProposal => ({
-  id: P, accountId: CO, status: 'open', createdAt: '2026-10-07T00:00:00.000Z', digest: '11'.repeat(32) as Hex,
-  chainId: CHAIN as Hex, approvalCount: 0, keyEpoch: 0, sealed: { iv: '', tag: '', body: '' } as never, ...over,
-});
-
-beforeEach(() => {
-  open.clear(); adopted.clear(); secrets.clear(); started.clear(); sent.length = 0; unreadable = false; refuseAtTheDoor = null; feeNotPaid = false;
-  chainTime = Date.parse(proposal().createdAt); history = 'never'; historyBehind = false;
-  store.putProposal(proposal());
-});
-
-/** The filing key each person's device sends with a relay: its own seat's, or, for one with no seat here, a key no entry names. */
-const FILER: Readonly<Record<string, string>> = { ada: ADA.statement.signingKey, bo: BO.statement.signingKey, eve: EVE.statement.signingKey };
-const RELAYS = /\/(approve|cancel|send|carry|charge|retirement|carried)$/u;
-/** A request as the person's device sends it: a relay carries the device's filing key unless the body names its own. */
-const post = (who: string | null, path: string, body: unknown) => {
-  const carried = RELAYS.test(path) && typeof body === 'object' && body !== null && !('filer' in body)
-    ? { filer: FILER[who ?? ''] ?? 'cc'.repeat(32), ...body } : body;
-  return sendAs(who)(path, { method: 'POST', body: JSON.stringify(carried) }) as Promise<{ status: number; body: any }>;
-};
+import { open, adopted, secrets, started, chain, sent, tx, P, CHAIN, proposal, FILER, post } from './a-proposal-relayed-on-a-stand-in-chain.test-support.js';
 
 describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
   it('AN APPROVAL A SEAT\'S DEVICE PROVED IS RELAYED AS AN APPROVAL, AND THE CHAIN\'S COUNT IS WRITTEN DOWN', async () => {
@@ -143,12 +43,12 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
 
   it('AN APPROVAL WHOSE FEE COULD NOT BE PAID IS REFUSED AS NOTHING SENT, WITH THE CODE A PAGE SAYS IT BY', async () => {
     open.set(CHAIN, 0);
-    feeNotPaid = true;
+    chain.feeNotPaid = true;
     const r = await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN) });
     /* RED WHEN: a fee that could not be paid reaches the page with no code, so it can only say the step did not finish. */
     expect(r).toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'fee-not-paid' } });
-    feeNotPaid = false;
-    refuseAtTheDoor = 'the chain refused it. Nothing was sent.';
+    chain.feeNotPaid = false;
+    chain.refuseAtTheDoor = 'the chain refused it. Nothing was sent.';
     /* RED WHEN: a refusal that is not about the fee is given the fee's code. */
     expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN) })).body.code).toBeUndefined();
   });
@@ -217,62 +117,6 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     expect(sent).toEqual([]);
   });
 
-  it('WHERE A PROPOSAL STANDS IS THE CHAIN\'S, AND A COUNT ALREADY WRITTEN IS NEVER LOWERED', async () => {
-    open.set(CHAIN, 2);
-    expect((await post('ada', `/api/proposals/${P}/standing`, {})).body).toMatchObject({ approvalCount: 2 });
-    open.set(CHAIN, 1);
-    /* RED WHEN a later, lower read writes the count backwards. */
-    expect((await post('ada', `/api/proposals/${P}/standing`, {})).body).toMatchObject({ approvalCount: 2 });
-    unreadable = true;
-    /* RED WHEN a chain that did not answer is read as a count of nothing. */
-    expect((await post('ada', `/api/proposals/${P}/standing`, {})).body).toMatchObject({ approvalCount: 2 });
-  });
-
-  it('A RAISE IS SENT ONLY FROM A PAGE OF THIS VERSION, ONLY WHILE THE CHAIN DOES NOT HOLD IT, AND ITS REFERENCE IS WRITTEN DOWN', async () => {
-    /* RED WHEN the version is not asked. */
-    expect((await post('ada', `/api/proposals/${P}/send`, { tx: tx('propose', CHAIN) })).status).toBe(422);
-    const r = await post('bo', `/api/proposals/${P}/send`, { tx: tx('propose', CHAIN), version: DEVICE_RAISE_VERSION });
-    expect(r.status).toBe(200);
-    expect(sent.map((x) => x.circuit)).toEqual(['propose']);
-    /* RED WHEN the reference is not written down, or the proposal is not marked seen. */
-    expect(store.getProposal(P)).toMatchObject({ txRef: 'ref-1' });
-    expect(typeof store.getProposal(P)!.raisedAt).toBe('string');
-    /* RED WHEN a proposal the chain holds is sent again. */
-    const again = await post('ada', `/api/proposals/${P}/send`, { tx: tx('propose', CHAIN), version: DEVICE_RAISE_VERSION });
-    expect(again.status).toBe(422);
-    expect(again.body.error).toMatch(/already holds this proposal/u);
-    expect(sent).toHaveLength(1);
-  });
-
-  it('A WITHDRAWAL: NO CALL FOR ONE ONLY WRITTEN DOWN, THE DEVICE\'S CALL FOR ONE ON THE CHAIN, AND NONE FOR ONE SENT AND NOT YET SEEN', async () => {
-    /* Only written down, the chain's time past its deadline: withdrawn here with no call. RED WHEN a call is demanded for it, or one is sent. */
-    chainTime = Date.parse('2026-10-08T00:00:00.000Z');
-    let r = await post('ada', `/api/proposals/${P}/cancel`, {});
-    expect(r.body).toMatchObject({ status: 'cancelled' });
-    expect(sent).toEqual([]);
-    /* Sent, and not seen yet: it may still land. RED WHEN it is closed here. */
-    chainTime = Date.parse(proposal().createdAt);
-    store.putProposal(proposal({ txRef: 'ref-x' }));
-    r = await post('ada', `/api/proposals/${P}/cancel`, {});
-    expect(r.status).toBe(422);
-    expect(store.getProposal(P)!.status).toBe('open');
-    /* On the chain: withdrawn only by the call a device proved. RED WHEN it is closed here with none. */
-    open.set(CHAIN, 1);
-    store.putProposal(proposal());
-    r = await post('ada', `/api/proposals/${P}/cancel`, {});
-    expect(r.status).toBe(422);
-    expect(store.getProposal(P)!.status).toBe('open');
-    r = await post('ada', `/api/proposals/${P}/cancel`, { tx: tx('cancel', CHAIN) });
-    expect(sent.map((x) => x.circuit)).toEqual(['cancel']);
-    /* RED WHEN it is written down withdrawn while the chain still holds it, or not once it no longer does. */
-    expect(r.body).toMatchObject({ status: 'cancelled' });
-    /* A ledger that does not answer withdraws nothing. */
-    store.putProposal(proposal());
-    unreadable = true;
-    expect((await post('ada', `/api/proposals/${P}/cancel`, {})).status).toBe(422);
-    expect(store.getProposal(P)!.status).toBe('open');
-  });
-
   it('A PROPOSAL SENT AND NEVER SEEN IS WITHDRAWN WITH NO CALL ONLY ONCE THE CHAIN\'S OWN TIME IS PAST ITS DEADLINE AND THE CHAIN NEVER HELD IT', async () => {
     /* Written down at 2026-10-07T00:00:00Z: a raise of it lands only in a block before a day later. */
     const DEADLINE = Date.parse('2026-10-08T00:00:00.000Z');
@@ -280,7 +124,7 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     const cancel = (body: object = {}) => post('ada', `/api/proposals/${P}/cancel`, body);
 
     /* Inside the deadline it may still land. RED WHEN it is closed here, or the refusal does not say until when. */
-    chainTime = DEADLINE - 1_000;
+    chain.chainTime = DEADLINE - 1_000;
     let r = await cancel();
     expect(r.status).toBe(422);
     expect(r.body.error).toMatch(/may still arrive until 2026-10-08T00:00:00\.000Z, by the chain's time/u);
@@ -290,22 +134,22 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     expect(store.getProposal(P)!.status).toBe('open');
 
     /* Past the deadline and a raise of it did land: RED WHEN it is closed here as withdrawn. */
-    chainTime = DEADLINE;
+    chain.chainTime = DEADLINE;
     for (const landed of ['open', 'carried', 'withdrawn', 'unknown'] as const) {
-      history = landed;
+      chain.history = landed;
       r = await cancel();
       expect(r.status, landed).toBe(422);
       expect(store.getProposal(P)!.status, landed).toBe('open');
     }
-    history = 'never';
+    chain.history = 'never';
 
     /* RED WHEN it is closed with the chain's time unread, or read from this service's own clock. */
-    chainTime = null;
+    chain.chainTime = null;
     expect((await cancel()).status).toBe(422);
     expect(store.getProposal(P)!.status).toBe('open');
 
     /* Past the deadline by the chain's time, never held: no raise of it can land. RED WHEN it is still refused, or a call is sent. */
-    chainTime = DEADLINE;
+    chain.chainTime = DEADLINE;
     r = await cancel();
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ status: 'cancelled' });
@@ -321,14 +165,14 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     store.putProposal(proposal(byAda));
 
     /* Inside the deadline. RED WHEN it is closed here at once, or the refusal does not say until when. */
-    chainTime = DEADLINE - 1_000;
+    chain.chainTime = DEADLINE - 1_000;
     let r = await cancel('ada');
     expect(r.status).toBe(422);
     expect(r.body.error).toMatch(/sent straight from a signer's wallet may still arrive until 2026-10-08T00:00:00\.000Z, by the chain's time/u);
     expect(store.getProposal(P)!.status).toBe('open');
 
     /* Past the deadline, another seat. RED WHEN a seat that did not write it down closes it. */
-    chainTime = DEADLINE;
+    chain.chainTime = DEADLINE;
     r = await cancel('bo');
     expect(r.status).toBe(422);
     expect(r.body.error).toMatch(/only the signer who wrote it down withdraws it/u);
@@ -342,16 +186,16 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     /* Stopped by the company's policy, and the chain holds it, past the deadline, with the history not yet showing it. RED WHEN it is closed with the chain unread. */
     store.putProposal(proposal({ ...byAda, status: 'blocked' }));
     open.set(CHAIN, 1);
-    historyBehind = true;
+    chain.historyBehind = true;
     expect((await cancel('ada')).status).toBe(422);
     expect(store.getProposal(P)!.status).toBe('blocked');
     /* Stopped by policy, not on the chain, inside the deadline. RED WHEN it is closed while a raise of it may still land. */
     open.clear();
-    historyBehind = false;
-    chainTime = DEADLINE - 1_000;
+    chain.historyBehind = false;
+    chain.chainTime = DEADLINE - 1_000;
     expect((await cancel('ada')).status).toBe(422);
     expect(store.getProposal(P)!.status).toBe('blocked');
-    chainTime = DEADLINE;
+    chain.chainTime = DEADLINE;
     expect((await cancel('ada')).body).toMatchObject({ status: 'cancelled' });
     expect(sent).toEqual([]);
   });
@@ -398,10 +242,10 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       expect(notAdopted.body.error).not.toMatch(/withdrawn|Approve|raise|turns that read on/u);
       expect(store.getProposal(A)!.status).toBe('open');
       adopted.add(V);
-      unreadable = true;
+      chain.unreadable = true;
       /* RED WHEN: a chain that did not answer is read as one that closed it. */
       expect((await carried('ada')).status).toBe(503);
-      unreadable = false;
+      chain.unreadable = false;
       /* RED WHEN: the vault's adoption, carried out on the chain, stays open with no approvals on every screen. */
       expect((await carried('ada')).body).toMatchObject({ status: 'executed' });
       expect(sent).toEqual([]);
@@ -487,10 +331,10 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       expect(notStarted.body.error).toMatch(/not every signer's sealed copy of it written/u);
       expect(store.getProposal(S)!.status).toBe('open');
       started.add(V);
-      unreadable = true;
+      chain.unreadable = true;
       /* RED WHEN: a chain that did not answer is read as one that shows the secret set. */
       expect((await carried('ada')).status).toBe(503);
-      unreadable = false;
+      chain.unreadable = false;
       /* RED WHEN: the first secret run, carried out on the chain, stays open on every screen. */
       expect((await carried('ada')).body).toMatchObject({ status: 'executed' });
       expect(store.getProposal(S)!.status).toBe('executed');
@@ -569,11 +413,11 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     expect(kept.filter((x) => x.publicKey === FILER.bo).map((x) => x.signedFor)).toEqual([16, 17, 18, 19]);
     expect(kept.filter((x) => x.publicKey === FILER.ada)).toEqual([adasAgain, adasFor6]);
     /* RED WHEN: an approval's signature is kept only after the approval was relayed, so a refused keep follows a counted approval. */
-    refuseAtTheDoor = 'the chain refused it. Nothing was sent.';
+    chain.refuseAtTheDoor = 'the chain refused it. Nothing was sent.';
     const adasFor7 = { ...adas, signedFor: 7, signature: 'a4'.repeat(64) };
     expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN), retirement: adasFor7 })).status).toBe(422);
     expect(store.getProposal(P)!.retirementSignatures!.some((x) => x.signedFor === 7)).toBe(true);
-    refuseAtTheDoor = null;
+    chain.refuseAtTheDoor = null;
     /* RED WHEN: a withdrawn proposal still takes retirement signatures. */
     store.putProposal(proposal({ status: 'cancelled' }));
     expect((await post('ada', `/api/proposals/${P}/retirement`, { signature: adas })).status).toBe(422);

@@ -72,13 +72,14 @@ import express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
-import { canonical, commit, fromHex, newWrappingKeypair, randomBytes, toHex, type Hex } from '../core/crypto.js';
+import { canonical, commit, fromHex, newWrappingKeypair, randomBytes, toHex, type Hex, type Sealed } from '../core/crypto.js';
 import { NIGHT, TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import { signedFoundingState } from '../core/founding-state.js';
 import { newProposalId, paysCommitmentOf, signProposalFiling, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { openSealedRun, sealedRunOf } from '../core/run-legs.js';
+import { openRecord } from '../core/sealed-records.js';
 import { signRunFiling } from '../core/run-filing.js';
 import { companyRecordEntry, proposalEntry, runEntry } from '../midnight/record-manifest.js';
 import { NothingWasSent } from '../core/jobs.js';
@@ -271,6 +272,7 @@ const recordsOn = (s: Seat): CompanyRecordsHere & { proposals: () => Promise<Ret
     file: async () => { throw new Error('no policy is set in this file: each is filed as a seat filed it, by the test'); },
     me: deviceSignerFrom(s.seat, toHex(new Uint8Array(32).fill(s.n + 100))),
     keys: async (input) => spendingPolicyKeysOf({ accountPure: P }, input),
+    grantReaders: async () => [],
     /* The person's own wallet, reading the chain as the test keeps it - never the state the service serves. */
     onChain: chainReadThroughTheWallet(async (asked) => {
       rolesAsked.push([...asked]);
@@ -440,6 +442,10 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const raised = sent.filter((w) => w.startsWith(`POST /api/accounts/${CO}/proposals `));
     expect(raised).toHaveLength(1);
     const body = JSON.parse(raised[0]!.slice(`POST /api/accounts/${CO}/proposals `.length)) as Record<string, unknown>;
+    /* RED WHEN: the raise writes its raiser's role into the proposal, a second copy of the role the company's directory holds. */
+    const proposal = openRecord<Record<string, unknown>>('proposals', CO, (body.proposal as { sealed: Sealed }).sealed, KEY as never);
+    expect(proposal['proposedBy']).toBeTypeOf('string');
+    expect(proposal).not.toHaveProperty('proposerRole');
     /* What the raise pays, as the raising device opens it from the company's sealed run. */
     const { run } = await keptRunHere(recordsOn(ADA), CO, runId, KEY);
     const leg = Object.values(run.payout!)[0]!;

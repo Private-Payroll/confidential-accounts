@@ -70,7 +70,7 @@ const ADA = person('ada', 0xa1);
 const BO = person('bo', 0xb2);
 const CY = person('cy', 0xc3);
 const DEE = person('dee', 0xd4);
-const VI = person('vi', 0xe5, 'viewer');
+const VI = person('vi', 0xe5, 'limited');
 
 const seatOf = (p: Person): DirectorySeat => ({ seat: p.seat, person: p.name, signingKey: p.signing.publicKey, wrappingKey: p.wrappingKey, role: p.role, retired: null });
 
@@ -135,7 +135,7 @@ type World = ReturnType<typeof aWorld>;
 const deviceOn = (w: World, p: Person, o: {
   released?: Hex | null; wallet?: Hex | null; served?: Hex; waiting?: readonly SealedAnswer[];
   leaving?: ReadonlySet<string> | Error; filings?: (served: DirectoryFiling[]) => DirectoryFiling[];
-  admitted?: ReadonlySet<string> | Error;
+  admitted?: ReadonlySet<string> | Error; revoked?: number | Error;
 } = {}) => {
   const asked = { wallet: 0 };
   const doors: RotationDoors = {
@@ -145,6 +145,7 @@ const deviceOn = (w: World, p: Person, o: {
     served: async () => o.served ?? KEY0,
     released: () => (o.released === undefined ? p.released : o.released),
     askTheWallet: async () => { asked.wallet += 1; return o.wallet ?? null; },
+    revoked: async () => { if (o.revoked instanceof Error) throw o.revoked; return o.revoked ?? null; },
     file: w.file,
     waiting: async () => o.waiting ?? [],
     leaving: async () => { if (o.leaving instanceof Error) throw o.leaving; return o.leaving ?? new Set(); },
@@ -197,6 +198,49 @@ describe('the company\'s key on this device', () => {
     /* RED WHEN: a seed is not opened under its own epoch's key. */
     expect(key.seeds.map((s) => s.epoch)).toEqual([1, 2]);
     expect(key.sealing()).toEqual({ key: key.keyAt(2), epoch: 2 });
+  });
+
+  it('a read grant taken away pauses sealing until the key is repaired: a new key for the same seats, the seed kept, after no retirement', async () => {
+    const w = aWorld([ADA, BO]);
+    const taken = { revoked: 0 };
+    /* RED WHEN: a device seals on under the key a reader whose grant was taken away still holds. */
+    expect((await deviceOn(w, ADA, taken).key()).notSealing).toMatch(/a read grant was taken away.*The next action a signer who stays makes in their wallet changes it first/su);
+    await expect((async () => (await deviceOn(w, ADA, taken).key()).sealing())()).rejects.toBeInstanceOf(CompanyKeyBeingChanged);
+    /* RED WHEN: no change of the key is filed for a taking-away, so the pause never clears. */
+    expect(await deviceOn(w, BO, taken).rotate()).toMatchObject({ state: 'rotated', epoch: 1 });
+    const repair = w.filings.at(-1)!.change as RotateChange;
+    expect([repair.repairs, repair.after, repair.seed]).toEqual([0, 0, undefined]);
+    const after = await deviceOn(w, ADA, taken).key();
+    expect([after.epoch, after.notSealing]).toEqual([1, null]);
+    /* RED WHEN: the pause clears though the grants could not be read, so a taking-away could be missed. */
+    expect((await deviceOn(w, ADA, { revoked: new Error('the service did not answer') }).key()).notSealing).toMatch(/read grants could not be read/u);
+    expect(await deviceOn(w, ADA, { revoked: new Error('the service did not answer') }).rotate()).toMatchObject({ state: 'waits' });
+  });
+
+  it('a change of the key reads who is leaving once, and the read grants only when no removal is owed a change', async () => {
+    const counting = (w: World, p: Person) => {
+      const asked = { leaving: 0, revoked: 0 };
+      const { doors } = deviceOn(w, p);
+      const counted: RotationDoors = {
+        ...doors,
+        leaving: async () => { asked.leaving += 1; return new Set<string>(); },
+        revoked: async () => { asked.revoked += 1; return 0; },
+      };
+      return { asked, rotate: (leaf?: Person) => rotateTheCompanyKeyHere(counted, leaf === undefined ? {} : { leaf: leaf.seat }) };
+    };
+    const repaired = counting(aWorld([ADA, BO]), BO);
+    expect(await repaired.rotate()).toMatchObject({ state: 'rotated', epoch: 1 });
+    /*
+     * RED WHEN: the waits a change of the key shares are asked again once a read grant taken away is found, doubling the
+     * chain's reads. The read grants are read twice: once by the wait, once by the key's own read of whether sealing pauses.
+     */
+    expect(repaired.asked).toEqual({ leaving: 1, revoked: 2 });
+    const removal = aWorld([ADA, BO, CY]);
+    removal.retire(CY);
+    const afterRemoval = counting(removal, ADA);
+    expect(await afterRemoval.rotate(CY)).toMatchObject({ state: 'rotated', epoch: 1 });
+    /* RED WHEN: a change a removal is owed waits on the read grants, which it clears anyway: only the key's own read asks them. */
+    expect(afterRemoval.asked).toEqual({ leaving: 1, revoked: 1 });
   });
 
   it('a seat seated after a rotation believes its served copy only when it matches the key check', async () => {
@@ -415,7 +459,7 @@ describe('the company\'s key on this device', () => {
   it('a seat that may not file a proposal files no rotation', async () => {
     const w = aWorld([ADA, BO, CY, VI]);
     w.retire(CY);
-    /* RED WHEN: a viewer's device changes the company's key. */
+    /* RED WHEN: a limited seat's device changes the company's key. */
     expect(await deviceOn(w, VI).rotate()).toMatchObject({ state: 'not-this-seat', why: expect.stringMatching(/files no proposal/u) });
     expect(w.filed).toEqual([]);
   });
@@ -907,5 +951,22 @@ describe('the company\'s key is changed for every seat that stays, after the wai
     w.chain.add(DEE.seat);
     /* RED WHEN: a seat the chain holds and the directory has no entry for does not make the change wait. */
     expect(await removalWaitsHere(w.here() as unknown as DirectoryHere, seatOf_(BO), {}, () => null, doors)).toMatchObject({ state: 'waits' });
+  });
+
+  it('a vault\'s change waits for a seat admitted after the company\'s key changed to file its entry; the key, owed nothing, does not', async () => {
+    const w = aWorld([ADA, BO]);
+    w.chain.add(DEE.seat);
+    const here = w.here() as unknown as DirectoryHere;
+    const bo = here.dir.seats.find((x) => x.seat === BO.seat);
+    const asked = { admitted: 0 };
+    const doors = { leaving: async () => new Set<string>(), admitted: async () => { asked.admitted += 1; return new Set([DEE.seat.toLowerCase()]); } };
+    /* RED WHEN: a vault's change made while no key change is owed leaves out a seat the roster admitted that has filed no entry yet. */
+    expect(await removalWaitsHere(here, bo, { admittedFirst: true }, () => null, doors))
+      .toEqual({ state: 'waits', why: 'the chain holds a seat the company\'s directory has no entry for yet; that seat files its entry first' });
+    /* RED WHEN: a company key owed no change reports a wait for every seat being admitted. */
+    expect(await removalWaitsHere(here, bo, {}, () => null, doors)).toEqual({ state: 'not-needed' });
+    expect(asked.admitted).toBe(1);
+    /* Once that seat's entry is not one the roster admitted, nothing waits. */
+    expect(await removalWaitsHere(here, bo, { admittedFirst: true }, () => null, { ...doors, admitted: async () => new Set<string>() })).toEqual({ state: 'not-needed' });
   });
 });

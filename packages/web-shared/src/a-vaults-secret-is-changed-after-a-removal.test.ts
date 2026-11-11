@@ -22,7 +22,7 @@ const chain = vi.hoisted(() => ({
   commitment: '', written: '', secret: '', copiesTo: [] as string[], removals: 0, stayers: [] as string[],
   approvals: 1, needed: 1, pending: null as null | { secret: string; readers: string[]; previous: string },
   waits: null as null | { state: string; why?: string }, raised: [] as string[], set: 0, copies: 0,
-  beforeARemoval: false, approvedHere: true, counts: [] as number[], stayersAtRaise: null as null | string[],
+  beforeARemoval: false, approvedHere: true, counts: [] as number[], stayersAtRaise: null as null | string[], admittedFirst: [] as boolean[],
   /** The account's removal count when the run that set each commitment was raised. */
   setAt: new Map<string, number>(),
 }));
@@ -31,7 +31,10 @@ const commitmentOf = vi.hoisted(() => (secret: string) => `c${secret.split('').r
 
 vi.mock('./company-key-here.js', async (orig) => ({
   ...(await orig<object>()),
-  removalWaitsHere: async () => chain.waits ?? { state: 'not-needed' },
+  removalWaitsHere: async (_here: unknown, _seat: unknown, o: { readonly admittedFirst?: boolean }) => {
+    chain.admittedFirst.push(o.admittedFirst === true);
+    return chain.waits ?? { state: 'not-needed' };
+  },
 }));
 vi.mock('./vault-read-here.js', async (orig) => ({
   ...(await orig<object>()),
@@ -142,7 +145,7 @@ const newest = async (records: ReturnType<typeof storesFor>, who: Uint8Array) =>
 beforeEach(() => {
   Object.assign(chain, {
     removals: 0, stayers: [pk(ADA), pk(BO), pk(CAROL)], approvals: 1, needed: 1, pending: null, waits: null, raised: [], set: 0, copies: 0,
-    beforeARemoval: false, approvedHere: true, counts: [], stayersAtRaise: null, setAt: new Map(),
+    beforeARemoval: false, approvedHere: true, counts: [], stayersAtRaise: null, setAt: new Map(), admittedFirst: [],
   });
 });
 
@@ -164,6 +167,7 @@ describe('a vault\'s secret, changed after a signer is removed', () => {
     expect(wallet.kept.size, 'RED WHEN: the kept secret stays in the wallet after it is filed').toBe(0);
     const again = await vaultSecretsRotatedHere(doors, [VAULT], 'raise');
     expect(again[0]!.state, 'RED WHEN: a second press raises or files again').toBe('not-owed');
+    expect(chain.admittedFirst, 'RED WHEN: a vault\'s change does not wait for a seat admitted that has filed no entry, while no key change is owed').toEqual([true, true]);
     expect([chain.raised.length, chain.set, (await records('nonce-secret').versions(VAULT)).length]).toEqual([1, 1, 2]);
   });
 

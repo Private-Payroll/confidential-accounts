@@ -456,7 +456,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     /* Every door a deposit uses was watched, so a search over them searched something. */
     expect([...new Set(caught.map((c) => c.to.split(' ').slice(0, 2).join(' ')))].sort(), 'RED WHEN: a door stops being watched').toEqual([
       'browser in-flight', 'device block', 'device created-by', 'device read', 'records deposit-journal', 'records nonce-secret',
-      'records pool', 'service deposit', 'service keys', 'wallet',
+      'records pool', 'service deposit', 'wallet',
     ]);
 
     /* ---- what the chain is sent states neither the deposit's token nor its amount ---- */

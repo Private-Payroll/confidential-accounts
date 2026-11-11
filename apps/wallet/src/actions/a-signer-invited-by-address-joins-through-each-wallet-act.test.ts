@@ -51,13 +51,15 @@ import { seatInvitedAction } from './seat-invited.js';
 import { admitSignerAction } from './admit-signer.js';
 import { giveVaultKeysAction } from './give-vault-keys.js';
 import { rebuildDoorsIn, upkeepSteps } from './upkeep.js';
+import { rightsOfRole, scopeOfRole } from '../../../../src/core/seat-rights.js';
 
 aCompanyWhoseSignersChange();
 
 const NETWORK = theNetwork();
 const VAULT = 'fb'.repeat(32);
 const VAULTS = [VAULT, 'fc'.repeat(32)] as const;
-const ALL = MidnightCommitments.allVaults().toLowerCase() as Hex;
+/* Dee is invited as an approver, so her seat carries an approver's rights on every vault. */
+const APPROVER = scopeOfRole('approver');
 const why = (key: string) => ({ key });
 
 /* ---- the wallets: each person's own keys, their saved keys and the company their wallet pinned ---- */
@@ -321,7 +323,7 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
     expect(openOffer((served.body as { offer: never }).offer, TOKEN).offer.for).toEqual(offer);
     /* RED WHEN: the invitation commits to an address the invitee's coin key does not make, or names other rights or another role. */
     expect(offer.invited.terms.invite!.address.toLowerCase()).toBe(MidnightCommitments.inviteAddressOf(DEES_COIN_KEY, offer.invited.terms.invite!.salt).toLowerCase());
-    expect(offer.invited.terms.invite!.scope.toLowerCase()).toBe(ALL);
+    expect(offer.invited.terms.invite!.scope.toLowerCase()).toBe(APPROVER);
     expect(offer.invited.terms.role).toBe('approver');
     /* RED WHEN: the offer carries an inviting entry for another seat than the one that invited. */
     expect((kept!.offer.offer.inviter as { statement: { seat: string } }).statement.seat).toBe(ADA.seat);
@@ -356,7 +358,7 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
 
   it('the invitee\'s wallet takes the seat with its own proof at the proposal its invitation names, and asks to be admitted', async () => {
     await run(ACTS.seat, dee, 'seat-invited', { ...companyFields, token: TOKEN });
-    leaf = deesSeat(0, ALL).leaf;
+    leaf = deesSeat(0, APPROVER).leaf;
     /* RED WHEN: the proof is built for another proposal, salt, address or seat than the invitation and the raise name. */
     expect(seatsProved.at(-1)).toMatchObject({
       proposal: offer.invited.terms.proposal!.toLowerCase(), proposalSalt: offer.byAddress!.proposalSalt, invite: { addressSalt: offer.invited.terms.invite!.salt },
@@ -370,7 +372,7 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
     signerId = saved.signerId;
     /* RED WHEN: the wallet keeps the seat under an id the service did not give the request, or without the seat, invitation and inviter it joined by. */
     expect(store.getAccount(CO)!.pendingSigners.map((p) => p.id)).toContain(signerId);
-    expect(saved).toMatchObject({ seat: 0, invited: offer.invited, scope: ALL });
+    expect(saved).toMatchObject({ seat: 0, invited: offer.invited, scope: APPROVER, rights: rightsOfRole('approver') });
     expect((saved.invitedBy as { statement: { seat: string } }).statement.seat).toBe(ADA.seat);
     /* RED WHEN: the wallet keeps an inviting entry other than the signed one the invitation's offer carried. */
     expect(saved.invitedBy).toEqual(inviter);
@@ -390,9 +392,9 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
   it('a seat\'s wallet finishes adding the signer at the seat the chain holds, with the role and coin key the proposal carries', async () => {
     const told = await run(ACTS.admit, bo, 'admit-signer', { ...companyFields, signer: signerId, personName: 'dee' });
     expect(told.state).toBe('admitted');
-    /* RED WHEN: the roster admits the signer at another seat, id, role or coin key than the chain, the request and the proposal hold. */
+    /* RED WHEN: the roster admits the signer at another seat, id or coin key than the chain, the request and the proposal hold. */
     expect(companyNow().signers.find((x) => x.id === signerId)).toMatchObject({
-      status: 'active', leafCommitment: leaf, role: 'approver', coinPublicKey: DEES_COIN_KEY, name: 'dee',
+      status: 'active', leafCommitment: leaf, coinPublicKey: DEES_COIN_KEY, name: 'dee',
     });
     /* RED WHEN: the company's key is wrapped for the new seat to a key its own saved wrapping secret does not open. */
     const wrapped = store.getAccount(CO)!.wrappedKeys.find((w) => w.signerId === signerId);
@@ -410,10 +412,8 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
     /* RED WHEN: the entry filed for the new seat names another seat, filing key or records key than the wallet's own. */
     const claim = store.directoryFilingsOf(CO).map((f) => f.change).find((c) => c.kind === 'claim' && c.entry.statement.seat.toLowerCase() === leaf);
     expect(claim).toMatchObject({ entry: { person: 'dee', statement: { signingKey: signing, wrappingKey: recordsKeyOf(dee) } } });
-    /* RED WHEN: the roster carries vault keys for the new seat at another seat or records key. */
-    expect(companyNow().signers.find((x) => x.id === signerId)).toMatchObject({
-      vaultKeys: { recordsKey: recordsKeyOf(dee), recordsKeySeat: leaf }, directoryEntry: { statement: { seat: leaf, signingKey: signing } },
-    });
+    /* RED WHEN: the new seat, an approver, whose role files no roster, folds its own offer into a version every device would refuse. */
+    expect(companyNow().signers.find((x) => x.id === signerId)?.vaultKeys ?? null).toBeNull();
   });
 
   it('the upkeep of the inviting seat\'s next act gives the new seat each vault\'s secret, which the new signer opens with their own records key', async () => {
@@ -423,6 +423,11 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
     const told: Record<string, string | number> = {};
     await upkeep.first.run(ctxOf(ada, intent, 1, 2, told));
     await upkeep.last.run(ctxOf(ada, intent, 2, 2, told));
+    const signing = signingPublicKeyOf(dee.kept.accounts[CO]!.signingSecret).toLowerCase();
+    /* RED WHEN: the offer of a seat that may not file the roster is not folded by the next seat that may, or carries vault keys at another seat or records key. */
+    expect(companyNow().signers.find((x) => x.id === signerId)).toMatchObject({
+      vaultKeys: { recordsKey: recordsKeyOf(dee), recordsKeySeat: leaf }, directoryEntry: { statement: { seat: leaf, signingKey: signing } },
+    });
     /* RED WHEN: the inviting seat's device does not believe the new seat's entry, with the role the invitation gave it and the records key it attested. */
     const seen = (await directoryOf(ADA)()).dir.seats.find((d) => d.seat.toLowerCase() === leaf);
     expect(seen).toMatchObject({ person: 'dee', role: 'approver', wrappingKey: recordsKeyOf(dee) });
@@ -439,16 +444,16 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
     for (const [w, s] of [[ada, ADA], [bo, BO], [dee, null]] as const) {
       const r = await keptReach((c) => companyReachFor(c, chain, builderOf(s), why)).at(ctxOf(w, intent, 1, 1, {}));
       const roster = await r.roster();
-      /* RED WHEN: a device does not believe the new signer active at the seat the chain holds, with the role approved and the coin key of the address invited. */
+      /* RED WHEN: a device does not believe the new signer active at the seat the chain holds, with the coin key of the address invited. */
       expect(roster.signers.find((x) => x.id === signerId), w.person).toMatchObject({
-        status: 'active', leafCommitment: leaf, role: 'approver', coinPublicKey: DEES_COIN_KEY,
+        status: 'active', leafCommitment: leaf, coinPublicKey: DEES_COIN_KEY,
       });
       const here = await r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)();
       /* RED WHEN: a device does not believe the new seat's entry, with the role agreed and the records key the new signer attested. */
       expect(here.dir.seats.find((d) => d.seat.toLowerCase() === leaf), w.person).toMatchObject({ person: 'dee', role: 'approver', wrappingKey: recordsKeyOf(dee) });
     }
     /* RED WHEN: the new signer's seat is not the one their own wallet makes at the rights the invitation gave. */
-    expect(dee.kept.accounts[CO]).toMatchObject({ scope: ALL, invited: { terms: { role: 'approver', invite: { scope: ALL } } } });
+    expect(dee.kept.accounts[CO]).toMatchObject({ scope: APPROVER, rights: rightsOfRole('approver'), invited: { terms: { role: 'approver', invite: { scope: APPROVER } } } });
     expect(deesSeat(0, dee.kept.accounts[CO]!.scope as Hex).leaf).toBe(leaf);
   });
 });
@@ -479,7 +484,7 @@ describe('AT ONE APPROVAL TO ADD A SIGNER, THE RAISING SEAT FINISHES ADDING THE 
     })).rejects.toThrow(/act\.approve-proposal\.why\.carried-out/u);
     const told = await run(ACTS.admitByTheRaiser, ada, 'admit-signer', { ...companyFields, signer, personName: 'eve' });
     expect(told.state).toBe('admitted');
-    expect(companyNow().signers.find((x) => x.id === signer)).toMatchObject({ status: 'active', role: 'approver', coinPublicKey: coinKeyOf(eve), name: 'eve' });
+    expect(companyNow().signers.find((x) => x.id === signer)).toMatchObject({ status: 'active', coinPublicKey: coinKeyOf(eve), name: 'eve' });
   });
 
   it('the admitted signer gives their keys, their own act cannot give them a vault\'s secret, and the raising seat\'s next act does', async () => {
@@ -530,7 +535,7 @@ describe('A SIGNER INVITED WITH A NEW THRESHOLD IS SEATED WITH IT, AND ONE NO SE
     const before = events.length;
     await expect(run(ACTS.invite, ada, 'invite', {
       ...companyFields, token, kind: 'signer', personName: 'gil', role: 'approver', address: GILS_ADDRESS, threshold: String(seats + 2),
-    })).rejects.toThrow(new RegExp(`act\\.invite\\.why\\.threshold-refused .*has ${seats + 1} signers, so it cannot need ${seats + 2} approvals`, 'u'));
+    })).rejects.toThrow(new RegExp(`act\\.invite\\.why\\.threshold-refused .*Once this seat is taken the company has ${seats + 1} signers, so it cannot need ${seats + 2} approvals`, 'u'));
     expect(ada.kept.seatInvitationsKept?.[invitationIdOf(token)]).toBeUndefined();
     expect(events.slice(before)).not.toContain('chain propose');
   });

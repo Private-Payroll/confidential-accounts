@@ -124,7 +124,7 @@ import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
-import { approverRosterFrom } from '../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../src/core/vault-approvers.js';
 import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { PayrollService, RecordingInviteDelivery, runLegOf } from '../../src/core/payroll.js';
@@ -667,7 +667,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /* The indexer this signer's own wallet names: the worker reads the vault there, over the chain above. */
     indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     approvers: async () => approverRosterFrom({
-      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
     }),
   };
   const wire: WireSend = async (path, init) => {
@@ -1083,6 +1083,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         },
         me: { signerId: hex(leafOfDevice(founder)), wrappingSecret: recordsKeypairFrom(me.companyKey).secret as Hex },
         keys: async (input) => spendingPolicyKeysOf({ accountPure: accountCircuits as never }, input),
+        grantReaders: async () => [],
         onChain: chainReadThroughTheWallet(async (asked) => ({ roles: rolesInAccountState(chain.contract(company).serialize(), asked) })),
       },
     };

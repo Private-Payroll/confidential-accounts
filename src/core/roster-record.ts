@@ -2,8 +2,8 @@
  * **A COMPANY'S SIGNERS AS ONE OF ITS OWN RECORDS: SEALED AND SIGNED ON A
  * SEAT'S DEVICE, ONE VERSION AT A TIME.**
  *
- * Who holds a seat, their name and role as the company knows them, the public
- * keys their device made, the leaf the chain holds for them and the vault keys
+ * Who holds a seat, their name as the company knows them, the public keys
+ * their device made, the leaf the chain holds for them and the vault keys
  * they gave - sealed under the company's roster key, which every signer's
  * device works out from the viewing key, and signed by the seat that filed the
  * version. The service files a version only for a seat of the company held
@@ -16,8 +16,9 @@ import { directoryEntrySignedBy } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Hex } from './crypto.js';
 import { canonical } from './crypto.js';
-import { openRecord, sealRecord } from './sealed-records.js';
+import { openRecord, sealRecord, type RecordsKey } from './sealed-records.js';
 import type { Role, Signer } from './types.js';
+import type { SeatRights } from './vault-approvers.js';
 import { vaultKeysAreTheSigners } from './vault-keys.js';
 import {
   signCompanyFiling, verifiedCompanyFiler, whyThisIsNotACompanyRecord, type SealedCompanyRecord,
@@ -29,17 +30,27 @@ export const ROSTER_ID = 'signers';
 /** What a roster holds: the company's name and its seated signers. Those waiting for a seat are in its inbox. */
 export interface RosterSecrets { name: string; signers: Signer[] }
 
-/** One version of a company's roster, sealed under its roster key and not yet signed. */
+/** Why a change to the roster is not filed from a seat that may not file it: every device would refuse that version. */
+export const SEAT_MAY_NOT_FILE_THE_ROSTER = 'This seat may not file the company\'s roster as this device reads the company\'s directory: its '
+  + 'role files no roster, or it is not a seat that may file one now. A seat whose role may file it, an admin\'s, makes this change.';
+
+/**
+ * One version of a company's roster, sealed under its roster key and not yet
+ * signed. No entry it seals carries a role: a seat's role is the one the
+ * company's directory holds, and a second copy here could only disagree.
+ */
 export const sealRoster = (
   company: string, roster: RosterSecrets, version: number, keyEpoch: number, viewingKey: Hex,
 ): SealedCompanyRecord => ({
   company, kind: 'roster', id: ROSTER_ID, version, keyEpoch,
-  sealed: sealRecord<RosterSecrets>('roster', company, { name: roster.name, signers: roster.signers.filter((s) => s.status !== 'pending') }, viewingKey),
+  sealed: sealRecord<RosterSecrets>('roster', company, {
+    name: roster.name, signers: roster.signers.filter((s) => s.status !== 'pending').map(({ role: _theDirectorysAlone, ...s }) => s),
+  }, viewingKey),
   wrapped: [],
 });
 
-/** A company's roster record, opened with its viewing key. */
-export const openRoster = (rec: Pick<SealedCompanyRecord, 'company' | 'sealed'>, viewingKey: Hex): RosterSecrets =>
+/** A company's roster record, opened with the key its reader holds for the roster. */
+export const openRoster = (rec: Pick<SealedCompanyRecord, 'company' | 'sealed'>, viewingKey: RecordsKey): RosterSecrets =>
   openRecord<RosterSecrets>('roster', rec.company, rec.sealed, viewingKey);
 
 /** The key epoch a company's first roster is sealed at: the one it is founded at. */
@@ -103,8 +114,6 @@ export const ROSTER_ENTRY_REFUSAL = Object.freeze({
   'not-their-signing-key': 'the signing key it gives is not the one their own wallet signed for that seat',
   'vault-keys-not-theirs': 'its vault keys are not signed by that signer\'s own signing key, or name another wallet than '
     + 'the one their seat was made for',
-  'rights-not-the-chains': 'it gives rights the chain did not seat it with: every seat the company makes is seated with '
-    + 'every right',
   'not-their-person': 'the person it names as the seat\'s holder is not the person the company\'s directory holds that seat for',
   'seat-named-twice': 'another entry of this roster already stands for the seat it names, and a seat has one entry',
   'seat-retired': 'the seat it names has been retired from the company, as the company\'s records anchor it, so it is no longer '
@@ -119,10 +128,16 @@ export interface DirectoryWitness {
   readonly committeeKey: { readonly tag: string; readonly value: string };
   /** Whether a quorum has retired the seat: a retired seat invites nobody. */
   readonly retired: boolean;
-  /** The seat's signer role, as the directory holds it: only a role that may file a proposal invites (`mayInvite`). */
+  /**
+   * The seat's role, read off the directory's own entry for the seat on this
+   * read, never off a roster entry: only a role that may file a proposal
+   * invites (`mayInvite`).
+   */
   readonly role: Role | null;
   /** The sign-in the seat's own entry names: a person holds one seat not retired. */
   readonly person: string;
+  /** The rights the directory believes the seat holds (`DirectorySeat.rights`): it offers only vaults within them. */
+  readonly rights?: SeatRights;
 }
 
 /** What a device holds each roster entry to: the chain its own wallet read, the directory it believes, its own key. */
@@ -152,10 +167,6 @@ const low = (h: unknown): string => String(h ?? '').toLowerCase();
 const walletOf = (k: { readonly tag: string; readonly value: string } | null | undefined): string =>
   (k ? `${low(k.tag)}:${low(k.value)}` : '');
 
-/** Every right on every vault: how every seat the company makes is seated (the all-vaults scope its leaf commits to). */
-const seatedWithEveryRight = (rights: Signer['rights']): boolean =>
-  rights === undefined || rights === null || (rights as { every?: unknown }).every === true;
-
 /**
  * **WHY THIS DEVICE DOES NOT BELIEVE ONE ROSTER ENTRY, OR NULL WHEN IT DOES.**
  *
@@ -173,10 +184,9 @@ const seatedWithEveryRight = (rights: Signer['rights']): boolean =>
  *     seat by the directory's own rule, so no entry here can take a wallet
  *     from another;
  *   · its vault keys, where it has them, are signed by that signing key and
- *     name that wallet;
- *   · it gives the rights the chain seated it with, which for every seat the
- *     company makes is every right: the chain holds a leaf, and the leaf of
- *     every seat raised is made under the scope of all vaults.
+ *     name that wallet.
+ * What the seat may do with runs is not the roster's to say: it is read from
+ * the seat's directory entry, checked against its leaf's scope.
  */
 export function rosterEntryRefusal(s: Signer, w: RosterWitnesses): RosterEntryRefusal | null {
   const no = (why: RosterEntryRefusal) => why;
@@ -207,7 +217,6 @@ export function rosterEntryRefusal(s: Signer, w: RosterWitnesses): RosterEntryRe
     if (!vaultKeysAreTheSigners(w.accountId, s)) return no('vault-keys-not-theirs');
     if (wallet !== null && walletOf(s.vaultKeys.committeeKey) !== wallet) return no('vault-keys-not-theirs');
   }
-  if (!seatedWithEveryRight(s.rights)) return no('rights-not-the-chains');
   return null;
 }
 
@@ -251,20 +260,31 @@ export interface RefusedEntry { readonly signerId: string; readonly name: string
  * for a seat another entry stands for (`oneEntryPerSeat`) is refused as
  * `seat-named-twice`. A refused entry is not shown and nothing is built on it;
  * a person waiting for a seat is not a roster entry and is left as it is.
+ *
+ * `attesting` is the entries whose records-key statements count for their
+ * seats: every believed entry and, for a seat no believed entry stands for,
+ * one refused only because it names another person than the one the
+ * directory holds the seat for. Such a statement counts only once the seat's
+ * own wallet key verifies it (`statementsCountedFor`), so the person an entry
+ * names says nothing about it; an entry refused for anything else gives none,
+ * and its seat still reads as not attested.
  */
 export function believedSigners(
   signers: readonly Signer[], w: RosterWitnesses,
-): { readonly believed: Signer[]; readonly refused: RefusedEntry[] } {
+): { readonly believed: Signer[]; readonly refused: RefusedEntry[]; readonly attesting: Signer[] } {
   const believed: Signer[] = [];
   const refused: RefusedEntry[] = [];
+  const otherPerson: Signer[] = [];
   const standing = new Set(oneEntryPerSeat(signers, w));
   for (const s of signers) {
     if (s.status !== 'active') { believed.push(s); continue; }
     const why = rosterEntryRefusal(s, w) ?? (standing.has(s) ? null : 'seat-named-twice');
+    if (why === 'not-their-person') otherPerson.push(s);
     if (why !== null) { refused.push({ signerId: s.id, name: s.name, why }); continue; }
     believed.push(s);
   }
-  return { believed, refused };
+  const stood = new Set(believed.filter((s) => s.status === 'active').map((s) => low(s.leafCommitment)));
+  return { believed, refused, attesting: [...believed, ...otherPerson.filter((s) => !stood.has(low(s.leafCommitment)))] };
 }
 
 /**

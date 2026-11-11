@@ -15,7 +15,8 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
 import type { Hex } from '../../../../src/core/crypto.js';
-import type { Role, SealedProposal } from '../../../../src/core/types.js';
+import type { SealedProposal } from '../../../../src/core/types.js';
+import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
 import { invitationThresholdRefusal } from '../../../../src/core/invitation.js';
 import { addSignerByAddressIn } from '../../../../src/core/proposal-filing.js';
 import type { RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
@@ -206,8 +207,8 @@ export interface AddSignerReach {
   readonly everyMs?: number;
 }
 
-const ROLES: readonly Role[] = ['admin', 'approver', 'initiator', 'viewer'];
-export const roleOf = (x: string | undefined): Role | null => (ROLES as readonly (string | undefined)[]).includes(x) ? x as Role : null;
+/** The signer role an add-signer proposal names, or null: a seat it adds holds a leaf, so it is never a reader's. */
+export const roleOf = (x: string | undefined): SignerRole | null => (isSignerRole(x) ? x : null);
 const ADD_SIGNER_FIELDS = ['personName', 'role', 'address', 'scope', 'coinKey'] as const;
 /** The threshold an invitation sets once its seat is taken, as the page showed it: none, '' and '0' all keep the one in force. */
 const shownThresholdOf = (x: string | undefined): string | null => (x === undefined || x === '' || x === '0' ? null : x);
@@ -282,7 +283,7 @@ export function addSignerKind(reach: AddSignerReach): ProposalKind {
             ...(threshold === null ? {} : { threshold }),
           },
           chainTime: chainTimeOf(r),
-        }, r.companyKeys), (c, salt) => commitments.inviteAddressOf(c, salt), { allVaults: String(commitments.allVaults()).toLowerCase() });
+        }, r.companyKeys), (c, salt) => commitments.inviteAddressOf(c, salt));
       } catch (e) {
         if (e instanceof InvitationOutrun) throw new StepRefused(addSignerWhy('outrun'), codeOfError(e));
         if (e instanceof NothingToApprove || e instanceof InvitationNotBound || e instanceof NotOpenedOnThisDevice) {

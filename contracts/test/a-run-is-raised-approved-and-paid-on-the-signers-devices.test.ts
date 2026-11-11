@@ -104,7 +104,7 @@ import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
-import { approverRosterFrom } from '../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../src/core/vault-approvers.js';
 import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { PayrollService, RecordingInviteDelivery, runLegOf } from '../../src/core/payroll.js';
@@ -131,6 +131,7 @@ import { payAnApprovedLeg } from 'vaults-web-shared/leg-paid-here.js';
 import { anchoredOver, headsCheckedHere, onChainOf, roundsOnATestChain } from '../../src/testing/record-tree-double.js';
 import type { DirectoryChainRead } from '../../src/server/seat-directory-route.js';
 import { noOneOffsHere } from '../../src/testing/no-one-offs.js';
+import { countedRightsOf } from '../../src/core/seat-rights.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -676,7 +677,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     /* The indexer this signer's own wallet names: the worker reads the vault there, over the chain above. */
     indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     approvers: async () => approverRosterFrom({
-      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
     }),
   };
   const wire: WireSend = async (path, init) => {
@@ -943,6 +944,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         },
         me: { signerId: hex(leafOfDevice(founder)), wrappingSecret: recordsKeypairFrom(me.companyKey).secret as Hex },
         keys: async (input) => spendingPolicyKeysOf({ accountPure: accountCircuits as never }, input),
+        grantReaders: async () => [],
         onChain: chainReadThroughTheWallet(async (asked) => ({ roles: rolesInAccountState(chain.contract(company).serialize(), asked) })),
       },
     };
@@ -1344,6 +1346,14 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       roster: async () => {
         const opened = openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey);
         return { ...opened, notBelieved: [], signers: [...opened.signers, { id: 'bea', name: 'Bea', status: 'active', leafCommitment: hex(leafOfDevice(guest)) }] } as never;
+      },      /* The directory as this wallet believes it: Bea's entry beside the founding seat's, with the rights her leaf's scope gives. */
+      judges: {
+        ...walletsOwn.judges,
+        directoryHereFor: (...a: Parameters<typeof walletsOwn.judges.directoryHereFor>) => async (asked?: never) => {
+          const believed = await walletsOwn.judges.directoryHereFor(...a)(asked);
+          const bea = { seat: hex(leafOfDevice(guest)), retired: null, rights: countedRightsOf(hex(guest.scope), null) };
+          return { ...believed, dir: { ...believed.dir, seats: [...believed.dir.seats, bea] } } as never;
+        },
       },
     };
     const action = changeThresholdAction({

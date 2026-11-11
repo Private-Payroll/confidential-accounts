@@ -19,6 +19,7 @@ import { vaultOnChain, fromIndexerAt } from '../chain/company-label-on-chain.js'
 import { chainTimeOf } from './chain-time.js';
 import { approversHere, enteredFor, runsOutrunHere, type CompanyReach } from './company-reach.js';
 import { StepRefused, type StepContext, type Words } from './definition.js';
+import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 /** Where a vault's secret is kept in this wallet, how the doors pause between reads, and the indexer they read vaults at. */
 export interface VaultDoorsReach {
@@ -104,7 +105,7 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
     service,
     builder,
     ...(r.handOver === undefined ? {} : { handOver: r.handOver }),
-    material: { signingSecret: r.seat.signingSecret, blinding: r.seat.blinding, scope: r.seat.scope },
+    material: signerMaterialOf(r.seat),
     me: deviceSignerFrom(r.leaf, r.companyKey),
     myRecordsKey: recordsKeypairFrom(fromHex(r.companyKey)).publicKey as Hex,
     signers: readersIn(directory).signers,

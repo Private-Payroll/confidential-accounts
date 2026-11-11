@@ -22,6 +22,7 @@ import { proveSeatKeys } from '../core/seat-invite-proof.js';
 import { seatBlinding } from '../core/seat-opening.js';
 import { storedSignerLeaf } from '../core/signer-leaf.js';
 import type { PendingSignerPayload } from '../core/types.js';
+import { scopeOfRole } from '../core/seat-rights.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { theNetwork } from '../midnight/network.js';
 import { firstAskRefusal, InvitationNotMade, InvitationRaisedNotFiled, inviteHere, openInvitationHere, type KeptSeatInvitation } from 'vaults-web-shared/invitation-on-device.js';
@@ -352,7 +353,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const asked = { name: 'ivy', role: 'approver' as const, person: 'unused', address: ivy };
     expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, down, doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
     const before = events.length;
-    for (const other of [{ role: 'admin' as const }, { name: 'ivy two' }, { scope: '09'.repeat(32) as Hex }]) {
+    for (const other of [{ role: 'admin' as const }, { name: 'ivy two' }, { vaults: ['09'.repeat(32) as Hex] }]) {
       const refused = await inviteHere(ACME, ADA, 'signer', { ...asked, ...other }, ORIGIN, fromAda, doors(), { token, resume: kept[0]! }).catch((e: unknown) => e);
       expect(refused).toBeInstanceOf(InvitationNotMade);
       expect((refused as Error).message).toMatch(/press again with the same details as the first time, or start a new invitation/u);
@@ -361,7 +362,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     expect(events.slice(before)).toEqual([]);
     expect(kept).toHaveLength(1);
     /* The same details take it up again, at the rights it was kept with. */
-    const made = await inviteHere(ACME, ADA, 'signer', { ...asked, scope: MidnightCommitments.allVaults() }, ORIGIN, fromAda, doors(), { token, resume: kept[0]! });
+    const made = await inviteHere(ACME, ADA, 'signer', { ...asked }, ORIGIN, fromAda, doors(), { token, resume: kept[0]! });
     expect(made.link).toBe(kept[0]!.link);
   });
 
@@ -433,7 +434,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const ada = seatingDevice(ADA);
     const ivy = coinKeyAt(addressOfWallet(53));
     const salt = '7a'.repeat(32) as Hex;
-    const scope = MidnightCommitments.allVaults().toLowerCase() as Hex;
+    const scope = scopeOfRole('approver');
     const at = MidnightCommitments.inviteAddressOf(ivy, salt).toLowerCase() as Hex;
     const terms = {
       company: CO, invitation: '7c'.repeat(32) as Hex, person: 'adr_00000000000000000002', name: 'ivy', role: 'approver' as const, invite: { address: at, salt, scope },
@@ -451,7 +452,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
 
   it('RED WHEN: a device acts on a seat by address whose invitation names another proposal than the one it opens', async () => {
     const at = MidnightCommitments.inviteAddressOf('6c'.repeat(32) as Hex, '6d'.repeat(32) as Hex).toLowerCase() as Hex;
-    const scope = MidnightCommitments.allVaults().toLowerCase() as Hex;
+    const scope = scopeOfRole('approver');
     const forged = signSeatInvitation({
       company: CO, invitation: '6e'.repeat(32) as Hex, person: 'adr_00000000000000000001', name: 'eve', role: 'approver',
       invite: { address: at, salt: '6d'.repeat(32) as Hex, scope }, proposal: '00'.repeat(32) as Hex,
@@ -465,56 +466,55 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
 
   it('RED WHEN: a press again is matched to the first by fewer than every field the first carried, or by another kind', () => {
     const SECRET = '21'.repeat(32) as Hex;
-    const ALL = MidnightCommitments.allVaults().toLowerCase() as Hex;
     const id = invitationIdOf(newInvitationToken());
-    const seat = (o: { name?: string; role?: 'approver' | 'admin'; scope?: Hex; address?: string } = {}): SignerOffer => {
+    const seat = (o: { name?: string; role?: 'approver' | 'admin'; vaults?: Hex[]; address?: string } = {}): SignerOffer => {
       const name = o.name ?? 'ivy';
       const role = o.role ?? 'approver';
       return {
         kind: 'signer', name, role, seat: { nonce: '0d'.repeat(32) as Hex, secret: '0e'.repeat(32) as Hex },
         invited: signSeatInvitation({
-          company: CO, invitation: id, person: 'adr_00000000000000000000', name, role,
-          invite: { address: '0a'.repeat(32) as Hex, salt: '0b'.repeat(32) as Hex, scope: o.scope ?? ALL }, proposal: '0c'.repeat(32) as Hex,
+          company: CO, invitation: id, person: 'adr_00000000000000000000', name, role, ...(o.vaults === undefined ? {} : { vaults: o.vaults }),
+          invite: { address: '0a'.repeat(32) as Hex, salt: '0b'.repeat(32) as Hex, scope: scopeOfRole(role, o.vaults) }, proposal: '0c'.repeat(32) as Hex,
         }, SECRET),
         byAddress: { address: o.address ?? DEES_ADDRESS, proposalSalt: '0f'.repeat(32) as Hex },
       };
     };
     const signer = { name: 'ivy', role: 'approver' as const, person: 'unused', address: DEES_ADDRESS };
-    expect(firstAskRefusal(seat(), 'signer', signer, ALL)).toBeNull();
-    expect(firstAskRefusal(seat(), 'signer', { ...signer, address: DEES_ADDRESS.toUpperCase(), scope: ALL.toUpperCase() as Hex }, ALL)).toBeNull();
-    expect(firstAskRefusal(seat(), 'signer', { ...signer, role: 'admin' }, ALL)).toMatch(/another role/u);
-    expect(firstAskRefusal(seat(), 'signer', { ...signer, name: 'ivy two' }, ALL)).toMatch(/another name/u);
-    expect(firstAskRefusal(seat(), 'signer', { ...signer, scope: '09'.repeat(32) as Hex }, ALL)).toMatch(/other rights/u);
-    expect(firstAskRefusal(seat({ scope: '09'.repeat(32) as Hex }), 'signer', signer, ALL)).toMatch(/other rights/u);
-    expect(firstAskRefusal(seat(), 'signer', { ...signer, address: addressOfWallet(55) }, ALL)).toMatch(/another address/u);
+    expect(firstAskRefusal(seat(), 'signer', signer)).toBeNull();
+    expect(firstAskRefusal(seat(), 'signer', { ...signer, address: DEES_ADDRESS.toUpperCase() })).toBeNull();
+    expect(firstAskRefusal(seat(), 'signer', { ...signer, role: 'admin' })).toMatch(/another role/u);
+    expect(firstAskRefusal(seat(), 'signer', { ...signer, name: 'ivy two' })).toMatch(/another name/u);
+    expect(firstAskRefusal(seat(), 'signer', { ...signer, vaults: ['09'.repeat(32) as Hex] })).toMatch(/other rights/u);
+    expect(firstAskRefusal(seat({ vaults: ['09'.repeat(32) as Hex] }), 'signer', signer)).toMatch(/other rights/u);
+    expect(firstAskRefusal(seat(), 'signer', { ...signer, address: addressOfWallet(55) })).toMatch(/another address/u);
     /* The name and role are judged both on the offer and on the invitation it signs, which is what the proposal raises. */
-    expect(firstAskRefusal({ ...seat(), role: 'admin' }, 'signer', signer, ALL)).toMatch(/another role/u);
-    expect(firstAskRefusal({ ...seat({ role: 'admin' }), role: 'approver' }, 'signer', signer, ALL)).toMatch(/another role/u);
-    expect(firstAskRefusal({ ...seat(), name: 'ivy two' }, 'signer', signer, ALL)).toMatch(/another name/u);
-    expect(firstAskRefusal({ ...seat({ name: 'ivy two' }), name: 'ivy' }, 'signer', signer, ALL)).toMatch(/another name/u);
+    expect(firstAskRefusal({ ...seat(), role: 'admin' }, 'signer', signer)).toMatch(/another role/u);
+    expect(firstAskRefusal({ ...seat({ role: 'admin' }), role: 'approver' }, 'signer', signer)).toMatch(/another role/u);
+    expect(firstAskRefusal({ ...seat(), name: 'ivy two' }, 'signer', signer)).toMatch(/another name/u);
+    expect(firstAskRefusal({ ...seat({ name: 'ivy two' }), name: 'ivy' }, 'signer', signer)).toMatch(/another name/u);
     const { address: _a, ...byLink } = signer;
-    expect(firstAskRefusal(seat(), 'signer', byLink, ALL)).toMatch(/another address/u);
+    expect(firstAskRefusal(seat(), 'signer', byLink)).toMatch(/another address/u);
     const employee = {
       kind: 'employee', person: 'emp_00000000000000000000', name: 'ada', title: 'Engineer', email: null, asset: 'ab'.repeat(32),
       baseAmount: 5000n, startDate: '2026-11-01', classification: 'full-time',
     } as const;
     const asEmployee = { name: 'ada', title: 'Engineer', email: null, asset: 'ab'.repeat(32), baseAmount: 5000n, startDate: '2026-11-01', classification: 'full-time' } as never;
-    expect(firstAskRefusal(employee as never, 'employee', asEmployee, ALL)).toBeNull();
+    expect(firstAskRefusal(employee as never, 'employee', asEmployee)).toBeNull();
     for (const [k, v, said] of [['baseAmount', 5001n, /another pay/u], ['asset', 'cd'.repeat(32), /another currency/u], ['email', 'a@b.c', /another email/u],
       ['startDate', '2026-12-01', /another start date/u], ['endDate', '2027-01-01', /another end date/u], ['classification', 'part-time', /another classification/u],
       ['address', DEES_ADDRESS, /another address/u], ['title', 'Boss', /another title/u], ['name', 'bo', /another name/u]] as const) {
-      expect(firstAskRefusal(employee as never, 'employee', { ...(asEmployee as object), [k]: v } as never, ALL), k).toMatch(said);
+      expect(firstAskRefusal(employee as never, 'employee', { ...(asEmployee as object), [k]: v } as never), k).toMatch(said);
     }
     const vendor = { kind: 'vendor', person: 'ven_00000000000000000000', name: 'acme', email: null, startDate: '2026-11-01' } as const;
     const asVendor = { name: 'acme', email: null, startDate: '2026-11-01', terms: { kind: 'one-off' }, network: NETWORK } as never;
-    expect(firstAskRefusal(vendor as never, 'vendor', asVendor, ALL)).toBeNull();
+    expect(firstAskRefusal(vendor as never, 'vendor', asVendor)).toBeNull();
     for (const [k, v, said] of [['name', 'acme two', /another name/u], ['email', 'a@b.c', /another email/u], ['startDate', '2026-12-01', /another start date/u],
       ['endDate', '2027-01-01', /another end date/u], ['address', DEES_ADDRESS, /another address/u]] as const) {
-      expect(firstAskRefusal(vendor as never, 'vendor', { ...(asVendor as object), [k]: v } as never, ALL), k).toMatch(said);
+      expect(firstAskRefusal(vendor as never, 'vendor', { ...(asVendor as object), [k]: v } as never), k).toMatch(said);
     }
     /* Another kind is never the same ask, whatever its fields. */
-    expect(firstAskRefusal(seat(), 'employee', asEmployee, ALL)).toMatch(/a signer, not an employee/u);
-    expect(firstAskRefusal(employee as never, 'vendor', asVendor, ALL)).toMatch(/an employee, not a vendor/u);
-    expect(firstAskRefusal({ kind: 'reissue', name: 'ivy', role: 'approver', invited: seat().invited } as never, 'signer', signer, ALL)).toMatch(/re-issued/u);
+    expect(firstAskRefusal(seat(), 'employee', asEmployee)).toMatch(/a signer, not an employee/u);
+    expect(firstAskRefusal(employee as never, 'vendor', asVendor)).toMatch(/an employee, not a vendor/u);
+    expect(firstAskRefusal({ kind: 'reissue', name: 'ivy', role: 'approver', invited: seat().invited } as never, 'signer', signer)).toMatch(/re-issued/u);
   });
 });

@@ -5,7 +5,7 @@ import type { DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-iden
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { OwedDirectoryEntry } from './keyring-blob.js';
 import { fileTheOwedDirectoryEntry, type OwedEntryFiled } from './vault-page-doors.js';
-import { fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere, type RosterReads } from './roster-here.js';
+import { fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere, RosterNotFiled, type RosterReads } from './roster-here.js';
 import type { RecordsEntered } from './record-entered-here.js';
 
 /*
@@ -29,17 +29,28 @@ export const ownEntryFiled = (
 /**
  * Files the company's roster again from this seat when no device believes the
  * version filed, or when it still seats a signer whose removal is anchored and
- * carried out on the chain (`fileTheRosterFollowedHere`): the version filed, or
- * null when the roster filed is believed, seats nobody who left, and nothing was filed.
+ * carried out on the chain (`fileTheRosterFollowedHere`), then folds every open
+ * offer of vault keys into it (`foldOffersHere`): a seat whose role may not
+ * file the roster offers its keys and leaves the fold to one that may.
+ * `changed` is true when a version was filed; `refused` names each offer the
+ * fold turned down, by its seat, with why, so the seat can be told to offer
+ * again (none when the roster could not be filed here).
  */
-export const rosterFollowed = (input: {
+export const rosterFollowed = async (input: {
   readonly api: Api; readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress;
   readonly signingSecret: Hex; readonly companyKeys: CompanyKeys; readonly reads: RosterReads; readonly entered: RecordsEntered;
-}): Promise<number | null> =>
-  fileTheRosterFollowedHere({
+}): Promise<{ readonly changed: boolean; readonly refused: readonly { readonly seat: string; readonly why: string }[] }> => {
+  const doors = {
     api: input.api, accountId: input.accountId, viewingKey: input.companyKeys, signingSecret: input.signingSecret,
     label: input.label, account: input.account, reads: input.reads, entered: input.entered,
+  };
+  const followed = await fileTheRosterFollowedHere(doors);
+  const folded = await foldOffersHere(doors).catch((e: unknown) => {
+    if (e instanceof RosterNotFiled) return null;
+    throw e;
   });
+  return { changed: followed !== null || (folded !== null && folded.folded.length > 0), refused: folded?.refused ?? [] };
+};
 
 /**
  * Offers the company this seat's vault keys and folds the offers into the

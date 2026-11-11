@@ -34,7 +34,8 @@ import {
   type Hex, type Sealed,
 } from './crypto.js';
 import type { AssetId } from './assets.js';
-import type { Role } from './types.js';
+import { isReaderRole, isRole, type Role } from './roles.js';
+import { seatScopeRefusal, vaultsRefusal } from './seat-rights.js';
 import { seatOpeningRefusal, type SeatOpening } from './seat-opening.js';
 
 /** How long an invitation can be accepted for, from when it is filed. */
@@ -220,25 +221,35 @@ export interface SeatInvitationTerms {
   readonly person: string;
   readonly name: string;
   readonly role: Role;
-  /** Only for a seat added from a code: the leaf the code carries. */
+  /**
+   * The vaults the seat's rights name, at most four; absent, the seat's rights cover every vault. The seat's scope is
+   * its role's rights on these (`scopeOfRole`), which the approvers agree to through the proposal's salt.
+   */
+  readonly vaults?: readonly Hex[];
+  /**
+   * The leaf of a seat added from a code, which the code carries, or of one that joined by a link, which the seat
+   * raising its proposal names when it signs the invitation again; absent on an invitation by address.
+   */
   readonly leaf?: Hex;
   /**
-   * Only on an invitation raised by address: the hiding commitment to the invitee's address (`inviteAddressOf`), the
-   * salt it was made under, and the rights the seat will carry, all hex. The proposal's payload is made from these.
+   * On an invitation raised by address, or signed again to raise the seat of a person who joined by a link or a code:
+   * the hiding commitment to the invitee's address (`inviteAddressOf`), the salt it was made under, and the rights the
+   * seat will carry, all hex. The proposal's payload is made from these.
    */
   readonly invite?: SeatInvitationAddress;
   /**
-   * Only beside `invite`, on an invitation made by address: the identity on the chain of the proposal raised to seat
-   * the address, made under the salt the rest of the invitation makes (`invitationProposalSalt`), so it commits to the
-   * whole invitation. The seat the invitee's wallet takes with `seatInvited` is bound to this invitation by it: a device
-   * believes the leaf the account's history shows that proposal closed with, and no other.
+   * Only beside `invite`: the identity on the chain of the proposal raised to seat the address, made under the salt
+   * the rest of the invitation makes (`invitationProposalSalt`), so it commits to the whole invitation, whichever way
+   * the signer joined. The seat the invitee's wallet takes with `seatInvited` is bound to this invitation by it: a
+   * device believes the leaf the invitation names, or, by address, the leaf the account's history shows that proposal
+   * closed with, and no other.
    */
   readonly proposal?: Hex;
   /**
    * Only on an invitation re-issued for a seat the chain already holds: the invitation it replaces - the one the
    * proposal that seated that leaf carried - by its id and its signature. Its terms are this one's own, but for the
-   * id, so it verifies only where the person, name, role and seat are exactly the ones that seat was proposed with
-   * (`replacedBy`).
+   * id, so it verifies only where every term (the person, name, role, vaults, seat, address and proposal) is exactly
+   * the one that seat was proposed with (`replacedBy`).
    */
   readonly replaces?: { readonly invitation: Hex; readonly signedBy: Hex; readonly signature: Hex };
 }
@@ -278,18 +289,20 @@ export interface SignedSeatInvitation {
 
 const SEAT_INVITATION_DOMAIN = 'confidential-accounts/seat-invitation/v1';
 const PERSON = /^[A-Za-z0-9_-]{1,64}$/u;
-const seatInvitationMessage = (terms: SeatInvitationTerms): string => canonical({ domain: SEAT_INVITATION_DOMAIN, terms });
+export const seatInvitationMessage = (terms: SeatInvitationTerms): string => canonical({ domain: SEAT_INVITATION_DOMAIN, terms });
 
 /** A seat invitation, signed on the inviting device by the filing key its directory entry names. */
 export const signSeatInvitation = (terms: SeatInvitationTerms, signingSecret: Hex): SignedSeatInvitation => {
   const t = termsAsSigned(terms);
-  if (seatInvitationTermsRefusal(t) !== null) throw new Error('that is not a seat invitation this device can sign, so the invitation was not made.');
+  const why = seatInvitationTermsRefusal(t);
+  if (why !== null) throw new Error(`that is not a seat invitation this device can sign, so the invitation was not made: ${why}. Nothing was sent. Invite the person again; if it happens again, tell the company's other signers.`);
   return { terms: t, signedBy: signingPublicKeyOf(signingSecret), signature: sign(seatInvitationMessage(t), signingSecret) };
 };
 
 /** The terms as a signature covers them: every hex value in lower case, and nothing the terms do not name. */
 const termsAsSigned = (terms: SeatInvitationTerms): SeatInvitationTerms => ({
   company: terms.company, invitation: terms.invitation.toLowerCase() as Hex, person: terms.person, name: terms.name, role: terms.role,
+  ...(terms.vaults === undefined ? {} : { vaults: terms.vaults.map((v) => v.toLowerCase() as Hex) }),
   ...(terms.leaf === undefined ? {} : { leaf: terms.leaf.toLowerCase() as Hex }),
   ...(terms.invite === undefined ? {} : { invite: {
     address: terms.invite.address.toLowerCase() as Hex, salt: terms.invite.salt.toLowerCase() as Hex, scope: terms.invite.scope.toLowerCase() as Hex,
@@ -304,7 +317,7 @@ const termsAsSigned = (terms: SeatInvitationTerms): SeatInvitationTerms => ({
 const PROPOSAL_SALT_DOMAIN = 'confidential-accounts/seat-invitation-proposal-salt/v1';
 
 /**
- * **THE SALT OF THE PROPOSAL RAISED TO SEAT AN INVITATION BY ADDRESS**: the
+ * **THE SALT OF THE PROPOSAL RAISED TO SEAT A SIGNER INVITATION**, by address or by a link or a code: the
  * digest of the invitation's terms, all but the `proposal` they name, and of
  * the filing key that signs it. The proposal's identity on the chain is made
  * from its change and this salt, so it commits to the whole invitation - the
@@ -337,48 +350,80 @@ export const seatByAddressChangeOf = (invite: SeatInvitationAddress): SeatByAddr
 /** A proposal's identity on the chain, from its change and its salt, as the account's own functions make it on this device. */
 export type ProposalIdentityOf = (change: SeatByAddressChange, salt: string) => Promise<{ readonly chainId: string }>;
 
+/** The invitation a seat was approved under: for a re-issue, the one it replaces (`replacedBy`); otherwise the invitation itself. */
+export const approvedInvitationOf = (invited: SignedSeatInvitation): SignedSeatInvitation => replacedBy(invited) ?? invited;
+
+/** Why a signer invitation is not the one its approvers agreed to (`approvedInvitationRefusal`). */
+export type NotApproved = 'not-raised' | 'not-its-salt' | 'not-its-proposal' | 'another-leaf';
+
 /**
- * **WHETHER AN INVITATION BY ADDRESS MAKES THE PROPOSAL IT NAMES**: the
- * identity its change and its own salt (`invitationProposalSalt`) make is the
- * `proposal` its terms name. False for any invitation not made by address. A
- * device believes a seat taken on such a proposal, and the role it carries,
- * only on an invitation for which this holds, so an invitation filed or
- * claimed beside the approved one under the same identity is never believed.
+ * **THE ONE RULE FOR THE INVITATION A SIGNER IS SEATED UNDER**, by address or
+ * by a link or a code, or null when `invited` is that invitation. It names the
+ * address it seats and the proposal raised for it; that proposal is the one
+ * its change and the salt its own signed terms make (`invitationProposalSalt`),
+ * so the approvers' signatures commit to its role, vaults, person and leaf;
+ * and the seat is the leaf the chain's record of that proposal shows it took
+ * (`seatInvited`), which is the leaf the invitation names where it names one.
+ * `made` is the proposal's identity as this device worked it out, with the
+ * salt its record is filed under where the caller holds one (a raise, an
+ * approval); null where the caller has no proposal to hold it to. `seat` is
+ * the seat being judged and the leaf the chain shows the proposal took, for a
+ * claim or an admission. The raising device, the approving device, the
+ * admitting device and every member's directory all ask this.
  */
-export const invitationMakesItsProposal = async (invited: SignedSeatInvitation, identity: ProposalIdentityOf): Promise<boolean> => {
+export const approvedInvitationRefusal = (
+  invited: SignedSeatInvitation, made: { readonly chainId: string | null; readonly salt?: string } | null,
+  seat?: { readonly leaf: string; readonly took: string | null },
+): NotApproved | null => {
   const t = invited.terms;
-  if (t.invite === undefined || t.proposal === undefined || t.leaf !== undefined) return false;
-  const made = await identity(seatByAddressChangeOf(t.invite), invitationProposalSalt(invited));
-  return String(made.chainId).toLowerCase() === t.proposal.toLowerCase();
+  if (t.invite === undefined || t.proposal === undefined) return 'not-raised';
+  if (made !== null) {
+    if (made.salt !== undefined && String(made.salt).toLowerCase() !== invitationProposalSalt(invited)) return 'not-its-salt';
+    if (made.chainId === null || String(made.chainId).toLowerCase() !== t.proposal.toLowerCase()) return 'not-its-proposal';
+  }
+  if (seat === undefined) return null;
+  const took = seat.took === null ? null : seat.took.toLowerCase();
+  return took === null || took !== seat.leaf.toLowerCase() || (t.leaf !== undefined && t.leaf.toLowerCase() !== took) ? 'another-leaf' : null;
 };
 
 /**
- * **WHICH OF THESE INVITATIONS MADE BY ADDRESS MAKE THE PROPOSAL THEY NAME**
- * (`invitationMakesItsProposal`), each worked out once, up front, so a reader
- * that must stay synchronous can ask afterwards. One not asked about, one not
- * signed as it says, or any where no `identity` is given, makes none. A
+ * **THE PROPOSAL A SIGNER INVITATION'S OWN SALT MAKES**: the identity its
+ * change and `invitationProposalSalt` make, worked out with `identity`, or
+ * null for one that names no address.
+ */
+export const proposalItsSaltMakes = async (invited: SignedSeatInvitation, identity: ProposalIdentityOf): Promise<string | null> => {
+  const t = invited.terms;
+  if (t.invite === undefined) return null;
+  return String((await identity(seatByAddressChangeOf(t.invite), invitationProposalSalt(invited))).chainId).toLowerCase();
+};
+
+/**
+ * **THE PROPOSAL EACH OF THESE SIGNER INVITATIONS' OWN SALT MAKES**
+ * (`proposalItsSaltMakes`), each worked out once, up front, so a reader that
+ * must stay synchronous can ask afterwards. One not asked about, one not
+ * signed as it says, or any where no `identity` is given, makes none (null). A
  * working-out that fails is thrown, never taken as a refusal.
  */
-export const invitationsMakingTheirProposal = async (
+export const proposalsTheirSaltsMake = async (
   invitations: readonly SignedSeatInvitation[], identity: ProposalIdentityOf | undefined,
-): Promise<(invited: SignedSeatInvitation) => boolean> => {
+): Promise<(invited: SignedSeatInvitation) => string | null> => {
   const keyOf = (i: SignedSeatInvitation): string => canonical({ terms: i.terms, signedBy: String(i.signedBy).toLowerCase() });
   const asked = [...new Map(invitations.filter((i) => seatInvitationRefusal(i) === null).map((i) => [keyOf(i), i])).values()];
-  const made = new Set<string>();
+  const made = new Map<string, string | null>();
   if (identity !== undefined && asked.length > 0) {
-    const yes = await Promise.all(asked.map((i) => invitationMakesItsProposal(i, identity))).catch((e: unknown) => {
-      throw new Error(`the proposal an invitation by address names could not be worked out on this device (${(e as Error)?.message ?? String(e)}), `
+    const ids = await Promise.all(asked.map((i) => proposalItsSaltMakes(i, identity))).catch((e: unknown) => {
+      throw new Error(`the proposal a signer invitation names could not be worked out on this device (${(e as Error)?.message ?? String(e)}), `
         + 'so no seat taken on one is believed. Reload the page');
     });
-    asked.forEach((i, n) => { if (yes[n]) made.add(keyOf(i)); });
+    asked.forEach((i, n) => made.set(keyOf(i), ids[n] ?? null));
   }
-  return (invited) => made.has(keyOf(invited));
+  return (invited) => made.get(keyOf(invited)) ?? null;
 };
 
 const seatInvitationTermsRefusal = (t: Partial<SeatInvitationTerms> | null | undefined): string | null => {
   if (typeof t !== 'object' || t === null) return 'it names nobody';
   /* An invitation by address carries one more field beside any of the shapes signed before it. */
-  const keys = Object.keys(t).filter((k) => k !== 'invite' && k !== 'proposal').sort().join(',');
+  const keys = Object.keys(t).filter((k) => k !== 'invite' && k !== 'proposal' && k !== 'vaults').sort().join(',');
   if ('proposal' in t && (!('invite' in t) || !HEX64.test(String(t.proposal)))) return 'the proposal it names is not one raised to seat the address it invites';
   if (keys !== 'company,invitation,name,person,role' && keys !== 'company,invitation,leaf,name,person,role'
     && keys !== 'company,invitation,leaf,name,person,replaces,role') {
@@ -389,7 +434,7 @@ const seatInvitationTermsRefusal = (t: Partial<SeatInvitationTerms> | null | und
     const named = typeof a === 'object' && a !== null ? Object.keys(a).sort().join(',') : '';
     if (typeof a !== 'object' || a === null || (named !== 'address,salt,scope' && named !== 'address,salt,scope,threshold')
       || !HEX64.test(String(a.address)) || !HEX64.test(String(a.salt)) || !HEX64.test(String(a.scope))) {
-      return 'the address it invites is not named by its commitment, its salt and the rights it carries';
+      return 'the address, salt or rights it names for the person are missing or not in the form a seat invitation needs';
     }
     /* A threshold it names is one the account can set; '0' is never written, since leaving it out keeps the one in force. */
     if ('threshold' in a) {
@@ -407,10 +452,14 @@ const seatInvitationTermsRefusal = (t: Partial<SeatInvitationTerms> | null | und
   if (typeof t.company !== 'string' || t.company === '' || typeof t.name !== 'string' || typeof t.role !== 'string' || String(t.role) === '') {
     return 'it does not name the company, the name and the role';
   }
+  if (!isRole(t.role)) return 'the role it names is not one a seat of a company can hold';
   if (typeof t.person !== 'string' || !PERSON.test(t.person)) return 'it does not name the sign-in of the person invited';
   if (!HEX64.test(String(t.invitation))) return 'it does not name its invitation';
-  if (t.leaf !== undefined && !HEX64.test(String(t.leaf))) return 'the leaf it names is not one';
-  return null;
+  if (t.leaf !== undefined && !HEX64.test(String(t.leaf))) return 'the seat it names is not written in the form a seat has';
+  if (isReaderRole(t.role)) return seatScopeRefusal(t.role, undefined, '');
+  const vaults = vaultsRefusal(t.vaults);
+  if (vaults !== null) return vaults;
+  return t.invite === undefined ? null : seatScopeRefusal(t.role, t.vaults, String(t.invite.scope));
 };
 
 /**
@@ -664,79 +713,13 @@ export const openOffer = (sealed: Sealed, token: Hex): SignedOffer => {
   return signed;
 };
 
-/* ------------------------------------------------------------------ the filing */
-
-/**
- * **AN INVITATION AS THE INVITING DEVICE FILES IT**: everything the service
- * keeps, and the seat's signature over it. Nothing in it opens the offer or
- * accepts the invitation, and nothing in it names, dates, addresses or
- * classifies the person: that is all in the sealed offer. A re-issued seat
- * invitation is filed as a signer's.
- */
-export interface InvitationFiling {
-  readonly company: string;
-  readonly kind: InvitationKind;
-  readonly id: Hex;
-  readonly acceptanceHash: Hex;
-  readonly offer: Sealed;
-  /** An employee's or a vendor's invitation: the id of the record it is for, and no other kind's carries one. */
-  readonly person?: string;
-  /**
-   * The epoch of the company key the offer's inbox and seat secret were made under. The service keeps it and judges
-   * nothing by it; each member's device refuses an answer sealed to an older inbox than the key in force, unless the
-   * change of the key named it as waiting.
-   */
-  readonly keyEpoch: number;
-  readonly filedBy?: { readonly publicKey: Hex; readonly signature: Hex };
-}
-
-const FILING_DOMAIN = 'confidential-accounts/invitation-filing/v1';
-const filingMessage = (f: InvitationFiling): string => {
-  const { filedBy: _signature, ...unsigned } = f;
-  return canonical({ domain: FILING_DOMAIN, ...unsigned });
-};
-
-export const signInvitationFiling = (f: InvitationFiling, signingSecret: Hex): InvitationFiling => {
-  const { filedBy: _replaced, ...unsigned } = f;
-  return { ...unsigned, filedBy: { publicKey: signingPublicKeyOf(signingSecret), signature: sign(filingMessage(unsigned), signingSecret) } };
-};
-
-/** The filing key that signed this invitation, or null for none or one that does not cover exactly it. */
-export const verifiedInvitationFiler = (f: InvitationFiling): Hex | null => {
-  const by = f.filedBy;
-  if (!by || typeof by.publicKey !== 'string' || typeof by.signature !== 'string') return null;
-  return verify(filingMessage(f), by.signature, by.publicKey) ? by.publicKey : null;
-};
-
-/** Why `x` is not an invitation filing for `company`, or null when it is one. */
-export const whyThisIsNotAnInvitation = (x: unknown, company: string): string | null => {
-  if (x === null || typeof x !== 'object') return 'it is not an invitation';
-  const f = x as Record<string, unknown>;
-  const allowed = ['company', 'kind', 'id', 'acceptanceHash', 'offer', 'person', 'keyEpoch', 'filedBy'];
-  if (Object.keys(f).some((k) => !allowed.includes(k))) return 'it carries something an invitation does not, and nothing unread is kept';
-  if (f.company !== company) return 'it is for another company';
-  if (!INVITATION_KINDS.includes(f.kind as InvitationKind)) {
-    return 'it is none of the four kinds of invitation (an employee, a vendor, a signer or a super admin): make it again as one of them';
-  }
-  if (!HEX64.test(String(f.id)) || !HEX64.test(String(f.acceptanceHash))) return 'it is not named by a lookup id and an acceptance hash';
-  if (!Number.isSafeInteger(f.keyEpoch) || (f.keyEpoch as number) < 0) return 'it does not name the epoch of the company key it was made under';
-  const o = f.offer as Record<string, unknown> | null;
-  if (o === null || typeof o !== 'object' || ['iv', 'tag', 'body'].some((k) => typeof o[k] !== 'string')) return 'it carries no sealed offer';
-  if (PAYEE_KINDS.includes(f.kind as InvitationKind) ? typeof f.person !== 'string' || f.person === '' : f.person !== undefined) {
-    return 'an employee\'s or a vendor\'s invitation names the record it is for, and no other kind\'s does';
-  }
-  if (f.kind === 'vendor' && !VENDOR_ID.test(String(f.person))) return 'a vendor\'s invitation names a vendor entry\'s id, and this one does not';
-  if (f.kind === 'employee' && !EMPLOYEE_ID.test(String(f.person))) return 'an employee\'s invitation names an employee\'s id, and this one does not';
-  return null;
-};
-
 /* ------------------------------------------------------------------ using it */
 
 /** Why a stored invitation cannot be opened or accepted now, each a sentence its reader can act on. */
 export const INVITATION_REFUSAL = {
   'not-found': 'there is no invitation at this link. Check you have the whole link, or ask whoever invited you for a new one.',
   'withdrawn': 'this invitation has been withdrawn by the company that sent it, so there is no offer here any more. Nothing you do with this link can change anything. If you were expecting to join, ask whoever sent it to you.',
-  'expired': 'this invitation has expired, so the offer it carried can no longer be opened or accepted. Nothing has been sent and nothing has changed. Ask whoever invited you to send a new invitation - the same link cannot be re-opened, by them or by us.',
+  'expired': 'this invitation has expired, so the offer it carried can no longer be opened or accepted. Nothing has been sent and nothing has changed. Ask whoever invited you to send a new invitation. The same link cannot be opened again.',
   'used': 'this invitation has already been accepted, so it cannot be accepted again. If that was not you, tell whoever invited you now.',
   'not-accepted': 'what was sent does not accept this invitation. Open the whole link again on the device you are joining from.',
 } as const;
@@ -822,3 +805,8 @@ export const withdrawalRefusal = (x: unknown, company: string): string | null =>
   if (!HEX64.test(String(w.signedBy)) || !HEX128.test(String(w.signature))) return 'it is not signed by a filing key';
   return verify(withdrawalMessage(w as WaitingSignerWithdrawal), w.signature!, w.signedBy!) ? null : 'the key it names did not sign it';
 };
+
+/* An invitation as the inviting device files it is kept in its own file. */
+export {
+  signInvitationFiling, verifiedInvitationFiler, whyThisIsNotAnInvitation, type InvitationFiling,
+} from './invitation-filing.js';

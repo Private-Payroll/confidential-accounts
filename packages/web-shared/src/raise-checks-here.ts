@@ -16,7 +16,8 @@
  * - is still refused there; these refuse first, so no approval is collected
  * and no fee is spent on a round the chain or the company would refuse.
  */
-import { keyOf, type KeysHeld } from '../../../src/core/company-key.js';
+import type { KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import type { PayrollRound } from '../../../src/core/account.js';
 import type { AssetRegistry } from '../../../src/core/assets.js';
 import { assets as theAssets, type AssetId } from '../../../src/core/assets.js';
@@ -386,7 +387,7 @@ export async function factsHere(
   const nowInSeconds = BigInt(Math.floor(now.getTime() / 1000));
   const rounds = payrollRoundsHere(proposals, accountId, viewingKey, { identity: records.roundIdentity, nowInSeconds });
   const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
-  const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, keyOf(viewingKey, r.keyEpoch)))
+  const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, keysByPurpose(viewingKey).at(r.keyEpoch)))
     .filter((r) => listOfRun(r) === listOfRun(run));
   return {
     people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets, rounds,

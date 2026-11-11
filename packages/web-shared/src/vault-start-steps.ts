@@ -2,7 +2,8 @@ import { ADOPT_VAULT, newProposalId, proposalFilingRefusal, raiseByOf, sealGover
 import type { AccountHolders } from 'midnight-identity/profile/records-key';
 import type { CreateVaultDoors, Pacing, VaultStartProposals } from './vault-doors.js';
 import { DEVICE_RAISE_VERSION } from '../../../src/core/device-raise.js';
-import { type DirectoryRead, kindAsked, listedHere, seatNotBelievedHere } from './vault-page-doors.js';
+import { type DirectoryRead, kindAsked, listedHere } from './vault-page-doors.js';
+import { mayNotFileSaid, seatMayFileIn } from './may-file-here.js';
 import type { FirstSecretRunParts } from '../../../src/midnight/vault-start.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import { type Hex, type Sealed, signingPublicKeyOf } from '../../../src/core/crypto.js';
@@ -16,7 +17,6 @@ import type { StartStandingOnTheWire, VaultBuilderClient } from './vault-worker-
 import { believedFilerHere } from './round-opened-here.js';
 import { chainAtOneBlockHere, oneBlockOrNotYet, theVaultAsItsSignersHoldIt } from './vault-read-here.js';
 import { handedOver } from './hand-over.js';
-import { mayFile } from '../../../src/midnight/seat-directory.js';
 import { proposalEntry } from '../../../src/midnight/record-manifest.js';
 import { sealingWith } from '../../../src/core/company-key.js';
 
@@ -202,21 +202,14 @@ const seatMayRaiseIn = (p: Pick<VaultStartProposals, 'signingSecret'>, here: Awa
   seatRefusalIn(p, here)?.says ?? null;
 
 export const seatRefusalIn = (p: Pick<VaultStartProposals, 'signingSecret'>, here: Awaited<ReturnType<DirectoryRead>>): SeatRefusal | null => {
-  const me = signingPublicKeyOf(p.signingSecret).toLowerCase();
-  const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === me);
-  if (mine === undefined) {
-    return { code: NOT_BUILT.seatUnknown, says: 'the company\'s directory, as this device reads it, holds no seat under your keys.' };
-  }
-  const off = seatNotBelievedHere(here, mine);
-  if (off !== null) return { code: NOT_BUILT.seatNotBelieved, says: `your seat is not one this device believes: ${off}.` };
-  if (!mayFile(mine).includes('proposal')) {
-    return {
-      code: NOT_BUILT.seatMayNotRaise,
-      says: 'your seat\'s role on this company may not raise proposals, and setting up a vault raises two. A signer whose role '
-        + 'may raise proposals sets it up.',
-    };
-  }
-  return null;
+  const s = seatMayFileIn(here, signingPublicKeyOf(p.signingSecret), 'proposal');
+  if (!('refused' in s)) return null;
+  const code = s.refused === 'no-seat' ? NOT_BUILT.seatUnknown : s.refused === 'not-believed' ? NOT_BUILT.seatNotBelieved : NOT_BUILT.seatMayNotRaise;
+  return {
+    code,
+    says: `${mayNotFileSaid(s, 'your seat\'s role on this company may not raise proposals, and setting up a vault raises two. A signer '
+      + 'whose role may raise proposals sets it up')}.`,
+  };
 };
 
 /** One of the two proposals a vault's start raises: its identity on the chain, and its record as this device seals it. */

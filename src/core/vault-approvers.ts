@@ -21,6 +21,7 @@
  * departed signer's approval may be among those it was given.
  */
 import type { Hex } from './crypto.js';
+import { mayFile, type Role } from './roles.js';
 
 /** Whether `n` could be a threshold at all: a whole number of at least one that is counted exactly. The chain further refuses one above the signers seated. */
 export const wholeThreshold = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 1;
@@ -202,10 +203,10 @@ const leftShortSaid = (short: readonly ShortVault[], nameOf: (vault: Hex) => str
     : '';
   const open = removals === 0 && roster.openRun !== undefined
     ? ` That counts one approval more on every vault, because run ${roster.openRun} is open on the chain and a run raised before `
-      + 'a removal needs one approval more for each signer removed; once it is paid out or withdrawn, it is no longer counted.'
+      + 'a removal or a replacement needs one approval more for each signer removed or replaced, whether or not any of it is paid yet; once it is paid out or withdrawn, it is no longer counted.'
     : '';
   return `this change would leave ${short.length === 1 ? 'a vault' : 'vaults'} unable to pay: ${list}. ` +
-    `Give another signer the right to approve runs there first, or ask for fewer approvals on that vault.${outrun}${open}`;
+    `Invite another approver or admin first, or ask for fewer approvals on that vault.${outrun}${open}`;
 };
 
 /**
@@ -369,27 +370,42 @@ export const removalThresholdRefusal = (bounds: RemovalBounds, leaf: Hex, newThr
   return null;
 };
 
+/**
+ * Why a removal would leave the company no seat that may file its list of signers, or null. Only such a seat - an
+ * admin, or the founding seat, which holds no role - admits a new signer to that list and files the company's people,
+ * vendors and policies, so with none left nobody could admit another admin to the company's records again and only the
+ * super admins could repair it. Admin is a role in the company's records, not on the chain: the chain seats a signer
+ * with no admin's say, and only the records would not admit them. It counts the seats the company's directory believes, not retired, that are among `admitted` - the
+ * active signers of the roster this device believes that the chain holds now - leaving out the one removed: a seat
+ * taken and not yet admitted admits nobody, and a seat with no believed entry carries no role.
+ */
+export const noAdminLeftRefusal = (
+  seats: ReadonlyArray<{ readonly seat: string; readonly role: Role | null; readonly retired: unknown }>, admitted: readonly string[], leaf: string,
+): string | null => {
+  const counted = new Set(admitted.map((x) => x.toLowerCase()));
+  const gone = leaf.toLowerCase();
+  const stays = seats.some((x) => x.seat.toLowerCase() !== gone && x.retired === null && counted.has(x.seat.toLowerCase())
+    && mayFile(x).includes('roster'));
+  return stays ? null : 'once this signer is removed, nobody left is an admin in the company\'s records, and only an admin adds '
+    + 'signers to those records and files people, vendors and policies. Invite another admin first, then remove this signer once '
+    + 'that admin has taken their seat and been added';
+};
+
+/** A refusal as it is shown to the person: the check's own sentence, with its first letter a capital. */
+export const refusalSaid = (says: string): string => `${says.charAt(0).toUpperCase()}${says.slice(1)}`;
+
 /** A seat added that sets the threshold once taken. */
 export type SeatThresholdChange = Extract<GovernanceChange, { kind: 'seatAndThreshold' }>;
-
-/** A seat counted as approving runs on no vault. */
-const NO_VAULT_COUNTED: SeatRights = Object.freeze({ every: false, mayApprove: false, everyVault: false, onVaults: [] }) as SeatRights;
-
-/**
- * The rights a seat invited with `scope` is counted with: every right where the scope is every vault's
- * (`allVaults`), and otherwise none. Any other scope is the commitment to a rights record, which says which vaults
- * the seat may approve on; this device holds no such record for a seat it invites, so it counts that seat on no
- * vault. Counting a seat on fewer vaults can only refuse more.
- */
-export const seatRightsOf = (scope: string, allVaults: string): SeatRights => (same(scope as Hex, allVaults as Hex) ? EVERY_RIGHT : NO_VAULT_COUNTED);
 
 /**
  * **WHY A SEAT ADDED WITH A NEW THRESHOLD IS REFUSED BEFORE ANYTHING IS BUILT, OR NULL.** The chain refuses, when the
  * invitee takes the seat, a threshold above the signers it then seats; this says so first, counting the seats on the
  * chain now (`seats`) and the one the invitation adds. Then the count of who may approve each vault's runs, with the
- * new seat counted with the rights `seatRightsOf` gives it (on every vault, or, for a seat with rights of its own, on
- * none): a threshold that leaves a vault short is refused, saying so where the new seat was counted on none.
+ * new seat counted with the rights its invitation's role gives on the vaults it names (`countedRightsOf`): a
+ * threshold that leaves a vault short is refused.
  * Bands are not counted here, as for a threshold change: leaving them out can only refuse more.
+ * **THE ONE CHECK OF AN INVITATION'S THRESHOLD, called by the page, the wallet and the device's governed call** with the roster each
+ * builds from its own reads (`approversFrom`, packages/web-shared/src/approvers-read.ts); the sentence is `refusalSaid` of what it returns.
  */
 export const seatThresholdRefusal = (
   roster: ApproverRoster, bounds: { readonly seats: number }, change: SeatThresholdChange, nameOf: (vault: Hex) => string = (v) => v,
@@ -403,11 +419,7 @@ export const seatThresholdRefusal = (
   }
   const { bands: _bands, ...counted } = roster;
   const short = vaultsLeftShort(counted, change);
-  if (short.length === 0) return null;
-  const scoped = change.rights.every !== true && !change.rights.mayApprove
-    ? ' The new seat is counted on no vault: its rights are not every vault\'s, and this device holds no record of which vaults they cover.'
-    : '';
-  return `${leftShortSaid(short, nameOf, roster)}${scoped}`;
+  return short.length === 0 ? null : leftShortSaid(short, nameOf, roster);
 };
 
 /** The account's bars as the person's own wallet reads them from the chain. */
@@ -433,12 +445,12 @@ export const thresholdCarryBar = (change: ThresholdChange, held: BarsHeld): numb
   return change.threshold > policyBar || change.threshold < vaultBar ? Math.max(held.approvals, held.seatBar) : held.approvals;
 };
 
-/** A seat with no rights recorded holds every right: every seat is made today under the scope of all vaults. */
+/** Every right on every vault: a seat whose leaf commits to `allVaults()`. */
 export const EVERY_RIGHT: SeatRights = Object.freeze({ every: true }) as SeatRights;
 
 /**
  * **THE COMPANY AS A SIGNER'S DEVICE COUNTS IT**: each seated leaf with the
- * rights the company's roster records for it, the bars the chain holds, and
+ * rights its directory entry was believed with, the bars the chain holds, and
  * every vault a run can name - each vault the account has adopted, and the
  * value a company-wide run names - with the bands, the vaults with a run open and
  * the signers removed since, where the caller read them.
@@ -446,7 +458,7 @@ export const EVERY_RIGHT: SeatRights = Object.freeze({ every: true }) as SeatRig
 export const approverRosterFrom = (input: {
   readonly threshold: number;
   readonly vaultThresholds: ReadonlyArray<{ readonly vault: string; readonly threshold: number }>;
-  readonly seated: ReadonlyArray<{ readonly leaf: string; readonly rights?: SeatRights }>;
+  readonly seated: ReadonlyArray<{ readonly leaf: string; readonly rights: SeatRights }>;
   readonly adoptedVaults: readonly string[];
   readonly companyWide: string;
   readonly bands?: ReadonlyMap<Hex, number>;
@@ -455,7 +467,7 @@ export const approverRosterFrom = (input: {
   readonly outrunBy?: string;
   readonly openRun?: string;
 }): ApproverRoster => ({
-  seats: new Map(input.seated.map((s) => [s.leaf.toLowerCase() as Hex, s.rights ?? EVERY_RIGHT])),
+  seats: new Map(input.seated.map((s) => [s.leaf.toLowerCase() as Hex, s.rights])),
   threshold: input.threshold,
   vaultThresholds: new Map(input.vaultThresholds.map((v) => [v.vault.toLowerCase() as Hex, v.threshold])),
   runVaults: [...new Set([...input.adoptedVaults, input.companyWide].map((v) => v.toLowerCase()))] as Hex[],

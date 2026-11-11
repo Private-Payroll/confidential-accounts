@@ -838,7 +838,7 @@ export class AccountService {
    * **THAT IS WORTH BEING EXACT ABOUT, BECAUSE THE COST IS NOT MISATTRIBUTION
    * ALONE.** An approval is judged against the ceiling of the role that raised it.
    * A caller free to name any seat is a caller free to choose which ceiling
-   * applies, so a viewer naming an admin's seat is not filing under the wrong
+   * applies, so an initiator naming an admin's seat is not filing under the wrong
    * name - they are raising an approval the policy would otherwise have refused.
    *
    * **THE MAPPING NEEDS THE VIEWING KEY AND THAT IS NOT AN INCONVENIENCE.**
@@ -1791,7 +1791,7 @@ export class AccountService {
   }): Promise<Proposal> {
     const account = this.open(args.accountId, args.viewingKey);
     const proposer = account.signers.find(s => s.id === args.proposedBy);
-    if (!proposer) throw new Error('proposer is not a signer on this account');
+    if (!proposer?.role) throw new Error('proposer is not a signer on this account whose roster entry records a role');
 
     /*
      * The CHANGE is computed here, once, and travels with the proposal.
@@ -2007,7 +2007,7 @@ export class AccountService {
   }): Promise<Proposal> {
     const account = this.open(args.accountId, args.viewingKey);
     const proposer = account.signers.find(s => s.id === args.proposedBy);
-    if (!proposer) throw new Error('proposer is not a signer on this account');
+    if (!proposer?.role) throw new Error('proposer is not a signer on this account whose roster entry records a role');
     if (args.again !== undefined) return this.raiseRunAgain(args, args.again, account);
 
     const entries = (args.payload.entries ?? []) as ShieldedEntry[];
@@ -2191,7 +2191,7 @@ export class AccountService {
     const account = this.open(proposal.accountId, viewingKey);
     const signer = account.signers.find(s => s.id === signerId);
     if (!signer) throw new Error('not a signer on this account');
-    if (signer.role === 'viewer') throw new Error('viewers cannot approve');
+    if (signer.role === 'limited') throw new Error('a limited seat cannot approve');
     if (signer.status !== 'active') throw new Error('that signer has not been granted access yet');
     /*
      * **THE RECONCILE, AND ITS TRIGGER IS THE LINE BELOW.**
@@ -2450,7 +2450,7 @@ export class AccountService {
   async sendRaise(proposalId: string, viewingKey: Hex, proven: Uint8Array, by: string): Promise<Proposal> {
     const asked = await this.mayBeSentFromADevice(proposalId, viewingKey);
     const sender = this.open(asked.accountId, viewingKey).signers.find(x => x.id === by);
-    if (!sender || sender.status !== 'active' || sender.role === 'viewer') {
+    if (!sender || sender.status !== 'active' || sender.role === 'limited') {
       throw new NothingWasSent('only a signer who may propose sends a proposal to the chain. Nothing was sent.');
     }
     const release = this.holdARaise(proposalId, viewingKey, asked);

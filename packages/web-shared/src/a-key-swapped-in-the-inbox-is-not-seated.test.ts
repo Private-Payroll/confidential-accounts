@@ -33,20 +33,26 @@ import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { newSeatInvitation, proveSeatKeys, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
 import { seatBlinding, type SeatOpening } from '../../../src/core/seat-opening.js';
 import { invitationIdOf, newInvitationToken, signSeatInvitation, type SeatInvitationTerms } from '../../../src/core/invitation.js';
-import type { PendingSignerPayload } from '../../../src/core/types.js';
+import type { PendingSignerPayload, SealedProposal } from '../../../src/core/types.js';
 import { directoryHere } from './vault-page-doors.js';
 import { seatRequestFingerprint } from './seat-request-fingerprint.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import {
-  approveOnDevice, InvitationNotBound, openTheRoundHere, seatSignerOnDevice, type GovernedCallDoors, type GovernedCallService,
+  approveOnDevice, InvitationNotBound, openTheRoundHere, type GovernedCallDoors, type GovernedCallService,
 } from './governed-call-on-device.js';
-import { refuseASeatNotForTheInvited, rosterBelievedHere, seatingOf, waitingHere, type RosterDoors, type RosterReads } from './roster-here.js';
+import { seatSignerOnDevice } from './signer-by-link.js';
+import { provedSeatsOf, refuseASeatNotForTheInvited, rosterBelievedHere, seatingOf, waitingHere, type RosterDoors, type RosterReads } from './roster-here.js';
+import { invitationByAddressRefusal } from './invitation-signed-by-a-seat.js';
 import type { DirectoryWitness } from '../../../src/core/roster-record.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
 import { anAddress, theInviteeTakesTheSeat } from '../../../src/testing/an-invitee.js';
+import { seatRoundBound } from '../../../src/testing/seat-round-bound.js';
+import { governanceIdentityOfTheContract } from '../../../src/testing/invitation-approved.js';
+import { scopeOfRole } from '../../../src/core/seat-rights.js';
 
-const scope = MidnightCommitments.allVaults();
+/* Dana is invited as an approver, so her seat is made with an approver's rights. */
+const scope = scopeOfRole('approver');
 /** A joiner's keys, their leaf made for a wallet key of their own under a fresh salt, and the opening that shows it. */
 const keysOf = (walletKey = { tag: 'schnorr', value: newBlinding() }) => {
   const s = newSigningKeypair();
@@ -93,10 +99,17 @@ const danasRequest = (): PendingSignerPayload => ({
 const DANAS_AT = anAddress(MidnightCommitments, 21);
 const DANAS_ADDRESS = { address: DANAS_AT.address, salt: DANAS_AT.addressSalt, scope };
 /* Raised with the invitation Ada's seat signed for that address, as Ada's device raises it. */
-const seatRound = await accounts.seatRound(company, viewingKey, waiting.id, ada.signerId, {
-  ...DANAS_ADDRESS,
-  invited: signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment as Hex, invite: DANAS_ADDRESS as never }, ada.signingSecret as Hex),
-});
+/** The same proposal as the old service raised it: under a salt of its own, its invitation naming no proposal. */
+let UNBOUND: SealedProposal;
+const seatRound = await (async () => {
+  const raised = await accounts.seatRound(company, viewingKey, waiting.id, ada.signerId, {
+    ...DANAS_ADDRESS,
+    invited: signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment as Hex, invite: DANAS_ADDRESS as never }, ada.signingSecret as Hex),
+  });
+  UNBOUND = structuredClone(store.getProposal(raised.id)!);
+  /* As Ada's device raises it now: under the salt the invitation's signed terms make, naming that proposal. */
+  return { ...raised, ...seatRoundBound(store, company, raised.id, viewingKey as Hex, ada.signingSecret as Hex) };
+})();
 /* Ada's and Bo's devices read the signers from a roster record Ada's seat filed, believed by entries their wallets signed. */
 const filed = aRosterASeatFiled(store, company, viewingKey as Hex, [
   { signerId: ada.signerId, person: 'ada', signingSecret: ada.signingSecret, n: 1 },
@@ -139,7 +152,7 @@ const service = (built: unknown[] = []): GovernedCallService => ({
 /** One signer's device. Whatever it builds - and so proves - is written down. */
 const aDevice = (built: Array<{ order: GovernedCallOrder; opened: OpenedRound }>): GovernedCallDoors => ({
   service: service(built),
-  builder: { governedCall: async ({ order, opened }) => { built.push({ order, opened }); return { tx: 'TX' }; } },
+  builder: { proposalIdentity: governanceIdentityOfTheContract, governedCall: async ({ order, opened }) => { built.push({ order, opened }); return { tx: 'TX' }; } },
   material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
   accountId: company, sleep: async () => {}, waitMs: 2, everyMs: 1, records: recordsHere, leaves,
 });
@@ -168,6 +181,41 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
       /* The plain approval reads the honest entry and then leaves the seat to be approved where it is made. */
       expect(String((outcomes[2] as PromiseRejectedResult).reason?.message)).toMatch(/approved where it is made/u);
       expect(built).toEqual([]);
+    }
+  });
+
+  it('a seat proposal whose invitation names another role than the one the person waiting accepted is opened by no device', async () => {
+    putBack();
+    const bound = store.getProposal(seatRound.id)!;
+    /* Raised as an admin, every vault, while Dana accepted an approver's seat. */
+    seatRoundBound(store, company, seatRound.id, viewingKey as Hex, ada.signingSecret as Hex, {
+      role: 'admin', invite: { ...DANAS_ADDRESS, scope: scopeOfRole('admin') } as never,
+    });
+    try {
+      const opened = await Promise.allSettled([true, false].map((forARaise) => openTheRoundHere(service(), company, seatRound.id, viewingKey, forARaise, recordsHere, leaves)));
+      /* RED WHEN: a device approves a seat at a role the person waiting never accepted. */
+      for (const o of opened) {
+        expect(o.status).toBe('rejected');
+        expect(String((o as PromiseRejectedResult).reason?.message)).toMatch(/does not give the seat, role, vaults, person or name of the person waiting/u);
+      }
+    } finally {
+      store.putProposal(bound);
+    }
+  });
+
+  it('a seat proposal raised under a salt its invitation does not make is opened by no device, so nobody approves a role it does not commit to', async () => {
+    putBack();
+    const bound = store.getProposal(seatRound.id)!;
+    store.putProposal(UNBOUND);
+    try {
+      const opened = await Promise.allSettled([true, false].map((forARaise) => openTheRoundHere(service(), company, seatRound.id, viewingKey, forARaise, recordsHere, leaves)));
+      /* RED WHEN: a device approves a seat whose proposal commits to an address and rights and not to the invitation's role. */
+      for (const o of opened) {
+        expect(o.status).toBe('rejected');
+        expect(String((o as PromiseRejectedResult).reason?.message)).toMatch(/names no proposal raised for the address it seats/u);
+      }
+    } finally {
+      store.putProposal(bound);
     }
   });
 
@@ -326,6 +374,18 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
     } finally {
       putBack();
     }
+  });
+
+  it('an inviting seat held on one vault alone has no invitation it signs for every vault raised or approved on any device', async () => {
+    const believed = provedSeatsOf((await recordsHere.directory()).dir.seats);
+    /* Ada's seat, as this device's directory reads it, is held on one vault alone. */
+    const adas = signingPublicKeyOf(ada.signingSecret as Hex).toLowerCase();
+    const seats = believed.map((x) => (x.signingKey.toLowerCase() === adas
+      ? { ...x, rights: { mayApprove: true, everyVault: false, onVaults: ['a1'.repeat(32)] } } : x));
+    const invited = signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment as Hex, invite: DANAS_ADDRESS as never }, ada.signingSecret as Hex);
+    /* RED WHEN: the raising or approving device acts on an invitation offering vaults beyond the inviting seat's own. */
+    expect(invitationByAddressRefusal(company, invited, DANAS_ADDRESS, seats)).toMatch(/offers vaults beyond the ones the inviting seat holds itself/u);
+    expect(invitationByAddressRefusal(company, invited, DANAS_ADDRESS, believed)).toBeNull();
   });
 
   it('the honest request, and one whose invitation names its own leaf, pass every check a device makes before it approves the leaf', async () => {
@@ -612,6 +672,8 @@ describe('A SEAT THE CHAIN HOLDS BEFORE ITS SIGNER IS ADMITTED', () => {
     holders: async () => { const h = await filed.reads.holders(); return { ...h, seats: [...h.seats, dana.leafCommitment] }; },
     anchored: filed.reads.anchored,
     leaves: filed.reads.leaves,
+    proposalIdentity: filed.reads.proposalIdentity,
+    invitedSeats: filed.reads.invitedSeats,
   };
   const readHere = () => rosterBelievedHere({ ...store.getAccount(company)!, roster: filed.roster }, viewingKey as Hex, {
     accountId: company, label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never,
@@ -651,6 +713,21 @@ describe('WHO MAY INVITE, AND ONE PERSON ONE SEAT, ON THE DEVICE THAT APPROVES T
     const box = sealed.pendingSigners.find((p) => p.id === waiting.id)!;
     return refuseASeatNotForTheInvited(sealed, viewingKey as Hex, box, danasRequest(), { seats, onTheChain, leaves });
   };
+  it('a request on an invitation by address is held to the one rule: the seat the network shows its proposal took', async () => {
+    const sealed = store.getAccount(company)!;
+    const box = sealed.pendingSigners.find((p) => p.id === waiting.id)!;
+    const proposal = '0d'.repeat(32);
+    const byAddress = signSeatInvitation({ ...DANAS_INVITATION, invite: DANAS_ADDRESS as never, proposal: proposal as Hex }, ada.signingSecret as Hex);
+    const request = { ...danasRequest(), invited: byAddress };
+    const askedWith = (took: string | null) => refuseASeatNotForTheInvited(sealed, viewingKey as Hex, box, request, {
+      seats: [adaSeat()], onTheChain: [], leaves, invitedSeats: async () => ({ [proposal]: took }),
+    });
+    /* RED WHEN: a request answering an invitation by address is seated though the network shows its proposal took another seat, or none. */
+    await expect(askedWith('0e'.repeat(32))).rejects.toThrow(/not the one the network shows this invitation's proposal took/u);
+    await expect(askedWith(null)).rejects.toThrow(/not the one the network shows this invitation's proposal took/u);
+    await expect(askedWith(dana.leafCommitment.toLowerCase())).resolves.toBeUndefined();
+  });
+
   const anotherRequestForDana = (by: Hex): PendingSignerPayload => {
     const other = keysOf();
     return {
@@ -663,8 +740,8 @@ describe('WHO MAY INVITE, AND ONE PERSON ONE SEAT, ON THE DEVICE THAT APPROVES T
     inTheInbox(danasRequest());
     try {
       await expect(held([adaSeat()])).resolves.toBeUndefined();
-      /* RED WHEN: a viewer's seat invites somebody an approving device then seats. */
-      await expect(held([adaSeat({ role: 'viewer' })])).rejects.toThrow(/a role that may not file a proposal/u);
+      /* RED WHEN: a limited seat's seat invites somebody an approving device then seats. */
+      await expect(held([adaSeat({ role: 'limited' })])).rejects.toThrow(/a role that may not file a proposal/u);
     } finally {
       putBack();
     }
@@ -721,6 +798,8 @@ describe('A PERSON WAITING FOR A SEAT, ACROSS A CHANGE OF THE COMPANY\'S KEY', (
     holders: async () => { const h = await filed.reads.holders(); return { ...h, seats: [...h.seats, dana.leafCommitment] }; },
     anchored: filed.reads.anchored,
     leaves: filed.reads.leaves,
+    proposalIdentity: filed.reads.proposalIdentity,
+    invitedSeats: filed.reads.invitedSeats,
   };
   /** The proposal that seated Dana's leaf, carrying the invitation Ada's seat signed for it. */
   const seatingProposal = () => ({

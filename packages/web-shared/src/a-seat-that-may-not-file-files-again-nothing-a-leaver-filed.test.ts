@@ -5,7 +5,7 @@ import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 /*
  * **A SEAT THAT MAY NOT FILE A VAULT'S RECORDS FILES NOTHING AGAIN OF WHAT A SIGNER WHO LEFT FILED.** When a vault's notes
  * are read on a device (`vaultNotesHere`), the versions a leaving signer filed that the chain vouches for are filed again
- * first, and only by a seat whose role files all three of the vault's records: a viewer, a retired seat or a seat this
+ * first, and only by a seat whose role files all three of the vault's records: a limited seat, a retired seat or a seat this
  * device does not believe files none and says so. The filing again is stood in, so whether it is asked can be seen.
  */
 
@@ -28,8 +28,8 @@ const doors = (seat: (() => Promise<{ role: string | null; retired: unknown } | 
 }) as never;
 
 describe('WHAT A SIGNER WHO LEFT FILED IS FILED AGAIN ONLY BY A SEAT THAT MAY FILE THE VAULT\'S RECORDS', () => {
-  it('a viewer, a retired seat, a seat this device does not believe and a read with no seat file nothing again and say so; an admin does', async () => {
-    const seats = [async () => ({ role: 'viewer', retired: null }), async () => ({ role: 'admin', retired: { at: 3 } }), async () => null, undefined];
+  it('a limited seat, a retired seat, a seat this device does not believe and a read with no seat file nothing again and say so; an admin does', async () => {
+    const seats = [async () => ({ role: 'limited', retired: null }), async () => ({ role: 'admin', retired: { at: 3 } }), async () => null, undefined];
     for (const seat of seats) {
       const here = await vaultNotesHere(doors(seat), VAULT, view as never);
       /* RED WHEN: a seat whose role files no vault record, or that is retired or not believed, files a leaver's versions again. */

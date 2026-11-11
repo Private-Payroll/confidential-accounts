@@ -1,6 +1,7 @@
 import { invitationThresholdRefusal } from '../../../../src/core/invitation.js';
 import type { AddSignerByAddress } from '../../../../src/core/proposal-filing.js';
 import type { Proposal, ProposalStatus, Role, SealedProposal } from '../../../../src/core/types.js';
+import { ALL_VAULTS } from '../../../../src/core/seat-rights.js';
 import { READ, type Read } from './reads.js';
 
 /**
@@ -198,3 +199,6 @@ export function thresholdChangesWaiting(
     return p.kind === 'set-threshold' && p.status === 'open' && typeof count === 'number' && Number.isSafeInteger(count) && count >= 1 ? [{ id: p.id, count }] : [];
   });
 }
+
+/** Whether an invitation's rights are over every vault of the company, as the wallet judges it; any other rights are over chosen vaults. */
+export const rightsAreOverEveryVault = (scope: string): boolean => scope.toLowerCase() === ALL_VAULTS;

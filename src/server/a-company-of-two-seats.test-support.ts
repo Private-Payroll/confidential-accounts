@@ -22,7 +22,7 @@ import { signedFoundingState } from '../core/founding-state.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
-import { newSigningKeypair, newSymmetricKey, sign, type Hex } from '../core/crypto.js';
+import { newSigningKeypair, newSymmetricKey, type Hex } from '../core/crypto.js';
 import { MemoryStore } from '../core/store.js';
 import { inboxPublicKey } from '../core/sealed-records.js';
 import type { SealedAccount } from '../core/types.js';
@@ -35,8 +35,11 @@ import { companyRecordEntry, type ManifestEntryBody } from '../midnight/record-m
 import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
-import { directoryChangeMessage, directoryEntryMade } from '../midnight/seat-directory.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation, type SeatByAddressChange } from '../core/invitation.js';
+import { directoryEntryMade } from '../midnight/seat-directory.js';
+import { invitationIdOf, newInvitationToken, type SeatByAddressChange } from '../core/invitation.js';
+import { invitedAsRaised, invitedLeafOfTheTestChain } from '../testing/invitation-approved.js';
+import { invitedSeatRightsOf, scopeOfRole } from '../core/seat-rights.js';
+import type { SignerRole } from '../core/roles.js';
 import type { InvitationSend, InvitingCompany, InvitingSeat } from 'vaults-web-shared/invitation-on-device.js';
 import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
@@ -67,21 +70,28 @@ export const apiAs = (person: string) => async (path: string, init?: RequestInit
   return r.body;
 };
 
-/** A seat of `company`, invited by the seat `invitedBy` signs with; a company's founding seat is invited by nobody. */
-export const seatOf = (person: string, n: number, label = LABEL, address = ADDRESS, company = CO, invitedBy?: { readonly signingSecret: string }): Seat => {
+/**
+ * A seat of `company`, invited by the seat `invitedBy` signs with at `role`; a company's founding seat is invited by
+ * nobody. Its leaf commits to the rights `role` gives on every vault, or to `scope` where a case gives one.
+ */
+export const seatOf = (
+  person: string, n: number, label = LABEL, address = ADDRESS, company = CO, invitedBy?: { readonly signingSecret: string }, scope?: Hex,
+  role: SignerRole = 'admin',
+): Seat => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const signing = newSigningKeypair();
   const committeeKey = committeeKeyFor(identity, label) as { tag: string; value: string };
   /* The seat as a seating device makes it: its leaf commits to this wallet key, and its opening shows that. */
-  const { seat, opening } = seatOpenedFor(committeeKey, n);
+  const { seat, opening } = seatOpenedFor(committeeKey, n, scope ?? (role === 'admin' ? undefined : scopeOfRole(role)));
   const statement = signDirectoryEntry(identity, label, address, new Uint8Array(32).fill(n + 100), signing.publicKey, seat);
   return {
-    n, person, seat, signingSecret: signing.secret, committeeKey, statement, opening, held: { role: 'admin', retired: false },
+    n, person, seat, signingSecret: signing.secret, committeeKey, statement, opening,
+    held: { role, retired: false, rights: role === 'admin' ? { every: true as const } : invitedSeatRightsOf({ role }, scopeOfRole(role)) },
     /* Its proof sealed under the company's viewing key, which every member's device here holds. */
     entry: directoryEntryMade({
       company, person, committeeKey, signed: statement, opening, signingSecret: signing.secret, viewingKey: KEY,
-      ...(invitedBy === undefined ? {} : { invited: signSeatInvitation({
-        company, invitation: invitationIdOf(newInvitationToken()), person, name: person, role: 'admin', leaf: seat as Hex,
+      ...(invitedBy === undefined ? {} : { invited: invitedAsRaised({
+        company, invitation: invitationIdOf(newInvitationToken()), person, name: person, role, leaf: seat as Hex,
       }, invitedBy.signingSecret as Hex) }),
     }),
     /* Every filing this seat makes is entered in its company's records, over the manifest route mounted below. */
@@ -89,7 +99,13 @@ export const seatOf = (person: string, n: number, label = LABEL, address = ADDRE
   };
 };
 export const ADA = seatOf('ada', 1);
-export const BO = seatOf('bo', 2, LABEL, ADDRESS, CO, ADA);
+/** Bo, invited by Ada's seat as an approver, unless the company a test sets up seats him at another role (`seatBoAs`). */
+export const BO = seatOf('bo', 2, LABEL, ADDRESS, CO, ADA, undefined, 'approver');
+/**
+ * Bo invited by Ada's seat at `role` instead, for every case of a test file: called as its module is loaded, before
+ * the company is set up, since a seat's role is the one its invitation gives and nothing changes it later.
+ */
+export const seatBoAs = (role: SignerRole): void => { Object.assign(BO, seatOf('bo', 2, LABEL, ADDRESS, CO, ADA, undefined, role)); };
 export const EVE = seatOf('eve', 9, OTHER_LABEL, OTHER_ADDRESS, OTHER);
 
 const accountOf = (id: string, members: string[], label: CompanyLabel, address: string): SealedAccount => ({
@@ -242,8 +258,12 @@ export const acmeReads = {
    * The seat each invitation by address took, as the account's history shows it, looked up as a device's vault worker
    * looks it up: one identity that is not thirty-two bytes refuses the whole ask.
    */
-  invitedSeats: async (proposals: readonly string[]) =>
-    Object.fromEntries(seatsInvitedIn([...seatsTakenByInvitation].map(([proposal, leaf]) => ({ proposal: proposal.toLowerCase(), leaf })), proposals)),
+  invitedSeats: async (proposals: readonly string[]) => {
+    const taken: Record<string, string | null> = Object.fromEntries(
+      seatsInvitedIn([...seatsTakenByInvitation].map(([proposal, leaf]) => ({ proposal: proposal.toLowerCase(), leaf })), proposals));
+    /* A seat this file's company was set up with, invited as its proposal raised it, was taken as that invitation names. */
+    return Object.fromEntries(Object.entries(taken).map(([p, leaf]) => [p, leaf ?? invitedLeafOfTheTestChain(p)]));
+  },
   /* A proposal's identity, as a device's vault worker makes it with the account's own functions. */
   proposalIdentity: async (change: SeatByAddressChange, salt: string) => identityOfAChange({ accountPure: pureCircuits as never }, change, salt),
   /** Acme's records as the head the test's chain holds them, over the tree routes mounted below. */
@@ -412,10 +432,6 @@ export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: Mounted
     await foundAcme(founding);
     chain = seated([ADA, BO]);
     expect((await sendAs('bo')(`/api/accounts/${CO}/directory/2`, { method: 'POST', body: JSON.stringify({ company: CO, version: 2, change: { kind: 'claim', entry: BO.entry } } satisfies DirectoryFiling) })).status).toBe(201);
-    /* Bo is an approver: a quorum of one, the chain's approvals, names his role. */
-    const unsigned = { kind: 'role', seat: BO.seat, role: 'approver', threshold: 1, signatures: [] } as const;
-    const message = directoryChangeMessage(CO, 3, unsigned as never);
-    expect((await sendAs('ada')(`/api/accounts/${CO}/directory/3`, { method: 'POST', body: JSON.stringify({ company: CO, version: 3, change: { ...unsigned, signatures: [{ publicKey: ADA.statement.signingKey as Hex, signature: sign(message, ADA.signingSecret) }] } }) })).status).toBe(201);
     chain = seated([EVE]);
     expect((await sendAs('eve')(`/api/accounts/${OTHER}/directory/1`, { method: 'POST', body: JSON.stringify({ company: OTHER, version: 1, change: { kind: 'claim', entry: EVE.entry } }) })).status).toBe(201);
     chain = seated([ADA, BO]);

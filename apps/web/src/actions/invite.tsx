@@ -4,7 +4,7 @@ import {
   CopyText, Input, RadioGroup, RadioGroupItem, useText,
 } from 'vaults-ui';
 import {
-  addressIsPrivate, APPROVALS, approvalsSentence, CLASSIFICATIONS, emptyDraft, FIELD, FORM, INVITE_KIND, INVITE_WAY, INVITED, PROBLEM, payAssets, ROLE, SIGNER_ROLES, SIGNER_ROLES_LATER, sendInvite, SCOPE,
+  addressIsPrivate, APPROVALS, approvalsSentence, CLASSIFICATIONS, emptyDraft, FIELD, FORM, INVITE_KIND, INVITE_WAY, INVITED, PROBLEM, payAssets, READER_ROLES, ROLE, ROLES, sendInvite, SCOPE,
   TERMS, WHY, WORDS_OF_SENT, type InviteDraft, type InviteKind, type InviteProblem, type InviteWhy, type Invited,
 } from '../adapters/invite.js';
 import { OPENED, READ } from '../adapters/reads.js';
@@ -57,7 +57,7 @@ function useWhySays(): Record<InviteWhy, string> {
   };
 }
 
-function useProblemSays(most: number): Record<InviteProblem, string> {
+function useProblemSays(most: number, says: string): Record<InviteProblem, string> {
   const t = useText();
   return {
     [PROBLEM.noName]: t('invite.problem.no-name'),
@@ -79,6 +79,7 @@ function useProblemSays(most: number): Record<InviteProblem, string> {
     [PROBLEM.superAdmin]: t('invite.problem.super-admin'),
     [PROBLEM.badThreshold]: t('invite.problem.bad-threshold'),
     [PROBLEM.thresholdTooHigh]: t('invite.problem.threshold-too-high', { count: most }),
+    [PROBLEM.thresholdRefused]: t('invite.problem.threshold-refused', { says }),
   };
 }
 
@@ -99,7 +100,7 @@ function useRoleDoes(): Record<string, string> {
   const t = useText();
   return {
     [ROLE.admin]: t('invite.role.admin.says'), [ROLE.approver]: t('invite.role.approver.says'),
-    [ROLE.initiator]: t('invite.role.initiator.says'), [ROLE.viewer]: t('invite.role.viewer.says'),
+    [ROLE.initiator]: t('invite.role.initiator.says'),
   };
 }
 
@@ -107,7 +108,7 @@ function useRoleSays(): Record<string, string> {
   const t = useText();
   return {
     [ROLE.admin]: t('invite.role.admin'), [ROLE.approver]: t('invite.role.approver'), [ROLE.initiator]: t('invite.role.initiator'),
-    [ROLE.viewer]: t('invite.role.viewer'), [ROLE.limited]: t('invite.role.limited'), [ROLE.accountant]: t('invite.role.accountant'),
+    [ROLE.limited]: t('invite.role.limited'), [ROLE.accountant]: t('invite.role.accountant'),
   };
 }
 
@@ -156,9 +157,9 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
   const first = kinds.find((k) => k !== INVITE_KIND.superAdmin) ?? INVITE_KIND.employee;
   const [draft, setDraft] = useState<InviteDraft>(() => emptyDraft(first));
   const [phase, setPhase] = useState<Phase>({ of: FORM.edit });
-  const [wrong, setWrong] = useState<{ field: keyof InviteDraft; problem: InviteProblem; most: number } | null>(null);
+  const [wrong, setWrong] = useState<{ field: keyof InviteDraft; problem: InviteProblem; most: number; says: string } | null>(null);
   const [seated, setSeated] = useState<number | null>(null);
-  const problemSays = useProblemSays(wrong?.most ?? 0);
+  const problemSays = useProblemSays(wrong?.most ?? 0, wrong?.says ?? '');
   const [stopped, setStopped] = useState<Extract<Invited, { of: 'stopped' }> | null>(null);
   const [refused, setRefused] = useState<Extract<Invited, { of: 'refused' }>['why'] | null>(null);
   /* The token of an invitation that may already be part made: the same press again carries on that one, and the form is held still. */
@@ -192,7 +193,7 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
       return;
     }
     setPhase({ of: FORM.edit });
-    if (ended.of === INVITED.problem) setWrong({ field: ended.field, problem: ended.problem, most: ended.most ?? 0 });
+    if (ended.of === INVITED.problem) setWrong({ field: ended.field, problem: ended.problem, most: ended.most ?? 0, says: ended.says ?? '' });
     else if (ended.of === INVITED.refused) setRefused(ended.why);
     else {
       setStopped(ended); setToken(ended.keeps ? ended.token : undefined);
@@ -335,8 +336,8 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
             <FieldSet disabled={locked}>
               <FieldLegend variant="label">{t('invite.role.label')}</FieldLegend>
               <RadioGroup value={draft.role} onValueChange={(v) => set({ role: v })} data-field="role">
-                {[...SIGNER_ROLES, ...SIGNER_ROLES_LATER].map((r) => {
-                  const later = (SIGNER_ROLES_LATER as readonly string[]).includes(r);
+                {ROLES.map((r) => {
+                  const later = (READER_ROLES as readonly string[]).includes(r);
                   return (
                     <Field key={r} orientation="horizontal">
                       <RadioGroupItem value={r} id={ids.title + r} disabled={locked || later} data-role={r} className={later ? 'disabled:opacity-70' : undefined} />

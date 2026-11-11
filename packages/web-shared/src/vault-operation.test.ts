@@ -663,17 +663,16 @@ describe('CREATING A VAULT', () => {
         const e = await createCompanyVault({
           ...pacing, ...walletReadsTheVault, ...doors, secretReaders, account: ACCOUNT, service, builder: unset([])(log),
         }, VAULT).catch((x) => x);
-        return { e, log, filed: await doors.records('nonce-secret').get(VAULT) };
+        return { e, log, filed: await doors.records('nonce-secret').get(VAULT), mine, companyKey: doors.me.companyKey };
       };
 
-      /* RED WHEN the nonce secret is filed before the keys the service lists are checked. */
-      it('a key the service slipped onto its list is refused, and no nonce secret is filed for it to open', async () => {
-        const { e, log, filed } = await pressUnfiled((mine) => [mine, another]);
-        expect(e.name).toBe('VaultStartOwed');
-        expect(e.vault).toBe(VAULT);
-        expect(e.stoppedAt).toBe('reader-not-a-signer');
-        expect(filed).toBeNull();
-        expect(log).not.toContain('built a governed call');
+      it('a key the service slips onto its list is never a reader: the secret is sealed to the keys the directory names', async () => {
+        const { filed, mine, companyKey } = await pressUnfiled((m) => [m, another]);
+        expect(filed).not.toBeNull();
+        const readers = openNonceSecrets(filed!, VAULT, recordsKeypairFrom(companyKey)).readers.map((k) => String(k).toLowerCase());
+        /* RED WHEN: a new vault's secret is sealed to the readers the service lists, so a key the directory does not name opens it. */
+        expect(readers).not.toContain(another.toLowerCase());
+        expect(readers).toEqual([mine.toLowerCase()]);
       });
 
       /* RED WHEN the check before filing refuses an honest list: the secret is then never filed and the start stops there. */
@@ -712,8 +711,9 @@ describe('THE POOL AND A DEPOSIT', () => {
     expect(await records('pool').get(VAULT)).toBeNull();
     expect(await records('nonce-secret').get(VAULT)).toBeNull();
     const seen: string[][] = [];
-    await openCompanyVaultPool(poolDoors(serviceFrom([ready], [], { keys: async () => ({ committee, why: null, readers: ['5c'.repeat(32)] }) }), records), VAULT,
-      async (readers) => { seen.push([...readers]); });
+    await openCompanyVaultPool(poolDoors(serviceFrom([ready], [], { keys: async () => ({ committee, why: null, readers: ['6d'.repeat(32)] }) }), records), VAULT,
+      async (readers) => { seen.push([...readers]); }, undefined, undefined, async () => ['5C'.repeat(32) as Hex]);
+    /* RED WHEN: the readers a new secret is checked and sealed to are the service's list, not the directory's. */
     expect(seen).toEqual([['5c'.repeat(32)]]);
   });
 

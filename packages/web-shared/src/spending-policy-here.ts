@@ -35,7 +35,9 @@ import {
   SPENDING_POLICY_KIND, type PolicyOpeningOnTheWire, type SpendingPolicySecrets,
 } from '../../../src/midnight/spending-policy-record.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import { companyRecordKey, mayFile, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
+import { isReaderId } from '../../../src/midnight/grants-record.js';
+import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
+import { companyRecordKey, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry, recordKeyOf } from '../../../src/midnight/record-manifest.js';
 import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
 import type { AccountGovernance, AccountRoleEntry } from 'midnight-identity/profile/records-key';
@@ -44,16 +46,41 @@ import type { BandInForce } from '../../../src/core/vault-approvers.js';
 import type { SpendingPolicyKeys } from './governed-call-builder.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import {
-  judgeIn, kindAsked, namedHere, readersIn, readersOf, sealedToARetiredSeat, seatNotBelievedHere, type DirectoryHere,
+  judgeIn, kindAsked, namedHere, readersIn, readersOf, sealedToARetiredSeat, type DirectoryHere,
 } from './vault-page-doors.js';
 import { openTheRoundHere } from './round-opened-here.js';
-import { signedStateHere, type CompanyRecordsHere, type SpendingPoliciesHere } from './run-rebuilt-here.js';
+import { signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { governOnDevice, type GovernanceDoors, type GovernedOutcome } from './governed-call-on-device.js';
 
 export { PolicyNotOpenedHere };
+export { sealPoliciesToNewSignersHere, type PoliciesResealed } from './policies-resealed-here.js';
+
+/**
+ * **A VAULT'S SPENDING POLICIES, AS THIS DEVICE READS AND FILES THEM.** Every
+ * version the company's store serves under one policy's key, each believed
+ * only as `spending-policy-here.ts` judges it against the directory this
+ * device believes; filing a new version, signed by this device's seat; this
+ * signer's own seat and wrapping secret, which open it; the contract's own keys
+ * for a policy, made in the worker; and what the company's account holds under
+ * given keys, read by the person's own wallet (`chainReadThroughTheWallet`) -
+ * never an answer the company's service made. Who a version is sealed to is
+ * the seats this device believes (`readersIn`) and the readers the read grants
+ * in force give `policy` (`grantReaders`, `policyReadersIn`).
+ */
+export interface SpendingPoliciesHere {
+  readonly versions: (id: string) => Promise<readonly SealedCompanyRecord[]>;
+  readonly file: (rec: SealedCompanyRecord) => Promise<void>;
+  readonly me: { readonly signerId: string; readonly wrappingSecret: Hex };
+  /** The worker's `spending-policy-keys` ask (`VaultBuilderClient.spendingPolicyKeys`). */
+  readonly keys: VaultBuilderClient['spendingPolicyKeys'];
+  /** For each key asked, lower-cased, what the account's map of roles holds under it, or null for nothing. */
+  readonly onChain: (keys: readonly string[]) => Promise<ReadonlyMap<string, string | null>>;
+  /** The readers of the read grants in force that read `policy`, as this device believes them: sealed to beside the seats. */
+  readonly grantReaders: () => Promise<readonly PoolSigner[]>;
+}
 
 /** What reading a vault's policy needs of this device: the company's records, which carry the policies' own doors. */
-interface SpendingPolicyDoors {
+export interface SpendingPolicyDoors {
   readonly records: CompanyRecordsHere;
   readonly accountId: string;
   readonly viewingKey: KeysHeld;
@@ -71,7 +98,7 @@ type SpendingPolicyStanding =
     readonly policy: PolicyOpening; readonly opening: PolicyOpeningOnTheWire; readonly version: number;
   };
 
-const policiesOf = (records: CompanyRecordsHere): SpendingPoliciesHere => {
+export const policiesOf = (records: CompanyRecordsHere): SpendingPoliciesHere => {
   if (records.spendingPolicies === undefined) {
     throw new PolicyNotOpenedHere('This page cannot read the company\'s spending policies. Reload the page to get the current version.');
   }
@@ -83,7 +110,7 @@ const blindingHere = async (doors: SpendingPolicyDoors): Promise<string> =>
   (await signedStateHere(doors.records, doors.accountId, doors.viewingKey)).assetBlinding;
 
 /** The contract's own keys for this vault and currency, with `opening` the commitment it makes, and with `total` too the approvals its band needs. */
-const keysHere = async (
+export const keysHere = async (
   doors: SpendingPolicyDoors, vault: string, asset: Hex, opening?: PolicyOpeningOnTheWire, total?: bigint,
 ): Promise<SpendingPolicyKeys> => policiesOf(doors.records).keys({
   vault: vault.toLowerCase(), asset, assetBlinding: await blindingHere(doors), ...(opening === undefined ? {} : { policy: opening }),
@@ -95,7 +122,9 @@ const keysHere = async (
  * company's store serves: each filed for this company under this key, its
  * filing signed by a seat the directory this device believes says may file a
  * spending policy at that version, and sealed only to seats that directory
- * holds an entry for. Two more rules keep a policy out of the wrong hands and
+ * holds an entry for and to readers of a read grant (`isReaderId`): a version
+ * sealed to a reader whose grant was taken away since stays believed, so a
+ * taking-away never shuts a policy in force out of reach. Two more rules keep a policy out of the wrong hands and
  * in the right ones: a version is sealed to no seat already retired before the
  * batch that anchored it (`sealedToARetiredSeat`), so a signer who left reads
  * no policy set after they left; and a version is sealed to every reader of the
@@ -114,7 +143,7 @@ async function believedVersions(doors: SpendingPolicyDoors, id: string): Promise
  * judged version no device believes; `sealPoliciesToNewSignersHere` seals its
  * opening again to the signers who stay, so that is never the end.
  */
-async function versionsHere(
+export async function versionsHere(
   doors: SpendingPolicyDoors, id: string,
 ): Promise<{ readonly judged: readonly SealedCompanyRecord[]; readonly believed: readonly SealedCompanyRecord[] }> {
   const policies = policiesOf(doors.records);
@@ -123,7 +152,7 @@ async function versionsHere(
   const seats = new Set(here.dir.seats.map((x) => x.seat.toLowerCase()));
   const passed = served.filter((rec) => rec.company === doors.accountId && rec.kind === SPENDING_POLICY_KIND && rec.id === id
     && judge(verifiedCompanyFiler(rec), SPENDING_POLICY_KIND, companyRecordKey(SPENDING_POLICY_KIND, id), companyRecordEntry(rec)) === null
-    && rec.wrapped.length > 0 && rec.wrapped.every((w) => seats.has(String(w.signerId).toLowerCase())));
+    && rec.wrapped.length > 0 && rec.wrapped.every((w) => seats.has(String(w.signerId).toLowerCase()) || isReaderId(String(w.signerId))));
   const anchored = new Map((here.records.history.get(recordKeyOf({ store: 'company', kind: SPENDING_POLICY_KIND, id })) ?? [])
     .map((v) => [v.version, v] as const));
   const believed: SealedCompanyRecord[] = [];
@@ -153,7 +182,8 @@ const leavesOutAStayingReader = (here: DirectoryHere, before: SealedCompanyRecor
 };
 
 /** The seats this device believes now, each to the records key its own entry names: who a new version is sealed to. */
-const believedSigners = (doors: SpendingPolicyDoors) => readersIn(doors.records.directory).signers();
+export const believedSigners = async (doors: SpendingPolicyDoors): Promise<readonly PoolSigner[]> =>
+  [...await readersIn(doors.records.directory).signers(), ...await policiesOf(doors.records).grantReaders()];
 
 /** The commitment an opening makes, by the contract's own function. */
 const commitmentHere = (doors: SpendingPolicyDoors, vault: string, asset: Hex) => async (opening: PolicyOpeningOnTheWire): Promise<Hex> => {
@@ -692,70 +722,4 @@ export function removalBoundaryRefusal(
     }
   }
   return null;
-}
-
-/** What sealing the policies in force to the signers seated since needs of this device: its own filing key, and the key epoch a bare key names. */
-type PolicyResealDoors = SpendingPolicyDoors & { readonly keyEpoch: number; readonly filingKey: string };
-
-/** What `sealPoliciesToNewSignersHere` did: the policies it sealed again, and each it could not, with why. */
-export interface PoliciesResealed {
-  readonly sealed: readonly string[];
-  readonly refused: ReadonlyArray<{ readonly id: string; readonly why: string }>;
-}
-
-/**
- * **EVERY SPENDING POLICY IN FORCE, SEALED TO EVERY SIGNER WHO STAYS**, from a
- * device whose seat may file a spending policy. For each policy the chain holds,
- * when a seat this device believes now is missing from the version that opens
- * the chain's commitment, that same opening - same terms, same blinding - is
- * filed again as the record's next version, sealed to every seat this device
- * believes now and to no retired seat. The commitment, and so the vault's
- * period total, do not change, and no proposal is raised. A device that cannot
- * open the policy in force files nothing for it. No seat action runs it yet;
- * a policy that fails is said and stops no other.
- */
-export async function sealPoliciesToNewSignersHere(doors: PolicyResealDoors): Promise<PoliciesResealed> {
-  const policies = policiesOf(doors.records);
-  const here = await doors.records.directory(kindAsked('company', SPENDING_POLICY_KIND));
-  const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === doors.filingKey.toLowerCase());
-  if (mine === undefined || seatNotBelievedHere(here, mine) !== null || !mayFile(mine).includes(SPENDING_POLICY_KIND)) {
-    return { sealed: [], refused: [] };
-  }
-  const signers = await believedSigners(doors);
-  const staying = signers.map((x) => x.id.toLowerCase());
-  const sealed: string[] = [];
-  const refused: { id: string; why: string }[] = [];
-  for (const id of namedHere(here, 'company', SPENDING_POLICY_KIND)) {
-    try {
-      const onChain = (await policies.onChain([id])).get(id.toLowerCase()) ?? null;
-      if (onChain === null) continue;
-      let inForce: { rec: SealedCompanyRecord; secrets: SpendingPolicySecrets } | null = null;
-      const { judged, believed } = await versionsHere(doors, id);
-      /* The believed versions first; then one judged and not believed, which no device reads until it is sealed again. */
-      for (const rec of [...[...believed].sort((a, b) => b.version - a.version), ...[...judged].sort((a, b) => b.version - a.version)]) {
-        let secrets: SpendingPolicySecrets;
-        try {
-          secrets = openSpendingPolicy(rec, policies.me).secrets;
-        } catch {
-          continue;
-        }
-        const made = await keysHere(doors, secrets.vault, secrets.asset, secrets.opening);
-        if (made.policyKey.toLowerCase() !== id.toLowerCase() || String(made.commitment).toLowerCase() !== onChain.toLowerCase()) continue;
-        inForce = { rec, secrets };
-        break;
-      }
-      if (inForce === null) continue;
-      const readers = readersOf(inForce.rec);
-      if (believed.includes(inForce.rec) && staying.every((x) => readers.has(x))) continue;
-      const newest = (await policies.versions(id)).reduce((n, r) => Math.max(n, r.version), 0);
-      await policies.file(sealSpendingPolicy({
-        company: doors.accountId, id: id as Hex, version: newest + 1, keyEpoch: epochInForce(doors.viewingKey, doors.keyEpoch),
-        secrets: { vault: inForce.secrets.vault, asset: inForce.secrets.asset, opening: inForce.secrets.opening }, signers,
-      }));
-      sealed.push(id);
-    } catch (e) {
-      refused.push({ id, why: String((e as Error)?.message ?? e) });
-    }
-  }
-  return { sealed, refused };
 }

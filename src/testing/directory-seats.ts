@@ -26,7 +26,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { signingPublicKeyOf, toHex, utf8, type Hex } from '../core/crypto.js';
 import type { SealedAccount } from '../core/types.js';
 import { directoryEntryMade, type DirectoryFiling } from '../midnight/seat-directory.js';
-import { signSeatInvitation } from '../core/invitation.js';
+import { invitedAsRaised } from './invitation-approved.js';
 import { seatBlinding, type LeafOf, type SeatOpening, type WalletKey } from '../core/seat-opening.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 
@@ -44,11 +44,13 @@ export const leavesOfTheContract = async (openings: readonly SeatOpening[]): Pro
  * public key drawn from `n`, the blinding `seatBlinding` makes of the key under
  * that salt, every vault as its scope, and the seat the leaf of that opening.
  */
-export const seatOpenedFor = (walletKey: WalletKey, n: number): { readonly seat: string; readonly opening: SeatOpening } => {
+export const seatOpenedFor = (
+  walletKey: WalletKey, n: number, scope: Hex = MidnightCommitments.allVaults().toLowerCase() as Hex,
+): { readonly seat: string; readonly opening: SeatOpening } => {
   const key = { tag: 'schnorr', value: walletKey.value.toLowerCase() };
   const salt = toHex(sha256(utf8(`a test seat's salt:${n}:${key.value}`)));
   const opening: SeatOpening = {
-    publicKey: toHex(sha256(utf8(`a test seat's public key:${n}`))), scope: MidnightCommitments.allVaults().toLowerCase(),
+    publicKey: toHex(sha256(utf8(`a test seat's public key:${n}`))), scope: scope.toLowerCase(),
     blinding: seatBlinding(key, salt), walletKey: key, salt,
   };
   return { seat: leafOfTheContract(opening)!, opening };
@@ -78,7 +80,7 @@ export const directorySeats = () => {
         new Uint8Array(32).fill((n + 100) % 256), signingPublicKeyOf(signingSecret as Hex), seat);
       const h = holding.get(account) ?? { committee: [], seats: [], inviter: signingSecret as Hex };
       /* The first seat is the founding one, which nobody invited; every later one is invited by it. */
-      const invited = h.seats.length === 0 ? undefined : signSeatInvitation({
+      const invited = h.seats.length === 0 ? undefined : invitedAsRaised({
         company: account, invitation: toHex(sha256(utf8(`a test invitation:${account}:${person}`))), person, name: person, role: 'admin', leaf: seat as Hex,
       }, h.inviter);
       if (!store.fileDirectory(account, {

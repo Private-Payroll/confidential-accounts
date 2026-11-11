@@ -30,18 +30,18 @@
  *   · every open offer is **folded** into the roster by a seat already believed,
  *     each checked against the signing key the roster holds for that signer.
  */
-import { keyOf, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import { canonical, fromHex, signingPublicKeyOf, wrapKey, type Hex } from '../../../src/core/crypto.js';
 import { openAccount } from '../../../src/core/account.js';
 import {
-  believedSigners, foundingRosterRefusal, oneEntryPerSeat, openRoster, retiredSeatStillNamed, ROSTER_ENTRY_REFUSAL, ROSTER_ID, rosterEntryRefusal, sealRoster, seatsNotBelieved,
-  seatsStaying as stayingIn,
+  believedSigners, foundingRosterRefusal, SEAT_MAY_NOT_FILE_THE_ROSTER, oneEntryPerSeat, openRoster, retiredSeatStillNamed, ROSTER_ENTRY_REFUSAL, ROSTER_ID, rosterEntryRefusal, sealRoster, seatsNotBelieved, seatsStaying as stayingIn,
   type DirectoryWitness, type RefusedEntry, type RosterEntryRefusal, type RosterSecrets, type RosterWitnesses,
 } from '../../../src/core/roster-record.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
-import { invitationMakesItsProposal, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { approvedInvitationRefusal, proposalItsSaltMakes, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { vaultKeysOfferOpened } from './vault-keys-offer-opened.js';
 import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import {
@@ -62,9 +62,9 @@ import { FOUNDING_KEY_EPOCH, foundingStateRefusal, stateRecordId } from '../../.
 import { manifestServiceFor, type RecordsEntered } from './record-entered-here.js';
 import { carriedEntriesEntered } from './carried-entries-entered.js';
 import { aReadNotMade, PROPOSALS_NOT_READ, SEAT_READ_STOP, seatsTakenAsked } from './seat-not-read-on-the-chain.js';
-import { signedByASeatHeld } from './invitation-signed-by-a-seat.js';
+import { inviterRefusalOf, signedByASeatHeld } from './invitation-signed-by-a-seat.js';
 import { seatingRefusedHolding } from './roster-seating-refused.js';
-import { companyRecordKey, filingRefusalOf, mayInvite, seatsWithAnotherRecordsKey, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
+import { companyRecordKey, filingRefusalOf, seatsWithAnotherRecordsKey, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { refuseASeatWhoseFingerprintIsNotTheJoiners } from './seat-request-fingerprint.js';
 import { notePreparing } from './read-bound.js';
@@ -110,7 +110,7 @@ export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'ancho
  * no believed entry names (`notBelieved`): a committee, a reader list or a count
  * of approvers is built only when that is empty.
  */
-export type BelievedAccount = Account & { readonly notBelieved: readonly string[] };
+export type BelievedAccount = Account & { readonly notBelieved: readonly string[]; readonly attesting?: readonly Signer[] };
 
 /** The fixed sentence for a company that has never filed its signers as a roster record: its signers are not read. */
 export const NO_ROSTER_RECORD = 'This company\'s signers have never been filed as a record a seat signed, so this device does '
@@ -349,7 +349,7 @@ export async function seatsAdmittedHere(
  */
 export const provedSeatsOf = (seats: readonly DirectorySeat[]): DirectoryWitness[] =>
   seats.flatMap((x) => (x.committeeKey === undefined ? [] : [{
-    seat: x.seat, signingKey: x.signingKey, committeeKey: x.committeeKey, retired: x.retired !== null, role: x.role, person: x.person,
+    seat: x.seat, signingKey: x.signingKey, committeeKey: x.committeeKey, retired: x.retired !== null, role: x.role, person: x.person, ...(x.rights === undefined ? {} : { rights: x.rights }),
   }]));
 
 /**
@@ -417,8 +417,8 @@ export async function rosterBelievedHere(
     own: d.own ?? null,
     retired: retiredAsAnchored(read),
   };
-  const { believed, refused } = believedSigners(opened.signers, witnesses);
-  const here = { ...read, another: seatsWithAnotherRecordsKey(read.dir, d.label, read.holders.account, attestedIn({ signers: believed })) };
+  const { believed, refused, attesting } = believedSigners(opened.signers, witnesses);
+  const here = { ...read, another: seatsWithAnotherRecordsKey(read.dir, d.label, read.holders.account, attestedIn({ signers: attesting })) };
   const why = roster.version === 1 ? firstRosterRefusal(here, roster, d.accountId, d.own ?? null)
     : judgeIn(here)(verifiedCompanyFiler(roster), 'roster', companyRecordKey('roster', ROSTER_ID), companyRecordEntry(roster), true, roster.keyEpoch);
   /* Every seat the chain holds is in the roster, or waited for by someone the company invited to it. */
@@ -449,7 +449,7 @@ export async function rosterBelievedHere(
       null, { check: ROSTER_CHECK.seatUnnamed, stoppedBy: stopped });
   }
   return {
-    account: { ...opened, signers: believed, notBelieved: seatsNotBelieved(believed, stayingIn(witnesses)) },
+    account: { ...opened, signers: believed, attesting, notBelieved: seatsNotBelieved(believed, stayingIn(witnesses)) },
     opened, version: roster.version, refused, witnesses, held,
   };
 }
@@ -548,7 +548,7 @@ const firstRosterRefusal = (
 };
 
 /** Why the roster was not read or not filed from this device. Nothing was filed. */
-class RosterNotFiled extends Error {
+export class RosterNotFiled extends Error {
   constructor(why: string) {
     super(`${why} Nothing was filed.`);
     this.name = 'RosterNotFiled';
@@ -608,10 +608,10 @@ const rosterReadHere = async (d: RosterDoors, mayEnter: boolean): Promise<Roster
     const held = e.followable;
     const { signers, above } = await carriedHere(d, held, true);
     const carried: Account = { ...held.opened, signers: [...signers, ...held.opened.signers.filter((s) => s.status !== 'active')] };
-    const { believed, refused } = believedSigners(carried.signers, held.witnesses);
+    const { believed, refused, attesting } = believedSigners(carried.signers, held.witnesses);
     return {
       sealed, opened: held.opened, version: above, refused, witnesses: held.witnesses, held, carried,
-      account: { ...carried, signers: believed, notBelieved: seatsNotBelieved(believed, stayingIn(held.witnesses)) },
+      account: { ...carried, signers: believed, attesting, notBelieved: seatsNotBelieved(believed, stayingIn(held.witnesses)) },
       followed: { version: held.roster.version, why: e.message },
     };
   }
@@ -623,7 +623,7 @@ const rosterReadHere = async (d: RosterDoors, mayEnter: boolean): Promise<Roster
 };
 
 /** The refusals no later read can lift: an entry refused for one of them is dropped from every version filed from here. */
-const REFUSED_FOR_GOOD: ReadonlySet<RosterEntryRefusal> = new Set<RosterEntryRefusal>(['not-their-signing-key', 'not-their-person', 'vault-keys-not-theirs', 'rights-not-the-chains', 'seat-retired']);
+const REFUSED_FOR_GOOD: ReadonlySet<RosterEntryRefusal> = new Set<RosterEntryRefusal>(['not-their-signing-key', 'not-their-person', 'vault-keys-not-theirs', 'seat-retired']);
 
 /** Whether a version filed from here carries `s`: believed here, or refused only for what a later read can lift. */
 const carriedOn = (s: Signer, w: RosterWitnesses): boolean => {
@@ -664,6 +664,7 @@ const carriedHere = async (
   let signers = seated.filter((s) => carriedOn(s, held.witnesses));
   let unnamed = unnamedIn(signers, stayingIn(held.witnesses), held.waited);
   let above = held.roster.version;
+  const activeIn = (rec: SealedCompanyRecord) => openRoster(rec, keysByPurpose(d.viewingKey).at(rec.keyEpoch)).signers.filter((s) => s.status === 'active' && carriedOn(s, held.witnesses));
   if (followed || unnamed.length > 0) {
     const answer = await d.api(companyWirePaths.versions(d.accountId, 'roster', ROSTER_ID)) as { versions?: unknown } | null;
     if (!Array.isArray(answer?.versions)) throw new RosterNotFiled('The company\'s earlier rosters could not be read.');
@@ -678,13 +679,12 @@ const carriedHere = async (
         throw new RosterNotFiled('No version of the company\'s roster filed by a seat that may file one can be read, so the version '
           + 'every device refuses is not followed from here.');
       }
-      signers = openRoster(base, keyOf(d.viewingKey, base.keyEpoch)).signers.filter((s) => s.status === 'active' && carriedOn(s, held.witnesses))
-        .map((b) => boundFrom(b, seated, held.witnesses));
+      signers = activeIn(base).map((b) => boundFrom(b, seated, held.witnesses));
       unnamed = unnamedIn(signers, stayingIn(held.witnesses), held.waited);
     }
     for (const rec of older) {
       if (unnamed.length === 0) break;
-      const theirs = openRoster(rec, keyOf(d.viewingKey, rec.keyEpoch)).signers.filter((s) => s.status === 'active' && carriedOn(s, held.witnesses));
+      const theirs = activeIn(rec);
       for (const seat of unnamed) {
         const found = theirs.find((s) => (s.leafCommitment ?? '').toLowerCase() === seat);
         if (found !== undefined) signers.push(found);
@@ -708,7 +708,7 @@ const carriedHere = async (
  * `b`, an entry of a version filed by a seat that may file one, with what a
  * refused version's entry for the same signer, seat and filing key binds -
  * their vault keys and the entry their wallet signed - where that entry is one
- * this device believes. Its name, sign-in, role and wrapping key are `b`'s.
+ * this device believes. Its name, sign-in and wrapping key are `b`'s.
  */
 const boundFrom = (b: Signer, refused: readonly Signer[], w: RosterWitnesses): Signer => {
   const r = refused.find((x) => x.id === b.id && (x.leafCommitment ?? '').toLowerCase() === (b.leafCommitment ?? '').toLowerCase()
@@ -733,7 +733,7 @@ export async function fileTheRosterFollowedHere(d: RosterDoors): Promise<number 
   const read = await rosterHere(d);
   if (read.followed === null && !retiredSeatStillNamed(read.opened.signers, read.witnesses)) return null;
   if (filerRefusedHere(read.held.here, signingPublicKeyOf(d.signingSecret), read.version + 1)) return null;
-  const { filing, entry } = nextFiling(d, read.sealed.keyEpoch, seatedOf(read.carried), read.version);
+  const { filing, entry } = nextFiling(d, read.held.here, read.sealed.keyEpoch, seatedOf(read.carried), read.version);
   const entries = await withTheFoundingFirst(d, nothingAnchoredIn(read.held), entry);
   await d.api(route(d.accountId, '/roster'), { method: 'POST', body: JSON.stringify({ ...filing, folded: [] }) });
   await d.entered.enter(entries);
@@ -784,19 +784,25 @@ const nothingAnchoredIn = (held: RosterReadHeld): boolean => held.here.records.r
  * The roster's next version, sealed and signed here under the company's key in
  * force (refused while sealing is paused; a bare key seals at `keyEpoch`), with
  * the index of the company's vault keys made from it, and the entry the one
- * filing call makes of it once the service has kept it.
+ * filing call makes of it once the service has kept it, and the sealing it
+ * was made under. Refused before it is
+ * signed when this device's seat may not file it (`filerRefusedHere`), judged
+ * as every device reads that version, with the records keys its own entries
+ * attest, since every device would refuse it in turn.
  */
 const nextFiling = (
-  d: RosterDoors, keyEpoch: number, next: RosterSecrets, version: number,
+  d: RosterDoors, here: Awaited<ReturnType<typeof directoryHere>>, keyEpoch: number, next: RosterSecrets, version: number,
   sealing: { readonly key: Hex; readonly epoch: number } = sealingWith(d.viewingKey, keyEpoch),
 ) => {
+  const asRead = { ...here, another: seatsWithAnotherRecordsKey(here.dir, d.label, here.holders.account, attestedIn(next)) };
+  if (filerRefusedHere(asRead, signingPublicKeyOf(d.signingSecret), version + 1)) throw new RosterNotFiled(SEAT_MAY_NOT_FILE_THE_ROSTER);
   const rec = signedWithItsEntry(sealRoster(d.accountId, next, version + 1, sealing.epoch, sealing.key), d.signingSecret);
   return {
     filing: {
       roster: { version: version + 1, message: toCompanyWire(rec) },
       index: vaultKeyIndexOf({ id: d.accountId, signers: next.signers }),
     },
-    entry: companyRecordEntry(rec),
+    entry: companyRecordEntry(rec), sealing,
   };
 };
 
@@ -902,6 +908,10 @@ export async function refuseASeatNotForTheInvited(
  * sentence an approving device shows, or null: everything
  * `refuseASeatNotForTheInvited` holds a request to but the other requests in
  * the inbox. The one rule for approving a leaf and for a seat being waited for.
+ * Its inviter is held to the one role check (`inviterRefusalOf`), and a seat
+ * taken by address to the one rule for an approved invitation
+ * (`approvedInvitationRefusal`); a request answered by link or code, whose
+ * invitation names no proposal yet, is held to the person and leaf it names.
  * Throws what `seatsTakenAsked` throws when a seat taken by address cannot be
  * checked: an unread chain is never told as another seat, and a seating
  * refused for good keeps its own words.
@@ -917,9 +927,9 @@ const invitationRefusalHere = async (
   if (t.company !== sealed.id || t.name !== payload.name || t.role !== payload.role) {
     return 'This seat request asks for another company, name or role than its invitation gave, so nobody is seated from it.';
   }
-  if (!signedByASeatHeld(invited, reads.seats, onTheChain(payload.leafCommitment, reads))) {
-    const inviter = reads.seats.find((x) => x.signingKey.toLowerCase() === invited.signedBy.toLowerCase());
-    return inviter !== undefined && !mayInvite(inviter)
+  const notInviting = inviterRefusalOf(invited, reads.seats, onTheChain(payload.leafCommitment, reads));
+  if (notInviting !== null) {
+    return notInviting === 'may-not-invite'
       ? 'The seat that signed this invitation has a role that may not file a proposal, so it invites nobody, and nobody is seated from it.'
       : 'The seat that signed this invitation is not one this device believes is seated, so nobody is seated from it.';
   }
@@ -927,7 +937,7 @@ const invitationRefusalHere = async (
     /* Made by address: nobody's sign-in was known, and the seat is the one the chain shows the invitation's own proposal took. */
     const proposal = t.proposal!.toLowerCase();
     const took = (await seatsTakenAsked(reads.invitedSeats, [proposal]))[proposal] ?? null;
-    if (took === null || took.toLowerCase() !== payload.leafCommitment.toLowerCase()) {
+    if (approvedInvitationRefusal(invited, null, { leaf: payload.leafCommitment, took }) !== null) {
       return 'The seat in this request is not the one the network shows this invitation\'s proposal took, so nobody is seated from it.';
     }
   } else {
@@ -1009,7 +1019,7 @@ export const sameInvitation = (a: SignedSeatInvitation, b: SignedSeatInvitation)
  * serves, the ones the company's records hold as they were served (`listedHere`), filed by a seat the directory this
  * device reads holds as able to file them (`judgeIn`, as `believedProposalIdsOnChainHere` asks it), that open with the
  * viewing key as a proposal to seat an address under `chainId` (`addSignerByAddressIn`), whose invitation a seat
- * that may invite signed (`signedByASeatHeld`), and whose invitation makes that id (`invitationMakesItsProposal`). A record
+ * that may invite signed (`signedByASeatHeld`), and whose invitation makes that id (`approvedInvitationRefusal`). A record
  * filed or an invitation signed by any other key is not one, and nor is a second invitation filed under an id the
  * approved one made: the id commits to the whole invitation, so two different invitations never stand under one id.
  */
@@ -1027,8 +1037,8 @@ export const believedSeatingsUnder = async (
     if (x === null || x.chainId !== id || !signedByASeatHeld(x.invited, seats, leafOnTheChain)) continue;
     out.push(x);
   }
-  const made = await Promise.all(out.map((x) => invitationMakesItsProposal(x.invited, identity)));
-  return out.filter((_, i) => made[i]);
+  const made = await Promise.all(out.map((x) => proposalItsSaltMakes(x.invited, identity)));
+  return out.filter((x, i) => approvedInvitationRefusal(x.invited, { chainId: made[i] ?? null }) === null);
 };
 
 /**
@@ -1132,13 +1142,11 @@ export async function admitSignerHere(d: RosterDoors, input: { signerId: string;
     ],
   };
   /* One sealing for the key handed to the person and the roster that seats them: both refused while sealing is paused. */
-  const sealing = sealingWith(d.viewingKey, sealed.keyEpoch);
-  const wrap = wrapKey(sealing.key, payload.wrappingPublicKey);
-  const { filing, entry } = nextFiling(d, sealed.keyEpoch, next, version, sealing);
+  const { filing, entry, sealing } = nextFiling(d, read.held.here, sealed.keyEpoch, next, version);
   const entries = await withTheFoundingFirst(d, nothingAnchoredIn(read.held), entry);
   await d.api(route(d.accountId, `/signers/${encodeURIComponent(input.signerId)}/admit`), {
     method: 'POST',
-    body: JSON.stringify({ ...filing, leaf: payload.leafCommitment.toLowerCase(), wrap }),
+    body: JSON.stringify({ ...filing, leaf: payload.leafCommitment.toLowerCase(), wrap: wrapKey(sealing.key, payload.wrappingPublicKey) }),
   });
   await d.entered.enter(entries);
 }
@@ -1233,7 +1241,7 @@ export async function foldOffersHere(d: RosterDoors): Promise<Folded> {
    * offer refused here stays open until its own signer offers again, for this or another seat's device to fold.
    */
   if (folded.length === 0) return { folded, refused };
-  const { filing, entry } = nextFiling(d, sealed.keyEpoch, roster, version);
+  const { filing, entry } = nextFiling(d, held.here, sealed.keyEpoch, roster, version);
   const entries = await withTheFoundingFirst(d, nothingAnchoredIn(held), entry);
   await d.api(route(d.accountId, '/roster'), { method: 'POST', body: JSON.stringify({ ...filing, folded }) });
   await d.entered.enter(entries);

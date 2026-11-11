@@ -14,7 +14,7 @@ import type { PaymentFacts } from '../midnight/payout-tree.js';
 import { payrollPayee } from './movement.js';
 import type { PayRecord } from '../midnight/run-keys.js';
 import type { Hex } from './crypto.js';
-import { openRecord, sealRecord } from './sealed-records.js';
+import { openRecord, sealRecord, type RecordsKey } from './sealed-records.js';
 import { kindOfRun } from './already-paid.js';
 import { payeeKeysRefusal } from './payee-keys.js';
 
@@ -258,7 +258,7 @@ export const PROPOSALS_OUTSIDE_ARE_NOT_INSIDE = 'this run\'s record lists other 
  * seal only, and a run naming a list that is neither is refused: it would
  * escape every check of which runs its month already has.
  */
-export const openSealedRun = (r: SealedRun, viewingKey: Hex): PayrollRun => {
+export const openSealedRun = (r: SealedRun, viewingKey: RecordsKey): PayrollRun => {
   const { sealed, keyEpoch: _epoch, proposalIds: outside, filedBy: _filedBy, list: _listOutside, ...operational } = r as SealedRun & { list?: unknown };
   const secrets = openRecord<RunSecrets>('payroll', r.accountId, sealed, viewingKey);
   const inside = proposalListOf(secrets);

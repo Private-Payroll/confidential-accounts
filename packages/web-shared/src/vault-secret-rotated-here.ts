@@ -332,7 +332,7 @@ async function waitsHere(doors: VaultRotationDoors, leaf: string | undefined): P
   const here = await doors.directory();
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex).toLowerCase();
   const seat = here.dir.seats.find((x) => x.signingKey.toLowerCase() === mine);
-  const waited = await removalWaitsHere(here, seat, leaf === undefined ? {} : { leaf },
+  const waited = await removalWaitsHere(here, seat, leaf === undefined ? { admittedFirst: true } : { leaf, admittedFirst: true },
     (s) => (mayFile(s).includes('nonce-secret') ? null : 'this seat\'s role files no vault secret, so it does not change one'), doors);
   if (waited.state === 'waits' || waited.state === 'not-this-seat') return waited;
   if (waited.state === 'ready') return { state: 'waits', why: 'the company\'s key is changed first, after a signer\'s removal; it is changed by the next action a signer who stays takes in their wallet' };

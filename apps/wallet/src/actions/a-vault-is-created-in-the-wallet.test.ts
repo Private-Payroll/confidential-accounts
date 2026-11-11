@@ -116,7 +116,7 @@ describe('the company the page names is believed only as the wallet\'s own chain
 /* The company's directory as the wallet believes it: this seat's entry names the roster's key, Bo's another; the chain holds `held`. */
 const BO_LEAF = 'bb'.repeat(32);
 const believing = (held: readonly string[], keys: Readonly<Record<string, string>> = { [LEAF]: '5a'.repeat(32), [BO_LEAF]: '7c'.repeat(32) }, another: readonly string[] = []) => ({
-  dir: { seats: Object.entries(keys).map(([seat, wrappingKey]) => ({ seat, wrappingKey, retired: null })) },
+  dir: { seats: Object.entries(keys).map(([seat, wrappingKey]) => ({ seat, wrappingKey, retired: null, rights: { every: true } })) },
   another: new Set(another), holders: { seats: held }, leafOf: () => null,
 });
 const reachParts = (over: Record<string, unknown> = {}) => ({
