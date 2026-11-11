@@ -13,8 +13,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   approverRosterFrom, barOf, policyChangeRefusal, withBandsInForce, vaultsLeftShort, refuseLeavingAVaultShort, thresholdCarryBar, thresholdChangeRefusal, removalRefusal,
-  seatRightsOf, seatThresholdRefusal, type ApproverRoster, type RemovalBounds, type SeatRights, type ThresholdBounds,
+  seatThresholdRefusal, refusalSaid, type ApproverRoster, type RemovalBounds, type SeatRights, type ThresholdBounds,
 } from './vault-approvers.js';
+import { ALL_VAULTS, invitedSeatRightsOf, scopeOfRole } from './seat-rights.js';
 
 const PAYROLL = 'aa'.repeat(32);
 const TREASURY = 'bb'.repeat(32);
@@ -124,7 +125,7 @@ describe('A VAULT\'S BAR IS THE MOST ITS RUNS CAN ASK FOR', () => {
   it('THE COMPANY IS COUNTED FROM WHAT THE DEVICE READ, A SEAT WITH NO RIGHTS RECORDED HOLDING EVERY RIGHT', () => {
     const r = approverRosterFrom({
       threshold: 2, vaultThresholds: [{ vault: PAYROLL.toUpperCase(), threshold: 3 }],
-      seated: [{ leaf: 'A1' }, { leaf: 'b2', rights: raiserOnly }], adoptedVaults: [PAYROLL.toUpperCase()], companyWide: COMPANY,
+      seated: [{ leaf: 'A1', rights: EVERY }, { leaf: 'b2', rights: raiserOnly }], adoptedVaults: [PAYROLL.toUpperCase()], companyWide: COMPANY,
       bands: new Map([[TREASURY, 4]]),
     });
     /* RED WHEN: a seat with no rights recorded is counted as unable to approve, or leaves and vaults keep their case. */
@@ -281,13 +282,14 @@ describe('a removal, with or without a new threshold, is refused on the device w
 });
 
 describe('a seat added with a new threshold is checked on the device before anything is built', () => {
-  const ALL = 'dd'.repeat(32);
   const one = roster([['a', EVERY]], 1);
+  const invited = (role: 'admin' | 'approver' | 'initiator', vaults?: string[]) =>
+    invitedSeatRightsOf({ role, ...(vaults === undefined ? {} : { vaults: vaults as never }) }, scopeOfRole(role, vaults as never));
   it('the threshold is a whole number no higher than the signers seated once the seat is taken', () => {
     /* RED WHEN: the seat the invitation adds is not counted, so a company of one cannot invite a second signer at two approvals. */
-    expect(seatThresholdRefusal(one, { seats: 1 }, { kind: 'seatAndThreshold', rights: seatRightsOf(ALL, ALL), threshold: 2 }, names)).toBeNull();
+    expect(seatThresholdRefusal(one, { seats: 1 }, { kind: 'seatAndThreshold', rights: invited('admin'), threshold: 2 }, names)).toBeNull();
     /* RED WHEN: a threshold above the signers seated once the seat is taken is raised, which the chain refuses only when the seat is taken. */
-    expect(seatThresholdRefusal(one, { seats: 1 }, { kind: 'seatAndThreshold', rights: seatRightsOf(ALL, ALL), threshold: 3 }, names))
+    expect(seatThresholdRefusal(one, { seats: 1 }, { kind: 'seatAndThreshold', rights: invited('admin'), threshold: 3 }, names))
       .toMatch(/once this seat is taken the company has 2 signers, so it cannot need 3 approvals/u);
     /* RED WHEN: a threshold that is not a whole number of at least one is let through. */
     for (const bad of [0, -1, 1.5, Number.NaN]) {
@@ -295,23 +297,37 @@ describe('a seat added with a new threshold is checked on the device before anyt
     }
   });
 
-  it('a seat with rights of its own is counted on no vault, and a threshold that leaves a vault short is refused, naming it and saying so', () => {
-    /* RED WHEN: a seat invited with a scope other than every vault's is counted as approving where its scope is read as a vault: the scope is a rights record's commitment, never a vault. */
-    expect(seatRightsOf(PAYROLL, ALL)).toEqual({ every: false, mayApprove: false, everyVault: false, onVaults: [] });
-    expect(seatRightsOf(ALL.toUpperCase(), ALL)).toEqual(EVERY);
-    const said = seatThresholdRefusal(one, { seats: 1 }, { kind: 'seatAndThreshold', rights: seatRightsOf(PAYROLL, ALL), threshold: 2 }, names);
+  it('a seat is counted where its role\'s rights let it approve, and a threshold that leaves a vault short is refused, naming it', () => {
+    /* RED WHEN: a seat invited at a scope that is not every vault's is counted as approving every vault, or an admin on every vault on none. */
+    expect(invited('admin')).toEqual(EVERY);
+    expect(invitedSeatRightsOf({ role: 'initiator' }, scopeOfRole('approver'))).toEqual({ every: false, mayApprove: false, everyVault: false, onVaults: [] });
+    expect(invitedSeatRightsOf({ role: 'approver' }, ALL_VAULTS)).toEqual(EVERY);
+    /* RED WHEN: an initiator, which approves no run, is counted as an approver, so a threshold no seat can reach is let through. */
+    const said = seatThresholdRefusal(one, { seats: 1 }, { kind: 'seatAndThreshold', rights: invited('initiator'), threshold: 2 }, names);
     expect(said).toMatch(/^this change would leave vaults unable to pay: Payroll .*Treasury .*company-wide runs/u);
-    /* RED WHEN: the refusal does not say the new seat was counted on no vault, so the person cannot tell why a seat they added counts for nothing. */
-    expect(said).toMatch(/The new seat is counted on no vault/u);
-    /* RED WHEN: a vault with a threshold of its own is judged at the company's new one. */
+    /* An approver on every vault meets it. */
+    expect(seatThresholdRefusal(one, { seats: 1 }, { kind: 'seatAndThreshold', rights: invited('approver'), threshold: 2 }, names)).toBeNull();
+    /* RED WHEN: a vault with a threshold of its own is judged at the company's new one, or a seat scoped to Payroll is counted elsewhere. */
     const own = roster([['a', EVERY]], 1, [[TREASURY, 1]]);
     expect(seatThresholdRefusal({ ...own, runVaults: [PAYROLL, TREASURY] }, { seats: 1 },
-      { kind: 'seatAndThreshold', rights: seatRightsOf(PAYROLL, ALL), threshold: 2 }, names)).toMatch(/^this change would leave a vault unable to pay: Payroll \(/u);
+      { kind: 'seatAndThreshold', rights: invited('approver', [TREASURY]), threshold: 2 }, names)).toMatch(/^this change would leave a vault unable to pay: Payroll \(/u);
+    expect(seatThresholdRefusal({ ...own, runVaults: [PAYROLL, TREASURY] }, { seats: 1 },
+      { kind: 'seatAndThreshold', rights: invited('approver', [PAYROLL]), threshold: 2 }, names)).toBeNull();
     /* A seat with every vault's rights meets it, and is not said to be counted on none. */
     expect(seatThresholdRefusal({ ...own, runVaults: [PAYROLL, TREASURY] }, { seats: 1 }, { kind: 'seatAndThreshold', rights: EVERY, threshold: 2 }, names)).toBeNull();
     /* Bands are not counted, as for a threshold change: a band alone never refuses it. */
     expect(seatThresholdRefusal({ ...one, bands: new Map([[PAYROLL as never, 5]]) }, { seats: 1 },
       { kind: 'seatAndThreshold', rights: EVERY, threshold: 2 }, names)).toBeNull();
+  });
+});
+
+describe('a refusal is said to the person as a sentence', () => {
+  it('begins with a capital, changes nothing else, and says an empty reason as empty', () => {
+    /* RED WHEN: the refusal is shown as the check returns it, in lower case, or the rest of it is changed. */
+    expect(refusalSaid('this change would leave a vault unable to pay: Payroll (x). Give another signer the right.'))
+      .toBe('This change would leave a vault unable to pay: Payroll (x). Give another signer the right.');
+    expect(refusalSaid('Already capital')).toBe('Already capital');
+    expect(refusalSaid('')).toBe('');
   });
 });
 

@@ -25,13 +25,10 @@ import { rosterHere } from 'vaults-web-shared/roster-here.js';
 import { attestedIn } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { companyKeyHere, rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
-import { sign, type Hex } from '../core/crypto.js';
-import type { Role } from '../core/types.js';
-import { directoryChangeMessage, type DirectoryChange } from '../midnight/seat-directory.js';
 import { aRecordFiledBy } from './a-company-of-two-seats.test-support.js';
 import {
   aCompanyWhoseSignersChange, anchorDoorsOf, aPolicyFiledBy, ADA, BO, CO, companyKeyDoorsOf, CY, deviceOf, directoryOf, events, KEY, policyReadBy,
-  recordsReadBy, rosterDoorsOf, seatsOnTheChain, sendAs, store, walletOf, type Seat,
+  recordsReadBy, rosterDoorsOf, seatOf, seatsOnTheChain, sendAs, store, walletOf,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
 
 aCompanyWhoseSignersChange();
@@ -39,13 +36,14 @@ aCompanyWhoseSignersChange();
 /** What a device asks of the company's records: every spending policy, with the directory. */
 const EVERY_POLICY = { kinds: [{ store: 'company' as const, kind: 'spending-policy' }] };
 
-/** The directory's next version, a role change signed by `by` at the seat bar of two, filed and not anchored. Returns its version. */
-const aRoleChangeSignedBy = async (by: readonly Seat[], change: { seat: string; role: Role }): Promise<number> => {
+/**
+ * The directory's next version, filed and not anchored: a second entry for Ada's seat under a new filing key, which
+ * the service keeps beside her first and every device passes over. Returns its version.
+ */
+const aSecondEntryForAdasSeat = async (): Promise<number> => {
   const version = store.directoryFilingsOf(CO).length + 1;
-  const unsigned = { kind: 'role', ...change, threshold: 2, signatures: [] } as unknown as DirectoryChange;
-  const message = directoryChangeMessage(CO, version, unsigned);
-  const filing = { company: CO, version, change: { ...unsigned, signatures: by.map((s) => ({ publicKey: s.statement.signingKey as Hex, signature: sign(message, s.signingSecret) })) } };
-  const r = await sendAs(by[0]!.person)(`/api/accounts/${CO}/directory/${version}`, { method: 'POST', body: JSON.stringify(filing) });
+  const filing = { company: CO, version, change: { kind: 'claim', entry: seatOf('ada', 1).entry } };
+  const r = await sendAs('ada')(`/api/accounts/${CO}/directory/${version}`, { method: 'POST', body: JSON.stringify(filing) });
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return version;
 };
@@ -57,7 +55,7 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
     expect((await anchorTheRecordsHere(anchorDoorsOf(CY))).anchored).toBeGreaterThan(0);
     /* Then, filed and not anchored when the removal is raised: Cy's spending policy, sealed to all three seats, and a directory version. */
     expect(await aPolicyFiledBy(CY, [ADA, BO, CY])).toBe(1);
-    const pending = await aRoleChangeSignedBy([ADA, BO], { seat: ADA.seat, role: 'admin' });
+    const pending = await aSecondEntryForAdasSeat();
     const before = await directoryOf(BO)(EVERY_POLICY);
     expect(before.records.directory.has(pending)).toBe(false);
     expect(before.records.notYetAnchored.some((e) => e.kind === 'spending-policy')).toBe(true);
@@ -88,11 +86,11 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
     const proposal = store.listProposals(CO).at(-1)!;
     expect(proposal.status).toBe('executed');
     expect(new Set(proposal.retirementSignatures?.map((x) => `${x.signedFor} ${x.publicKey}`)))
-      .toEqual(new Set([`7 ${ADA.statement.signingKey}`, `7 ${BO.statement.signingKey}`]));
+      .toEqual(new Set([`5 ${ADA.statement.signingKey}`, `5 ${BO.statement.signingKey}`]));
 
     /* RED WHEN: the chain is asked to take the leaf off before the retirement is filed and anchored, or the leaver's own policy before it. */
     expect(events).toEqual([
-      'anchored', 'chain propose', 'chain approve', 'directory 7 retire', 'anchored', `chain removeSignerAndSetThreshold removing ${CY.seat}`,
+      'anchored', 'chain propose', 'chain approve', 'directory 5 retire', 'anchored', `chain removeSignerAndSetThreshold removing ${CY.seat}`,
     ]);
     /* RED WHEN: the chain call is not relayed, or the chain keeps the leaf. */
     expect(seatsOnTheChain()).toEqual([ADA.seat, BO.seat]);
@@ -105,7 +103,7 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
       const cy = here.dir.seats.find((x) => x.seat === CY.seat)!;
       /* RED WHEN: the directory judge does not retire the seat its quorum signed off. */
       expect(Object.entries(cy.retired ?? {}).sort(), s.person).toEqual([['policy:pol_filed_by_cy', 1], [expect.stringMatching(/^spending-policy:/u), 1]]);
-      expect(here.records.directory.has(7), s.person).toBe(true);
+      expect(here.records.directory.has(5), s.person).toBe(true);
     }
 
     /* The roster each staying device believes leaves Cy out, so no statement of Cy's is read from it any more. */

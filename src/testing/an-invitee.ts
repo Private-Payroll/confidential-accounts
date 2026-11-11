@@ -10,6 +10,8 @@ import { createHash } from 'node:crypto';
 import type { Hex } from '../core/crypto.js';
 import type { CommitmentScheme, InvitedSeat, TxRef } from '../core/ledger.js';
 import type { SignerInvite } from '../core/account.js';
+import type { SignerRole } from '../core/roles.js';
+import { scopeOfRole } from '../core/seat-rights.js';
 
 export interface Invitee {
   /** The coin secret key of the address they are invited at, and the salt that hides it. */
@@ -37,8 +39,18 @@ export function anAddress(commitments: CommitmentScheme, seed: number): Pick<Inv
   return { coinSecretKey, addressSalt, address: commitments.inviteAddressOf(commitments.coinPublicKeyOf(coinSecretKey), addressSalt) };
 }
 
-/** An invitee whose keys are worked out from `seed`, with every right on every vault unless `scope` says otherwise. */
-export function anInvitee(commitments: CommitmentScheme, seed: number, scope: Hex = commitments.allVaults()): Invitee {
+/**
+ * An invitee whose keys are worked out from `seed`, seated with the rights `role` gives on every vault (an admin's are
+ * every right, `allVaults()`), unless `scope` says otherwise.
+ */
+export function anInvitee(
+  commitments: CommitmentScheme, seed: number, scope?: Hex, role: SignerRole = 'admin',
+): Invitee {
+  const seated = scope ?? (role === 'admin' ? commitments.allVaults() : scopeOfRole(role));
+  return inviteeAt(commitments, seed, seated);
+}
+
+function inviteeAt(commitments: CommitmentScheme, seed: number, scope: Hex): Invitee {
   const { coinSecretKey, addressSalt, address } = anAddress(commitments, seed);
   const signerPublicKey = bytes('a test invitee seat key', seed);
   const blinding = bytes('a test invitee blinding', seed);

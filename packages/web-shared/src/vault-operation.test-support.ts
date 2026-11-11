@@ -12,7 +12,7 @@ import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../.
 import type { PaymentInFlight, PaymentsInFlight, SecretReaderSources, ServedVaultChain, VaultChainView, VaultService } from './vault-operation.js';
 import type { VaultBuilderClient, VaultOnChainOnTheWire } from './vault-worker-client.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
-import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../../src/core/vault-approvers.js';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { creatingTransactionOfNote } from './vault-worker-entry.js';
 import { identityFromSecret } from 'midnight-identity';
@@ -73,7 +73,7 @@ export const committee = { committee: [{ tag: 'schnorr', value: walletKey(0x11) 
  */
 export const nobodyShort = {
   approvers: async () => approverRosterFrom({
-    threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+    threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
   }),
   vaultName: (v: string) => v,
 };

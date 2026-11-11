@@ -7,7 +7,7 @@
  * The record a governed call runs against has two halves with two different
  * origins, and only one of them may ever reach a store:
  *
- *   THE SIGNER'S OWN MATERIAL   `secretKey`, `blinding`, `scope`. One person's.
+ *   THE SIGNER'S OWN MATERIAL   `secretKey`, `blinding`, `scope`, `rights`. One person's.
  *                       It lives once, in that person's own encrypted keyring,
  *                       and is composed into the record in memory at the moment
  *                       a circuit asks for it. **It is never persisted, on any
@@ -38,7 +38,7 @@
  * the record survives. And a record composed partly from material another party
  * holds is a record another party can put a pin into.
  *
- * So the two are on the same list as the three, for a different reason, and the
+ * So the two are on the same list as the signer's own, for a different reason, and the
  * list says which reason each is on it for.
  *
  * -- WHY IT IS A MODULE AND NOT A SENTENCE IN A COMMENT --------------------
@@ -66,13 +66,13 @@
 import type { AccountPrivateState } from '../../contracts/src/witnesses.js';
 
 /**
- * The three that are one person's and are composed rather than stored.
+ * The four that are one person's and are composed rather than stored.
  *
  * Constrained to the record's own field names, so a rename of any of them in
  * the contract's private half is a type error here rather than a list that has
  * quietly stopped naming anything.
  */
-export type SignerOnlyField = Extract<keyof AccountPrivateState, 'secretKey' | 'blinding' | 'scope'>;
+export type SignerOnlyField = Extract<keyof AccountPrivateState, 'secretKey' | 'blinding' | 'scope' | 'rights'>;
 
 /** The two that forge a membership path, and must not survive a call either. */
 export type ForgedPathField = Extract<keyof AccountPrivateState, 'pinnedPath' | 'pinAnyLeaf'>;
@@ -90,7 +90,7 @@ export type NeverPersistedField = SignerOnlyField | ForgedPathField;
 export const NEVER_PERSISTED_FIELDS: Record<NeverPersistedField, string> = {
   /*
    * **NOT "MEMORY ONLY", AND THE DIFFERENCE MATTERS TO WHOEVER READS THIS
-   * REFUSAL.** These three are written down - once - in the signer's own
+   * REFUSAL.** These four are written down - once - in the signer's own
    * encrypted keyring, which is where they live. What must not exist is a
    * SECOND copy of them, in the store a call's record is written to. A message
    * saying they may never be stored at all sends the next reader looking, and
@@ -99,6 +99,7 @@ export const NEVER_PERSISTED_FIELDS: Record<NeverPersistedField, string> = {
   secretKey: "the signer's own material, which lives only in their keyring",
   blinding: "the signer's own material, which lives only in their keyring",
   scope: "the signer's own material, which lives only in their keyring",
+  rights: "the signer's own material, which lives only in their keyring",
   pinnedPath: 'a membership path that stops verifying when the signer tree moves',
   pinAnyLeaf: 'a membership path that stops verifying when the signer tree moves',
 };
@@ -108,6 +109,7 @@ export const SIGNER_ONLY_FIELDS: Record<SignerOnlyField, true> = {
   secretKey: true,
   blinding: true,
   scope: true,
+  rights: true,
 };
 
 /** The record as it may be written down: the account's half and nothing else. */
@@ -122,7 +124,7 @@ const present = <K extends string>(record: unknown, names: readonly K[]): K[] =>
 };
 
 /**
- * Which of the signer's three a record still carries, in the order they are
+ * Which of the signer's four a record still carries, in the order they are
  * declared.
  *
  * **PRESENCE, NOT TRUTHINESS.** A field that is present and empty, or present

@@ -31,6 +31,9 @@
  *   · **making yourself payable** (`makeMyselfPayableHere`): the same checks,
  *     on the code your own wallet signed.
  *
+ * The one filing call refuses, before it signs or sends anything, when this device's own seat holds a role that may not
+ * file a person's record (`mayFileHere`); the service judges no role.
+ *
  * What is filed is the next version of the person's record, sealed and signed
  * here, naming the seat that made it and when (`madeBy`, `madeAt`); a version
  * that names a signer other than its filer is not believed. The service checks
@@ -54,6 +57,7 @@ import type { RecordsEntered } from './record-entered-here.js';
 import { joinCodeSignedBy, type JoinCode, type PayeeParts } from 'midnight-identity/profile/join-code';
 import { payeeCodeFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { judgeIn, kindAsked, seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
+import { mayFileHere } from './may-file-here.js';
 import { payeeAt, type InvitationSend, type InvitingCompany } from './invitation-on-device.js';
 import {
   readClaimedHandover, typedAddressIsShielded, type AddressClaim,
@@ -97,11 +101,15 @@ export const madeHere = (signingSecret: Hex): MadeBy => ({ madeBy: signingPublic
 /**
  * **A VERSION OF A PERSON, SEALED AND SIGNED ON THIS DEVICE, FILED AT `path`
  * AND ENTERED IN THE COMPANY'S RECORDS** - the one filing call - once the
- * service has kept it. Returns the version as filed, naming this seat as its maker.
+ * service has kept it. Refused first, with what resolves it, when this seat's role may not file a person's record; a seat
+ * this device does not believe is not judged here, and every reader refuses what it files. Returns the version as filed,
+ * naming this seat as its maker.
  */
 const filedAndEntered = async (
   d: PeopleDevice, path: string, person: RosterEmployee, version: number, made: MadeBy = madeHere(d.signingSecret),
 ): Promise<RosterEmployee> => {
+  const refused = await mayFileHere(() => d.directory(), signingPublicKeyOf(d.signingSecret), 'person');
+  if (refused?.why === 'role') throw new PersonNotChanged(refused.says);
   const filed: RosterEmployee = { ...person, ...made };
   const sealing = sealingWith(d.company.viewingKey, d.company.keyEpoch);
   const rec = signedWithItsEntry(sealPerson(filed, version, sealing.epoch, sealing.key), d.signingSecret);
@@ -187,7 +195,7 @@ const refuseACodeThatCannotBePaid = (
    * check, so nothing is made payable while one is there.
    */
   if (read.notBelieved.length > 0) {
-    throw new PersonNotChanged(`the payroll holds ${read.notBelieved.length} record(s) no seat this device believes filed (${read.notBelieved.join(', ')}), so whether this person is already payable cannot be checked. A signer files those people again from their own device first.`);
+    throw new PersonNotChanged(`the payroll holds ${read.notBelieved.length} record(s) no seat this device believes filed (${read.notBelieved.join(', ')}), so whether this person is already payable cannot be checked. One a seat this device does not believe filed is filed again by a signer whose seat it believes; one whose record does not open here is read on a seat's device that holds the key it was sealed under, and this person is added from there.`);
   }
   const activeNotPayable = read.notPayable.filter((x) => x.here.person.status === 'active');
   if (activeNotPayable.length > 0) {

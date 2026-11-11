@@ -6,7 +6,10 @@ import type { AccountHoldersRead, AccountPaymentFacts, AccountRoleEntry } from '
 import { canonical, randomBytes, signingPublicKeyOf, toHex, unwrapKey, type Hex } from '../../../../src/core/crypto.js';
 import type { SealedAccount, SealedProposal } from '../../../../src/core/types.js';
 import { newProposalId } from '../../../../src/core/proposal-filing.js';
-import { approverRosterFrom, type ApproverRoster } from '../../../../src/core/vault-approvers.js';
+import { approversHere, runsOutrunHere } from './approvers-here.js';
+import { spendingPoliciesFor } from './spending-policies-reach.js';
+
+export { spendingPoliciesFor };
 import { companyWirePaths, fromCompanyWire } from '../../../../src/midnight/sealed-record-wire.js';
 import { governedCallServiceFor, withCompanyKeys, type GovernanceDoors } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import type { RosterDoors } from '../../../../packages/web-shared/src/roster-here.js';
@@ -25,13 +28,11 @@ import { buildOneOffRun, type DetailsOfKind } from '../../../../src/midnight/pay
 import { openOneOff } from '../../../../src/midnight/one-off-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
-import { SPENDING_POLICY_KIND } from '../../../../src/midnight/spending-policy-record.js';
 import { detailsOfKind } from '../../../../src/midnight/vault-details.js';
 import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { readPeopleHere } from '../../../../packages/web-shared/src/people-read-here.js';
 import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
-import { chainReadThroughTheWallet } from '../../../../packages/web-shared/src/spending-policy-here.js';
 import type { TreeKept } from '../../../../packages/web-shared/src/tree-kept-here.js';
 import { deviceSignerFrom, filingRefusalCodeOf, judgeIn, seatNotBelievedHere, type DirectoryHere } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { NETWORK } from 'midnight-identity/network';
@@ -49,6 +50,7 @@ import { intentShapeOf } from 'midnight-identity/profile/act-shape';
 import { routeOf } from 'midnight-identity/profile/act-intents';
 import { StepRefused, type StepContext, type Words } from './definition.js';
 import { fellBackLine, type FellBack } from './fall-back-line.js';
+import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 
 /*
@@ -359,8 +361,9 @@ const NO_LONGER_AGREED = 'the company\'s choice of service was agreed by signers
  * - each version is judged before it is opened, the highest served as the newest there is. A version the anchored
  *   records do not name is dropped unopened (never entered, or passed over by the records); the highest refused only
  *   as never entered is not counted and leaves the choice unread until a later version is filed over it. A version
- *   they name refused for any other reason leaves the choice unread: one served as other bytes is never dropped,
- *   so a service cannot take a filing out of the count. Only one filed by a seat no longer seated is not counted;
+ *   they name refused for any other reason leaves the choice unread, so a service cannot take a filing out of the count.
+ *   A version filed by a seat whose role may not file it is passed over at any version; one past its boundary is
+ *   passed over only below the highest; one by a seat no longer seated is not counted;
  * - a believed version this seat cannot open (filed in the old form, wrapped to the seats alone, before it was
  *   seated; sealed at an epoch whose company key this device does not hold; or whose copies will not open) is
  *   passed over, with every version before it, only when the versions after it agree a choice by themselves;
@@ -392,8 +395,8 @@ export function serviceVersionsFrom(served: readonly SealedCompanyRecord[], d: S
     if (refused !== null) {
       const code = filingRefusalCodeOf(refused);
       if (rec.version === highest && code === 'not-entered' && !named.has(rec.version)) { unentered = { rec, why: refused }; continue; }
-      if (rec.version === highest && code !== 'seat-not-seated') return { unread: refused };
-      if (!named.has(rec.version) || code === 'past-its-boundary') continue;
+      if (rec.version === highest && code !== 'seat-not-seated' && code !== 'role-may-not-file') return { unread: refused };
+      if (!named.has(rec.version) || code === 'past-its-boundary' || code === 'role-may-not-file') continue;
       if (code !== 'seat-not-seated') return { unread: refused };
       left = true;
     }
@@ -639,65 +642,6 @@ export function keptReach(readFor: (ctx: StepContext) => Promise<CompanyReach>) 
   };
 }
 
-/**
- * Who may approve each vault's runs, counted from the roster this wallet believes and the seats the chain holds, for
- * the check that a change leaves no vault unable to pay. Refused while the roster names no signer for a seat the chain
- * holds (`notBelieved`), such as one waiting for Finish adding: a count without that seat is not the company's. With
- * `removals`, the signers removed since the open run they outran most was raised are counted against every vault the
- * account holds, naming that run: which vault a run pays from is sealed in its record, so the count can only refuse
- * more, never less. For a removal (`o.removal`), every vault the account holds is counted as holding an open run while
- * any run is open on the chain, so the one approval more the removal adds to every open run is counted, naming a run.
- */
-export const approversHere = async (
-  r: Pick<CompanyReach, 'roster' | 'holders' | 'builder'>,
-  removals?: () => Promise<{ readonly removals: number; readonly run: string | null; readonly open?: string | null }>,
-  o: { readonly removal?: boolean } = {},
-): Promise<ApproverRoster> => {
-  const [account, held, wide] = await Promise.all([r.roster(), r.holders(), r.builder.companyWide()]);
-  const n = account.notBelieved.length;
-  if (n > 0) {
-    throw new Error(`the company's roster, as this wallet believes it, names no signer for ${n} seat${n === 1 ? '' : 's'} the `
-      + 'company\'s account holds on the network, so it cannot count who approves each vault. Nothing was approved. If a '
-      + 'signer is waiting for Finish adding, a signer presses it first; then try again.');
-  }
-  const outrun: { removals: number; run: string | null; open?: string | null } = removals === undefined ? { removals: 0, run: null } : await removals();
-  const since = outrun.removals;
-  const counting = o.removal === true && (outrun.open ?? null) !== null;
-  const onTheChain = new Set(held.seats.map((x) => x.toLowerCase()));
-  return approverRosterFrom({
-    threshold: held.approvals, vaultThresholds: held.vaultThresholds,
-    seated: account.signers.filter((x) => x.status === 'active' && x.leafCommitment !== null && onTheChain.has(x.leafCommitment.toLowerCase()))
-      .map((x) => ({ leaf: x.leafCommitment!, ...(x.rights === undefined ? {} : { rights: x.rights }) })),
-    adoptedVaults: held.adoptedVaults, companyWide: wide,
-    ...(since > 0 || counting ? {
-      removals: since, openRuns: new Set([...held.adoptedVaults, wide].map((v) => v.toLowerCase() as Hex)), ...(outrun.run === null ? {} : { outrunBy: outrun.run }),
-      ...(counting && since === 0 ? { openRun: outrun.open! } : {}),
-    } : {}),
-  });
-};
-
-/**
- * **THE RUN OPEN NOW THAT THE MOST REMOVALS HAVE OUTRUN**, and how many signers were removed or replaced since it was
- * raised, read from the chain's open proposals at the indexer this wallet names (`runsOutrun`), so a run the service
- * or the records leave out is still counted; and `open`, one run open on the chain whether or not any removal has
- * outrun it, or null when none is. Each run is named as the company's records name it where the service lists it, and
- * by its identity on the chain otherwise, so a refusal can say which run to withdraw, pay out or raise again.
- */
-export const runsOutrunHere = async (r: CompanyReach): Promise<{ readonly removals: number; readonly run: string | null; readonly open: string | null }> => {
-  const runs = await r.builder.runsOutrun({ account: r.account, indexer: r.chain.indexer });
-  let most: { removals: number; chainId: string | null } = { removals: 0, chainId: null };
-  for (const [chainId, removals] of Object.entries(runs)) if (removals > most.removals) most = { removals, chainId: chainId.toLowerCase() };
-  const first = Object.keys(runs).map((x) => x.toLowerCase()).sort()[0] ?? null;
-  if (most.chainId === null && first === null) return { removals: 0, run: null, open: null };
-  const listed = await governedCallServiceFor(r.api).sealedProposals!(r.accountId).catch(() => [] as readonly { id: string; chainId: string }[]);
-  const nameOf = (chainId: string): string => {
-    const named = (listed as readonly { id: string; chainId: string }[]).find((p) => String(p.chainId).toLowerCase() === chainId);
-    return named === undefined ? chainId : `${named.id} (${chainId})`;
-  };
-  const open = nameOf(most.chainId ?? first!);
-  return { removals: most.removals, run: most.chainId === null ? null : nameOf(most.chainId), open };
-};
-
 /** What this seat files is entered as it files it, signed with its own key, through the page. */
 export const enteredFor = (r: CompanyReach) => recordsEnteredFor(manifestServiceFor(r.api), r.accountId, r.seat.signingSecret);
 
@@ -761,7 +705,7 @@ export function governanceDoorsFor(
       },
     },
     builder: r.builder,
-    material: { signingSecret: r.seat.signingSecret as Hex, blinding: r.seat.blinding as Hex, scope: r.seat.scope },
+    material: signerMaterialOf(r.seat),
     accountId: r.accountId,
     records: governanceRecordsFor(r),
     leaves: r.judges.leavesFor(r.account),
@@ -815,32 +759,6 @@ export interface RecordsReach {
 export type CompanyRecordsInTheWallet = CompanyRecordsHere & {
   readonly oneOffs: NonNullable<CompanyRecordsHere['oneOffs']>;
   readonly proposals: () => Promise<readonly SealedProposal[]>;
-};
-
-/**
- * **A VAULT'S SPENDING POLICIES AS THIS SEAT READS THEM, AND NEVER FILES THEM**: every version of a policy's sealed
- * record as the service holds it, each judged where it is used; this seat's key to open them; the contract's keys made
- * in the worker; and what the chain holds under each key, read through this wallet's own indexer. Filing is refused:
- * no action that reads policies through this door, a payment or an approval of another seat's policy, writes one.
- */
-export const spendingPoliciesFor = (r: CompanyReach): NonNullable<CompanyRecordsHere['spendingPolicies']> => {
-  const me = deviceSignerFrom(r.leaf, r.companyKey);
-  return {
-    versions: async (id) => {
-      const b = await r.api(companyWirePaths.versions(r.accountId, SPENDING_POLICY_KIND, id)) as { versions?: unknown } | null;
-      return Array.isArray(b?.versions)
-        ? b!.versions.map((m) => fromCompanyWire(m, { company: r.accountId, kind: SPENDING_POLICY_KIND, id }).sealed) as SealedCompanyRecord[] : [];
-    },
-    file: async () => { throw new Error('a payment, or an approval of another seat\'s policy, files no spending policy.'); },
-    me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex },
-    keys: (input) => r.builder.spendingPolicyKeys(input),
-    onChain: chainReadThroughTheWallet(async (asked) => {
-      if (r.chain.roles === undefined) throw new Error('this wallet cannot read the account\'s entries.');
-      const read = await r.chain.roles(r.account, r.label, asked);
-      if ('key' in read) throw new StepRefused(read);
-      return { roles: read };
-    }),
-  };
 };
 
 /**
@@ -907,3 +825,6 @@ export const paidAmongFor = (records: CompanyRecordsHere, pure: PureCircuits) =>
   const held = new Set((await records.payments.read(entries)).held.map((e) => e.toLowerCase()));
   return { known: true, paid: leaves.filter((_leaf, i) => held.has(entries[i]!)) as Hex[] };
 };
+
+/* Who may approve each vault's runs is counted in its own file. */
+export { approversHere, runsOutrunHere } from './approvers-here.js';

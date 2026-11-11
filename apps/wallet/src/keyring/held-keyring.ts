@@ -1,7 +1,7 @@
 import type { KeyringHandedIn, SealedKeyring } from 'midnight-identity/profile/unlock';
 import type { Identity, Secret } from 'midnight-identity/keys/derivation';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
-import { canonical, toHex, type Hex } from '../../../../src/core/crypto.js';
+import { canonical, signingPublicKeyOf, toHex, type Hex } from '../../../../src/core/crypto.js';
 import {
   counterOf, KeyringDidNotOpen, metadataOf, openKeyring, sealedDigestOf, sealKeyring, type Keyring, type KeyringMetadata,
 } from '../../../../packages/web-shared/src/keyring-blob.js';
@@ -136,8 +136,15 @@ const seatsKept = (before: Keyring, after: Keyring): boolean => {
   const kept = (a: Readonly<Record<string, unknown>> | undefined, b: Readonly<Record<string, unknown>> | undefined): boolean =>
     Object.entries(a ?? {}).every(([id, entry]) => b !== undefined && Object.prototype.hasOwnProperty.call(b, id)
       && canonical(b[id]) === canonical(entry));
+  /* A seat may leave `accounts` only to be set aside, whole, under its own signing key with the company it was for. */
+  const setAside = (id: string, entry: Keyring['accounts'][string]): boolean => {
+    const was = after.formerSeats?.[signingPublicKeyOf(entry.signingSecret).toLowerCase()];
+    return was !== undefined && !Object.prototype.hasOwnProperty.call(after.accounts, id) && canonical(was) === canonical({ ...entry, accountId: id });
+  };
+  const accountsKept = Object.entries(before.accounts ?? {}).every(([id, entry]) =>
+    (Object.prototype.hasOwnProperty.call(after.accounts, id) && canonical(after.accounts[id]) === canonical(entry)) || setAside(id, entry));
   return typeof after.accounts === 'object' && after.accounts !== null
-    && kept(before.accounts, after.accounts) && kept(before.pendingSeats, after.pendingSeats);
+    && accountsKept && kept(before.pendingSeats, after.pendingSeats) && kept(before.formerSeats, after.formerSeats);
 };
 const DID_NOT_OPEN =
   'the saved keys the page handed this wallet did not open with this wallet’s key for you. They may be another '

@@ -69,7 +69,7 @@ vi.mock('./upkeep.js', async (real) => {
   };
 });
 
-const { removeSignerAction } = await import('./remove-signer.js');
+const { removalKind, removeSignerAction } = await import('./remove-signer.js');
 const { approveProposalAction } = await import('./approve-proposal.js');
 const { ActionStopped } = await import('./run.js');
 const { RosterNotBelieved } = await import('../../../../packages/web-shared/src/roster-here.js');
@@ -91,7 +91,7 @@ const raiserOnly = { mayApprove: false, everyVault: true, onVaults: [] };
 const intent = (name: string, fields: Record<string, string>): ActIntent => ({ name, fields }) as ActIntent;
 
 /* The company as this wallet reads it: four seats on the chain, the roster's rights and names for each, and the bars. */
-let company: { approvals: number; policyBar: number | null; seatBar: number; rights: (unknown | undefined)[]; seats: string[] };
+let company: { approvals: number; policyBar: number | null; seatBar: number; rights: (unknown | null | undefined)[]; seats: string[] };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
   leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {},
@@ -102,7 +102,11 @@ const reachOf = () => ({
     vaultThresholds: [], adoptedVaults: [PAYROLL], account: ACCOUNT,
   }),
   judges: {
-    directoryHereFor: () => async () => ({ dir: { seats: [] }, records: { history: new Map() } }),
+    /* Each seat believed with the rights the company gave it: every right unless a case gives it fewer, and no entry where a case says null. */
+    directoryHereFor: () => async () => ({
+      dir: { seats: SEATS.flatMap((seat, i) => (company.rights[i] === null ? [] : [{ seat, retired: null, rights: company.rights[i] ?? { every: true } }])) },
+      records: { history: new Map() },
+    }),
     leavesFor: () => async () => [],
     rosterReadsFor: () => ({}),
   },
@@ -197,6 +201,19 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
     expect(t.onDevice[0]!.input.name).toBe('Dee');
     /* RED WHEN: the page is told the removal was carried out without the approvals and the bar the chain showed. */
     expect(told).toContainEqual({ state: 'carried-out', approvals: 1, needed: 1 });
+  });
+
+  it('a seat whose entry this wallet does not believe is counted on no vault, and the company can still remove it', async () => {
+    /* Dee's wallet never filed her directory entry, so this wallet cannot read what her seat may approve. */
+    company.rights[3] = null;
+    const i = intent('remove-signer', { ...BASE, leaf: LEAVER, threshold: '2' });
+    const { ctx, told } = ctxOf(i);
+    /* RED WHEN: a seat with no believed entry stops every count, so the company cannot remove the very seat that stops it. */
+    await run(removeSignerAction(reach()), i, ctx);
+    expect(told).toContainEqual({ state: 'carried-out', approvals: 1, needed: 1 });
+    const counted = await (t.doors as { approvers: () => Promise<{ seats: ReadonlyMap<string, unknown> }> }).approvers();
+    expect(counted.seats.get(LEAVER)).toEqual({ every: false, mayApprove: false, everyVault: false, onVaults: [] });
+    expect(counted.seats.get(SEATS[0]!)).toEqual({ every: true });
   });
 
   it('a removal keeping the threshold names none, and at a bar of two a second signer approves it through the one approval and carries it out', async () => {
@@ -521,6 +538,21 @@ describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT
       'not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened'];
     /* RED WHEN: the wallet says a word its language file does not hold. */
     for (const k of [...keys, ...[...whys, ...stops].map((w) => `act.remove-signer.why.${w}`)]) expect(WORDS[k], k).toBeTypeOf('string');
+  });
+
+  it('the window says what the removal does on the chain to the changes and runs already raised, on raising it and on approving it', async () => {
+    for (const shown of [
+      await removeSignerAction(reach()).shown(intent('remove-signer', { ...BASE, leaf: LEAVER })),
+      await removalKind(reach()).shown(intent('approve-proposal', { ...BASE, leaf: LEAVER, proposal: 'prp_1' })),
+    ]) {
+      /* RED WHEN: a removal is raised or approved without saying that every other change raised before it must be raised again, and every run raised before it needs one more approval. */
+      expect(shown).toContainEqual({ key: 'act.remove-signer.shown.other-changes', from: 'action' });
+      expect(shown).toContainEqual({ key: 'act.remove-signer.shown.open-runs', from: 'action' });
+    }
+    /* RED WHEN: the words leave out a change raised after the removal but before the network carries it out, which is outrun too. */
+    expect(WORDS['act.remove-signer.shown.other-changes']).toMatch(/raised before then .*including one raised after this removal: .* raised again/u);
+    /* RED WHEN: the words leave out a run partly paid, or a signer replaced, which also add an approval. */
+    expect(WORDS['act.remove-signer.shown.open-runs']).toMatch(/whether or not any of it is paid yet, needs one more approval for each signer removed or replaced/u);
   });
 
   it('the window promises of the vault secrets only what the change does: started at once, in force once approved and set', async () => {

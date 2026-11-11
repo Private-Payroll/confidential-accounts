@@ -38,13 +38,6 @@ const ADA: SignerMaterial = {
   scope: bytes32(3),
 };
 
-/** Somebody else's, for the cases about a record another party wrote. */
-const BRUNO: SignerMaterial = {
-  signingSecret: bytes32(41),
-  blinding: bytes32(42),
-  scope: bytes32(43),
-};
-
 const A_CONTRACT = '0200aa'.padEnd(70, '0');
 const ANOTHER_CONTRACT = '0200bb'.padEnd(70, '0');
 const ID = 'device-side:acc_1';
@@ -432,5 +425,29 @@ describe('the ways a record could leave this device, and the fact that none of t
 
     d.memory.releaseAll();
     expect(await d.provider.get(ID)).toBeNull();
+  });
+});
+
+describe('the rights a seat was given reach every run it proves', () => {
+  it('a seat\'s rights record is handed to the circuit, and one its scope does not commit to is refused', async () => {
+    const { rightsOfRole, rightsScopeOf } = await import('../../../src/core/seat-rights.js');
+    const { signerMaterialOf } = await import('./private-state.js');
+    const record = rightsOfRole('approver', ['9a'.repeat(32) as never]);
+    const seat = { signingSecret: ADA.signingSecret, blinding: ADA.blinding, scope: rightsScopeOf(record), rights: record };
+    /* RED WHEN: a seat seated with its role's rights proves runs with no record, and every approval it gives fails inside the proof. */
+    const half = signerHalfOf(signerMaterialOf(seat));
+    expect(half.rights).toMatchObject({ mayRaise: false, mayApprove: true, mayHold: true, everyVault: false });
+    expect(toHex(half.rights!.vaults[0]!)).toBe('9a'.repeat(32));
+    /* RED WHEN: a record the seat's leaf does not commit to is proved with, and the seat seems to hold rights it does not. */
+    expect(() => signerHalfOf(signerMaterialOf({ ...seat, rights: rightsOfRole('admin', ['9a'.repeat(32) as never]) })))
+      .toThrow(/not the ones this seat's leaf commits to/u);
+    /* A seat on every vault holds no record. */
+    expect(signerHalfOf(ADA).rights).toBeNull();
+  });
+
+  it('the rights record is never written to storage beside the account half', async () => {
+    const { neverPersistedFieldsIn } = await import('../../../src/midnight/what-a-device-may-persist.js');
+    /* RED WHEN: a seat's rights are kept a second time outside its saved keys. */
+    expect(neverPersistedFieldsIn({ rights: null })).toEqual(['rights']);
   });
 });

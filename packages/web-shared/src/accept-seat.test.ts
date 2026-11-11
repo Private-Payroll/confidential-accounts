@@ -233,3 +233,19 @@ describe('THE FOUNDING SEAT\'S KEYS ARE THE ONES THE WALLET GAVE', () => {
     }
   });
 });
+
+describe('a seat taken on an invitation is made with the rights its role gives', () => {
+  it('an approver\'s leaf commits to an approver\'s rights, kept with the seat; a code\'s seat, made before any role, to every vault', async () => {
+    const { rightsOfRole, rightsScopeOf } = await import('../../../src/core/seat-rights.js');
+    const d = doorsThat();
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET, undefined, { role: 'approver' });
+    /* RED WHEN: a seat invited as an approver is made with every right on every vault, which the company's directory refuses. */
+    expect(itemAt(d.sealed, 0).scope).toBe(rightsScopeOf(rightsOfRole('approver')));
+    expect(itemAt(d.sealed, 0).rights).toEqual(rightsOfRole('approver'));
+    expect(itemAt(d.sealed, 0).opening?.scope).toBe(rightsScopeOf(rightsOfRole('approver')));
+    const code = doorsThat();
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, code.doors, WALLET);
+    expect(itemAt(code.sealed, 0).scope).toBe(SimulatedCommitments.allVaults());
+    expect(itemAt(code.sealed, 0).rights).toBeUndefined();
+  });
+});

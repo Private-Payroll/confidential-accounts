@@ -31,12 +31,12 @@ import {
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
 import { anchoredOver, anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
-import { sign } from '../core/crypto.js';
-import { directoryChangeMessage, directoryEntryMade, type DirectoryChange, type DirectoryFiling } from '../midnight/seat-directory.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
+import { directoryEntryMade, type DirectoryFiling } from '../midnight/seat-directory.js';
+import { invitationIdOf, newInvitationToken } from '../core/invitation.js';
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
+import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../testing/invitation-approved.js';
 
 const ID: Record<string, string> = { ada: 'sgn_ada', bo: 'sgn_bo' };
 
@@ -161,15 +161,6 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
     }
   });
 
-  it('BO\'S RIGHTS, REWRITTEN BY ADA\'S SEAT, ARE REFUSED ON EVERY DEVICE', async () => {
-    await adaFiles(withBo((bo) => ({ ...bo, rights: { mayApprove: false, everyVault: false, onVaults: [] } })));
-    for (const s of [ADA, BO]) {
-      const read = await readOn(s);
-      /* RED WHEN: a device believes rights the chain did not seat the signer with: the vault check would then count them. */
-      expect(read.refused).toEqual([{ signerId: ID.bo, name: 'bo', why: 'rights-not-the-chains' }]);
-      expect(shown(read.account)).toEqual([ID.ada]);
-    }
-  });
 
   it('BO\'S ENTRY NAMING ANOTHER PERSON THAN THE ONE THE DIRECTORY HOLDS HIS SEAT FOR IS REFUSED', async () => {
     await adaFiles(withBo((bo) => ({ ...bo, userId: 'ada' })));
@@ -277,7 +268,7 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
       company: CO, person: 'eli', committeeKey: committeeKeyFor(other, LABEL) as never, opening: elisOpening, signingSecret: elisFiling.secret, viewingKey: KEY,
       signed: signDirectoryEntry(other, LABEL, ADDRESS, new Uint8Array(32).fill(114), elisFiling.publicKey, seat3),
       /* Invited by Ada's seat, as every seat but the founding one is. */
-      invited: signSeatInvitation({ company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'eli', name: 'eli', role: 'admin', leaf: seat3 as Hex }, ADA.signingSecret as Hex),
+      invited: invitedAsRaised({ company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'eli', name: 'eli', role: 'admin', leaf: seat3 as Hex }, ADA.signingSecret as Hex),
     }) } })).toBe(true);
     try {
       for (const [what, added, refused] of cases) {
@@ -358,7 +349,7 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
       anchored: anchoredOver(apiAs('eve'), OTHER),
       filings: async () => store.directoryFilingsOf(OTHER),
       holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS, founding: EVE.seat }) as never,
-      leaves: leavesOfTheContract,
+      leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
     };
     const eveFiles = async (version: number) => {
       const eve: Signer = {
@@ -417,7 +408,9 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
     { who: 'bo', own: { signerId: ID.bo!, signingPublicKey: signingPublicKeyOf(BO.signingSecret as Hex) } },
     { who: 'cy', own: { signerId: 'sgn_cy', signingPublicKey: cy.publicKey } },
   ];
-  const reads: RosterReads = { filings: acmeReads.filings, holders: acmeReads.holders, anchored: acmeReads.anchored, leaves: acmeReads.leaves };
+  const reads: RosterReads = {
+    filings: acmeReads.filings, holders: acmeReads.holders, anchored: acmeReads.anchored, leaves: acmeReads.leaves, proposalIdentity: acmeReads.proposalIdentity, invitedSeats: acmeReads.invitedSeats,
+  };
   const readOn = async (d: (typeof devices)[number], rec?: SealedCompanyRecord) =>
     rosterBelievedHere({ ...(await served()), ...(rec === undefined ? {} : { roster: rec }) }, KEY, {
       accountId: CO, label: LABEL, account: ADDRESS, reads, own: d.own,
@@ -500,19 +493,17 @@ describe('A ROSTER SHORT OF A SEAT THE CHAIN HOLDS, WHILE A DIRECTORY VERSION IS
     },
     builder: { ...anchorFunctions, anchor: anchorSentInATest },
   });
-  /** Ada's role set again by her own quorum of one, as the directory's next version. */
-  const adaAdmin = async (): Promise<number> => {
+  /** Another entry for Ada's seat under a new filing key, as the directory's next version: the service keeps it, and every device passes it over. */
+  const adaAgain = async (): Promise<number> => {
     const version = store.directoryFilingsOf(CO).length + 1;
-    const unsigned = { kind: 'role', seat: ADA.seat, role: 'admin', threshold: 1, signatures: [] } as unknown as DirectoryChange;
-    const signature = sign(directoryChangeMessage(CO, version, unsigned), ADA.signingSecret);
-    const filing = { company: CO, version, change: { ...unsigned, signatures: [{ publicKey: ADA.statement.signingKey as Hex, signature }] } } as DirectoryFiling;
+    const filing = { company: CO, version, change: { kind: 'claim', entry: seatOf('ada', 1).entry } } as DirectoryFiling;
     expect((await sendAs('ada')(`/api/accounts/${CO}/directory/${version}`, { method: 'POST', body: JSON.stringify(filing) })).status).toBe(201);
     return version;
   };
 
   it('IS REFUSED WHOLE, SAYING THE WAY PAST THE VERSION PASSED OVER RATHER THAN ONLY ASKING A SIGNER TO OPEN IT', async () => {
-    const passed = await adaAdmin();
-    await adaAdmin();
+    const passed = await adaAgain();
+    await adaAgain();
     await anchorAsAda(passed);
     const seat = 'c3'.repeat(32);
     const was = chains.get(CO)!;

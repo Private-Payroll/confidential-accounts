@@ -42,9 +42,11 @@ import { carryOrderHere } from './material-made-here.js';
 import type { PendingSignerPayload } from '../../../src/core/types.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
 import { anAddress } from '../../../src/testing/an-invitee.js';
+import { seatRoundBound } from '../../../src/testing/seat-round-bound.js';
 import { directoryHere } from './vault-page-doors.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
+import { scopeOfRole } from '../../../src/core/seat-rights.js';
 
 /* ── the builder, over stand-ins for the contract's pure functions ─────────── */
 
@@ -308,7 +310,7 @@ const ada = created.secrets[0]!;
 const lateWallet = { tag: 'schnorr', value: newBlinding() };
 const lateSalt = newBlinding();
 const late = { ...newSigningKeypair(), wrapping: newWrappingKeypair(), blinding: seatBlinding(lateWallet, lateSalt) as Hex };
-const lateLeaf = storedSignerLeaf({ signingSecret: late.secret, blinding: late.blinding, scope: MidnightCommitments.allVaults() }, MidnightCommitments);
+const lateLeaf = storedSignerLeaf({ signingSecret: late.secret, blinding: late.blinding, scope: scopeOfRole('approver') }, MidnightCommitments);
 const invite = accounts.inviteSigner(company, 'Late', 'late@opened.example', 'approver');
 /* Accepted as a person's own device accepts: with the proof its link let it make. */
 const lateKeys = { signingPublicKey: late.publicKey, wrappingPublicKey: late.wrapping.publicKey, leafCommitment: lateLeaf };
@@ -322,7 +324,7 @@ const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publ
   const request: PendingSignerPayload = {
     name: 'Late', role: 'approver', ...lateKeys, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys), person: 'usr_late',
     opening: {
-      publicKey: MidnightCommitments.signerPublicKey(late.secret).toLowerCase(), scope: MidnightCommitments.allVaults().toLowerCase(),
+      publicKey: MidnightCommitments.signerPublicKey(late.secret).toLowerCase(), scope: scopeOfRole('approver'),
       blinding: late.blinding, walletKey: lateWallet, salt: lateSalt,
     },
     invited: signSeatInvitation(LATES_TERMS, ada.signingSecret as Hex),
@@ -331,12 +333,16 @@ const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publ
 }
 /* Late is invited at an address of her own wallet, with every right on every vault. */
 const lateAt = anAddress(MidnightCommitments, 7);
-const lateInvite = { address: lateAt.address, scope: MidnightCommitments.allVaults() };
+const lateInvite = { address: lateAt.address, scope: scopeOfRole('approver') };
 /** The invitation Ada's seat signs for Late's address, as Ada's device raises it: what every approving device makes the payload from. */
 const invitedAt = (invite: { address: string; salt: string; scope: string }, by: string = ada.signingSecret) =>
   signSeatInvitation({ ...LATES_TERMS, leaf: lateLeaf as Hex, invite: invite as never }, by as Hex);
 const LATES_SIGNED = invitedAt({ ...lateInvite, salt: lateAt.addressSalt });
-const seatRound = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId, { ...lateInvite, invited: LATES_SIGNED });
+/* Raised as Ada's device raises it now: under the salt the invitation's signed terms make, naming that proposal. */
+const seatRound = await (async () => {
+  const raised = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId, { ...lateInvite, invited: LATES_SIGNED });
+  return { ...raised, ...seatRoundBound(store, company, raised.id, viewingKey as Hex, ada.signingSecret as Hex) };
+})();
 const thresholdChange = await accounts.proposeThresholdChange(company, viewingKey, 2, ada.signerId, { onDevice: true });
 /* A device reads the signers only from a roster record a seat filed: Ada's seat files the company's, as it stands. */
 const roster = (() => {
@@ -389,7 +395,9 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
   it.each([
     ['another address than the one the seat that invited signed', () => ({ ...lateInvite, address: anAddress(MidnightCommitments, 8).address, invited: LATES_SIGNED }),
       /not the ones the seat that invited signed/u],
-    ['wider rights than the ones the seat that invited signed', () => ({ ...lateInvite, scope: 'ab'.repeat(32), invited: invitedAt({ ...lateInvite, scope: 'cd'.repeat(32), salt: lateAt.addressSalt }) }),
+    ['wider rights than the ones the seat that invited signed', () => ({ ...lateInvite, scope: scopeOfRole('admin'), invited: signSeatInvitation({
+      ...LATES_TERMS, leaf: lateLeaf as Hex, vaults: ['cd'.repeat(32) as Hex], invite: { ...lateInvite, scope: scopeOfRole('approver', ['cd'.repeat(32) as Hex]), salt: lateAt.addressSalt } as never,
+    }, ada.signingSecret as Hex) }),
       /not the ones the seat that invited signed/u],
     ['an invitation signed by a key no seat holds', () => ({ ...lateInvite, address: anAddress(MidnightCommitments, 9).address,
       invited: invitedAt({ ...lateInvite, address: anAddress(MidnightCommitments, 9).address, salt: lateAt.addressSalt }, '77'.repeat(32)) }),

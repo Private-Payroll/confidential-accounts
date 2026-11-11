@@ -35,7 +35,7 @@ import {
 import { signedFoundingState } from './founding-state.js';
 import { signedFoundingRoster } from './roster-record.js';
 import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
-import type { Role, SealedAccount } from './types.js';
+import type { SealedAccount } from './types.js';
 
 /** The founding signer's seat, as its two public halves and the leaf the account seats. */
 export interface FoundingSeat {
@@ -73,7 +73,7 @@ export interface CompanyFounded {
  */
 export function foundTheCompanyHere(input: {
   readonly name: string;
-  readonly signer: { readonly name: string; readonly role: Role };
+  readonly signer: { readonly name: string };
   /** The signed-in person founding it, who takes the seat. */
   readonly userId: string;
   readonly label: CompanyLabel;

@@ -61,18 +61,18 @@ import { z } from 'zod';
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { canonical, type Hex } from '../core/crypto.js';
 import type { AccountDeploy, AccountOpeningRecord, SealedAccount, SealedProposal } from '../core/types.js';
+import { isSignerRole, type SignerRole } from '../core/roles.js';
 import { proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { accountDeployDigest } from '../core/store.js';
 import type { Ledger } from '../core/ledger.js';
 import { isAccountId, isSignerId } from '../core/account.js';
-import type { CompanyFounded } from '../core/company-founding.js';
+import type { CompanyCreationState, CompanyFounded } from '../core/company-founding.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { readContractAuthority } from '../midnight/ledger.js';
 import type { CommitteeKey } from '../midnight/vault-committee.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { circuitsRefusal, readAccountDeploy, refusalForCreationInsert, refusalForPayKeyCall } from '../wiring/vault-submission.js';
-import type { CompanyCreationState } from '../core/company-founding.js';
 import { foundingStateRefusal } from '../core/founding-state.js';
 import { A_STEP_MAY_BE_REPLACED_BELOW_MS, A_STEP_NEEDS_LEFT_MS } from '../midnight/intent-lifetime.js';
 import { foundingRosterRefusal, ROSTER_ID } from '../core/roster-record.js';
@@ -218,7 +218,7 @@ const FOUNDED = z.object({
 /** The whole request, on a chain: what the founding signer's wallet gave, and what their device made. */
 const MADE_ON_THE_DEVICE = z.object({
   name: z.string().min(1),
-  signers: z.array(z.object({ name: z.string().min(1), role: z.enum(['admin', 'approver', 'initiator', 'viewer']) }).strict()),
+  signers: z.array(z.object({ name: z.string().min(1), role: z.custom<SignerRole>(isSignerRole) }).strict()),
   threshold: z.number().int(),
   companyLabel: z.string(),
   foundingKey: z.object({ tag: z.literal('schnorr'), value: HEX_64 }).strict(),

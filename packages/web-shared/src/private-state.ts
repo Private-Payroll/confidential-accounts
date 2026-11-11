@@ -14,7 +14,8 @@
  * So there is no store of records here. There is a VIEW over two sources with
  * two different lifetimes:
  *
- *   THE SIGNER'S OWN MATERIAL   their secret key, their blinding, their scope.
+ *   THE SIGNER'S OWN MATERIAL   their secret key, their blinding, their scope,
+ *                    and the rights record a scope other than every vault's is.
  *                    Held in memory for the length of a session, put there by
  *                    the person unlocking their own keyring, and composed into
  *                    a record at the moment a circuit asks for one. **It is
@@ -65,7 +66,7 @@
  * -- WHAT A SECOND SIGNER NEEDS, WHICH IS LESS THAN IT LOOKS ----------------
  *
  * Approving a round somebody else raised reads FOUR things: the approver's own
- * secret key, their blinding, their scope, and a path through the signer tree -
+ * secret key, their blinding, their scope (with the rights record behind it), and a path through the signer tree -
  * and the tree is public. It reads no salt, no asset and no amount. **So a
  * device that has never staged anything against an account can still approve on
  * it**, and the type below says so rather than a comment: the signer's three
@@ -96,7 +97,8 @@
  */
 import type { PrivateStateProvider } from '@midnight-ntwrk/midnight-js-types';
 
-import type { AccountPrivateState } from '../../../contracts/src/witnesses.js';
+import type { AccountPrivateState, SignerRights } from '../../../contracts/src/witnesses.js';
+import { rightsScopeOf, type RightsRecord } from '../../../src/core/seat-rights.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
 import {
   persistableAccountHalf,
@@ -112,7 +114,7 @@ import {
  * module reaches the wallet, and the wallet reaches a package that leaves a
  * page blank while it is still being evaluated. What composes a record has to
  * be loadable in a background thread that has no wallet in it at all, so it
- * takes the three values and knows nothing about where they were unsealed.
+ * takes the values and knows nothing about where they were unsealed.
  */
 export interface SignerMaterial {
   signingSecret: Hex;
@@ -128,7 +130,24 @@ export interface SignerMaterial {
    * from a device reporting itself healthy. The absence is refused instead.
    */
   scope?: Hex;
+  /**
+   * The rights record `scope` is the hash of, for a seat seated with its role's rights rather than every right on
+   * every vault: what every run this seat raises, approves or holds opens inside its proof. Absent for a seat on
+   * every vault, which needs none.
+   */
+  rights?: RightsRecord;
 }
+
+/**
+ * The material a saved seat proves with: its signing secret, blinding, scope and, where it was seated with its role's
+ * rights, the record of them. The one place a wallet act takes a seat's material from its saved keys.
+ */
+export const signerMaterialOf = (seat: {
+  readonly signingSecret: string; readonly blinding: string; readonly scope: string; readonly rights?: RightsRecord;
+}): SignerMaterial & { readonly scope: Hex } => ({
+  signingSecret: seat.signingSecret as Hex, blinding: seat.blinding as Hex, scope: seat.scope as Hex,
+  ...(seat.rights === undefined ? {} : { rights: seat.rights }),
+});
 
 /**
  * The record this module composes.
@@ -177,9 +196,9 @@ export interface AccountHalfStore {
 }
 
 /**
- * What the signer's three become, as the circuit reads them.
+ * What the signer's own material becomes, as the circuit reads it.
  *
- * Refuses rather than substituting anything. Each of the three is thirty-two
+ * Refuses rather than substituting anything. Each of the three values is thirty-two
  * bytes and each is part of the leaf the tree is asked about, so a value of the
  * wrong width and a value that is absent fail in the same place and produce the
  * same sentence from the circuit: that this person is not a signer. **The
@@ -238,7 +257,25 @@ export const signerHalfOf = (
         'scopes were recorded, so it cannot say which vaults this signer may act on, and ' +
         'nothing converts it. A seat taken under a new invitation by another sign-in can act.',
     ),
+    rights: rightsAsTheCircuitReadsThem(material),
   };
+};
+
+/**
+ * The seat's rights record as the circuit reads it, or null for a seat that holds none. Refused when the record is
+ * not the one its scope is the hash of: proving with it would fail inside every run's proof, and the seat would
+ * seem to hold rights it does not.
+ */
+const rightsAsTheCircuitReadsThem = (material: SignerMaterial): SignerRights | null => {
+  const r = material.rights;
+  if (r === undefined) return null;
+  if (material.scope === undefined || rightsScopeOf(r) !== material.scope.toLowerCase()) {
+    throw new Error(
+      'the rights saved for this company on this device are not the ones this seat\'s leaf commits to, so it cannot ' +
+        'raise, approve or hold a run. Take the seat on this device again from your backup, or use the device you were seated from.',
+    );
+  }
+  return { mayRaise: r.mayRaise, mayApprove: r.mayApprove, mayHold: r.mayHold, everyVault: r.everyVault, vaults: r.vaults.map((v) => fromHex(v)) };
 };
 
 /**

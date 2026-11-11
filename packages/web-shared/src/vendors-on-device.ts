@@ -14,6 +14,9 @@
  *   · **a change** (`changeVendorHere`): their payment terms, their end date or where they stand. Their address is
  *     never changed here.
  *
+ * The one filing call refuses, before it signs or sends anything, when this device's own seat holds a role that may not
+ * file a vendor's entry (`mayFileHere`); the service judges no role.
+ *
  * Adding a vendor is inviting one (`inviteHere`), which files their first entry. What is filed is the next version of
  * the entry, sealed and signed here; the service checks who filed it and opens nothing.
  */
@@ -26,7 +29,9 @@ import { toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordEntry, signedWithItsEntry } from '../../../src/midnight/record-manifest.js';
 import type { PayeeParts } from 'midnight-identity/profile/join-code';
 import { judgeIn, kindAsked } from './vault-page-doors.js';
+import { mayFileHere } from './may-file-here.js';
 import { payeeAt } from './invitation-on-device.js';
+import { signingPublicKeyOf } from '../../../src/core/crypto.js';
 import { madeHere, payeeCodeHandedOver, raisingWalletOf, type PeopleDevice } from './people-on-device.js';
 import { answered, at, believedVersionsOf, readVendorsHere, type VendorHere } from './vendors-read-here.js';
 
@@ -40,10 +45,12 @@ export class VendorNotChanged extends Error {
   }
 }
 
-/** The next version of a vendor, sealed and signed here and filed at `path` under `field`, then entered in the company's records. */
+/** The next version of a vendor, sealed and signed here and filed at `path` under `field`, then entered in the company's records; refused first when this seat's role may not file a vendor's entry. */
 const filedAndEntered = async (
   d: PeopleDevice, path: string, method: 'POST' | 'PUT', field: 'vendor' | null, vendor: VendorRecord, version: number,
 ): Promise<VendorRecord> => {
+  const refused = await mayFileHere(() => d.directory(), signingPublicKeyOf(d.signingSecret), 'vendor');
+  if (refused?.why === 'role') throw new VendorNotChanged(refused.says);
   const filed: VendorRecord = { ...vendor, ...madeHere(d.signingSecret) };
   const sealing = sealingWith(d.company.viewingKey, d.company.keyEpoch);
   const rec = signedWithItsEntry(sealVendor(filed, version, sealing.epoch, sealing.key), d.signingSecret);

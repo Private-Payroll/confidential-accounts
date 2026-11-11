@@ -100,7 +100,7 @@ describe('A ONE-OFF SEALED BEFORE THE COMPANY\'S KEY CHANGES OPENS FOR A SIGNER 
     /* Dee's device holds only the key she was handed, and every older one through it. */
     const dee = await companyKeyHere({
       accountId: CO, material: { signingSecret: keys[0]!.signingSecret }, records: { directory: companyDirectory },
-      filings: async () => store.directoryFilingsOf(CO), served: async () => handed, released: () => null, askTheWallet: async () => null,
+      filings: async () => store.directoryFilingsOf(CO), served: async () => handed, released: () => null, askTheWallet: async () => null, revoked: async () => null,
     });
     expect([dee.epoch, dee.key]).toEqual([1, handed]);
     expect(handed).not.toBe(KEY);

@@ -18,7 +18,8 @@ import { toWire, type WireRecord } from '../../../src/midnight/sealed-record-wir
 import { newSigningKeypair, newWrappingKeypair, sign, type Hex } from '../../../src/core/crypto.js';
 import { openNonceSecrets, recordsKeypairFrom, startNonceSecret, startNonceSecretAgain } from '../../../src/midnight/company-nonce-secret.js';
 import { directoryChangeMessage, directoryEntryMade, vaultRecordKey, type DirectoryChange, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../../../src/core/invitation.js';
+import { invitationIdOf, newInvitationToken } from '../../../src/core/invitation.js';
+import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../../../src/testing/invitation-approved.js';
 
 /*
  * A VAULT IS ONE ITS COMPANY'S SIGNERS HOLD AS THE CHAIN SHOWS IT, AND WHAT A
@@ -79,7 +80,7 @@ const filings: DirectoryFiling[] = [ADA, BO].map((s, i) => {
       company: CO, person: s.person, committeeKey: s.committeeKey, opening: s.opening, signingSecret: s.signing.secret, viewingKey: VIEWING,
       signed: signDirectoryEntry(identity, LABEL, ACCOUNT, s.companyKey, s.signing.publicKey, s.seat),
       /* Ada's is the founding seat; Bo's entry carries the invitation her seat signed for him. */
-      ...(s === ADA ? {} : { invited: signSeatInvitation({
+      ...(s === ADA ? {} : { invited: invitedAsRaised({
         company: CO, invitation: invitationIdOf(newInvitationToken()), person: s.person, name: s.person, role: 'admin', leaf: s.seat as Hex,
       }, ADA.signing.secret) }),
     }) },
@@ -110,7 +111,7 @@ const booksOf = new WeakMap<Map<WireRecord, MemorySealedPoolStore>, ReturnType<t
 const bookOf = (kept: Map<WireRecord, MemorySealedPoolStore>) => booksOf.get(kept) ?? booksOf.set(kept, aCompanysRecords(CO)).get(kept)!;
 const deviceOf = (who: Signer, kept: Map<WireRecord, MemorySealedPoolStore>, seated: () => AccountHoldersRead, reads: { n: number }, attested: Attested[] = everySeatAttested, served: readonly DirectoryFiling[] = filings) =>
   (record: WireRecord) => new HttpSealedPoolStore(record, routeOver(kept), who.signing.secret, directoryJudge({
-    accountId: CO, label: LABEL, viewingKey: VIEWING, filings: async () => served, attested: async () => attested, anchored: bookOf(kept).anchored, leaves: leavesOfTheContract,
+    accountId: CO, label: LABEL, viewingKey: VIEWING, filings: async () => served, attested: async () => attested, anchored: bookOf(kept).anchored, leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
     holders: async () => { reads.n += 1; return seated(); },
   }), bookOf(kept).enteredBy(who.signing.secret));
 const recordsReader = (s: Signer) => ({ publicKey: recordsKeypairFrom(s.companyKey).publicKey });

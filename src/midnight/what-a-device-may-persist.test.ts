@@ -64,8 +64,8 @@ const aStoreThatWritesWhatItIsGiven = () => {
 };
 
 describe('what a device may write down', () => {
-  it('the signer material named is exactly the three that are one person\'s', () => {
-    expect(Object.keys(SIGNER_ONLY_FIELDS).sort()).toEqual(['blinding', 'scope', 'secretKey'].sort());
+  it('the signer material named is exactly the four that are one person\'s', () => {
+    expect(Object.keys(SIGNER_ONLY_FIELDS).sort()).toEqual(['blinding', 'rights', 'scope', 'secretKey'].sort());
   });
 
   /**
@@ -75,7 +75,7 @@ describe('what a device may write down', () => {
    */
   it('and the full list adds the two that forge a membership path, with the reason', () => {
     expect(Object.keys(NEVER_PERSISTED_FIELDS).sort())
-      .toEqual(['blinding', 'pinAnyLeaf', 'pinnedPath', 'scope', 'secretKey']);
+      .toEqual(['blinding', 'pinAnyLeaf', 'pinnedPath', 'rights', 'scope', 'secretKey']);
     expect(NEVER_PERSISTED_FIELDS.pinnedPath).toMatch(/signer tree moves/);
     expect(NEVER_PERSISTED_FIELDS.secretKey).toMatch(/lives only in their keyring/);
   });

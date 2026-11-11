@@ -27,7 +27,7 @@ import {
 } from '../../../src/core/run-legs.js';
 import { DEVICE_RAISE_VERSION, paymentChecked, paymentsOnTheWire, type PaymentChecked } from '../../../src/core/device-raise.js';
 import { refuseWhatTheVaultCannotPay } from '../../../src/core/vault-holdings.js';
-import type { Employee, PayrollRun, Role, RunLeg, SealedProposal, ShieldedEntry } from '../../../src/core/types.js';
+import type { Employee, PayrollRun, RunLeg, SealedProposal, ShieldedEntry } from '../../../src/core/types.js';
 import type { buildRetryRun, buildRun, rootOfPayments, DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import { currentPayoutSeed } from '../../../src/midnight/run-keys.js';
 import { NO_LEG } from '../../../src/midnight/spending-policy-record.js';
@@ -193,7 +193,6 @@ export async function raiseLegHere(
   }, proposals);
   await checkedHere(doors, key, { run, leg, made, vault }, { proposals, spendingPolicy: policy });
 
-  const role = await roleOfThisSeat(doors);
   const total = facts.reduce((a, f) => a + f.amount, 0n);
   doors.progress?.('checking-the-vault');
   const payments = facts.map(paymentChecked);
@@ -202,7 +201,7 @@ export async function raiseLegHere(
   }, ['shielded', 'unshielded']);
 
   return writtenProvedAndFiled(doors, key, {
-    run, leg, entries: paid.map((e) => ({ e, at: now.toISOString() })), root, payees, window, vault, role, asset,
+    run, leg, entries: paid.map((e) => ({ e, at: now.toISOString() })), root, payees, window, vault, asset,
     summary: `Payroll ${run.period}, ${paid.length} recipients`, payments, vouched, legRoot: hex(NO_LEG()),
     raisedRun: (proposalId) => ({
       ...run,
@@ -247,10 +246,6 @@ const vouchedHere = async (doors: LegRaiseDoors): Promise<VouchedHere> => {
   return { ...vouched, checkedHere: true };
 };
 
-/** The role this device's seat holds, as the company's directory reads it, written on the proposal as its raiser's. */
-const roleOfThisSeat = async (doors: LegRaiseDoors): Promise<Role | undefined> =>
-  ((await doors.records.directory()).dir.seats.find((s) => s.seat === doors.filing.seat)?.role ?? undefined) as Role | undefined;
-
 /**
  * **WHAT EVERY RAISE FROM THIS DEVICE ENDS WITH**: the proposal written and
  * sealed, the run as raised, both signed by this seat; the raise proved, its
@@ -260,7 +255,7 @@ const roleOfThisSeat = async (doors: LegRaiseDoors): Promise<Role | undefined> =
 async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
   readonly run: PayrollRun; readonly leg: RunLeg; readonly entries: ReadonlyArray<{ readonly e: Employee; readonly at: string }>;
   readonly root: Hex; readonly payees: bigint; readonly window: { readonly opensAt: bigint; readonly closesAt: bigint };
-  readonly vault: Hex; readonly role: Role | undefined; readonly asset: AssetId; readonly summary: string;
+  readonly vault: Hex; readonly asset: AssetId; readonly summary: string;
   readonly payments: ReadonlyArray<ReturnType<typeof paymentChecked>>;
   readonly retry?: readonly number[];
   /** What the proposal's salt is made from, and the root of the leg it pays again: none for a leg of the run. */
@@ -310,7 +305,7 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
        * value.
        */
       required: BigInt(required),
-      proposedBy: doors.filing.seat, ...(r.role === undefined ? {} : { proposerRole: r.role }),
+      proposedBy: doors.filing.seat,
     }),
   }, doors.material.signingSecret as Hex);
   const runFiling = signRunFiling(accountId, sealedRunOf(r.raisedRun(proposalId), sealing.key, sealing.epoch), doors.material.signingSecret as Hex);
@@ -462,7 +457,6 @@ export async function raiseRetryHere(
   }, proposals);
   await checkedHere(doors, key, { run, leg, made, vault }, { proposals, spendingPolicy: policy });
 
-  const role = await roleOfThisSeat(doors);
   const facts = retry.facts;
   const total = facts.reduce((a, f) => a + f.amount, 0n);
 
@@ -474,7 +468,7 @@ export async function raiseRetryHere(
 
   const at = now.toISOString();
   return writtenProvedAndFiled(doors, key, {
-    run, leg, entries: indices.map((i) => ({ e: onTheLeg[i]!, at })), root, payees, window, vault, role, asset,
+    run, leg, entries: indices.map((i) => ({ e: onTheLeg[i]!, at })), root, payees, window, vault, asset,
     summary: `Payroll ${run.period}, retry for ${indices.length} recipients`, payments, retry: indices,
     vouched, legRoot: whole.tree.root.toLowerCase() as Hex,
     raisedRun: (proposalId) => {

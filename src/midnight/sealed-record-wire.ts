@@ -37,6 +37,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { canonical, sign, signingPublicKeyOf, toHex, utf8, verify, type Hex } from '../core/crypto.js';
 import { whyThisIsNotASealedPool, type SealedPool, type SealedRecordKind, type WrappedPoolKey } from './vault-pool.js';
 import type { Sealed } from '../core/crypto.js';
+import type { Purpose } from '../core/sealed-records.js';
 import type { ManifestEntry } from './record-manifest.js';
 
 export type WireRecord = SealedRecordKind;
@@ -50,23 +51,30 @@ export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', '
  * one-off payment from a vault, sealed under the company's one-offs key
  * (`one-off-record.ts`); `vendor` is one entry on the company's vendor list,
  * sealed under the company's vendors key (`vendor-record.ts`), and never on
- * the same list as a `person`.
+ * the same list as a `person`; `grants` is the company's read grants, sealed to
+ * every seat and reader (`grants-record.ts`).
  */
-export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy', 'vault-info', 'transfer', 'vendor'] as const;
+export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy', 'vault-info', 'transfer', 'vendor', 'grants'] as const;
 export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
 /**
  * **THE KINDS SEALED UNDER ONE OF THE COMPANY'S OWN KEYS**, and which one: a
- * person under the payroll purpose key, the company's signers under the
+ * person under the people purpose key, the company's signers under the
  * roster purpose key, a vault's name and description under the vaults purpose
- * key, a one-off payment under the one-offs purpose key, a vendor entry under the vendors purpose key, and the company's state under the viewing key of the epoch the record
- * names, exactly as the founding signer's device sealed it. Such a record is
+ * key, a one-off payment under the one-offs purpose key, a vendor entry under
+ * the vendors purpose key (each purpose from the one list, `PURPOSES`), and the
+ * company's state under the company key itself of the epoch the record
+ * names, exactly as the founding signer's device sealed it (`PURPOSE_OF_KIND`
+ * is the same map without the state, which each kind's own file seals by). Such a record is
  * opened by whoever holds that key, so it carries no per-reader wraps: a wrap
  * beside it would be a second, drifting answer to who may read it. Every other
  * kind is sealed under a fresh key wrapped to each reader.
  */
-export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'vaults' | 'one-offs' | 'vendors' | 'viewing'>>> = Object.freeze({
-  person: 'payroll', roster: 'roster', 'vault-info': 'vaults', transfer: 'one-offs', vendor: 'vendors', state: 'viewing',
+export const PURPOSE_OF_KIND = Object.freeze({
+  person: 'people', roster: 'roster', 'vault-info': 'vaults', transfer: 'one-offs', vendor: 'vendors',
+} as const satisfies Partial<Record<CompanyRecordKind, Purpose>>);
+export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, Purpose | 'viewing'>>> = Object.freeze({
+  ...PURPOSE_OF_KIND, state: 'viewing',
 });
 
 /** Where a person on a company's payroll stands. */

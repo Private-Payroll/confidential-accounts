@@ -99,7 +99,7 @@ describe('A PERSON SEATED ON THE CHAIN BEFORE A SIGNER LEAVES IS ADMITTED AFTER 
     const dee = await companyKeyHere({
       accountId: CO, material: { signingSecret: made_[0]!.signingSecret },
       records: { directory: (asked) => directoryHere(acmeDirectoryDeps(), asked) }, filings: async () => store.directoryFilingsOf(CO),
-      served: async () => handed as Hex, released: () => null, askTheWallet: async () => null,
+      served: async () => handed as Hex, released: () => null, askTheWallet: async () => null, revoked: async () => null,
     });
     /* RED WHEN: a person admitted after the change cannot read what was sealed before it, or reads no key in force. */
     expect([dee.epoch, dee.keyAt(0)]).toEqual([1, KEY]);

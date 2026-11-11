@@ -15,7 +15,8 @@ import type { InvitationKind } from './invitation.js';
 import type { SeatOpening } from './seat-opening.js';
 import type { SignedSeatInvitation } from './invitation.js';
 
-export type Role = 'admin' | 'approver' | 'initiator' | 'viewer';
+import type { Role } from './roles.js';
+export type { Role, SignerRole } from './roles.js';
 
 /*
  * EVERY AMOUNT IN THIS FILE IS A `bigint`, IN THE ASSET'S SMALLEST UNIT, AND
@@ -158,15 +159,12 @@ export interface Signer {
   signingPublicKey: Hex;
   /** x25519, used to receive the wrapped account viewing key */
   wrappingPublicKey: Hex;
-  role: Role;
   /**
-   * **WHAT THIS SEAT MAY APPROVE, AND ON WHICH VAULTS**, as the company recorded
-   * it when the seat was made. Absent is every right on every vault, which is
-   * how every seat is made today: its leaf is made under the scope of all
-   * vaults. A signer's device counts these before it approves a change of who
-   * may approve (`vault-approvers.ts`).
+   * A role, on an entry the service's own account code wrote and reads. No
+   * device writes one or reads one: a seat's role is the one the company's
+   * directory holds for it.
    */
-  rights?: import('./vault-approvers.js').SeatRights;
+  role?: Role;
   /**
    * The two public keys this signer gave for the company's vaults, signed with
    * this entry's own signing key. Absent until they give them. The roster is

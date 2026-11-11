@@ -30,7 +30,7 @@
 import { recordsKeySignedBy, directoryEntrySignedBy, type DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { sign, verify, type Hex, type Sealed } from './crypto.js';
-import { openRecord, sealRecord } from './sealed-records.js';
+import { openRecord, sealRecord, type RecordsKey } from './sealed-records.js';
 import type { Account, Signer } from './types.js';
 
 export type VaultKey = { readonly tag: string; readonly value: string };
@@ -326,7 +326,7 @@ export const offerAsKept = (o: unknown, person: string): VaultKeysOffer | null =
  * key the service kept beside it are not the ones sealed inside it. Whether
  * what it says is true is `vaultKeysOfferRefusal`'s.
  */
-export const openVaultKeysOffer = (company: string, kept: VaultKeysOffer, viewingKey: Hex): OpenedVaultKeysOffer | string => {
+export const openVaultKeysOffer = (company: string, kept: VaultKeysOffer, viewingKey: RecordsKey): OpenedVaultKeysOffer | string => {
   let o: Partial<OpenedVaultKeysOffer>;
   try {
     o = openRecord<Partial<OpenedVaultKeysOffer>>('roster', company, kept.sealed, viewingKey);

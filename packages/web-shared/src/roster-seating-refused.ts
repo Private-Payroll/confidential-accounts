@@ -24,9 +24,9 @@ const READS = new WeakMap<object, SeatingRefusedRead>();
 export const seatingRefusedHolding = <E extends object>(
   stop: E, held: { readonly opened: Account; readonly witnesses: RosterWitnesses; readonly waited: ReadonlySet<string> }, unread: readonly string[],
 ): E => {
-  const { believed, refused } = believedSigners(held.opened.signers, held.witnesses);
+  const { believed, refused, attesting } = believedSigners(held.opened.signers, held.witnesses);
   READS.set(stop, {
-    account: { ...held.opened, signers: believed, notBelieved: seatsNotBelieved(believed, seatsStaying(held.witnesses)), refused, waited: [...held.waited] },
+    account: { ...held.opened, signers: believed, attesting, notBelieved: seatsNotBelieved(believed, seatsStaying(held.witnesses)), refused, waited: [...held.waited] },
     unread: unread.map((x) => x.toLowerCase()),
   });
   return stop;

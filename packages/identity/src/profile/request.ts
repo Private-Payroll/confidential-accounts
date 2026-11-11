@@ -452,13 +452,17 @@ export function readTidyAsked(value: unknown): readonly TidyAsked[] | null {
   return Object.freeze(out);
 }
 
-/** The founding signer's role, one of a company's four. */
-export const FOUNDING_ROLES = ['admin', 'approver', 'initiator', 'viewer'] as const;
+/**
+ * The roles held by a seat with a leaf on a company's account, which signs on
+ * the chain: the founding signer's is one of them. The one list of these
+ * names; a company's roles are built on it.
+ */
+export const SIGNER_ROLES = Object.freeze(['admin', 'approver', 'initiator'] as const);
 
 /** What a page asks a new company to be founded with: its name and its founding signer's name and role. */
 export interface FoundingAsked {
   readonly name: string;
-  readonly signer: { readonly name: string; readonly role: (typeof FOUNDING_ROLES)[number] };
+  readonly signer: { readonly name: string; readonly role: (typeof SIGNER_ROLES)[number] };
 }
 
 /** The longest name a founding may carry, for the company or its signer. */
@@ -478,7 +482,7 @@ export function readFoundingAsked(value: unknown): FoundingAsked | null {
   if (Object.keys(w).some((k) => k !== 'name' && k !== 'role')) return null;
   if (!aFoundingName(v['name']) || !aFoundingName(w['name'])) return null;
   const role = w['role'];
-  if (!(FOUNDING_ROLES as readonly unknown[]).includes(role)) return null;
+  if (!(SIGNER_ROLES as readonly unknown[]).includes(role)) return null;
   return Object.freeze({
     name: v['name'] as string,
     signer: Object.freeze({ name: w['name'] as string, role: role as FoundingAsked['signer']['role'] }),

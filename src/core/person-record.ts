@@ -21,7 +21,7 @@
  *
  * Pure: the server and the page both import it.
  */
-import { sealRecord, openRecord } from './sealed-records.js';
+import { sealRecord, openRecord, type RecordsKey } from './sealed-records.js';
 import { joinCodeSignedBy } from 'midnight-identity/profile/join-code';
 import { readAddressClaim, typedAddressIsShielded } from 'midnight-identity/profile/address-claim';
 import { canonical, type Hex } from './crypto.js';
@@ -35,14 +35,14 @@ export {
 } from './payable-days.js';
 import type { ClassificationLine, RosterEmployee, SealedEmployee } from './types.js';
 import {
-  fromCompanyWire, SealedRecordWireRefused, whyThisIsNotACompanyRecord, type CompanyWireVersion, type PersonFacts, type SealedCompanyRecord,
+  fromCompanyWire, PURPOSE_OF_KIND, SealedRecordWireRefused, whyThisIsNotACompanyRecord, type CompanyWireVersion, type PersonFacts, type SealedCompanyRecord,
 } from '../midnight/sealed-record-wire.js';
 
 /** Everything about a person that is sealed: the whole entry but its id, its company and where they stand, the one plain fact. */
 export type PersonSecrets = Omit<RosterEmployee, 'id' | 'accountId' | 'status'>;
 
-/** The purpose key a person record is sealed under. */
-export const PERSON_PURPOSE = 'payroll' as const;
+/** The purpose key a person record is sealed under: the company's people key, apart from its runs' payroll key. */
+export const PERSON_PURPOSE = PURPOSE_OF_KIND.person;
 
 /** The employee row the older payroll code reads, made from a person's newest record and the drop box on their invitation. */
 export const employeeRowOf = (rec: SealedCompanyRecord, inbox: SealedEmployee['inbox']): SealedEmployee => {
@@ -80,11 +80,11 @@ export const personRecordFromRow = (row: SealedEmployee, version: number): Seale
 
 /**
  * **A PERSON, SEALED ON THIS DEVICE**, as the next version of their record:
- * everything private under the company's payroll key, their payslip key among
+ * everything private under the company's people key, their payslip key among
  * it, and where they stand beside it. The filer's seat signs it when it is filed.
  */
 export const sealPerson = (
-  person: RosterEmployee, version: number, keyEpoch: number, viewingKey: Hex,
+  person: RosterEmployee, version: number, keyEpoch: number, viewingKey: RecordsKey,
 ): SealedCompanyRecord => {
   const { id, accountId, status, ...secrets } = person;
   const facts: PersonFacts = { status };
@@ -95,21 +95,21 @@ export const sealPerson = (
 };
 
 /**
- * **AN EMPLOYEE ROW, OPENED WITH THE COMPANY'S KEY**: the whole entry, where
+ * **AN EMPLOYEE ROW, OPENED WITH THE PEOPLE KEY ITS READER HOLDS**: the whole entry, where
  * the person stands from beside the seal. A record sealed with no payslip key
  * reads as having none. The address comes out as it was sealed; the
  * service's payroll code decodes it again before anything is paid to it.
  */
-export const openEmployeeRow = (r: SealedEmployee, viewingKey: Hex): RosterEmployee => {
+export const openEmployeeRow = (r: SealedEmployee, viewingKey: RecordsKey): RosterEmployee => {
   const secrets = openRecord<PersonSecrets>(PERSON_PURPOSE, r.accountId, r.sealed, viewingKey);
   return { ...secrets, id: r.id, accountId: r.accountId, status: r.status, wrappingPublicKey: secrets.wrappingPublicKey ?? null };
 };
 
 /**
- * A person record, opened with the company's key. Refused when it is not named as an employee or carries a vendor's
+ * A person record, opened with the people key its reader holds. Refused when it is not named as an employee or carries a vendor's
  * payment terms, so the people and vendor lists never share an id or a rule.
  */
-export const openPerson = (rec: SealedCompanyRecord, viewingKey: Hex): RosterEmployee => {
+export const openPerson = (rec: SealedCompanyRecord, viewingKey: RecordsKey): RosterEmployee => {
   const person = openEmployeeRow(employeeRowOf(rec, null), viewingKey);
   if (!person.id.startsWith('emp_')) throw new Error(`${person.name}'s record is not an employee's, so it is not read as one.`);
   if ('terms' in person) throw new Error(`${person.name}'s record carries a vendor's payment terms, so it is not read as an employee: a vendor is a vendor entry.`);

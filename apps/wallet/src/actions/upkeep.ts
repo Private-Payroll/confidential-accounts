@@ -10,10 +10,13 @@
  * company's next seat action tries again. A transaction it sent that the service did not confirm does stop the action
  * at that step, since the page must be told what may have gone out.
  */
-import type { Hex } from '../../../../src/core/crypto.js';
+import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import { peopleServed } from '../../../../src/core/person-record.js';
 import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors, type SealedAnswer } from '../../../../packages/web-shared/src/company-key-here.js';
+import { grantsServedBy, revokedAtHere } from '../../../../packages/web-shared/src/purpose-wraps.js';
+import { grantsWrappedAgainHere } from '../../../../packages/web-shared/src/grants-filed-here.js';
+import { grantsFilingDoorsIn } from './grant-read.js';
 import { governedCallServiceFor, seatsLeavingHere } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import {
   anchoredOnTheWayIn, anchorServiceFor, anchorTheRecordsHere, directoryChangeFiledHere, type AnchorDoors,
@@ -39,6 +42,8 @@ import { mayFile } from '../../../../src/midnight/seat-directory.js';
 import { vaultSecretsKeptFor } from './vault-secret-kept.js';
 import type { VaultDoorsReach } from './vault-doors-here.js';
 import { stillOwed, vaultSecretsChangedHere } from './vault-secrets-changed-here.js';
+import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
+import { seatsWithNoRightsRead } from './approvers-here.js';
 
 /** Where this wallet keeps the coins it put into a vault; absent where the browser keeps no database. */
 export interface UpkeepReach {
@@ -129,7 +134,7 @@ export async function anchorDoorsIn(r: CompanyReach, api: Api): Promise<AnchorDo
   const service = anchorServiceFor(api);
   return {
     accountId: r.accountId,
-    material: { signingSecret: r.seat.signingSecret as Hex, blinding: r.seat.blinding as Hex, scope: r.seat.scope },
+    material: signerMaterialOf(r.seat),
     manifest: manifestServiceFor(api),
     tree: treeServiceFor(api),
     ...treeKeptHere(),
@@ -189,6 +194,10 @@ export async function rotationDoorsIn(r: CompanyReach, api: Api): Promise<Rotati
     leaving: () => seatsLeavingHere({ service: governedCallServiceFor(api), accountId: r.accountId, records, leaves: r.judges.leavesFor(r.account) }, found, true),
     admitted: async () => r.judges.seatsAdmittedOn(await api(accountPath(r.accountId)) as SealedAccount),
     file: (change, signedFor) => directoryChangeFiledHere(anchor, change, signedFor),
+    revoked: () => revokedAtHere({
+      accountId: r.accountId, versions: grantsServedBy(api, r.accountId), directory: records.directory,
+      signingPublicKey: signingPublicKeyOf(r.seat.signingSecret as Hex), released: async () => r.companyKey,
+    }),
   };
 }
 
@@ -314,7 +323,9 @@ const NOT_YET_ANCHORED = /not yet anchored/u;
  */
 export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { readonly ownEntry?: boolean } = {}) {
   let partial = false;
-  const left = (): void => { partial = true; };
+  const offersRefused: string[] = [];
+  /* Something left for the next seat action; an offer of vault keys the fold refused is named, seat and reason, to the person in this window. */
+  const left = (offerRefused?: string): void => { partial = true; if (offerRefused !== undefined) offersRefused.push(offerRefused); };
 
   const first: ActionStep = {
     title: { key: 'act.upkeep.step.first' },
@@ -366,20 +377,35 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         company.renew();
         r = await company.reach(ctx);
       }
+      /* The read grants in force, wrapped again to the company's newest key and sealed to every seat, when owed. */
+      const rewrapped = await grantsWrappedAgainHere(grantsFilingDoorsIn(r, w.api, w.send)).catch((e: unknown) => {
+        if (e instanceof ActionStopped) throw e;
+        return { state: 'not-wrapped' as const, why: String(e) };
+      });
+      w.rethrow();
+      if (rewrapped.state === 'not-wrapped') left();
+      if (rewrapped.state === 'filed') changed = true;
       try {
         const companyKeys = await r.judges.companyKeysFor(r.accountId, r.sealed, r.seat);
-        if (await rosterFollowed({
+        const followed = await rosterFollowed({
           api: w.api, accountId: r.accountId, companyKeys, signingSecret: r.seat.signingSecret as Hex, label: r.label, account: r.account,
           reads: r.judges.rosterReadsFor(r.accountId, r.label, r.account),
           entered: recordsEnteredFor(manifestServiceFor(w.api), r.accountId, r.seat.signingSecret as Hex),
-        }) !== null) changed = true;
+        });
+        if (followed.changed) changed = true;
+        for (const offer of followed.refused) left(`seat ${offer.seat}: ${offer.why}`);
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         left();
       }
       w.rethrow();
+      /* A seat whose rights this wallet cannot read yet is counted on no vault; the person is told which, and what clears it. */
+      const unread = await seatsWithNoRightsRead(r).catch((e: unknown) => { if (e instanceof ActionStopped) throw e; left(); return []; });
+      w.rethrow();
       if (changed) company.renew();
       ctx.tell({ upkeep: partial ? UPKEEP.partial : UPKEEP.done });
+      if (offersRefused.length > 0) ctx.show({ key: 'act.upkeep.left.vault-keys-refused', values: { offers: offersRefused.join('; ') } });
+      if (unread.length > 0) ctx.show({ key: 'act.upkeep.left.seat-rights-unread', values: { seats: unread.join(', ') } });
       if (w.seen.unconfirmed > 0) throw new StepRefused(why('not-confirmed'));
     },
   };

@@ -20,9 +20,10 @@ import { newSigningKeypair, newSymmetricKey, type Hex } from '../core/crypto.js'
 import { SimulatedCommitments } from '../core/ledger.js';
 import { openSeatProof, seatOpeningRefusal } from '../core/seat-opening.js';
 import {
-  alreadyOnTheCompany, invitationIdOf, InvitationNotOpened, newInvitationToken, openOffer, sealOffer, signOffer, signSeatInvitation, signWithdrawal,
-  type Inviter, type SignedSeatInvitation,
+  alreadyOnTheCompany, invitationIdOf, InvitationNotOpened, newInvitationToken, openOffer, replacedBy, sealOffer, signOffer, signSeatInvitation, signWithdrawal,
+  type Inviter, type SeatInvitationTerms, type SignedSeatInvitation,
 } from '../core/invitation.js';
+import { scopeOfRole } from '../core/seat-rights.js';
 import { sealGovernanceProposal, signProposalFiling } from '../core/proposal-filing.js';
 import { openFromInbox } from '../core/sealed-records.js';
 import { NO_ASSET } from '../core/assets.js';
@@ -35,6 +36,7 @@ import {
 import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
+import { invitedAsRaised, proposalMadeByHere } from '../testing/invitation-approved.js';
 import {
   aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chainRead, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat,
 } from './a-company-of-two-seats.test-support.js';
@@ -165,9 +167,9 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     const ned = await waitingFor('ned');
     const sent = wire.length;
     const withdraw = (seat: Seat, reads = adasReads()) => withdrawWaitingSignerHere({ id: CO, viewingKey: KEY }, seat, ned.signerId, reads, fromAda);
-    /* RED WHEN: a viewer's seat, or a retired one, withdraws somebody. */
-    await expect(withdraw({ ...ADA, held: { role: 'viewer', retired: false } })).rejects.toThrow(SeatMayNotInvite);
-    await expect(withdraw({ ...ADA, held: { role: 'admin', retired: true } })).rejects.toThrow(SeatMayNotInvite);
+    /* RED WHEN: a limited seat's seat, or a retired one, withdraws somebody. */
+    await expect(withdraw({ ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
+    await expect(withdraw({ ...ADA, held: { role: 'admin', retired: true, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
     /* RED WHEN: a seat the chain no longer holds withdraws somebody. */
     await expect(withdraw(ADA, { ...adasReads(), onTheChain: [BO.seat] })).rejects.toThrow(/not one the company's account holds now/u);
     /* RED WHEN: a person a proposal could still seat is withdrawn while the chain holds that proposal open, approved or not. */
@@ -212,8 +214,8 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
 
   it('a seat whose role may not file a proposal invites nobody', async () => {
     const sent = wire.length;
-    /* RED WHEN: a viewer's device signs an invitation, which every member's device would refuse anyway. */
-    await expect(inviteHere(ACME, { ...ADA, held: { role: 'viewer', retired: false } }, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda))
+    /* RED WHEN: a limited seat's device signs an invitation, which every member's device would refuse anyway. */
+    await expect(inviteHere(ACME, { ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } }, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda))
       .rejects.toThrow(SeatMayNotInvite);
     /* RED WHEN: a device that has not read its own seat's role from the directory invites somebody all the same. */
     const { held: _unread, ...unread } = ADA;
@@ -232,13 +234,18 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
 describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   /* Lee was invited by Bo and the chain seated Lee's leaf; Bo has left, so the account holds Ada and Lee. */
   const LEE = seatOf('lee', 7, LABEL, ADDRESS, CO, BO);
-  const original: SignedSeatInvitation = signSeatInvitation({
-    company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'lee', name: 'lee', role: 'approver', leaf: LEE.seat as Hex,
+  /* Lee's vault, the one his approver's seat was offered. */
+  const LEES_VAULT = 'a1'.repeat(32) as Hex;
+  /* As Bo's device raised it: naming his leaf, his vault, the address he took the seat from and the proposal raised for it. */
+  const original: SignedSeatInvitation = invitedAsRaised({
+    company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'lee', name: 'lee', role: 'approver', vaults: [LEES_VAULT], leaf: LEE.seat as Hex,
   }, BO.signingSecret);
   const leesChain = [ADA.seat, LEE.seat];
   /** The company's proposals: the one that seated Lee carries the invitation the signers approved for his leaf. */
   const seatedLee = [anAddSigner({ signerId: 'sgn_lee', invited: original }, '0e'.repeat(32) as Hex)];
   const replacing = { invitation: original.terms.invitation, signedBy: original.signedBy, signature: original.signature };
+  /** Lee's invitation's terms with his role raised to admin, at an admin's rights on his vault. */
+  const asAnAdmin = (t: SeatInvitationTerms): SeatInvitationTerms => ({ ...t, role: 'admin', invite: { ...t.invite!, scope: scopeOfRole('admin', t.vaults) } });
   /** Lee's device taking a re-issue, with the company's proposals it reads. */
   const leeTakes = (opened: Parameters<typeof takeTheReissueHere>[0], kept: unknown[], proposals: readonly SealedProposal[] = seatedLee,
     mine: { accountId: string; person: string; seat: string } = { accountId: CO, person: 'lee', seat: LEE.seat }) =>
@@ -260,8 +267,9 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     expect(kept).toHaveLength(1);
     expect(kept[0]!.inviter).toEqual(asInviter(ADA));
     expect(kept[0]!.invited.signedBy).toBe(ADA.statement.signingKey);
-    /* RED WHEN: a re-issue changes who the seat is for, their name, their role or their leaf. */
+    /* RED WHEN: a re-issue changes who the seat is for, their name, their role, their vaults, their leaf or the proposal that seated them. */
     expect(kept[0]!.invited.terms).toEqual({ ...original.terms, invitation: made.id, replaces: replacing });
+    expect(proposalMadeByHere(replacedBy(kept[0]!.invited)!)).toBe(original.terms.proposal);
     /* RED WHEN: the person's wallet still refuses after the re-issue, so they stay locked out. */
     expect(leesWallet(kept[0]!.inviter)).toBeNull();
     /* A re-issue offers no new seat: the link makes no seat request. */
@@ -273,9 +281,12 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     const sent = wire.length;
     const reissue = (seat: Seat, inv: SignedSeatInvitation = original, chain: readonly string[] = leesChain, also: readonly SealedProposal[] = []) =>
       reissueInvitationHere(ACME, seat, { leaf: LEE.seat as Hex, proposals: [anAddSigner({ signerId: 'sgn_lee', invited: inv }, '0e'.repeat(32) as Hex), ...also], onTheChain: chain }, ORIGIN, fromAda);
-    /* RED WHEN: a viewer's seat or a retired one re-issues an invitation. */
-    await expect(reissue({ ...ADA, held: { role: 'viewer', retired: false } })).rejects.toThrow(SeatMayNotInvite);
-    await expect(reissue({ ...ADA, held: { role: 'admin', retired: true } })).rejects.toThrow(SeatMayNotInvite);
+    /* RED WHEN: a limited seat's seat or a retired one re-issues an invitation. */
+    await expect(reissue({ ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
+    await expect(reissue({ ...ADA, held: { role: 'admin', retired: true, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
+    /* RED WHEN: a seat held on another vault re-issues an invitation to Lee's. */
+    const elsewhere = { mayApprove: true, everyVault: false, onVaults: ['b2'.repeat(32) as Hex] };
+    await expect(reissue({ ...ADA, held: { role: 'admin', retired: false, rights: elsewhere } })).rejects.toThrow(/beyond the ones the inviting seat holds/u);
     /* RED WHEN: an invitation is re-issued for a leaf the chain does not hold: somebody waiting is withdrawn and invited again instead. */
     await expect(reissue(ADA, original, [ADA.seat])).rejects.toThrow(/not one the company's account holds now/u);
     /* RED WHEN: an invitation naming no seat, or another company's, is re-issued, so it could seat whoever holds the link. */
@@ -286,7 +297,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
      * RED WHEN: the invitation re-issued is whichever the service lists first, when the proposals carry two for the leaf:
      * a record anybody holding the company's key seals could then name the role.
      */
-    const asAdmin = signSeatInvitation({ ...original.terms, role: 'admin' }, BO.signingSecret);
+    const asAdmin = signSeatInvitation(asAnAdmin(original.terms), BO.signingSecret);
     await expect(reissue(ADA, asAdmin, leesChain, [anAddSigner({ signerId: 'sgn_lee', invited: original }, '0d'.repeat(32) as Hex)])).rejects.toThrow(/does not carry an invitation a signer made for them/u);
     expect(wire.length).toBe(sent);
   });
@@ -314,10 +325,10 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     /* RED WHEN: Lee's device keeps a re-issue that gives his seat another role, or replaces no invitation, than the one his seat was proposed under. */
     const openedAs = (terms: Parameters<typeof signSeatInvitation>[0]) =>
       ({ token, signed: openOffer(offerOf(signSeatInvitation({ ...terms, invitation: invitationIdOf(token) }, ADA.signingSecret)), token), expiresAt: '', kind: 'signer' as const });
-    await expect(leeTakes(openedAs({ ...original.terms, role: 'admin', replaces: replacing }), kept)).rejects.toThrow(/not the one your seat was proposed under/u);
+    await expect(leeTakes(openedAs({ ...asAnAdmin(original.terms), replaces: replacing }), kept)).rejects.toThrow(/not the one your seat was proposed under/u);
     await expect(leeTakes(openedAs({ ...original.terms }), kept)).rejects.toThrow(/not the one your seat was proposed under/u);
     /* RED WHEN: Lee's device holds a re-issue to whichever invitation the service lists first, where two name his seat. */
-    const twice = [...seatedLee, anAddSigner({ signerId: 'sgn_lee', invited: signSeatInvitation({ ...original.terms, role: 'admin' }, BO.signingSecret) }, '0d'.repeat(32) as Hex)];
+    const twice = [...seatedLee, anAddSigner({ signerId: 'sgn_lee', invited: signSeatInvitation(asAnAdmin(original.terms), BO.signingSecret) }, '0d'.repeat(32) as Hex)];
     await expect(leeTakes(openedAs({ ...original.terms, replaces: replacing }), kept, twice)).rejects.toThrow(/not the one your seat was proposed under/u);
     expect(kept).toEqual([]);
     await leeTakes(openedAs({ ...original.terms, replaces: replacing }), kept);

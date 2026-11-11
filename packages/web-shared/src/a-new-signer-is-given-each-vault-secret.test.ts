@@ -7,13 +7,14 @@ import { newSigningKeypair } from '../../../src/core/crypto.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import { openNonceSecrets, recordsKeypairFrom, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
 import { directoryEntryMade, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../../../src/core/invitation.js';
+import { invitationIdOf, newInvitationToken } from '../../../src/core/invitation.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { directoryHere, type DirectoryHere, type DirectoryHereDeps } from './vault-page-doors.js';
 import { giveEachVaultSecretHere } from './vault-secret-given.js';
 import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
 import { leavesOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
 import { recordsReaderOf, type DeviceSigner } from './deposit-on-device.js';
+import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../../../src/testing/invitation-approved.js';
 
 /*
  * A NEW SIGNER IS GIVEN EACH VAULT'S NONCE SECRET FROM A SIGNER'S OWN DEVICE.
@@ -39,7 +40,7 @@ const signer = (n: number, invitedBy?: { readonly filingSecret: Hex }) => {
   const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, filing.publicKey, seat);
   const entry = directoryEntryMade({
     company: CO, person: `p${n}`, committeeKey, signed: statement, opening, signingSecret: filing.secret, viewingKey: VIEWING,
-    ...(invitedBy === undefined ? {} : { invited: signSeatInvitation({
+    ...(invitedBy === undefined ? {} : { invited: invitedAsRaised({
       company: CO, invitation: invitationIdOf(newInvitationToken()), person: `p${n}`, name: `p${n}`, role: 'admin', leaf: seat as Hex,
     }, invitedBy.filingSecret) }),
   });
@@ -66,7 +67,7 @@ const company = (o: { filings?: DirectoryFiling[]; seats?: string[]; attested?: 
     attested: async () => o.attested ?? [ADA.attested, CAROL.attested, DAN.attested],
     /* Nothing here reads a record through the anchor: the company's records hold no entry. */
     anchored: anchoredEntering(CO),
-    leaves: leavesOfTheContract,
+    leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
   };
   const directory = (): Promise<DirectoryHere> => directoryHere(deps);
   /* Every version filed, per vault, so a test counts the puts. */

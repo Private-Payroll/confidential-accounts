@@ -14,6 +14,7 @@ import {
   foundingStateRefusal, openStateRecord, signedFoundingState, stateRecordId,
 } from './founding-state.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import { openRoster } from './roster-record.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 
 const LABEL = `co_${'3d'.repeat(32)}` as CompanyLabel;
@@ -22,7 +23,7 @@ const founded = () => {
   const signing = newSigningKeypair();
   const wrapping = newWrappingKeypair();
   const f = foundTheCompanyHere({
-    name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' }, userId: 'usr_founder', label: LABEL,
+    name: 'Acme Ltd', signer: { name: 'Priya' }, userId: 'usr_founder', label: LABEL,
     seat: { signingPublicKey: signing.publicKey, wrappingPublicKey: wrapping.publicKey, leaf: '4e'.repeat(32) },
     signingSecret: signing.secret,
   });
@@ -69,7 +70,7 @@ describe('THE FIRST STATE, AS ITS FOUNDING SEAT SIGNED IT', () => {
       .toThrow(/founded at key epoch 0/);
     /* RED WHEN: a company is made with a seat key its secret does not make, so its state is signed by nobody it names. */
     expect(() => foundTheCompanyHere({
-      name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' }, userId: 'usr_founder', label: LABEL,
+      name: 'Acme Ltd', signer: { name: 'Priya' }, userId: 'usr_founder', label: LABEL,
       seat: { signingPublicKey: newSigningKeypair().publicKey, wrappingPublicKey: newWrappingKeypair().publicKey, leaf: '4e'.repeat(32) },
       signingSecret: signing.secret,
     })).toThrow(/is not the one its secret makes/);
@@ -90,5 +91,15 @@ describe('THE FIRST STATE, AS ITS FOUNDING SEAT SIGNED IT', () => {
     expect(asked).toEqual([]);
     /* RED WHEN: a key that does not open the record is told anything but that it does not. */
     await expect(accounts.payoutSeedsOf(f.account.id, 'ab'.repeat(32) as Hex)).rejects.toThrow(/viewing key cannot open this account/);
+  });
+});
+
+describe('THE FIRST ROSTER, AS ITS FOUNDING SEAT SIGNED IT', () => {
+  it('NAMES THE FOUNDING SEAT WITH NO ROLE: A SEAT\'S ROLE IS THE ONE THE COMPANY\'S DIRECTORY HOLDS', () => {
+    const { f, viewingKey } = founded();
+    const [seat] = openRoster(f.roster, viewingKey).signers;
+    /* RED WHEN: the device that founds the company writes a role into its roster, a second place a seat's role is held. */
+    expect(seat).toMatchObject({ name: 'Priya', userId: 'usr_founder' });
+    expect(seat).not.toHaveProperty('role');
   });
 });

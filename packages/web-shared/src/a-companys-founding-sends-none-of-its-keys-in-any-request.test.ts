@@ -6,7 +6,7 @@ import { parseAsk, type KeyringRequest } from 'midnight-identity/profile/request
 import { openKeyring } from './keyring-blob.js';
 import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
 import { unwrapKey, unseal, parseCanonical, toHex } from '../../../src/core/crypto.js';
-import { purposeKey, type Purpose } from '../../../src/core/sealed-records.js';
+import { purposeKey, PURPOSES } from '../../../src/core/sealed-records.js';
 import * as keyring from './keyring.js';
 import type { Openable } from './wallet-sign-in.js';
 
@@ -27,7 +27,6 @@ const A = { id: 'usr_a', email: null, name: 'Priya' };
 const identity = identityFromWords(TEST_MNEMONIC);
 const ACCOUNT = 'c0'.repeat(32);
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
-const PURPOSES: readonly Purpose[] = ['roster', 'policy', 'payroll', 'inbox', 'proposals'];
 
 /** The wallet, answering the keyring ask with its own code, and founding a company as it does. */
 class Wallet implements Openable {

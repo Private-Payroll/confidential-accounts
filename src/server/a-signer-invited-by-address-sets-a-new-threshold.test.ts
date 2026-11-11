@@ -19,9 +19,10 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { theNetwork } from '../midnight/network.js';
 import { inviteHere, openInvitationHere, type KeptSeatInvitation } from 'vaults-web-shared/invitation-on-device.js';
 import {
-  approveSeatInvitationOnDevice, InvitationNotBound, raiseSeatInvitationOnDevice, removeSignerOnDevice, seatSignerOnDevice, signerByAddressDoorsOf,
+  approveSeatInvitationOnDevice, InvitationNotBound, raiseSeatInvitationOnDevice, removeSignerOnDevice, signerByAddressDoorsOf,
   type SeatInvitationShown,
 } from 'vaults-web-shared/governed-call-on-device.js';
+import { seatSignerOnDevice } from 'vaults-web-shared/signer-by-link.js';
 import { ACME, ORIGIN, fromAda, store } from './a-company-of-two-seats.test-support.js';
 import {
   aCompanyWhoseSignersChange, ADA, BO, CO, CY, deviceOf, events, KEY, rosterDoorsOf, sendAs, type Seat,
@@ -38,17 +39,17 @@ const coinKeyAt = (address: string): Hex => String(checkShieldedAddress(address,
 const inviteAddressOf = (c: Hex, salt: Hex): Hex => MidnightCommitments.inviteAddressOf(c, salt);
 const seatingDevice = (s: Seat) => ({ ...deviceOf(s), roster: rosterDoorsOf(s) });
 
-/** Ada's device invites the wallet at `fill`'s address with `threshold`, and `scope` where given; what it kept, and the offer the link opens. */
-const invitedAt = async (fill: number, threshold: string, scope?: Hex) => {
+/** Ada's device invites the wallet at `fill`'s address at `role` with `threshold`; what it kept, and the offer the link opens. */
+const invitedAt = async (fill: number, threshold: string, role: 'approver' | 'initiator' = 'approver') => {
   const kept: KeptSeatInvitation[] = [];
   const made = await inviteHere(ACME, ADA, 'signer', {
-    name: `w${fill}`, role: 'approver', person: 'unused', address: addressOf(fill), threshold, ...(scope === undefined ? {} : { scope }),
+    name: `w${fill}`, role, person: 'unused', address: addressOf(fill), threshold,
   }, ORIGIN, fromAda, signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); }));
   const offer = (await openInvitationHere(made.link, sendAs(null))).signed.offer.for as SignerOffer;
   const proposal = (await store.listProposals(CO) as SealedProposal[])
     .find((p) => String(p.chainId).toLowerCase() === offer.invited.terms.proposal!.toLowerCase())!;
   const shown: SeatInvitationShown = {
-    proposal: proposal.id, name: `w${fill}`, role: 'approver', address: offer.invited.terms.invite!.address, scope: offer.invited.terms.invite!.scope,
+    proposal: proposal.id, name: `w${fill}`, role, address: offer.invited.terms.invite!.address, scope: offer.invited.terms.invite!.scope,
     coinPublicKey: coinKeyAt(addressOf(fill)), threshold,
   };
   return { kept, offer, shown };
@@ -73,18 +74,18 @@ describe('A SIGNER INVITED BY ADDRESS SETS THE THRESHOLD THE SIGNERS APPROVED, O
   it('RED WHEN: a threshold above the seats held once the seat is taken is raised, which the chain refuses only when the seat is taken', async () => {
     const before = events.length;
     const proposals = (await store.listProposals(CO)).length;
-    await expect(invitedAt(82, '5')).rejects.toThrow(/once this seat is taken the company has 4 signers, so it cannot need 5 approvals/iu);
+    await expect(invitedAt(82, '5')).rejects.toThrow(/Once this seat is taken the company has 4 signers, so it cannot need 5 approvals/u);
     expect(events.slice(before)).toEqual([]);
     expect((await store.listProposals(CO)).length).toBe(proposals);
   });
 
-  it('RED WHEN: a seat with rights of its own is counted as an approver, and a threshold that leaves company-wide runs short is raised', async () => {
+  it('RED WHEN: an initiator, which approves no run, is counted as an approver, and a threshold that leaves company-wide runs short is raised', async () => {
     const before = events.length;
-    await expect(invitedAt(83, '4', 'fa'.repeat(32) as Hex))
-      .rejects.toThrow(/unable to pay: company-wide runs \(its runs need 4 approvals and 3 signers could give them\)\..* The new seat is counted on no vault/u);
+    await expect(invitedAt(83, '4', 'initiator'))
+      .rejects.toThrow(/unable to pay: company-wide runs \(its runs need 4 approvals and 3 signers could give them\)\./u);
     expect(events.slice(before)).toEqual([]);
     /* The same seat at a threshold the three seats on every vault can meet is raised. */
-    await invitedAt(84, '3', 'fa'.repeat(32) as Hex);
+    await invitedAt(84, '3', 'initiator');
     expect(events.slice(before)).toEqual(['chain propose']);
   });
 
@@ -94,13 +95,11 @@ describe('A SIGNER INVITED BY ADDRESS SETS THE THRESHOLD THE SIGNERS APPROVED, O
     const before = events.length;
     for (const changed of [{ ...w.shown, threshold: '3' }, { ...w.shown, threshold: undefined }, { ...w.shown, threshold: '0' }]) {
       /* RED WHEN: a proposal that sets another threshold than the window showed (or one where the window showed none) is approved. */
-      await expect(approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: changed }, inviteAddressOf, { allVaults: ALL }), String(changed.threshold))
+      await expect(approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: changed }, inviteAddressOf), String(changed.threshold))
         .rejects.toThrow(InvitationNotBound);
     }
-    /* RED WHEN: a device that cannot tell which rights cover every vault counts the new seat anyway, and approves. */
-    await expect(approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: w.shown }, inviteAddressOf)).rejects.toThrow(/which rights cover every vault/u);
     expect(events.slice(before)).toEqual([]);
-    const done = await approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: w.shown }, inviteAddressOf, { allVaults: ALL });
+    const done = await approveSeatInvitationOnDevice(bo, { viewingKey: KEY, shown: w.shown }, inviteAddressOf);
     expect(done.state).toBe('waiting-for-the-invitee');
     expect(events.slice(before)).toEqual(['chain approve']);
   });
@@ -113,7 +112,7 @@ describe('A SIGNER INVITED BY ADDRESS SETS THE THRESHOLD THE SIGNERS APPROVED, O
     const before = events.length;
     await expect(raiseSeatInvitationOnDevice(seatingDevice(BO), {
       viewingKey: KEY, invited: stripped, proposalSalt: w.offer.byAddress!.proposalSalt, name: 'w86',
-    }, undefined, { allVaults: ALL })).rejects.toThrow(/salt this proposal is raised under is not the one its invitation makes/u);
+    }, undefined)).rejects.toThrow(/salt this proposal is raised under is not the one its invitation makes/u);
     expect(events.slice(before)).toEqual([]);
   });
 
@@ -124,7 +123,7 @@ describe('A SIGNER INVITED BY ADDRESS SETS THE THRESHOLD THE SIGNERS APPROVED, O
     /* Bo's device reads one directory version filed past the newest anchored, which anchoring from here does not reach. */
     const behind = { ...bo, records: { ...bo.records!, directory: async (asked?: never) => { const d = await read(asked); return { ...d, dir: { ...d.dir, version: d.dir.version + 1 } }; } } };
     const before = events.length;
-    await expect(approveSeatInvitationOnDevice(behind as never, { viewingKey: KEY, shown: w.shown }, inviteAddressOf, { allVaults: ALL }))
+    await expect(approveSeatInvitationOnDevice(behind as never, { viewingKey: KEY, shown: w.shown }, inviteAddressOf))
       .rejects.toThrow(/is not raised while version \d+ of the company's directory is filed and not yet anchored/u);
     /* The device anchors what it can first; nothing reaches the chain's proposals. */
     expect(events.slice(before).filter((e) => e.startsWith('chain'))).toEqual([]);

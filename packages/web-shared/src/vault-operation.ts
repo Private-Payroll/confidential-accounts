@@ -79,7 +79,7 @@
  * and sends it; and the pool is advanced - the note gone, its change added with
  * the transaction that made it - only once the chain shows both.
  */
-import { refuseLeavingAVaultShort } from '../../../src/core/vault-approvers.js';
+import { refuseLeavingAVaultShort, type SeatRights } from '../../../src/core/vault-approvers.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import type { Committee } from '../../../src/midnight/vault-committee.js';
 import { whyNotInstallable } from 'midnight-identity/profile/request';
@@ -103,7 +103,7 @@ import { ownCopyOpened } from '../../../src/midnight/sealed-secret-copy.js';
 import { signingPublicKeyOf } from '../../../src/core/crypto.js';
 import { mayFile } from '../../../src/midnight/seat-directory.js';
 import { seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
-import { fileVaultInfoHere, VaultInfoChanged, VaultInfoRefused } from './vault-info-here.js';
+import { fileVaultInfoHere, VaultInfoChanged, VaultInfoRefused } from './vault-info-filed-here.js';
 import { vaultInfoTidied } from '../../../src/midnight/vault-info-record.js';
 import { handedOver, type HandOver } from './hand-over.js';
 import { versionsBelievedOf } from './http-sealed-pool-store.js';
@@ -2114,13 +2114,14 @@ export interface RebuildDoors extends ChainHereDoors {
 }
 
 /**
- * This device's own seat in the directory it believes, found by the key it files with, or null when it holds none
+ * This device's own seat in the directory it believes, with its role, its retirement and the rights the directory
+ * believes it holds, found by the key it files with, or null when it holds none
  * or holds one this device does not believe (`seatNotBelievedHere`: not attested by its own wallet, retired, or not on
  * the chain now) - the one rule every reader of a seat keeps.
  */
 export const seatHereIn = async (
   directory: DirectoryRead, signingSecret: Hex,
-): Promise<{ readonly role: Role | null; readonly retired: unknown } | null> => {
+): Promise<{ readonly role: Role | null; readonly retired: unknown; readonly rights?: SeatRights } | null> => {
   const me = signingPublicKeyOf(signingSecret).toLowerCase();
   const here = await directory();
   const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === me);

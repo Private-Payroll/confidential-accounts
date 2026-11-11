@@ -100,7 +100,7 @@ export interface HeadersKeptStore {
 
 /**
  * **A SIGNED CHANGE TO THE COMPANY'S DIRECTORY THIS DEVICE FILED** - a
- * quorum's role or retirement - by the version its signatures were made
+ * quorum's retirement - by the version its signatures were made
  * for: kept from before it is first filed until a version carrying it is
  * anchored, so a change the service passes over, or no longer serves, is filed
  * again by this device rather than lost. A change of the company's key is
@@ -123,12 +123,12 @@ export interface DirectoryChangesKeptStore {
 
 /**
  * A kept change as read back: believed in its shape only, and judged like any filing when it is filed again. Only a
- * quorum's role or retirement is read back: a change of the company's key is never kept or filed again.
+ * quorum's retirement is read back: a change of the company's key is never kept or filed again.
  */
 const keptChangeOf = (x: unknown): KeptDirectoryChange | null => {
   const k = x as Partial<KeptDirectoryChange> | null;
   return k !== null && typeof k === 'object' && Number.isSafeInteger(k.signedAt) && (k.signedAt as number) >= 1
-    && typeof k.change === 'object' && k.change !== null && (k.change.kind === 'role' || k.change.kind === 'retire')
+    && typeof k.change === 'object' && k.change !== null && k.change.kind === 'retire'
     ? { signedAt: k.signedAt as number, change: k.change } : null;
 };
 const inOrder = (all: readonly KeptDirectoryChange[]) => [...all].sort((a, b) => a.signedAt - b.signedAt);

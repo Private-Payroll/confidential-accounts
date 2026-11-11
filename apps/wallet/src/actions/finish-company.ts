@@ -26,6 +26,7 @@ import type { BuiltAccountKeys } from '../chain/this-builds-account-keys.js';
 import { foundingSeatOf, type FoundingSeat } from '../keyring/founding-seat.js';
 import { withCompanyKey } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 /**
  * **FINISH CREATING A COMPANY, AS ONE ACTION RUN WHOLE IN THIS WALLET.**
@@ -393,7 +394,7 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
       half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: ZERO },
       ...(writtenAt === undefined ? {} : { raiseBy: raiseByOf(writtenAt) }),
     } as OpenedRound;
-    const material: SignerMaterial = { signingSecret: f.seat.signingSecret, blinding: f.seat.blinding, scope: f.seat.scope };
+    const material: SignerMaterial = signerMaterialOf(f.seat);
     const built = await reach.build({
       ask: 'governed-call', network: reach.network, account: at.account, order, material, chain: at.chain, opened,
     });

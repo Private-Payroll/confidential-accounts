@@ -17,14 +17,15 @@ import type { Inviter, SignedSeatInvitation, SignerOffer } from '../../../src/co
 import type { KeptSeatInvitation } from './invitation-on-device.js';
 import type { DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
-import { isCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import { isCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { x25519 } from '@noble/curves/ed25519.js';
-import { fromHex, seal, signingPublicKeyOf, toHex, unseal, unwrapKey, utf8, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { canonical, fromHex, seal, signingPublicKeyOf, toHex, unseal, unwrapKey, utf8, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { inboxPublicKey } from '../../../src/core/sealed-records.js';
 import type { SeatOpening } from '../../../src/core/seat-opening.js';
-import type { SealedAccount } from '../../../src/core/types.js';
-import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import type { RightsRecord } from '../../../src/core/seat-rights.js';
+import { creationsInOneRecord, withoutCreation, type SavedCreation } from './keyring-creations.js';
+import type { RoleChangeKept } from './keyring-role-changes.js';
 
 export interface AccountKeys {
   signerId: string;
@@ -57,6 +58,11 @@ export interface AccountKeys {
    * seat has to be taken on this device again. Nothing converts one.
    */
   scope: Hex;
+  /**
+   * The rights record `scope` commits to, for a seat seated with its role's rights: proved inside every run this seat
+   * raises, approves or holds, and found nowhere else. Absent for a seat on every vault.
+   */
+  rights?: RightsRecord;
   /**
    * **THE SEAT THAT INVITED THIS SIGNER: ITS COMMITTEE KEY AND THE DIRECTORY
    * ENTRY ITS WALLET SIGNED**, as the invitation carried it. Handed to this
@@ -92,6 +98,9 @@ export interface AccountKeys {
 /** An entry as a saved bundle may hold it: material saved before scopes were recorded has no scope. */
 export type SavedAccountKeys = Omit<AccountKeys, 'scope'> & { scope?: unknown };
 
+/** A seat set aside once the chain no longer held it, as `accounts` held it, with the company it was for. */
+type FormerSeat = SavedAccountKeys & { readonly accountId: string };
+
 /**
  * **KEY MATERIAL THAT IS DURABLE BEFORE ITS LEAF IS PUBLISHED.**
  *
@@ -113,6 +122,8 @@ export interface PendingSeat {
   wrappingSecret: Hex;
   blinding: Hex;
   scope: Hex;
+  /** The rights record `scope` commits to, kept with the seat as its saved keys keep it once the seat is taken. */
+  rights?: RightsRecord;
   /** The seat that invited this signer, as the invitation carried it; promoted with the material. */
   invitedBy?: Inviter;
   /** This seat's opening of its own leaf, made here with the leaf; promoted with the material. */
@@ -169,6 +180,13 @@ export interface Keyring {
    */
   pendingSeats?: Record<string, PendingSeat>;
   /**
+   * **SEATS THIS WALLET HELD ON A COMPANY THE CHAIN NO LONGER SEATS IT ON**, keyed by each seat's signing public key,
+   * each with the company it was for. A seat moves here from `accounts` only when this wallet takes a new seat on the
+   * same company, so a person removed and invited again keeps the removed seat's keys instead of losing them; nothing
+   * reads them to act. Optional, because saved keys written before it have no such field.
+   */
+  formerSeats?: Record<string, FormerSeat>;
+  /**
    * **THE COMPANIES THAT PAY THIS PERSON, BY THEIR LABELS.** The person's wallet lists a company here when they join it
    * as a payee, before it hands the company anything, and never takes one off.
    *
@@ -210,6 +228,11 @@ export interface Keyring {
    */
   seatInvitationsKept?: Record<string, KeptSeatInvitation>;
   /**
+   * **EACH ROLE CHANGE THIS WALLET STARTED**, keyed by the company and the seat (`roleChangeKeyOf`), written only by
+   * keyring-role-changes.ts. Optional, because saved keys written before it have no such field.
+   */
+  roleChangesKept?: Record<string, RoleChangeKept>;
+  /**
    * **EVERY INVITATION THIS PERSON JOINED AS A PAYEE BY CODE**, keyed by the invitation's id: the company and the
    * address the code names. Kept before the code is handed over, so a join whose answer never came back can show the
    * same fingerprint again when the invitation is already used, and never one for a code this wallet did not make.
@@ -221,93 +244,6 @@ export interface Keyring {
    * written before it was kept, which read as 0 (`counterOf`).
    */
   counter?: number;
-}
-
-/**
- * **WHAT IS KEPT OF A COMPANY THIS PERSON IS CREATING ON A CHAIN, UNTIL ITS
- * CREATION IS FINISHED**: with everything else they have saved, so a reload, a
- * closed tab or another of their browsers carries on from where it stopped and
- * never makes a second company of the same creation. Any number of creations are kept at once, each under its own company.
- *
- * Nothing here is a secret of the company: the request that made it is public
- * halves and what its secrets seal, the deploy and the second step are public
- * once sent, and the signature is the founding signer's on a public step. The
- * seat's own secrets are kept beside it as every seat's are.
- */
-export interface SavedCreation {
-  readonly accountId: string;
-  /** The person who started it: every later write of it is refused when somebody else is signed in. Absent on a creation kept before it was recorded. */
-  readonly person?: string;
-  readonly label: CompanyLabel;
-  readonly foundingKey: { readonly tag: 'schnorr'; readonly value: string };
-  /** The request that made the company, exactly as sent: sent again, it is the same company. */
-  readonly request: {
-    readonly name: string;
-    readonly signers: ReadonlyArray<{ readonly name: string; readonly role: 'admin' | 'approver' | 'initiator' | 'viewer' }>;
-    readonly threshold: number;
-    readonly companyLabel: CompanyLabel;
-    readonly foundingKey: { readonly tag: 'schnorr'; readonly value: string };
-    /**
-     * What founding the company made: the founding seat's public halves and leaf, and the company's record, first
-     * roster and first state, sealed. The same shape `foundTheCompanyHere` returns.
-     */
-    readonly founding: {
-      readonly seat: {
-        readonly signerId: string;
-        readonly signingPublicKey: Hex;
-        readonly wrappingPublicKey: Hex;
-        readonly leaf: Hex;
-      };
-      readonly account: SealedAccount;
-      readonly roster: SealedCompanyRecord;
-      readonly state: SealedCompanyRecord;
-    };
-  };
-  /** The service answered the request: the company exists. */
-  readonly made: boolean;
-  /** The account's deploy, built here, and the keys its second step adds. */
-  readonly deploy: {
-    readonly account: AccountAddress; readonly tx: string; readonly insert: ReadonlyArray<{ circuit: string; key: string }>;
-    /** When it was built (epoch ms, taken before it was built): its time to live runs from there. Absent on one kept before this was kept. */
-    readonly builtAt?: number;
-  } | null;
-  /** The second step, signed by the founding signer's wallet, and that signature. */
-  readonly signed: {
-    readonly tx: string; readonly signature: { readonly tag: string; readonly value: string };
-    /** When it was built, as for the deploy. */
-    readonly builtAt?: number;
-  } | null;
-  /** The service recorded the deploy and the second step. */
-  readonly recorded: boolean;
-  /**
-   * The service refused a step for the life it had left, so what is kept is built again before it is next sent, whatever
-   * this device's clock says of its age: the service reads the step's own time to live, which this device cannot.
-   */
-  readonly mustBeBuiltAgain?: true;
-  /** Set when this creation was started again after its deploy was signed or sent: kept, not listed as being finished, and taken up if its account turns up. */
-  readonly setAside?: true;
-}
-
-const howFarOn = (c: SavedCreation): number => (c.recorded ? 4 : 0) + (c.signed !== null ? 2 : 0) + (c.deploy !== null ? 1 : 0);
-
-/**
- * Saved keys written before every creation was kept in `creations` hold the ones set aside in `creationsSetAside`.
- * Read into the new shape, each is a creation of its own marked `setAside`; none is lost. If the same company is in both,
- * the one further on is kept.
- */
-export function creationsInOneRecord(k: Keyring): Keyring {
-  const { creationsSetAside, ...rest } = k;
-  if (creationsSetAside === undefined || creationsSetAside === null || typeof creationsSetAside !== 'object') return k;
-  const creations: Record<string, SavedCreation> = { ...(rest.creations ?? {}) };
-  for (const [id, aside] of Object.entries(creationsSetAside)) {
-    const active = creations[id];
-    if (active === undefined) creations[id] = { ...aside, setAside: true };
-    else if (howFarOn(aside) > howFarOn(active)) {
-      const { setAside: _flag, ...asActive } = aside;
-      creations[id] = asActive;
-    }
-  }
-  return { ...rest, creations };
 }
 
 /**
@@ -330,7 +266,6 @@ export interface OwedDirectoryEntry {
    */
   readonly invited?: SignedSeatInvitation;
 }
-
 
 /** Saved keys that could not be read: not opened by the key given, not a keyring, or a counter that is not a count. */
 export class KeyringDidNotOpen extends Error {
@@ -395,23 +330,6 @@ export function sealedDigestOf(sealed: Sealed): Hex {
   return toHex(sha256(utf8(`${sealed.iv}:${sealed.tag}:${sealed.body}`)));
 }
 
-/** A company this person is creating, kept in their saved keys, unless it was set aside. */
-export function creationIn(k: Keyring, accountId: string): SavedCreation | undefined {
-  const c = k.creations?.[accountId];
-  return c !== undefined && c.setAside !== true ? c : undefined;
-}
-
-/** The keyring with this creation kept under its company, replacing whatever was kept there. */
-export function withCreation(k: Keyring, c: SavedCreation): Keyring {
-  return { ...k, creations: { ...(k.creations ?? {}), [c.accountId]: c } };
-}
-
-/** The keyring with nothing kept of a creation under this company. */
-export function withoutCreation(k: Keyring, accountId: string): Keyring {
-  const { [accountId]: _done, ...rest } = k.creations ?? {};
-  return { ...k, creations: rest };
-}
-
 /**
  * The keyring holding a seat on a company it held no seat on. Refuses a company it already holds keys for: writing over
  * them would lose the only copy of a seat's secrets.
@@ -421,6 +339,24 @@ export function withNewSeat(k: Keyring, accountId: string, keys: AccountKeys): K
     throw new Error('these saved keys already hold a seat on this company, so a new one is not written over it. Nothing was changed.');
   }
   return { ...k, accounts: { ...k.accounts, [accountId]: keys } };
+}
+
+/**
+ * The keyring with its seat on `accountId` set aside in `formerSeats`, under the seat's signing public key, so a new
+ * seat on the same company can be kept without writing over it. A keyring holding no seat there is returned as it is;
+ * a different seat already set aside under the same key is refused, since it may be the only copy of that seat.
+ */
+export function withSeatSetAside(k: Keyring, accountId: string): Keyring {
+  const was = k.accounts[accountId];
+  if (was === undefined) return k;
+  const key = signingPublicKeyOf(was.signingSecret).toLowerCase();
+  const kept: FormerSeat = { ...was, accountId };
+  const already = k.formerSeats?.[key];
+  if (already !== undefined && canonical(already) !== canonical(kept)) {
+    throw new Error('these saved keys already set aside another seat under this key, so it is not written over. Nothing was changed.');
+  }
+  const { [accountId]: _setAside, ...accounts } = k.accounts;
+  return { ...k, accounts, formerSeats: { ...(k.formerSeats ?? {}), [key]: kept } };
 }
 
 /**
@@ -692,3 +628,7 @@ export function tidiedWith(k: Keyring, tidy: readonly CreationTidy[]): Keyring {
   }
   return next;
 }
+
+/* What is kept of a company being created is kept in its own file. */
+export { creationsInOneRecord, creationIn, withCreation, withoutCreation, type SavedCreation } from './keyring-creations.js';
+export { roleChangeKeyOf, withRoleChangeDone, withRoleChangeKept, type RoleChangeKept } from './keyring-role-changes.js';

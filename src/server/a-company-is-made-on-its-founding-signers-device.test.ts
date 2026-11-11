@@ -28,7 +28,7 @@ const SEAT_SECRET = new WeakMap<CompanyFounded, Hex>();
 const madeHere = (over: { label?: CompanyLabel; userId?: string } = {}): CompanyFounded => {
   const signing = newSigningKeypair();
   const f = foundTheCompanyHere({
-    name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' }, userId: over.userId ?? PERSON, label: over.label ?? LABEL,
+    name: 'Acme Ltd', signer: { name: 'Priya' }, userId: over.userId ?? PERSON, label: over.label ?? LABEL,
     seat: { signingPublicKey: signing.publicKey, wrappingPublicKey: newWrappingKeypair().publicKey, leaf: LEAF },
     signingSecret: signing.secret,
   });
@@ -272,7 +272,7 @@ describe('THE ONE SEALING CODE', () => {
     const wk = newWrappingKeypair();
     const signing = newSigningKeypair();
     const f = foundTheCompanyHere({
-      name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' }, userId: PERSON, label: LABEL,
+      name: 'Acme Ltd', signer: { name: 'Priya' }, userId: PERSON, label: LABEL,
       seat: { signingPublicKey: signing.publicKey, wrappingPublicKey: wk.publicKey, leaf: LEAF },
       signingSecret: signing.secret,
     });

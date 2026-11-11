@@ -5,6 +5,7 @@ import { KitProvider, languagesFrom } from 'vaults-ui';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { VIEWS } from '../pages.js';
 import { ENGLISH } from '../english.test-support.js';
+import { ALL_VAULTS } from '../../../../src/core/seat-rights.js';
 
 /*
  * THE SIGNERS PAGE'S COMPONENT, DRAWN over the real adapters and the real wallet wrappers, with only the call to the wallet and the
@@ -273,7 +274,7 @@ describe('the invitations waiting for approvals', () => {
   });
 
   /* RED WHEN: the rights or the coin key are shown as the whole run of digits (or not shown), or the address is shortened so it can no longer be compared. */
-  it('shows the rights and the coin key shortened, says the account\'s window names them, and keeps the address whole', async () => {
+  it('shows the rights and the coin key shortened, says the wallet tells whether they cover every vault, and keeps the address whole', async () => {
     await draw();
     const row = q('[data-invited=prop_1]')!;
     const cut = (hex: string) => en('signers.shortened').replace('{start}', hex.slice(0, 8)).replace('{end}', hex.slice(-8));
@@ -282,7 +283,18 @@ describe('the invitations waiting for approvals', () => {
     expect(row.textContent).not.toContain(HEX(2));
     expect(row.textContent).not.toContain(HEX(3));
     expect(row.querySelector('[data-address]')!.textContent).toContain(HEX(1));
-    expect(en('signers.pending.scope')).toMatch(/window names the vaults/);
+    expect(en('signers.pending.scope')).toMatch(/not rights over every vault.*wallet shows the same code/);
+  });
+
+  /* RED WHEN: an invitation whose rights are over every vault is shown as a shortened code, or the words for every vault are shown for rights that are not. */
+  it('says every vault for rights over every vault, and shows the code only for any other rights', async () => {
+    kr.company = records({ signersInvited: read([invited({ scope: ALL_VAULTS }), invited({ proposal: 'prop_2', scope: HEX(2) })]) });
+    await draw();
+    const every = q('[data-invited=prop_1] [data-scope]')!.textContent;
+    expect(every).toBe(en('signers.pending.scope.every'));
+    expect(every).not.toContain(ALL_VAULTS.slice(0, 8));
+    expect(q('[data-invited=prop_2] [data-scope]')!.textContent).toContain(HEX(2).slice(0, 8));
+    expect(q('[data-invited=prop_2] [data-scope]')!.textContent).not.toBe(en('signers.pending.scope.every'));
   });
 
   /* RED WHEN: the approvals needed are the account's number, not the number a change of signers needs, or the sentence is written anew instead of the adapter's. */
@@ -504,12 +516,12 @@ describe('approving an invitation', () => {
   });
 
   /* RED WHEN: an invitation that carries no coin key can be pressed to approve, or sends the person to a Withdraw this page does not have, or does not say plainly it cannot be approved and who to ask. */
-  it('offers no Approve to an invitation with no coin key, says it cannot be approved, that nothing here withdraws it, and who to ask', async () => {
+  it('offers no Approve to an invitation with no coin key, says it cannot be approved, and that the signer who raised it withdraws it from Proposals', async () => {
     kr.company = records({ signersInvited: read([invited({ coinKey: null })]) });
     await draw();
     expect(q('[data-action=approve-signer]')).toBeNull();
     expect(q('[data-no-coin-key]')!.textContent).toBe(en('signers.pending.noCoinKey'));
-    expect(q('[data-no-coin-key]')!.textContent).toMatch(/cannot be approved.*Nothing on this page can withdraw it.*Contact support/);
+    expect(q('[data-no-coin-key]')!.textContent).toMatch(/cannot be approved.*withdraws it from the Proposals page/);
     expect(q('[data-no-coin-key]')!.textContent).not.toMatch(/Withdraw it/);
   });
 
@@ -540,14 +552,14 @@ describe('approving an invitation', () => {
     }
   });
 
-  /* RED WHEN: the words for a seat taken that is not the invited one tell the person to reload, or leave out that the person is removed and invited again, or that removing cannot be done here yet. */
+  /* RED WHEN: the words for a seat taken that is not the invited one tell the person to reload, or leave out that the person is removed and invited again, or that Remove on this page does it. */
   it('says a seat taken that is not the invited one needs a removal and a new invitation, not a reload', async () => {
     kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.admit-signer.why.not-the-invited' };
     await draw();
     await press('[data-action=finish-adding]');
     const says = q('[data-signer-stopped]')!.textContent!;
     expect(says).toMatch(/Reloading will not change this: the person has to be removed as a signer and invited again/);
-    expect(says).toMatch(/cannot be done from this page yet; contact support/);
+    expect(says).toMatch(/Press Remove beside their name, then invite them again/);
     expect(says).not.toMatch(/then reload the page\.$/);
   });
 

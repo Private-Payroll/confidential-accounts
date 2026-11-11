@@ -54,7 +54,7 @@ function harness() {
  */
 const aCompany = async (h: ReturnType<typeof harness>) => h.accounts.create('Northwind', [
   { name: 'Ada', role: 'admin', userId: 'usr_ada' },
-  { name: 'Blake', role: 'viewer', userId: 'usr_blake' },
+  { name: 'Blake', role: 'limited', userId: 'usr_blake' },
 ], 1, undefined, drawCompanyLabel());
 
 describe('a person acts as their own seat and as no other', () => {
@@ -78,7 +78,7 @@ describe('a person acts as their own seat and as no other', () => {
    *
    * RED WHEN: the resolver stops distinguishing people. The two seats hold the
    * highest and the lowest role there is, so a resolver that answered with
-   * either one for both would be handing a viewer an admin's ceiling.
+   * either one for both would be handing a limited seat an admin's ceiling.
    */
   it('the seat it answers with carries that person\'s own role', async () => {
     const h = harness();
@@ -87,7 +87,7 @@ describe('a person acts as their own seat and as no other', () => {
       c.account.signers.find(s => s.id === seatId)!.role;
 
     expect(roleOf(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_ada'))).toBe('admin');
-    expect(roleOf(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_blake'))).toBe('viewer');
+    expect(roleOf(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_blake'))).toBe('limited');
   });
 
   /*

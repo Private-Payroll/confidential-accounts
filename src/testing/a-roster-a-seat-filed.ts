@@ -20,6 +20,7 @@ import type { SealedAccount } from '../core/types.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import { directorySeats, leavesOfTheContract } from './directory-seats.js';
+import { proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from './invitation-approved.js';
 import { aCompanysRecords, barOnATestChain } from './record-tree-double.js';
 
 interface RosterStore {
@@ -85,6 +86,8 @@ export function aRosterASeatFiled(
       filings: async () => store.directoryFilingsOf(accountId),
       /* What a device's vault worker makes of each entry's opening, with the account's own compiled `signerLeaf`. */
       leaves: leavesOfTheContract,
+      /* A seat invitation's proposal, as a device's vault worker makes it with the account's own functions. */
+      proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
       holders: async () => {
         const c = (await dir.directoryChain(accountId, held))!;
         /*

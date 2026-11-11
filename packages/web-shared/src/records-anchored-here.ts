@@ -1136,7 +1136,7 @@ async function ownEntryFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): 
 
 /**
  * **A SIGNED CHANGE TO THE COMPANY'S DIRECTORY, FILED FROM THIS DEVICE AND
- * ANCHORED AT ONCE** - a quorum's role or retirement, or one seat's change of
+ * ANCHORED AT ONCE** - a quorum's retirement, or one seat's change of
  * the company's key - carrying its signatures over `signedFor`, the version it
  * was signed for. A quorum's change is kept in this device's database before it is
  * filed, and let go of only once a version carrying it is anchored, so a
@@ -1187,7 +1187,7 @@ async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBeliev
   if (doors.fileDirectory === undefined || here.refiled === undefined) return 0;
   /* Only a quorum's change is filed again: a change of key a store hands back is never a candidate. */
   const all = (await doors.changes?.all(doors.accountId) ?? [])
-    .filter((k): k is { readonly signedAt: number; readonly change: QuorumChange } => k.change.kind === 'role' || k.change.kind === 'retire');
+    .filter((k): k is { readonly signedAt: number; readonly change: QuorumChange } => k.change.kind === 'retire');
   for (const k of all) if (here.anchoredAgain?.has(k.signedAt) === true) await doors.changes!.letGo(doors.accountId, k.signedAt);
   const kept = all.filter((k) => here.anchoredAgain?.has(k.signedAt) !== true);
   /* One kept before its first filing reached the service: its version is still the next, so it is filed as that version. */

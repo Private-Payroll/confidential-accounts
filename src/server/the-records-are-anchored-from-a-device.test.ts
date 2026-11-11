@@ -394,7 +394,7 @@ describe('ANCHORING FROM A DEVICE', () => {
     const viewing = async () => {
       const d = await acmeDirectory();
       const asViewer = <T extends { seats: typeof d.dir.seats }>(dir: T): T =>
-        ({ ...dir, seats: dir.seats.map((x) => (x.seat === BO.seat ? { ...x, role: 'viewer' as const } : x)) });
+        ({ ...dir, seats: dir.seats.map((x) => (x.seat === BO.seat ? { ...x, role: 'limited' as const } : x)) });
       return { ...d, dir: asViewer(d.dir), at: (v: number) => { const then = d.at(v); return then && { ...then, dir: asViewer(then.dir) }; } };
     };
     const read = await heldNow({ ...doorsOf(ADA), directory: viewing as never });
@@ -527,7 +527,7 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
     log.length = 0;
     const viewing = async () => {
       const d = await acmeDirectory();
-      return { ...d, dir: { ...d.dir, seats: d.dir.seats.map((x) => (x.seat === BO.seat ? { ...x, role: 'viewer' as const } : x)) } };
+      return { ...d, dir: { ...d.dir, seats: d.dir.seats.map((x) => (x.seat === BO.seat ? { ...x, role: 'limited' as const } : x)) } };
     };
     /* RED WHEN: a seat whose role files nothing proves and sends an anchor no device's check would ever believe. */
     expect(await anchoredOnTheWayIn({ ...doorsOf(BO), directory: viewing as never, now: () => new Date(T + 900 * 24 * HOUR) }))

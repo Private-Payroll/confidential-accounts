@@ -10,6 +10,7 @@ import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { sealHandover } from './invite-handover.js';
 import { openRecord, sealRecord } from './sealed-records.js';
+import { PERSON_PURPOSE } from './person-record.js';
 import { newWrappingKeypair, toHex, fromHex, type Hex } from './crypto.js';
 import { assets, NO_ASSET, privateForm, symbolOf } from './assets.js';
 import {
@@ -493,10 +494,10 @@ describe('the door, the refusal, and the record', () => {
     }, viewingKey);
 
     const raw = h.store.getEmployee(a.employee.id)!;
-    const secrets = openRecord<any>('payroll', raw.accountId, raw.sealed, viewingKey);
+    const secrets = openRecord<any>(PERSON_PURPOSE, raw.accountId, raw.sealed, viewingKey);
     h.store.putEmployee({
       ...raw,
-      sealed: sealRecord('payroll', raw.accountId, {
+      sealed: sealRecord(PERSON_PURPOSE, raw.accountId, {
         ...secrets,
         /* Exactly the JSON the old roster wrote, address and all. */
         address: {

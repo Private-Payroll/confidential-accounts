@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { carriesASecret, forgetWatched } from './nothing-secret-crosses.js';
 import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation';
 import { keyringKeyFor } from 'midnight-identity/profile/unlock';
-import { seal, toHex, unseal } from '../../../../src/core/crypto.js';
+import { seal, signingPublicKeyOf, toHex, unseal, type Hex } from '../../../../src/core/crypto.js';
 import {
-  counterOf, sealedDigestOf, sealKeyring, withCreation, withNewSeat, withoutCreation, type Keyring,
+  counterOf, sealedDigestOf, sealKeyring, withCreation, withNewSeat, withoutCreation, withSeatSetAside, type Keyring,
 } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { forgetOpenWallet } from '../accounts/wallets-held.js';
 import { keyringMarkOf, raiseKeyringMark } from '../accounts/storage.js';
@@ -215,6 +216,26 @@ describe('a change seals only what it adds, never a seat it drops or alters', ()
     expect(why(() => held.seal(() => ({ accounts: { acc_A: SEAT } })))).toBe('refused');
     /* RED WHEN: a refused change leaves the keyring unable to seal what is allowed. */
     expect(why(() => held.seal((k) => withNewSeat(k, 'acc_C', SEAT)))).toBe('sealed');
+  });
+
+  it('sets a seat aside under its signing key, and never drops or alters one set aside', () => {
+    const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
+    const { acc_A: _a, ...none } = withSeats().accounts;
+    /* RED WHEN: a seat is taken out of the saved keys and kept anywhere but under its own signing key, or with its keys changed. */
+    expect(why(() => held.seal((k) => ({ ...k, accounts: none, formerSeats: { ['00'.repeat(32)]: { ...SEAT, accountId: 'acc_A' } } })))).toBe('refused');
+    expect(why(() => held.seal((k) => ({ ...k, accounts: none, formerSeats: { [signingPublicKeyOf(SEAT.signingSecret as Hex).toLowerCase()]: { ...SEAT, blinding: '99'.repeat(32), accountId: 'acc_A' } } })))).toBe('refused');
+    /* RED WHEN: a seat the chain removed cannot be set aside for a new seat on the same company. */
+    const moved = held.seal((k) => withSeatSetAside(k, 'acc_A'));
+    moved.kept(2);
+    expect(Object.keys(JSON.parse(unseal(moved.sealed, KEY)).accounts)).toEqual([]);
+    /* RED WHEN: a seat set aside is dropped. */
+    expect(why(() => held.seal((k) => ({ ...k, formerSeats: {} })))).toBe('refused');
+    /* A new seat on the same company is then kept beside the one set aside. */
+    expect(why(() => held.seal((k) => withNewSeat(k, 'acc_A', { ...SEAT, signingSecret: '98'.repeat(32) })))).toBe('sealed');
+    /* RED WHEN: a seat set aside is not watched for, so its secrets could leave this wallet in an answer to the page. */
+    forgetWatched();
+    opening(writtenByThePage({ accounts: {}, formerSeats: { ['5a'.repeat(32)]: { ...SEAT, accountId: 'acc_A' } } }, 1), marksInMemory());
+    expect(carriesASecret({ said: SEAT.blinding })).toBe(true);
   });
 
   it('a change cannot reach the saved keys it was handed and alter them in place', () => {

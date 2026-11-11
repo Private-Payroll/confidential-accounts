@@ -34,6 +34,8 @@ import { admitSignerAction } from './admit-signer.js';
 import { admitPersonAction } from './admit-person.js';
 import { changePersonAction } from './change-person.js';
 import { chooseCompanyServiceAction } from './choose-company-service.js';
+import { grantReadAction } from './grant-read.js';
+import { changeRoleAction } from './change-role.js';
 import { raiseRunAction } from './raise-run.js';
 import { payRunAction } from './pay-run.js';
 import { withdrawProposalAction } from './withdraw-proposal.js';
@@ -91,6 +93,12 @@ const RECOVERY: RecoveryReach = Object.freeze<RecoveryReach>({
   ownWallet,
 });
 
+/** What inviting reaches: the chain, the builder, the clock and the account's compiled commitments; changing a role reaches it too. */
+const INVITING = Object.freeze({
+  chain: VAULTS.chain, builder: VAULTS.builder, now: VAULTS.now, pause, network: NETWORK as never,
+  commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
+});
+
 /**
  * EVERY ACTION THIS WALLET RUNS, ONE DEFINITION PER ACTION A PAGE MAY NAME.
  *
@@ -132,10 +140,7 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
       pureCircuits: { payKeyWrapKeyOf(account: Uint8Array, sk: Uint8Array, part: bigint): Uint8Array };
     }).pureCircuits.payKeyWrapKeyOf,
   }),
-  invite: inviteAction({
-    chain: VAULTS.chain, builder: VAULTS.builder, now: VAULTS.now, pause, network: NETWORK as never,
-    commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
-  }),
+  invite: inviteAction(INVITING),
   'approve-proposal': approveProposalAction({
     ...VAULTS,
     ...afterARemoval(VAULTS),
@@ -159,6 +164,8 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
     roundIdentity: async () => ((await import('../../../../contracts/managed/contract/index.js')) as unknown as { pureCircuits: RoundIdentity }).pureCircuits,
   }),
   'choose-company-service': chooseCompanyServiceAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
+  'grant-read': grantReadAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
+  'change-role': changeRoleAction({ ...INVITING, ...afterARemoval(VAULTS) }),
 });
 
 /** The definition of the action with this name, or `null` when this wallet runs none by that name. */

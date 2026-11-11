@@ -15,7 +15,8 @@
  * what is paid, to whom or why: no payments and no run.
  */
 import type { KeysHeld } from '../../../src/core/company-key.js';
-import { keyOf, sealingWith } from '../../../src/core/company-key.js';
+import { sealingWith } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import { assetIdBytes, assetIdHex, assets as theAssets, type AssetId } from '../../../src/core/assets.js';
 import { canonical, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import type { Privacy } from '../../../src/core/movement.js';
@@ -38,7 +39,7 @@ import {
   oneOffBuiltHere, oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere, type OneOffBelieved, type OneOffReadDoors, type OneOffRecords, type OneOffsHere,
 } from './one-off-here.js';
 import { FilingNotBelieved } from './http-sealed-pool-store.js';
-import { seatThatMayFileHere } from './vault-page-doors.js';
+import { seatThatMayFileHere } from './may-file-here.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import { refuseWhatThePolicyWouldNotCharge } from './raise-checks-here.js';
 import { signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
@@ -78,7 +79,7 @@ async function thisSeatHere(doors: Pick<OneOffFilingDoors, 'signingSecret' | 'di
 const mineAndTheSame = (doors: OneOffFilingDoors, rec: SealedCompanyRecord, given: OneOffOpened): boolean => {
   if (verifiedCompanyFiler(rec)?.toLowerCase() !== signingPublicKeyOf(doors.signingSecret).toLowerCase()) return false;
   try {
-    return factsOf(openOneOff(rec, keyOf(doors.keys, rec.keyEpoch), doors.registry)) === factsOf(given);
+    return factsOf(openOneOff(rec, keysByPurpose(doors.keys).at(rec.keyEpoch), doors.registry)) === factsOf(given);
   } catch {
     return false;
   }
@@ -104,7 +105,7 @@ export async function fileOneOffHere(
       company: doors.accountId, id: input.id, keyEpoch: sealing.epoch, key: sealing.key, given: input.given,
       ...(doors.registry === undefined ? {} : { registry: doors.registry }),
     });
-    given = openOneOff(rec, keyOf(doors.keys, rec.keyEpoch), doors.registry);
+    given = openOneOff(rec, keysByPurpose(doors.keys).at(rec.keyEpoch), doors.registry);
   } catch (e) {
     if (e instanceof OneOffRefused) throw new OneOffNotFiled(said(e), { cause: e });
     throw e;

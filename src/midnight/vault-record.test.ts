@@ -741,11 +741,57 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
    * READINGS THAT SAY SO.** In `committee-here.ts`, `view` is the company
    * account's ledger and its `vaults` the account's own set of adopted vault
    * addresses, iterated beside the vaults it retired: no name is turned into a
-   * vault there. Only these readings are taken out, so any other reach into a
-   * map of vaults in that file is still a lookup.
+   * vault there. Every other file here reads the list of vault addresses a
+   * seat's rights name (`readonly Hex[]`, never a map from names): on a seat
+   * invitation's terms, on a rights record, or on what a signer is offered.
+   * None of those files imports the vault record. Only these readings are
+   * taken out, so any other reach into a map of vaults in those files is still
+   * a lookup.
    */
   const READINGS_THAT_ARE_NOT_THE_MAP: Readonly<Record<string, readonly string[]>> = {
     'packages/web-shared/src/committee-here.ts': ['view?.vaults === undefined', 'for (const v of view.vaults)'],
+    /* `terms` and `t` are a seat invitation's terms (`SeatInvitationTerms`): `vaults` the addresses its rights name. */
+    'src/core/invitation.ts': [
+      '...(terms.vaults === undefined ? {} : { vaults: terms.vaults.map((v) => v.toLowerCase() as Hex) })',
+      'const vaults = vaultsRefusal(t.vaults);',
+      'seatScopeRefusal(t.role, t.vaults, String(t.invite.scope))',
+    ],
+    /* `rights` and `record` are a rights record (`RightsRecord`), `invited` a role and the addresses its rights name. */
+    'src/core/seat-rights.ts': [
+      '...rights.vaults.map((v) => bytesOf(v.toLowerCase()))',
+      'onVaults: [...record.vaults]',
+      'invited at `invited.role` on `invited.vaults`',
+      'scopeOfRole(invited.role, invited.vaults)',
+      'seatRightsRecordOf(invited.role, invited.vaults)',
+    ],
+    /* `invited.terms` is a signed seat invitation's terms (`SeatInvitationTerms`). */
+    'src/midnight/seat-directory.ts': [
+      'seatScopeRefusal(invited.terms.role, invited.terms.vaults, proof.opening.scope)',
+      'vaultsOfferedRefusal(inviter.rights ?? NO_VAULT_COUNTED, invited.terms.vaults)',
+    ],
+    /* `terms` is a seat invitation's terms (`SeatInvitationTerms`). */
+    'src/testing/invitation-approved.ts': ['scopeOfRole(terms.role, terms.vaults)'],
+    /* `offered` is the role and the vault addresses a seat was offered. */
+    'packages/web-shared/src/accept-seat.ts': ['seatRightsRecordOf(offered.role, offered.vaults)'],
+    /* `signer` and `spec` are what a signer is offered (`SignerSpec`), `t` a seat invitation's terms. */
+    'packages/web-shared/src/invitation-on-device.ts': [
+      'refuseVaultsBeyondTheSeat(seat, signer.vaults)',
+      '...(signer.vaults === undefined ? {} : { vaults: signer.vaults })',
+      'The scope a seat offered at `signer.role` on `signer.vaults` commits to',
+      "seatScopeRefusal(signer.role, signer.vaults, '')",
+      'vaultsRefusal(signer.vaults)',
+      'scopeOfRole(signer.role, signer.vaults)',
+      'the vaults its rights name (`spec.vaults`, or every',
+      "['rights', t.vaults ?? null, (s.vaults as readonly Hex[] | undefined)?.map((v) => v.toLowerCase()) ?? null]",
+      'refuseVaultsBeyondTheSeat(seat, t.vaults)',
+    ],
+    /* `t` is a seat invitation's terms (`SeatInvitationTerms`), and `vaultsOf` reads the same from two of them. */
+    'packages/web-shared/src/invitation-signed-by-a-seat.ts': [
+      'vaultsOfferedRefusal(inviter?.rights ?? NO_VAULT_COUNTED, t.vaults)',
+      'canonical((x.vaults ?? []).map((v) => v.toLowerCase()))',
+    ],
+    /* `r` is a seat's rights record (`RightsRecord`), turned into the rights the circuit reads. */
+    'packages/web-shared/src/private-state.ts': ['vaults: r.vaults.map((v) => fromHex(v))'],
   };
   const withoutReadingsThatAreNotTheMap = (file: string, text: string): string =>
     Object.entries(READINGS_THAT_ARE_NOT_THE_MAP)

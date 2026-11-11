@@ -56,7 +56,7 @@ const MINUTE = 60_000;
 const keptFor = async (label: CompanyLabel, over: Partial<SavedCreation> = {}, seatOf = label): Promise<{ keys: Keyring; creation: SavedCreation }> => {
   const seat = await foundingSeatOf(identity, seatOf);
   const founded = foundTheCompanyHere({
-    name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' }, userId: 'usr_a', label,
+    name: 'Acme Ltd', signer: { name: 'Priya' }, userId: 'usr_a', label,
     seat: { signingPublicKey: seat.signingPublicKey, wrappingPublicKey: seat.wrappingPublicKey, leaf: seat.leaf }, signingSecret: seat.signingSecret,
   });
   const walletKey = { tag: 'schnorr' as const, value: String(committeeKeyFor(identity, label).value).toLowerCase() as never };

@@ -206,7 +206,7 @@ const aDevice = (o: {
         /* A company where the change asked for would leave its company-wide runs short. */
         return approverRosterFrom({ threshold: 1, vaultThresholds: [], seated: [{ leaf: 'e1', rights: EVERY_RIGHT }], adoptedVaults: [], companyWide: 'cc'.repeat(32) });
       }
-      return approverRosterFrom({ threshold: 1, vaultThresholds: [], seated: [1, 2, 3, 4].map((n) => ({ leaf: `e${n}` })), adoptedVaults: [], companyWide: 'cc'.repeat(32) });
+      return approverRosterFrom({ threshold: 1, vaultThresholds: [], seated: [1, 2, 3, 4].map((n) => ({ leaf: `e${n}`, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32) });
     },
     vaultName: () => 'company-wide runs',
     sleep: async () => {}, waitMs: 3, everyMs: 1,

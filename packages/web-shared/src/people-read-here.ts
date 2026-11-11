@@ -1,12 +1,11 @@
 /**
  * **A COMPANY'S PEOPLE, READ ON THIS DEVICE WITH NO SEAT SECRET.** Every person's newest record is opened here with
- * the company's key and believed only when a seat this device believes filed it and their history holds; a believed
+ * the key this device holds for the company's people (`keysByPurpose`) and believed only when a seat this device believes filed it and their history holds; a believed
  * person is payable only while their record names the address its first version was filed with, if any, and, for an
  * unshielded one, with their wallet's signed claim of it checked where the ledger loads (`claimRefusal`). The service
  * only serves sealed records. A page reads people through this alone; filing a change signs with a seat's key and
  * is done in the wallet (`admitHere`, `setStatusHere`, `changePersonHere`).
  */
-import { keyOf } from '../../../src/core/company-key.js';
 import { canonical, type Hex } from '../../../src/core/crypto.js';
 import { madeByRefusal, openPerson, peopleServed, personVersionsRefusal, whyNotPayable } from '../../../src/core/person-record.js';
 import type { RosterEmployee } from '../../../src/core/types.js';
@@ -15,6 +14,7 @@ import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from 
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import { judgeIn, kindAsked, namedHere, type DirectoryRead } from './vault-page-doors.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import { InvitationRefused, type InvitationSend, type InvitingCompany } from './invitation-on-device.js';
 import {
   readAddressClaim, typedAddressIsShielded, type AddressClaimFor, type UnshieldedAddressClaim,
@@ -63,7 +63,9 @@ export async function typedAddressOf(
   if (first === null || judge(verifiedCompanyFiler(first), 'person', companyRecordKey('person', id), companyRecordEntry(first), false, first.keyEpoch) !== null) {
     return { refused: 'the first version of their record is not one this device believes was filed by a seat, so this device cannot tell how this person was added and will not pay them. Ask a signer to file their record again' };
   }
-  return { typed: openPerson(first, keyOf(d.company.viewingKey, first.keyEpoch)).invitedAddress ?? null };
+  const opened = personOpened(d, first);
+  return 'why' in opened ? { refused: `the first version of their record does not open here (${opened.why}), so this device cannot tell how this person was added and will not pay them. Filing it again leaves the first version as it is: they are paid from a seat's device that opens it` }
+    : { typed: opened.person.invitedAddress ?? null };
 }
 
 /**
@@ -129,6 +131,18 @@ export interface PeopleHere {
 }
 
 /**
+ * A person's record opened with the key this device holds for the company's people, or why it does not open: a
+ * record sealed under another key (another purpose, or an epoch this device cannot reach) is never read as no person.
+ */
+const personOpened = (d: Pick<PeopleReader, 'company'>, rec: SealedCompanyRecord): { readonly person: RosterEmployee } | { readonly why: string } => {
+  try {
+    return { person: openPerson(rec, keysByPurpose(d.company.viewingKey).at(rec.keyEpoch)) };
+  } catch (e) {
+    return { why: e instanceof Error ? e.message : String(e) };
+  }
+};
+
+/**
  * **EVERY PERSON ON THE COMPANY'S PAYROLL, OPENED HERE.** A version no seat
  * this device believes filed is not opened: it is named in `notBelieved`, so a
  * screen never shows it as a person and never hides that it is there. So is a
@@ -140,8 +154,9 @@ export interface PeopleHere {
  * not believed (`madeByRefusal`), and neither is a person any of whose versions
  * rewrites the history the versions before it made (`historyKeptHere`). A
  * person whose record does not read as a person record at all - one filed with
- * the payslip key beside its seal among them - is refused alone (`refused`,
- * with why), and everybody else is still read.
+ * the payslip key beside its seal among them - or does not open with this
+ * device's people key is refused alone (`refused`, with why), and everybody
+ * else is still read.
  */
 export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
   const answer = answered(await d.send(at(d, '/people'), { method: 'GET' }), 200);
@@ -150,7 +165,8 @@ export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
   const people: PersonHere[] = [];
   const notBelieved: string[] = [];
   const notPayable: { here: PersonHere; why: string }[] = [];
-  const { people: served, refused } = peopleServed(answer, d.company.id);
+  const { people: served, refused: unread } = peopleServed(answer, d.company.id);
+  const refused = [...unread];
   for (const { id } of refused) notBelieved.push(id);
   /* A person the company's records name and the service did not give is not believed, never left out unseen. */
   const given = new Set([...served.map(({ rec }) => rec.id), ...refused.map(({ id }) => id)]);
@@ -160,7 +176,13 @@ export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
       notBelieved.push(rec.id);
       continue;
     }
-    const here: PersonHere = { person: openPerson(rec, keyOf(d.company.viewingKey, rec.keyEpoch)), version: rec.version, handedOver };
+    const opened = personOpened(d, rec);
+    if ('why' in opened) {
+      refused.push({ id: rec.id, why: opened.why });
+      notBelieved.push(rec.id);
+      continue;
+    }
+    const here: PersonHere = { person: opened.person, version: rec.version, handedOver };
     if (madeByRefusal(here.person, verifiedCompanyFiler(rec)) !== null || (rec.version > 1 && !(await historyKeptHere(d, rec, judge)))) {
       notBelieved.push(rec.id);
       continue;
@@ -197,7 +219,10 @@ async function historyKeptHere(d: PeopleReader, newest: SealedCompanyRecord, jud
       if (i === 0) return false;
       continue;
     }
-    try { opened.push({ person: openPerson(rec, keyOf(d.company.viewingKey, rec.keyEpoch)), filer }); } catch { if (i === 0) return false; }
+    /* A later version that does not open here (an epoch this device cannot reach) is passed over; a first one refuses the person. */
+    const version = personOpened(d, rec);
+    if ('why' in version) { if (i === 0) return false; continue; }
+    opened.push({ person: version.person, filer });
   }
   return personVersionsRefusal(opened) === null;
 }

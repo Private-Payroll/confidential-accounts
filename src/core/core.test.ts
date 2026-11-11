@@ -14,9 +14,8 @@ import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { NO_ASSET } from './assets.js';
 import { newWrappingKeypair, newSigningKeypair, newSymmetricKey, seal, unseal,
   commit, newProposalSalt } from './crypto.js';
-import {
-  openRecord, sealRecord, sealToInbox, openFromInbox, inboxPublicKey,
-} from './sealed-records.js';
+import { openRecord, sealRecord, sealToInbox, openFromInbox, inboxPublicKey } from './sealed-records.js';
+import { PERSON_PURPOSE } from './person-record.js';
 import { IdentityService } from './identity.js';
 import { MemorySessionStore } from './sessions.js';
 import { MemoryChallengeStore } from './challenges.js';
@@ -1487,13 +1486,13 @@ describe('onboarding', () => {
      * through the same function that wrote it.
      */
     const raw = h.store.getEmployee(a.employee.id)!;
-    const secrets = openRecord<any>('payroll', raw.accountId, raw.sealed, viewingKey);
+    const secrets = openRecord<any>(PERSON_PURPOSE, raw.accountId, raw.sealed, viewingKey);
     const { kind, ...withoutKind } = secrets.address;
     expect(kind).toBe('shielded');
     h.store.putEmployee({
       ...raw,
       sealed: sealRecord(
-        'payroll', raw.accountId, { ...secrets, address: withoutKind }, viewingKey),
+        PERSON_PURPOSE, raw.accountId, { ...secrets, address: withoutKind }, viewingKey),
     });
 
     /* Read back, the kind is there — because the address was parsed, not revived. */

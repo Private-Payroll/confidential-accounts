@@ -303,6 +303,19 @@ describe('THE APPROVALS ANY POLICY CHANGE NEEDS ARE APPROVED AND CARRIED OUT IN 
     expect(told).toContainEqual({ state: 'waiting-for-approvals', approvals: 2, needed: 3 });
   });
 
+  it.each([['a spending policy', POLICY, 'spending-policy'], ['a new bar', { kind: 'policy-bar', bar: '2' }, 'policy-bar']] as const)(
+    '%s waits for the seat bar when the account\'s threshold, its stored policy bar and its seat bar are three different numbers', async (_name, fields, kind) => {
+      /* The chain's round asks only one approval; the account's threshold is one and its stored policy bar two, so only the seat bar asks three. */
+      Object.assign(company, { approvals: 1, policyBar: 2, seatBar: 3 });
+      t.chain = { [CHAIN_ID]: { held: 'open', approvals: 1, needed: 1, raisedAt: 1 } };
+      const i = intent(fields);
+      const { ctx, told } = ctxOf(i);
+      await run(i, ctx);
+      /* RED WHEN: the approvals this kind waits for are the account's threshold (1), its stored policy bar (2) or the proposal's own (1), not the seat bar (3). */
+      expect(told).toContainEqual({ state: 'waiting-for-approvals', approvals: 2, needed: 3 });
+      expect(handed(kind).map((c) => c.input.carryOnly)).toEqual([undefined]);
+    });
+
   it('a proposal that sets another bar, or a bar above the seats the chain holds, is not approved', async () => {
     t.opened = { chainId: CHAIN_ID, governance: { kind: 'policy-bar', bar: '3' } };
     const other = intent({ kind: 'policy-bar', bar: '2' });

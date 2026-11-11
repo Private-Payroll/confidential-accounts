@@ -24,7 +24,7 @@ import {
   approveSpendingPolicyOnDevice, bandsInForceHere, refusePolicyChangeHere, removalBoundaryRefusal, sealPoliciesToNewSignersHere, setSpendingPolicyOnDevice,
   spendingPolicyHere, type PoliciesResealed, type PolicyGovernanceDoors, type PolicySteps,
 } from './spending-policy-here.js';
-import { approverRosterFrom, type ApproverRoster } from '../../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT, type ApproverRoster } from '../../../src/core/vault-approvers.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import type { OpenedRound } from './governed-call-builder.js';
 import * as onDevice from './governed-call-on-device.js';
@@ -140,6 +140,7 @@ const recordsOf = (w: World): CompanyRecordsHere => {
       file: async (rec) => { w.filed.push(signCompanyFiling(rec, as.filing.secret)); },
       me: { signerId: as.seat, wrappingSecret: as.wrap.secret },
       keys: async (i) => keysOf(i),
+      grantReaders: async () => [],
       onChain: async (keys) => new Map(keys.map((k) => [k, w.chain.get(k) ?? null])),
     },
   };
@@ -394,7 +395,7 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
    * otherwise; `another` are seats this device does not believe now.
    */
   const everyoneOnTheVault = () => approverRosterFrom({
-    threshold: 1, vaultThresholds: [], seated: EVERYONE.map((x) => ({ leaf: x.seat })), adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
+    threshold: 1, vaultThresholds: [], seated: EVERYONE.map((x) => ({ leaf: x.seat, rights: EVERY_RIGHT })), adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
   });
   const aCompany = (
     filed: SealedCompanyRecord[], policy?: { commitment: string; approvals: number }, removal = 2,
@@ -531,7 +532,7 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
     it('a policy whose highest band asks for more signers than may approve its vault\'s runs is refused before any build', async () => {
       const onlyAda = () => approverRosterFrom({
         threshold: 1, vaultThresholds: [], adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
-        seated: [{ leaf: ADA.seat }, ...[BO, CY].map((x) => ({ leaf: x.seat, rights: { mayApprove: false, everyVault: true, onVaults: [] } }))],
+        seated: [{ leaf: ADA.seat, rights: EVERY_RIGHT }, ...[BO, CY].map((x) => ({ leaf: x.seat, rights: { mayApprove: false, everyVault: true, onVaults: [] } }))],
       });
       const c = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 1 }, 1, { approvers: onlyAda });
       /* RED WHEN: a policy is approved with its bands not counted against the signers who may approve its vault's runs. */

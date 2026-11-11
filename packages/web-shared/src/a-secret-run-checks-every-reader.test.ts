@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../../src/core/vault-approvers.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { seatBarOf, signRecordsKey } from 'midnight-identity/profile/records-key';
@@ -35,7 +35,7 @@ const CO = `co_${'c1'.repeat(32)}` as CompanyLabel;
  */
 const nobodyShort = {
   approvers: async () => approverRosterFrom({
-    threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+    threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
   }),
   vaultName: (v: string) => v,
 };

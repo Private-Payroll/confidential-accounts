@@ -78,7 +78,7 @@ import { paymentsFitNotes } from './vault-builder.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../src/testing/assets.js';
 import { canonical, newSigningKeypair, newSymmetricKey, seal, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { signedFoundingState } from '../../../src/core/founding-state.js';
-import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../../src/core/vault-approvers.js';
 import type { RetirementSignature, SealedProposal } from '../../../src/core/types.js';
 import { heldEntering } from '../../../src/testing/record-tree-double.js';
 import type { LegRaiseDoors } from './run-raised-here.js';
@@ -1143,7 +1143,7 @@ const aGovernedDevice = (o: {
       entered: { enter: async () => undefined },
     },
     approvers: async () => approverRosterFrom({
-      threshold: 1, vaultThresholds: [], seated: [1, 2, 3, 4].map((n) => ({ leaf: `e${n}` })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+      threshold: 1, vaultThresholds: [], seated: [1, 2, 3, 4].map((n) => ({ leaf: `e${n}`, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
     }),
     vaultName: () => 'company-wide runs',
     sleep: async () => {}, waitMs: 3, everyMs: 1,
@@ -1281,7 +1281,7 @@ describe('A THRESHOLD CHANGE IS CHECKED BEFORE EVERY SEND, AND CARRIED OUT IN A 
   const NEVER: RoundOnChain = { held: 'never', approvals: 0 };
   /* Two seats that may approve company-wide runs: a threshold of three would leave those runs unable to be paid. */
   const twoApprovers = () => approverRosterFrom({
-    threshold: 2, vaultThresholds: [], seated: [{ leaf: 'e1' }, { leaf: 'e2' }], adoptedVaults: [], companyWide: 'cc'.repeat(32),
+    threshold: 2, vaultThresholds: [], seated: [{ leaf: 'e1', rights: EVERY_RIGHT }, { leaf: 'e2', rights: EVERY_RIGHT }], adoptedVaults: [], companyWide: 'cc'.repeat(32),
   });
 
   it('a raise written down earlier and sent again is checked first, and one that would leave a vault unable to pay is neither built nor sent', async () => {
@@ -1341,7 +1341,7 @@ describe('A SPENDING POLICY IS COUNTED AGAINST ITS VAULT\'S APPROVERS AT ITS BAN
   const POLICY: GovernanceOnTheWire = { kind: 'spending-policy', vault: VAULT, assetKey: 'a5'.repeat(32), commitment: 'c5'.repeat(32) };
   /* Two seats that may approve the vault's runs, at a threshold of one; the account stores a policy bar of three, so no removal is asked about. */
   const twoOnTheVault = () => approverRosterFrom({
-    threshold: 1, vaultThresholds: [], seated: [{ leaf: 'e1' }, { leaf: 'e2' }], adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
+    threshold: 1, vaultThresholds: [], seated: [{ leaf: 'e1', rights: EVERY_RIGHT }, { leaf: 'e2', rights: EVERY_RIGHT }], adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
   });
   const approving = (highestBand: number, bandsInForce?: () => Promise<readonly { vault: string; band: number }[]>) => {
     const d = aGovernedDevice({ held: true, bar: 1, policyBar: 3, governance: POLICY, chain: () => ({ held: 'open', approvals: 1, needed: 3, raisedAt: 1 }) });

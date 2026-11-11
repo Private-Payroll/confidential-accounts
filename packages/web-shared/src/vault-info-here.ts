@@ -1,5 +1,5 @@
 /**
- * **A VAULT'S NAME AND DESCRIPTION, READ AND FILED ON A SIGNER'S OWN DEVICE.**
+ * **A VAULT'S NAME AND DESCRIPTION, READ ON A SIGNER'S OWN DEVICE.**
  *
  * `vaultInfoHere` reads the newest version of a vault's name through the one
  * check every company record is read through (`HttpCompanyRecordStore` and
@@ -12,27 +12,18 @@
  * unread; withheld together with its entry, the newest version the anchor holds
  * is read.
  *
- * `fileVaultInfoHere` files the next version from a seat whose role may file
- * it (an admin, or the founding seat before roles are set), after the version
- * the caller last read; a version another admin filed meanwhile is refused
- * rather than written over. The record is sealed under the company's key for
- * vaults, so every signer reads it.
- *
- * Creating a vault files its first version right after the deploy
- * (`createCompanyVault`); an edit screen calls `fileVaultInfoHere` itself.
- * Nothing that moves money reads either.
+ * Filing a version is `fileVaultInfoHere` (`vault-info-filed-here.ts`), kept
+ * apart so that a page that only reads a vault's name does not load the
+ * filing seat's check. The record is sealed under the company's key for
+ * vaults, so every signer reads it. Nothing that moves money reads it.
  */
-import { keyOf, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
-import { signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
-import {
-  companyWirePaths, fromCompanyWire, verifiedCompanyFiler, type CompanyRecordKind, type SealedCompanyRecord,
-} from '../../../src/midnight/sealed-record-wire.js';
-import {
-  openVaultInfo, sealVaultInfo, VAULT_INFO_KIND, vaultInfoTidied, VaultInfoRefused, type VaultInfo,
-} from '../../../src/midnight/vault-info-record.js';
-import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import type { KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
+import type { Hex } from '../../../src/core/crypto.js';
+import { companyWirePaths, fromCompanyWire, type CompanyRecordKind, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { openVaultInfo, VAULT_INFO_KIND, VaultInfoRefused } from '../../../src/midnight/vault-info-record.js';
 import { FilingNotBelieved, HttpCompanyRecordStore, pageWireSend, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
-import { seatThatMayFileHere, type DirectoryRead } from './vault-page-doors.js';
+import type { DirectoryRead } from './vault-page-doors.js';
 import type { RecordsEntered } from './record-entered-here.js';
 
 export { VaultInfoRefused };
@@ -72,27 +63,11 @@ export type VaultInfoRead =
   | { readonly state: 'none' }
   | { readonly state: 'unread'; readonly why: string; readonly version: number | null };
 
-/** A vault's name was not filed. Nothing was filed, unless the sentence says otherwise. */
-export class VaultInfoNotFiled extends Error {
-  constructor(why: string, options?: { cause?: unknown }) {
-    super(why, options);
-    this.name = 'VaultInfoNotFiled';
-  }
-}
-
-/** Another version of the vault's name was filed after the one this edit was made over. Nothing was filed. */
-export class VaultInfoChanged extends Error {
-  constructor(readonly newest: number) {
-    super(`version ${newest} of this vault's name was filed by another admin after the version this change was made over, `
-      + 'so nothing was filed. Read it again and make the change over what it says now.');
-    this.name = 'VaultInfoChanged';
-  }
-}
 
 const VAULT = /^[0-9a-f]{64}$/u;
-const said = (e: unknown): string => String((e as Error)?.message ?? e);
+export const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
-const vaultOf = (vault: string): Hex => {
+export const vaultOf = (vault: string): Hex => {
   const v = String(vault).toLowerCase();
   if (!VAULT.test(v)) throw new VaultInfoRefused('A vault\'s name is read and filed under the vault\'s address, and this is not one.');
   return v as Hex;
@@ -109,79 +84,12 @@ export async function vaultInfoHere(doors: Pick<VaultInfoDoors, 'companyKeys' | 
   }
   if (rec === null) return { state: 'none' };
   try {
-    return { state: 'named', ...openVaultInfo(rec, keyOf(doors.companyKeys, rec.keyEpoch)), version: rec.version };
+    return { state: 'named', ...openVaultInfo(rec, keysByPurpose(doors.companyKeys).at(rec.keyEpoch)), version: rec.version };
   } catch (e) {
     return { state: 'unread', why: said(e), version: rec.version };
   }
 }
 
-/**
- * Why this device's own seat may not file a vault's name, or null when it may:
- * its seat is in the directory as this device believes it, and its role may
- * file the record (`MAY_FILE`: an admin, or the founding seat), as
- * `seatThatMayFileHere` judges every filing seat.
- */
-async function whyThisSeatMayNotNameAVault(doors: Pick<VaultInfoDoors, 'signingSecret' | 'directory'>): Promise<string | null> {
-  const seat = seatThatMayFileHere(await doors.directory(), signingPublicKeyOf(doors.signingSecret), VAULT_INFO_KIND,
-    'your seat\'s role on this company may not name or describe a vault; an admin does');
-  return typeof seat === 'string' ? seat : null;
-}
-
-/**
- * Files `vault`'s name and description as the version after `over` (null for
- * a vault with none yet). Refuses text the check refuses, a seat that may not
- * file it, and a version filed after `over`; when the newest version already
- * says exactly this and was filed by this seat, it is entered in the company's
- * records again instead of filed twice.
- */
-export async function fileVaultInfoHere(
-  doors: VaultInfoDoors, input: { readonly vault: string; readonly name: string; readonly description: string; readonly over: number | null },
-): Promise<{ readonly state: 'filed' | 'entered-again'; readonly version: number }> {
-  const vault = vaultOf(input.vault);
-  const info = vaultInfoTidied(input);
-  const may = await whyThisSeatMayNotNameAVault(doors);
-  if (may !== null) throw new VaultInfoNotFiled(`This vault's name was not filed: ${may}. Nothing was filed.`);
-  const sealing = sealingWith(doors.companyKeys, 0);
-  let newest: SealedCompanyRecord | null;
-  let newestVersion: number;
-  try {
-    newest = await doors.records.get(VAULT_INFO_KIND, vault);
-    newestVersion = newest?.version ?? 0;
-  } catch (e) {
-    if (!(e instanceof FilingNotBelieved)) {
-      throw new VaultInfoNotFiled(`This vault's name was not filed: the version it has now could not be read (${said(e)}), so `
-        + 'the next version is not known. Nothing was filed.', { cause: e });
-    }
-    /* Not believed - perhaps this seat's own version, filed and never entered: that one is entered again. */
-    const served = await doors.records.served(VAULT_INFO_KIND, vault).catch(() => null);
-    newest = served !== null && served.version === e.version && served.keyEpoch === sealing.epoch ? served : null;
-    newestVersion = e.version;
-  }
-  const mine = signingPublicKeyOf(doors.signingSecret).toLowerCase();
-  if (newest !== null && verifiedCompanyFiler(newest)?.toLowerCase() === mine && sameInfo(newest, doors.companyKeys, info)) {
-    await doors.entered.enter([companyRecordEntry(newest)]);
-    return { state: 'entered-again', version: newest.version };
-  }
-  if ((input.over ?? 0) !== newestVersion) throw new VaultInfoChanged(newestVersion);
-  const rec = sealVaultInfo({ company: doors.accountId, vault, version: newestVersion + 1, keyEpoch: sealing.epoch, key: sealing.key, info });
-  try {
-    await doors.records.put(rec);
-  } catch (e) {
-    if ((e as Error)?.name === 'VaultPoolVersionAlreadyFiled') throw new VaultInfoChanged(newestVersion + 1);
-    throw e;
-  }
-  await doors.entered.enter([companyRecordEntry(rec)]);
-  return { state: 'filed', version: rec.version };
-}
-
-const sameInfo = (rec: SealedCompanyRecord, keys: KeysHeld, info: VaultInfo): boolean => {
-  try {
-    const opened = openVaultInfo(rec, keyOf(keys, rec.keyEpoch));
-    return opened.name === info.name && opened.description === info.description;
-  } catch {
-    return false;
-  }
-};
 
 /**
  * The company's records as a device reads and files a vault's name: through

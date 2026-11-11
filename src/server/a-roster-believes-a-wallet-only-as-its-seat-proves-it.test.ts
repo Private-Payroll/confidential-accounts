@@ -28,7 +28,7 @@ import { newSigningKeypair, newWrappingKeypair, sign, signingPublicKeyOf, toHex,
 import { openAccount, sealAccount } from '../core/account.js';
 import { sealToInbox } from '../core/sealed-records.js';
 import { newSeatInvitation, proveSeatKeys } from '../core/seat-invite-proof.js';
-import { invitationIdOf, invitationProposalSalt, newInvitationToken, seatByAddressChangeOf, signSeatInvitation } from '../core/invitation.js';
+import { invitationIdOf, invitationProposalSalt, newInvitationToken, seatByAddressChangeOf, seatInvitationMessage, signSeatInvitation } from '../core/invitation.js';
 import { signedFoundingRoster, sealRoster, type RosterSecrets } from '../core/roster-record.js';
 import { signVaultKeys, vaultKeyIndexOf } from '../core/vault-keys.js';
 import type { Account, PendingSignerPayload, SealedAccount, Signer } from '../core/types.js';
@@ -50,6 +50,7 @@ import {
   sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { scopeOfRole } from '../core/seat-rights.js';
 
 /** Ada's device anchors every filing not yet anchored, as it does on its way in. */
 const adaAnchors = () => anchorTheRecordsHere({
@@ -336,17 +337,19 @@ describe('A SEAT THE CHAIN HOLDS THAT THE ROSTER DOES NOT NAME IS WAITED FOR ONL
 
 describe('A SEAT TAKEN ON AN INVITATION BY ADDRESS IS ENTERED ONLY WITH THE INVITATION ITS PROPOSAL COMMITS TO', () => {
   it('AN ENTRY CARRYING ANOTHER ROLE UNDER THE SAME PROPOSAL IS NOT BELIEVED, AND THE ONE THE PROPOSAL MAKES IS', async () => {
-    const HAL = seatOf('hal', 16);
+    /* Hal's seat is made with an approver's rights, as the invitation offers. */
+    const HAL = seatOf('hal', 16, LABEL, ADDRESS, CO, undefined, scopeOfRole('approver'));
     /* Ada's seat invites an address as an approver: the proposal's id is made under the salt the invitation itself makes. */
     const terms = {
       company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'adr_00112233445566778899', name: 'hal', role: 'approver' as const,
-      invite: { address: 'c1'.repeat(32) as Hex, salt: 'c2'.repeat(32) as Hex, scope: 'c3'.repeat(32) as Hex },
+      invite: { address: 'c1'.repeat(32) as Hex, salt: 'c2'.repeat(32) as Hex, scope: scopeOfRole('approver') },
     };
     const salt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(ADA.signingSecret as Hex) });
     const proposal = (await acmeReads.proposalIdentity(seatByAddressChangeOf(terms.invite), salt)).chainId.toLowerCase() as Hex;
     const approved = signSeatInvitation({ ...terms, proposal }, ADA.signingSecret as Hex);
-    /* Ada's seat signs another invitation naming the same proposal, address and rights, with another role. */
-    const anotherRole = signSeatInvitation({ ...terms, role: 'admin', proposal }, ADA.signingSecret as Hex);
+    /* Ada's seat signs, as it is, another invitation naming the same proposal, address and rights, with another role. */
+    const otherTerms = { ...terms, role: 'admin' as const, proposal };
+    const anotherRole = { terms: otherTerms, signedBy: signingPublicKeyOf(ADA.signingSecret as Hex), signature: sign(seatInvitationMessage(otherTerms), ADA.signingSecret as Hex) };
     seatsTakenByInvitation.set(proposal, HAL.seat.toLowerCase());
     onChain(ADA, DEE, CY, HAL);
     const entryWith = (invited: typeof approved) => directoryEntryMade({
@@ -408,7 +411,7 @@ describe('A SEAT TAKEN ON AN INVITATION BY ADDRESS IS ENTERED ONLY WITH THE INVI
     const request = requestOf(KIM, { invited: false });
     request.invited = signSeatInvitation({
       company: CO, invitation: invitationIdOf(newInvitationToken()), person: KIM.person, name: KIM.person, role: 'admin', proposal: 'd4'.repeat(32) as Hex,
-      invite: { address: 'd5'.repeat(32) as Hex, salt: 'd6'.repeat(32) as Hex, scope: 'd7'.repeat(32) as Hex },
+      invite: { address: 'd5'.repeat(32) as Hex, salt: 'd6'.repeat(32) as Hex, scope: scopeOfRole('admin') },
     }, ADA.signingSecret as Hex);
     inboxHolds({ id: 'sgn_kim', userId: KIM.person, payload: request });
     try {

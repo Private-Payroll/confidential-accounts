@@ -14,14 +14,13 @@
  */
 import type { RecordsAsked } from '../midnight/records-held.js';
 import { describe, expect, it } from 'vitest';
-import { sign, type Hex } from '../core/crypto.js';
+import type { Hex } from '../core/crypto.js';
 import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 import { theNetwork } from '../midnight/network.js';
 import { signRunFiling, type RunToFile } from '../core/run-filing.js';
 import { sealRecord } from '../core/sealed-records.js';
 import { sealedOf, sealPool } from '../midnight/vault-pool.js';
 import { signCompanyFiling, signFiling, toCompanyWire, toWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
-import { directoryChangeMessage, type DirectoryFiling } from '../midnight/seat-directory.js';
 import type { SealedRun } from '../core/types.js';
 import { companyRecordEntry, entryIdOf, vaultRecordEntry } from '../midnight/record-manifest.js';
 import { anchoredOver, anchorFunctions, heldEntering, anchorSentInATest } from '../testing/record-tree-double.js';
@@ -307,21 +306,14 @@ describe('A VAULT\'S RECORDS, READ THROUGH THE ANCHOR', () => {
   });
 });
 
-describe('A SEAT\'S ANCHORED RECORDS, READ AFTER ITS ROLE CHANGES', () => {
-  it('A PERSON A SEAT FILED AND THE ANCHOR HOLDS IS STILL READ AFTER THAT SEAT MAY NO LONGER FILE ONE', async () => {
+describe('THE DIRECTORY A DEVICE BELIEVES IS NEVER OLDER THAN THE ONE ANCHORED', () => {
+  it('A DIRECTORY SERVED WITHOUT ITS NEWEST ANCHORED VERSION IS REFUSED', async () => {
     const q = (await inviteHere(ACME, ADA, 'employee', { ...pay, name: 'Quinn', email: 'quinn@acme.co', baseAmount: 500_102n }, ORIGIN, fromAda)).person!;
     await anchoredByAda();
     /* RED WHEN: a directory served older than the one anchored is believed - a seat's role or retirement could be hidden from a device. */
     const served = store.directoryFilingsOf(CO);
     await expect(directoryHere({ ...acmeDirectoryDeps(), filings: async () => served.slice(0, -1) }))
       .rejects.toThrow(new RegExp(`the company's directory was served without version ${served.length}, which the company's records anchor on chain`, 'u'));
-    /* A quorum of one makes Ada an approver: she may no longer file a person. */
-    const version = store.directoryFilingsOf(CO).length + 1;
-    const unsigned = { kind: 'role', seat: ADA.seat, role: 'approver', threshold: 1, signatures: [] } as const;
-    const signature = sign(directoryChangeMessage(CO, version, unsigned as never), ADA.signingSecret);
-    const filing = { company: CO, version, change: { ...unsigned, signatures: [{ publicKey: ADA.statement.signingKey as Hex, signature }] } } as DirectoryFiling;
-    expect((await sendAs('ada')(`/api/accounts/${CO}/directory/${version}`, { method: 'POST', body: JSON.stringify(filing) })).status).toBe(201);
-    /* RED WHEN: an anchored record is judged by its filer's role now - every person Ada ever filed would stop being read. */
     expect((await readPeopleHere(peopleOn(ADA))).people.map((p) => p.person.id)).toContain(q);
   });
 });
@@ -338,7 +330,7 @@ describe('A COMPANY RECORD\'S VERSIONS, ONE OF THEM NEVER ENTERED', () => {
     return companyRecordEntry(rec);
   };
   it('THE LIST SAYS THE VERSION PASSED OVER, WITHOUT ITS BYTES, AND BELIEVES THE REST', async () => {
-    /* Ada is an approver by now, whose role files a company proposal record. */
+    /* Ada is an admin, whose role files a company proposal record. */
     const ID = 'prp_passedover2';
     await ADA.entered.enter([await filedByAda(ID)]);
     /* Version 2 is filed and its entry never entered; version 3 is filed and entered. */

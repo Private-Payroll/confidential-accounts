@@ -24,7 +24,8 @@
  * it is filed is drawn by `runDrawnHere`, which only reads, and filed by
  * `fileRunDrawnHere`, which reads the month's runs and rounds again first.
  */
-import { keyOf, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import { randomBytes, type Hex } from '../../../src/core/crypto.js';
 import { assets as theAssets, type AssetRegistry } from '../../../src/core/assets.js';
 import { isLiveRound } from '../../../src/core/retry-cover.js';
@@ -191,7 +192,7 @@ const peopleToDrawOver = (
   if (unreadable.length > 0) {
     throw new RunNotDrawnHere(`${unreadable.length} of the company's people ${unreadable.length === 1 ? 'has a record' : 'have records'} `
       + `this device cannot read as a person's record (${unreadable.map((r) => r.why).join('; ')}), so it cannot say whether they should be paid. `
-      + 'Ask a signer of the company to file their record again, or reload the page.');
+      + 'A record that does not open here is read on a seat\'s device that holds the key it was sealed under: draw the run there.');
   }
   if (unread.length > 0) {
     throw new RunNotDrawnHere(`${unread.length} of the company's people ${unread.length === 1 ? 'has a record' : 'have records'} `
@@ -225,7 +226,7 @@ const specOf = (p: ListPayee, period: string) => ('terms' in p
 /** The list's runs this device can open, and the payroll rounds the company wrote down, as read at `at`. */
 const runsAndRoundsHere = async (doors: RunDrawDoors, list: RunList, at: string): Promise<{ runs: PayrollRun[]; rounds: PayrollRound[] }> => {
   const [sealedRuns, proposals] = await Promise.all([runsListedHere(doors.records), proposalsListedHere(doors.records)]);
-  const runs = runsOfList(sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keyOf(doors.viewingKey, r.keyEpoch))), list);
+  const runs = runsOfList(sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keysByPurpose(doors.viewingKey).at(r.keyEpoch))), list);
   const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey, {
     identity: doors.records.roundIdentity, nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000)),
   });

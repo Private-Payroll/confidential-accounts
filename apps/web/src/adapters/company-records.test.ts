@@ -636,8 +636,8 @@ describe('each read, on its own', () => {
     expect(c.people.of).toBe('unreadable');
   });
 
-  /* RED WHEN: a record filed for another company reads as a person, or hides the people that are fine; one sealed under another key reads as read. */
-  it('names a record that is not a person of this company as refused, and hands on one it cannot open as unreadable', async () => {
+  /* RED WHEN: a record filed for another company reads as a person, or hides the people that are fine; one sealed under another key reads as a person. */
+  it('names a record that is not a person of this company, or one that does not open here, as refused, and hands on the people as unreadable', async () => {
     const { readCompany } = await load();
     const ana = { id: 'emp_e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'pending', address: null };
     kr.answers[ROUTE('/people')] = { people: [filedPerson(ana, false, VK, 'c2'), filedPerson({ ...ana, id: 'emp_e3', name: 'Cat' }, false)] };
@@ -650,7 +650,7 @@ describe('each read, on its own', () => {
     kr.answers[ROUTE('/people')] = { people: [filedPerson(ana, false, OTHER_VK)] };
     const d = await readCompany('u1', 'c1');
     if (d.of !== 'open') throw new Error('not open');
-    expect([d.people.of, d.peopleBelief?.of, d.runs.of]).toEqual(['unreadable', 'unreadable', 'read']);
+    expect([d.people.of, d.peopleBelief?.of === 'read' && d.peopleBelief.value.refused.map((x) => x.id), d.runs.of]).toEqual(['unreadable', ['emp_e1'], 'read']);
   });
 
   /* RED WHEN: a person whose record was refused is left out of the people while the people read still says it is complete. */

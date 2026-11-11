@@ -202,10 +202,10 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     await c.deposited(400n, 2, false);
     c.chain.notes.push('5c'.repeat(32));
     const walks: number[] = [];
-    const viewer = c.doors(BO, { seatHere: async () => ({ role: 'viewer', retired: null }) });
+    const viewer = c.doors(BO, { seatHere: async () => ({ role: 'limited', retired: null }) });
     const counted = { ...viewer, builder: { ...viewer.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
     const first = await vaultNotesHere(counted, VAULT);
-    /* A viewer's open finds both deposits, holds them in memory and files nothing. */
+    /* A limited seat's open finds both deposits, holds them in memory and files nothing. */
     expect(first.of).toBe('not-filed');
     expect(first.of !== 'not-read' && first.notes.length).toBe(2);
     await vaultNotesHere(counted, VAULT);

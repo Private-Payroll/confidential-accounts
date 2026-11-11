@@ -9,7 +9,8 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
 import type { ActIntent } from 'midnight-identity/profile/request';
-import { fromHex, signingPublicKeyOf, toHex, type Hex } from '../../../../src/core/crypto.js';
+import { fromHex, newSigningKeypair, sign, signingPublicKeyOf, toHex, type Hex } from '../../../../src/core/crypto.js';
+import { directoryChangeMessage, type DirectoryChange } from '../../../../src/midnight/seat-directory.js';
 import {
   acceptanceProofOf, invitationIdOf, newInvitationToken, sealOffer, signOffer, signSeatInvitation, utcMomentOf, type InvitationOffer,
 } from '../../../../src/core/invitation.js';
@@ -24,6 +25,7 @@ import { carriesASecret, forgetWatched } from '../keyring/nothing-secret-crosses
 import { pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { ServiceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
+import { rightsOfRole, scopeOfRole } from '../../../../src/core/seat-rights.js';
 
 /* A signer invited by address takes the seat from their own wallet: it opens the offer with the link's token, checks
  * the address is its own, proves the seat with its own seat and the address's coin key, and asks to be admitted. The
@@ -50,7 +52,7 @@ const inviterFor = (label: string, account: string) => ({
 
 /* `made` varies what the offer says about the company it is for, which the link the person pressed must agree with. */
 const anOffer = (
-  address = DEES_ADDRESS, scope = MidnightCommitments.allVaults().toLowerCase() as Hex, proposal = '77'.repeat(32) as Hex,
+  address = DEES_ADDRESS, scope = scopeOfRole('approver'), proposal = '77'.repeat(32) as Hex,
   made: { label?: string; account?: string; company?: string; expiresAt?: number; threshold?: string } = {},
 ) => {
   const token = newInvitationToken();
@@ -60,11 +62,13 @@ const anOffer = (
     address: MidnightCommitments.inviteAddressOf(coinKey, salt).toLowerCase() as Hex, salt, scope, ...(made.threshold === undefined ? {} : { threshold: made.threshold }),
   };
   const proposalSalt = '88'.repeat(32) as Hex;
-  const invited = signSeatInvitation({ company: made.company ?? COMPANY, invitation: invitationIdOf(token), person: 'adr_00000000000000000000', name: 'dee', role: 'approver', invite, proposal }, INVITER_SECRET);
+  /* Offered every right on every vault, Dee is invited as an admin; offered an approver's rights, as an approver. */
+  const role = scope === MidnightCommitments.allVaults().toLowerCase() ? 'admin' as const : 'approver' as const;
+  const invited = signSeatInvitation({ company: made.company ?? COMPANY, invitation: invitationIdOf(token), person: 'adr_00000000000000000000', name: 'dee', role, invite, proposal }, INVITER_SECRET);
   const offer: InvitationOffer = {
     company: made.company ?? COMPANY, companyName: 'Acme', label: (made.label ?? LABEL) as never, account: (made.account ?? ACCOUNT) as never, inboxPublicKey: inboxPublicKey(KEY, COMPANY),
     expiresAt: made.expiresAt ?? Date.now() + 3_600_000, madeAt: utcMomentOf(Date.now()), inviter: inviterFor(made.label ?? LABEL, made.account ?? ACCOUNT) as never,
-    for: { kind: 'signer', name: 'dee', role: 'approver', seat: { nonce: '9a'.repeat(32) as Hex, secret: '9b'.repeat(32) as Hex }, invited, byAddress: { address, proposalSalt } },
+    for: { kind: 'signer', name: 'dee', role, seat: { nonce: '9a'.repeat(32) as Hex, secret: '9b'.repeat(32) as Hex }, invited, byAddress: { address, proposalSalt } },
   } as InvitationOffer;
   return { token, sealed: sealOffer(signOffer(offer, INVITER_SECRET), token), invite, proposal, proposalSalt, coinKey };
 };
@@ -82,6 +86,8 @@ const deesSeat = (n: number, scope: Hex) => {
 interface ChainNow {
   seats?: string[]; took?: string | null; slots?: string[]; tookFromSecondRead?: string; reads?: number; noRoles?: boolean; rolesUnread?: boolean;
   founding?: string; foundingCommittee?: Array<{ tag: string; value: string }>;
+  /* The approvals a change of who is seated needs, as the chain holds it now: 1 unless a case gives another. */
+  seatBar?: number;
   /* Our service cannot be reached for the seat, and the person's own wallet sends it instead and then loses its answer. */
   goneAround?: boolean;
 }
@@ -97,6 +103,8 @@ interface Opts {
   offerGone?: boolean | 'used' | 'expired' | 'withdrawn';
   /* What the service says the company's directory already names among the leaves and keys asked about; an error or a refusal instead. */
   named?: { leaves?: readonly string[]; keys?: readonly string[] } | 'error' | 'refused' | 'used' | 'expired' | 'unreadable';
+  /* The company's directory as the service serves it: none unless a case gives one; 'unread' when the service does not serve it. */
+  directory?: readonly unknown[] | 'unread';
   /* The action made once for the wallet's lifetime, as the registry makes it, shared by the runs given it. */
   action?: ReturnType<typeof seatInvitedAction>;
 }
@@ -130,7 +138,7 @@ const reachNow = () => ({
   commitments: async () => MidnightCommitments as never,
   payKeyWrapKeyOf: async () => pureCircuits.payKeyWrapKeyOf,
   chain: () => ({
-    holders: async () => ({ seats: now().chain.seats ?? [], founding: now().chain.founding ?? 'f0'.repeat(32), foundingCommittee: now().chain.foundingCommittee ?? [] }) as never,
+    holders: async () => ({ seats: now().chain.seats ?? [], founding: now().chain.founding ?? 'f0'.repeat(32), foundingCommittee: now().chain.foundingCommittee ?? [], seatBar: now().chain.seatBar ?? 1 }) as never,
     ...(now().chain.noRoles === true ? {} : {
       roles: async (_a: unknown, _l: unknown, keys: readonly string[]) => {
         now().seen.rolesAsked.push([...keys]);
@@ -166,6 +174,9 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
     held: { identity: dee, secret: newSecret(), account: 0 }, at: { step: 1, steps: 2 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a seat is relayed through its invitation'); },
     call: async (method: string, path: string, body?: string) => {
+      if (method === 'GET' && path === `/api/accounts/${COMPANY}/directory`) {
+        return opts.directory === 'unread' ? { status: 503, body: { error: 'not now' } } : { status: 200, body: { filings: opts.directory ?? [] } };
+      }
       if (method === 'GET') {
         if (opts.offerGone !== undefined && opts.offerGone !== false) {
           return { status: 410, body: { refused: opts.offerGone === true ? 'used' : opts.offerGone, error: 'this invitation is closed' } };
@@ -197,6 +208,17 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
   return seen;
 };
 
+/** The company's directory holding `leaf`'s retirement, signed by the one seat whose entry it names. */
+const retiredIn = (leaf: string): unknown[] => {
+  const signer = newSigningKeypair();
+  const unsigned = { kind: 'retire', seat: leaf, filedUpTo: {}, threshold: 1, signatures: [] } as unknown as DirectoryChange;
+  const signature = sign(directoryChangeMessage(COMPANY, 2, unsigned), signer.secret);
+  return [
+    { company: COMPANY, version: 1, change: { kind: 'claim', entry: { person: 'ada', statement: { signingKey: signer.publicKey } } } },
+    { company: COMPANY, version: 2, change: { ...unsigned, signatures: [{ publicKey: signer.publicKey, signature }] } },
+  ];
+};
+
 describe('a seat invited by address is taken in the wallet, by the wallet that holds the address', () => {
   it('the wallet hands the seat builder its own seat\'s keys and the address\'s coin key, relays what the builder returns through the invitation, and asks to be admitted', async () => {
     const o = anOffer();
@@ -210,6 +232,7 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     const own = seatKeysFor(dee, LABEL, 0);
     expect(b.material.signingSecret).toBe(toHex(own.signingSecret));
     expect(b.material.scope).toBe(o.invite.scope);
+    /* RED WHEN: the rights an approver is seated with are not kept with the seat, so no run it approves proves. */
     expect(relayed).toHaveLength(1);
     expect(relayed[0]).toMatchObject({ tx: 'VFg=' });
     /* The request to be admitted opens with the company's key and carries the seat's public halves, not its secrets. */
@@ -218,12 +241,12 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     expect(JSON.stringify(asked)).not.toContain(toHex(own.signingSecret));
     expect(JSON.stringify(asked)).not.toContain(b.invite.coinSecretKey);
     /* RED WHEN: the seat taken is not kept in the saved keys, under the request the company filed. */
-    expect(kept.accounts[COMPANY]).toMatchObject({ signerId: 'sgn_dee', signingSecret: toHex(own.signingSecret), scope: o.invite.scope, seat: 0 });
+    expect(kept.accounts[COMPANY]).toMatchObject({ signerId: 'sgn_dee', signingSecret: toHex(own.signingSecret), scope: o.invite.scope, seat: 0, rights: rightsOfRole('approver') });
     /* RED WHEN: the seat is kept only after its proof is relayed, or only after the one-shot request to be admitted. */
     expect(order).toEqual(['keep', 'prove', 'relay', 'accept-signer', 'keep']);
     const pending = Object.values(kept.pendingSeats ?? {}) as any[];
     expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({ accountId: COMPANY, signingSecret: toHex(own.signingSecret), scope: o.invite.scope, seat: 0, invited: { terms: { proposal: o.proposal } } });
+    expect(pending[0]).toMatchObject({ accountId: COMPANY, signingSecret: toHex(own.signingSecret), scope: o.invite.scope, rights: rightsOfRole('approver'), seat: 0, invited: { terms: { proposal: o.proposal } } });
     expect(pending[0].opening).toEqual(kept.accounts[COMPANY].opening);
   });
 
@@ -293,7 +316,7 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
 
   it('RED WHEN: a wallet already seated on this company takes a second seat, by its saved keys, by a leaf at the offer\'s rights or at all vaults, or as the founding seat', async () => {
     const all = MidnightCommitments.allVaults().toLowerCase() as Hex;
-    const narrow = '3c'.repeat(32) as Hex;
+    const narrow = scopeOfRole('approver');
     const refusedWith = async (o: ReturnType<typeof anOffer>, chain: ChainNow, opts: Opts = {}) => {
       const err = await run(o, chain, opts).catch((e: unknown) => e);
       expect(err).toMatchObject({ words: { key: 'act.seat-invited.why.already-seated' } });
@@ -307,12 +330,40 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     /* The founding seat, held by this wallet's committee key. */
     const founding = '6f'.repeat(32);
     await refusedWith(anOffer(), { seats: [founding], founding, foundingCommittee: [deesSeat(0, all).walletKey] });
-    /* A seat its saved keys already hold for this company. */
-    await refusedWith(anOffer(), {}, { held: { accounts: { [COMPANY]: { signerId: 'sgn_old', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: all } } } });
+    /* A seat its saved keys already hold for this company, which the chain still holds. */
+    const held = { signerId: 'sgn_old', signingSecret: '01'.repeat(32) as Hex, wrappingSecret: '02'.repeat(32) as Hex, blinding: '03'.repeat(32) as Hex, scope: all };
+    const heldLeaf = storedSignerLeaf({ signingSecret: held.signingSecret, blinding: held.blinding, scope: held.scope }, MidnightCommitments as never).toLowerCase();
+    await refusedWith(anOffer(), { seats: [heldLeaf] }, { held: { accounts: { [COMPANY]: held } } });
+    /* A seat its saved keys hold with no scope, whose leaf this wallet cannot work out. */
+    const { scope: _noScope, ...unscoped } = held;
+    await refusedWith(anOffer(), {}, { held: { accounts: { [COMPANY]: unscoped } } });
     /* Nothing is kept, proved, relayed or asked for. */
     const into = newSeen();
     await run(anOffer(), { seats: [deesSeat(0, all).leaf] }, { into }).catch(() => {});
     expect([into.order, into.kept]).toEqual([[], { accounts: {} }]);
+  });
+
+  it('a wallet whose seat on this company the chain no longer holds takes the new seat, and keeps the removed seat\'s keys set aside, never written over', async () => {
+    const all = MidnightCommitments.allVaults().toLowerCase() as Hex;
+    const removed = { signerId: 'sgn_old', signingSecret: '01'.repeat(32) as Hex, wrappingSecret: '02'.repeat(32) as Hex, blinding: '03'.repeat(32) as Hex, scope: all };
+    const leaf = storedSignerLeaf(removed, MidnightCommitments as never).toLowerCase();
+    /* RED WHEN: a seat one read of the chain leaves out is set aside though the company's directory holds no retirement for it. */
+    const unretired = await run(anOffer(), {}, { held: { accounts: { [COMPANY]: removed } } }).catch((e: unknown) => e);
+    expect(unretired).toMatchObject({ words: { key: 'act.seat-invited.why.removal-not-filed' } });
+    /* RED WHEN: a directory the service did not serve is read as one holding no retirement, and the person told their removal was not recorded. */
+    const unread = await run(anOffer(), {}, { held: { accounts: { [COMPANY]: removed } }, directory: 'unread' }).catch((e: unknown) => e);
+    expect(unread).toMatchObject({ words: { key: 'act.seat-invited.why.directory-not-read' } });
+    /*
+     * The directory holds the seat's retirement, signed by a seat it names: two sources agree the seat was removed.
+     * RED WHEN: a bar for a change of who is seated raised after the removal (1 when it was filed, 3 now) refuses the rejoin.
+     */
+    const { kept, order } = await run(anOffer(), { seatBar: 3 }, { held: { accounts: { [COMPANY]: removed } }, directory: retiredIn(leaf) });
+    /* RED WHEN: a wallet whose seat was removed can never take a seat on the company again, so a signer whose role changes is never seated again. */
+    expect(kept.accounts[COMPANY]).toMatchObject({ signerId: 'sgn_dee', signingSecret: toHex(seatKeysFor(dee, LABEL, 0).signingSecret), seat: 0 });
+    /* RED WHEN: the removed seat's keys are written over or dropped. */
+    expect(kept.formerSeats).toEqual({ [signingPublicKeyOf(removed.signingSecret).toLowerCase()]: { ...removed, accountId: COMPANY } });
+    /* The removed seat is set aside before anything of the new seat is kept or proved. */
+    expect(order).toEqual(['keep', 'keep', 'prove', 'relay', 'accept-signer', 'keep']);
   });
 
   it('RED WHEN: a seat number whose pay-key wrap slot is occupied is taken, or the seat number is not kept', async () => {
@@ -452,7 +503,7 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
   });
 
   it('RED WHEN: a seat kept for an invitation that never landed takes its number, so the next invitation at other rights cannot be taken', async () => {
-    const narrow = '3c'.repeat(32) as Hex;
+    const narrow = scopeOfRole('approver');
     const one = anOffer(DEES_ADDRESS, narrow, '71'.repeat(32) as Hex);
     /* Invitation one is proved and relayed at a narrower scope, and the network never shows it. */
     const into = newSeen();
@@ -470,12 +521,12 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     const action = seatInvitedAction(reachNow() as never);
     const a = anOffer();
     const first = await run(a, {}, { action });
-    const b = anOffer(DEES_ADDRESS, '3c'.repeat(32) as Hex, '72'.repeat(32) as Hex);
+    const b = anOffer(DEES_ADDRESS, MidnightCommitments.allVaults().toLowerCase() as Hex, '72'.repeat(32) as Hex);
     /* The second invitation, on a wallet whose saved keys hold no seat here (another device's, say), with the same action. */
     const second = await run(b, {}, { action });
     expect(first.built[0]!.proposal).toBe(a.proposal);
     expect(second.built[0]!.proposal).toBe(b.proposal);
-    expect(second.built[0]!.material.scope).toBe('3c'.repeat(32));
+    expect(second.built[0]!.material.scope).toBe(b.invite.scope);
     expect(second.relayed[0]!.acceptance).toBe(acceptanceProofOf(b.token));
   });
 

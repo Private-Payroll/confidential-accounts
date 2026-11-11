@@ -207,6 +207,7 @@ export function removalDoorsFor(
       askTheWallet: async () => r.companyKey,
       waiting: async () => (await rotating()).waiting!(),
       admitted: async () => (await rotating()).admitted!(),
+      revoked: async () => (await rotating()).revoked(),
       file: async (change, signedFor) => { handed.over = true; return (await rotating()).file(change, signedFor); },
     },
   };
@@ -272,6 +273,8 @@ const removalShown = (intent: ActIntent): ShownLine[] => {
       ? { key: 'act.remove-signer.shown.keeps-the-threshold', from: 'page' }
       : { key: 'act.remove-signer.shown.threshold', values: { threshold }, from: 'page' },
     { key: 'act.remove-signer.shown.retirement', from: 'action' },
+    { key: 'act.remove-signer.shown.other-changes', from: 'action' },
+    { key: 'act.remove-signer.shown.open-runs', from: 'action' },
     { key: 'act.remove-signer.shown.checks', from: 'action' },
     { key: 'act.remove-signer.shown.vault-secrets', from: 'action' },
   ];

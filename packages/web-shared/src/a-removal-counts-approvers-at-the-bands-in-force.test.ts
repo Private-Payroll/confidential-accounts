@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { approverRosterFrom, vaultsLeftShort } from '../../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT, vaultsLeftShort } from '../../../src/core/vault-approvers.js';
 import type { Hex } from '../../../src/core/crypto.js';
 
 /*
@@ -20,7 +20,7 @@ const VAULT = 'ab'.repeat(32) as Hex;
 const WIDE = 'cc'.repeat(32) as Hex;
 const SEATS = ['a1', 'a2', 'a3'].map((x) => x.repeat(32));
 const roster = () => approverRosterFrom({
-  threshold: 1, vaultThresholds: [], seated: SEATS.map((leaf) => ({ leaf })), adoptedVaults: [VAULT], companyWide: WIDE,
+  threshold: 1, vaultThresholds: [], seated: SEATS.map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [VAULT], companyWide: WIDE,
 } as never);
 const doors = (policies: boolean) => ({
   approvers: async () => roster(), accountId: 'acc_1', records: (policies ? { spendingPolicies: {} } : {}) as never,

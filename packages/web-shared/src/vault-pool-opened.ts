@@ -84,9 +84,11 @@ export async function readTheSecretBack(doors: Pick<PoolDoors, 'me' | 'records' 
  * before anything is wrapped, and stops the filing by throwing; there is no
  * filing without it. `removals` reads the account's count of removals, before
  * the readers are checked, and a new secret's record carries it; without it the
- * record carries 0, which is behind once any signer has been removed. A kept
- * record is filed again over another only while every reader it is wrapped to
- * is one `stayers` names now.
+ * record carries 0, which is behind once any signer has been removed.
+ * `readersNow` is who the company's directory believes now (`readersNow`, from
+ * `readersIn`), never the service's word: a new secret is wrapped to those keys
+ * and no others, and to this device alone without it; a kept record is filed
+ * again over another only while every reader it is wrapped to is one it names.
  */
 /*
  * **WHAT THE CHAIN SHOWS OF A VAULT'S SECRET, BEFORE ANY IS MADE OR FILED.** A vault's nonce commitment is zero until
@@ -135,11 +137,15 @@ const behindTheFiled = (doors: Pick<PoolDoors, 'me'>, vault: Hex, kept: SealedPo
 };
 
 /** Whether every reader of a kept record is still one the directory believes now: never filed again to one who left. */
-const everyReaderStays = async (readers: readonly Hex[], stayers?: () => Promise<readonly Hex[]>): Promise<boolean> => {
-  if (stayers === undefined) return true;
-  const now = (await stayers()).map((k) => k.toLowerCase());
+const everyReaderStays = async (readers: readonly Hex[], readersNow?: () => Promise<readonly Hex[]>): Promise<boolean> => {
+  if (readersNow === undefined) return true;
+  const now = (await readersNow()).map((k) => k.toLowerCase());
   return readers.every((k) => now.includes(k.toLowerCase()));
 };
+
+/** Who a new secret is sealed to beside this device: the keys the directory believes now, lower-cased; none without them. */
+const readersToSealTo = async (readersNow?: () => Promise<readonly Hex[]>): Promise<readonly Hex[]> =>
+  (readersNow === undefined ? [] : await readersNow()).map((k) => k.toLowerCase() as Hex);
 
 /**
  * A kept record as it is filed after the newest the records list: as it is when it was made as that next version (the
@@ -156,7 +162,7 @@ export async function openCompanyVaultPool(
   doors: PoolDoors, vault: Hex, beforeFiling: (readers: readonly Hex[]) => Promise<void>,
   chainsSecret?: (secret: Hex, state: string) => Promise<boolean>,
   removals?: () => Promise<number>,
-  stayers?: () => Promise<readonly Hex[]>,
+  readersNow?: () => Promise<readonly Hex[]>,
 ): Promise<SecretReadBack> {
   doors.progress?.('opening the pool');
   const { view, refusal } = await theVaultReadForItsStart(doors, vault);
@@ -183,7 +189,7 @@ export async function openCompanyVaultPool(
   }
   const keptHere = keptIsTheChains || (secretOwed && !chainHolds) ? kept : null;
   const counted = secretOwed && keptHere === null && removals !== undefined ? await removals() : 0;
-  const readers = secretOwed && keptHere === null ? (await doors.service.keys()).readers : [];
+  const readers = secretOwed && keptHere === null ? await readersToSealTo(readersNow) : [];
   if (secretOwed && keptHere === null) await beforeFiling(readers);
   if (await doors.records('pool').get(vault) === null) {
     if ((view.notes ?? []).length > 0 || everCreated.size > 0) {
@@ -197,7 +203,7 @@ export async function openCompanyVaultPool(
     if (filedNow === null) {
       await store.put(vault, keptHere);
     } else if (newestSecretIn(doors, vault, filedNow)?.toLowerCase() !== opened.secret.toLowerCase()
-      && !behindTheFiled(doors, vault, keptHere, filedNow) && await everyReaderStays(opened.readers, stayers)) {
+      && !behindTheFiled(doors, vault, keptHere, filedNow) && await everyReaderStays(opened.readers, readersNow)) {
       await store.put(vault, await keptAsNext(store, vault, keptHere, doors.me.companyKey));
     }
     return opened;

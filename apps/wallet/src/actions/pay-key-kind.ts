@@ -38,6 +38,7 @@ import { governanceDoorsFor, handOverMarked, pureCircuits, type CompanyReach, ty
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
 import { carryStep, onTheChain, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
+import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 /** What the pay-record key's kind reads and waits with. A test hands in its own. */
 export interface PayKeyKindReach {
@@ -123,7 +124,7 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
     } as OpenedRound;
     const { tx } = await r.builder.governedCall({
       account: r.account, order, opened, chain,
-      material: { signingSecret: r.seat.signingSecret as Hex, blinding: r.seat.blinding as Hex, scope: r.seat.scope },
+      material: signerMaterialOf(r.seat),
     });
     await handedOver(handOverMarked(r.handOver, handed), {
       tx, call: { kind: 'account-call', contract: r.account, circuit: order.circuit },

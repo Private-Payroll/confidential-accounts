@@ -6,7 +6,7 @@ import {
   REMOVAL_STATE, ROTATION, SIGNER_ACT, SIGNER_ACTED, VAULT_SECRETS_NOT_STARTED, WHY, admitSigner, approveSigner, changeVaultSecrets, giveYourKeys, removeSigner,
   type SignerAct, type SignerActed, type SignerWhy,
 } from '../adapters/signer-acts.js';
-import { thresholdChangesWaiting, type SignerInvited } from '../adapters/signers.js';
+import { rightsAreOverEveryVault, thresholdChangesWaiting, type SignerInvited } from '../adapters/signers.js';
 import { useCompanyRecords } from '../records/company-records.js';
 import { WithRecords } from '../records/parts.js';
 import { ActDone, ActOutcome, ActStopped, type ActStep } from '../records/proposal-act.js';
@@ -74,7 +74,6 @@ function useRoleSays(): Record<string, string> {
   const t = useText();
   return {
     [ROLE.admin]: t('invite.role.admin'), [ROLE.approver]: t('invite.role.approver'), [ROLE.initiator]: t('invite.role.initiator'),
-    [ROLE.viewer]: t('invite.role.viewer'),
   };
 }
 
@@ -341,7 +340,7 @@ function WaitingList({ records, busy, result, phase, approvedHere, onApprove }: 
               <span className="font-medium">{i.name}</span>
               <span className="text-muted-foreground">{t('signers.pending.role', { role: roleSays[i.role] ?? i.role })}</span>
               <span className="break-all font-mono text-xs text-muted-foreground" dir="ltr" data-address>{t('signers.pending.address', { address: i.address })}</span>
-              <span className="break-all font-mono text-xs text-muted-foreground" dir="ltr" data-scope>{t('signers.pending.scope', { scope: shortOf(i.scope) })}</span>
+              <span className="break-all font-mono text-xs text-muted-foreground" dir="ltr" data-scope>{rightsAreOverEveryVault(i.scope) ? t('signers.pending.scope.every') : t('signers.pending.scope', { scope: shortOf(i.scope) })}</span>
               {i.coinKey === null ? null : <span className="break-all font-mono text-xs text-muted-foreground" dir="ltr" data-coin-key>{t('signers.pending.coinKey', { coinKey: shortOf(i.coinKey) })}</span>}
               {i.status === 'approved' ? (
                 <>

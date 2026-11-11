@@ -24,7 +24,7 @@
  * Pure: the page, the wallet and the service all import it.
  */
 import { canonical, fromHex, parseCanonical, seal, unseal, unwrapKey, wrapKey, newSymmetricKey, type Hex } from '../core/crypto.js';
-import { purposeKey } from '../core/sealed-records.js';
+import { keyForThePurpose, type RecordsKey } from '../core/sealed-records.js';
 import { recordsKeypairFrom } from './company-nonce-secret.js';
 import { paddedToABucket, type PoolSigner, type WrappedPoolKey } from './vault-pool.js';
 import type { SealedCompanyRecord } from './sealed-record-wire.js';
@@ -39,7 +39,7 @@ export const COMPANY_SERVICE_RECORD = Object.freeze({ kind: 'policy' as const, i
 export const COMPANY_WRAP_ID = '$company';
 
 /** The pair the company's copy of a version's key is wrapped to: derived from the company's key `key` for this record alone. */
-const companyWrapping = (key: Hex, company: string) => recordsKeypairFrom(fromHex(purposeKey(key, company, 'company-service')));
+const companyWrapping = (key: RecordsKey, company: string) => recordsKeypairFrom(fromHex(keyForThePurpose(key, company, 'company-service')));
 
 /** What a company chose: our service, its own service at an address, or none. */
 export type CompanyService =

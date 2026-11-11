@@ -29,6 +29,9 @@ import {
 import type { PayoutSeed } from '../../../src/core/types.js';
 import type { CompanyKeys } from '../../../src/core/company-key.js';
 import type { DirectoryHere, DirectoryRead } from './vault-page-doors.js';
+import { filedByARemovedSeat, owedIn, removalWaitsHere } from './key-change-owed.js';
+
+export { removalWaitsHere };
 import { answerDigestOf, type SealedAnswer } from '../../../src/core/answer-opened.js';
 
 /** A waiting seat request or a payee's handover, as the service serves it: sealed to the company's inbox. */
@@ -56,6 +59,11 @@ interface CompanyKeyDoors {
   readonly released: () => Hex | null;
   /** Asks the person's wallet once for the key it releases for this company; null, or a throw, when the person declines. */
   readonly askTheWallet: () => Promise<Hex | null>;
+  /**
+   * The key epoch a believed taking-away of a read grant was filed at, or null when none is (`revokedAtHere`): while it
+   * is the newest epoch, the reader it was taken from still holds the key in force, and nothing new is sealed.
+   */
+  readonly revoked: () => Promise<number | null>;
 }
 
 /** The company's keys this device holds. */
@@ -207,6 +215,25 @@ const pauseIn = (here: DirectoryHere, lastRotated: number, accountId: string): s
     + (why === null ? '' : `. This device tried to change it and could not yet: ${why}`);
 };
 
+/** Why nothing new is sealed after a read grant is taken away, and what clears it. */
+const REVOKED_PAUSE = 'a read grant was taken away and the company\'s key has not changed since, so the reader it was taken from '
+  + 'still holds the key in force and this device seals nothing new. The next action a signer who stays makes in their wallet changes it first';
+
+/**
+ * Why nothing new is sealed for the company's read grants: one was taken away and the key has not changed past the epoch
+ * it was filed at, or the grants could not be read, so whether one was is not known. Null when neither.
+ */
+const grantsPauseOf = async (doors: Pick<CompanyKeyDoors, 'revoked'>, newest: number): Promise<string | null> => {
+  let revokedAt: number | null;
+  try {
+    revokedAt = await doors.revoked();
+  } catch (e) {
+    return `the company's read grants could not be read (${(e as Error)?.message ?? String(e)}), so whether a reader's grant was `
+      + 'taken away is not known and this device seals nothing new. Reload the page, which reads them again';
+  }
+  return revokedAt !== null && revokedAt >= newest ? REVOKED_PAUSE : null;
+};
+
 /** This device's own seat in the directory, by its filing key or that key's public half. */
 const ownSeatIn = (here: DirectoryHere, material: CompanyKeyDoors['material']): DirectorySeat | undefined => {
   const mine = ('signingPublicKey' in material ? material.signingPublicKey : signingPublicKeyOf(material.signingSecret as Hex)).toLowerCase();
@@ -333,6 +360,7 @@ export async function companyKeyHere(
   const key = keys.get(epoch)!;
   const seeded = [...rotations].reverse().find(({ rotation }) => rotation.repairs === undefined)?.rotation.epoch;
   const newestNotBelieved = notBelieved.get(newest);
+  const grantsPause = await grantsPauseOf(doors, newest);
   const notOpenedNow = notOpened.filter((e) => !keys.has(e));
   const notSealing = notOpenedNow.includes(newest)
     ? 'the company\'s newest key is not opened on this page, because your wallet has not released the company\'s key on this '
@@ -347,7 +375,7 @@ export async function companyKeyHere(
         : seeded !== undefined && !seeds.some((s) => s.epoch === seeded)
           ? 'this seat holds no copy of the payout seed of the company\'s newest key, so it seals nothing new'
           : own?.retired !== null && own !== undefined ? 'this seat is retired from the company, so it seals nothing new'
-            : pauseIn(here, lastRotated, doors.accountId);
+            : grantsPause ?? pauseIn(here, lastRotated, doors.accountId);
   const answered = new Map<number, ReadonlySet<string>>(
     rotations.map(({ rotation, change }) => [change.replaces ?? rotation.epoch - 1, new Set(change.waiting.map((d) => d.toLowerCase()))]));
   return Object.freeze({
@@ -399,33 +427,6 @@ export type KeyRotated =
   | { readonly state: 'not-this-seat'; readonly why: string }
   | { readonly state: 'not-rotated'; readonly why: string };
 
-/** The version of the newest retirement no rotation has followed yet (`after`), and the version of the newest rotation (`since`); null when every retirement is followed. */
-const owedIn = (here: DirectoryHere): { readonly after: number; readonly since: number } | null => {
-  const retiredAt = here.dir.seats.flatMap((x) => (x.retired !== null && x.retiredAt !== undefined ? [x.retiredAt] : []));
-  if (retiredAt.length === 0) return null;
-  const after = Math.max(...retiredAt);
-  const rotations = here.dir.rotations ?? [];
-  const since = rotations.length === 0 ? 0 : rotations[rotations.length - 1]!.version;
-  return after > since ? { after, since } : null;
-};
-
-/** Whether a change of the key was filed by a seat the directory has retired since and the chain no longer holds. */
-const filedByARemovedSeat = (here: DirectoryHere, r: DirectoryRotation): boolean => {
-  const filer = here.dir.seats.find((x) => x.seat === r.by);
-  return filer !== undefined && filer.retired !== null && filer.retiredAt !== undefined && filer.retiredAt > r.version
-    && !here.holders.seats.includes(filer.seat);
-};
-
-/**
- * Whether the seats that stay, among those the chain holds, are enough to meet the higher of the account's threshold and
- * its seat bar on their own. A retired seat the chain still holds gets no copy of a new key, so it can never open, and so
- * never approve, a proposal sealed under it; the key changes past such a seat only while no proposal needs it.
- */
-const stayersApproveAlone = (here: DirectoryHere): boolean => {
-  const staying = here.holders.seats.filter((s) => here.dir.seats.some((x) => x.seat === s && x.retired === null)).length;
-  return staying >= Math.max(Number(here.holders.approvals ?? 0), Number(here.holders.seatBar ?? 0));
-};
-
 /**
  * **THE COMPANY'S KEY CHANGED FROM THIS DEVICE, ONCE A SIGNER'S REMOVAL IS CARRIED OUT
  * ON THE CHAIN AND ANCHORED.** A new random key and payout seed, a copy of the key
@@ -441,7 +442,9 @@ const stayersApproveAlone = (here: DirectoryHere): boolean => {
  * other's change and files nothing more. A seat that does not hold the newest key
  * (its copy did not open, or this device does not believe that change) changes the key
  * from the newest key it holds (`replaces`) once every newer change was filed by a seat
- * retired since and off the chain, and otherwise files nothing.
+ * retired since and off the chain, and otherwise files nothing. When no removal is owed one
+ * and a read grant was taken away while the newest key was in force (`revoked`), it repairs the
+ * newest key instead: a new key, wrapped to the same seats, keeping the payout seed.
  */
 export async function rotateTheCompanyKeyHere(doors: RotationDoors, o: { readonly leaf?: string } = {}): Promise<KeyRotated> {
   const outcome = await rotatedHere(doors, o);
@@ -449,72 +452,20 @@ export async function rotateTheCompanyKeyHere(doors: RotationDoors, o: { readonl
   return outcome;
 }
 
-/** Where a seat's device stands after a removal, before it changes the company's key or a vault's secret. */
-type RemovalWaited =
-  | { readonly state: 'waits' | 'not-this-seat'; readonly why: string }
-  | { readonly state: 'not-needed' }
-  | { readonly state: 'ready'; readonly seat: DirectorySeat; readonly owed: { readonly after: number; readonly since: number } };
-
 /**
- * **WHAT EVERY CHANGE AFTER A REMOVAL WAITS FOR, IN ONE PLACE.** `seat` is this device's own entry (`ownSeatIn`).
- * Nothing is made by a seat that is not in the directory, is retired, is the one leaving (`leaf`: the leaver's own
- * wallet makes nothing for the seats that stay), is no longer held by the chain or under an approved removal, or whose
- * role `mayAct` refuses (it returns why, in the caller's words); and nothing while who is under an approved removal
- * cannot be read, a change of the company's key is filed and not anchored, the retirement is not anchored, the chain
- * still holds a retired seat while the seats that stay could not meet the chain's approvals without it
- * (`stayersApproveAlone`), the chain holds a seat the directory has no entry for that the company's roster admitted,
- * or the directory holds a seat that stays and the chain no longer holds. `not-needed` is a company whose key is not
- * owed a change; `ready` names the seat that acts and what is owed (`owedIn`).
+ * What a change of the key from this device waits for (`removalWaitsHere`), in one pass. The read grants are read only
+ * when no removal is owed a change: a removal's change never waits on them, and clears any taking-away anyway.
  */
-export async function removalWaitsHere(
-  here: DirectoryHere, seat: DirectorySeat | undefined, o: { readonly leaf?: string },
-  mayAct: (seat: DirectorySeat) => string | null, doors: Pick<RotationDoors, 'leaving' | 'admitted'>,
-): Promise<RemovalWaited> {
-  if (seat === undefined) return { state: 'not-this-seat', why: 'this device\'s seat has no entry in the company\'s directory' };
-  if (seat.retired !== null) return { state: 'not-this-seat', why: 'this seat is retired from the company' };
-  if (typeof o.leaf === 'string' && o.leaf.toLowerCase() === seat.seat) return { state: 'not-this-seat', why: 'this seat is the one leaving' };
-  if (!here.holders.seats.includes(seat.seat)) return { state: 'not-this-seat', why: 'the chain no longer holds this seat' };
-  const roleMayNot = mayAct(seat);
-  if (roleMayNot !== null) return { state: 'not-this-seat', why: roleMayNot };
-  let leaving: ReadonlySet<string>;
-  try {
-    leaving = await doors.leaving();
-  } catch (e) {
-    return { state: 'waits', why: `${(e as Error)?.message ?? String(e)}; the company's key is changed once it can be read` };
-  }
-  if (leaving.has(seat.signingKey.toLowerCase())) return { state: 'not-this-seat', why: 'a removal of this seat is approved' };
-  const rotations = here.dir.rotations ?? [];
-  if (rotations.some((r) => !here.records.directory.has(r.version))) {
-    return { state: 'waits', why: 'a change of the company\'s key is filed and not yet anchored' };
-  }
-  const owed = owedIn(here);
-  if (owed === null) return { state: 'not-needed' };
-  if (!here.records.directory.has(owed.after)) return { state: 'waits', why: 'the retirement of the leaving seat is filed and not yet anchored' };
-  const stillHeld = here.dir.seats.filter((x) => x.retired !== null && (x.retiredAt ?? 0) > owed.since && here.holders.seats.includes(x.seat));
-  if (stillHeld.some((x) => !here.records.directory.has(x.retiredAt ?? 0)) || (stillHeld.length > 0 && !stayersApproveAlone(here))) {
-    return { state: 'waits', why: 'the chain still holds a retired seat, so the removal is not carried out on the chain yet' };
-  }
-  const unentered = here.holders.seats.filter((s) => !here.dir.seats.some((x) => x.seat === s));
-  if (unentered.length > 0) {
-    let admitted: ReadonlySet<string> | null = null;
-    try { admitted = doors.admitted === undefined ? new Set(unentered.map((s) => s.toLowerCase())) : await doors.admitted(); } catch { admitted = null; }
-    if (admitted === null) {
-      return { state: 'waits', why: 'the chain holds a seat the company\'s directory has no entry for, and the company\'s roster could not be read to tell whether it was admitted' };
-    }
-    if (unentered.some((s) => admitted!.has(s.toLowerCase()))) {
-      return { state: 'waits', why: 'the chain holds a seat the company\'s directory has no entry for yet; that seat files its entry first' };
-    }
-  }
-  if (here.dir.seats.some((x) => x.retired === null && !here.holders.seats.includes(x.seat))) {
-    return { state: 'waits', why: 'the chain no longer holds a seat the directory has not retired; its retirement is filed and anchored first' };
-  }
-  return { state: 'ready', seat, owed };
-}
+const keyChangeWaited = async (
+  doors: RotationDoors, here: DirectoryHere, o: { readonly leaf?: string },
+): Promise<Awaited<ReturnType<typeof removalWaitsHere>>> => {
+  const mayAct = (s: DirectorySeat): string | null => (mayInvite(s) ? null : 'this seat\'s role files no proposal, so it does not change the company\'s key');
+  return removalWaitsHere(here, ownSeatIn(here, doors.material), { ...o, revoked: doors.revoked }, mayAct, doors);
+};
 
 const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }): Promise<KeyRotated> => {
   const here = await doors.records.directory();
-  const waited = await removalWaitsHere(here, ownSeatIn(here, doors.material), o,
-    (s) => (mayInvite(s) ? null : 'this seat\'s role files no proposal, so it does not change the company\'s key'), doors);
+  const waited = await keyChangeWaited(doors, here, o);
   if (waited.state !== 'ready') return waited;
   const { seat, owed } = waited;
   const released = releasedOnce(doors);
@@ -525,6 +476,10 @@ const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }):
     records = recordsKeyOf(await released());
   } catch (e) {
     return { state: 'not-rotated', why: (e as Error)?.message ?? String(e) };
+  }
+  const repairs = 'repairs' in owed ? owed.repairs : null;
+  if (repairs !== null && now.epoch < now.newest) {
+    return { state: 'not-rotated', why: 'this seat holds no copy of the company\'s newest key, so it cannot change the key after a read grant is taken away; a signer who holds it does' };
   }
   if (now.epoch < now.newest && (here.dir.rotations ?? []).some((r) => r.epoch > now.epoch && !filedByARemovedSeat(here, r))) {
     return { state: 'not-rotated', why: 'this seat holds no copy of the company\'s newest key, and the signer who changed it is not removed from the company yet' };
@@ -538,7 +493,7 @@ const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }):
    * The new key goes to every seat the directory holds and has not retired, believed or not, never to `readersIn`'s
    * list alone: a seat's records key is attested only by its vault-keys offer and a fold of it, and both seal under
    * the company's key, which is paused until this change. A seat left out here could never attest, and every device's
-   * sealing would stay paused. The waits above make these exactly the seats the chain holds.
+   * sealing would stay paused. The waits above make these exactly the seats the chain holds. A reader is never one.
    */
   const wraps = wrapsFor(key, here.dir.seats.filter((x) => x.retired === null).map((x) => ({ seat: x.seat, wrappingKey: x.wrappingKey })));
   const own = wraps.find((w) => w.seat === seat.seat);
@@ -553,10 +508,12 @@ const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }):
     if (!waiting.includes(d)) waiting.push(d);
   }
   const signedFor = here.dir.version + 1;
+  /* A repair, after a read grant is taken away, keeps the payout seed: no reader ever held it. */
   const unsigned = {
     kind: 'rotate' as const, epoch, keyCheck: keyCheckOf(doors.accountId, epoch, key), after: owed.after, wraps,
-    previous: sealedPrevious(key, now.key), seed: { epoch, sealed: sealedSeed(key, newSymmetricKey().toLowerCase()) }, waiting,
-    ...(now.epoch < now.newest ? { replaces: now.epoch } : {}),
+    previous: sealedPrevious(key, now.key), waiting,
+    ...(repairs !== null ? { repairs } : { seed: { epoch, sealed: sealedSeed(key, newSymmetricKey().toLowerCase()) } }),
+    ...(repairs === null && now.epoch < now.newest ? { replaces: now.epoch } : {}),
   };
   const message = directoryChangeMessage(doors.accountId, signedFor, { ...unsigned, signatures: [] as never });
   const secret = doors.material.signingSecret as Hex;
@@ -565,8 +522,9 @@ const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }):
   try {
     filed = await doors.file(change, signedFor);
   } catch (e) {
-    const after = owedIn(await doors.records.directory());
-    if (after === null) return { state: 'rotated-elsewhere', epoch };
+    const after = await doors.records.directory();
+    const newest = (after.dir.rotations ?? []).reduce((n, r) => Math.max(n, r.epoch), 0);
+    if (repairs !== null ? newest > repairs : owedIn(after) === null) return { state: 'rotated-elsewhere', epoch };
     throw e;
   }
   const notAnchored = (filed.anchor as { readonly notAnchored?: unknown }).notAnchored;

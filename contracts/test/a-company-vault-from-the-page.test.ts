@@ -97,7 +97,7 @@ import { believedFilerHere } from 'vaults-web-shared/round-opened-here.js';
 import { kindAsked, listedHere } from 'vaults-web-shared/vault-page-doors.js';
 import { openRecord } from '../../src/core/sealed-records.js';
 import { parseCanonical, unseal } from '../../src/core/crypto.js';
-import { approverRosterFrom } from '../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../src/core/vault-approvers.js';
 import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { anAccountBornHeld } from './an-account-born-held.js';
@@ -557,7 +557,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* The indexer this signer's own wallet names: the worker reads the vault there, over the chain above. */
     indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     approvers: async () => approverRosterFrom({
-      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
     }),
   };
   const wireAs = (person: string): WireSend => async (path, init) => {

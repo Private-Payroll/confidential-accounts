@@ -63,7 +63,7 @@ import type { AccountPresenceOnTheWire } from './vault-worker-client.js';
 
 export type { CompanyCreationState } from '../../../src/core/company-founding.js';
 import { seatToPromote } from './seat-repair.js';
-import type { SealedAccount } from '../../../src/core/types.js';
+import type { SealedAccount, SignerRole } from '../../../src/core/types.js';
 import { onlyCompanyLabels, rememberedCompanies } from './my-payslips.js';
 import {
   metadataFrom, type Keyring, type PendingSeat, type SavedCreation, type SeatPublicHalves,
@@ -1334,7 +1334,7 @@ const tidyOwed = new Map<string, 'aside' | 'forget'>();
 /** What a company is made from: its name, who signs for it, and how many signatures it needs. */
 export interface CompanyToFound {
   name: string;
-  signers: Array<{ name: string; role: 'admin' | 'approver' | 'initiator' | 'viewer' }>;
+  signers: Array<{ name: string; role: SignerRole }>;
   threshold: number;
 }
 

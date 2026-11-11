@@ -6,7 +6,8 @@
  * of it checked where the ledger loads (`claimRefusal`). A page reads vendors through this alone; admitting or
  * changing one signs with a seat's key and is done in the wallet (`admitVendorHere`, `changeVendorHere`).
  */
-import { keyOf, type KeysHeld } from '../../../src/core/company-key.js';
+import type { KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose } from './keys-by-purpose.js';
 import { madeByRefusal, whyVendorNotPayable } from '../../../src/core/person-record.js';
 import { openVendor, vendorVersionsRefusal, type VendorRecord } from '../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
@@ -84,7 +85,7 @@ export async function believedVersionsOf(d: VendorsReader, id: string, judge: Re
     if (rec.version !== i + 1
       || judge(filer, 'vendor', companyRecordKey('vendor', id), companyRecordEntry(rec), i === recs.length - 1, rec.keyEpoch) !== null) return null;
     let v: VendorRecord;
-    try { v = openVendor(rec, keyOf(d.company.viewingKey, rec.keyEpoch)); } catch { return null; }
+    try { v = openVendor(rec, keysByPurpose(d.company.viewingKey).at(rec.keyEpoch)); } catch { return null; }
     if (madeByRefusal(v, filer) !== null) return null;
     opened.push(v);
   }

@@ -55,7 +55,8 @@ type Words = ReturnType<typeof useText>;
 const kindSays = (t: Words, kind: Offered['kind']): string =>
   ({ employee: t('join.kind.employee'), vendor: t('join.kind.vendor'), signer: t('join.kind.signer') })[kind];
 const roleSays = (t: Words, role: NonNullable<Offered['role']>): string =>
-  ({ admin: t('invite.role.admin'), approver: t('invite.role.approver'), initiator: t('invite.role.initiator'), viewer: t('invite.role.viewer') })[role];
+  ({ admin: t('invite.role.admin'), approver: t('invite.role.approver'), initiator: t('invite.role.initiator'),
+    limited: t('invite.role.limited'), accountant: t('invite.role.accountant') })[role];
 const classificationSays = (t: Words, c: NonNullable<Offered['classification']>): string =>
   (c === FULL_TIME ? t('invite.classification.fullTime') : t('invite.classification.partTime'));
 const waySays = (t: Words, offer: Offered): string =>

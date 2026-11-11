@@ -127,8 +127,8 @@ describe('the signers invited by address, read off the company\'s proposals', ()
   });
 
   it('carries the role the signed terms name', () => {
-    const read = signersInvitedIn([{ rec: rec('p1'), opened: opened('open', 0), status: 'open', approvals: 0 }], () => ({ ...(body('Sam', COIN) as object), invited: { terms: { name: 'Sam', role: 'viewer', invite: { address: LEAF(9), salt: LEAF(8), scope: LEAF(7) } } } }) as never);
-    expect(read[0]!.role).toBe('viewer');
+    const read = signersInvitedIn([{ rec: rec('p1'), opened: opened('open', 0), status: 'open', approvals: 0 }], () => ({ ...(body('Sam', COIN) as object), invited: { terms: { name: 'Sam', role: 'limited', invite: { address: LEAF(9), salt: LEAF(8), scope: LEAF(7) } } } }) as never);
+    expect(read[0]!.role).toBe('limited');
   });
 
   /* RED WHEN: the threshold an invitation binds is not carried to the page as its digits, or an invitation that binds none, or one that binds something that is not a threshold, shows one. */

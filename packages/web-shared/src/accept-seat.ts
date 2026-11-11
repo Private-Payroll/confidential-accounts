@@ -20,6 +20,8 @@
 import { x25519 } from '@noble/curves/ed25519.js';
 import { fromHex, newSigningKeypair, newWrappingKeypair, signingPublicKeyOf, toHex, type Hex } from '../../../src/core/crypto.js';
 import { storedSignerLeaf, type LeafScheme } from '../../../src/core/signer-leaf.js';
+import { isSignerRole, type Role } from '../../../src/core/roles.js';
+import { rightsScopeOf, seatRightsRecordOf } from '../../../src/core/seat-rights.js';
 import { newSeatBlinding, seatBlinding, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
 import { proveSeatKeys, type SeatInvitation, type SeatProof } from '../../../src/core/seat-invite-proof.js';
@@ -127,18 +129,27 @@ export async function acceptSeatOnThisDevice(
    * it they go out with none, and are refused there.
    */
   invitation?: SeatInvitation,
+  /**
+   * The role and vaults the signed invitation offers, where the seat is made after it: the leaf commits to that role's
+   * rights on those vaults. Without it, as for a code made before anybody chose a role, the seat is made for every
+   * right on every vault.
+   */
+  offered?: { readonly role: Role; readonly vaults?: readonly Hex[] },
 ): Promise<AcceptedSeat> {
   if (invitation && invitation.accountId !== accountId) {
     throw new Error('this invitation is for a different company from the one being joined. Nothing was sent.');
   }
   const keys = doors.newKeys(walletKey);
   /*
-   * Read once from the scheme and used for both the leaf and the material that
-   * has to reproduce it. The scope is the leaf's third argument, it
-   * lives on the device because that is where the circuit's witness reads it,
-   * and a writer that took it from somewhere else is a seat nobody can prove.
+   * Worked out once and used for both the leaf and the material that has to
+   * reproduce it: the rights the invitation's role gives on the vaults it
+   * names, kept with the seat, or every vault from the scheme when no role has
+   * been chosen yet. The scope is the leaf's third argument, it lives on the
+   * device because that is where the circuit's witness reads it, and a writer
+   * that took it from somewhere else is a seat nobody can prove.
    */
-  const scope = commitments.allVaults();
+  const rights = offered !== undefined && isSignerRole(offered.role) ? seatRightsRecordOf(offered.role, offered.vaults) : null;
+  const scope = rights === null ? commitments.allVaults() : rightsScopeOf(rights);
   /* The seat's opening, kept with its secrets: what shows the company's members that the leaf was made for this wallet key. */
   const opening: SeatOpening = {
     publicKey: String(commitments.signerPublicKey(keys.signingSecret)).toLowerCase(),
@@ -152,6 +163,7 @@ export async function acceptSeatOnThisDevice(
     wrappingSecret: keys.wrappingSecret,
     blinding: keys.blinding,
     scope,
+    ...(rights === null ? {} : { rights }),
     opening,
   };
 

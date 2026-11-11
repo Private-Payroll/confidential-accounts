@@ -173,7 +173,7 @@ describe('what is asked of the wallet, and what comes back', () => {
     await press('[data-action=raise-threshold]');
     expect(q('[data-wallet-refused]')!.textContent).toContain(EN['changeThreshold.refused']);
     expect(EN['changeThreshold.refused']).toMatch(/choose a smaller number/i);
-    expect(EN['changeThreshold.refused']).toMatch(/give another signer the right to approve runs/i);
+    expect(EN['changeThreshold.refused']).toMatch(/invite another approver or admin first/i);
     expect(EN['changeThreshold.refused']).toMatch(/nothing was sent/i);
     expect(q('[data-acted]')).toBeNull();
   });

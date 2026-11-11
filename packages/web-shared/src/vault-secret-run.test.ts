@@ -9,7 +9,7 @@ import { START_STOP, type SecretReaderSources, StartRoundRefused, type VaultCrea
 import type { SealedProposal } from '../../../src/core/types.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
-import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../../src/core/vault-approvers.js';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
@@ -157,20 +157,24 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       expect((long[0] as FirstSecretShown).readers[0]?.name).toBe('x'.repeat(MOST_READER_NAME));
     });
 
-    /* RED WHEN: a check with no reader to show sends the wallet an empty list it refuses, hiding which signer is missing. */
-    it('with no reader to show, the wallet is asked plainly and the reader check says who is missing', async () => {
+    /* RED WHEN: a check with no reader to show sends the wallet an empty list it refuses, hiding why the start stopped. */
+    it('with no reader the directory names, the wallet is asked plainly and the reader check says what is missing', async () => {
       const log: string[] = [];
       const a = ada([walletRead(committeeKey)], log);
       const shown: unknown[] = [];
       const reads = a.secretReaders.read;
-      a.secretReaders = { ...a.secretReaders, read: async (v, firstSecret) => { shown.push(firstSecret); return reads(v, firstSecret); } };
+      const directory = a.secretReaders.directory;
+      a.secretReaders = {
+        ...a.secretReaders, read: async (v, firstSecret) => { shown.push(firstSecret); return reads(v, firstSecret); },
+        directory: async () => ({ ...(await directory()), readers: [] }),
+      };
       const service = serviceFrom([heldByThem], log, { keys: async () => ({ committee, why: null, readers: [] }) });
       const e = await createCompanyVault({
         ...pacing, ...walletReadsTheVault, ...a, account: ACCOUNT, service, builder: chainBuilder(log, {})(),
       }, VAULT).catch((x) => x);
       expect(shown).toEqual([undefined]);
-      expect(e.stoppedAt).toBe('signer-left-out');
-      expect(await a.records('nonce-secret').get(VAULT)).toBeNull();
+      expect(e.message).toMatch(/the list of seats the company's directory believes does not have the key your own recovery words give/u);
+      expect(log.filter((l) => l.startsWith('built ') || l.startsWith('sent '))).toEqual([]);
     });
 
     it('a wallet that cannot be asked stops the press as the wallet\'s, before anything is filed', async () => {
@@ -210,7 +214,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
     it('too few approvers stop the press as that, and nothing is sent', async () => {
       const log: string[] = [];
       const a = { ...ada([walletRead(committeeKey)], log), approvers: async () => approverRosterFrom({
-        threshold: 2, vaultThresholds: [], seated: [{ leaf: 'e1' }], adoptedVaults: [], companyWide: 'cc'.repeat(32),
+        threshold: 2, vaultThresholds: [], seated: [{ leaf: 'e1', rights: EVERY_RIGHT }], adoptedVaults: [], companyWide: 'cc'.repeat(32),
       }) };
       const e = await press(a, log, { unadopted: true });
       expect(e.name).toBe('VaultStartOwed');
@@ -435,7 +439,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
      * Ada's wallet then reads nothing, so each press stops right after the adoption. The standing says whether the
      * chain holds this seat's approval, as the account's marker read for this seat does.
      */
-    const adoptionPress = (over: { ranOutAfterSend?: boolean; open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; failCarried?: boolean; kept?: SealedProposal[]; role?: 'viewer'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain'; counted?: boolean; chainTime?: number | null; onTimeRead?: (chain: { open: boolean; approvals: number; adopted: boolean; mine: boolean }) => void } = {}) => {
+    const adoptionPress = (over: { ranOutAfterSend?: boolean; open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; failCarried?: boolean; kept?: SealedProposal[]; role?: 'limited'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain'; counted?: boolean; chainTime?: number | null; onTimeRead?: (chain: { open: boolean; approvals: number; adopted: boolean; mine: boolean }) => void } = {}) => {
       const log: string[] = [];
       const chain = { open: over.open ?? false, approvals: 0, adopted: over.adopted ?? false, mine: false };
       const kept = proposalsKeptInATest({
@@ -566,17 +570,17 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       expect(again.log.filter((l) => l.startsWith('sent '))).toEqual([]);
     });
 
-    it('a viewer seat sets up no vault and raises no proposal for one', async () => {
-      const fresh = adoptionPress({ role: 'viewer' });
+    it('a limited seat sets up no vault and raises no proposal for one', async () => {
+      const fresh = adoptionPress({ role: 'limited' });
       const e = await fresh.press(null);
       /* RED WHEN: a seat whose role may not raise a proposal deploys a vault it cannot start. */
       expect(e.message).toMatch(/your seat's role on this company may not raise proposals/);
       /* RED WHEN: a seat whose role may not raise is refused without a kind, so the page can only say it did not finish. */
       expect(e).toMatchObject({ name: 'VaultNotBuilt', code: 'seat-may-not-raise' });
       expect(fresh.log.filter((l) => l === 'sent deploy' || l.startsWith('build vault'))).toEqual([]);
-      const resumed = adoptionPress({ role: 'viewer' });
+      const resumed = adoptionPress({ role: 'limited' });
       const r = await resumed.press();
-      /* RED WHEN: a viewer's raise of an adoption is written down or sent. */
+      /* RED WHEN: a limited seat's raise of an adoption is written down or sent. */
       expect(r.message).toMatch(/may not raise proposals/);
       expect(resumed.kept.log).toEqual([]);
       expect(resumed.log.filter((l) => l.startsWith('built'))).toEqual([]);
@@ -1350,7 +1354,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
     });
 
     it('an adoption that would leave a vault short of signers who may approve its runs is neither approved nor carried out', async () => {
-      const approvers = async () => approverRosterFrom({ threshold: 2, vaultThresholds: [], seated: [{ leaf: 'e1' }], adoptedVaults: [], companyWide: 'cc'.repeat(32) });
+      const approvers = async () => approverRosterFrom({ threshold: 2, vaultThresholds: [], seated: [{ leaf: 'e1', rights: EVERY_RIGHT }], adoptedVaults: [], companyWide: 'cc'.repeat(32) });
       const t = await start({ approvers, needed: 1 });
       for (const act of [approveStartRoundHere, carryStartRoundHere]) {
         /* RED WHEN: the vault check is skipped when another signer approves or carries out the adoption. */

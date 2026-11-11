@@ -95,7 +95,8 @@ const reachOf = (signers: unknown[] = [], notBelieved: string[] = []) => ({
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: ['aa'.repeat(32)], committee: [], threshold: 1, approvals: 1, seatBar: 1, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
   judges: {
-    directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null, records: { history: new Map() } }),
+    /* The directory as this wallet believes it: the seat the chain holds, with every right. */
+    directoryHereFor: () => async () => ({ dir: { seats: [{ seat: 'aa'.repeat(32), retired: null, rights: { every: true } }] }, leafOf: () => null, records: { history: new Map() } }),
     filingJudgeFor: () => async () => null, leavesFor: () => async () => [],
     rosterReadsFor: () => ({ filings: async () => [], holders: async () => ({ seats: [] }), anchored: async () => ({}), leaves: async () => [], invitedSeats: async () => ({}) }),
   },
@@ -314,13 +315,13 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED IN THE WALLET, EXACTLY AS THE 
   });
 
   it('RED WHEN: the window does not show the role the seat is invited with, in words of its own for each role', async () => {
-    for (const role of ['admin', 'approver', 'initiator', 'viewer']) {
+    for (const role of ['admin', 'approver', 'initiator']) {
       const lines = await approveProposalAction(reach()).shown(intent('approve-proposal', { ...APPROVE, role }));
       expect(lines.filter((l) => l.key.startsWith('act.approve-proposal.shown.role.')).map((l) => l.key)).toEqual([`act.approve-proposal.shown.role.${role}`]);
     }
   });
 
-  it('a seat that sets a new threshold is shown with it, approved only at it, and asked with every vault\'s rights to count the seat by', async () => {
+  it('a seat that sets a new threshold is shown with it, approved only at it, and counted by the rights its invitation\'s role gives', async () => {
     const withThreshold = intent('approve-proposal', { ...APPROVE, threshold: '3' });
     const lines = await approveProposalAction(reach()).shown(withThreshold);
     /* RED WHEN: the window does not show the threshold the seat sets once taken, which the approvers approve with it. */
@@ -330,9 +331,9 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED IN THE WALLET, EXACTLY AS THE 
     t.approve = async (...a: any[]) => { asked = a; return { state: 'waiting-for-the-invitee', round: { id: 'p', approvalCount: 2 } }; };
     const { ctx } = ctxOf(withThreshold);
     await run(approveProposalAction(reach()), withThreshold, ctx);
-    /* RED WHEN: the shared code is not held to the threshold the window showed, or cannot count the new seat by the rights of every vault. */
+    /* RED WHEN: the shared code is not held to the threshold the window showed. The seat is counted by its invitation's own terms, so nothing else is asked. */
     expect(asked[1].shown).toMatchObject({ threshold: '3' });
-    expect(asked[3]).toEqual({ allVaults: ALL });
+    expect(asked).toHaveLength(3);
     /* RED WHEN: a threshold that is not a whole number of at least one is shown and asked. */
     for (const bad of ['-1', '1.5', 'x', '01']) {
       expect((await approveProposalAction(reach()).check(intent('approve-proposal', { ...APPROVE, threshold: bad }), {} as never))?.key, bad)
@@ -460,7 +461,7 @@ describe('EACH ACTION CALLS ONLY THE ROUTES ITS INTENT LISTS, AND HAS ITS WORDS'
     const keys = new Set<string>();
     for (const [name, a, i] of [
       ['approve-proposal', approveProposalAction(reach()), [intent('approve-proposal', APPROVE), intent('approve-proposal', { ...APPROVE, scope: '09'.repeat(32) }),
-        ...(['admin', 'initiator', 'viewer'] as const).map((role) => intent('approve-proposal', { ...APPROVE, role }))]],
+        ...(['admin', 'initiator', 'limited'] as const).map((role) => intent('approve-proposal', { ...APPROVE, role }))]],
       ['admit-signer', admitSignerAction(reach()), [intent('admit-signer', ADMIT)]],
     ] as const) {
       keys.add(`act.${name}.headline`);

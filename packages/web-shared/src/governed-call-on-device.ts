@@ -35,10 +35,11 @@ import { sameGovernance } from './governance-compared.js';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
 import { commit, sign, signingPublicKeyOf, verify, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import {
-  policyChangeRefusal, refuseLeavingAVaultShort, removalThresholdRefusal, seatRightsOf, seatThresholdRefusal, thresholdCarryBar, thresholdCounted,
-  type ApproverRoster, type BandInForce,
+  noAdminLeftRefusal, policyChangeRefusal, refuseLeavingAVaultShort, refusalSaid, removalThresholdRefusal, seatThresholdRefusal, thresholdCarryBar, thresholdCounted,
+  type ApproverRoster, type BandInForce, type SeatRights,
   type GovernanceChange as VaultCheckChange, type SeatThresholdChange,
 } from '../../../src/core/vault-approvers.js';
+import { invitedSeatRightsOf } from '../../../src/core/seat-rights.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { RetirementSignature, Role, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../../../src/core/retry-cover.js';
@@ -51,7 +52,7 @@ import { handedOver, NotHandedOver, notThroughOurService, serviceNotReached, typ
 import { raiseLegHere, raiseRetryHere, type LegRaiseDoors } from './run-raised-here.js';
 import type { SignedRunFiling } from '../../../src/core/run-filing.js';
 import {
-  addSignerByAddressIn, paysCommitmentOf, proposalFilingRefusal, raiseByOf, raiseMayStillLandAt, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody,
+  addSignerByAddressIn, addSignerInvitationRefusalIn, paysCommitmentOf, proposalFilingRefusal, raiseByOf, raiseMayStillLandAt, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody,
   type RetirementTerms, type SignedProposalFiling,
 } from '../../../src/core/proposal-filing.js';
 import { directoryChangeMessage, type DirectorySeat, type SignedChange } from '../../../src/midnight/seat-directory.js';
@@ -63,10 +64,10 @@ import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors } from './
 import { removalBoundaryRefusal } from './spending-policy-here.js';
 import { removalApproversHere } from './removal-approvers-here.js';
 import {
-  admitSignerHere, believedSeatingsUnder, rosterHere, sameInvitation, seatingOf, waitingHere, type RosterDoors, type SeatingReads,
+  believedSeatingsUnder, rosterHere, sameInvitation, seatingOf, type RosterDoors, type SeatingReads,
 } from './roster-here.js';
-import { invitationByAddressRefusal } from './invitation-signed-by-a-seat.js';
-import { invitationProposalSalt, seatByAddressChangeOf, signSeatInvitation, type Inviter, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { invitationByAddressRefusal, NOT_APPROVED_SAID } from './invitation-signed-by-a-seat.js';
+import { approvedInvitationRefusal, seatByAddressChangeOf, type Inviter, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { addressReadsOf, addressSeatedOrInvitedRefusal, type InviteAddressOf } from './address-seated-or-invited.js';
 
 import {
@@ -1415,10 +1416,10 @@ async function governOnDevice(
     /** Only carries out, with `approveOnly` naming the proposal: one short of its bar is left waiting and not approved. */
     carryOnly?: boolean;
     /**
-     * The rights a seat's scope names for every vault (`allVaults`): given for an invitation that sets a threshold, so
-     * the seat it adds is counted on the vaults its rights reach. Without it, such an invitation is refused.
+     * Who the seat an invitation adds counts as approving, from its role's rights on the vaults it names (`invitedSeatRightsOf`):
+     * given for an invitation that sets a threshold. Without it, such an invitation is refused.
      */
-    allVaults?: string;
+    seatRights?: SeatRights;
   },
 ): Promise<GovernedOutcome> {
   const { service } = doors;
@@ -1430,7 +1431,7 @@ async function governOnDevice(
    * (`refuseWhatALeaverFiledHere`).
    */
   const check = async (opened?: OpenedRound, proposalId?: string): Promise<void> => {
-    const counts = changeCounted(input.change, input.allVaults);
+    const counts = changeCounted(input.change, input.seatRights);
     if (counts?.kind === 'seatAndThreshold') await refuseASeatThresholdHere(doors, counts);
     else if (counts?.kind === 'remove' || counts?.kind === 'removeAndThreshold') {
       refuseLeavingAVaultShort(await removalApproversHere(doors, input.viewingKey), counts, doors.vaultName);
@@ -1471,9 +1472,9 @@ async function governOnDevice(
     await check();
     const salt = doors.filing.salt();
     const identity = await proposalIdentityOn(doors.builder)(input.change, salt);
-    /* An invitation by address names the proposal raised for it; raised under any other, every other device refuses it. */
+    /* A signer invitation, by address or by a link or a code, names the proposal raised for it; raised under any other, every other device refuses it. */
     const terms = (input.body as { invited?: { terms?: { proposal?: unknown; leaf?: unknown } } }).invited?.terms;
-    if (input.change.kind === 'add-signer' && typeof terms?.proposal === 'string' && terms.leaf === undefined
+    if (input.change.kind === 'add-signer' && typeof terms?.proposal === 'string'
       && terms.proposal.toLowerCase() !== String(identity.chainId).toLowerCase()) {
       throw new InvitationNotBound('The invitation this proposal carries names another proposal than this one, so nothing was raised. '
         + 'Nothing was sent. Invite the person again.');
@@ -1695,23 +1696,23 @@ async function refuseAPolicyLeavingAVaultShort(
 
 /**
  * A governance change, as the vault check counts it. A seat added that sets a
- * threshold is counted with the rights its scope gives (`seatRightsOf`, against
- * `allVaults`) and the threshold it sets. A removal is counted with the threshold
+ * threshold is counted with the rights its invitation's role gives on the
+ * vaults it names (`invitedSeatRightsOf`) and the threshold it sets. A removal is counted with the threshold
  * it leaves the company at, where it names one. A spending policy is counted at
  * its bands by `refuseAPolicyLeavingAVaultShort`, from what it opens to; the
  * approvals a policy change needs are no run's bar, so a change of them leaves
  * every vault as it was and is not counted.
  */
-const changeCounted = (change: GovernedThroughTheRecords, allVaults?: string): VaultCheckChange | null => {
+const changeCounted = (change: GovernedThroughTheRecords, seatRights?: SeatRights): VaultCheckChange | null => {
   if (change.kind === 'add-signer') {
     /* A seat added that keeps the threshold never leaves a vault short of approvers, and the leaf it adds is the invitee's to make. */
     const t = thresholdCounted(change.threshold, true);
     if (t === 0) return null;
-    if (allVaults === undefined) {
-      throw new NotOpenedOnThisDevice('This device was not told which rights cover every vault, so it cannot count who approves each '
+    if (seatRights === undefined) {
+      throw new NotOpenedOnThisDevice('This device was not told which rights the invited seat carries, so it cannot count who approves each '
         + 'vault\'s runs once this seat is taken. Nothing was sent. Reload the page to get the current version.');
     }
-    return { kind: 'seatAndThreshold', rights: seatRightsOf(change.scope, allVaults), threshold: t };
+    return { kind: 'seatAndThreshold', rights: seatRights, threshold: t };
   }
   if (change.kind === 'remove-signer') {
     const t = thresholdCounted(change.threshold, true);
@@ -1735,7 +1736,7 @@ async function refuseASeatThresholdHere(doors: GovernanceDoors, change: SeatThre
   }
   const seats = (await doors.records.directory()).holders.seats.length;
   const no = seatThresholdRefusal(await doors.approvers(), { seats }, change, doors.vaultName);
-  if (no !== null) throw new Error(`${no.charAt(0).toUpperCase()}${no.slice(1)} Nothing was sent.`);
+  if (no !== null) throw new Error(`${refusalSaid(no)} Nothing was sent.`);
   await riseWaitsForTheDirectory(doors, change.threshold);
 }
 
@@ -1808,29 +1809,6 @@ export { governOnDevice };
 /** An inviter record as a proposal carries it: the wallet key, the signed entry and the opening, and nothing else. */
 const inviterRecordOf = (x: Inviter): Inviter => ({ committeeKey: { tag: x.committeeKey.tag, value: x.committeeKey.value }, statement: x.statement, opening: x.opening });
 
-/**
- * **THE INVITATION A SEAT IS ENTERED UNDER, NAMING ITS LEAF AND THE ADDRESS IT
- * IS TAKEN FROM.** It is signed again here with the same terms, the leaf, and
- * the address's commitment, salt and rights, by this seat's filing key, which
- * every member's device holds to a seat it believes, has not seen retired and
- * whose role may invite, as it holds any inviter.
- */
-const invitationForTheLeaf = (
-  invited: SignedSeatInvitation, leaf: string, invite: { address: string; salt: string; scope: string }, signingSecret: Hex,
-): SignedSeatInvitation => {
-  /* This path raises a seat that keeps the threshold in force: an invitation that names one is never signed again without it. */
-  if (invited.terms.invite?.threshold !== undefined) throw new InvitationNotBound(SEAT_BY_LEAF_SETS_NO_THRESHOLD);
-  return signSeatInvitation({
-    ...invited.terms, leaf: leaf as Hex,
-    invite: { address: invite.address.toLowerCase() as Hex, salt: invite.salt.toLowerCase() as Hex, scope: invite.scope.toLowerCase() as Hex },
-  }, signingSecret);
-};
-
-/** Why a seat entered under the leaf its person sealed is refused when its invitation sets a threshold. */
-const SEAT_BY_LEAF_SETS_NO_THRESHOLD = 'This invitation sets the approvals the company needs once the seat is taken, and a seat '
-  + 'entered under the leaf its person sent keeps the threshold in force, so nothing was raised. Invite the person by their '
-  + 'private address instead, which carries the new threshold to the seat.';
-
 /** A device asked only to approve found no proposal raised on the chain to approve: nothing was sent. */
 export class NothingToApprove extends Error {
   readonly nothingWasSent = true;
@@ -1880,7 +1858,7 @@ export interface SeatInvitationToRaise {
 }
 
 /** The builder's working-out of a proposal's identity on this page; refused, with nothing sent, on a page that has none. */
-const proposalIdentityOn = (builder: GovernanceDoors['builder']) => (change: GovernanceOnTheWire, salt: string): Promise<ProposalIdentity> => {
+export const proposalIdentityOn = (builder: GovernanceDoors['builder']) => (change: GovernanceOnTheWire, salt: string): Promise<ProposalIdentity> => {
   if (builder.proposalIdentity === undefined) {
     throw new Error('This page cannot work out a proposal\'s identity. Reload the page to get the current version. Nothing was sent.');
   }
@@ -1891,17 +1869,17 @@ const proposalIdentityOn = (builder: GovernanceDoors['builder']) => (change: Gov
  * **A SEAT OFFERED BY ADDRESS, RAISED BEFORE ANYBODY HAS ACCEPTED IT, AND APPROVED.** The invitation names the
  * commitment to the address that was typed, the rights the seat carries, the threshold it sets once taken (where it
  * names one) and the proposal raised for it; this device checks it was signed by a seated signer who may invite, that
- * the salt is the one the invitation itself makes (`invitationProposalSalt`), and that the proposal it raises or
- * approves is exactly the one its change and that salt make, so it commits to the whole invitation. A threshold it sets is checked before
+ * the salt is the one the invitation itself makes, and that the proposal it raises or approves is exactly the one its
+ * change and that salt make (the one raise step, `raiseTheSeatHere`), so it commits to the whole invitation. A threshold it sets is checked before
  * every send as the chain will check it, and against every vault (`refuseASeatThresholdHere`), with the seat counted on
- * the vaults its rights reach, which `allVaults` decides. Nothing waits for an acceptance and no fingerprint is read: the invitee's own wallet takes the
+ * the vaults its role's rights reach (`invitedSeatRightsOf`). Nothing waits for an acceptance and no fingerprint is read: the invitee's own wallet takes the
  * seat (`seatInvited`), proving it holds the address, once the approvals reach the seat bar, and this device never
  * carries it out. Called again from another seat's device, it approves the same proposal; asked only to approve
  * (`approveOnly`, the proposal's identity on the chain), it raises nothing.
  */
 export async function raiseSeatInvitationOnDevice(
   doors: GovernanceDoors & { readonly roster: RosterDoors }, input: { readonly viewingKey: KeysHeld } & SeatInvitationToRaise,
-  inviteAddressOf?: InviteAddressOf, o: { readonly approveOnly?: string; readonly allVaults?: string } = {},
+  inviteAddressOf?: InviteAddressOf, o: { readonly approveOnly?: string } = {},
 ): Promise<GovernedOutcome> {
   const t = input.invited.terms;
   if (t.invite === undefined || t.proposal === undefined || t.leaf !== undefined) {
@@ -1918,30 +1896,10 @@ export async function raiseSeatInvitationOnDevice(
         + 'Invite the person again.');
     }
   }
-  const seats = seatingOf(await rosterHere(doors.roster), doors.roster.reads).seats;
-  const refused = invitationByAddressRefusal(doors.roster.accountId, input.invited, invite, seats);
-  if (refused !== null) throw new InvitationNotBound(refused);
-  const change = seatByAddressChangeOf(invite);
-  if (String(input.proposalSalt).toLowerCase() !== invitationProposalSalt(input.invited)) {
-    throw new InvitationNotBound('The salt this proposal is raised under is not the one its invitation makes, so the proposal would not '
-      + 'commit to the person, name and role invited, and nothing was raised. Invite the person again.');
-  }
-  const identity = await proposalIdentityOn(doors.builder)(change, input.proposalSalt);
-  if (String(identity.chainId).toLowerCase() !== t.proposal.toLowerCase()) {
-    throw new InvitationNotBound('The proposal this invitation names is not the one its address, rights, threshold and salt make, so nothing '
-      + 'was raised. Invite the person again.');
-  }
-  return governOnDevice({ ...doors, filing: { ...doors.filing, salt: () => input.proposalSalt }, leaves: doors.roster.reads.leaves }, {
-    viewingKey: input.viewingKey,
-    change,
-    proposal: t.proposal,
-    summary: change.threshold === undefined ? `Add ${input.name} as a signer` : `Add ${input.name} as a signer, then need ${change.threshold} approvals`,
-    body: {
-      invite: { address: change.address, scope: change.scope },
-      invited: input.invited,
-      ...(input.inviter === undefined ? {} : { inviter: inviterRecordOf(input.inviter) }),
-      ...(coin === undefined ? {} : { coinPublicKey: coin }),
-    },
+  return raiseTheSeatHere(doors, {
+    viewingKey: input.viewingKey, invited: input.invited, salt: input.proposalSalt, name: input.name, byItsProposal: true,
+    ...(input.inviter === undefined ? {} : { inviter: input.inviter }), ...(o.approveOnly === undefined ? {} : { approveOnly: o.approveOnly }),
+    body: coin === undefined ? {} : { coinPublicKey: coin },
     /* Only a raise reaches this with no round opened: a proposal raised without the coin key hides a wallet invited twice. */
     before: async (opened) => {
       if (opened === undefined && coin === undefined) {
@@ -1949,8 +1907,51 @@ export async function raiseSeatInvitationOnDevice(
           + 'Invite the person again from the device that typed the address.');
       }
     },
-    ...(o.approveOnly === undefined ? {} : { approveOnly: o.approveOnly }),
-    ...(o.allVaults === undefined ? {} : { allVaults: o.allVaults }),
+  });
+}
+
+/**
+ * **THE ONE RAISE STEP FOR A SIGNER INVITATION**, by address or by a link or a
+ * code. The invitation must be signed by a seat this device believes may
+ * invite, offering only vaults within its own, and name the address the
+ * proposal invites (`invitationByAddressRefusal`); the proposal is the one its
+ * change (`seatByAddressChangeOf`) and the salt its own signed terms make
+ * (`approvedInvitationRefusal`), filed under that salt so the approvers'
+ * signatures commit to the whole invitation, and the new seat is counted on
+ * the vaults its role's rights reach (`invitedSeatRightsOf`). `byItsProposal`
+ * finds an open round by the proposal the invitation names; otherwise by its
+ * change, as a second device's own signature makes another proposal. `body`
+ * adds what the way in carries beside the invitation.
+ */
+export async function raiseTheSeatHere(
+  doors: GovernanceDoors & { readonly roster: RosterDoors },
+  input: {
+    readonly viewingKey: KeysHeld; readonly invited: SignedSeatInvitation; readonly salt: string; readonly name: string; readonly inviter?: Inviter;
+    readonly byItsProposal: boolean; readonly approveOnly?: string; readonly body: Readonly<Record<string, unknown>>;
+    readonly before: (opened?: OpenedRound) => Promise<void>;
+  },
+): Promise<GovernedOutcome> {
+  const t = input.invited.terms;
+  if (t.invite === undefined) throw new InvitationNotBound(`${NOT_APPROVED_SAID['not-raised']}, so nothing was raised. Invite the person again.`);
+  const seats = seatingOf(await rosterHere(doors.roster), doors.roster.reads).seats;
+  const refused = invitationByAddressRefusal(doors.roster.accountId, input.invited, t.invite, seats);
+  if (refused !== null) throw new InvitationNotBound(refused);
+  const change = seatByAddressChangeOf(t.invite);
+  const identity = await proposalIdentityOn(doors.builder)(change, input.salt);
+  const unbound = approvedInvitationRefusal(input.invited, { salt: input.salt, chainId: identity.chainId });
+  if (unbound !== null) throw new InvitationNotBound(`${NOT_APPROVED_SAID[unbound]}, so nothing was raised. Invite the person again.`);
+  return governOnDevice({ ...doors, filing: { ...doors.filing, salt: () => input.salt }, leaves: doors.roster.reads.leaves }, {
+    viewingKey: input.viewingKey,
+    change,
+    ...(input.byItsProposal ? { proposal: t.proposal! } : {}),
+    summary: change.threshold === undefined ? `Add ${input.name} as a signer` : `Add ${input.name} as a signer, then need ${change.threshold} approvals`,
+    body: {
+      ...input.body, invite: { address: change.address, scope: change.scope }, invited: input.invited,
+      ...(input.inviter === undefined ? {} : { inviter: inviterRecordOf(input.inviter) }),
+    },
+    before: input.before,
+    ...(input.approveOnly === undefined ? {} : { approveOnly: input.approveOnly }),
+    seatRights: invitedSeatRightsOf(t, change.scope),
   });
 }
 
@@ -1984,7 +1985,7 @@ export interface SeatInvitationShown {
 export async function approveSeatInvitationOnDevice(
   doors: GovernanceDoors & { readonly roster: RosterDoors },
   input: { readonly viewingKey: KeysHeld; readonly shown: SeatInvitationShown; readonly chainTime?: () => Promise<number> },
-  inviteAddressOf: InviteAddressOf, o: { readonly allVaults?: string } = {},
+  inviteAddressOf: InviteAddressOf,
 ): Promise<GovernedOutcome> {
   const low = (x: unknown): string => String(x).toLowerCase();
   const { shown } = input;
@@ -1995,7 +1996,7 @@ export async function approveSeatInvitationOnDevice(
   const rec = (await doors.service.sealedProposals(doors.accountId) as readonly SealedProposal[]).find((p) => p.id === shown.proposal);
   const body = rec === undefined ? null : addSignerByAddressIn(rec, doors.accountId, input.viewingKey);
   if (body === null) {
-    throw new InvitationNotBound('The company holds no proposal to add a seat by address under that name that this device can open, '
+    throw new InvitationNotBound((rec === undefined ? null : addSignerInvitationRefusalIn(rec, doors.accountId, input.viewingKey)) ?? 'The company holds no proposal to add a seat by address under that name that this device can open, '
       + 'so nothing was approved. Nothing was sent. Reload the page.');
   }
   const invite = body.invited.terms.invite!;
@@ -2037,7 +2038,7 @@ export async function approveSeatInvitationOnDevice(
   return raiseSeatInvitationOnDevice(doors, {
     viewingKey: input.viewingKey, invited: body.invited, proposalSalt: body.proposalSalt, name: body.invited.terms.name,
     coinPublicKey: body.coinPublicKey, ...(body.inviter === undefined ? {} : { inviter: body.inviter }),
-  }, inviteAddressOf, { approveOnly: body.chainId, ...(o.allVaults === undefined ? {} : { allVaults: o.allVaults }) });
+  }, inviteAddressOf, { approveOnly: body.chainId });
 }
 
 /**
@@ -2059,87 +2060,8 @@ export const signerByAddressDoorsOf = (
   held: (coinPublicKey, except) => addressSeatedOrInvitedRefusal(addressReadsOf(doors, chainTime), doors.accountId, viewingKey,
     (c, salt) => commitments.inviteAddressOf(c, salt), coinPublicKey, except),
   identity: async (change, salt) => proposalIdentityOn(doors.builder)(change, salt),
-  raise: (input) => raiseSeatInvitationOnDevice(doors, { viewingKey, ...input }, (c, salt) => commitments.inviteAddressOf(c, salt),
-    { allVaults: String(commitments.allVaults()).toLowerCase() }),
+  raise: (input) => raiseSeatInvitationOnDevice(doors, { viewingKey, ...input }, (c, salt) => commitments.inviteAddressOf(c, salt)),
 });
-
-/**
- * **ONE PERSON WAITING FOR A SEAT, INVITED AND ADMITTED AS FAR AS THIS DEVICE
- * CAN.** Who waits is read from the company's inbox and checked here before
- * anything is raised, approved or filed (`waitingHere`): their keys against the
- * proof their invitation gave them, against every other signer's, against the
- * fingerprint they read out (`readOut`), against the sign-in their request was
- * sealed for, and against the invitation a seat this device believes signed for
- * them, their leaf proved for their wallet. The invitation (`invite`: the
- * commitment to their address and the rights the seat carries) is then raised
- * and approved like any other change, and the invitee takes the seat from their
- * own wallet; this device never carries it out. Once the chain holds their
- * leaf, they are admitted to the roster from this device and the company's key
- * is wrapped to them.
- */
-export async function seatSignerOnDevice(
-  doors: GovernanceDoors & { readonly roster: RosterDoors },
-  input: {
-    viewingKey: KeysHeld; signerId: string; readOut: string;
-    /**
-     * This seat as an inviter record - its wallet key, the directory entry its wallet signed and its own seat's
-     * opening - carried in the proposal for the person's wallet, which keeps the company's account only on a seat
-     * of it (`whyTheInvitationDoesNotNameIt`). A person added from a code holds no other.
-     */
-    inviter?: Inviter;
-    /**
-     * The hiding commitment to the invitee's address, the salt it was made under and the rights their seat will
-     * carry, all hex. This seat signs them into the invitation the proposal carries.
-     */
-    invite: { address: string; salt: string; scope: string };
-  },
-): Promise<GovernedOutcome> {
-  if ((input.invite as { threshold?: unknown }).threshold !== undefined) throw new InvitationNotBound(SEAT_BY_LEAF_SETS_NO_THRESHOLD);
-  const look = async () => {
-    const read = await rosterHere(doors.roster);
-    const seating = seatingOf(read, doors.roster.reads);
-    return { ...await waitingHere(read.sealed, read.account, doors.roster.viewingKey, input.signerId, input.readOut, seating), seats: seating.seats };
-  };
-  const { payload, seats } = await look();
-  const leaf = payload.leafCommitment.toLowerCase();
-  if (payload.invited === undefined) {
-    throw new InvitationNotBound('This seat request carries no invitation a seat signed, so nothing was raised. Withdraw it, and '
-      + 'invite the person again from the device of a seated signer who may invite.');
-  }
-  /*
-   * The invitation the proposal carries names the leaf and the address, signed by this seat: what every approving
-   * device makes the payload from. This device holds it to the same rule before it raises anything.
-   */
-  const invited = invitationForTheLeaf(payload.invited, leaf, input.invite, doors.material.signingSecret as Hex);
-  const refused = invitationByAddressRefusal(doors.roster.accountId, invited, input.invite, seats);
-  if (refused !== null) throw new InvitationNotBound(refused);
-  /* A seat the chain already holds, taken by the invitee before this device admitted them, is only admitted. */
-  const held = doors.records === undefined ? false : (await doors.records.directory()).holders.seats.includes(leaf);
-  /*
-   * Every approval opens the proposal again: it holds the invitation to the payload the record carries, and the
-   * person waiting to the opening of their leaf, with this device's own vault worker.
-   */
-  const outcome: GovernedOutcome = held ? { state: 'done', round: null } : await governOnDevice({ ...doors, leaves: doors.roster.reads.leaves }, {
-    viewingKey: input.viewingKey,
-    change: { kind: 'add-signer', address: input.invite.address.toLowerCase(), scope: input.invite.scope.toLowerCase() },
-    summary: `Add ${payload.name} as a signer`,
-    /*
-     * The signed invitation, naming the leaf the invitee will seat and the address they take it from, travels in the
-     * proposal: it is what the person's own directory entry carries, what every member's device holds that entry's
-     * person and seat to, and what every approving device makes the payload from.
-     */
-    body: {
-      signerId: input.signerId,
-      invite: { address: input.invite.address.toLowerCase(), scope: input.invite.scope.toLowerCase() },
-      invited,
-      ...(input.inviter === undefined ? {} : { inviter: inviterRecordOf(input.inviter) }),
-    },
-    before: async () => { await look(); },
-  });
-  if (outcome.state !== 'done') return outcome;
-  await admitSignerHere(doors.roster, { signerId: input.signerId, readOut: input.readOut });
-  return outcome;
-}
 
 /* ── A SIGNER REMOVED, FROM THIS DEVICE ──────────────────────────────────────── */
 
@@ -2167,7 +2089,7 @@ export type RemovalDoors = GovernanceDoors & {
    * key the wallet released, the copy the service serves this seat, the waiting answers, the seats the roster admitted,
    * and the filing of the change (`rotateTheCompanyKeyHere`). Absent, this device changes no key.
    */
-  readonly companyKey?: Pick<RotationDoors, 'filings' | 'served' | 'released' | 'askTheWallet' | 'waiting' | 'admitted' | 'file'>;
+  readonly companyKey?: Pick<RotationDoors, 'filings' | 'served' | 'released' | 'askTheWallet' | 'waiting' | 'admitted' | 'file' | 'revoked'>;
 };
 
 /** The retirement signatures one device keeps for each removal it signed or read. */
@@ -2982,7 +2904,7 @@ export async function removeSignerOnDevice(
    */
   const refuse = async (terms: RetirementTerms | undefined, raised = false, raise?: RaiseRead): Promise<void> => {
     const now = await records.directory(EVERY_RECORD_ASKED);
-    const bound = raised ? null : removalThresholdRefusal(now.holders, leaf as Hex, newThreshold);
+    const bound = raised ? null : removalThresholdRefusal(now.holders, leaf as Hex, newThreshold) ?? noAdminLeftRefusal(now.dir.seats, [...(await doors.approvers()).seats.keys()], leaf);
     const why = bound?.replace(/\.$/u, '') ?? await removalRefusalHere(doors, now, leaf, terms, raised, raise);
     if (why === null) return;
     throw new Error(raised

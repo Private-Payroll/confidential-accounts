@@ -5,8 +5,9 @@ import { NETWORK } from 'midnight-identity/network';
 import { assets as theAssets, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { fromHex, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { EMPLOYEE_CLASSIFICATIONS, invitationIdOf, invitationThresholdRefusal, type EmployeeClassification } from '../../../../src/core/invitation.js';
-import { seatRightsOf, seatThresholdRefusal } from '../../../../src/core/vault-approvers.js';
-import type { Role } from '../../../../src/core/types.js';
+import { refusalSaid, seatThresholdRefusal, type SeatRights } from '../../../../src/core/vault-approvers.js';
+import { invitedSeatRightsOf, NO_VAULT_COUNTED, scopeOfRole, vaultsOfferedRefusal } from '../../../../src/core/seat-rights.js';
+import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
 import type { VendorTerms } from '../../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import {
@@ -70,7 +71,6 @@ const why = (key: string, values?: Readonly<Record<string, string | number>>): W
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const HEX64 = /^[0-9a-f]{64}$/u;
-const ROLES: readonly Role[] = ['admin', 'approver', 'initiator', 'viewer'];
 
 type Asked =
   | { readonly kind: 'employee'; readonly spec: InviteSpecs['employee'] }
@@ -123,17 +123,19 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
       };
     }
     case 'signer': {
-      const role = f['role'] as Role | undefined;
-      if (role === undefined || !ROLES.includes(role)) return why('no-role');
+      const role = f['role'];
+      if (!isSignerRole(role)) return why('no-role');
       const address = opt('address');
       if (address === undefined) return why('signer-by-address');
       /* "0", like none, keeps the threshold in force; anything else is the approvals needed once the seat is taken. */
+      /* The page offers every vault; a scope it names must be exactly the rights the role gives there. */
+      if (opt('scope') !== undefined && f['scope']!.toLowerCase() !== scopeOfRole(role)) return why('wider-scope');
       const threshold = opt('threshold') === '0' ? undefined : opt('threshold');
       if (threshold !== undefined && invitationThresholdRefusal(threshold) !== null) return why('not-a-threshold');
       return {
         kind: 'signer',
         spec: {
-          name, role, person: 'by-address', address: address.trim(), ...(opt('scope') === undefined ? {} : { scope: f['scope']!.toLowerCase() as Hex }),
+          name, role, person: 'by-address', address: address.trim(),
           ...(threshold === undefined ? {} : { threshold }),
         },
       };
@@ -157,7 +159,7 @@ async function invitingSeatOf(ctx: StepContext, r: CompanyReach): Promise<Inviti
   return {
     signingSecret: r.seat.signingSecret,
     entered: enteredFor(r),
-    ...(held === null ? {} : { held: { role: held.role, retired: held.retired !== null && held.retired !== undefined } }),
+    ...(held === null ? {} : { held: { role: held.role, retired: held.retired !== null && held.retired !== undefined, rights: held.rights ?? NO_VAULT_COUNTED } }),
     committeeKey: committeeKeyFor(ctx.held.identity, r.label) as { tag: string; value: string },
     statement: signDirectoryEntry(ctx.held.identity, r.label, r.account, fromHex(r.companyKey), signingKey, r.leaf),
     opening: r.seat.opening,
@@ -234,7 +236,6 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
            * is signed: against the seat offer kept in the saved keys for its id, and against the offer filed under it,
            * whose employee's or vendor's record is entered before the press is told done.
            */
-          const all = (await reach.commitments()).allVaults().toLowerCase() as Hex;
           const notTheFirstAsk = (no: string): StepRefused => new StepRefused(why('not-made', { says: said(new InvitationNotMade(no)) }));
           const notEntered = (e: FiledNotEntered): StepRefused => new StepRefused(why('filed-not-entered', { says: e.why }));
           const found = await keptInvitationFor(ctx, r, reach.now(), send, asked, intent.fields['token']!.toLowerCase() as Hex);
@@ -242,12 +243,12 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
           const { kept, token } = found;
           const id = invitationIdOf(token);
           if (kept !== undefined) {
-            const no = firstAskRefusal(kept.offer.offer.for, asked.kind, asked.spec as never, all);
+            const no = firstAskRefusal(kept.offer.offer.for, asked.kind, asked.spec as never);
             if (no !== null) throw notTheFirstAsk(no);
           }
           const filedAlready = await send(`/api/invites/${id}/offer`, { method: 'GET' });
           if (filedAlready.status === 200) {
-            const opened = openTheFiledOffer((filedAlready.body as { offer?: unknown } | null)?.offer, token, r.accountId, asked.kind, asked.spec as never, all,
+            const opened = openTheFiledOffer((filedAlready.body as { offer?: unknown } | null)?.offer, token, r.accountId, asked.kind, asked.spec as never,
               kept === undefined ? {} : { kept });
             if ('refused' in opened) throw notTheFirstAsk(opened.refused);
             /* An employee's or a vendor's record filed with it is entered now if the first press did not keep its entry. */
@@ -377,11 +378,11 @@ async function inviteASigner(
   const network = reach.network ?? (NETWORK as NetworkName);
   if (holdsTheCoinKeyOf(ctx.held.identity, network, spec.address)) throw new StepRefused(why('own-address'));
   const commitments = await reach.commitments();
-  const all = commitments.allVaults().toLowerCase();
-  const own = String(r.seat.scope).toLowerCase();
-  const offered = (spec.scope ?? all).toLowerCase();
-  if (offered !== own && own !== all) throw new StepRefused(why('wider-scope'));
-  if (spec.threshold !== undefined) await refuseASeatThresholdInTheWallet(r, offered, all, Number(spec.threshold));
+  /* Offered only within the inviting seat's own rights as its directory holds them: the one check on this path (`vaultsOfferedRefusal`). */
+  if (vaultsOfferedRefusal(inviting.held?.rights ?? NO_VAULT_COUNTED, spec.vaults) !== null) throw new StepRefused(why('wider-scope'));
+  if (spec.threshold !== undefined) {
+    await refuseASeatThresholdInTheWallet(r, invitedSeatRightsOf(spec, scopeOfRole(spec.role as SignerRole, spec.vaults)), Number(spec.threshold));
+  }
   const keep = async (kept: KeptSeatInvitation): Promise<void> => {
     if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
     await ctx.keyring.keep((k) => withSeatInvitationKept(k, kept, reach.now()));
@@ -398,14 +399,14 @@ async function inviteASigner(
 /**
  * **A SEAT OFFERED WITH A NEW THRESHOLD IS CHECKED BEFORE ANYTHING IS KEPT, SIGNED OR RAISED** (`seatThresholdRefusal`):
  * the threshold no higher than the seats this wallet reads on the chain and the one the invitation adds, and no vault
- * left with fewer signers who may approve its runs than they need, the new seat counted on the vaults `scope` reaches
- * (`seatRightsOf` against `allVaults`) and the signers removed since an open run was raised counted against every
- * vault. The shared code checks it again before every send (`refuseASeatThresholdHere`).
+ * left with fewer signers who may approve its runs than they need, the new seat counted with `rights`, its role's on
+ * the vaults it names (`invitedSeatRightsOf`), and the signers removed since an open run was raised counted against
+ * every vault. The shared code checks it again before every send (`refuseASeatThresholdHere`).
  */
-export const refuseASeatThresholdInTheWallet = async (r: CompanyReach, scope: string, allVaults: string, threshold: number): Promise<void> => {
+export const refuseASeatThresholdInTheWallet = async (r: CompanyReach, rights: SeatRights, threshold: number): Promise<void> => {
   const [roster, held] = await Promise.all([approversHere(r, () => runsOutrunHere(r)), r.holders()]);
-  const no = seatThresholdRefusal(roster, { seats: held.seats.length }, { kind: 'seatAndThreshold', rights: seatRightsOf(scope, allVaults), threshold });
-  if (no !== null) throw new StepRefused(why('threshold-refused', { says: `${no.charAt(0).toUpperCase()}${no.slice(1)}` }));
+  const no = seatThresholdRefusal(roster, { seats: held.seats.length }, { kind: 'seatAndThreshold', rights, threshold });
+  if (no !== null) throw new StepRefused(why('threshold-refused', { says: refusalSaid(no) }));
 };
 
 /**

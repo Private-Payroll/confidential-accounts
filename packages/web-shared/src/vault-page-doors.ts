@@ -5,9 +5,9 @@
  * opened.
  */
 import { directoryReplaysInMemory, type DirectoryReplaysKept, type KeptReplay, type StartedFrom } from './tree-kept-here.js';
-import type { Hex } from '../../../src/core/crypto.js';
-import { canonical, fromHex } from '../../../src/core/crypto.js';
-import { keyInForce, keysHeld, type KeysHeld } from '../../../src/core/company-key.js';
+import { canonical, fromHex, type Hex } from '../../../src/core/crypto.js';
+import { keyInForce, type KeysHeld } from '../../../src/core/company-key.js';
+import { keysByPurpose, type HeldForReading } from './keys-by-purpose.js';
 import { whyNotTheReaders, type Roster } from './handover-check.js';
 import type { Account, SealedProposal, SealedRun } from '../../../src/core/types.js';
 import { digestOfBody, type WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -15,13 +15,13 @@ import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
 import {
-  asAMember, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, mayFile, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
+  asAMember, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
   type AccountHeld, type DirectoryRefusalCode, type DirectoryReplayKept, type DirectoryReplayed, type QuorumChange, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
 } from '../../../src/midnight/seat-directory.js';
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import type { OwedDirectoryEntry } from './keyring-blob.js';
 import { openSeatProof, type LeafOf, type SeatOpening } from '../../../src/core/seat-opening.js';
-import { invitationsMakingTheirProposal, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { approvedInvitationOf, approvedInvitationRefusal, proposalsTheirSaltsMake, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { seatsTakenAsked, type InvitedSeatsRead } from './seat-not-read-on-the-chain.js';
 
 import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
@@ -119,9 +119,12 @@ export const readersIn = (directory: DirectoryRead) => ({
   },
 });
 
-/** Every records-key statement the roster this device opened carries, with the committee key that signed it. */
-export const attestedIn = (account: Pick<Account, 'signers'>): { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[] =>
-  account.signers.flatMap((s) => {
+/**
+ * Every records-key statement the roster this device opened carries, with the committee key that signed it: from the
+ * entries whose statements count for their seats where the read names them (`believedSigners`), else from its signers.
+ */
+export const attestedIn = (account: Pick<Account, 'signers'> & { readonly attesting?: readonly Account['signers'][number][] }): { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[] =>
+  (account.attesting ?? account.signers).flatMap((s) => {
     const k = s.vaultKeys;
     if (!k || !k.recordsKeyStatement || !k.recordsKeySeat) return [];
     return [{
@@ -162,12 +165,12 @@ export interface DirectoryHereDeps {
   readonly label: CompanyLabel;
   readonly accountId: string;
   /**
-   * The company's keys as this device holds them, from which the roster key every entry's proof is sealed under is
-   * worked out; a bare key is the one key of a company never changed. Each entry's proof is tried with every key held,
+   * The company's keys as this device holds them, or a reader's purpose keys, from which the roster key every entry's
+   * proof is sealed under is worked out; a bare key is the one key of a company never changed. Each entry's proof is tried with every key held,
    * which a page finds from the directory's own changes of the key before any is believed (`keysInTheFilings`); belief
    * stays the replay's.
    */
-  readonly viewingKey: KeysHeld;
+  readonly viewingKey: HeldForReading;
   /** Who holds the account now and its approval threshold, as the person's own wallet read it for this read. */
   readonly holders: () => Promise<AccountHoldersRead>;
   /** The records-key statements in the roster this device opened. */
@@ -308,7 +311,7 @@ export type DirectoryBelieved = Omit<DirectoryHere, 'records'>;
  */
 export interface DirectoryHere {
   /** The company's records as the head on chain holds them for this read: what every record read here is believed by. */
-  readonly records: RecordsHeld & FirstAnchorSeats & Pick<RecordsHeldHere, 'checkedFrom' | 'leaving' | 'seqOfHead' | 'newestLandedBy'>;
+  readonly records: RecordsHeld & FirstAnchorSeats & Pick<RecordsHeldHere, 'checkedFrom' | 'leaving' | 'seqOfHead' | 'newestLandedBy' | 'held'>;
   readonly dir: Directory;
   readonly holders: AccountHoldersRead;
   /**
@@ -339,7 +342,7 @@ export interface DirectoryHere {
    */
   readonly passedOver?: readonly DirectoryFiling[];
   /**
-   * **EVERY QUORUM'S CHANGE NOT APPLIED** - a role or retirement - by the
+   * **EVERY QUORUM'S CHANGE NOT APPLIED** - a retirement - by the
    * version its signatures were made for, oldest first, with its change: what
    * a device files again (`refiled`) when the replay would believe it filed as
    * the next version. A change of the company's key is never here: one passed
@@ -380,8 +383,8 @@ const pastAStop = (stop: TransitionStop): string =>
 const leafKeyOf = (o: Pick<SeatOpening, 'publicKey' | 'blinding' | 'scope'>): string =>
   `${String(o.publicKey).toLowerCase()}:${String(o.blinding).toLowerCase()}:${String(o.scope).toLowerCase()}`;
 
-/** Why no seat of a directory is believed when the chain could not be read for the seats its invitations by address took. */
-const SEATS_NOT_READ = 'this page could not check the network for the seat each invitation by address took, so it shows no signers from that list. Nothing was changed. Reload the page';
+/** Why no seat of a directory is believed when the chain could not be read for the seats its signer invitations' proposals took. */
+const SEATS_NOT_READ = 'this page could not check the network for the seat each signer invitation took, so it shows no signers from that list. Nothing was changed. Reload the page';
 
 /**
  * **HOW THIS DEVICE JUDGES EVERY ENTRY, AS A MEMBER**: each entry's proof
@@ -392,9 +395,10 @@ const SEATS_NOT_READ = 'this page could not check the network for the seat each 
  * about is null and proves nothing. A worker answer of the wrong length is
  * refused. `leafAt` gives, per filing in order, the leaf of the opening its
  * entry's proof opened to, and undefined for a filing with none. Every
- * invitation made by address an entry carries is held to the proposal it
- * names the same way, before the replay (`invitationsMakingTheirProposal`).
- * Only a signed seat invitation naming a proposal of thirty-two bytes
+ * invitation an entry carries (for a re-issue, the one it replaces,
+ * `approvedInvitationOf`) has the proposal its own salt makes worked out the
+ * same way, before the replay (`proposalsTheirSaltsMake`), and the chain is
+ * asked the seat each such proposal took, by address or by a link or a code. Only a signed seat invitation naming a proposal of thirty-two bytes
  * (`seatInvitationRefusal`) is asked about: the chain is asked about every
  * claim's invitation at once, so one claim's malformed invitation must not
  * fail the read of every seat. Any other proves no seat. Throws
@@ -406,19 +410,19 @@ const memberHere = async (
   /** The seat the account's deploy seated, as the person's own wallet read it: the one entry believed without an invitation. */
   founding: string | null,
 ): Promise<{ judge: EntryJudge; leafOf: LeafOf; leafAt: (index: number) => string | null | undefined }> => {
-  const proofOf = proofsOpenedWith(deps.accountId, keysHeld(deps.viewingKey));
+  const proofOf = proofsOpenedWith(deps.accountId, keysByPurpose(deps.viewingKey).everyEpoch());
   const openings = new Map<string, SeatOpening>();
   const openedAt: (string | undefined)[] = [];
-  const byAddress: SignedSeatInvitation[] = [];
+  const raised: SignedSeatInvitation[] = [];
   for (const f of filings) {
     const invited = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.invited : undefined;
-    if (invited !== undefined && seatInvitationRefusal(invited) === null && invited.terms.leaf === undefined && invited.terms.invite !== undefined
-      && typeof invited.terms.proposal === 'string') byAddress.push(invited);
+    const approved = invited === undefined || seatInvitationRefusal(invited) !== null ? undefined : approvedInvitationOf(invited);
+    if (approved !== undefined && approvedInvitationRefusal(approved, null) === null) raised.push(approved);
     const o = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.opening : undefined;
     openedAt.push(o === undefined ? undefined : leafKeyOf(o));
     if (o !== undefined) openings.set(leafKeyOf(o), o);
   }
-  const proposals = new Set(byAddress.map((i) => i.terms.proposal!.toLowerCase()));
+  const proposals = new Set(raised.map((i) => i.terms.proposal!.toLowerCase()));
   const asked = [...openings.values()];
   const leaves = asked.length === 0 ? [] : await deps.leaves(asked);
   if (!Array.isArray(leaves) || leaves.length !== asked.length) {
@@ -427,14 +431,14 @@ const memberHere = async (
   const made = new Map(asked.map((o, i) => [leafKeyOf(o), typeof leaves[i] === 'string' ? leaves[i]!.toLowerCase() : null]));
   const leafOf: LeafOf = (o) => made.get(leafKeyOf(o)) ?? null;
   const leafAt = (i: number) => (openedAt[i] === undefined ? undefined : made.get(openedAt[i]!) ?? null);
-  /* A history that cannot be read stops the read, so a seat taken by address is never left out for a read not made. */
+  /* A history that cannot be read stops the read, so an invited seat is never left out for a read not made. */
   const seated = proposals.size === 0 ? {} : await seatsTakenAsked(deps.invitedSeats, [...proposals], SEATS_NOT_READ);
   const invitedLeafOf = (proposal: string): string | null => {
     const leaf = Object.hasOwn(seated, proposal) ? seated[proposal] : null;
     return typeof leaf === 'string' ? leaf.toLowerCase() : null;
   };
-  const makesItsProposal = await invitationsMakingTheirProposal(byAddress, deps.proposalIdentity);
-  return { judge: asAMember(proofOf, leafOf, founding, invitedLeafOf, makesItsProposal), leafOf, leafAt };
+  const proposalMadeBy = await proposalsTheirSaltsMake(raised, deps.proposalIdentity);
+  return { judge: asAMember(proofOf, leafOf, founding, invitedLeafOf, proposalMadeBy), leafOf, leafAt };
 };
 
 /** The replays of each company's directory this page keeps, for a read given no `kept` of its own. */
@@ -454,7 +458,7 @@ export const directoryHere = async (deps: DirectoryHereDeps, asked: RecordsAsked
   const here = await directoryWithItsRecordsHere(deps, asked);
   /*
    * **NO DIRECTORY IS BELIEVED PAST A HEADER THIS DEVICE COULD NOT CHECK.** It
-   * may anchor a version of the directory - a demotion, a retirement - and who
+   * may anchor a version of the directory - a retirement - and who
    * held the account as it was anchored cannot be said, so who may act, who is
    * wrapped to and the roster are refused here, as every record read past it is.
    */
@@ -487,7 +491,7 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
   const now: AccountHeld = { approvals: holders.approvals, seats: holders.seats, seatBar: holders.seatBar };
   const kept = deps.kept ?? replaysKeptHere;
   const judged = digestOfBody(canonical({
-    company: deps.accountId, label: deps.label, account: holders.account, founding, keys: keysHeld(deps.viewingKey),
+    company: deps.accountId, label: deps.label, account: holders.account, founding, keys: keysByPurpose(deps.viewingKey).everyEpoch().map((k) => k.keyFor('roster', deps.accountId)),
   }));
   const digests: Hex[] = [];
   const digestAt = (i: number): Hex => (digests[i] ??= directoryEntry(filings[i]!).digest as Hex);
@@ -560,7 +564,7 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
   const notApplied = new Map<number, QuorumChange>();
   for (const f of filings) {
     const at = f.signedAt ?? f.version;
-    if ((f.change.kind === 'role' || f.change.kind === 'retire') && !replayed.replay.applied.has(at) && !notApplied.has(at)) notApplied.set(at, f.change);
+    if (f.change.kind === 'retire' && !replayed.replay.applied.has(at) && !notApplied.has(at)) notApplied.set(at, f.change);
   }
   const refiledRefused = filings.flatMap((f) => {
     const why = replayed.refused.get(f.version);
@@ -605,10 +609,10 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
     }
     return { filed, refused, waiting };
   };
-  const anchoredAgain = new Set(filings.flatMap((f) => ((f.change.kind === 'role' || f.change.kind === 'retire') && replayed.replay.applied.has(f.version)
+  const anchoredAgain = new Set(filings.flatMap((f) => (f.change.kind === 'retire' && replayed.replay.applied.has(f.version)
     && records.directory.has(f.version) ? [f.signedAt ?? f.version] : [])));
   return {
-    ...believed, records, passedOver, refiledRefused, refiled, anchoredAgain, refusedAt: new Set(replayed.refused.keys()),
+    ...believed, records: { ...records, held }, passedOver, refiledRefused, refiled, anchoredAgain, refusedAt: new Set(replayed.refused.keys()),
     notApplied: [...notApplied].sort(([a], [b]) => a - b).map(([signedAt, change]) => ({ signedAt, change })),
   };
 };
@@ -629,7 +633,7 @@ export const passedOverSaid = (here: Pick<DirectoryHere, 'passedOver' | 'refiled
   if (over.length === 0 && refused.length === 0) return null;
   const claims = over.filter((f) => f.change.kind === 'claim').map((f) => f.version);
   /* A quorum's change passed over is filed again; a change of key passed over is not, and is said only as passed over. */
-  const signed = [...new Set(over.filter((f) => f.change.kind === 'role' || f.change.kind === 'retire').map((f) => f.signedAt ?? f.version))];
+  const signed = [...new Set(over.filter((f) => f.change.kind === 'retire').map((f) => f.signedAt ?? f.version))];
   /* Whether each change passed over would be believed filed again now, or why not: the replay's own answer. */
   const answer = here.refiled?.(here.notApplied ?? []);
   const wouldNot = answer?.refused ?? new Map<number, DirectoryRefusalCode>();
@@ -978,23 +982,6 @@ export const seatNotBelievedHere = (here: DirectoryHere, seat: DirectorySeat): s
   return off === null ? null : FILING_REFUSAL[off].replace(/^it is signed by a seat /u, 'it is a seat ');
 };
 
-/**
- * **THE SEAT THAT SIGNS WITH `signingKey`, IF IT MAY FILE A RECORD OF `kind`**:
- * the seat the directory this device believes holds under that key, believed
- * as a seat (`seatNotBelievedHere`), with a role that files the kind
- * (`mayFile`). The one check a device makes of its own seat before it files a
- * company record; the reason when it may not, `roleMayNot` when its role is why.
- */
-export const seatThatMayFileHere = (here: DirectoryHere, signingKey: string, kind: FiledKind, roleMayNot: string): DirectorySeat | string => {
-  const key = signingKey.toLowerCase();
-  const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === key);
-  if (mine === undefined) return 'the company\'s directory, as this device reads it, holds no seat under your keys';
-  const off = seatNotBelievedHere(here, mine);
-  if (off !== null) return `your seat is not one this device believes: ${off}`;
-  if (!mayFile(mine).includes(kind)) return roleMayNot;
-  return mine;
-};
-
 /** The seats a record sealed to each reader is wrapped to, by seat, in lower case. */
 export const readersOf = (rec: SealedCompanyRecord): Set<string> => new Set(rec.wrapped.map((w) => String(w.signerId).toLowerCase()));
 
@@ -1246,7 +1233,7 @@ const fileOwnDirectoryEntry = async (
    */
   const there = filings.some((f) => f?.change?.kind === 'claim' && f.change.entry?.statement?.seat === signed.entry.seat
     && f.change.entry.statement.signingKey === signed.entry.signingKey && f.change.entry.statement.wrappingKey === signed.entry.wrappingKey
-    && (invited === null || ((proof) => keysHeld(keys.viewingKey).some((k) => openSeatProof(accountId, proof, k)?.invited?.signature === invited.signature))(f.change.entry.proof)));
+    && (invited === null || ((proof) => keysByPurpose(keys.viewingKey).everyEpoch().some((k) => openSeatProof(accountId, proof, k)?.invited?.signature === invited.signature))(f.change.entry.proof)));
   if (there) return 'already-there';
   const entry: DirectoryEntry = directoryEntryMade({
     /*

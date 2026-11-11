@@ -7,11 +7,12 @@ import { newSigningKeypair, newWrappingKeypair, toHex } from '../../../src/core/
 import { MemorySealedPoolStore, SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { directoryEntryMade, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
-import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../../../src/core/invitation.js';
+import { invitationIdOf, newInvitationToken } from '../../../src/core/invitation.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { deviceSignerFrom, directoryHere, readersIn } from './vault-page-doors.js';
 import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
 import { leavesOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
+import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../../../src/testing/invitation-approved.js';
 
 /*
  * A VAULT'S POOL AND JOURNALS ARE WRAPPED TO THE RECORDS KEY IN EACH SIGNER'S
@@ -37,7 +38,7 @@ const signer = (n: number, invitedBy?: { readonly filingSecret: Hex }) => {
   const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, filing.publicKey, seat);
   const entry = directoryEntryMade({
     company: CO, person: `p${n}`, committeeKey, signed: statement, opening, signingSecret: filing.secret, viewingKey: VIEWING,
-    ...(invitedBy === undefined ? {} : { invited: signSeatInvitation({
+    ...(invitedBy === undefined ? {} : { invited: invitedAsRaised({
       company: CO, invitation: invitationIdOf(newInvitationToken()), person: `p${n}`, name: `p${n}`, role: 'admin', leaf: seat as Hex,
     }, invitedBy.filingSecret) }),
   });
@@ -63,7 +64,7 @@ const directory = (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[
   attested: async () => o.attested ?? [ADA.attested, BO.attested, CY.attested],
   /* Who records are wrapped to reads no record: the company's records hold no entry. */
   anchored: anchoredEntering(CO),
-  leaves: leavesOfTheContract,
+  leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
 });
 
 describe('who a vault\'s records are wrapped to', () => {

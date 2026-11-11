@@ -13,17 +13,17 @@
 import type { JoinCode } from 'midnight-identity/profile/join-code';
 import type { AddressClaim } from 'midnight-identity/profile/address-claim';
 import { canonical, type Hex } from './crypto.js';
-import { openRecord, sealRecord } from './sealed-records.js';
+import { openRecord, sealRecord, type RecordsKey } from './sealed-records.js';
 import type { AssetId } from './assets.js';
 import { VENDOR_ID } from './invitation.js';
 import { datesOfTheRecordRefusal } from './payable-days.js';
 import { payeeKeysRefusal } from './payee-keys.js';
 import { canonicalPeriod } from './calendar-days.js';
 import type { Payee } from '../midnight/payee-address.js';
-import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import { PURPOSE_OF_KIND, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 
 /** The key a vendor entry is sealed under: the company's vendors key, never the payroll's. */
-export const VENDOR_PURPOSE = 'vendors' as const;
+export const VENDOR_PURPOSE = PURPOSE_OF_KIND.vendor;
 
 /** How a vendor is paid: by one-off payments as they come, or a fixed amount each month on a run over the vendor list. */
 export type VendorTerms =
@@ -99,7 +99,7 @@ export const sealVendor = (v: VendorRecord, version: number, keyEpoch: number, v
 };
 
 /** A vendor record opened under the company's vendors key. Throws on a record of another kind, or one that is not a vendor entry. */
-export const openVendor = (rec: SealedCompanyRecord, viewingKey: Hex): VendorRecord => {
+export const openVendor = (rec: SealedCompanyRecord, viewingKey: RecordsKey): VendorRecord => {
   if (rec.kind !== 'vendor') throw new Error(`a ${rec.kind} record is not a vendor, so it is not read as one.`);
   const v: VendorRecord = { id: rec.id, accountId: rec.company, ...openRecord<VendorSecrets>(VENDOR_PURPOSE, rec.company, rec.sealed, viewingKey) };
   const why = vendorRecordRefusal(v);

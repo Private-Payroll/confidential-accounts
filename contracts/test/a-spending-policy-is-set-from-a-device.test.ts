@@ -53,7 +53,7 @@ import type { GovernedCallOrder, OpenedRound, SignerMaterial } from 'vaults-web-
 import type { PolicyGovernanceDoors } from 'vaults-web-shared/spending-policy-here.js';
 import type { GovernedCallService } from 'vaults-web-shared/governed-call-on-device.js';
 import { approveSpendingPolicyOnDevice, setSpendingPolicyOnDevice, setPolicyBarOnDevice, spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
-import { approverRosterFrom } from '../../src/core/vault-approvers.js';
+import { approverRosterFrom, EVERY_RIGHT } from '../../src/core/vault-approvers.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
 import { canonical, newWrappingKeypair, seal, signingPublicKeyOf, type Hex } from '../../src/core/crypto.js';
@@ -288,6 +288,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
         },
         me: { signerId: hex(leafOfDevice(who)), wrappingSecret: wrapping[person].secret },
         keys: (input) => builder().spendingPolicyKeys(input),
+        grantReaders: async () => [],
         /* STAND-IN, NAMED: the wallet's read of the account's map of roles, answered from this file's ledger directly. */
         onChain: async (keys) => new Map(keys.map((k) => [k, roles(k)])),
       },
@@ -298,7 +299,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     filing: { seat: hex(leafOfDevice(who)), keyEpoch: 0, salt: () => hex(crypto.getRandomValues(new Uint8Array(32))), newId: () => newProposalId(), entered: enteredAs(who) },
     /* Both seats may approve every vault's runs: a policy is counted against them at its bands. */
     approvers: async () => approverRosterFrom({
-      threshold: 1, vaultThresholds: [], seated: [founder, blake].map((x) => ({ leaf: hex(leafOfDevice(x)) })), adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
+      threshold: 1, vaultThresholds: [], seated: [founder, blake].map((x) => ({ leaf: hex(leafOfDevice(x)), rights: EVERY_RIGHT })), adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
     }),
     vaultName: () => 'the vault',
     sleep: async () => {}, waitMs: 10, everyMs: 1,

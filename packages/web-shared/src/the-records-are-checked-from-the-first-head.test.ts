@@ -227,20 +227,20 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
 });
 
 describe('THE DIRECTORY CHANGES A DEVICE FILED AGAIN, KEPT IN ITS OWN DATABASE UNTIL ANCHORED', () => {
-  const role = (seat: string) => ({ kind: 'role', seat, role: 'approver', threshold: 1, signatures: [] }) as const;
+  const retiring = (seat: string) => ({ kind: 'retire', seat, filedUpTo: {}, threshold: 1, signatures: [] }) as const;
   it('keeps one change per version signed for, oldest first, read back by a fresh read; lets go of one; keeps nothing for another company', async () => {
     const db = new IDBFactory();
-    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 5, change: role('bb'.repeat(32)) });
-    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 3, change: role('aa'.repeat(32)) });
+    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 5, change: retiring('bb'.repeat(32)) });
+    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 3, change: retiring('aa'.repeat(32)) });
     /* RED WHEN: the changes kept are read back in the order they were kept, not the order they were first filed - filed again out of order. */
     expect((await treeKeptHere(db).changes.all(COMPANY)).map((k) => k.signedAt)).toEqual([3, 5]);
-    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 5, change: role('cc'.repeat(32)) });
+    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 5, change: retiring('cc'.repeat(32)) });
     /* RED WHEN: a change kept is not read back from the device's database, out of order, or two are kept for one version. */
-    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([{ signedAt: 3, change: role('aa'.repeat(32)) }, { signedAt: 5, change: role('cc'.repeat(32)) }]);
+    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([{ signedAt: 3, change: retiring('aa'.repeat(32)) }, { signedAt: 5, change: retiring('cc'.repeat(32)) }]);
     expect(await treeKeptHere(db).changes.all('acct_other')).toEqual([]);
     await treeKeptHere(db).changes.letGo(COMPANY, 3);
     /* RED WHEN: a change let go of is still kept, or letting go of one drops another. */
-    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([{ signedAt: 5, change: role('cc'.repeat(32)) }]);
+    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([{ signedAt: 5, change: retiring('cc'.repeat(32)) }]);
   });
   it('A DATABASE A PAGE BEFORE THIS ONE MADE GAINS THE PLACE FOR THEM, KEEPING THE HEADS IT HELD', async () => {
     const db = new IDBFactory();
@@ -258,9 +258,9 @@ describe('THE DIRECTORY CHANGES A DEVICE FILED AGAIN, KEPT IN ITS OWN DATABASE U
       };
       req.onerror = () => reject(req.error);
     });
-    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 2, change: role('aa'.repeat(32)) });
+    await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 2, change: retiring('aa'.repeat(32)) });
     /* RED WHEN: a database made before changes were kept never gains their place, so nothing filed again is kept. */
-    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([{ signedAt: 2, change: role('aa'.repeat(32)) }]);
+    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([{ signedAt: 2, change: retiring('aa'.repeat(32)) }]);
     /* RED WHEN: gaining it loses what the database held before: the heads this device checked at its first version. */
     expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual({ latest, fromZero: latest, heads: [latest.head] });
   });

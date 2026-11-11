@@ -43,6 +43,7 @@ import { anchorDoorsIn, anchoredAtTheEnd, UPKEEP_CHECK, upkeepShown, upkeepSteps
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { approveStep, approving, atTheBar, type Approving, type ApprovalStop, type ProposalKind, type ReadCompany } from './proposal-kinds.js';
+import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 /*
  * A ONE-OFF PAYMENT OUT OF A COMPANY'S VAULT, MADE IN THE WALLET: one window and one passkey. The wallet raises the
@@ -235,7 +236,7 @@ export const governedDoorsFor = (
       },
     },
     builder: r.builder,
-    material: { signingSecret: r.seat.signingSecret as Hex, blinding: r.seat.blinding as Hex, scope: r.seat.scope },
+    material: signerMaterialOf(r.seat),
     accountId: r.accountId,
     records,
     leaves: r.judges.leavesFor(r.account),
