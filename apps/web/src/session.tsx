@@ -27,6 +27,8 @@ export interface Session {
    * screen reads is the one this refreshes.
    */
   companiesChanged: (choose?: string) => Promise<void>;
+  /** The reader's page tells the app that its wallet gave or refused read keys, so the companies read this visit are asked again. */
+  readerOpened?: () => void;
   /** Whether this is a Mac, where the command key is held for shortcuts. */
   mac: boolean;
 }

@@ -154,20 +154,13 @@ describe('the join page opens an invitation and says what it is', () => {
     expect(on(container, '[data-action=go-on]')).not.toBeNull();
   });
 
-  /* RED WHEN: a super admin's or a re-issued invitation is closed without saying what to do, or a re-issue gets the words of a signer invited another way. */
-  it('tells a super admin\'s and a re-issued invitation what to do, each in its own words', async () => {
+  /* RED WHEN: a super admin's invitation is closed without saying what to do. */
+  it('tells a super admin\'s invitation what to do', async () => {
     const a = anInvitation('super-admin');
     serve(() => offerAnswer(a));
     const sa = draw(a, 'member');
     await shown(sa.container, '[data-join-card=closed]');
     expect(text(sa.container)).toContain('Ask whoever invited you to take this to the company\'s super admins');
-    cleanup();
-    const r = anInvitation('reissue');
-    serve(() => offerAnswer(r));
-    const re = draw(r, 'member');
-    await shown(re.container, '[data-join-card=closed]');
-    expect(text(re.container)).toContain('re-issued invitation');
-    expect(text(re.container)).not.toContain('private address');
   });
 
   /* RED WHEN: a closed invitation is shown as offered, or its reason is not in the page's words, or an unreachable service has no way to try again. */
@@ -207,6 +200,23 @@ describe('each kind and way is joined from the page', () => {
     expect(text(container)).not.toContain('has taken your seat');
     expect(heldFor(i.id)).toBe('nothing');
     expect(wallet.joinByCode).not.toHaveBeenCalled();
+  });
+
+  /* RED WHEN: a re-issued invitation's press takes a seat instead of keeping the invitation, or the page does not say what finishes joining. */
+  it('keeps a re-issued invitation: take-reissue with the offer\'s four fields, then the words to give your keys', async () => {
+    const r = anInvitation('reissue');
+    serve(() => offerAnswer(r));
+    wallet.act.mockResolvedValue({ of: 'done', steps: 2, relayed: 0 });
+    const { container } = draw(r, 'member');
+    await shown(container, '[data-way=reissue]');
+    expect(text(container)).toContain('sent again the invitation your seat was proposed under');
+    expect(on(container, '[data-action=accept]')?.textContent).toBe('Keep this invitation');
+    await press(container, 'accept');
+    await shown(container, '[data-join-card=done]');
+    expect(wallet.act.mock.calls[0]![0]).toMatchObject({ name: 'take-reissue', token: r.token });
+    expect(Object.keys(wallet.act.mock.calls[0]![0]).sort()).toEqual(['account', 'company', 'name', 'record', 'token']);
+    expect(text(container)).toContain('Give your keys');
+    expect(heldFor(r.id)).toBe('nothing');
   });
 
   /* RED WHEN: an employee's press does not run join-by-code, or the page does not tell the person to read out the fingerprint the wallet showed, or shows a payslips link. */

@@ -33,14 +33,20 @@ export type Roster = Pick<Account, 'id' | 'signers'> & { readonly notBelieved: r
 /**
  * **WHY NOTHING IS BUILT FOR A COMMITTEE FROM THIS ROSTER**, or null when the
  * roster names a signer this device believes at every seat the chain holds. A
- * seat it does not is a signer left out of whatever would be built.
+ * seat it does not, such as one whose signer the chain seated and who is still
+ * waiting to be admitted, is a signer left out of whatever would be built, so
+ * nothing is built until the roster names them; the refusal names each such
+ * seat and what ends the wait: an admission, or keys given and then folded in.
  */
 export const whyNotWhole = (roster: Roster): string | null => {
   const n = roster.notBelieved.length;
   return n === 0 ? null
     : `the company's roster, as this device believes it, shows no signer for ${n} seat${n === 1 ? '' : 's'} the `
-      + 'company\'s account holds on the chain, so nothing is built for a committee from it. Each signer without an '
-      + 'entry opens the company on their own device and sets up their vault keys; if they have, reload the page.';
+      + `company's account holds on the chain (${roster.notBelieved.join(', ')}), so nothing is built for a committee from it. `
+      + 'A signer seated there and still waiting to be admitted is admitted from the wallet of a seat that may file the list '
+      + 'of signers (Admit a signer). A signer already admitted whose keys are not in the list gives their keys from their '
+      + 'own wallet (Give your keys, on the Signers page), and the next seat action of a seat that may file the list folds '
+      + 'them in. Once either has happened, reload the page.';
 };
 
 /**

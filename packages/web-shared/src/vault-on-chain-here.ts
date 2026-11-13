@@ -188,6 +188,12 @@ const toBase64 = (bytes: Uint8Array): string => {
  * never passed: a vault pays out on its account's approvals, so an account
  * whose circuits are not this app's could let money out on approvals nobody
  * gave.
+ *
+ * `unshieldedTokens` is the vault's own list of public tokens it was ever paid
+ * in, which only its `forgetUnshielded` shortens and which its `retire` refuses
+ * on; `publicBalances` is what it holds of each. A token can stay on the list
+ * while the vault holds none of it, which is the case the retire takes it off
+ * for.
  */
 export async function readVaultOnChain(
   d: {
@@ -209,7 +215,7 @@ export async function readVaultOnChain(
   const circuits = circuitsNotThisBuilds(state, d.vault.expectedVk, sha256, NO_MONEY, 'the vault\'s');
   const accountCircuits = accountAddress === undefined ? undefined : await accountCircuitsOf(d, source, accountAddress);
   const ledger = d.vault.ledger(state.data) as Parameters<typeof startingLedgerFrom>[0] & {
-    notes: Iterable<Uint8Array>; nonceCommitment: Uint8Array; splitJournal: Iterable<[Uint8Array, Uint8Array]>;
+    notes: Iterable<Uint8Array>; unshieldedTokens: Iterable<Uint8Array>; nonceCommitment: Uint8Array; splitJournal: Iterable<[Uint8Array, Uint8Array]>;
   };
   let notesFromThisBuild = true;
   let notesWhy: string | undefined;
@@ -247,6 +253,8 @@ export async function readVaultOnChain(
     } : {}),
     notesFromThisBuild,
     ...(notesWhy === undefined ? {} : { notesWhy }),
+    /* The public tokens the vault lists, which its retire refuses on while any is listed: read, like the notes, only off this build's ledger. */
+    ...(notesFromThisBuild ? { unshieldedTokens: [...ledger.unshieldedTokens].map(hexOf) } : { unshieldedTokensWhy: notesWhy! }),
     everCreated,
     account,
     started,
@@ -255,6 +263,8 @@ export async function readVaultOnChain(
     ...(accountCircuits === undefined ? {} : { accountCircuits }),
   };
 }
+
+export { ON_CHAIN, moneyOnChainOf, type MoneyOnChain } from './money-on-chain.js';
 
 const NO_MONEY = 'no money goes in or out of this vault';
 

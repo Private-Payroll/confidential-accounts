@@ -32,7 +32,7 @@
  *
  * Imports nothing that loads WebAssembly: the ledger's classes are handed in.
  */
-import { committeeUpdateOf } from 'midnight-identity/profile/committee-sign';
+import { committeeUpdateOf, type CommitteeUpdateLedger } from 'midnight-identity/profile/committee-sign';
 import { authorityValueRefusals, type MaintenanceRefusal } from './authority-replacement.js';
 
 export interface CommitteeKey {
@@ -48,6 +48,13 @@ export interface Committee {
 const KEY = /^[0-9a-f]{64}$/u;
 
 const idOf = (k: CommitteeKey): string => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`;
+
+/**
+ * Two committee keys are the same key: the same tag and the same hex, in either case. A value written with 0x is never
+ * the same as the bare one: the service takes committee keys as bare hex only and refuses any other spelling before it
+ * compares, and the chain and the wallet give them bare, so every side compares exactly what the service's check does.
+ */
+export const sameCommitteeKey = (a: CommitteeKey, b: CommitteeKey): boolean => idOf(a) === idOf(b);
 
 /** The refusal a company's signers read, for each way a committee value can be wrong. */
 const companySentence = (r: MaintenanceRefusal, threshold: number, signerCount: number): string => {
@@ -121,10 +128,11 @@ export const sameCommittee = (a: Committee, b: Committee): boolean =>
   && a.committee.length === b.committee.length
   && a.committee.every((k, i) => idOf(k) === idOf(b.committee[i]!));
 
-/** The ledger classes the update is built from. `@midnightntwrk/ledger-v9` satisfies this. */
-export interface ReplacementPrimitives {
-  ContractMaintenanceAuthority: new (committee: CommitteeKey[], threshold: number, counter?: bigint) => object;
-  ReplaceAuthority: new (authority: never) => object;
+/**
+ * The ledger classes the update is built from, the ones `committeeUpdateOf` builds with, and an update that takes its
+ * signatures. `@midnightntwrk/ledger-v9` satisfies this.
+ */
+export interface ReplacementPrimitives extends CommitteeUpdateLedger {
   MaintenanceUpdate: new (address: string, updates: never[], counter: bigint) => {
     readonly dataToSign: Uint8Array;
     addSignature(index: bigint, signature: never): unknown;
@@ -151,5 +159,5 @@ export function committeeReplacement<P extends ReplacementPrimitives>(
     keys: input.to.committee, threshold: input.to.threshold, signerCount: input.to.committee.length,
   });
   if (again !== null) throw new Error(again);
-  return committeeUpdateOf(P as never, { address: input.vault, counter: input.counter, to: input.to }) as InstanceType<P['MaintenanceUpdate']>;
+  return committeeUpdateOf(P, { address: input.vault, counter: input.counter, to: input.to });
 }

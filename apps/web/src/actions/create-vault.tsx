@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Alert, AlertDescription, Button, ConfirmInYourAccount, Input, Label, Textarea, useText } from 'vaults-ui';
 import {
-  CREATING, createVault, finishStarting, giveYourVaultKeys, openYourKeys, pressingAgainCanClear, READY, readVaultReadiness, SAID, STARTING,
+  adoptAgain, CREATING, createVault, finishStarting, giveYourVaultKeys, openYourKeys, pressingAgainCanClear, READY, readVaultReadiness, SAID, STARTING,
   STOPPED, type Creating, type Readiness, type SaidCode, type StartStopped, type VaultCreated,
 } from '../adapters/create-vault.js';
 import { HANDOVER, readHandover, type Handover } from '../adapters/handover-state.js';
@@ -130,6 +130,8 @@ function StopResolvedBy({ result, disabled, ask }: {
  * component opens once, after the company is read, asking to carry that
  * vault's set up on; a vault carried on whose name this device cannot read
  * has its name and description asked first, and they are filed as it is.
+ * With `retired` as well, the vault is one the company retired that still holds money, adopted again under the
+ * company's record of the retire that retired it.
  *
  * Once the super admins hold it, the vault is set up: it is added to the company's
  * account, its private records are made and its secret set, and each signer
@@ -146,7 +148,7 @@ function StopResolvedBy({ result, disabled, ask }: {
  * company account not read as held by its super admins is said once the vault
  * is created, with the way to the signers page where a change is owed.
  */
-export function CreateVault({ leadTo, onChanged, starting }: StepProps & { starting?: string }) {
+export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps & { starting?: string; retired?: string }) {
   const t = useText();
   const stoppedSays = useStoppedSays();
   const { person, company } = useSession();
@@ -205,6 +207,7 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
     setAsking(null); setResult(null); setStage(CREATING.checking);
     const r = asked.of === ASKING.create
       ? await createVault(person.id, company, setStage, { name: name.trim(), description: description.trim() })
+      : retired !== undefined ? await adoptAgain(person.id, company, asked.vault, retired, setStage)
       : await finishStarting(person.id, company, asked.vault, setStage,
         nameOwed === asked.vault && name.trim() !== '' ? { name: name.trim(), description: description.trim() } : undefined);
     const handover = r.of === ACTED.done ? await readHandover(person.id, company) : null;

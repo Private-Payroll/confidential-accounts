@@ -65,17 +65,21 @@ const ACTS_FOR: Record<string, string> = {
   'retry-run.tsx': 'adapters/proposal-acts.js',
   /* Paying someone from a vault or from the vendor list, and approving a one-off payment the vault's signers raised, asks the same wallet conversation as raising and approving any proposal. */
   'one-off.tsx': 'adapters/proposal-acts.js',
+  /* Retiring a vault from its page raises and carries a change to the company, asked of the same wallet conversation as raising and approving any proposal. */
+  'retire-vault.tsx': 'adapters/proposal-acts.js',
+  /* Setting how long a recovery waits, from the recovery page, acts through its own adapter. */
+  'recovery-window.tsx': 'adapters/recovery-window.js',
 };
-/** Files other than the action's own that may import its adapter, because they only read what it names: the vault adapter's `namedFor` is the one source of a company's record, label and account (the invite, signer, person and proposal acts all ask it), and the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the proposals adapter's reason codes and result kinds are read by the shared proposal-act hook and display (`records/proposal-act.tsx`), and its can-approve and can-withdraw questions by the proposals page, which never calls its acts; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
+/** Files other than the action's own that may import its adapter, because they only read what it names: the vault adapter's `namedFor` is the one source of a company's record, label and account (the invite, signer, person, proposal, recovery window and service acts all ask it), and the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts, and its private-address check by the roles adapter, which holds a role change's typed address to it; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the proposals adapter's reason codes and result kinds are read by the shared proposal-act hook and display (`records/proposal-act.tsx`), and its can-approve and can-withdraw questions by the proposals page, which never calls its acts; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
 const ALSO_READ_BY: Record<string, string[]> = {
-  'adapters/create-vault.js': ['adapters/invite.ts', 'adapters/person-acts.ts', 'adapters/proposal-acts.ts', 'adapters/signer-acts.ts'],
+  'adapters/create-vault.js': ['adapters/grants-here.ts', 'adapters/invite.ts', 'adapters/person-acts.ts', 'adapters/policy-acts.ts', 'adapters/proposal-acts.ts', 'adapters/recovery-window.ts', 'adapters/service-acts.ts', 'adapters/signer-acts.ts'],
   'adapters/person-acts.js': ['records/parts.tsx'],
   'adapters/proposal-acts.js': ['records/proposal-act.tsx', 'screens/proposals.tsx'],
-  'adapters/invite.js': ['actions/signers.tsx', 'actions/vendor-panel.tsx', 'adapters/person-acts.ts', 'fields/form-fields.tsx', 'screens/vendors.tsx'],
+  'adapters/invite.js': ['actions/signers.tsx', 'actions/vendor-panel.tsx', 'adapters/person-acts.ts', 'adapters/roles-here.ts', 'fields/form-fields.tsx', 'screens/vendors.tsx'],
 };
 /** The components in actions/ that are no step's: each with the only files that may show it, one component called from each, never a copy. */
 const NO_STEP: Record<string, string[]> = {
-  'committee-change.tsx': ['actions/signers', 'records/vault-pending'],
+  'committee-change.tsx': ['records/vault-pending', 'screens/super-admins'],
   'start-again.tsx': ['actions/finish-company'],
   'account-tokens.tsx': ['actions/deposit', 'shell/account-menu'],
   'deposit.tsx': ['screens/vault'],
@@ -89,6 +93,8 @@ const NO_STEP: Record<string, string[]> = {
   'raise-run.tsx': ['screens/home', 'screens/payroll', 'shell/create-menu'],
   'retry-run.tsx': ['screens/run'],
   'one-off.tsx': ['screens/vault', 'screens/vendors', 'shell/create-menu'],
+  'retire-vault.tsx': ['screens/vault'],
+  'recovery-window.tsx': ['screens/recovery'],
 };
 
 describe('every step is in the list, and every entry is a step', () => {
@@ -121,12 +127,12 @@ describe('every step is in the list, and every entry is a step', () => {
   });
 
   /*
-   * RED WHEN: the committee change is a step again, or is shown from any file but the vault panel's and the signers
-   * component's (a copy of it, or a third place it is drawn); or the signers step and the signers page do not draw that one
+   * RED WHEN: the committee change is a step again, or is shown from any file but the vault panel and the super
+   * admins' page (a copy of it, or the signers component drawing it again); or the signers step and the signers page do not draw that one
    * component, the page from its own screen and the step from the list; or the step or the page is Coming soon, in whole or in
    * part, for choosing how many must approve again.
    */
-  it('shows the committee change from the vault panel and the signers component only, which the step and the page both draw', () => {
+  it('shows the committee change from the vault panel and the super admins\' page only, and the signers component, which the step and the page both draw, without it', () => {
     /* Every one of them is a file in actions/, and no step shows it. */
     const shown = EVERY_STEP.filter(isBuiltStep).map((st) => (st.shows as { action: { name: string } }).action.name);
     expect(Object.keys(NO_STEP).every((f) => actionFiles().includes(f))).toBe(true);
@@ -144,7 +150,7 @@ describe('every step is in the list, and every entry is a step', () => {
     expect(((PAGES.settingsSigners as Page).shows as unknown as { screen: { screenName: string } }).screen.screenName).toBe('SignersBuilt');
     expect(read('screens/settings-sections.tsx')).toMatch(/export function SignersBuilt\b[\s\S]*<Signers \/>/);
     expect(read('screens/settings-sections.tsx')).not.toMatch(/CommitteeChange/);
-    expect(read(`${ACTIONS}/signers.tsx`).match(/<CommitteeChange\b/g)).toHaveLength(1);
+    expect(read(`${ACTIONS}/signers.tsx`).match(/<CommitteeChange\b/g)).toBeNull();
   });
 
   /*

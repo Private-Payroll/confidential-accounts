@@ -5,7 +5,7 @@ import { WalletClosed, type WalletPaymentFailure } from 'vaults-web-shared/walle
 /* The codes themselves live in `refusal-codes.ts`, which loads nothing, so a screen the first download carries can name them without loading the keyring. */
 import { ACT_REFUSAL, type ActRefusal } from './refusal-codes.js';
 
-export { ACT_REFUSAL, ACTED, type ActRefusal } from './refusal-codes.js';
+export { ACT_REFUSAL, ACTED, SEAT_REFUSALS, type ActRefusal } from './refusal-codes.js';
 
 /** Each reason the account could not make a payment it was asked for, as the refusal that says it. */
 function paymentFailure(why: WalletPaymentFailure): ActRefusal {

@@ -5,6 +5,8 @@ import type { ActRefusal } from './refusals.js';
 import { isReadMethod, readsAnswered, serviceRead, SIGN_OUT_WAITS_MS } from 'vaults-web-shared/read-bound.js';
 import { keepSignIn } from './kept-sign-in.js';
 import { tabStorage } from './kept-skips.js';
+import type { ChangeCost } from '../../../../src/core/change-costs.js';
+import { CHANGE_ASKED, SEAT_CHANGE } from './change-asked.js';
 
 /*
  * The shared keyring, loaded after the service's first answer rather than
@@ -12,6 +14,13 @@ import { tabStorage } from './kept-skips.js';
  * company.
  */
 const keyring = () => import('vaults-web-shared/keyring.js');
+
+/**
+ * The companies this visit opened as a reader, by id. Loaded with the keyring, after the service's first answer, so the
+ * first download does not carry the code that releases a reader's keys.
+ */
+export const companiesReadThisVisit = async (): Promise<readonly string[]> =>
+  (await import('vaults-web-shared/reader-keys-released.js')).companiesReadThisVisit();
 
 /*
  * WHO IS SIGNED IN, SIGNING IN WITH THE PERSON'S ACCOUNT, AND SIGNING OUT.
@@ -273,32 +282,40 @@ export async function companyNamesFor(personId: string): Promise<CompanyNames> {
 }
 
 /** The one read of the approvals each company needs, for the list as last asked for; dropped when the list is asked for again. */
-let approvalsRead: { person: string; map: Promise<ReadonlyMap<string, number>> } | null = null;
+export interface SeatBarRead { readonly needed: number; readonly because: ChangeCost['because'] }
+
+let approvalsRead: { person: string; map: Promise<ReadonlyMap<string, SeatBarRead>> } | null = null;
 
 /**
- * HOW MANY MUST APPROVE FOR EACH COMPANY IN THE ONE LIST, by id, as the person's own wallet reads it off the chain
- * (the answer's `approvals`; its `threshold` is the committee's and is never read). The service's row carries no such
+ * THE SEAT BAR OF EACH COMPANY IN THE ONE LIST, by id: the approvals a change of who is seated needs, and what sets it
+ * (the account, a vault, or the policy bar), worked out by `whatAChangeCosts` from the figures the person's own wallet reads
+ * off the chain (the answer's `approvals`, `vaultThresholds`, `policyBar`; its `threshold` is the committee's and is never read). The service's row carries no such
  * number that is read here. A company whose account the wallet cannot read, or that names no account yet, has none, and
  * so does every company when the list was asked for somebody else. The list is not asked for again, and the wallet is
- * asked once for each company however many screens ask.
+ * asked once for each company however many screens ask, one company at a time.
  */
-export function approvalsNeededFor(personId: string): Promise<ReadonlyMap<string, number>> {
+export function approvalsNeededFor(personId: string): Promise<ReadonlyMap<string, SeatBarRead>> {
   if (listed.person !== personId) return Promise.resolve(new Map());
   if (approvalsRead !== null && approvalsRead.person === personId) return approvalsRead.map;
   const rows = listed.rows;
-  const map = (async (): Promise<ReadonlyMap<string, number>> => {
-    const out = new Map<string, number>();
+  const map = (async (): Promise<ReadonlyMap<string, SeatBarRead>> => {
+    const out = new Map<string, SeatBarRead>();
     try {
-      const [{ keyringFor }, { holdersFromTheWallet }] = await Promise.all([import('./keyring-person.js'), import('vaults-web-shared/keyring.js')]);
+      const [{ keyringFor }, { holdersFromTheWallet }, { changeHoldersOf, whatAChangeCosts }] = await Promise.all([
+        import('./keyring-person.js'), import('vaults-web-shared/keyring.js'), import('../../../../src/core/change-costs.js'),
+      ]);
       if (!(await keyringFor(personId))) return out;
-      await Promise.all(rows.map(async (row) => {
+      /* One company at a time: each read opens a wallet frame of its own, so a long list never has more than one open. */
+      for (const row of rows) {
         const r = (row ?? {}) as { id?: unknown; companyLabel?: unknown; contractAddress?: unknown };
-        if (typeof r.id !== 'string' || typeof r.companyLabel !== 'string' || typeof r.contractAddress !== 'string') return;
+        if (typeof r.id !== 'string' || typeof r.companyLabel !== 'string' || typeof r.contractAddress !== 'string') continue;
         try {
           const { holders } = await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: r.companyLabel as never, account: r.contractAddress as never });
-          if (Number.isSafeInteger(holders.approvals) && holders.approvals >= 1) out.set(r.id, holders.approvals);
+          if (!Number.isSafeInteger(holders.approvals) || holders.approvals < 1) continue;
+          const { needed, because } = whatAChangeCosts(changeHoldersOf(holders), { kind: CHANGE_ASKED.seating, seat: SEAT_CHANGE.remove });
+          if (Number.isSafeInteger(needed) && needed >= 1) out.set(r.id, { needed, because });
         } catch { /* a company the wallet cannot read has no figure shown */ }
-      }));
+      }
     } catch { /* no figure is shown */ }
     return out;
   })();

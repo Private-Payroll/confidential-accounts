@@ -13,6 +13,8 @@ export interface EndedHere {
   readonly ended: ActEnded;
   /** Why a stopped action stopped, or what a done action gave its window to show. */
   readonly says: Words | null;
+  /** The rest of what a done action gave its window to show, after `says`. */
+  readonly more?: readonly Words[];
   /** A step was still running when the action ended: it is cut off from the keys, but may still be finishing. */
   readonly abandoned: boolean;
 }

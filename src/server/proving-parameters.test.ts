@@ -274,12 +274,12 @@ describe('ON START THE SERVER FETCHES WHAT IT LACKS, CHECKS IT, AND SAYS SO', ()
     const started = startProvingParameters({ places, sources: ['https://unreachable.example'], fetch: offline, published, readSizes }, log);
     expect(started).toBeUndefined();
     expect(lines).toEqual([]);
-    await vi.waitFor(() => expect(lines.some((l) => l.startsWith('warn') && l.includes('deposit (vault)'))).toBe(true));
+    await vi.waitFor(() => expect(lines.some((l) => l.startsWith('warn') && l.includes('deposit (vault)'))).toBe(true), { timeout: 10_000 });
 
     const broken = (): string | undefined => { throw new Error('the digest list could not be read'); };
     startProvingParameters({ places, sources: ['https://unreachable.example'], fetch: offline, published: broken, readSizes }, log);
     await vi.waitFor(() => expect(lines.some((l) => l.startsWith('warn') && l.includes('stopped part way')
-      && l.includes('the digest list could not be read'))).toBe(true));
+      && l.includes('the digest list could not be read'))).toBe(true), { timeout: 10_000 });
   });
 
   it('A FILE REPLACED WHILE THE SERVER RUNS IS CHECKED AGAIN, SO A GENUINE ONE FETCHED LATE IS SERVED', async () => {

@@ -27,8 +27,6 @@ import {
 } from '../../../../src/midnight/company-service-record.js';
 import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
-import { VaultPoolVersionAlreadyFiled } from '../../../../src/midnight/vault-pool.js';
-import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { mayFileHere } from '../../../../packages/web-shared/src/may-file-here.js';
 import { readersIn, type DirectoryHere } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { CompanyKeyBeingChanged } from '../../../../packages/web-shared/src/company-key-here.js';
@@ -39,6 +37,7 @@ import {
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
+import { companyRecordFiledHere } from './company-record-filed.js';
 
 /** What the wallet reads the company with: its own chain and builder, and its pause. */
 export interface ChooseCompanyServiceReach {
@@ -124,20 +123,7 @@ async function filedHere(r: CompanyReach, choice: CompanyService, filed: Service
     throw e;
   }
   const rec = sealCompanyService({ company: r.accountId, version: filed.highest + 1, sealing, choice, signers });
-  const store = new HttpCompanyRecordStore(r.accountId, r.send, signingSecret, r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster));
-  try {
-    await store.put(rec);
-  } catch (e) {
-    if (e instanceof ActionStopped) throw e;
-    if (e instanceof VaultPoolVersionAlreadyFiled) throw new StepRefused(why('filed-meanwhile'), codeOfError(e));
-    throw new StepRefused(why('not-filed', { says: said(e) }), codeOfError(e));
-  }
-  try {
-    await enteredFor(r).enter([companyRecordEntry(rec)]);
-  } catch (e) {
-    if (e instanceof ActionStopped) throw e;
-    throw new StepRefused(why('not-entered', { says: said(e) }), codeOfError(e));
-  }
+  await companyRecordFiledHere(r, rec, why);
   return serviceAsked([...filed.versions, { version: rec.version, filer, choice }], filed.needed)!;
 }
 

@@ -28,9 +28,10 @@ import {
 import { grantPurposes, isReaderRole, READER_PURPOSES, type ReaderRole } from '../core/roles.js';
 import type { Purpose } from '../core/sealed-records.js';
 import { HEX64 } from './directory-change-shape.js';
-import type { SealedCompanyRecord } from './sealed-record-wire.js';
+import type { CompanyRecordKind, SealedCompanyRecord } from './sealed-record-wire.js';
 import type { DirectorySeat, SeatSignature } from './seat-directory.js';
 import { quorumOf } from './seat-quorum.js';
+import { signedChangesInForce, type SignedCount } from './signed-change-fold.js';
 import { paddedToABucket, type PoolSigner } from './vault-pool.js';
 
 /** The one grants record a company keeps: its kind and its id. */
@@ -100,17 +101,36 @@ export const readersMessage = (company: string, sequence: number, readers: reado
 export const grantsMessage = (company: string, change: GrantsChange): string =>
   readersMessage(company, change.sequence, readersNamedIn(change.entries), entriesDigestOf(change.entries));
 
-/** The plain list the service keeps as a company's readers, with what puts it in force: the signatures over it. */
+/**
+ * The plain list the service keeps as a company's readers, with what puts it in force: the signatures over it, and the
+ * entries themselves (`granted`), which the service holds to the signed digest before it reads each reader's purposes.
+ */
 export interface ReadersHandedIn {
   readonly sequence: number;
   readonly readers: readonly string[];
   readonly entries: Hex;
+  readonly granted: readonly GrantEntry[];
   readonly signatures: readonly SeatSignature[];
 }
 
 /** The list of readers a change names, as a signer's wallet hands it to the service. */
-export const readersHandedInFor = (change: GrantsChange, signatures: readonly SeatSignature[]): ReadersHandedIn =>
-  ({ sequence: change.sequence, readers: readersNamedIn(change.entries), entries: entriesDigestOf(change.entries), signatures: [...signatures] });
+export const readersHandedInFor = (change: GrantsChange, signatures: readonly SeatSignature[]): ReadersHandedIn => ({
+  sequence: change.sequence, readers: readersNamedIn(change.entries), entries: entriesDigestOf(change.entries),
+  granted: entriesInOrder(change.entries), signatures: [...signatures],
+});
+
+/**
+ * The kinds of company record each purpose is read through. A reader's device needs the grants (its own wraps) and
+ * the roster (the seats it judges every version by) whatever its grant names, so every reader fetches those two.
+ */
+const KINDS_OF_PURPOSE: Readonly<Record<Purpose, readonly CompanyRecordKind[]>> = Object.freeze({
+  roster: ['roster'], policy: ['policy', 'spending-policy'], payroll: ['run'], people: ['person'], inbox: [],
+  proposals: ['proposal'], vaults: ['vault-info'], 'one-offs': ['transfer'], vendors: ['vendor'], 'company-service': ['policy'],
+});
+
+/** The kinds of company record a reader whose entry names these purposes may fetch from the service, in order, each once. */
+export const kindsAReaderFetches = (purposes: readonly Purpose[]): readonly CompanyRecordKind[] =>
+  [...new Set<CompanyRecordKind>(['grants', 'roster', ...purposes.flatMap((p) => KINDS_OF_PURPOSE[p] ?? [])])].sort();
 
 /** Why a version of the grants record is not believed, each in words that say what puts it right. */
 export const GRANTS_REFUSAL = {
@@ -197,6 +217,21 @@ const signedByAnySeat = (seats: readonly DirectorySeat[], message: string, signa
   return typeof n === 'string' ? 0 : n;
 };
 
+/**
+ * How many distinct wallets a change of the grants is counted as signed by: seats `held` now, and, when the change only
+ * narrows what is in force (`narrows`, from `narrowsOnly`), any seat of the directory that signed it, retired since or
+ * not. Every device's fold and the service's list of readers count with this one rule. A string when a signature does
+ * not verify or one key signed twice, so nothing is counted.
+ */
+export const grantsChangeCounted = (
+  seats: readonly DirectorySeat[], message: string, signatures: readonly SeatSignature[],
+  held: (seat: DirectorySeat) => boolean, narrows: boolean,
+): number | string => {
+  const counted = quorumOf(seats, message, signatures, held);
+  if (typeof counted === 'string' || !narrows) return counted;
+  return Math.max(counted, signedByAnySeat(seats, message, signatures));
+};
+
 /** Whether `after` takes away anything `before` gave: an entry gone, or a purpose an entry no longer reads. */
 export const takesAway = (before: readonly GrantEntry[], after: readonly GrantEntry[]): boolean =>
   before.some((b) => {
@@ -212,15 +247,21 @@ export const purposeWrapsFor = (
 
 interface GrantsLabel { readonly record: 'grants'; readonly company: string; readonly version: number }
 
-/** One version of the grants record, sealed under a key of its own wrapped to every seat in `seats` and every entry's recipient. */
+/**
+ * One version of the grants record, sealed under a key of its own wrapped to every seat in `seats`, every entry's
+ * recipient, and every recipient in `told`: the readers the change takes away, sealed the version with no key of
+ * theirs so their own wallets can see it in force and tell them.
+ */
 export const sealGrants = (input: {
   readonly company: string; readonly version: number; readonly keyEpoch: number; readonly grants: Grants; readonly seats: readonly PoolSigner[];
+  readonly told?: readonly GrantEntry[];
 }): SealedCompanyRecord => {
   const key = newSymmetricKey();
   const label: GrantsLabel = { record: 'grants', company: input.company, version: input.version };
-  /* A recipient is sealed a version only where it carries that recipient's keys: never one still waiting for the bar. */
-  const readers = input.grants.entries.filter((e) => input.grants.wraps[readerIdOf(e.recipient)] !== undefined)
-    .map((e) => ({ id: readerIdOf(e.recipient), wrappingPublicKey: e.recipient }));
+  /* A recipient is sealed a version only where it carries that recipient's keys, or where it takes that recipient away. */
+  const keyed = input.grants.entries.filter((e) => input.grants.wraps[readerIdOf(e.recipient)] !== undefined);
+  const told = (input.told ?? []).filter((t) => !input.grants.entries.some((e) => e.recipient === t.recipient));
+  const readers = [...keyed, ...told].map((e) => ({ id: readerIdOf(e.recipient), wrappingPublicKey: e.recipient }));
   return {
     company: input.company, kind: GRANTS_RECORD.kind, id: GRANTS_RECORD.id, version: input.version, keyEpoch: input.keyEpoch,
     sealed: seal(paddedToABucket(canonical({ ...input.grants, $label: label })), key),
@@ -256,11 +297,7 @@ export interface GrantsInForce {
 }
 
 /** Who counts toward the bar: the seats the directory believes, the test of a seat the chain holds, and the seat bar. */
-export interface GrantsCount {
-  readonly seats: readonly DirectorySeat[];
-  readonly held: (seat: DirectorySeat) => boolean;
-  readonly bar: number;
-}
+export type GrantsCount = SignedCount;
 
 /**
  * Who counts toward the bar now, and the newest key epoch the directory believes, which no version may name a higher
@@ -279,7 +316,7 @@ export interface GrantsQuorum extends GrantsCount {
  * no higher than the newest the directory believes and no lower than the version in force, wraps exactly its entries,
  * is signed at the bar (as the records anchored it, for a version they anchor), and is the change in force wrapped again
  * or the next change. A change that only narrows the grants (`narrowsOnly`) counts its signers' seats that have left
- * since (`signedByAnySeat`), so removing a signer of a taking-away never brings back the reader it took away. One still below the bar wraps keys
+ * since (`grantsChangeCounted`), as the service counts its list of readers, so removing a signer of a taking-away never brings back the reader it took away. One still below the bar wraps keys
  * only to entries already in force, unchanged.
  * The first version this device opens may be any change: a reader opens only the versions sealed to it. A version that
  * takes away an entry or a purpose names the key epoch it was filed at (`revokedAt`): until the company's key changes
@@ -288,39 +325,20 @@ export interface GrantsQuorum extends GrantsCount {
 export const grantsInForceOf = (
   company: string, versions: readonly { readonly version: number; readonly keyEpoch: number; readonly grants: Grants | null }[], quorum: GrantsQuorum,
 ): GrantsInForce => {
-  let inForce: GrantsVersion | null = null;
-  let waiting: GrantsVersion | null = null;
   let revokedAt: number | null = null;
-  const refused = new Map<number, GrantsRefusal>();
-  for (const v of [...versions].sort((a, b) => a.version - b.version)) {
-    const g = v.grants;
-    if (g === null) { refused.set(v.version, 'not-opened'); continue; }
-    const shape = grantsChangeRefusal(g) ?? (!Number.isSafeInteger(v.keyEpoch) || v.keyEpoch < 0 ? 'not-grants'
-      : v.keyEpoch > quorum.newest ? 'epoch-not-reached' : null);
-    if (shape !== null) { refused.set(v.version, shape); continue; }
-    const prior = inForce;
-    const again = prior !== null && g.sequence === prior.grants.sequence;
-    if (prior !== null && (again ? canonical(g.entries) !== canonical(prior.grants.entries) || v.keyEpoch < prior.keyEpoch
-      : g.sequence !== prior.grants.sequence + 1 || v.keyEpoch < prior.keyEpoch)) {
-      refused.set(v.version, 'not-the-next-change');
-      continue;
-    }
-    const count = quorum.asAnchored?.(v.version) ?? quorum;
-    const message = grantsMessage(company, g);
-    const counted = quorumOf(count.seats, message, g.signatures, count.held);
-    if (typeof counted === 'string') { refused.set(v.version, 'not-signed'); continue; }
-    const n = prior !== null && !again && narrowsOnly(prior.grants.entries, g.entries)
-      ? Math.max(counted, signedByAnySeat(count.seats, message, g.signatures)) : counted;
-    const unwrapped = wrapsRefusal(g, v.keyEpoch, n >= count.bar ? g.entries : carriedFrom(prior?.grants.entries ?? [], g.entries));
-    if (unwrapped !== null) { refused.set(v.version, unwrapped); continue; }
-    if (n < count.bar) {
-      refused.set(v.version, 'below-quorum');
-      if (!again) waiting = { version: v.version, keyEpoch: v.keyEpoch, grants: g };
-      continue;
-    }
-    if (prior !== null && !again && takesAway(prior.grants.entries, g.entries)) revokedAt = v.keyEpoch;
-    inForce = { version: v.version, keyEpoch: v.keyEpoch, grants: g };
-    if (waiting !== null && waiting.grants.sequence <= g.sequence) waiting = null;
-  }
-  return { inForce, waiting, revokedAt, refused };
+  type Filed = { readonly version: number; readonly keyEpoch: number; readonly change: Grants | null };
+  const judged = signedChangesInForce<Filed, Grants, GrantsRefusal>(versions.map((v) => ({ version: v.version, keyEpoch: v.keyEpoch, change: v.grants })), quorum, {
+    shape: (v, g) => grantsChangeRefusal(g) ?? (!Number.isSafeInteger(v.keyEpoch) || v.keyEpoch < 0 ? 'not-grants'
+      : v.keyEpoch > quorum.newest ? 'epoch-not-reached' : null),
+    follows: (v, g, prior, again) => (again ? canonical(g.entries) === canonical(prior.change.entries) : g.sequence === prior.change.sequence + 1)
+      && v.keyEpoch >= prior.v.keyEpoch,
+    counted: (count, _v, g, prior, again) => grantsChangeCounted(count.seats, grantsMessage(company, g), g.signatures, count.held,
+      prior !== null && !again && narrowsOnly(prior.change.entries, g.entries)),
+    afterCount: (count, v, g, n, prior) => wrapsRefusal(g, v.keyEpoch, n >= count.bar ? g.entries : carriedFrom(prior?.change.entries ?? [], g.entries)),
+    cameIntoForce: (v, g, prior, again) => {
+      if (prior !== null && !again && takesAway(prior.change.entries, g.entries)) revokedAt = v.keyEpoch;
+    },
+  });
+  const asVersion = (f: (Filed & { readonly change: Grants }) | null): GrantsVersion | null => (f === null ? null : { version: f.version, keyEpoch: f.keyEpoch, grants: f.change });
+  return { inForce: asVersion(judged.inForce), waiting: asVersion(judged.waiting), revokedAt, refused: judged.refused };
 };

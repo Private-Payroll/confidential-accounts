@@ -9,7 +9,7 @@ import type { Ledger, LedgerStatus } from './ledger.js';
 import { AccountService, openAccount, sealAccount, approvalMessage } from './account.js';
 import { sign, newSigningKeypair, newWrappingKeypair, type Hex } from './crypto.js';
 import type { Account } from './types.js';
-import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
+import { personOf, provenBy } from '../testing/a-seat-request-proved.js';
 
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
 import { anInvitee, theInviteeTakesTheSeat } from '../testing/an-invitee.js';
@@ -18,12 +18,6 @@ function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
   return value;
 }
-/** What the invited person's device sends beside its keys: the proof its link let it make. */
-const provenBy = (
-  viewingKey: string, invite: { accountId: string; name?: string; role?: string },
-  signingPublicKey: string, wrappingPublicKey: string, leafCommitment: string,
-) => proveSeatKeys(newSeatInvitation(viewingKey, invite.accountId, invite.name!, invite.role!),
-  { signingPublicKey, wrappingPublicKey, leafCommitment });
 
 
 /**
@@ -796,8 +790,8 @@ describe('the record is written before the chain call, so a lost round is never 
     const invite = accounts.inviteSigner(account.id, 'Dara', 'dara@acme.co', 'approver');
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const pending = accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, dara.leaf,
-      provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, dara.leaf));
+      invite.token, personOf(invite), sk.publicKey, wk.publicKey, dara.leaf,
+      ...provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, dara.leaf));
     expect(pending.status).toBe('pending');
 
     const real = await accounts.proposeSigner(

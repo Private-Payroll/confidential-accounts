@@ -4,7 +4,7 @@ import { usableOrigin } from './origin.js';
 import { readAccountAddress, readCompanyLabel } from './company-label.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
 import type {
-  CommitteeKeyOnTheWire, CommitteeOnTheWire, CommitteeRequest, SuperAdminChangeOnTheWire,
+  CommitteeKeyOnTheWire, CommitteeOnTheWire, CommitteeRequest, SuperAdminChangeOnTheWire, SuperAdminRequestAsk,
 } from './request.js';
 
 /**
@@ -35,6 +35,7 @@ import type {
 
 export const COMMITTEE_SIGNATURES_SCHEMA = 'midnight-identity/committee-signatures/v1';
 export const COMMITTEE_JOIN_SCHEMA = 'midnight-identity/committee-join/v1';
+export const COMMITTEE_REQUEST_SCHEMA = 'midnight-identity/committee-request/v1';
 
 type Key = { readonly tag: string; readonly value: string };
 
@@ -431,6 +432,91 @@ export function committeeJoinFor(
     signer: shown.mine,
     signature: signature.value.toLowerCase(),
   });
+}
+
+/**
+ * **THE BYTES OF A SUPER ADMIN'S REQUEST TO THE COMPANY'S SERVICE**: the company as the service records it, the
+ * person signed in there and the account on the chain whose label the wallet checked, under their own domain, as
+ * sorted JSON. The wallet signs them with its key for the company,
+ * and the service checks that signature with `joinedBy` before it lets the request in.
+ */
+export const SUPER_ADMIN_REQUEST_DOMAIN = 'confidential-accounts/super-admin-request/v1';
+export const superAdminRequestBytes = (company: string, userId: string, account: string): Uint8Array =>
+  new TextEncoder().encode(JSON.stringify({ account: account.toLowerCase(), company, domain: SUPER_ADMIN_REQUEST_DOMAIN, user: userId }));
+
+/** A wallet's signature on a super admin's request: the key it holds for the company, and its signature over the request's bytes. */
+export interface CommitteeRequestSignature {
+  readonly schema: typeof COMMITTEE_REQUEST_SCHEMA;
+  readonly origin: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly nonce: string;
+  readonly at: number;
+  readonly signer: CommitteeKeyOnTheWire;
+  readonly signature: string;
+}
+
+/**
+ * **THE REQUEST PRESS.** Signs `superAdminRequestBytes(record, user, account)` with this wallet's key for the company. The
+ * screen calls it only once the account on the chain carries the company's label. It signs no contract's update, so
+ * nothing on the chain can change by it; the service still checks the key against the committee the chain holds.
+ */
+/** A ledger that signs with a company's committee signing key: the wallet's own. */
+interface SignsWithTheCommitteeKey {
+  signData(signingKey: ReturnType<typeof committeeSigningKeyFor>, data: Uint8Array): { tag: string; value: string };
+}
+
+export function committeeRequestFor(L: SignsWithTheCommitteeKey, identity: Identity, request: SuperAdminRequestAsk, at: number): CommitteeRequestSignature {
+  if (!usableOrigin(request.requester.origin)) {
+    throw new CommitteeSignError('this wallet could not tell who asked, so nothing has been signed.');
+  }
+  const signature = L.signData(committeeSigningKeyFor(identity, request.company), superAdminRequestBytes(request.record, request.user, request.account));
+  return Object.freeze({
+    schema: COMMITTEE_REQUEST_SCHEMA,
+    origin: request.requester.origin,
+    company: request.company,
+    account: request.account,
+    nonce: request.nonce,
+    at,
+    signer: wireKey({ tag: 'schnorr', value: String(committeeKeyFor(identity, request.company).value) }),
+    signature: signature.value.toLowerCase(),
+  });
+}
+
+/** A key's own signature as a page reads it from the wallet's answer, or why the answer is refused. */
+export type KeySignatureRead =
+  | { readonly ok: true; readonly signer: CommitteeKeyOnTheWire; readonly signature: string }
+  | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-change'; readonly says: string };
+
+/**
+ * **A PAGE READS A JOINING KEY'S OR A REQUEST'S SIGNATURE**: the answer of the kind asked, for this page, this ask
+ * and this company, with a key and a signature in the shapes a ledger checks. Whether the signature verifies is
+ * checked where it is used: by the chain's committee and the service.
+ */
+export function readKeySignature(
+  message: unknown,
+  expecting: {
+    readonly schema: typeof COMMITTEE_JOIN_SCHEMA | typeof COMMITTEE_REQUEST_SCHEMA;
+    readonly atOrigin: string; readonly expectingNonce: string; readonly company: CompanyLabel; readonly account: AccountAddress;
+  },
+): KeySignatureRead {
+  const body = message as Partial<CommitteeRequestSignature> | null;
+  if (typeof body !== 'object' || body === null || body.schema !== expecting.schema) {
+    return { ok: false, code: 'not-an-answer', says: 'that is not a key\'s signature this page asked for.' };
+  }
+  if (body.origin !== expecting.atOrigin) {
+    return { ok: false, code: 'origin-mismatch', says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.` };
+  }
+  if (body.nonce !== expecting.expectingNonce) return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
+  if (readCompanyLabel(body.company) !== expecting.company || readAccountAddress(body.account) !== expecting.account) {
+    return { ok: false, code: 'other-change', says: 'this is signed for a different company from the one asked about. It is refused.' };
+  }
+  const signer = body.signer;
+  if (typeof signer !== 'object' || signer === null || signer.tag !== 'schnorr' || !HEX64.test(String(signer.value).toLowerCase())
+    || typeof body.signature !== 'string' || !HEX128.test(body.signature.toLowerCase()) || typeof body.at !== 'number') {
+    return { ok: false, code: 'not-an-answer', says: 'this answer does not carry a key and its signature.' };
+  }
+  return { ok: true, signer: wireKey(signer), signature: body.signature.toLowerCase() };
 }
 
 export type CommitteeSignaturesRead =

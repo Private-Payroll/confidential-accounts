@@ -24,6 +24,8 @@ import { seatInvitedAction } from './seat-invited.js';
 import { inviteAction } from './invite.js';
 import { approveProposalAction } from './approve-proposal.js';
 import { changeThresholdAction } from './change-threshold.js';
+import { retireVaultAction } from './retire-vault.js';
+import { setPolicyAction } from './set-policy.js';
 import { removeSignerAction } from './remove-signer.js';
 import type { RemoveSignerReach } from './remove-signer.js';
 import { rotationDoorsIn } from './upkeep.js';
@@ -35,10 +37,18 @@ import { admitPersonAction } from './admit-person.js';
 import { changePersonAction } from './change-person.js';
 import { chooseCompanyServiceAction } from './choose-company-service.js';
 import { grantReadAction } from './grant-read.js';
-import { changeRoleAction } from './change-role.js';
+import { setRecoveryWindowAction } from './set-recovery-window.js';
+import { readerKeysAction } from './reader-keys.js';
+import { changeRoleAction, dropRoleChangeAction } from './change-role.js';
+import { repairCompanyKeyAction } from './repair-company-key.js';
 import { raiseRunAction } from './raise-run.js';
 import { payRunAction } from './pay-run.js';
 import { withdrawProposalAction } from './withdraw-proposal.js';
+import { withdrawWaitingSignerAction } from './withdraw-waiting-signer.js';
+import { reissueInvitationAction } from './reissue-invitation.js';
+import { takeReissueAction } from './take-reissue.js';
+import { addSignerByCodeAction } from './add-signer-by-code.js';
+import { raiseWaitingSignerAction } from './raise-waiting-signer.js';
 import { ownWalletFrom, recoveryAction, type RecoveryReach } from './recovery.js';
 import { landedOnTheChain } from '../chain/pending.js';
 import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here.js';
@@ -148,6 +158,9 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
     recovery: RECOVERY,
   }),
   'change-threshold': changeThresholdAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
+  'retire-vault': retireVaultAction(VAULTS),
+  'set-spending-policy': setPolicyAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }, 'set-spending-policy'),
+  'set-policy-bar': setPolicyAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }, 'set-policy-bar'),
   'remove-signer': removeSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause, ...afterARemoval(VAULTS) }),
   'rotate-vault-secrets': rotateVaultSecretsAction(VAULTS),
   'raise-run': raiseRunAction(VAULTS),
@@ -165,7 +178,16 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
   }),
   'choose-company-service': chooseCompanyServiceAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
   'grant-read': grantReadAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
+  'set-recovery-window': setRecoveryWindowAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
+  'reader-keys': readerKeysAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
   'change-role': changeRoleAction({ ...INVITING, ...afterARemoval(VAULTS) }),
+  'drop-role-change': dropRoleChangeAction(),
+  'repair-company-key': repairCompanyKeyAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
+  'withdraw-waiting-signer': withdrawWaitingSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
+  'reissue-invitation': reissueInvitationAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
+  'take-reissue': takeReissueAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
+  'add-signer-by-code': addSignerByCodeAction({ chain: VAULTS.chain, builder: VAULTS.builder, commitments: INVITING.commitments }),
+  'raise-waiting-signer': raiseWaitingSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause, commitments: INVITING.commitments }),
 });
 
 /** The definition of the action with this name, or `null` when this wallet runs none by that name. */

@@ -915,11 +915,14 @@ export class AccountService {
      */
     leafCommitment: Hex,
     /**
-     * The invitee's proof that the keys above are theirs. This service cannot
-     * check it and does not try: it is sealed into the inbox with the keys, and
-     * every signer's device checks it before giving this person access.
+     * The invitee's proof that the keys above are theirs, made for `userId`
+     * and for the invitation `invited` names. This service cannot check it and
+     * does not try: it is sealed into the inbox with the keys, the sign-in and
+     * the invitation, and every signer's device checks it before giving this
+     * person access. `invited` is who the seat is for, as the seat that
+     * invited signed it, sealed with the request; absent is refused there.
      */
-    seatProof?: { nonce: Hex; proof: Hex },
+    seatProof?: { nonce: Hex; proof: Hex }, invited?: SignedSeatInvitation,
   ): Signer {
     const invite = this.store.getInvite(token);
     if (!invite) throw new Error('invite not found');
@@ -968,10 +971,9 @@ export class AccountService {
     const payload: PendingSignerPayload = {
       name: invite.name ?? '(unnamed)',
       role: invite.role ?? 'approver',
-      signingPublicKey,
-      wrappingPublicKey,
-      leafCommitment,
+      signingPublicKey, wrappingPublicKey, leafCommitment,
       ...(seatProof === undefined ? {} : { seatProof: { nonce: seatProof.nonce, proof: seatProof.proof } }),
+      ...(userId === null ? {} : { person: userId }), ...(invited === undefined ? {} : { invited }),
     };
     const pending: PendingSigner = {
       id: 'sgn_' + nanoid(10),

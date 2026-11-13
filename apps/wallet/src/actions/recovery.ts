@@ -28,10 +28,10 @@ import type { RoundOnChain, SignerMaterial } from '../../../../packages/web-shar
 import { standingNow, type ProposalFile } from '../../../../packages/web-shared/src/governance-from-the-chain.js';
 import { anchorsOnChainAt } from '../../../../packages/web-shared/src/records-anchored-here.js';
 import {
-  approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, recoveryFileOf, recoveryPartsOf, RecoveryNotCarriedOut, type RecoveryDoors,
+  approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, recoveryFileOf, recoveryPartsOf, RecoveryNotCarriedOut, RecoveryWindowNotRead, type RecoveryDoors,
   type RecoveryParts,
 } from '../../../../packages/web-shared/src/records-recovered-here.js';
-import type { CheckedHeadsStore, HeadersKeptStore } from '../../../../packages/web-shared/src/tree-kept-here.js';
+import type { CheckedHeadsStore, HeadersKeptStore, RecoveryWindowsKeptStore } from '../../../../packages/web-shared/src/tree-kept-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import {
   FeeRefused, sentFromTheOwnWallet, type Handed, type OwnWalletDoors,
@@ -49,7 +49,7 @@ import { signerMaterialOf } from '../../../../packages/web-shared/src/private-st
 export interface RecoveryReach {
   readonly chain: () => CompanyChain;
   readonly builder: () => VaultBuilderClient;
-  readonly kept: () => { readonly checked: CheckedHeadsStore; readonly headers: HeadersKeptStore };
+  readonly kept: () => { readonly checked: CheckedHeadsStore; readonly headers: HeadersKeptStore; readonly windows: RecoveryWindowsKeptStore };
   readonly ownWallet: (identity: Identity, account: number) => OwnWalletDoors;
   readonly now: () => number;
   readonly pause: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -136,7 +136,7 @@ function doorsFor(ctx: StepContext, r: ChainOnlyReach, reach: RecoveryReach, cir
   return {
     accountId: r.accountId, account: r.account, material: r.material, indexer: r.chain.indexer, builder: r.builder,
     onChain: () => anchorsOnChainAt(r.builder, r.account, r.chain.indexer),
-    checked: kept.checked, headers: kept.headers,
+    checked: kept.checked, headers: kept.headers, window: () => kept.windows.read(r.accountId),
     send: {
       ownWallet: {
         send: async (tx: string) => {
@@ -165,6 +165,7 @@ const refusedAs = (e: unknown, handed: Handed, notDone: string): never => {
   const code = codeOfError(e);
   if (handed.noDust === true) throw new StepRefused(why('no-dust'), code);
   if (e instanceof RecoveryNotCarriedOut) throw new StepRefused(why('still-open', { says: said(e) }), code);
+  if (e instanceof RecoveryWindowNotRead) throw new StepRefused(why('window-unread', { says: said(e) }), code);
   throw new StepRefused(why(handed.over && !(e instanceof FeeRefused) ? 'may-be-sent' : notDone, { says: said(e) }), code);
 };
 

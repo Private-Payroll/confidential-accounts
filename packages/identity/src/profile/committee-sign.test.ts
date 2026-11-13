@@ -98,7 +98,7 @@ const joinWire = (over: Record<string, unknown> = {}) => ({
 
 const parsed = (w: Record<string, unknown>): CommitteeRequest => {
   const p = parseAsk(w, ORIGIN, NOW);
-  if (p.kind !== 'committee') throw new Error('not a committee change');
+  if (p.kind !== 'committee' || p.press === 'request') throw new Error('not a committee change');
   return p;
 };
 const ask = (over: Record<string, unknown> = {}) => parsed(wire(over)) as HandOverRequest;

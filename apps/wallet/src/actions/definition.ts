@@ -1,6 +1,7 @@
 import type { Identity, Secret } from 'midnight-identity/keys/derivation';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { RelayLabel, StepAt } from 'midnight-identity/profile/channel';
+import type { ReadKeysReleased } from 'midnight-identity/profile/read-keys-release';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { HeldKeyring } from '../keyring/held-keyring.js';
 
@@ -151,8 +152,15 @@ export interface StepContext {
   /** Adds to what the action's end tells the page: only the parts the action's entry lists, all of them public. */
   tell(outcome: Readonly<Record<string, string | number>>): void;
   /**
-   * Words the wallet's own window shows when the action ends done, such as a fingerprint the person reads out. They
-   * stay in the wallet: nothing of them is sent to the page. A later call replaces an earlier one.
+   * Hands the page, at the end of an action that ends done, the read keys a reader's grant in force wraps to it, for
+   * the action's one company. Only the `reader-keys` action's end carries them; the page refuses them on any other.
+   * A later call replaces an earlier one.
+   */
+  releaseReadKeys(keys: ReadKeysReleased): void;
+  /**
+   * Words the wallet's own window shows when the action ends done, such as a fingerprint the person reads out or an
+   * invitation's link to send. They stay in the wallet: nothing of them is sent to the page. Each call adds its words
+   * after those of the calls before it.
    */
   show(words: Words): void;
   /**

@@ -9,8 +9,9 @@
  * invitation's proposal names this address, these rights and the threshold the seat sets (the signed invitation's,
  * or 0, which keeps the threshold in force), and is approved at the seat bar; a threshold above the seats the account
  * holds once this one is taken is refused here before anything is proved. It then asks to be
- * admitted with its seat's public halves sealed to the company's inbox key, and keeps the seat again under the id the
- * company gave the request. When the service has already taken the request or fails, it ends waiting for admission:
+ * admitted with its seat's public halves sealed to the company's inbox key, with a proof made with the offer's secret
+ * over those halves, the sign-in the page names and the invitation's id (`proveSeatKeys`). With no sign-in named it
+ * takes no seat and asks nothing. It keeps the seat again under the id the company gave the request. When the service has already taken the request or fails, it ends waiting for admission:
  * the seat is kept with what asking again needs, and the next act on the company keeps it under the id the company's
  * roster gives it. The coin key and the seat's secrets never leave this wallet. */
 import { x25519 } from '@noble/curves/ed25519.js';
@@ -66,7 +67,7 @@ interface Opened {
   readonly inviter: unknown;
   readonly label: string;
   readonly account: string;
-  readonly invitation: string;
+  readonly invitation: Hex;
   readonly acceptance: Hex;
 }
 
@@ -294,6 +295,8 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
         {
           title: { key: 'act.seat-invited.step.seat' },
           run: async (ctx) => {
+            /* The request to be admitted names the sign-in, so with none named no seat is taken that could never be admitted. */
+            if (ctx.person === null || ctx.person === '') return refuse('no-sign-in');
             const o = await open(ctx);
             const at = heldAt(ctx.held.identity, reach.network, o.offer.byAddress.address);
             if (at === null || at.kind !== 'shielded') return refuse('not-held');
@@ -382,10 +385,14 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
             const signingPublicKey = signingPublicKeyOf(s.signingSecret).toLowerCase() as Hex;
             const wrappingPublicKey = toHex(x25519.getPublicKey(Uint8Array.from(s.wrappingSecret.match(/../gu)!.map((x) => Number.parseInt(x, 16))))) as Hex;
             const published = { signingPublicKey, wrappingPublicKey, leafCommitment: s.leaf };
+            /* The proof names the sign-in the request is for, so with none named no request is made that every device would refuse. */
+            const person = ctx.person;
+            if (person === null || person === '') return refuse('no-sign-in-after');
             const waiting: PendingSignerPayload = {
-              name: o.offer.name, role: o.offer.role, ...published, opening: s.opening, person: ctx.person ?? undefined, invited: o.offer.invited,
-              seatProof: proveSeatKeys({ accountId: company, nonce: o.offer.seat.nonce, secret: o.offer.seat.secret }, published),
-            } as PendingSignerPayload;
+              name: o.offer.name, role: o.offer.role, ...published, opening: s.opening, person, invited: o.offer.invited,
+              seatProof: proveSeatKeys({ accountId: company, nonce: o.offer.seat.nonce, secret: o.offer.seat.secret }, published,
+                { person, invitationId: o.invitation }),
+            };
             /* Asked again after an answer that never came back, the service gives back the id it gave the first time. */
             const asked = await ctx.call('POST', `/api/invites/${o.invitation}/accept-signer`,
               JSON.stringify({ acceptance: o.acceptance, waiting: sealToInbox(waiting, o.inbox), leaf: s.leaf }));

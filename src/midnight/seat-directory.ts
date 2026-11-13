@@ -88,13 +88,13 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import { canonical, sign, verify, type Hex, type Sealed } from '../core/crypto.js';
 import { exactly, HEX128, HEX64, HEX_OR_EMPTY, rotateShaped } from './directory-change-shape.js';
 import { openSeatProof, sealSeatProof, walletKeyProvedBy, type LeafOf, type SeatOpening, type SeatProof } from '../core/seat-opening.js';
-import { isReaderRole, isRole, mayFile, mayInvite, type FiledKind, type Role } from '../core/roles.js';
+import { isReaderRole, isRole, mayInvite, type Role } from '../core/roles.js';
 import { countedRightsOf, invitedSeatRightsOf, NO_VAULT_COUNTED, seatScopeRefusal, vaultsOfferedRefusal } from '../core/seat-rights.js';
 import type { SeatRights } from '../core/vault-approvers.js';
 import { approvedInvitationOf, approvedInvitationRefusal, seatInvitationMessage, seatInvitationRefusal, type SignedSeatInvitation } from '../core/invitation.js';
 import type { CompanyRecordKind, WireRecord } from './sealed-record-wire.js';
 import { sealedSeedShaped, type SeatWrap } from '../core/company-key.js';
-import { notOnTheChainNow, signerSeatOf } from './seat-held-now.js';
+import { signerSeatOf } from './seat-held-now.js';
 import { barReadable, quorumOf as quorumOver, signaturesRefusal as signaturesOver } from './seat-quorum.js';
 
 /* ------------------------------------------------------------------ kinds */
@@ -353,7 +353,7 @@ export const DIRECTORY_REFUSAL = {
   'key-taken': 'that filing, records or committee key is already an entry\'s this device believes, and a key belongs to one entry.',
   'person-has-a-seat': 'this device already believes an entry by that person in this company\'s directory.',
   'not-invited': 'that entry carries no invitation a seat of this company signed for it, so it is not believed. A seated signer invites the person again, and their device files its entry again.',
-  'reader-not-seated': 'the invitation that entry carries offers a reader role, which holds no seat on the company\'s account, so it is not believed. Giving read access is not on a screen yet.',
+  'reader-not-seated': 'the invitation that entry carries offers a reader role, which holds no seat on the company\'s account, so it is not believed. Read access is given on the Roles tab in Settings.',
   'rights-not-the-roles': 'the seat that entry names was seated with other rights than its invitation\'s role gives on the vaults it names, so it is not believed. A seated signer invites the person again, at the rights of their role.',
   'role-not-known': 'the invitation that entry carries names a role no seat of a company can hold, so it is not believed. A seated signer invites the person again at one of the roles a seat can hold.',
   'invited-someone-else': 'the invitation that entry carries is for another person than the one the entry names, so it is not believed.',
@@ -1070,41 +1070,7 @@ export const directoryReplayed = (
   return { dir, refused, replay: { filings, applied, passed, changed }, ...(kept === undefined ? {} : { kept }) };
 };
 
-/** Why a device does not believe a filing signed by `publicKey`, or null when it does. */
-export type FilingRefusal = 'no-entry' | 'no-account' | 'seat-not-seated' | 'role-may-not-file' | 'past-its-boundary';
-
-export const FILING_REFUSAL: Readonly<Record<FilingRefusal, string>> = Object.freeze({
-  'no-entry': 'it is signed by a key that has no entry in the company\'s directory that this device believes',
-  'no-account': 'it is signed by a seat of a company whose account on the chain could not be read, so whether the account holds that seat is not known',
-  'seat-not-seated': 'it is signed by a seat the company\'s account no longer holds, and no retirement names it',
-  'role-may-not-file': 'it is signed by a seat whose role may not file this kind of record',
-  'past-its-boundary': 'it is signed by a retired seat, and is later than the last version that seat filed before it left',
-});
-
-/** A retired seat's version is believed only up to the last it filed of that record before it left. */
-const withinItsBoundary = (seat: DirectorySeat, recordKey: string, version: number): boolean => {
-  const last = seat.retired?.[recordKey];
-  return last !== undefined && version <= last;
-};
-
-/**
- * **WHETHER A MEMBER'S DEVICE BELIEVES A FILING**: a version signed by
- * `publicKey` of the record counted under `recordKey`, of kind `kind`, at
- * `version`. The seat's role must file that kind (`mayFile`). `chain` is what
- * this device's own wallet read off the chain for this read: a seat not
- * retired is believed only while its seat is seated - its wallet key was
- * proved for that seat by its entry's opening when the entry was believed; a
- * retired seat only within its boundary.
- */
-export const filingRefusalOf = (
-  dir: Directory, chain: AccountSeats, publicKey: Hex, kind: FiledKind, recordKey: string, version: number,
-): FilingRefusal | null => {
-  const seat = dir.seats.find((x) => x.signingKey === publicKey.toLowerCase());
-  if (seat === undefined) return 'no-entry';
-  if (!mayFile(seat).includes(kind)) return 'role-may-not-file';
-  if (seat.retired !== null) return withinItsBoundary(seat, recordKey, version) ? null : 'past-its-boundary';
-  return notOnTheChainNow(seat, chain);
-};
+export { FILING_REFUSAL, filingRefusalOf, mayFileTheRecord, type FilingRefusal } from './filing-refusal.js';
 
 /**
  * **THE SEATS WHOSE WRAPPING KEY IS NOT THE RECORDS KEY THEIR OWN WALLET

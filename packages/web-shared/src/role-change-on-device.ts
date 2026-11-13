@@ -39,7 +39,7 @@ const filesOf = (role: Role | null): string => mayFile({ role }).join();
 export const roleAskedRefusal = (role: unknown, now: Role | null | undefined): string | null => {
   if (isReaderRole(role)) {
     return 'limited and accountant people read the company\'s records and hold no seat, so a signer\'s seat is not changed into '
-      + 'one. To make this signer a reader, remove them first with Remove. Giving read access is not on a screen yet';
+      + 'one. To make this signer a reader, remove them first with Remove. Read access is given on the Roles tab in Settings';
   }
   if (!isSignerRole(role)) return 'the role asked for is not one a seat of a company can hold: choose admin, approver or initiator';
   if (now !== undefined && filesOf(now) === filesOf(role)) return `that seat already holds the role ${role}, so there is nothing to change`;
@@ -66,16 +66,14 @@ export const addressTieOf = (seatCoin: string | undefined, addressCoin: string):
  * Why the invitation that follows the removal of `leaf` may not be raised from these saved keys for the address whose
  * coin key is `coinPublicKey` at `role`, or null: it is held to what this wallet confirmed when it raised the removal,
  * so a page cannot send another person or another role at the second press. With nothing kept here, the signer who
- * raised the removal invites the person; with another address or role, the one confirmed is asked for again; with
- * another invitation link, the one confirmed is asked for, since an invitation under it may already be filed.
+ * raised the removal invites the person; with another address or role, the one confirmed is asked for again.
  */
 export const keptRoleChangeRefusal = (
-  k: Keyring, accountId: string, leaf: string, coinPublicKey: string, role: SignerRole, token: string,
-): 'not-started-here' | 'not-as-started' | 'another-link' | null => {
+  k: Keyring, accountId: string, leaf: string, coinPublicKey: string, role: SignerRole,
+): 'not-started-here' | 'not-as-started' | null => {
   const kept = k.roleChangesKept?.[roleChangeKeyOf(accountId, leaf)];
   if (kept === undefined) return 'not-started-here';
-  if (kept.coinPublicKey !== coinPublicKey.toLowerCase() || kept.role !== role) return 'not-as-started';
-  return kept.token === token.toLowerCase() ? null : 'another-link';
+  return kept.coinPublicKey !== coinPublicKey.toLowerCase() || kept.role !== role ? 'not-as-started' : null;
 };
 
 /** A field of a value read off the wire, or undefined where it is not an object. */

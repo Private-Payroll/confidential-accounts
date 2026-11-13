@@ -9,7 +9,8 @@
 import { seatBlinding, walletKeyProvedBy } from '../core/seat-opening.js';
 import { storedSignerLeaf } from '../core/signer-leaf.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
-import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
+import { aJoinersWallet, aWalletSecret } from '../testing/a-joiners-wallet.js';
 import type { Hex } from '../core/crypto.js';
 import { enteredHere } from '../testing/records-entered.js';
 import { describe, it, expect } from 'vitest';
@@ -20,6 +21,7 @@ import type { CompanyKeys } from '../core/company-key.js';
 import { CompanyKeyBeingChanged } from 'vaults-web-shared/company-key-here.js';
 import { answerDigestOf, answerOpenedWith, AnswerToAnOldInvitation } from '../core/answer-opened.js';
 import { SimulatedCommitments } from '../core/ledger.js';
+import { MidnightCommitments } from '../midnight/commitments.js';
 import { inboxPublicKey, openFromInbox, sealToInbox } from '../core/sealed-records.js';
 import { invitationSecret, refuseASeatKeyNotFromTheInvitee } from '../core/seat-invite-proof.js';
 import { openPerson } from '../core/person-record.js';
@@ -33,10 +35,11 @@ import {
   type InvitationFiling,
 } from '../core/invitation.js';
 import {
-  acceptAsPayeeHere, acceptAsSignerHere, addPayeeFromCodeHere, addSignerFromCodeHere, CodeNotTaken, inviteHere,
+  acceptAsPayeeHere, acceptAsSignerHere, inviteHere,
   InvitationNotMade, InvitationRefused, makeSignerCodeHere, openInvitationHere, SeatMayNotInvite, payeeHandoverOf,
   type InvitationSend, type InviteSpecs,
 } from 'vaults-web-shared/invitation-on-device.js';
+import { addPayeeFromCodeHere, addSignerFromCodeHere, CodeNotTaken } from 'vaults-web-shared/invitation-by-code.js';
 import { FingerprintsDiffer, refuseASeatWhoseFingerprintIsNotTheJoiners, seatRequestFingerprint } from 'vaults-web-shared/seat-request-fingerprint.js';
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { readJoinCode, signJoinCode, writeJoinCode, type JoinCode, type SignerParts } from 'midnight-identity/profile/join-code';
@@ -51,7 +54,14 @@ import { scopeOfRole } from '../core/seat-rights.js';
 const LEAVES = async (openings: readonly { publicKey: string; blinding: string; scope: string }[]) =>
   openings.map((o) => SimulatedCommitments.signerLeaf(o.publicKey as Hex, o.blinding as Hex, o.scope as Hex));
 /* The key Cleo's wallet gives for the company her invitation names: the key her seat's leaf commits to. */
-const CLEOS_KEY = { tag: 'schnorr', value: '4c'.repeat(32) };
+/** Cleo's wallet: its key for the company, and the address it signs for the seat it takes. */
+const CLEOS = aJoinersWallet(aWalletSecret(), 54, SimulatedCommitments);
+const CLEOS_KEY = CLEOS.walletKey;
+/** The account's own function making an address from a coin key and a salt, on the simulated ledger these devices use. */
+const INVITE_ADDRESS_OF = (c: Hex, salt: Hex) => SimulatedCommitments.inviteAddressOf(c, salt);
+/** The address the wallet of the person whose identity is `n` signs for a seat in the company `label`. */
+const SIGNS = (n: number, label: CompanyLabel = LABEL) =>
+  aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new Uint8Array(32).fill(n)), label).value as Hex, n, SimulatedCommitments).seatAddress;
 
 aCompanyOfTwoSeats();
 
@@ -294,7 +304,7 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
       try {
         await expect(acceptAsSignerHere(opened, SimulatedCommitments, {
           newKeys: newSeatKeys, seal: async (s) => { madeHere.push(s as PendingSeat); }, promote: async () => {},
-        }, sendAs('cleo'), 'cleo', async (company) => { asked.push(company); return CLEOS_KEY; }), what)
+        }, sendAs('cleo'), 'cleo', async (company) => { asked.push(company); return CLEOS_KEY; }, CLEOS.seatAddress), what)
           .rejects.toThrow(/names another company account or label than the company its seat request would be filed to/);
         expect([madeHere, asked], what).toEqual([[], []]);
       } finally {
@@ -307,7 +317,7 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     const askedFor: unknown[] = [];
     const seat = await acceptAsSignerHere(opened, SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async (s) => { kept.push(s as PendingSeat); }, promote: async () => {},
-    }, sendAs('cleo'), 'cleo', async (company) => { askedFor.push(company); return CLEOS_KEY; });
+    }, sendAs('cleo'), 'cleo', async (company) => { askedFor.push(company); return CLEOS_KEY; }, CLEOS.seatAddress);
     /* RED WHEN: the invitee's wallet is asked for its key for any company but the one the offer names. */
     expect(askedFor).toEqual([{ accountId: CO, label: LABEL, account: ADDRESS }]);
     /* RED WHEN: an invitee's leaf is made with a blinding that does not commit to the wallet key their wallet gave for the company. */
@@ -337,12 +347,12 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     const again = await inviteHere(ACME, ADA, 'signer', { name: 'Ada again', role: 'admin', person: 'ada' }, ORIGIN, fromAda);
     await expect(acceptAsSignerHere(await openInvitationHere(again.link, sendAs(null)), SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
-    }, sendAs('ada'), 'ada', async () => CLEOS_KEY)).rejects.toMatchObject({ refused: 'already-on-this-account' });
+    }, sendAs('ada'), 'ada', async () => CLEOS_KEY, CLEOS.seatAddress)).rejects.toMatchObject({ refused: 'already-on-this-account' });
     /* RED WHEN: a payee's invitation is accepted as a seat. */
     const payee = await inviteHere(ACME, ADA, 'employee', DANA, ORIGIN, fromAda);
     await expect(acceptAsSignerHere(await openInvitationHere(payee.link, sendAs(null)), SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
-    }, sendAs('zed'), 'zed', async () => CLEOS_KEY)).rejects.toThrow(/offers pay, not a seat/);
+    }, sendAs('zed'), 'zed', async () => CLEOS_KEY, CLEOS.seatAddress)).rejects.toThrow(/offers pay, not a seat/);
     /* RED WHEN: the service accepts a seat request against a payee's invitation. */
     expect((await sendAs('zed')(`/api/invites/${payee.id}/accept-signer`, { method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(tokenOfLink(payee.link)!), waiting: sealToInbox({}, ACME_INBOX) }) })).status).toBe(404);
   });
@@ -354,7 +364,7 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     /* RED WHEN: somebody holding Lou's link makes a seat, or asks their wallet for a key, under their own sign-in. */
     await expect(acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async (x) => { madeHere.push(x as PendingSeat); }, promote: async () => {},
-    }, sendAs('mallory'), 'mallory', async (company) => { asked.push(company); return CLEOS_KEY; })).rejects.toThrow(/for somebody else/);
+    }, sendAs('mallory'), 'mallory', async (company) => { asked.push(company); return CLEOS_KEY; }, CLEOS.seatAddress)).rejects.toThrow(/for somebody else/);
     expect([madeHere, asked]).toEqual([[], []]);
     expect(store.invitationById(made.id)!.acceptedAt).toBeUndefined();
   });
@@ -393,9 +403,9 @@ describe('AN INVITING SEAT OFFERS ONLY VAULTS WITHIN ITS OWN, ON EVERY PATH THAT
 
   it('BY A CODE: A SEAT NOT AT EVERY VAULT ADDS NOBODY FROM A CODE, AND IS SENT TO INVITE BY ADDRESS', async () => {
     const made = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: () => newSeatKeys(keyOf(61)), seal: async () => {} },
-      async (parts: SignerParts) => signJoinCode(identityFromSecret(new Uint8Array(32).fill(61)), LABEL, 'wyn', parts), keyOf(61));
+      async (parts: SignerParts) => signJoinCode(identityFromSecret(new Uint8Array(32).fill(61)), LABEL, 'wyn', parts), keyOf(61), SIGNS(61));
     /* RED WHEN: a seat on one vault adds a seat made for every vault from a code. */
-    await expect(addSignerFromCodeHere(ACME, onVaultOne, made.code, { name: 'Wyn', role: 'admin' }, fromAda, LEAVES)).rejects.toThrow(/by their address/u);
+    await expect(addSignerFromCodeHere(ACME, onVaultOne, made.code, { name: 'Wyn', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF)).rejects.toThrow(/by their address/u);
   });
 });
 
@@ -417,19 +427,22 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
     const viaLink = await inviteHere(ACME, ADA, 'signer', { name: 'Dee', role: 'admin', person: 'dee' }, ORIGIN, fromAda);
     const linked = await acceptAsSignerHere(await openInvitationHere(viaLink.link, sendAs(null)), SimulatedCommitments, {
       newKeys: () => keys, seal: async () => {}, promote: async () => {},
-    }, sendAs('dee'), 'dee', async () => keyOf(31));
+    }, sendAs('dee'), 'dee', async () => keyOf(31), SIGNS(31));
     /* By code: Fen's device makes the same keys into a code her wallet signs; Ada pastes it. */
     const sealedForCode: unknown[] = [];
-    const made = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: () => keys, seal: async (x) => { sealedForCode.push(x); } }, walletOf(31, 'fen'), keyOf(31));
+    const made = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: () => keys, seal: async (x) => { sealedForCode.push(x); } }, walletOf(31, 'fen'), keyOf(31), SIGNS(31));
     /* RED WHEN: the keys of a code are not made and kept on the joiner's own device. */
     expect(sealedForCode).toHaveLength(1);
     const listedBefore = store.listInvites(CO).length;
-    const added = await addSignerFromCodeHere(ACME, ADA, made.code, { name: 'Dee', role: 'admin' }, fromAda, LEAVES);
+    const added = await addSignerFromCodeHere(ACME, ADA, made.code, { name: 'Dee', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF);
     const a = opened(pendingOf(linked.signerId!));
     const b = opened(pendingOf(added.id));
     /* RED WHEN: a code and a link end in seat requests that differ in anything but the invitation each was proved and signed under and the sign-in it was sealed for. */
-    const { seatProof: proofA, person: personA, invited: invitedA, ...restA } = a;
-    const { seatProof: proofB, person: personB, invited: invitedB, ...restB } = b;
+    const { seatProof: proofA, person: personA, invited: invitedA, seatAddress: addressA, ...restA } = a;
+    const { seatProof: proofB, person: personB, invited: invitedB, seatAddress: addressB, ...restB } = b;
+    /* RED WHEN: a code or a link carries another address than the one the joiner's wallet signed for the seat. */
+    expect([addressA?.address, addressA?.salt]).toEqual([addressB?.address, addressB?.salt]);
+    expect(addressB?.address).toMatch(/^[0-9a-f]{64}$/u);
     /* RED WHEN: a code's invitation does not name the leaf the code carries and the person its wallet signed for, so another leaf could be seated under it. */
     expect(invitedB!.terms).toMatchObject({ company: CO, person: 'fen', name: 'Dee', role: 'admin', leaf: b.leafCommitment.toLowerCase() });
     /* RED WHEN: a link's invitation names a leaf, or another person than the one it was made for. */
@@ -455,9 +468,9 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
 
   it('A CODE SWAPPED ON THE WAY IS CAUGHT BY THE FINGERPRINT THE JOINER READS OUT', async () => {
     /* Gus makes his code; somebody else makes theirs, and theirs is what reaches Ada. */
-    const gus = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(41, 'gus'), keyOf(41));
-    const theirs = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(42, 'gus'), keyOf(42));
-    const added = await addSignerFromCodeHere(ACME, ADA, theirs.code, { name: 'Gus', role: 'admin' }, fromAda, LEAVES);
+    const gus = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(41, 'gus'), keyOf(41), SIGNS(41));
+    const theirs = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(42, 'gus'), keyOf(42), SIGNS(42));
+    const added = await addSignerFromCodeHere(ACME, ADA, theirs.code, { name: 'Gus', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF);
     const waiting = opened(pendingOf(added.id));
     /* A swapped code verifies: it is a real signature, by somebody else's wallet. */
     expect(() => refuseASeatKeyNotFromTheInvitee(KEY, CO, waiting)).not.toThrow();
@@ -472,30 +485,40 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
     const code = await walletOf(51, 'hal')({ kind: 'signer', signingPublicKey: k.signingPublicKey, wrappingPublicKey: k.wrappingPublicKey, leafCommitment: '7c'.repeat(32) });
     const before = store.listInvites(CO).length;
     /* RED WHEN: a code whose keys were changed after the wallet signed it is taken. */
-    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code, parts: { ...(code.parts as SignerParts), signingPublicKey: '99'.repeat(32) } }), { name: 'Hal', role: 'admin' }, fromAda, LEAVES))
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code, parts: { ...(code.parts as SignerParts), signingPublicKey: '99'.repeat(32) } }), { name: 'Hal', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF))
       .rejects.toThrow(/not signed by the wallet it names/);
     /* RED WHEN: a code made for another company is taken. */
-    const other = await makeSignerCodeHere(OTHER, SimulatedCommitments, { newKeys: keysOf, seal: async () => {} }, walletOf(52, 'hal', OTHER_LABEL), keyOf(52, OTHER_LABEL));
-    await expect(addSignerFromCodeHere(ACME, ADA, other.code, { name: 'Hal', role: 'admin' }, fromAda, LEAVES)).rejects.toThrow(/another company/);
+    const other = await makeSignerCodeHere(OTHER, SimulatedCommitments, { newKeys: keysOf, seal: async () => {} }, walletOf(52, 'hal', OTHER_LABEL), keyOf(52, OTHER_LABEL), SIGNS(52, OTHER_LABEL));
+    await expect(addSignerFromCodeHere(ACME, ADA, other.code, { name: 'Hal', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF)).rejects.toThrow(/another company/);
     /* RED WHEN: a payee's code is taken as a signer's. */
-    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(danasCode()), { name: 'Hal', role: 'admin' }, fromAda, LEAVES)).rejects.toBeInstanceOf(CodeNotTaken);
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(danasCode()), { name: 'Hal', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF)).rejects.toBeInstanceOf(CodeNotTaken);
     /* RED WHEN: a refused code still files an invitation. */
     expect(store.listInvites(CO).length).toBe(before);
   });
 
   it('A CODE IS TAKEN ONLY WITH THE OPENING THAT MAKES ITS LEAF FOR THE WALLET THAT SIGNED IT', async () => {
-    const mo = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(61, 'mo'), keyOf(61));
-    const nan = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(62, 'nan'), keyOf(62));
+    const mo = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(61, 'mo'), keyOf(61), SIGNS(61));
+    const nan = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(62, 'nan'), keyOf(62), SIGNS(62));
     const code = (text: string) => readJoinCode(text, LABEL) as JoinCode;
     const before = store.listInvites(CO).length;
-    const { opening: _none, ...bare } = code(mo.code);
+    const { opening: _none, seatAddress: _noAddress, ...bare } = code(mo.code);
     /* RED WHEN: a code with no opening is taken, so no approving device could see whose wallet its leaf is made for. */
-    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(bare as JoinCode), { name: 'Mo', role: 'admin' }, fromAda, LEAVES)).rejects.toThrow(/does not show that its seat is made for the wallet that signed it/);
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(bare as JoinCode), { name: 'Mo', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF)).rejects.toThrow(/does not show that its seat is made for the wallet that signed it/);
+    /* RED WHEN: a signer's code with no address its wallet signed for the seat is taken: the proposal's address could be anybody's. */
+    const { seatAddress: _unsigned, ...noAddress } = code(mo.code);
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(noAddress as JoinCode), { name: 'Mo', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF))
+      .rejects.toThrow(/does not carry an address its wallet signed for the seat, made from that wallet.s coin key.*No wallet adds that address to a code yet.*Invite this person by their private address instead/u);
+    /* RED WHEN: a code is taken without its address worked out again from its coin key by the account's own function: here another one's. */
+    await expect(addSignerFromCodeHere(ACME, ADA, mo.code, { name: 'Mo', role: 'admin' }, fromAda, LEAVES, (c, salt) => MidnightCommitments.inviteAddressOf(c, salt)))
+      .rejects.toThrow(/does not carry an address its wallet signed for the seat, made from that wallet.s coin key/u);
+    /* RED WHEN: a code whose address another wallet signed is taken. */
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code(mo.code), seatAddress: code(nan.code).seatAddress }), { name: 'Mo', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF))
+      .rejects.toThrow(/does not carry an address its wallet signed for the seat/u);
     /* RED WHEN: a code is taken on an opening of another wallet's leaf. */
-    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code(mo.code), opening: code(nan.code).opening }), { name: 'Mo', role: 'admin' }, fromAda, LEAVES)).rejects.toBeInstanceOf(CodeNotTaken);
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code(mo.code), opening: code(nan.code).opening }), { name: 'Mo', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF)).rejects.toBeInstanceOf(CodeNotTaken);
     /* RED WHEN: a code is taken on an opening that makes its leaf for another wallet than the one that signed it. */
-    const forNan = makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(61, 'mo'), keyOf(62));
-    await expect(addSignerFromCodeHere(ACME, ADA, (await forNan).code, { name: 'Mo', role: 'admin' }, fromAda, LEAVES)).rejects.toThrow(/does not show that its seat is made for the wallet that signed it/);
+    const forNan = makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(61, 'mo'), keyOf(62), SIGNS(62));
+    await expect(addSignerFromCodeHere(ACME, ADA, (await forNan).code, { name: 'Mo', role: 'admin' }, fromAda, LEAVES, INVITE_ADDRESS_OF)).rejects.toThrow(/does not show that its seat is made for the wallet that signed it/);
     /* RED WHEN: a refused code still files an invitation. */
     expect(store.listInvites(CO).length).toBe(before);
     /* RED WHEN: a payee's code carrying an opening is read as a code at all. */
@@ -571,7 +594,7 @@ describe('AN INVITATION ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
     expect(opened.signed.offer.inboxPublicKey).toBe(inboxPublicKey(KEY1, CO));
     /* RED WHEN: the seat's secret is made under an older key than the inbox the answer is sealed to. */
     const seat = (opened.signed.offer.for as { seat: { nonce: Hex; secret: Hex } }).seat;
-    expect(seat.secret).toBe(invitationSecret(KEY1, CO, seat.nonce, 'Ivy', 'approver'));
+    expect(seat.secret).toBe(invitationSecret(KEY1, CO, seat.nonce, 'Ivy', 'approver', made.id as Hex));
     /* RED WHEN: the invitation's key epoch is not signed into its filing and kept with it. */
     expect(store.invitationById(made.id)!.keyEpoch).toBe(1);
     /* RED WHEN: an invitation is made while the company's key is being changed, naming an inbox the leaver holds. */
@@ -626,7 +649,7 @@ describe('AN INVITATION ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
     const seatOffer = { ...offer(Date.now() - 1), for: { kind: 'signer' as const, name: 'Ivy', role: 'approver' as const, seat: { nonce: '01'.repeat(32), secret: '02'.repeat(32) }, invited } };
     /* RED WHEN: a seat offer opened before its expiry is still answered after it. */
     await expect(acceptAsSignerHere({ token, signed: signOffer(seatOffer as never, ADA.signingSecret), expiresAt: '', kind: 'signer' }, {} as never, {} as never,
-      async () => { sent += 1; return { status: 200, body: {} }; }, 'ivy', async () => { throw new Error('the wallet was asked'); })).rejects.toThrow(/has expired/u);
+      async () => { sent += 1; return { status: 200, body: {} }; }, 'ivy', async () => { throw new Error('the wallet was asked'); }, async () => { throw new Error('the wallet was asked'); })).rejects.toThrow(/has expired/u);
     expect(sent).toBe(0);
   });
 });
@@ -823,7 +846,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
     const counting: InvitationSend = async () => { sent += 1; return { status: 201, body: { id: 'sgn_x' } }; };
     /* RED WHEN: a super admin's invitation is accepted as pay or as a seat, instead of joining under the committee's own rules. */
     await expect(acceptAsPayeeHere(opened, danasCode(), counting)).rejects.toThrow(/joins under the committee's own rules/u);
-    await expect(acceptAsSignerHere(opened, SimulatedCommitments, {} as never, counting, 'sue', async () => { throw new Error('the wallet was asked'); }))
+    await expect(acceptAsSignerHere(opened, SimulatedCommitments, {} as never, counting, 'sue', async () => { throw new Error('the wallet was asked'); }, async () => { throw new Error('the wallet was asked'); }))
       .rejects.toThrow(/joins under the committee's own rules/u);
     expect(sent).toBe(0);
   });

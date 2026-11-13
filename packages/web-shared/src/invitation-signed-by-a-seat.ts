@@ -2,10 +2,12 @@
  * Whether a seat invitation made by address was signed by a seat this device believes may invite, and whether the
  * address and rights a proposal invites are the ones that seat signed. The seats come from the company's directory as
  * this device reads it; an invitation signed by any other key, or naming another company, address or rights, is refused.
+ * On the link and code paths the address must also be the one the person waiting signed with their own wallet.
  */
 import { canonical } from '../../../src/core/crypto.js';
 import { seatInvitationRefusal, type NotApproved, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import { NO_VAULT_COUNTED, vaultsOfferedRefusal } from '../../../src/core/seat-rights.js';
+import { NO_SIGNED_ADDRESS, seatAddressSignedFor, type InviteAddressOf } from '../../../src/core/seat-address.js';
 import type { PendingSignerPayload } from '../../../src/core/types.js';
 import type { DirectoryWitness } from '../../../src/core/roster-record.js';
 import { mayInvite } from '../../../src/midnight/seat-directory.js';
@@ -97,11 +99,21 @@ export const NOT_APPROVED_SAID: Readonly<Record<NotApproved, string>> = Object.f
  * WAITING**, or null: the seat it names is the leaf the waiting request
  * carries, its role, vaults, person and name are the ones the invitation the
  * person accepted gives, and the rights its address carries are the ones the
- * person's own leaf was made with. Run on every approving device after it has
- * checked the waiting request itself (`refuseASeatNotForTheInvited`), so the
- * approvers agree only to the seat the person accepted.
+ * person's own leaf was made with; it sets no new threshold, since a seat for
+ * a person who joined by a link or a code keeps the one in force and no
+ * approver is shown one; and the address it invites, with its salt, is the one
+ * the person's own wallet signed for that leaf in the company `accountId`, made
+ * from the coin key signed with it (`seatAddressSignedFor`, worked out again
+ * with `inviteAddressOf` where the reading has it), since the chain seats
+ * whoever holds the address the proposal names. Run on every approving device
+ * after it has checked the waiting request itself
+ * (`refuseASeatNotForTheInvited`), so the approvers agree only to the seat the
+ * person accepted, for the person.
  */
-export const linkInvitationRefusal = (invited: SignedSeatInvitation, waiting: Pick<PendingSignerPayload, 'leafCommitment' | 'invited' | 'opening'>): string | null => {
+export const linkInvitationRefusal = (
+  accountId: string, invited: SignedSeatInvitation, waiting: Pick<PendingSignerPayload, 'leafCommitment' | 'invited' | 'opening' | 'seatAddress'>,
+  inviteAddressOf: InviteAddressOf | null,
+): string | null => {
   const t = invited.terms;
   const w = waiting.invited?.terms;
   const vaultsOf = (x: { readonly vaults?: readonly string[] }) => canonical((x.vaults ?? []).map((v) => v.toLowerCase()));
@@ -110,5 +122,19 @@ export const linkInvitationRefusal = (invited: SignedSeatInvitation, waiting: Pi
     return 'The invitation this proposal carries does not give the seat, role, vaults, person or name of the person waiting for it, so this '
       + 'device does not approve it. Do not approve it. Withdraw it, and invite the person again.';
   }
+  if (t.invite?.threshold !== undefined) return LINK_SEAT_SETS_NO_THRESHOLD;
+  const signed = seatAddressSignedFor(waiting.seatAddress, waiting.opening?.walletKey, accountId, waiting.leafCommitment, inviteAddressOf);
+  if (typeof signed === 'string') return NO_SIGNED_ADDRESS;
+  if (t.invite?.address.toLowerCase() !== signed.address || t.invite.salt.toLowerCase() !== signed.salt) {
+    return 'The address this proposal would seat is not the one the person waiting signed with their own wallet, so whoever holds it '
+      + 'would take the seat. This device does not approve it. Do not approve it. Withdraw it, and raise the person\'s seat again '
+      + 'from the device of a seated signer who may invite.';
+  }
   return null;
 };
+
+/** Why a proposal to seat a person who joined by a link or a code is refused when it sets a new threshold, and what clears it. */
+const LINK_SEAT_SETS_NO_THRESHOLD = 'This proposal sets the approvals the company needs once the seat is taken, and a seat for a '
+  + 'person who joined by a link or a code keeps the approvals in force and shows no new number to anybody approving it, so this '
+  + 'device does not approve it. Do not approve it. Withdraw it, and raise the person\'s seat again without a change to the '
+  + 'approvals needed; to change them with the seat, invite the person by their private address.';

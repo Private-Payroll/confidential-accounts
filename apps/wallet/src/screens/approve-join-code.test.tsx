@@ -8,7 +8,8 @@ import { parseAsk, type JoinCodeRequest } from 'midnight-identity/profile/reques
 import type { Channel } from 'midnight-identity/profile/channel';
 import { joinCodeSignedBy, type JoinCode, type PayeeParts } from 'midnight-identity/profile/join-code';
 import { payslipKeyOfThisWallet } from './join-code-payslip-key.js';
-import { payeeCodeFingerprint, seatKeyFingerprint } from 'midnight-identity/profile/fingerprint';
+import { payeeCodeFingerprint, readerCodeFingerprint } from 'midnight-identity/profile/fingerprint';
+import { readerKeyOfThisWallet } from './join-code-reader-key.js';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { secretFromWords } from 'midnight-identity/keys/derivation';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
@@ -78,23 +79,44 @@ describe('THE PAYSLIP KEY THIS WALLET GIVES FOR A COMPANY', () => {
 describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
   it('SHOWS THE COMPANY, THE SIGN-IN AND THE FINGERPRINT, AND ANSWERS ONLY AFTER THE PRESS WITH A CODE IT SIGNED', async () => {
     const answers: unknown[] = [];
-    const { container } = draw(answers, ask());
+    const { container } = draw(answers, ask(payeeParts()), [ADDRESS]);
     /* The account the page names is read off the chain before anything can be signed. */
     await settle();
     expect(container.querySelector('[data-join-code-company]')?.textContent).toBe(CO);
     expect(container.querySelector('[data-join-code-person]')?.textContent).toBe('usr_cleo');
     /* RED WHEN: the fingerprint shown is not the one of the keys the code carries. */
-    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(seatKeyFingerprint(SIGNER));
+    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(payeeFingerprint(payeeParts()));
     /* RED WHEN: the wallet answers before the person presses. */
     expect(answers).toEqual([]);
     await act(async () => { fireEvent.click(button(container)); });
     expect(answers).toHaveLength(1);
     const code = answers[0] as JoinCode;
     expect(joinCodeSignedBy(code)).toBe(true);
-    expect(code).toMatchObject({ company: CO, person: 'usr_cleo', parts: SIGNER });
+    expect(code).toMatchObject({ company: CO, person: 'usr_cleo', parts: payeeParts() });
     /* RED WHEN: the fingerprint is not shown on its own after the press, to be read out and copied. */
     expect(container.querySelector('[data-signed]')).not.toBeNull();
-    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(seatKeyFingerprint(SIGNER));
+    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(payeeFingerprint(payeeParts()));
+  });
+
+  it('makes no code for a seat, says why and what seats the person instead, and answers nothing at the press', async () => {
+    const answers: unknown[] = [];
+    const { container } = draw(answers, ask(), [ADDRESS]);
+    await settle();
+    /* RED WHEN: the wallet signs a seat's keys a page handed it, in a code no company can add anybody from. */
+    expect(container.querySelector('[data-join-code-not-yours]')?.textContent).toMatch(/does not make a code for a seat yet.*private address/u);
+    expect(button(container).disabled).toBe(true);
+    await act(async () => { fireEvent.click(button(container)); });
+    expect(answers).toEqual([]);
+  });
+
+  it('says a seat\'s code also carries what the seat\'s entry on the network is made from, and never that it holds only public halves', async () => {
+    const { container } = draw([], ask());
+    await settle();
+    const said = container.querySelector('[data-join-code-signs]')?.textContent ?? '';
+    /* RED WHEN: the screen promises the code holds only the keys' public halves, while the page adds the seat's salt and blinding to it. */
+    expect(said).not.toMatch(/only their public halves/iu);
+    expect(said).toMatch(/salt and blinding/u);
+    expect(said).toMatch(/whoever holds the code can see that seat is this wallet's/u);
   });
 
   it('WILL NOT SIGN AN ADDRESS THIS WALLET DOES NOT RECEIVE AT, OR A PAYSLIP KEY IT DOES NOT GIVE, AS THE PERSON\'S', async () => {
@@ -122,8 +144,8 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
   it('A REFUSAL AT THE PRESS IS SAID, AND DECLINING ANSWERS ONLY THAT IT WAS DECLINED', async () => {
     const answers: unknown[] = [];
     /* An ask whose asker this wallet cannot tell is refused at the press, where the button does not stand in front of it. */
-    const refusing = { ...ask(), requester: { ...ask().requester, origin: 'not an origin' } } as JoinCodeRequest;
-    const again = draw(answers, refusing, []);
+    const refusing = { ...ask(payeeParts()), requester: { ...ask().requester, origin: 'not an origin' } } as JoinCodeRequest;
+    const again = draw(answers, refusing, [ADDRESS]);
     await settle();
     await act(async () => { fireEvent.click(button(again.container)); });
     /* RED WHEN: a press the wallet refuses answers anyway, or says nothing. */
@@ -163,16 +185,47 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     expect(opener.sent.length).toBe(before + 1);
   });
 
+  it('MAKES A READER\'S CODE OVER THIS WALLET\'S OWN READER KEY FOR THE COMPANY, WHICH THE PAGE NEVER NAMES', async () => {
+    const opener = watchedOpener();
+    const handlers: ((event: MessageEvent) => void)[] = [];
+    const view: ChannelWindow = {
+      opener: opener as ChannelWindow['opener'],
+      addEventListener: (_t, h) => { handlers.push(h); },
+      removeEventListener: () => {},
+    };
+    const { container } = render(
+      <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} readLabel={carries} embedder={ORIGIN} />);
+    const wire = {
+      schema: 'midnight-identity/disclosure-request/v1', kind: 'join-code',
+      requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To read.',
+      nonce: 'j3', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, person: 'usr_cleo', parts: { kind: 'reader' },
+    };
+    await act(async () => { for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent); });
+    await settle();
+    const own = readerKeyOfThisWallet(identity, CO);
+    /* RED WHEN: the reader reads out a fingerprint that is not the one over this wallet, their sign-in and their own reader key. */
+    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent)
+      .toBe(readerCodeFingerprint({ committeeKey: committeeKeyFor(identity, CO), person: 'usr_cleo', parts: { readerKey: own } }));
+    expect(container.querySelector('[data-join-code-signs]')?.textContent).toMatch(/never kept and never leaves this wallet/u);
+    expect(container.querySelector('[data-join-code-not-yours]')).toBeNull();
+    const before = opener.sent.length;
+    await act(async () => { fireEvent.click(button(container)); });
+    await settle();
+    /* RED WHEN: the code the wallet hands the page carries any key but this wallet's own reader key for the company. */
+    const made = opener.sent.slice(before).map((m) => JSON.stringify(m)).join('');
+    expect(made).toContain(own);
+  });
+
   it('SHOWS THE COMPANY\'S FINGERPRINT FROM THE ACCOUNT AS READ OFF THE CHAIN, AND SIGNS NOTHING UNTIL THE ACCOUNT CARRIES THE LABEL', async () => {
     const answers: unknown[] = [];
-    const { container } = draw(answers, ask());
+    const { container } = draw(answers, ask(payeeParts()), [ADDRESS]);
     await settle();
     /* RED WHEN: the code screen shows no company fingerprint, or one not worked out from the account the page names. */
     expect(container.textContent).toContain(companyFingerprint(CO, ACCOUNT));
     expect(button(container).disabled).toBe(false);
     cleanup();
     const elsewhere: unknown[] = [];
-    const other = draw(elsewhere, ask(), [], { ok: true } as never, OWN_PAYSLIP_KEY, async () => ({ of: 'carries', label: `co_${'d6'.repeat(32)}` as CompanyLabel }));
+    const other = draw(elsewhere, ask(payeeParts()), [ADDRESS], { ok: true } as never, OWN_PAYSLIP_KEY, async () => ({ of: 'carries', label: `co_${'d6'.repeat(32)}` as CompanyLabel }));
     await settle();
     /* RED WHEN: a code is signed while the account the page names carries another company's label. */
     expect(button(other.container).disabled).toBe(true);
@@ -197,12 +250,12 @@ describe('a join code approved before the passkey', () => {
 
   it('is made with no press once the account is read and carries the label', async () => {
     const answers: unknown[] = [];
-    const { container } = drawAtOnce(answers, ask());
+    const { container } = drawAtOnce(answers, ask(payeeParts()), [ADDRESS]);
     await settle();
     /* RED WHEN: a join code approved before the passkey waits for the screen's own press once the wallet is open. */
     expect(answers).toHaveLength(1);
     expect(joinCodeSignedBy(answers[0] as JoinCode)).toBe(true);
-    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(seatKeyFingerprint(SIGNER));
+    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(payeeFingerprint(payeeParts()));
   });
 
   it('is not made for an address this wallet does not receive at', async () => {

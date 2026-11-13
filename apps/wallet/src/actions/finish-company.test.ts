@@ -164,6 +164,7 @@ const world = (opts: {
     },
     tell: () => {}, show: (words) => { shown.push(words); },
     confirm: async () => { throw new Error('finishing a company waits on no Confirm in the window'); },
+    releaseReadKeys: () => { throw new Error('finishing a company hands a page no read keys'); },
     /* What the wallet sends itself, and finds on the chain, is counted by the run for the window's end; these steps end in the test. */
     sentByTheWallet: () => {}, seenOnTheChain: () => {},
     keyring: {

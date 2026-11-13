@@ -1,12 +1,21 @@
 import { ACT_ENDED_SCHEMA, ACT_REFUSED_CODE, ACT_REFUSED_KEY, MOST_ACT_RELAYS, MOST_ACT_STEPS, readOutcome } from 'midnight-identity/profile/channel';
 import type { ActEnded, ActStop, ActingChannel, CalledOver, KeptOver, RelayLabel, StepAt } from 'midnight-identity/profile/channel';
+import type { ReadKeysReleased } from 'midnight-identity/profile/read-keys-release';
 import { intentShapeOf, routeOf, sendsIn, type ActRequest } from 'midnight-identity/profile/request';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { keyringMarksFor, openHeldKeyring, SavedKeysRefused, type HeldKeyring, type KeyringMarks } from '../keyring/held-keyring.js';
-import { readFor } from '../keyring/read-for-the-page.js';
+import { keysAtTheEnd, readKeysAtTheEnd } from './keys-at-the-end.js';
 import { checkedChannel, SecretWouldCross } from '../keyring/nothing-secret-crosses.js';
 import { StepRefused, type ActKeyring, type ActionDefinition, type Held, type Words } from './definition.js';
 import { ServiceNotReached, serviceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
+
+/** A signal aborted at Stop, and abortable on its own when the action ends or runs out of time. */
+const cutAtStop = (stop: AbortSignal): AbortController => {
+  const cut = new AbortController();
+  if (stop.aborted) cut.abort();
+  else stop.addEventListener('abort', () => cut.abort(), { once: true });
+  return cut;
+};
 
 /**
  * RUNS ONE ACTION, STEP BY STEP, OVER THE ONE CHANNEL ITS ASK CAME ON.
@@ -21,7 +30,8 @@ import { ServiceNotReached, serviceNotReached } from '../../../../packages/web-s
  * one terminal answer saying where it stopped, how many transactions the page
  * said it handed over, how many may still land (those the page did not confirm,
  * and those this wallet sent itself without the page) and, when the action's
- * entry lists one, what it got to.
+ * entry lists one, what it got to; a reader's act that ends done also hands
+ * over the read keys its step released (`releaseReadKeys`).
  * A transaction is never handed over after Stop. A call the service gave no
  * answer to does not stop the action: the step it was made for is told, as
  * `ServiceNotReached`, and may go straight to the chain instead.
@@ -108,6 +118,8 @@ export interface RunOf {
 export interface RunEnded {
   readonly ended: ActEnded;
   readonly says: Words | null;
+  /** Further words a done action's steps gave to show, after `says`, in the order given. */
+  readonly more: readonly Words[];
   readonly abandoned: boolean;
 }
 
@@ -143,8 +155,10 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   let says: Words | null = null;
   /* The kind of refusal the step that refused named, if it named one. */
   let refusedCode: string | undefined;
-  let shownAtTheEnd: Words | null = null;
+  const shownAtTheEnd: Words[] = [];
   const told: Record<string, string | number> = {};
+  /* The read keys a reader's action hands over, sent only when it ends done (`releaseReadKeys`). */
+  let readKeys: ReadKeysReleased | null = null;
   /* Set once the action is ending: nothing is handed over after it. */
   let closed = false;
   /* Set by a transaction or call the page refused, or a transaction it did not answer: the action stops at that step, whatever the step does. */
@@ -167,31 +181,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     get account() { return keys().account; },
   });
   /* Aborted at Stop, at the deadline and when the action ends: what each step is given to stop building. */
-  const cut = new AbortController();
-  if (run.stop.aborted) cut.abort();
-  else run.stop.addEventListener('abort', () => cut.abort(), { once: true });
+  const cut = cutAtStop(run.stop);
 
-  /*
-   * When a step opened the saved keys: what they hold that is not secret, as the action left them, so the page reads
-   * the creations and seats it lists without opening them (`read-for-the-page.ts`), and no copy. The one viewing key in
-   * it is the action's own company's, from the served keys the ask handed in for it, opened with this seat and given
-   * only when it makes that company's inbox public key (`servedKeysOpenedFrom`), so a page that ran an action with its
-   * keys closed can open that company afterwards with no other window.
-   */
-  const keysAtTheEnd = (): { keys?: NonNullable<ActEnded['keys']> } => {
-    const h = opened;
-    if (h === null || request.person === undefined) return {};
-    try {
-      const k = h.read();
-      const own = ownCompany ?? ownCompanyIn(k);
-      const served = own === null ? [] : (request.served ?? []).filter((s) => s.accountId === own);
-      const read = readFor(run.held.identity, { requester: request.requester, person: request.person, served }, k);
-      const viewing = own !== null && Object.prototype.hasOwnProperty.call(read.viewing, own) ? { [own]: read.viewing[own]! } : {};
-      return { keys: Object.freeze({ ...read, viewing, resealed: null }) };
-    } catch {
-      return {};
-    }
-  };
   /*
    * What a stop for a refused check says of its refusal: the key of the words, and the code the step named, each only
    * in the shape the page reads. Never the words' values, which can hold what was entered or read.
@@ -222,7 +213,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
         const outcome = Object.keys(told).length === 0 ? undefined : readOutcome({ ...told }, request.intent.name);
         return outcome === undefined || outcome === null ? {} : { outcome };
       })(),
-      ...keysAtTheEnd(),
+      ...keysAtTheEnd(opened, request, run.held.identity, (k) => ownCompany ?? ownCompanyIn(k)),
+      ...readKeysAtTheEnd(request.intent.name, why, readKeys),
     });
     let sent: ActEnded = answer;
     try {
@@ -236,7 +228,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       });
       channel.answer(sent);
     }
-    ended = Object.freeze({ ended: sent, says: sent.ended === 'done' ? shownAtTheEnd : says, abandoned: !stepSettled });
+    const done = sent.ended === 'done';
+    ended = Object.freeze({ ended: sent, says: done ? shownAtTheEnd[0] ?? null : says, more: done ? shownAtTheEnd.slice(1) : [], abandoned: !stepSettled });
     log(sent.ended === 'done'
       ? `done, ${sent.steps} of ${sent.steps} steps (relayed ${relayed})`
       : `stopped at step ${sent.step} of ${sent.steps}: ${sent.why ?? 'step-failed'} (relayed ${relayed}, unconfirmed ${sent.unconfirmed})`
@@ -340,6 +333,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     return mine;
   };
   const tell = (outcome: Readonly<Record<string, string | number>>): void => { Object.assign(told, outcome); };
+  const releaseReadKeys = (keys: ReadKeysReleased): void => { readKeys = keys; };
   const sentByTheWallet = (): void => { handedOver += 1; sentStraight += 1; };
   /* The chain shows the call the page did not answer in time for: it is on the chain, no longer unconfirmed. */
   const seenOnTheChain = (): void => {
@@ -348,7 +342,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     unconfirmed -= 1;
     watch();
   };
-  const show = (words: Words): void => { shownAtTheEnd = words; };
+  const show = (words: Words): void => { shownAtTheEnd.push(words); };
   /*
    * The person's Confirm of what a step read with the seat's keys. Refused once anything has been handed over to be
    * sent or written (a relay, or any call that is not a GET or a read), or asked a second time, so the one Confirm
@@ -489,7 +483,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       const ran: Promise<Raced> = Promise.resolve()
         .then(() => step.run({
           intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
-          call: (method, path, body) => callInTurn(at, method, path, body), tell, show, confirm, sentByTheWallet, seenOnTheChain,
+          call: (method, path, body) => callInTurn(at, method, path, body), tell, show, confirm, sentByTheWallet, seenOnTheChain, releaseReadKeys,
         }))
         .then(() => ({ of: 'ran' as const }), (error: unknown) => {
           log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);

@@ -47,6 +47,8 @@ import { directoryHere } from './vault-page-doors.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { scopeOfRole } from '../../../src/core/seat-rights.js';
+import { aJoinersWallet, aWalletSecret } from '../../../src/testing/a-joiners-wallet.js';
+import { signSeatAddress } from '../../../src/core/seat-address.js';
 
 /* ── the builder, over stand-ins for the contract's pure functions ─────────── */
 
@@ -306,8 +308,10 @@ const created = await accounts.create('Opened', [{ name: 'Ada', role: 'admin', u
 const company = created.account.id;
 const viewingKey = created.viewingKey;
 const ada = created.secrets[0]!;
-/* Late's leaf is made for her own wallet key under a fresh salt, as her device makes it. */
-const lateWallet = { tag: 'schnorr', value: newBlinding() };
+/* Late's leaf is made for her own wallet key under a fresh salt, as her device makes it; her wallet signs the address it takes the seat with. */
+const LATES_WALLET_SECRET = aWalletSecret();
+const LATES_WALLET = aJoinersWallet(LATES_WALLET_SECRET, 7);
+const lateWallet = LATES_WALLET.walletKey;
 const lateSalt = newBlinding();
 const late = { ...newSigningKeypair(), wrapping: newWrappingKeypair(), blinding: seatBlinding(lateWallet, lateSalt) as Hex };
 const lateLeaf = storedSignerLeaf({ signingSecret: late.secret, blinding: late.blinding, scope: scopeOfRole('approver') }, MidnightCommitments);
@@ -316,23 +320,26 @@ const invite = accounts.inviteSigner(company, 'Late', 'late@opened.example', 'ap
 const lateKeys = { signingPublicKey: late.publicKey, wrappingPublicKey: late.wrapping.publicKey, leafCommitment: lateLeaf };
 /* Who Late's seat is for, as Ada's seat signed it when it invited her. */
 const LATES_TERMS = { company, invitation: invitationIdOf(newInvitationToken()), person: 'usr_late', name: 'Late', role: 'approver' } as const;
+const LATES_BOUND = { person: LATES_TERMS.person, invitationId: LATES_TERMS.invitation };
 const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publicKey, late.wrapping.publicKey, lateLeaf,
-  proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys));
+  proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver', LATES_TERMS.invitation), lateKeys, LATES_BOUND));
 /* Her request as her device seals it: with her leaf's opening, her sign-in, and the invitation Ada's seat signed for her. */
 {
   const rec = store.getAccount(company)!;
   const request: PendingSignerPayload = {
-    name: 'Late', role: 'approver', ...lateKeys, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys), person: 'usr_late',
+    name: 'Late', role: 'approver', ...lateKeys, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver', LATES_TERMS.invitation), lateKeys, LATES_BOUND), person: 'usr_late',
     opening: {
       publicKey: MidnightCommitments.signerPublicKey(late.secret).toLowerCase(), scope: scopeOfRole('approver'),
       blinding: late.blinding, walletKey: lateWallet, salt: lateSalt,
     },
     invited: signSeatInvitation(LATES_TERMS, ada.signingSecret as Hex),
+    seatAddress: signSeatAddress(LATES_WALLET_SECRET, company, lateLeaf, { coinPublicKey: LATES_WALLET.holds.coinPublicKey, salt: LATES_WALLET.at.addressSalt },
+      (c, salt) => MidnightCommitments.inviteAddressOf(c, salt)),
   };
   store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.map((x) => (x.id === lateSeat.id ? { ...x, sealed: sealToInbox(request, rec.inboxPublicKey) } : x)) });
 }
 /* Late is invited at an address of her own wallet, with every right on every vault. */
-const lateAt = anAddress(MidnightCommitments, 7);
+const lateAt = LATES_WALLET.at;
 const lateInvite = { address: lateAt.address, scope: scopeOfRole('approver') };
 /** The invitation Ada's seat signs for Late's address, as Ada's device raises it: what every approving device makes the payload from. */
 const invitedAt = (invite: { address: string; salt: string; scope: string }, by: string = ada.signingSecret) =>

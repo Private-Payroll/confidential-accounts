@@ -1,5 +1,5 @@
 import type { BalancedAnswer } from './balance.js';
-import type { CommitteeSignatures } from './committee-sign.js';
+import type { CommitteeRequestSignature, CommitteeSignatures } from './committee-sign.js';
 import type { HoldersAnswer, RecordsKeyAnswer } from './records-key.js';
 import type { CreationSignature } from './creation-sign.js';
 import { PROGRESS_SCHEMA, parseAsk } from './request.js';
@@ -8,6 +8,8 @@ import type { DisclosureResponse } from './disclosure.js';
 import type { KeyringRelease, KeysRead, SealedKeyring, UnlockRelease } from './unlock.js';
 import type { SealedAcceptance } from './inbox.js';
 import type { JoinCode } from './join-code.js';
+import type { ReadKeysReleased } from './read-keys-release.js';
+export type { ReadKeysReleased } from './read-keys-release.js';
 import type { AddressesAndBalances } from './addresses-and-balances.js';
 import { countFrom1, readActCall, readActKeep, readActRelay } from './act-channel.js';
 export { readOutcome } from './act-channel.js';
@@ -266,7 +268,9 @@ export const ACT_REFUSED_CODE = /^[a-z]+(?:-[a-z]+){0,7}$/u;
  * send them, so whether they landed is read from the chain, never from these
  * counts. `outcome`, when the action's entry names one, carries only the
  * public facts it lists (a vault's address, a count, a short code), on either
- * ending, so the page can say where the action got to.
+ * ending, so the page can say where the action got to. `readKeys` is the one
+ * part that is not public: the read keys a reader's own grant names, only on a
+ * reader's act that ended done.
  */
 export interface ActEnded {
   readonly schema: typeof ACT_ENDED_SCHEMA;
@@ -290,6 +294,11 @@ export interface ActEnded {
    * makes its inbox public key.
    */
   readonly keys?: KeysRead;
+  /**
+   * On a `reader-keys` action that ended done, only: the keys the read grant in force wraps to this reader, for the
+   * action's one company (`readReleasedReadKeys`). Never a company key, a seat secret or the reader's own key.
+   */
+  readonly readKeys?: ReadKeysReleased;
 }
 
 export type ChannelState =
@@ -405,7 +414,7 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  */
 export type Answer =
   | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures
-  | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode | AddressesAndBalances | ActEnded;
+  | CommitteeRequestSignature | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode | AddressesAndBalances | ActEnded;
 
 /**
  * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**

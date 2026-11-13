@@ -1,6 +1,6 @@
 /**
  * **A SPENDING POLICY IS SEALED TO THE READERS THE WALLET READS FROM THE GRANTS IN FORCE.** Acme's signers at the seat
- * bar give Rhea a limited read grant; the wallet's own door to a vault's spending policies (`spendingPoliciesFor`) reads
+ * bar give Rhea a limited read grant; the one door the wallet and the page read a vault's spending policies through (`spendingPoliciesFor`) reads
  * her as a reader of the policy purpose, and a policy sealed again through it opens for her. Over real HTTP with the
  * company of `a-company-whose-signers-change-on-the-chain.test-support.ts`.
  */
@@ -13,10 +13,10 @@ import { sealPoliciesToNewSignersHere } from '../../../../packages/web-shared/sr
 import { grantsChangeFiledHere } from '../../../../packages/web-shared/src/grants-filed-here.js';
 import { peopleRecords } from '../../../../src/server/a-company-of-two-seats.test-support.js';
 import {
-  aCompanyWhoseSignersChange, ADA, ADDRESS, apiAs, aPolicyFiledBy, BO, CO, CY, directoryOf, KEY, LABEL, VAULT, walletOf, type Seat,
+  aCompanyWhoseSignersChange, ADA, apiAs, aPolicyFiledBy, BO, CO, CY, directoryOf, KEY, VAULT, walletOf, type Seat,
 } from '../../../../src/server/a-company-whose-signers-change-on-the-chain.test-support.js';
-import { grantsDoorsOf, keysOf, policyFilingOf, RHEA } from '../../../../src/server/a-read-grant.test-support.js';
-import { spendingPoliciesFor, type SpendingPoliciesReach } from './spending-policies-reach.js';
+import { grantsDoorsOf, policyFilingOf, RHEA } from '../../../../src/server/a-read-grant.test-support.js';
+import { spendingPoliciesFor, type SpendingPoliciesReach } from '../../../../packages/web-shared/src/spending-policies-reach.js';
 
 type ResealDoors = Parameters<typeof sealPoliciesToNewSignersHere>[0];
 
@@ -24,10 +24,10 @@ aCompanyWhoseSignersChange(2);
 
 /** The part of `s`'s wallet reach its spending policies' readers are read through; the rest refuses, being unused here. */
 const walletReachOf = async (s: Seat): Promise<SpendingPoliciesReach> => ({
-  leaf: s.seat as Hex, companyKey: walletOf(s).companyKey, api: apiAs(s.person), accountId: CO, account: ADDRESS, label: LABEL,
-  companyKeys: await keysOf(s), roster: async () => { throw new Error('the policy readers read no roster'); },
-  builder: { spendingPolicyKeys: async () => { throw new Error('the policy readers make no policy keys'); } }, chain: {},
-  judges: { directoryHereFor: () => directoryOf(s) },
+  leaf: s.seat as Hex, companyKey: walletOf(s).companyKey, api: apiAs(s.person), accountId: CO,
+  keys: async () => { throw new Error('the policy readers make no policy keys'); },
+  roles: async () => { throw new Error('the policy readers read no entry of the chain'); },
+  directory: directoryOf(s),
 });
 
 describe('A SPENDING POLICY SEALED THROUGH THE WALLET\'S OWN DOOR', () => {

@@ -24,8 +24,17 @@ export async function secretMustChange(input: {
   readonly chainRemovals: number;
   readonly set: () => Promise<number>;
 }): Promise<SecretMustChange | null> {
-  if (input.chainRemovals > 0 && input.chainRemovals > await input.set()) return { why: 'removed-since-it-was-set' };
+  if (await removedSinceSet(input.chainRemovals, input.set)) return { why: 'removed-since-it-was-set' };
   return secretBehindTheChain(input.opened, input.chainRemovals) ? { why: 'behind-the-chain' } : null;
+}
+
+/**
+ * **WHETHER THE CHAIN HAS COUNTED A REMOVAL SINCE THE VAULT'S SECRET WAS SET**, so a signer who left may hold it and the
+ * vault owes a new secret. The one compare the wallet's rotation and the page's showing of an owed change both make, on
+ * the chain's counts alone. `set` is read only once the chain has counted any removal, since it asks the chain's history.
+ */
+export async function removedSinceSet(chainRemovals: number, set: () => Promise<number>): Promise<boolean> {
+  return chainRemovals > 0 && chainRemovals > await set();
 }
 
 /** The account's removal count before each vault's secret was set, by indexer, vault and commitment: it never changes. */

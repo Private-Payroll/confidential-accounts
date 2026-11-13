@@ -9,7 +9,9 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { CommitteeRequest } from 'midnight-identity/profile/request';
 import type { Channel, ChannelWindow } from 'midnight-identity/profile/channel';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { joinedBy, superAdminChangeBytes } from 'midnight-identity/profile/committee-sign';
+import { joinedBy, superAdminChangeBytes, superAdminRequestBytes } from 'midnight-identity/profile/committee-sign';
+import type { CommitteeRequestSignature } from 'midnight-identity/profile/committee-sign';
+import type { CommitteeAsk } from 'midnight-identity/profile/request';
 import type {
   ChainRead, CommitteeJoinSignature, CommitteeUpdateSignatures, CommitteeSigningLedger, ContractOnTheChain,
 } from 'midnight-identity/profile/committee-sign';
@@ -359,5 +361,44 @@ describe('a change approved in the locked wallet\'s window', () => {
     expect(document.querySelector('[data-leaves]')).not.toBeNull();
     fireEvent.click(button);
     await waitFor(() => expect(signed()).toHaveLength(1));
+  });
+});
+
+describe('A SUPER ADMIN\'S REQUEST TO THE COMPANY\'S SERVICE', () => {
+  const requestWire = { ...wire(), to: undefined, contracts: undefined, record: 'acct_1', user: 'user_1' };
+  const request = () => parseAsk(requestWire, ORIGIN, NOW) as CommitteeAsk;
+  const renderRequest = (answers: unknown[], readLabel: LabelReader = carries) => render(
+    <ApproveCommittee
+      request={request()} identity={identity} channel={channelFor(answers)} consent={consented}
+      whoIsAsking={<p>asker</p>} onDecline={() => {}} ledger={ledger} now={() => NOW} readLabel={readLabel} />);
+
+  it('SAYS IT CHANGES NO CONTRACT, AND SIGNS THE REQUEST WITH THE KEY FOR THE COMPANY ONLY ON THE PRESS', async () => {
+    const answers: unknown[] = [];
+    renderRequest(answers);
+    const button = await screen.findByText('Sign this request');
+    expect(document.querySelector('[data-request-what]')!.textContent).toMatch(/changes no contract and moves no money/);
+    /* RED WHEN: the screen does not show what the signature covers: the person at the site, the company it records and that it stands while signed in. */
+    expect(document.querySelector('[data-request-for]')!.textContent).toMatch(/user_1.*acct_1/);
+    expect(document.querySelector('[data-request-what]')!.textContent).toMatch(/as long as you are signed in there/);
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect(answers).toEqual([]);
+    fireEvent.click(button);
+    await waitFor(() => expect(answers).toHaveLength(1));
+    const answer = answers[0] as CommitteeRequestSignature;
+    expect(answer.signer.value).toBe(String(mine.value).toLowerCase());
+    /* RED WHEN: the press signs anything but the request's bytes with this company's key. */
+    expect(joinedBy(L as never, superAdminRequestBytes('acct_1', 'user_1', ACCOUNT), answer.signer, answer.signature)).toBe(true);
+    expect(await screen.findByText(/You signed a request as a super admin/)).toBeTruthy();
+  });
+
+  it('OFFERS NO PRESS WHILE THE ACCOUNT ON THE CHAIN DOES NOT CARRY THE COMPANY\'S LABEL', async () => {
+    const answers: unknown[] = [];
+    renderRequest(answers, async () => ({ of: 'no-account' }));
+    const button = await screen.findByText('Sign this request');
+    await settled(5);
+    /* RED WHEN: the request can be signed before the wallet has read the label on the chain. */
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(button);
+    expect(answers).toEqual([]);
   });
 });

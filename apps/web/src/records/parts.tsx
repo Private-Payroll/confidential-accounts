@@ -15,6 +15,7 @@ import { PageLink } from '../router.js';
 import { useSession } from '../session.js';
 import { usePanel } from '../shell/right-panel.js';
 import { useCompanyRecords } from './company-records.js';
+import { RetiredMayHold, retiredVaultShown, useRetiredVaultOnChain } from './retired-vault.js';
 
 /*
  * THE PIECES THE PAGES THAT READ ARE MADE OF: the company's records opened or
@@ -329,10 +330,12 @@ const KIND_SAYS: Readonly<Record<ProposalRow['kind'], (t: ReturnType<typeof useT
   'remove-signer': (t) => t('proposals.kind.removeSigner'),
   'set-threshold': (t) => t('proposals.kind.setThreshold'),
   'set-vault-threshold': (t) => t('proposals.kind.setVaultThreshold'),
-  'change-policy': (t) => t('proposals.kind.changePolicy'),
+  'set-spending-policy': (t) => t('proposals.kind.spendingPolicy'),
+  'set-policy-bar': (t) => t('proposals.kind.policyBar'),
   'adopt-vault': (t) => t('proposals.kind.adoptVault'),
   'vault-secret': (t) => t('proposals.kind.vaultSecret'),
   'pay-key': (t) => t('proposals.kind.payKey'),
+  'retire-vault': (t) => t('proposals.kind.retireVault'),
   unreadable: (t) => t('proposals.kind.unreadable'),
 };
 
@@ -441,6 +444,11 @@ export interface VaultMoney {
  * what it found: amounts, nothing held yet, a record not believed, or why it
  * could not be read.
  */
+/** Whether a vault is read holding any money, privately or publicly; a side still being read, or unread, holds none here. */
+export const holdsMoney = (m: VaultMoney): boolean =>
+  (m.private !== MONEY.reading && m.private.of === PRIVATE_MONEY.held && m.private.amounts.length > 0)
+  || (typeof m.public !== 'string' && m.public.amounts.length > 0);
+
 export function useVaultMoney(company: string, vault: string, asked = 0): VaultMoney {
   const { person } = useSession();
   const [money, setMoney] = useState<VaultMoney>({ private: MONEY.reading, public: MONEY.reading });
@@ -531,6 +539,9 @@ export function VaultTile({ company, vault, index }: { company: string; vault: V
   const day = useDay();
   const says = useStandingSays();
   const money = useVaultMoney(company, vault.vault);
+  const onChain = useRetiredVaultOnChain(company, vault.vault, vault.retired === true);
+  /* A retired vault is listed only while it holds money, which only adopting it again can pay out. */
+  if (vault.retired === true && !holdsMoney(money) && !retiredVaultShown(onChain)) return null;
   return (
     <StatTile
       link={<PageLink to={PAGE.vault} params={{ vault: vault.vault }} data-vault={vault.vault} />}
@@ -538,7 +549,7 @@ export function VaultTile({ company, vault, index }: { company: string; vault: V
       tagline={isPending(vault.standing) ? undefined : <span data-standing={vault.standing}>{says(vault.standing)}</span>}
       subtext={t('vaults.tile.created', { date: day(vault.createdAt) })}
     >
-      <span className="pt-2"><VaultMoneyLines money={money} /></span>
+      <span className="pt-2"><VaultMoneyLines money={money} />{vault.retired === true ? <RetiredMayHold read={onChain} /> : null}</span>
     </StatTile>
   );
 }

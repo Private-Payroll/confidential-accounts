@@ -9,6 +9,7 @@ import { withOwedEntry, withoutOwedEntry } from '../../../../packages/web-shared
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
 import { seatInviterIn } from '../../../../src/core/proposal-filing.js';
+import { inviterForTheWallet } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import type { Inviter } from '../../../../src/core/invitation.js';
 import type { SealedProposal } from '../../../../src/core/types.js';
 import { liveLeafReader, type LeafReader } from '../chain/seat-leaf.js';
@@ -43,26 +44,22 @@ export interface KeysGiven {
   readonly signed: RecordsKeyAnswer;
 }
 
-/** The steps that give this seat's vault keys, and a way for the steps after them to read what they gave. */
 /*
  * **WHO INVITED THIS SEAT, FOR A WALLET THAT HAS KEPT NO ACCOUNT FOR THE COMPANY YET.** The invitation the saved keys
- * carry, else the one the company's proposals carry for this seat, preferring one whose inviter the network seats. It is
- * a claim: `whyTheInvitationDoesNotNameIt` believes it only against the network's seats and the inviter's own opening.
+ * carry, else the one the company's proposals carry for this seat, preferring one whose inviter the network seats
+ * (`inviterForTheWallet`). It is a claim: `whyTheInvitationDoesNotNameIt` believes it only against the network's seats
+ * and the inviter's own opening.
  */
 const inviterOf = async (r: CompanyReach, onTheChain: readonly string[]): Promise<Inviter | undefined> => {
-  const seated = (x: Inviter | null | undefined): x is Inviter =>
-    x != null && typeof x.statement?.seat === 'string' && onTheChain.some((s) => s.toLowerCase() === x.statement.seat.toLowerCase());
-  const kept = (r.seat as { readonly invitedBy?: Inviter }).invitedBy;
-  if (seated(kept)) return kept;
   let carried: Inviter | null = null;
   try {
     const listed: unknown = await r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/proposals`);
     carried = seatInviterIn(Array.isArray(listed) ? listed as SealedProposal[] : [], r.accountId, r.companyKeys, r.leaf);
   } catch {
+    /* Proposals not read leave only the kept inviter, which the wallet then judges against the network's seats. */
     carried = null;
   }
-  if (seated(carried)) return carried;
-  return kept ?? carried ?? undefined;
+  return inviterForTheWallet((r.seat as { readonly invitedBy?: Inviter }).invitedBy, carried, onTheChain);
 };
 
 /** The inviter in the shape the records-key check reads, or none when its keys are not the wallet's kind. */
@@ -80,6 +77,7 @@ const openingLeafOf = async (opening: NonNullable<RecordsKeyRequest['invitedBy']
 };
 
 
+/** The steps that give this seat's vault keys, and a way for the steps after them to read what they gave. */
 export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?: Readonly<Record<string, string | number>>) => Words, titles: string) {
   const read = keptReach((ctx) => companyReachFor(ctx, reach.chain(), reach.builder(), (k) => why(k)));
   let given: KeysGiven | null = null;

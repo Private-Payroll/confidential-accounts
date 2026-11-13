@@ -1,17 +1,18 @@
-import { schnorr } from '@noble/curves/secp256k1.js';
 import type { AttributeName } from './definition.js';
 import { usableOrigin, whyNotUsable } from './origin.js';
 import { RECEIVING_ADDRESS } from './attributes.js';
 import type { Registry } from './attributes.js';
 import { readAccountAddress, readCompanyLabel, readVaultAddress } from './company-label.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from './company-label.js';
-import { readJoinParts, type JoinParts } from './join-parts.js';
+import { readAskedParts, type AskedParts } from './join-parts.js';
 import { ACT_INTENTS } from './act-intents.js';
 import { readKeyringHandedIn, type KeyringHandedIn } from './unlock.js';
 import type { ActIntentName, IntentFieldKind, IntentShape } from './act-intents.js';
 export type { ActIntentName, CallRoute, IntentFieldKind, IntentShape, OutcomeKind } from './act-intents.js';
 export { routeOf, sendsIn } from './act-intents.js';
 export { intentShapeOf } from './act-shape.js';
+export { committeeInstallRefusals, whyNotInstallable, type CommitteeInstallRefusal } from './committee-install.js';
+import { COMMITTEE_KEY, committeeInstallRefusals } from './committee-install.js';
 
 /**
  * WHAT AN APPLICATION SENDS, AND THE ONE FIELD IT MAY NEVER SEND.
@@ -638,6 +639,22 @@ export interface CommitteeJoinRequest extends CommitteeAsking {
 export type CommitteeRequest = HandOverRequest | SuperAdminsRequest | CommitteeJoinRequest;
 
 /**
+ * A super admin's request to the company's service: the wallet signs, with its key for the company, that the person
+ * signed in at the service as `user` asks about the company the service records as `record`. The service lets the
+ * request in only while that key holds the company's account on the chain or joins it in a change kept there.
+ */
+export interface SuperAdminRequestAsk extends CommitteeAsking {
+  readonly press: 'request';
+  /** The company as the service's routes name it. */
+  readonly record: string;
+  /** The person signed in at the service who asks. */
+  readonly user: string;
+}
+
+/** Everything a page may ask this wallet to sign with its key for a company. */
+export type CommitteeAsk = CommitteeRequest | SuperAdminRequestAsk;
+
+/**
  * ASKING THIS WALLET TO SIGN ONE SIGNER'S RECORDS KEY FOR THEIR SEAT ON A
  * COMPANY'S ACCOUNT, AND TO SAY WHO HOLDS THAT ACCOUNT NOW.
  *
@@ -842,7 +859,8 @@ export const MOST_ENTRIES_ASKED = 2048;
  * **EVERYTHING HERE IS CLAIMED, AND THE PRESS IS WHAT DECIDES.** A payee's
  * address must be one this wallet receives at, or nothing is signed; a
  * signer's keys are the page's, and the fingerprint the person compares is
- * what makes a swapped key visible.
+ * what makes a swapped key visible; a reader's key is never the page's, it is
+ * the one this wallet derives for the company.
  */
 export interface JoinCodeRequest extends Asking {
   readonly kind: 'join-code';
@@ -856,7 +874,8 @@ export interface JoinCodeRequest extends Asking {
   readonly account: AccountAddress;
   /** The id the person signed in to the company's service with. */
   readonly person: string;
-  readonly parts: JoinParts;
+  /** The parts to sign; a reader's names no key, which the wallet puts in itself. */
+  readonly parts: AskedParts;
 }
 
 /**
@@ -922,7 +941,7 @@ export interface ActRequest extends Asking {
 
 /** What an application may open this wallet with. */
 export type Ask =
-  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest
+  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeAsk
   | RecordsKeyRequest | HoldersRequest | CreationRequest | JoinCodeRequest | AddressesAndBalancesRequest | ActRequest;
 
 /**
@@ -1300,7 +1319,6 @@ function wantsOf(body: Record<string, unknown>): readonly Want[] {
 const MAX_CONTRACTS = 64;
 /** The most keys a committee on this wire may list. */
 const MAX_COMMITTEE = 64;
-const COMMITTEE_KEY = /^[0-9a-fA-F]{64}$/u;
 const COUNTER = /^[0-9]{1,20}$/u;
 
 /*
@@ -1337,115 +1355,6 @@ const accountIn = (value: unknown, asks: string, nothing: string): AccountAddres
 const accountMaybeIn = (value: unknown, asks: string, nothing: string): AccountAddress | null =>
   value === undefined || value === null ? null : accountIn(value, asks, nothing);
 
-/** One reason a committee may not be installed on a contract: a code a caller compares and the sentence a person reads. */
-export interface CommitteeInstallRefusal {
-  readonly code:
-    | 'malformed-committee-key'
-    | 'repeated-committee-member'
-    | 'threshold-below-one'
-    | 'threshold-above-committee'
-    | 'committee-emptied';
-  /** Starts in lower case and ends with a full stop, so a caller can put its own words in front of it. */
-  readonly why: string;
-}
-
-/**
- * Whether `value` is a key the chain builds a committee with and a wallet
- * derives: a schnorr key, thirty-two bytes of hex that name a point on the
- * curve. The chain refuses any other length, and an x with no point, when the
- * authority is built; it would take an ecdsa key too, but no wallet derives
- * one, so no wallet could sign for it or for a committee holding it.
- */
-const isWalletCommitteeKey = (tag: string, value: string): boolean => {
-  if (tag !== 'schnorr' || !COMMITTEE_KEY.test(value)) return false;
-  try {
-    schnorr.utils.lift_x(BigInt(`0x${value}`));
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
- * **THE ONE RULE FOR WHICH COMMITTEE MAY BE INSTALLED ON A CONTRACT.** This
- * wallet asks it before it signs a committee change, and every device and
- * service door that builds, checks or pays for a change of who holds a
- * contract asks it too, so no door installs or funds what another refuses.
- *
- * A committee may be installed when every key is a schnorr key a wallet
- * derives (sixty-four hex digits naming a point on the curve), no key appears
- * twice (compared by digits, case folded), and the threshold is a whole number
- * from one to the number of keys. Several keys at a threshold of one are allowed:
- * which of the company's super admins may act alone is the company's choice.
- *
- * The chain checks none of this but the key's length and point when it
- * installs a committee: at a threshold of zero anybody can change the contract
- * with no signature at all; at a threshold above the number of keys nobody ever
- * can again; and a key listed twice signs once and counts at every place it
- * holds. Returns every reason at once, so a person fixes them
- * together, and an empty list when the committee may be installed. Anything at
- * all may be passed: a value that is not a list of keys, or a key that is not
- * a pair of strings, is a refusal and never a thrown error.
- */
-export function committeeInstallRefusals(committee: unknown, threshold: unknown): readonly CommitteeInstallRefusal[] {
-  const out: CommitteeInstallRefusal[] = [];
-  const keys: readonly unknown[] = Array.isArray(committee) ? committee : [];
-  if (!Array.isArray(committee)) {
-    out.push({ code: 'malformed-committee-key', why: 'the committee is not a list of keys. Name the keys that are to hold the contract.' });
-  }
-  const seen = new Map<string, number>();
-  keys.forEach((k, i) => {
-    const key = k as { tag?: unknown; value?: unknown } | null;
-    const tag = typeof key === 'object' && key !== null && typeof key.tag === 'string' ? key.tag : null;
-    const value = typeof key === 'object' && key !== null && typeof key.value === 'string' ? key.value : null;
-    if (tag === null || value === null || !isWalletCommitteeKey(tag, value)) {
-      out.push({
-        code: 'malformed-committee-key',
-        why: `key ${i + 1} is not a schnorr key a wallet derives - sixty-four hex digits naming a point on the curve - so `
-          + 'nobody could sign for that place. Name it by the key its holder\'s wallet gives.',
-      });
-    }
-    if (tag === null || value === null) return;
-    const id = `${tag.toLowerCase()}:${value.toLowerCase()}`;
-    const first = seen.get(id);
-    if (first === undefined) { seen.set(id, i); return; }
-    out.push({
-      code: 'repeated-committee-member',
-      why: `keys ${first + 1} and ${i + 1} are the same key, so its holder would sign once and count at both places, and `
-        + 'the threshold would need fewer people than it reads as. Name each key once.',
-    });
-  });
-  const whole = typeof threshold === 'number' && Number.isInteger(threshold);
-  if (!whole || (threshold as number) < 1) {
-    out.push({
-      code: 'threshold-below-one',
-      why: `a threshold of ${String(threshold)} is not a whole number of at least one, and at zero anybody could change the `
-        + 'contract\'s rules with no signature at all. Choose a whole number from 1 to the number of keys.',
-    });
-  }
-  if (keys.length === 0) {
-    out.push({
-      code: 'committee-emptied',
-      why: 'the committee holds no keys, so nobody could ever change the contract\'s rules again. Name at least one key.',
-    });
-  }
-  if (whole && (threshold as number) > keys.length) {
-    out.push({
-      code: 'threshold-above-committee',
-      why: `a threshold of ${threshold as number} over ${keys.length} key${keys.length === 1 ? '' : 's'} can never be met, so nobody `
-        + `could ever change the contract's rules again. Choose a threshold from 1 to ${keys.length}.`,
-    });
-  }
-  return out;
-}
-
-/**
- * **THE FIRST REASON `committeeInstallRefusals` GIVES FOR A COMMITTEE VALUE**, or
- * null when it may be installed: `committeeInstallRefusals` for a door that
- * puts one sentence in front of a person and stops.
- */
-export const whyNotInstallable = (c: { readonly committee: unknown; readonly threshold: unknown }): string | null =>
-  committeeInstallRefusals(c.committee, c.threshold)[0]?.why ?? null;
 
 const notACommitteeChange = (why: string): RequestError => new RequestError(
   'not-a-committee-change',
@@ -1482,20 +1391,22 @@ const SIGNATURE_HEX = /^[0-9a-fA-F]{128}$/u;
 const MOST_CHANGE_BYTES = 64 * 1024;
 
 /** The fields that say which press a committee ask is. Each press carries exactly its own, and an ask carrying any other mixture is refused. */
-const PRESS_FIELDS = ['to', 'change', 'salt', 'changeBytes', 'joined', 'joining'] as const;
-const PRESSES: Readonly<Record<CommitteeRequest['press'], readonly (typeof PRESS_FIELDS)[number][]>> = {
+const PRESS_FIELDS = ['to', 'change', 'salt', 'changeBytes', 'joined', 'joining', 'record', 'user'] as const;
+const PRESSES: Readonly<Record<CommitteeAsk['press'], readonly (typeof PRESS_FIELDS)[number][]>> = {
   'hand-over': ['to'],
   'super-admins': ['change', 'salt', 'changeBytes', 'joined'],
   join: ['change', 'salt', 'changeBytes', 'joining'],
+  request: ['record', 'user'],
 };
 
-function pressOf(body: Record<string, unknown>): CommitteeRequest['press'] {
+function pressOf(body: Record<string, unknown>): CommitteeAsk['press'] {
   const present = PRESS_FIELDS.filter((f) => body[f] !== undefined);
-  const found = (Object.keys(PRESSES) as CommitteeRequest['press'][])
+  const found = (Object.keys(PRESSES) as CommitteeAsk['press'][])
     .find((p) => PRESSES[p].length === present.length && PRESSES[p].every((f) => present.includes(f)));
   if (found === undefined) {
-    throw notACommitteeChange('it is none of the three things this wallet signs for a committee - a hand-over, a change of the '
-      + 'super admins, or a joining key\'s own signature - but a mixture of them, or one with a part missing');
+    throw notACommitteeChange('it is none of the four things this wallet signs for a committee - a hand-over, a change of the '
+      + 'super admins, a joining key\'s own signature, or a super admin\'s request to the company\'s service - but a mixture of '
+      + 'them, or one with a part missing');
   }
   return found;
 }
@@ -1610,7 +1521,7 @@ function joinedOf(value: unknown): readonly JoiningSignatureOnTheWire[] {
  * names the account first; nothing in it is believed until the wallet reads
  * the chain.
  */
-function committeeChangeOf(body: Record<string, unknown>, asking: Asking): CommitteeRequest {
+function committeeChangeOf(body: Record<string, unknown>, asking: Asking): CommitteeAsk {
   if ('wants' in body) {
     throw new RequestError(
       'attributes-on-a-committee-change',
@@ -1630,12 +1541,13 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
   const company = labelIn(body['company'], committeeAsks, committeeNothing);
   const account = accountIn(body['account'], committeeAsks, committeeNothing);
   const press = pressOf(body);
+  const head = { ...asking, kind: 'committee' as const, company, account };
+  if (press === 'request') return superAdminRequestOf(body, head);
   if ((press === 'join') !== (body['contracts'] === undefined)) {
     throw notACommitteeChange(press === 'join'
       ? 'a joining key\'s own signature names no contract to sign, and this one does'
       : `it names no contract to change, or more than ${MAX_CONTRACTS}`);
   }
-  const head = { ...asking, kind: 'committee' as const, company, account };
   if (press === 'hand-over') {
     const to = committeeOnTheWire(body['to'], 'the committee to install');
     const contracts = contractsAskedOf(body['contracts'], account, (e) => Object.freeze({
@@ -1664,10 +1576,26 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
   return Object.freeze({ ...named, press, joined, contracts });
 }
 
+/**
+ * The request press: which company at the service, and which person signed in there, the wallet signs for. It names
+ * no contract, so nothing on the chain changes by it.
+ */
+function superAdminRequestOf(body: Record<string, unknown>, head: CommitteeAsking): SuperAdminRequestAsk {
+  if (body['contracts'] !== undefined) throw notACommitteeChange('a request to the company\'s service names no contract to sign, and this one does');
+  const record = body['record'];
+  const user = body['user'];
+  if (typeof record !== 'string' || !RECORD_ID.test(record)) throw notACommitteeChange('it does not name the company as the service records it');
+  if (typeof user !== 'string' || !PERSON.test(user)) throw notACommitteeChange('it does not name the person signed in at the service');
+  return Object.freeze({ ...head, press: 'request' as const, record, user });
+}
+
 const SEAT = /^[0-9a-f]{64}$/u;
 
 /** The service's name for a record, as an action may name it: never a path, never more than one segment. */
 const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+
+/** A join code as its wallet writes it, the one long text an action carries: never more than one code. */
+const JOIN_CODE_TEXT = /^mnjoin1\.[A-Za-z0-9_-]{1,8000}$/u;
 
 /** The longest text an action carries as the page's words. */
 export const MOST_WORDS = 2_000;
@@ -1862,9 +1790,9 @@ function joinCodeAskOf(body: Record<string, unknown>, asking: Asking): JoinCodeR
   if (typeof person !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(person)) {
     throw new RequestError('not-a-person', `${asks} and names you by something that is not a sign-in. ${nothing}`);
   }
-  const parts = readJoinParts(body['parts']);
+  const parts = readAskedParts(body['parts']);
   if (parts === null) {
-    throw new RequestError('not-a-join-code', `${asks} and what it asks to be signed is neither a signer's keys nor a payee's. ${nothing}`);
+    throw new RequestError('not-a-join-code', `${asks} and what it asks to be signed is not a signer's keys, a payee's, or a reader's with no key named. ${nothing}`);
   }
   return Object.freeze({ ...asking, kind: 'join-code' as const, company, account, person, parts });
 }
@@ -1927,6 +1855,9 @@ function intentFieldOf(kind: IntentFieldKind, value: unknown, field: string, ask
       return value;
     case 'record':
       if (typeof value !== 'string' || !RECORD_ID.test(value)) throw notOne('the name of a record: up to sixty-four letters, digits, - or _');
+      return value;
+    case 'join-code':
+      if (typeof value !== 'string' || !JOIN_CODE_TEXT.test(value)) throw notOne('a join code as a wallet writes it');
       return value;
     case 'words':
       if (typeof value !== 'string' || value.length > MOST_WORDS || PAGE_WORDS_REFUSED.test(value)) {
@@ -2141,7 +2072,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * COMMITTEE CHANGE AND TO NOTHING ELSE**, refused by presence on every other
    * kind for the keyring fields' reason.
    */
-  if (kind !== 'committee' && ['to', 'contracts', 'change', 'salt', 'changeBytes', 'joined', 'joining'].some((f) => f in body)) {
+  if (kind !== 'committee' && ['to', 'contracts', 'change', 'salt', 'changeBytes', 'joined', 'joining', 'record', 'user'].some((f) => f in body)) {
     throw new RequestError(
       'committee-fields-on-another-kind',
       `this is a '${kind}' and it names a committee or the contracts a committee holds. Those belong only to a `

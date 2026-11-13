@@ -161,18 +161,37 @@ describe('what is shown and refused before anything is sent', () => {
     expect(kr.acts).toEqual([]);
   });
 
-  /* RED WHEN: limited or accountant can be chosen, a chosen set of vaults can be, or their reasons are missing. */
-  it('shows limited, accountant and a chosen set of vaults disabled, with the reason beside them', async () => {
+  /* RED WHEN: limited or accountant cannot be chosen, a chosen set of vaults can be, or the reason beside the vaults is missing. */
+  it('offers every role, and shows a chosen set of vaults disabled, with the reason beside it', async () => {
     inPanel(<InvitePeople />);
     await settle(); await openPanel();
     pick('data-kind=signer');
-    for (const role of ['limited', 'accountant']) expect((q(`[data-role=${role}]`) as HTMLButtonElement).disabled, role).toBe(true);
-    for (const role of ['admin', 'approver', 'initiator']) expect((q(`[data-role=${role}]`) as HTMLButtonElement).disabled, role).toBe(false);
-    /* RED WHEN: a role no seat can hold any more is still offered beside the three a signer is invited to. */
+    for (const role of ['admin', 'approver', 'initiator', 'limited', 'accountant']) expect((q(`[data-role=${role}]`) as HTMLButtonElement).disabled, role).toBe(false);
+    /* RED WHEN: a role no seat can hold any more is still offered beside the roles a signer or a reader holds. */
     expect(q('[data-role=viewer]')).toBeNull();
     expect((q('[data-scope=chosen]') as HTMLButtonElement).disabled).toBe(true);
-    expect(q('[data-invite-later=roles]')!.textContent).toBe(EN['invite.role.later']);
     expect(q('[data-invite-later=scope]')!.textContent).toBe(EN['invite.scope.chosen.why']);
+    expect(q('[data-invite-reader]')).toBeNull();
+  });
+
+  /* RED WHEN: a reader role keeps the form of an invitation, or its sentence and link to Roles and permissions are missing, or an invitation can still be sent for it, or choosing a signer role again does not bring the form back. */
+  it('swaps the rest of the form for a sentence and a link to Roles and permissions when a reader role is chosen', async () => {
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer');
+    for (const role of ['limited', 'accountant']) {
+      pick(`data-role=${role}`);
+      expect(q('[data-invite-reader]')!.textContent).toContain(EN['invite.role.reader']!);
+      expect(q('[data-invite-reader] [data-action=go-roles]')!.textContent).toBe(EN['page.settingsRoles.name']);
+      expect(q('[data-invite-reader] [data-action=go-roles]')!.getAttribute('href')).toContain('/settings/roles');
+      for (const gone of ['[data-field=name]', '[data-field=address]', '[data-field=scope]', '[data-threshold-value]', '[data-action=send-invite]']) expect(q(gone), `${role} ${gone}`).toBeNull();
+      expect(q('[data-field=role]')).not.toBeNull();
+      expect(q('[data-field=kind]')).not.toBeNull();
+    }
+    expect(kr.acts).toEqual([]);
+    pick('data-role=approver');
+    expect(q('[data-invite-reader]')).toBeNull();
+    for (const back of ['[data-field=name]', '[data-field=address]', '[data-field=scope]', '[data-threshold-value]', '[data-action=send-invite]']) expect(q(back), back).not.toBeNull();
   });
 
   /* RED WHEN: the sentence is missing, shows the account's number when a vault raised it, or is guessed when the number is unreadable. */
@@ -314,7 +333,7 @@ describe('a stop that may have made part of the invitation', () => {
   });
 
   /* RED WHEN: a refusal that made nothing holds the form still, so the mistake cannot be corrected. */
-  it('lets the form be changed after a refusal that made nothing, and a new press makes a new token', async () => {
+  it('lets the form be changed after a refusal that made nothing, and a signer\'s press again sends no token', async () => {
     inPanel(<InvitePeople />);
     await settle(); await openPanel();
     pick('data-kind=signer');
@@ -324,7 +343,7 @@ describe('a stop that may have made part of the invitation', () => {
     expect(q('[data-invite-stopped=own-address]')!.textContent).toContain(EN['invite.why.own-address']);
     expect((q('[data-field=address]') as HTMLInputElement).disabled).toBe(false);
     await press();
-    expect(kr.acts[1]!['token']).not.toBe(kr.acts[0]!['token']);
+    expect(kr.acts.map((a) => 'token' in a)).toEqual([false, false]);
   });
 });
 
@@ -395,6 +414,19 @@ describe('the panel words, controls and sent state', () => {
     expect(q('[data-invite-sent]')!.textContent).toContain('holder of the address');
   });
 
+  /* RED WHEN: a signer's invitation sends the wallet a token, or the page shows or holds a link for it, which would open the seat's offer from the page. */
+  it('sends a signer\'s wallet no token, shows no link, and says the wallet showed it', async () => {
+    inPanel(<InvitePeople />);
+    await settle(); await openPanel();
+    pick('data-kind=signer'); type('name', 'Sam'); type('address', PRIVATE);
+    await press();
+    expect('token' in kr.acts[0]!).toBe(false);
+    expect(q('[data-invite=sent] input[readonly]')).toBeNull();
+    expect(q('[data-invite-link-once]')).toBeNull();
+    expect(q('[data-invite-sent]')!.textContent).toContain(EN['invite.done.link.inWallet']!.replace('{name}', 'Sam'));
+    expect(document.body.textContent).not.toMatch(/\/join\/[0-9a-f]{64}/u);
+  });
+
   /* RED WHEN: a signer's sent state does not say the proposal still needs approvals, how many, and where it shows. */
   it('tells the inviter of a signer that the proposal still needs approvals and where it shows', async () => {
     inPanel(<InvitePeople />);
@@ -423,7 +455,7 @@ describe('the panel words, controls and sent state', () => {
       expect(q('[data-invite-closing]')!.textContent, why).toBe(EN[words]);
     }
     expect(EN['invite.stopped.closingSigner']).not.toMatch(/new one/u);
-    expect(EN['invite.stopped.closingSigner']).toMatch(/cannot be invited again until it is withdrawn.*Proposals page/);
+    expect(EN['invite.stopped.closingSigner']).toMatch(/your wallet carries on the invitation it kept.*withdraws it from the Proposals page/);
   });
 
   /* RED WHEN: the sent link is not drawn by the kit's copy control, says nothing of being shown once, or a browser that would not copy leaves no word. */
@@ -597,16 +629,17 @@ describe('the panel words, controls and sent state', () => {
     expect(kr.acts[1]!['token']).toBe(kr.acts[0]!['token']);
   });
 
-  /* RED WHEN: a disabled option gives a statement and no cause or next step. */
-  it('gives the cause and the next step for each disabled signer option', async () => {
+  /* RED WHEN: the vaults option that cannot be chosen gives a statement and no cause or next step, or a reader role's refusal does not say where read access is given. */
+  it('gives the cause and the next step for the signer option that is disabled, and for a reader role refused here', async () => {
     inPanel(<InvitePeople />);
     await settle(); await openPanel();
     pick('data-kind=signer');
-    expect(q('[data-invite-later=roles]')!.textContent).toMatch(/Admin, Approver or Initiator\./u);
-    expect(q('[data-invite-later=roles]')!.textContent).toMatch(/cannot be given from here/u);
     expect(q('[data-invite-later=scope]')!.textContent).toMatch(/cannot choose vaults yet/u);
     expect(q('[data-invite-later=scope]')!.textContent).toMatch(/wait before inviting/u);
-    expect(EN['invite.problem.role-later']).toMatch(/Admin, Approver or Initiator\./u);
+    expect(EN['invite.problem.role-reader']).toMatch(/given as read access, not with an invitation/u);
+    expect(EN['invite.problem.role-reader']).toMatch(/Open Roles and permissions/u);
+    expect(EN['invite.role.reader']).toMatch(/without a seat/u);
+    expect(EN['invite.role.reader']).toMatch(/read access and not an invitation/u);
   });
 
   /* RED WHEN: a role has no line, or its line is not the one drawn from the seat directory's rule of what each role may file. */

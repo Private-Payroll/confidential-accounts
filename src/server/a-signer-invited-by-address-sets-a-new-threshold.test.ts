@@ -140,7 +140,7 @@ describe('A SIGNER INVITED BY ADDRESS SETS THE THRESHOLD THE SIGNERS APPROVED, O
 
   it('RED WHEN: a seat entered under the leaf its person sent drops the threshold its invitation names, and is raised keeping the one in force', async () => {
     await expect(seatSignerOnDevice(seatingDevice(ADA), {
-      viewingKey: KEY, signerId: 'sgn_none', readOut: '', invite: { address: 'aa'.repeat(32), salt: 'bb'.repeat(32), scope: ALL, threshold: '2' },
+      companyKeys: KEY, signerId: 'sgn_none', readOut: '', invite: { scope: ALL, threshold: '2' },
     } as never)).rejects.toThrow(/a seat entered under the leaf its person sent keeps the threshold in force/u);
   });
 });

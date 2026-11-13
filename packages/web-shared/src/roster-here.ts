@@ -69,9 +69,12 @@ import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.j
 import { refuseASeatWhoseFingerprintIsNotTheJoiners } from './seat-request-fingerprint.js';
 import { notePreparing } from './read-bound.js';
 import {
-  attestedIn, directoryHere, filingRefusalCodeOf, foundingRecordRefusalHere, judgeIn, kindAsked, listedHere, newerNamedRefusal, passedOverSaid, type DirectoryHere,
+  attestedIn, directoryHere, filingRefusalCodeOf, judgeIn, kindAsked, listedHere, passedOverSaid, type DirectoryHere,
   type DirectoryHereDeps,
 } from './vault-page-doors.js';
+import { provedSeatsOf, rosterFilerJudged } from './roster-filer-here.js';
+
+export { provedSeatsOf };
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -343,16 +346,6 @@ export async function seatsAdmittedHere(
 }
 
 /**
- * The seats of a directory this device believes whose entry it opened and
- * believed: only those carry a wallet key to witness a roster entry with, and
- * only those are believed to have signed an invitation.
- */
-export const provedSeatsOf = (seats: readonly DirectorySeat[]): DirectoryWitness[] =>
-  seats.flatMap((x) => (x.committeeKey === undefined ? [] : [{
-    seat: x.seat, signingKey: x.signingKey, committeeKey: x.committeeKey, retired: x.retired !== null, role: x.role, person: x.person, ...(x.rights === undefined ? {} : { rights: x.rights }),
-  }]));
-
-/**
  * **THE COMPANY'S ROSTER AS THIS DEVICE BELIEVES IT, FROM ITS FILED RECORD
  * ONLY.** Refused, with `NO_ROSTER_RECORD`, for a company whose signers were
  * never filed as a roster record: the unsigned list on its account record is
@@ -411,16 +404,7 @@ export async function rosterBelievedHere(
     throw new RosterNotBelieved(`This device could not check who filed the company's roster (${(e as Error)?.message ?? String(e)}). Reload the page and try again.`,
       null, null, { check: ROSTER_CHECK.filerNotChecked, stoppedBy: [classOf(e)] });
   }
-  const witnesses: RosterWitnesses = {
-    accountId: d.accountId, label: d.label, account: d.account, seatsOnTheChain: read.holders.seats,
-    directory: provedSeatsOf(read.dir.seats),
-    own: d.own ?? null,
-    retired: retiredAsAnchored(read),
-  };
-  const { believed, refused, attesting } = believedSigners(opened.signers, witnesses);
-  const here = { ...read, another: seatsWithAnotherRecordsKey(read.dir, d.label, read.holders.account, attestedIn({ signers: attesting })) };
-  const why = roster.version === 1 ? firstRosterRefusal(here, roster, d.accountId, d.own ?? null)
-    : judgeIn(here)(verifiedCompanyFiler(roster), 'roster', companyRecordKey('roster', ROSTER_ID), companyRecordEntry(roster), true, roster.keyEpoch);
+  const { witnesses, believed, refused, attesting, here, why } = rosterFilerJudged(opened, read, roster, d);
   /* Every seat the chain holds is in the roster, or waited for by someone the company invited to it. */
   const stopped: string[] = [];
   const waited = await seatsWaitedFor(sealed, viewingKey, {
@@ -453,16 +437,6 @@ export async function rosterBelievedHere(
     opened, version: roster.version, refused, witnesses, held,
   };
 }
-
-/**
- * The seats a retirement anchored in the company's records retired, as the directory stood at the newest version the
- * anchor holds: one retired by a version filed and not yet anchored still has its entry, until that version is anchored.
- */
-const retiredAsAnchored = (read: { readonly records: { readonly directory: ReadonlyMap<number, unknown> }; readonly at: DirectoryHere['at'] }): string[] => {
-  const newest = Math.max(0, ...read.records.directory.keys());
-  if (newest === 0) return [];
-  return (read.at(newest)?.dir.seats ?? []).filter((x) => x.retired !== null).map((x) => x.seat.toLowerCase());
-};
 
 /** The seats the chain holds that no seated entry of `signers` names and nobody invited to them waits for. */
 const unnamedIn = (signers: readonly Signer[], seatsOnTheChain: readonly string[], waited: ReadonlySet<string>): string[] =>
@@ -522,29 +496,6 @@ const heldAsFiled = (here: Awaited<ReturnType<typeof directoryHere>>, rec: Seale
   if (filer === null) return false;
   const s = heldStandingOf(here.records, companyRecordEntry(rec), filer);
   return (s.standing === 'anchored' || s.standing === 'older-than-anchored' || s.standing === 'not-yet-anchored') && s.version === rec.version;
-};
-
-/**
- * Why this device does not believe a company's first roster, or null when it
- * does. It is filed with the company by its founding signer's device and
- * anchored in the company's first batch, so it is believed by the rule the
- * first state is (`foundingRecordRefusalHere`), and only while no newer version
- * is named. On the founding signer's own device, on its own signing key, it is
- * believed before that first anchor too, while nothing is anchored and no newer
- * version is named: that device made it.
- */
-const firstRosterRefusal = (
-  here: Awaited<ReturnType<typeof directoryHere>>, roster: SealedCompanyRecord, accountId: string,
-  own: { readonly signingPublicKey: string } | null,
-): string | null => {
-  const filer = verifiedCompanyFiler(roster);
-  const read = { ...companyRecordEntry(roster), version: roster.version };
-  const nothingAnchored = here.records.reached.seq < 0 && here.records.stopped === null;
-  if (nothingAnchored && filer !== null && own !== null && filer.toLowerCase() === own.signingPublicKey.toLowerCase()) {
-    return foundingRosterRefusal(roster, accountId, own.signingPublicKey) ?? newerNamedRefusal(here, read);
-  }
-  return foundingRecordRefusalHere(here, roster, (key) => foundingRosterRefusal(roster, accountId, key))
-    ?? newerNamedRefusal(here, read);
 };
 
 /** Why the roster was not read or not filed from this device. Nothing was filed. */

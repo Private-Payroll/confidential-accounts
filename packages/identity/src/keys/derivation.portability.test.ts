@@ -308,6 +308,13 @@ describe('the authority compartment', () => {
       0: 'fef9ff639a1cf52b690927055ab8fb1f8d702576d4234a799e46b8098eda7a8f',
       1: '8906085371a8aef6957f11f6c6591789ce73cbc04ca4350f1cf33493e5d61f48',
     },
+    /* The tenth purpose, added under the same sentence as the four before it: every value above is the value it already
+     * had. Recorded from this repository's derivation and checked against the independent walk below
+     * (`@scure/bip32` + `@noble/hashes`), which must agree byte for byte. */
+    reader: {
+      0: '02d35dade72770ec29f1aeecb4cba84f690840fcb2535d3f41ee146e71ad5e38',
+      1: 'e2be060aaedb5380c8c644d41848575a9f6077a40eebf958adb68385deac35ee',
+    },
   };
 
   /**
@@ -363,7 +370,8 @@ describe('the authority compartment', () => {
      * sentence again: the twelve before it are byte-identical. */
     /* Fourteen became sixteen when `maintenance` arrived with two indices. The
      * fourteen before it are byte-identical. */
-    expect(checked).toBe(16);
+    /* Sixteen became eighteen when `reader` arrived with two indices. The sixteen before it are byte-identical. */
+    expect(checked).toBe(18);
   });
 
   it('walks the path this repository says it walks — every purpose', () => {

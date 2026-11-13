@@ -10,6 +10,7 @@ import type { StepAt } from 'midnight-identity/profile/channel';
 import { actOnACompanyInTheWallet } from './keyring.js';
 import { PROPOSAL_ACT, proposalActInTheWallet } from './proposal-in-the-wallet.js';
 import { walletInThisPage } from './wallet-frame.js';
+import { RECOVERY_WINDOW_RANGE, windowWhenNoneInForce } from '../../../src/midnight/recovery-window-record.js';
 import type { Openable } from './wallet-sign-in.js';
 import type { ActOutcome } from './wallet-act.js';
 
@@ -28,6 +29,7 @@ export type RecoveryState = (typeof RECOVERY_STATE)[keyof typeof RECOVERY_STATE]
 export const RECOVERY_WHY = {
   seat: 'seat', noAccount: 'no-account', noDust: 'no-dust', notARecovery: 'not-a-recovery', notRaised: 'not-raised', closed: 'closed', outrun: 'outrun',
   stillOpen: 'still-open', mayBeSent: 'may-be-sent', notDone: 'not-done', noWallet: 'no-wallet', stopped: 'stopped', other: 'other',
+  windowUnread: 'window-unread',
 } as const;
 export type RecoveryWhy = (typeof RECOVERY_WHY)[keyof typeof RECOVERY_WHY];
 
@@ -36,7 +38,7 @@ const WHY_OF: Readonly<Record<string, RecoveryWhy>> = {
   'no-account': RECOVERY_WHY.noAccount, 'no-dust': RECOVERY_WHY.noDust, 'not-a-recovery': RECOVERY_WHY.notARecovery,
   'not-raised': RECOVERY_WHY.notRaised, closed: RECOVERY_WHY.closed, outrun: RECOVERY_WHY.outrun, 'still-open': RECOVERY_WHY.stillOpen,
   'may-be-sent': RECOVERY_WHY.mayBeSent, 'not-raised-here': RECOVERY_WHY.notDone, 'not-approved': RECOVERY_WHY.notDone, 'not-carried': RECOVERY_WHY.notDone,
-  'no-own-wallet': RECOVERY_WHY.noWallet,
+  'no-own-wallet': RECOVERY_WHY.noWallet, 'window-unread': RECOVERY_WHY.windowUnread,
 };
 const KEY = /^act\.(?:recovery|approve-proposal)\.why\.([a-z-]+)$/u;
 
@@ -53,7 +55,15 @@ export function recoveryWhyOf(refused: string | undefined): RecoveryWhy {
  */
 export const RECOVERY_WITHIN = [
   { id: 'hour', seconds: 60 * 60 }, { id: 'day', seconds: 24 * 60 * 60 }, { id: 'three-days', seconds: 3 * 24 * 60 * 60 }, { id: 'six-days', seconds: 6 * 24 * 60 * 60 },
+  { id: 'two-weeks', seconds: 14 * 24 * 60 * 60 }, { id: 'longest', seconds: RECOVERY_WINDOW_RANGE.longest },
 ] as const;
+
+/**
+ * The waits a recovery may be raised with: those no longer than the company's recovery window in force, or, with none
+ * in force, than the window a device holds then (`windowWhenNoneInForce`). The wallet holds the window it kept, and refuses past it.
+ */
+export const recoveryWithinUpTo = (window: number | null): readonly (typeof RECOVERY_WITHIN)[number][] =>
+  RECOVERY_WITHIN.filter((w) => w.seconds <= (window ?? windowWhenNoneInForce()));
 export type RecoveryWithin = (typeof RECOVERY_WITHIN)[number]['id'];
 
 /** Why a file did not open as a recovery of this company. */
@@ -174,6 +184,24 @@ export function carryOutRecoveryInTheWallet(
  * here, not taken from the code that makes the file on a device with the seat's keys, because that code uses a seat secret and the page
  * holds none: the page only writes the parts of the file down and reads them back, and the wallet makes the file again from them.
  */
+/** What setting the recovery window tells the page: in force, or still gathering signatures. */
+export const WINDOW_STATE = { inForce: 'in-force', waiting: 'waiting-for-signers' } as const;
+
+/** Sets the company's recovery window to `seconds`, or adds this seat's signature to a change to that length, in the wallet. */
+export function setRecoveryWindowInTheWallet(
+  ask: Company & { readonly seconds: number }, walletOrigin: string, opts: Opts = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  return actOnACompanyInTheWallet({
+    name: 'set-recovery-window', record: ask.record, company: ask.company, account: ask.account, seconds: digitsOf(ask.seconds),
+  }, walletOrigin, withSteps(opts), view);
+}
+
+/** What setting the window told the page: its state, how many have signed it and how many it needs. */
+export function windowOutcomeOf(ended: ActOutcome): { readonly state: string | null; readonly signed: number | null; readonly needed: number | null } {
+  const state = ended.outcome?.['state'];
+  return { state: typeof state === 'string' ? state : null, signed: count(ended.outcome?.['signed']), needed: count(ended.outcome?.['needed']) };
+}
+
 const FILE_FORMAT = 'confidential-accounts/proposal-file/v1';
 const CHANGE_KIND = 'recover-anchor';
 

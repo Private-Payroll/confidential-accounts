@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Badge, formatDate, useLanguage, useText } from 'vaults-ui';
 import { creationOfCompany } from '../setup/creation-on-demand.js';
-import { approvalsNeededFor, type Company } from '../adapters/session.js';
+import { approvalsNeededFor, type Company, type SeatBarRead } from '../adapters/session.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { useSessionIfAny } from '../session.js';
 
@@ -13,9 +13,9 @@ const STARTED_ON = { dateStyle: 'medium' } as const;
  * until it is read, and for a company the wallet cannot read: no figure is shown for those, and the service's own
  * number is never put in its place.
  */
-function useApprovalsNeeded(): ReadonlyMap<string, number> {
+function useApprovalsNeeded(): ReadonlyMap<string, SeatBarRead> {
   const person = useSessionIfAny()?.person.id ?? null;
-  const [needed, setNeeded] = useState<ReadonlyMap<string, number>>(new Map());
+  const [needed, setNeeded] = useState<ReadonlyMap<string, SeatBarRead>>(new Map());
   useEffect(() => {
     if (person === null) return undefined;
     let alive = true;
@@ -44,11 +44,18 @@ export function useCompanyName(): (company: { createdAt?: string }, name?: strin
 }
 
 
-export function useCompanyWords(): { approvals: (c: Company) => string } {
+export function useCompanyWords(): { approvals: (c: Company) => string; why: (c: Company) => string } {
   const t = useText();
   const needed = useApprovalsNeeded();
   return {
-    approvals: (c) => (needed.has(c.id) ? t('switcher.approvals', { needed: needed.get(c.id), signers: c.signers }) : ''),
+    approvals: (c) => {
+      const bar = needed.get(c.id);
+      return bar === undefined ? t('switcher.signersOnly', { count: c.signers }) : t('switcher.approvals', { needed: bar.needed, signers: c.signers });
+    },
+    why: (c) => {
+      const bar = needed.get(c.id)?.because;
+      return bar === undefined ? '' : bar === 'account' ? t('switcher.because.account') : bar === 'policy-bar' ? t('switcher.because.policyBar') : t('switcher.because.vault');
+    },
   };
 }
 
@@ -97,6 +104,7 @@ export function CompanyFacts({ company, name = null, whyUnnamed = null, inList =
         : <span className="font-medium" data-company-name>{name}</span>}
       {unnamedBecause === undefined ? null : <span className="whitespace-normal text-xs text-muted-foreground" data-unnamed-why>{unnamedBecause}</span>}
       <span className="text-xs text-muted-foreground" data-approvals>{words.approvals(company)}</span>
+      {words.why(company) === '' ? null : <span className="text-xs text-muted-foreground" data-approvals-why>{words.why(company)}</span>}
       {notFinished ? <Badge variant="outline" className="mt-1 justify-self-start" data-not-finished>{t('company.notFinished')}</Badge> : null}
     </span>
   );

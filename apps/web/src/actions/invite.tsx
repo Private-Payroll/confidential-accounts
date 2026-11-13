@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import {
   Alert, AlertDescription, AlertTitle, Button, Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet,
   CopyText, Input, RadioGroup, RadioGroupItem, useText,
@@ -13,6 +13,8 @@ import { PayField, TermsChoice } from '../fields/form-fields.js';
 import { useCalendarDay } from '../records/parts.js';
 import { useCompanyRecords } from '../records/company-records.js';
 import { useSession } from '../session.js';
+import { PAGE } from '../pages.js';
+import { PageLink } from '../router.js';
 import { usePanel } from '../shell/right-panel.js';
 import type { StepProps } from '../setup/step-ids.js';
 
@@ -44,6 +46,8 @@ function useWhySays(): Record<InviteWhy, string> {
     [WHY.noOpening]: t('invite.why.no-opening'),
     [WHY.ownAddress]: t('invite.why.own-address'),
     [WHY.widerScope]: t('invite.why.wider-scope'),
+    [WHY.notVaults]: t('invite.why.not-vaults'),
+    [WHY.vaultNotAdopted]: t('invite.why.vault-not-adopted'),
     [WHY.notAThreshold]: t('invite.why.not-a-threshold'),
     [WHY.thresholdRefused]: t('invite.why.threshold-refused'),
     [WHY.notMade]: t('invite.why.not-made'),
@@ -75,7 +79,7 @@ function useProblemSays(most: number, says: string): Record<InviteProblem, strin
     [PROBLEM.badAddress]: t('invite.problem.bad-address'),
     [PROBLEM.notPrivateAddress]: t('invite.problem.not-private-address'),
     [PROBLEM.noRole]: t('invite.problem.no-role'),
-    [PROBLEM.roleLater]: t('invite.problem.role-later'),
+    [PROBLEM.roleReader]: t('invite.problem.role-reader'),
     [PROBLEM.superAdmin]: t('invite.problem.super-admin'),
     [PROBLEM.badThreshold]: t('invite.problem.bad-threshold'),
     [PROBLEM.thresholdTooHigh]: t('invite.problem.threshold-too-high', { count: most }),
@@ -115,7 +119,7 @@ function useRoleSays(): Record<string, string> {
 type Phase =
   | { readonly of: 'edit' }
   | { readonly of: 'busy'; readonly step: number; readonly steps: number }
-  | { readonly of: 'sent'; readonly link: string; readonly already: boolean; readonly draft: InviteDraft };
+  | { readonly of: 'sent'; readonly link: string | null; readonly already: boolean; readonly draft: InviteDraft };
 
 /**
  * ONE INVITE PANEL FOR EVERY PLACE SOMEBODY IS INVITED. In the setup wizard's People step it is drawn in place (employees and
@@ -137,19 +141,17 @@ function InviteOpener({ kinds, fixed, onInvited }: { kinds: readonly InviteKind[
   const open = (): void => panel.open({
     title: vendor ? t('invite.title.vendor') : t('invite.title'),
     description: t('invite.description'),
-    body: <InviteForm kinds={kinds} onInvited={() => { reload(); onInvited?.(); }} onHandedOver={reload} />,
+    body: <InviteForm kinds={kinds} onInvited={() => { reload(); onInvited?.(); }} onHandedOver={reload} onLeave={panel.close} />,
   });
   return <Button data-action="invite" onClick={open}>{vendor ? t('invite.open.vendor') : t('people.invite')}</Button>;
 }
 
 const atAddressOf = (d: InviteDraft): boolean => d.kind === INVITE_KIND.signer || ((d.kind === INVITE_KIND.employee || d.kind === INVITE_KIND.vendor) && d.way === INVITE_WAY.address);
 
-function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly InviteKind[]; onInvited: () => void; onHandedOver: () => void }) {
+function InviteForm({ kinds, onInvited, onHandedOver, onLeave }: { kinds: readonly InviteKind[]; onInvited: () => void; onHandedOver: () => void; onLeave?: () => void }) {
   const t = useText();
   const whySays = useWhySays();
   const kindSays = useKindSays();
-  const roleSays = useRoleSays();
-  const roleDoes = useRoleDoes();
   const classSays = useClassSays();
   const day = useCalendarDay();
   const { person, company } = useSession();
@@ -174,6 +176,8 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
   const signer = draft.kind === INVITE_KIND.signer;
   const person0 = draft.kind === INVITE_KIND.employee || draft.kind === INVITE_KIND.vendor;
   const atAddress = atAddressOf(draft);
+  /* A reader holds no seat, so what an invitation asks for is not asked: the form points to where read access is given. */
+  const reader = signer && (READER_ROLES as readonly string[]).includes(draft.role);
 
   const idOfField: Partial<Record<keyof InviteDraft, string>> = {
     [FIELD.name]: ids.name, [FIELD.email]: ids.email, [FIELD.startDate]: ids.start, [FIELD.endDate]: ids.end, [FIELD.amount]: ids.amount,
@@ -196,28 +200,20 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
     if (ended.of === INVITED.problem) setWrong({ field: ended.field, problem: ended.problem, most: ended.most ?? 0, says: ended.says ?? '' });
     else if (ended.of === INVITED.refused) setRefused(ended.why);
     else {
-      setStopped(ended); setToken(ended.keeps ? ended.token : undefined);
+      setStopped(ended); setToken(ended.keeps ? ended.token ?? undefined : undefined);
       if (ended.handedOver) onHandedOver();
     }
   };
 
   if (phase.of === 'sent') {
     const d = phase.draft;
-    const person = d.kind === INVITE_KIND.employee || d.kind === INVITE_KIND.vendor;
-    const toHolder = d.kind === INVITE_KIND.signer || (d.way === INVITE_WAY.address && person);
-    const atPrivate = person && d.way === INVITE_WAY.address && addressIsPrivate(d.address);
     const name = d.name.trim();
     const symbolOf = (code: string): string => assets.find((a) => a.code === code)?.symbol ?? code;
     const pay = d.kind === INVITE_KIND.employee ? { what: t('invite.pay'), amount: d.amount.trim(), asset: symbolOf(d.asset) }
       : d.kind === INVITE_KIND.vendor && d.terms === TERMS.monthly ? { what: t('invite.monthlyAmount'), amount: d.termsAmount.trim(), asset: symbolOf(d.termsAsset) } : null;
     return (
       <div className="flex flex-col gap-4 text-sm" data-invite="sent">
-        <Alert data-invite-sent>
-          <AlertTitle>{phase.already ? t('invite.done.already') : t('invite.done.title')}</AlertTitle>
-          <AlertDescription>{atPrivate ? t('invite.done.link.privateAddress', { name }) : toHolder ? t('invite.done.link.holder', { name }) : t('invite.done.link.anyone', { name })}</AlertDescription>
-        </Alert>
-        {linkToCopy(phase.link)}
-        <p className="text-muted-foreground" data-invite-link-once>{t('invite.done.linkOnce')}</p>
+        <SentLink draft={d} link={phase.link} already={phase.already} copy={linkToCopy} />
         {d.kind === INVITE_KIND.signer ? (
           <>
             <SignerSent name={name} />
@@ -256,11 +252,13 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
       ) : null}
 
       <FieldGroup>
-        <Field data-invalid={problemOf(FIELD.name) !== null || undefined}>
-          <FieldLabel htmlFor={ids.name}>{t('invite.name')}</FieldLabel>
-          <Input id={ids.name} data-field="name" value={draft.name} disabled={locked} aria-invalid={problemOf(FIELD.name) !== null} onChange={(e) => set({ name: e.target.value })} />
-          {problemOf(FIELD.name) === null ? null : <FieldError data-problem="name">{problemOf(FIELD.name)}</FieldError>}
-        </Field>
+        {reader ? null : (
+          <Field data-invalid={problemOf(FIELD.name) !== null || undefined}>
+            <FieldLabel htmlFor={ids.name}>{t('invite.name')}</FieldLabel>
+            <Input id={ids.name} data-field="name" value={draft.name} disabled={locked} aria-invalid={problemOf(FIELD.name) !== null} onChange={(e) => set({ name: e.target.value })} />
+            {problemOf(FIELD.name) === null ? null : <FieldError data-problem="name">{problemOf(FIELD.name)}</FieldError>}
+          </Field>
+        )}
 
         {person0 ? (
           <FieldSet disabled={locked}>
@@ -272,7 +270,7 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
           </FieldSet>
         ) : null}
 
-        {atAddress ? (
+        {atAddress && !reader ? (
           <Field data-invalid={problemOf(FIELD.address) !== null || undefined}>
             <FieldLabel htmlFor={ids.address}>{signer ? t('invite.address.signer') : t('invite.address.person')}</FieldLabel>
             <Input id={ids.address} data-field="address" dir="ltr" value={draft.address} disabled={locked} aria-invalid={problemOf(FIELD.address) !== null} onChange={(e) => set({ address: e.target.value })} />
@@ -333,34 +331,14 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
 
         {signer ? (
           <>
-            <FieldSet disabled={locked}>
-              <FieldLegend variant="label">{t('invite.role.label')}</FieldLegend>
-              <RadioGroup value={draft.role} onValueChange={(v) => set({ role: v })} data-field="role">
-                {ROLES.map((r) => {
-                  const later = (READER_ROLES as readonly string[]).includes(r);
-                  return (
-                    <Field key={r} orientation="horizontal">
-                      <RadioGroupItem value={r} id={ids.title + r} disabled={locked || later} data-role={r} className={later ? 'disabled:opacity-70' : undefined} />
-                      <FieldContent>
-                        <FieldLabel htmlFor={ids.title + r} className={later ? 'opacity-80 peer-disabled:opacity-80 group-data-[disabled=true]/field:opacity-80' : undefined}>{roleSays[r]!}</FieldLabel>
-                        {later ? null : <FieldDescription data-role-says={r}>{roleDoes[r]!}</FieldDescription>}
-                      </FieldContent>
-                    </Field>
-                  );
-                })}
-              </RadioGroup>
-              <FieldDescription data-invite-later="roles">{t('invite.role.later')}</FieldDescription>
-            </FieldSet>
-            <FieldSet disabled>
-              <FieldLegend variant="label">{t('invite.scope.label')}</FieldLegend>
-              <RadioGroup value={SCOPE.all} data-field="scope">
-                <Field orientation="horizontal"><RadioGroupItem value={SCOPE.all} id={ids.scopeAll} data-scope="all" /><FieldLabel htmlFor={ids.scopeAll}>{t('invite.scope.all')}</FieldLabel></Field>
-                <Field orientation="horizontal"><RadioGroupItem value={SCOPE.chosen} id={ids.scopeChosen} disabled data-scope="chosen" className="disabled:opacity-70" /><FieldLabel htmlFor={ids.scopeChosen} className="opacity-80 peer-disabled:opacity-80 group-data-[disabled=true]/field:opacity-80">{t('invite.scope.chosen')}</FieldLabel></Field>
-              </RadioGroup>
-              <FieldDescription data-invite-later="scope">{t('invite.scope.chosen.why')}</FieldDescription>
-            </FieldSet>
+            <RoleChoice role={draft.role} locked={locked} reader={reader} idPrefix={ids.title} onRole={(role) => set({ role })} onLeave={onLeave} />
+            {reader ? null : (
+              <>
+            <ScopeChoice idAll={ids.scopeAll} idChosen={ids.scopeChosen} />
             <ThresholdField id={ids.threshold} value={draft.threshold} locked={locked} problem={problemOf(FIELD.threshold)} onValue={(threshold) => set({ threshold })} onSeated={setSeated} />
             <SignerApprovals />
+              </>
+            )}
           </>
         ) : null}
       </FieldGroup>
@@ -379,11 +357,58 @@ function InviteForm({ kinds, onInvited, onHandedOver }: { kinds: readonly Invite
       {stopped?.link != null ? linkToCopy(stopped.link) : null}
       {refused === null ? null : <ActRefused why={refused} />}
       {busy ? <p role="status" className="text-muted-foreground" data-invite-working>{phase.steps > 0 ? t('invite.working.step', { step: phase.step, steps: phase.steps }) : t('invite.working')}</p> : null}
-      <p className="text-muted-foreground">{t('invite.walletNote')}</p>
-      <div>
-        <Button type="submit" disabled={busy || company === null} data-action={held ? 'invite-press-again' : 'send-invite'}>{held ? t('invite.pressAgain') : t('invite.send')}</Button>
-      </div>
+      {reader ? null : (
+        <>
+          <p className="text-muted-foreground">{t('invite.walletNote')}</p>
+          <div>
+            <Button type="submit" disabled={busy || company === null} data-action={held ? 'invite-press-again' : 'send-invite'}>{held ? t('invite.pressAgain') : t('invite.send')}</Button>
+          </div>
+        </>
+      )}
     </form>
+  );
+}
+
+/** The role a signer is invited as: every role the company has, a reader's role saying where read access is given instead. */
+function RoleChoice({ role, locked, reader, idPrefix, onRole, onLeave }: { role: string; locked: boolean; reader: boolean; idPrefix: string; onRole: (r: string) => void; onLeave?: () => void }) {
+  const t = useText();
+  const roleSays = useRoleSays();
+  const roleDoes = useRoleDoes();
+  return (
+    <FieldSet disabled={locked}>
+      <FieldLegend variant="label">{t('invite.role.label')}</FieldLegend>
+      <RadioGroup value={role} onValueChange={onRole} data-field="role">
+        {ROLES.map((r) => (
+          <Field key={r} orientation="horizontal">
+            <RadioGroupItem value={r} id={idPrefix + r} disabled={locked} data-role={r} />
+            <FieldContent>
+              <FieldLabel htmlFor={idPrefix + r}>{roleSays[r]!}</FieldLabel>
+              {roleDoes[r] === undefined ? null : <FieldDescription data-role-says={r}>{roleDoes[r]}</FieldDescription>}
+            </FieldContent>
+          </Field>
+        ))}
+      </RadioGroup>
+      {reader ? (
+        <FieldDescription data-invite-reader>
+          {t('invite.role.reader')} <PageLink to={PAGE.settingsRoles} onClick={onLeave} data-action="go-roles">{t('page.settingsRoles.name')}</PageLink>
+        </FieldDescription>
+      ) : null}
+    </FieldSet>
+  );
+}
+
+/** The vaults a signer may act on: every vault; a chosen set cannot be given yet, and says what to do. */
+function ScopeChoice({ idAll, idChosen }: { idAll: string; idChosen: string }) {
+  const t = useText();
+  return (
+    <FieldSet disabled>
+      <FieldLegend variant="label">{t('invite.scope.label')}</FieldLegend>
+      <RadioGroup value={SCOPE.all} data-field="scope">
+        <Field orientation="horizontal"><RadioGroupItem value={SCOPE.all} id={idAll} data-scope="all" /><FieldLabel htmlFor={idAll}>{t('invite.scope.all')}</FieldLabel></Field>
+        <Field orientation="horizontal"><RadioGroupItem value={SCOPE.chosen} id={idChosen} disabled data-scope="chosen" className="disabled:opacity-70" /><FieldLabel htmlFor={idChosen} className="opacity-80 peer-disabled:opacity-80 group-data-[disabled=true]/field:opacity-80">{t('invite.scope.chosen')}</FieldLabel></Field>
+      </RadioGroup>
+      <FieldDescription data-invite-later="scope">{t('invite.scope.chosen.why')}</FieldDescription>
+    </FieldSet>
   );
 }
 
@@ -424,6 +449,35 @@ function ThresholdField({ id, value, locked, problem, onValue, onSeated }: {
   );
 }
 
+
+/**
+ * What the sent state says of the link: who may use it and the link to copy, for an employee or a vendor; for a signer,
+ * that the person's wallet showed the link, which this page never holds.
+ */
+function SentLink({ draft: d, link, already, copy }: { draft: InviteDraft; link: string | null; already: boolean; copy: (link: string) => ReactNode }) {
+  const t = useText();
+  const name = d.name.trim();
+  const person = d.kind === INVITE_KIND.employee || d.kind === INVITE_KIND.vendor;
+  const toHolder = d.kind === INVITE_KIND.signer || (d.way === INVITE_WAY.address && person);
+  const atPrivate = person && d.way === INVITE_WAY.address && addressIsPrivate(d.address);
+  return (
+    <>
+      <Alert data-invite-sent>
+        <AlertTitle>{already ? t('invite.done.already') : t('invite.done.title')}</AlertTitle>
+        <AlertDescription>
+          {link === null ? t('invite.done.link.inWallet', { name })
+            : atPrivate ? t('invite.done.link.privateAddress', { name }) : toHolder ? t('invite.done.link.holder', { name }) : t('invite.done.link.anyone', { name })}
+        </AlertDescription>
+      </Alert>
+      {link === null ? null : (
+        <>
+          {copy(link)}
+          <p className="text-muted-foreground" data-invite-link-once>{t('invite.done.linkOnce')}</p>
+        </>
+      )}
+    </>
+  );
+}
 
 function SignerSent({ name }: { name: string }) {
   const t = useText();

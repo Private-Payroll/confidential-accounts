@@ -38,10 +38,12 @@ import type { PaymentFailure } from 'midnight-identity/profile/channel';
  * wallet's own change, before anything is signed. The screen says the deposit
  * is public before the press. Nothing else public is ever paid for a page.
  *
- * What this does NOT decide: whether the vault is really the company's, or
- * whether the company's committee holds its rules. The company's service
- * refuses a deposit into a vault whose authority on chain is not the company's
- * committee; this wallet can only show the vault's address.
+ * What this does NOT decide: whether the vault is really the company's. The
+ * company's own service, and only it, refuses to send a deposit unless it saw
+ * the vault created held by the company's committee and pinned to the
+ * company's account; it does not look at who holds the vault's rules now. A
+ * page behind another service gives no such check. This wallet can only show
+ * the vault's address.
  */
 
 /** The ledger objects this file reads, structurally, so a test can hand in the real ones. */

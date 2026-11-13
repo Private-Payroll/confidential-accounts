@@ -391,6 +391,17 @@ describe('a vault\'s private money, read on this device', () => {
     expect(asked).toBe(1);
   });
 
+  /* RED WHEN: a read of the company's spending policies is given no seat leaf or no company key set, so it must work them out again beside this one. */
+  it('gives the seat\'s leaf and the company\'s key set with the seat and records', async () => {
+    const { seatAndRecordsHere } = await load();
+    const here = await seatAndRecordsHere('u1', 'c1');
+    if (typeof here === 'string') throw new Error(`no seat: ${here}`);
+    expect(here.leaf).toBe(SEAT.toLowerCase());
+    expect(here.leaf).toBe(here.mine.signerId);
+    expect(typeof here.viewingKey).toBe('object');
+    expect(Object.keys(here.viewingKey).length).toBeGreaterThan(0);
+  });
+
   it('gives a read the seat\'s public half and records that file nothing, and never the seat\'s secrets', async () => {
     await filePool(NOTES);
     const { seatAndRecordsHere } = await load();

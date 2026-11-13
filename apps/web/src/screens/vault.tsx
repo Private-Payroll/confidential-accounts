@@ -7,7 +7,7 @@ import {
 } from 'vaults-ui';
 import { COLUMN_SIZE, DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
 import { isPending, PendingPill, useStandingSays, useVaultActions, VaultName } from '../records/vault-pending.js';
-import { canPay, legOfRetry, openOneOffsOf, type CompanyRecords, type OneOffRow, type VaultRow } from '../adapters/company-records.js';
+import { canPay, legOfRetry, openOneOffsOf, retiredBy, type CompanyRecords, type OneOffRow, type VaultRow } from '../adapters/company-records.js';
 import { ChangeThreshold } from '../actions/change-threshold.js';
 import { OneOffPayment } from '../actions/one-off.js';
 import { PayRun } from '../actions/pay-run.js';
@@ -15,7 +15,10 @@ import { DepositActions, DepositStrip } from '../actions/deposit.js';
 import { PRIVATE_MONEY } from '../adapters/vault-private-money.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
-import { MONEY, PaidWords, PrivateMoneyUnshown, ReadOf, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
+import { holdsMoney, MONEY, PaidWords, PrivateMoneyUnshown, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
+import { RetireVault } from '../actions/retire-vault.js';
+import { RetiredMayHold, retiredVaultShown, useRetiredVaultOnChain } from '../records/retired-vault.js';
+import { READ } from '../adapters/reads.js';
 
 /**
  * A VAULT'S OWN PAGE: its name, with the Pending pill when it waits on
@@ -69,7 +72,12 @@ function VaultBody({ records, vault, number }: { records: CompanyRecords; vault:
       <PageHeader
         title={<span className="flex flex-wrap items-center gap-2" data-vault={vault.vault}><span><VaultName company={company} vault={vault} number={number} /></span><PendingPill vault={vault} /></span>}
         description={t('vaults.tile.created', { date: day(vault.createdAt) })}
-        actions={<><PaySomeone vault={vault.vault} /><DepositActions company={company} vault={vault.vault} standing={vault.standing} /></>}
+        actions={(
+          <>
+            {vault.retired === true ? null : <><PaySomeone vault={vault.vault} /><DepositActions company={company} vault={vault.vault} standing={vault.standing} /></>}
+            <RetireOrAdoptAgain records={records} vault={vault} />
+          </>
+        )}
       />
       <DepositStrip company={company} vault={vault.vault} standing={vault.standing} onDone={() => setDeposited((n) => n + 1)} />
       {isPending(vault.standing) ? null : <p className="text-sm" data-standing={vault.standing}>{says(vault.standing)}</p>}
@@ -81,6 +89,58 @@ function VaultBody({ records, vault, number }: { records: CompanyRecords; vault:
   );
 }
 
+
+/**
+ * A vault the company's account holds is retired from here once the wallet can carry a retire out, and until then
+ * shows Retire as not built yet; one it retired is adopted again from here while it still
+ * holds money, under the newest retire the company's records hold carried out for it. Both are asked of the wallet,
+ * which reads the chain itself and refuses a vault still holding money, or a retire the chain does not show carried out.
+ */
+function RetireOrAdoptAgain({ records, vault }: { records: CompanyRecords; vault: VaultRow }) {
+  const t = useText();
+  const { inPanel } = useVaultActions();
+  if (vault.adopted === true) {
+    return (
+      WALLET_PROVES_RETIRE
+        ? <Button variant="outline" data-action="retire-vault" onClick={() => inPanel(t('vault.retire'), () => <RetireVault vault={vault.vault} />)}>{t('vault.retire')}</Button>
+        : <UnbuiltAction variant="outline" data-action="retire-vault">{t('vault.retire')}</UnbuiltAction>
+    );
+  }
+  const retire = retireOf(records, vault.vault);
+  return vault.retired !== true || retire === null ? null : <AdoptAgain company={records.id} vault={vault.vault} retired={retire} />;
+}
+
+/** Adopt again, offered only while the retired vault is read holding money. */
+function AdoptAgain({ company, vault, retired }: { company: string; vault: string; retired: string }) {
+  const t = useText();
+  const { adoptAgain } = useVaultActions();
+  const money = useVaultMoney(company, vault);
+  const onChain = useRetiredVaultOnChain(company, vault, true);
+  if (!holdsMoney(money) && !retiredVaultShown(onChain)) return null;
+  return (
+    <>
+      <RetiredMayHold read={onChain} />
+      <Button data-action="adopt-again" onClick={() => adoptAgain(vault, retired)}>{t('vault.adoptAgain')}</Button>
+    </>
+  );
+}
+
+/**
+ * WHETHER THE WALLET CAN CARRY OUT A RETIRE. It holds no proving key for the
+ * vault's retire call today, so every press would be refused; until it does,
+ * the entry is drawn as an action not built yet and no panel can be opened.
+ * Set to true when the wallet's list of vault calls it proves includes retire.
+ */
+const WALLET_PROVES_RETIRE: boolean = false;
+
+/** The company's record of the newest retire of `vault` the records hold carried out, by its name; null when there is none. */
+const retireOf = (records: CompanyRecords, vault: string): string | null => {
+  if (records.proposals.of !== READ.read) return null;
+  const carried = records.proposals.value
+    .filter((p) => retiredBy(p) === vault.toLowerCase())
+    .sort((a, b) => b.raisedAt.localeCompare(a.raisedAt));
+  return carried[0]?.id ?? null;
+};
 
 /** Paying someone from this vault, from the page's title line: opens the one-off payment in the shell's panel, where its answer survives the records being read again. */
 function PaySomeone({ vault }: { vault: string }) {

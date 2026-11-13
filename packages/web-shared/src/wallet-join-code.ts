@@ -2,10 +2,11 @@
  * **ASKING THE PERSON'S WALLET FOR A JOIN CODE**, and checking what comes back
  * before anything is shown or sent: it must be signed by the wallet it names,
  * for the company asked about, the person signed in here, and exactly the
- * parts this page asked to be signed.
+ * parts this page asked to be signed. A reader's code is asked for with no key,
+ * so what comes back must be a reader's, with the key the wallet put in.
  */
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
-import { joinCodeSignedBy, readJoinParts, type JoinCode, type JoinParts } from 'midnight-identity/profile/join-code';
+import { joinCodeSignedBy, readJoinParts, type AskedParts, type JoinCode } from 'midnight-identity/profile/join-code';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
@@ -31,11 +32,19 @@ interface JoinCodeAsked {
   readonly account: AccountAddress;
   /** The id this person signed in to the service with. */
   readonly person: string;
-  readonly parts: JoinParts;
+  /** What to sign; a reader's names no key, which the wallet puts in. */
+  readonly parts: AskedParts;
   readonly name: string;
   readonly rdns: string;
   readonly now?: () => number;
 }
+
+/** Whether the signed parts are those asked for: a signer's or payee's exactly, a reader's with any key the wallet put in. */
+const samePartsAsAsked = (signed: unknown, asked: AskedParts): boolean => {
+  const read = readJoinParts(signed);
+  if (read === null) return false;
+  return asked.kind === 'reader' ? read.kind === 'reader' : JSON.stringify(read) === JSON.stringify(readJoinParts(asked));
+};
 
 /** The code the wallet made, checked as the one asked for. */
 export async function askWalletForAJoinCode(
@@ -57,7 +66,7 @@ export async function askWalletForAJoinCode(
   const code = answer as JoinCode;
   if (!joinCodeSignedBy(code)) throw new WalletDidNotMakeTheCode('The wallet\'s answer is not a code it signed, so nothing is shown.');
   if (code.company !== ask.company || code.person !== ask.person
-    || JSON.stringify(readJoinParts(code.parts)) !== JSON.stringify(readJoinParts(ask.parts))) {
+    || !samePartsAsAsked(code.parts, ask.parts)) {
     throw new WalletDidNotMakeTheCode('The wallet signed a code for something other than what this page asked, so nothing is shown.');
   }
   return code;

@@ -32,6 +32,9 @@ export {
   FILE_OPENED, FILE_REFUSED, HELD_ON_CHAIN, PROPOSAL_ACTED as RECOVERED, RECOVERY_ACT, RECOVERY_FILE_ACCEPT, RECOVERY_STATE, RECOVERY_WHY, RECOVERY_WITHIN, STANDING_READ,
   type FileRefusal, type RecoveryAct, type RecoveryState, type RecoveryWhy, type RecoveryWithin,
 };
+/** The range a recovery window may be set in, and the waits a recovery may be asked for within the window in force. */
+export { RECOVERY_WINDOW_RANGE } from '../../../../src/midnight/recovery-window-record.js';
+export { recoveryWithinUpTo } from 'vaults-web-shared/recovery-in-the-wallet.js';
 
 /** The company as the wallet is asked to name it: its record, its label and its account on the network; null for a company with no account yet. */
 const namedFor = async (companyId: string): Promise<{ record: string; company: string; account: string } | null> => {

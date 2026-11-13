@@ -17,12 +17,12 @@
  * company's list of proposals.
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
-import { ADOPT_VAULT, PAY_KEY, VAULT_SECRET } from '../../../../src/core/proposal-filing.js';
 import type { RoundOnChain, OpenedRound } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import {
   governedCallServiceFor, nothingWasSentBy, SentAndNotYetSeen, withCompanyKeys, WithdrawalRefused, withdrawOnDevice, type WithdrawalOutcome,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
+import { KINDS_IN_THE_WALLET, kindInTheWallet, neverWithdrawn, type KindInTheWallet } from '../../../../packages/web-shared/src/proposal-kinds-in-the-wallet.js';
 import { chainTimeOf } from './chain-time.js';
 import { companyReachFor, companyRecordsFor, keptReach, pureCircuits, type Handed } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
@@ -36,33 +36,12 @@ const why = (key: string, values?: Readonly<Record<string, string | number>>): W
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(/\.\s*$/u, '');
 
-/**
- * **EVERY KIND A PAGE NAMES, AND THE KIND THE PROPOSAL'S SEALED RECORD NAMES FOR IT.** A kind mapped to `never` is
- * refused before anything is opened, with its own words; every other kind is withdrawn only when the record opened names
- * exactly that kind.
- */
-export const WITHDRAWN_KINDS: Readonly<Record<string, { readonly sealedAs: string } | { readonly never: string }>> = Object.freeze({
-  'add-signer': { sealedAs: 'add-signer' },
-  removal: { sealedAs: 'remove-signer' },
-  threshold: { sealedAs: 'set-threshold' },
-  'vault-threshold': { sealedAs: 'set-vault-threshold' },
-  'spending-policy': { sealedAs: 'set-spending-policy' },
-  'policy-bar': { sealedAs: 'set-policy-bar' },
-  payroll: { sealedAs: 'payroll' },
-  'one-off': { sealedAs: 'transfer' },
-  'adopt-vault': { never: 'never-adopt-vault' },
-  'vault-secret': { never: 'never-vault-secret' },
-  'pay-key': { sealedAs: PAY_KEY },
-  recovery: { never: 'never-recovery' },
-});
-/** Kinds sealed for a vault's set-up: whatever the page called them, never withdrawn here. */
-const SEALED_NEVER: Readonly<Record<string, string>> = { [ADOPT_VAULT]: 'never-adopt-vault', [VAULT_SECRET]: 'never-vault-secret' };
+/** The sealed kinds refused whatever the chain holds: a vault's set-up, never withdrawn once raised. */
+const SEALED_NEVER: Readonly<Record<string, string>> = Object.fromEntries(Object.values(KINDS_IN_THE_WALLET)
+  .flatMap((k) => (k.sealedAs !== undefined && k.never !== undefined && neverWithdrawn(k) ? [[k.sealedAs, k.never] as const] : [])));
 
 const NAMED = ['record', 'proposal', 'kind'] as const;
-const kindAsked = (intent: ActIntent) => {
-  const k = intent.fields['kind'] ?? '';
-  return Object.prototype.hasOwnProperty.call(WITHDRAWN_KINDS, k) ? WITHDRAWN_KINDS[k]! : null;
-};
+const kindAsked = (intent: ActIntent): KindInTheWallet | null => kindInTheWallet(intent.fields['kind'] ?? '');
 
 /**
  * The refusal of the kind opened, run inside the withdrawal before anything is built or sent: a kind of a vault's set-up
@@ -70,12 +49,12 @@ const kindAsked = (intent: ActIntent) => {
  * the company's pay-record key is withdrawn only once the chain shows a removal has outrun it: until then it can still be
  * carried out, and raised again it would carry the same identity, whose approvals given before cannot be given again.
  */
-const kindRefusal = (shown: string) => (opened: OpenedRound, onChain: RoundOnChain): void => {
+const kindRefusal = (shown: KindInTheWallet) => (opened: OpenedRound, onChain: RoundOnChain): void => {
   const sealed = String(opened.kind ?? '');
   if (SEALED_NEVER[sealed] !== undefined) throw new StepRefused(why(SEALED_NEVER[sealed]!));
-  if (sealed !== shown) throw new StepRefused(why('not-as-shown'));
+  if (sealed !== shown.sealedAs) throw new StepRefused(why('not-as-shown'));
   if (sealed === 'transfer' && onChain.held !== 'never') throw new StepRefused(why('one-off-held'));
-  if (sealed === PAY_KEY && onChain.outrun !== true) throw new StepRefused(why('never-pay-key'));
+  if (shown.unlessOutrun === true && shown.never !== undefined && onChain.outrun !== true) throw new StepRefused(why(shown.never));
 };
 
 /**
@@ -101,11 +80,11 @@ export function withdrawProposalAction(reach: WithdrawProposalReach): ActionDefi
       const empty = (k: string) => intent.fields[k] === undefined || intent.fields[k] === '';
       const kind = kindAsked(intent);
       if (kind === null || NAMED.some(empty)) return why('not-a-proposal');
-      return 'never' in kind ? why(kind.never) : null;
+      return neverWithdrawn(kind) ? why(kind.never!) : null;
     },
     steps: (intent) => {
       const kind = kindAsked(intent);
-      if (kind === null || 'never' in kind) return [];
+      if (kind === null || neverWithdrawn(kind) || kind.sealedAs === undefined) return [];
       const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
       const seat: ActionStep = {
         title: { key: 'act.withdraw-proposal.step.seat' },
@@ -131,7 +110,7 @@ export function withdrawProposalAction(reach: WithdrawProposalReach): ActionDefi
                 /* A withdrawal carrying a proven call is handed to the chain; one without changes only the company's records. */
                 cancel: (id, body) => { if (body.tx !== undefined) handed.over = true; return service.cancel!(id, body); },
               },
-            }, withCompanyKeys({ round: { id: proposal }, chainTime, check: kindRefusal(kind.sealedAs) }, r.companyKeys));
+            }, withCompanyKeys({ round: { id: proposal }, chainTime, check: kindRefusal(kind) }, r.companyKeys));
             state = done.withdrawal;
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;

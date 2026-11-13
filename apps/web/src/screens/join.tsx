@@ -62,13 +62,14 @@ const classificationSays = (t: Words, c: NonNullable<Offered['classification']>)
 const waySays = (t: Words, offer: Offered): string =>
   ({
     [WAY.seat]: t('join.way.seat'), [WAY.code]: offer.address === null ? t('join.way.code') : t('join.way.codeAt'), [WAY.claim]: t('join.way.claim'),
+    [WAY.reissue]: t('join.way.reissue'),
   })[offer.way];
 const whenSays = (t: Words, moment: (at: string) => string, at: string): string =>
   t('join.when', { when: moment(at), zone: Intl.DateTimeFormat().resolvedOptions().timeZone });
-const acceptSays = (t: Words, kind: Offered['kind']): string =>
-  ({ employee: t('join.accept.person'), vendor: t('join.accept.person'), signer: t('join.accept.signer') })[kind];
+const acceptSays = (t: Words, offer: Offered): string => (offer.way === WAY.reissue ? t('join.accept.reissue')
+  : ({ employee: t('join.accept.person'), vendor: t('join.accept.person'), signer: t('join.accept.signer') })[offer.kind]);
 const doneSays = (t: Words, way: Offered['way']): string =>
-  ({ [WAY.seat]: t('join.done.seat'), [WAY.code]: t('join.done.code'), [WAY.claim]: t('join.done.claim') })[way];
+  ({ [WAY.seat]: t('join.done.seat'), [WAY.code]: t('join.done.code'), [WAY.claim]: t('join.done.claim'), [WAY.reissue]: t('join.done.reissue') })[way];
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -119,7 +120,7 @@ function Shown({ of, title, body, children, footer }: {
 const closedSays = (t: Words, why: ClosedWhy): string => ({
   [CLOSED.notFound]: t('join.closed.notFound'), [CLOSED.withdrawn]: t('join.closed.withdrawn'), [CLOSED.expired]: t('join.closed.expired'),
   [CLOSED.used]: t('join.closed.used'), [CLOSED.notAccepted]: t('join.closed.notAccepted'), [CLOSED.notOpened]: t('join.closed.notOpened'),
-  [CLOSED.superAdmin]: t('join.closed.superAdmin'), [CLOSED.reissue]: t('join.closed.reissue'), [CLOSED.seatByAddressOnly]: t('join.closed.seatByAddressOnly'),
+  [CLOSED.superAdmin]: t('join.closed.superAdmin'), [CLOSED.seatByAddressOnly]: t('join.closed.seatByAddressOnly'),
   [CLOSED.unreachable]: t('join.closed.unreachable'),
 })[why];
 
@@ -174,11 +175,11 @@ function JoinView({ state, signedIn, signingIn, signInRefusal, actions }: JoinVi
         const working = state.of === STATE.working;
         return (
           <Shown
-            of={state.of} title={t('join.offer.title', { company: offer.companyName })} body={kindSays(t, offer.kind)}
+            of={state.of} title={t('join.offer.title', { company: offer.companyName })} body={offer.way === WAY.reissue ? t('join.kind.reissue') : kindSays(t, offer.kind)}
             footer={(
               <>
                 {signedIn ? (
-                  <Button disabled={working || (state.of === STATE.stopped && !MENDED_BY_PRESSING.has(state.why))} aria-describedby={state.of === STATE.stopped ? stoppedId : undefined} onClick={actions.accept} data-action="accept">{acceptSays(t, offer.kind)}</Button>
+                  <Button disabled={working || (state.of === STATE.stopped && !MENDED_BY_PRESSING.has(state.why))} aria-describedby={state.of === STATE.stopped ? stoppedId : undefined} onClick={actions.accept} data-action="accept">{acceptSays(t, offer)}</Button>
                 ) : (
                   <Button disabled={signingIn} onClick={actions.signIn} data-action="sign-in">{t('join.signIn')}</Button>
                 )}

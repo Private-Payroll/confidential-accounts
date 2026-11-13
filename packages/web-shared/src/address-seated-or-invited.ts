@@ -7,7 +7,8 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { SealedProposal } from '../../../src/core/types.js';
-import { addressesInvitedIn, raiseHoldsWhatItNamesAt, type AddressInvited } from '../../../src/core/proposal-filing.js';
+import { addressesInvitedIn, type AddressInvited } from '../../../src/core/proposal-filing.js';
+import { raisesStillHolding, sittingSigningKeysIn } from './filed-raise-still-holds.js';
 import { kindAsked, listedHere } from './vault-page-doors.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { rosterHere, type RosterDoors, type RosterReads } from './roster-here.js';
@@ -17,8 +18,8 @@ import type { GovernanceDoors } from './governed-call-on-device.js';
 const NOT_READ = 'this device could not read from the network which seat an earlier invitation of this address took, so it invites nobody. '
   + 'Reload the page and try again';
 
-/** What makes the commitment to an address from its coin key and a salt, as the account makes it. */
-export type InviteAddressOf = (coinPublicKey: Hex, salt: Hex) => Hex;
+export type { InviteAddressOf } from '../../../src/core/seat-address.js';
+import type { InviteAddressOf } from '../../../src/core/seat-address.js';
 
 /**
  * **WHY AN ADDRESS MAY NOT BE INVITED TO A SEAT HERE AGAIN, OR NULL.** The words returned complete a sentence that
@@ -33,7 +34,7 @@ export type InviteAddressOf = (coinPublicKey: Hex, salt: Hex) => Hex;
  * closed without a seat, never held past its raise's deadline, whose record does not say when it was written, or whose
  * seat has since left the account, holds the address no more. A coin key the roster this device believes records for a
  * seat (`seated`, read from the roster here) is held too, whatever the proposals served say. `except` is the proposal
- * this device is raising again or approving. Refuses to say yes when this device cannot read the chain for it; a seat
+ * this device is raising again or approving, or, for a seat named by its leaf, every proposal for that same leaf. Refuses to say yes when this device cannot read the chain for it; a seat
  * read not made or refused throws what `seatsTakenAsked` throws.
  */
 export async function addressSeatedOrInvitedRefusal(
@@ -47,7 +48,7 @@ export async function addressSeatedOrInvitedRefusal(
     /** The time of the newest block, in milliseconds, at the indexer this device reads the chain from. */
     readonly chainTime?: () => Promise<number>;
   },
-  accountId: string, viewingKey: KeysHeld, inviteAddressOf: InviteAddressOf, coinPublicKey: Hex, except?: string,
+  accountId: string, viewingKey: KeysHeld, inviteAddressOf: InviteAddressOf, coinPublicKey: Hex, except?: string | readonly string[],
 ): Promise<string | null> {
   const cannot = 'this device cannot read which addresses the company\'s proposals have seated or invited, so it invites nobody '
     + 'by address. Reload the page and try again';
@@ -58,8 +59,9 @@ export async function addressSeatedOrInvitedRefusal(
   const here = await reads.directory(kindAsked('proposal'));
   const listed = listedHere(here, 'proposal', await reads.proposals(), 'proposal');
   if (reads.seated !== undefined && (await reads.seated()).some((x) => x.toLowerCase() === coin)) return twice;
+  const excepted = new Set((typeof except === 'string' ? [except] : except ?? []).map((x) => x.toLowerCase()));
   const invited = addressesInvitedIn([...listed, ...listed.setAside], accountId, viewingKey, inviteAddressOf)
-    .filter((x) => x.coinPublicKey === coin && x.chainId !== except?.toLowerCase());
+    .filter((x) => x.coinPublicKey === coin && !excepted.has(x.chainId));
   const same = invited.map((x) => x.chainId);
   if (same.length === 0) return null;
   const [seated, rounds] = await Promise.all([seatsTakenAsked(reads.invitedSeats, same, NOT_READ), reads.roundsOnChain(same)]);
@@ -71,32 +73,25 @@ export async function addressSeatedOrInvitedRefusal(
   }
   const filed = invited.filter((x) => (seated[x.chainId] ?? null) === null && rounds[x.chainId]?.held === 'never');
   if (filed.length === 0) return null;
-  const sitting = new Set(here.dir.seats.filter((x) => x.retired === null && onTheChain.has(String(x.seat).toLowerCase()))
-    .map((x) => String(x.signingKey).toLowerCase()));
+  const sitting = sittingSigningKeysIn(here, onTheChain);
   return filedInvitationRefusal(filed.filter((x) => x.filedBy !== undefined && sitting.has(x.filedBy)), reads.chainTime);
 }
 
 /**
  * Why an invitation written down and not yet on the chain still holds its address, or null: one of `filed` (each filed by
  * a seat that sits now, so a seat since removed cannot keep refiling to hold an address) whose raise may still land by
- * the chain's time, within one raise window (`raiseHoldsWhatItNamesAt`). A record that does not say
- * when it was written holds nothing, since no deadline can be read from it. When the chain's time cannot be read while
+ * the chain's time (`raisesStillHolding`). A record that does not say when it was written holds nothing, since no
+ * deadline can be read from it. When the chain's time cannot be read while
  * a record with a deadline is waiting, it refuses with words to try again rather than letting the address through.
  */
 const filedInvitationRefusal = async (
   filed: readonly AddressInvited[], chainTime: (() => Promise<number>) | undefined,
 ): Promise<string | null> => {
-  const dated = filed.filter((x) => x.raiseBy !== undefined);
-  if (dated.length === 0) return null;
-  const at = chainTime === undefined ? undefined : await chainTime().catch(() => {
-    /* A chain time not read is refused below with words to try again, never let through. */
-    return undefined;
-  });
-  if (typeof at !== 'number' || !Number.isSafeInteger(at) || at <= 0) {
+  const holding = await raisesStillHolding(filed, chainTime);
+  if (holding === 'time-not-read') {
     return 'the network\'s time could not be read to tell whether another invitation for this address, written down but not yet '
       + 'on the network, may still reach it. Try again in a minute';
   }
-  const holding = dated.filter((x) => raiseHoldsWhatItNamesAt(x.raiseBy!, at));
   if (holding.length === 0) return null;
   const until = new Date(Math.max(...holding.map((x) => Number(x.raiseBy) * 1000))).toISOString().slice(0, 16).replace('T', ' ');
   return 'another invitation for this address was written down but is not on the network yet, and it may still reach the network '

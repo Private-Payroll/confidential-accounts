@@ -248,37 +248,25 @@ describe('the wizard reads the one list', () => {
   });
 
   /*
-   * RED WHEN: the signers step does not draw the signers component, the change of the approvals needed and the committee
-   * change, once each, or is Coming soon as a whole or in part; or the words once kept for saying that choosing how many
+   * RED WHEN: the signers step does not draw the signers component and the change of the approvals needed once each, draws the
+   * committee change that belongs to Super admins, or is Coming soon as a whole or in part; or the words once kept for saying that choosing how many
    * must approve is Coming soon are still in the language.
    */
-  it('draws the signers, the change of the approvals needed and the committee change in the signers step, with nothing in it Coming soon', async () => {
+  it('draws the signers and the change of the approvals needed, without the committee change, in the signers step, with nothing in it Coming soon', async () => {
     const { container } = await drawWizard(signing());
     await pick(container, STEP.signers);
     const step = q(container, '[data-current-step]')!;
     expect(step.getAttribute('data-current-step')).toBe(STEP.signers);
     expect(step.querySelectorAll('[data-action=signers]')).toHaveLength(1);
-    expect(step.querySelectorAll('[data-action=committee-change]')).toHaveLength(1);
+    expect(step.querySelectorAll('[data-action=committee-change]')).toHaveLength(0);
     expect(q(container, '[data-coming-soon-step]')).toBeNull();
     expect(step.querySelectorAll('[data-action=change-threshold]')).toHaveLength(1);
     expect(q(step, '[data-slot=coming-soon]')).toBeNull();
     expect(EN['setup.step.signers.soon']).toBeUndefined();
   });
 
-  /* RED WHEN: a press in the signers step that changes who holds the company is not told to the wizard, which then reads the company again. */
-  it('reads the company again when the committee change is signed inside the signers step', async () => {
-    state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
-    const { container } = await drawWizard(signing());
-    await pick(container, STEP.signers);
-    const before = state.vaultReads;
-    await act(async () => { fireEvent.click(q(container, '[data-action=sign-change]')!); await settle(); });
-    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
-    expect(state.acted).toContain(JSON.stringify(['sign-change', 'u1', 'c-1']));
-    expect(state.vaultReads).toBeGreaterThan(before);
-  });
-
   /*
-   * RED WHEN: one act in the signers step, an invitation sent for a signer or the committee change signed, asks for
+   * RED WHEN: one act in the signers step, an invitation sent for a signer, asks for
    * the company's records to be read again more than once, or not at all, so the same read is asked for two or three times, or the step goes on
    * showing what it read before.
    */
@@ -288,11 +276,6 @@ describe('the wizard reads the one list', () => {
       await act(async () => { fireEvent.change(q(c, '[data-field=address]')!, { target: { value: SIGNER_ADDRESS } }); await settle(); });
       await act(async () => { fireEvent.click(q(c, '[data-action=send-invite]')!); await settle(); });
       expect(state.sent).toHaveLength(1);
-    }],
-    ['the committee change signed', async (c: HTMLElement) => {
-      await act(async () => { fireEvent.click(q(c, '[data-action=sign-change]')!); await settle(); });
-      await act(async () => { fireEvent.click([...c.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
-      expect(state.acted).toContain(JSON.stringify(['sign-change', 'u1', 'c-1']));
     }],
   ])('asks for the company\'s records to be read once for one act in the signers step: %s', async (_name, act1) => {
     state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };

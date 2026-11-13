@@ -746,7 +746,7 @@ export function refusalForMerge(tx: unknown, expect: { readonly vault: string })
 /* ------------------------------------------------- 6. a vault's start */
 
 /** The calls one transaction makes, each as `address/circuit`, or a refusal when it is not calls that move nothing. */
-const callsMovingNothing = (tx: unknown, what: string): { calls: string[] } | { refusal: string } => {
+export const callsMovingNothing = (tx: unknown, what: string): { calls: string[] } | { refusal: string } => {
   const t = tx as TxShape | null;
   if (!(t?.intents instanceof Map) || t.intents.size !== 1) {
     return { refusal: `this is not ${what}: it must carry exactly one set of actions. Nothing was sent.` };
@@ -755,13 +755,13 @@ const callsMovingNothing = (tx: unknown, what: string): { calls: string[] } | { 
     || (t.fallibleOffer !== undefined && t.fallibleOffer !== null
       && (!(t.fallibleOffer instanceof Map) || [...t.fallibleOffer.values()].some(
         (o) => !emptyOffer(o, ['inputs', 'outputs', 'transients']))))) {
-    return { refusal: `this is not ${what}: it moves coins, and starting a vault moves none. Nothing was sent.` };
+    return { refusal: `this is not ${what}: it moves coins, and ${what} moves none. Nothing was sent.` };
   }
   const intent = [...t.intents.values()][0] as IntentShape | null;
   if (!intent || !emptyOffer(intent.guaranteedUnshieldedOffer, ['inputs', 'outputs'])
     || !emptyOffer(intent.fallibleUnshieldedOffer, ['inputs', 'outputs'])
     || !emptyOffer(intent.dustActions, ['spends', 'registrations'])) {
-    return { refusal: `this is not ${what}: it moves coins, and starting a vault moves none. Nothing was sent.` };
+    return { refusal: `this is not ${what}: it moves coins, and ${what} moves none. Nothing was sent.` };
   }
   if (!Array.isArray(intent.actions)) return { refusal: `this is not ${what}: it could not be read. Nothing was sent.` };
   const calls: string[] = [];

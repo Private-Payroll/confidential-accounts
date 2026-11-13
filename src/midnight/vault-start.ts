@@ -23,10 +23,12 @@
  *
  * **EVERY VALUE IS MADE THE SAME WAY EVERY TIME, SO A START CAN BE RUN AGAIN.**
  *
- *   · The adoption round's salt is a hash of the vault's address under a domain
- *     of its own. The round's identity is then public as soon as the vault is,
- *     and so is the adoption itself once carried out, so nothing is lost by it,
- *     and any signer's device finds the same round without being told about it.
+ *   · The adoption's salt is a hash of the vault's address, and for a vault the
+ *     company retired and adopts again of the proposal that retired it, under a
+ *     domain of its own. The adoption's identity is then public as soon as the
+ *     vault is, and so is the adoption itself once carried out, so nothing is
+ *     lost by it, and any signer's device finds the same proposal without being
+ *     told about it.
  *   · The secret run's salt and its leaf's nonce are derived from the secret
  *     itself, which only the company's signers can open, so the run's identity
  *     says nothing to anybody else until it is used.
@@ -93,11 +95,28 @@ export interface AdoptionRound {
   readonly proposal: Hex;
 }
 
-export function adoptionRoundOf(P: AccountStartPure, vault: Hex): AdoptionRound {
+/**
+ * The adoption round of a vault, made the same way on every device. A vault the company retired and adopts again
+ * passes `again`, the proposal that retired it: the account never forgets a seat's approval of a proposal, so an
+ * adoption made again under the first one's identity could never gather its approvals. Refuses an `again` that is not
+ * a proposal's identity.
+ */
+export function adoptionRoundOf(P: AccountStartPure, vault: Hex, again?: Hex): AdoptionRound {
   const v = vaultBytes(vault);
   const payload = P.adoptVaultPayload(v);
-  const salt = sha256(new Uint8Array([...ADOPTION_SALT, ...v]));
+  const salt = fromHex(adoptionSaltOf(vault, again));
   return { vault, payload: toHex(payload), salt: toHex(salt), proposal: toHex(P.proposalIdOf(payload, P.noVault(), salt)) };
+}
+
+/**
+ * The salt of a vault's adoption round, and of its adoption again under `again`, the proposal that retired it: the
+ * same on every device. Refuses an `again` that is not a proposal's identity.
+ */
+export function adoptionSaltOf(vault: Hex, again?: Hex): Hex {
+  if (again !== undefined && (typeof again !== 'string' || !HEX32.test(again))) {
+    throw new Error('the proposal that retired this vault is named by 64 lower-case hex characters, and this is not one. Nothing was built.');
+  }
+  return toHex(sha256(new Uint8Array([...ADOPTION_SALT, ...vaultBytes(vault), ...(again === undefined ? [] : fromHex(again))])));
 }
 
 /* ------------------------------------------------------------ 2. the secret run */
@@ -385,6 +404,8 @@ export function startStandingOf(
     readonly approvedHere?: (id: Uint8Array) => boolean;
     /** Secrets this device holds for the vault, to find the one a replacement carries among (`earlier`). */
     readonly earlier?: readonly string[];
+    /** For a vault the company retired and adopts again, the proposal that retired it (`adoptionRoundOf`). */
+    readonly again?: Hex;
   },
 ): StartStanding {
   const V = circuits.vault;
@@ -392,7 +413,7 @@ export function startStandingOf(
   const a = input.account;
   const mine = input.approvedHere;
   const v = vaultBytes(input.vault);
-  const adoption = adoptionRoundOf(P, input.vault);
+  const adoption = adoptionRoundOf(P, input.vault, input.again);
   const adopted = adoptedSetOf(a).member(v);
   const out: StartStanding = {
     adopted, removals: Number(removalsSoFar(P, a)),

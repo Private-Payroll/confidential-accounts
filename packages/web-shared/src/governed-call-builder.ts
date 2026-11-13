@@ -82,7 +82,7 @@
  * call builder asks for are made from randomness nobody keeps.
  */
 import type { AccountPrivateState } from '../../../contracts/src/witnesses.js';
-import { fromHex, type Hex } from '../../../src/core/crypto.js';
+import type { Hex } from '../../../src/core/crypto.js';
 import { vouchedFreshOf, vouchedRefusal } from '../../../src/midnight/record-tree.js';
 import { HEX64 } from '../../../src/midnight/directory-change-shape.js';
 import { CIRCUITS_THAT_READ_NO_WITNESS } from '../../../src/midnight/governed-call.js';
@@ -101,10 +101,16 @@ import type { DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import type { AccountStartPure, VaultStartPure } from '../../../src/midnight/vault-start.js';
 import { NO_LEG, policyOpeningFromWire, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
+import {
+  adoptionPayloadOf, assetKeyMadeHere, bytesOf, digitsOf, governancePayloadOf, hexOf, invitationThresholdOf, payKeyPayloadOf, policyBarOf,
+  policyBarPayloadOf, policyCommitmentMadeHere, removalPayloadOf, removalThresholdOf, spendingPolicyPayloadOf, thresholdOf,
+  vaultThresholdPayloadOf,
+} from './governance-payload.js';
+
+export { governancePayloadOf };
 
 export type { SignerMaterial } from './private-state.js';
 
-const DIGITS = /^[0-9]+$/u;
 const ZERO_32 = new Uint8Array(32);
 
 /**
@@ -171,7 +177,9 @@ export type GovernanceOnTheWire =
    * account carries this one out only while that is still its latest, so a
    * recovery approved before another is carried out can never be used after it.
    */
-  | { readonly kind: 'recover-anchor'; readonly resumesFrom: string; readonly latest: string; readonly lastRecovery: string };
+  | { readonly kind: 'recover-anchor'; readonly resumesFrom: string; readonly latest: string; readonly lastRecovery: string }
+  /** A vault taken out of the company's account; the vault itself carries it out once it holds no money. */
+  | { readonly kind: 'retire-vault'; readonly vault: string };
 
 /**
  * **THE COMPANY'S ACCOUNT TAKING A NEW VAULT AS ITS OWN**, named by the vault's
@@ -425,6 +433,8 @@ export interface GovernedCallDeps {
     setVaultThresholdPayload?(vault: Uint8Array, threshold: bigint): Uint8Array;
     /** Present where a vault's adoption is built; asked for only then. */
     adoptVaultPayload?(vault: Uint8Array): Uint8Array;
+    /** Present where a vault's retire is built; asked for only then. */
+    retireVaultPayload?(vault: Uint8Array): Uint8Array;
     /** Present where the pay-record key's round is built; asked for only then. */
     payKeyPayload?(commitment: Uint8Array): Uint8Array;
     /** The commitment to a pay-record key, and where the account keeps it; asked for only when a payroll run is approved. */
@@ -539,19 +549,6 @@ export class RecordChangedByTheCall extends Error {
   }
 }
 
-const bytesOf = (name: string, value: string): Uint8Array => {
-  if (typeof value !== 'string' || !HEX64.test(value)) {
-    throw new Error(`the ${name} this proposal was handed is not thirty-two bytes, so nothing was built.`);
-  }
-  return fromHex(value);
-};
-const digitsOf = (name: string, value: string): bigint => {
-  if (typeof value !== 'string' || !DIGITS.test(value)) {
-    throw new Error(`the ${name} this proposal was handed is not a whole number, so nothing was built.`);
-  }
-  return BigInt(value);
-};
-
 const ACCOUNT_FIELDS = ['assetBlinding', 'assetId', 'proposalSalt', 'changeAmount', 'changeBatchDigest'] as const;
 
 /**
@@ -640,42 +637,6 @@ export function recordForOneCall(order: GovernedCallOrder, material: SignerMater
   return record;
 }
 
-/** A threshold, as the digits it travels as, refused unless it is a whole number of at least one. */
-const thresholdOf = (value: string): bigint => {
-  const t = digitsOf('threshold', value);
-  if (t < 1n) throw new Error('a company\'s threshold is at least one, and this one is not. Nothing was built.');
-  return t;
-};
-
-/**
- * The threshold a removal sets, as the digits it travels as: a whole number, where 0 keeps the threshold in force. Whether
- * the signers left can meet it is the chain's to refuse.
- */
-const removalThresholdOf = (value: string): bigint => digitsOf('threshold', value);
-
-/** The largest number the account stores as a threshold (`Uint<64>`). */
-const MOST_A_THRESHOLD_CAN_BE = 2n ** 64n - 1n;
-
-/**
- * What an invitation sets the threshold to once its seat is taken, as the digits it travels as: none or 0 keeps the
- * threshold in force. The account binds it into the invitation's payload, so the invitee carries out the same number
- * the signers approved. Refused above the largest number the account stores; whether the seats can meet it is the
- * chain's to refuse when the seat is taken.
- */
-const invitationThresholdOf = (value: string | undefined): bigint => {
-  if (value === undefined) return 0n;
-  const t = digitsOf('threshold', value);
-  if (t > MOST_A_THRESHOLD_CAN_BE) throw new Error('the threshold this invitation sets is larger than the account can store, so nothing was built.');
-  return t;
-};
-
-/** The approvals a change to a spending policy needs, refused unless it is a whole number of at least one. */
-const policyBarOf = (value: string): bigint => {
-  const t = digitsOf('number of approvals a policy change needs', value);
-  if (t < 1n) throw new Error('a change to a spending policy needs at least one approval, and this number is not. Nothing was built.');
-  return t;
-};
-
 /**
  * The circuit's arguments, from the order and, for a raise, the `raiseBy` the device read from the
  * proposal's own record, which is the circuit's last argument, its `deadline`.
@@ -744,73 +705,6 @@ function partsFor(order: GovernedCallOrder): unknown[] {
   return [ZERO_32, bytesOf('payout root', r.root), payees, opensAt, closesAt, required, true, bytesOf('vault', r.vault)];
 }
 
-/**
- * The contract's own payload for taking `leaf` off the account and setting the threshold to `threshold` (0 keeps the one in
- * force), refused by name where this device was not given the function.
- */
-const removalPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, leaf: string, threshold: bigint): Uint8Array => {
-  if (typeof deps.accountPure.removeAndSetThresholdPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for removing a signer, so nothing was built. Reload the page to use the current build.');
-  }
-  return deps.accountPure.removeAndSetThresholdPayload(bytesOf('signer\'s leaf', leaf), threshold);
-};
-
-/** The contract's own payload for adopting `vault`, refused by name where this device was not given the function. */
-const adoptionPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string): Uint8Array => {
-  if (typeof deps.accountPure.adoptVaultPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for adopting a vault, so nothing was built.');
-  }
-  return deps.accountPure.adoptVaultPayload(bytesOf('vault', vault));
-};
-
-/** The contract's own payload for one vault's approvals needed, refused by name where this device was not given the function. */
-const vaultThresholdPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string, threshold: string): Uint8Array => {
-  if (typeof deps.accountPure.setVaultThresholdPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for a vault\'s approvals needed, so nothing was built.');
-  }
-  return deps.accountPure.setVaultThresholdPayload(bytesOf('vault', vault), thresholdOf(threshold));
-};
-
-/** The contract's own payload for committing to the pay-record key, refused by name where this device was not given the function. */
-const payKeyPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, commitment: string): Uint8Array => {
-  if (typeof deps.accountPure.payKeyPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for its pay-record key, so nothing was built.');
-  }
-  return deps.accountPure.payKeyPayload(bytesOf('pay-record key\'s commitment', commitment));
-};
-
-/** The contract's own payload for a vault's spending policy, refused by name where this device was not given the function. */
-const spendingPolicyPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string, assetKey: string, commitment: string): Uint8Array => {
-  if (typeof deps.accountPure.setPolicyPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for a spending policy, so nothing was built.');
-  }
-  return deps.accountPure.setPolicyPayload(bytesOf('vault', vault), bytesOf('currency\'s key', assetKey), bytesOf('policy\'s commitment', commitment));
-};
-
-/** The contract's own payload for the approvals a policy change needs, refused by name where this device was not given the function. */
-const policyBarPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, bar: string): Uint8Array => {
-  if (typeof deps.accountPure.setPolicyBarPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for the approvals a policy change needs, so nothing was built.');
-  }
-  return deps.accountPure.setPolicyBarPayload(policyBarOf(bar));
-};
-
-/** The currency's blinded key, made by the contract's own function from the currency and the account's blinding. */
-const assetKeyMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, asset: string, blinding: string): string => {
-  if (typeof deps.accountPure.assetKeyOf !== 'function') {
-    throw new Error('this device was not given the account\'s function for a currency\'s key, so nothing was built.');
-  }
-  return hexOf(deps.accountPure.assetKeyOf(bytesOf('currency', asset), bytesOf('account\'s asset blinding', blinding)));
-};
-
-/** The commitment a policy's opening makes, by the contract's own function. */
-const policyCommitmentMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, policy: PolicyOpeningOnTheWire): string => {
-  if (typeof deps.accountPure.policyCommitmentOf !== 'function') {
-    throw new Error('this device was not given the account\'s function for a policy\'s commitment, so nothing was built.');
-  }
-  return hexOf(deps.accountPure.policyCommitmentOf(policyOpeningFromWire(policy)));
-};
-
 /** What a raise that is not a run changes: a seat or a threshold, a vault adopted, or the pay-record key committed. */
 const raisedChange = (order: RaiseGovernanceOrder | RaiseAdoptionOrder | RaisePayKeyOrder): RoundChangeOnTheWire =>
   ('adoption' in order ? order.adoption : 'payKey' in order ? order.payKey : order.governance);
@@ -818,35 +712,6 @@ const raisedChange = (order: RaiseGovernanceOrder | RaiseAdoptionOrder | RaisePa
 /** Stand-ins in a governance raise's arguments, replaced with the contract's own values before the call is built. */
 const GOVERNANCE_PAYLOAD = Symbol('the governance payload');
 const NO_VAULT = Symbol('no vault');
-
-/** The payload a governance round commits to, made by the contract's own function from the change named. */
-export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>, g: RoundChangeOnTheWire): Uint8Array {
-  /* The super admins' changes are their own kind, signed by their wallets on each contract: never a proposal the account holds or counts. */
-  if ((g as { readonly kind: string }).kind === 'super-admins') {
-    throw new Error('a change of the super admins is never raised, approved or counted on the company\'s account as a signers\' proposal, so nothing was built.');
-  }
-  if (g.kind === 'add-signer') {
-    return deps.accountPure.signerInvitePayload(
-      bytesOf('invited address', g.address), bytesOf('seat\'s rights', g.scope), invitationThresholdOf(g.threshold));
-  }
-  if (g.kind === 'remove-signer') return removalPayloadOf(deps, g.leaf, removalThresholdOf(g.threshold ?? '0'));
-  if (g.kind === 'threshold') return deps.accountPure.setThresholdPayload(thresholdOf(g.threshold));
-  if (g.kind === 'vault-threshold') return vaultThresholdPayloadOf(deps, g.vault, g.threshold);
-  if (g.kind === 'adopt-vault') return adoptionPayloadOf(deps, g.vault);
-  if (g.kind === 'pay-key') return payKeyPayloadOf(deps, g.commitment);
-  if (g.kind === 'spending-policy') return spendingPolicyPayloadOf(deps, g.vault, g.assetKey, g.commitment);
-  if (g.kind === 'policy-bar') return policyBarPayloadOf(deps, g.bar);
-  if (g.kind === 'recover-anchor') {
-    if (typeof deps.accountPure.recoverAnchorPayload !== 'function') {
-      throw new Error('this device was not given the account\'s function for a recovery of its record anchor. Reload the page to use the current build.');
-    }
-    return deps.accountPure.recoverAnchorPayload(
-      bytesOf('head it resumes from', String(g.resumesFrom).toLowerCase()), digitsOf('recovery\'s last time', g.latest),
-      bytesOf('latest recovery\'s head', String(g.lastRecovery).toLowerCase()));
-  }
-  throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted, nor the pay-record key, nor a spending '
-    + 'policy, so nothing was built.');
-}
 
 /** A governance proposal's payload and its identity on the chain, each the hexadecimal of its thirty-two bytes. */
 export interface ProposalIdentity {
@@ -861,7 +726,7 @@ export interface ProposalIdentity {
  * made by the contract's own functions. A device writing a governance proposal
  * down takes both from here, so what it files is what the chain will compute.
  */
-export function identityOfAChange(deps: Pick<GovernedCallDeps, 'accountPure'>, change: GovernanceOnTheWire, salt: string): ProposalIdentity {
+export function identityOfAChange(deps: Pick<GovernedCallDeps, 'accountPure'>, change: RoundChangeOnTheWire, salt: string): ProposalIdentity {
   const P = deps.accountPure;
   const digest = governancePayloadOf(deps, change);
   const noVault = P.noVault();
@@ -1028,12 +893,11 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
   }
 }
 
-const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const same = (a: unknown, b: unknown): boolean => String(a).toLowerCase() === String(b).toLowerCase();
 const changeNamed = (g: RoundChangeOnTheWire | undefined): string =>
   (g?.kind === 'threshold' || g?.kind === 'vault-threshold' ? 'threshold' : g?.kind === 'adopt-vault' ? 'vault adopted'
     : g?.kind === 'pay-key' ? 'pay-record key' : g?.kind === 'spending-policy' ? 'policy' : g?.kind === 'policy-bar' ? 'policy bar'
-      : g?.kind === 'recover-anchor' ? 'recovery' : g?.kind === 'add-signer' ? 'invitation' : 'leaf');
+      : g?.kind === 'recover-anchor' ? 'recovery' : g?.kind === 'add-signer' ? 'invitation' : g?.kind === 'retire-vault' ? 'vault retired' : 'leaf');
 
 /**
  * **NOTHING IS PROVED WITH A VALUE THIS DEVICE DID NOT READ ITSELF, BUT TWO.**

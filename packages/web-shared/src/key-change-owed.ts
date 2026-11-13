@@ -84,13 +84,14 @@ const admittedWaits = async (here: DirectoryHere, doors: Pick<RotationDoors, 'ad
  * or the directory holds a seat that stays and the chain no longer holds. `not-needed` is a company whose key is not
  * owed a change; `ready` names the seat that acts and what is owed (`owedIn`), or, when no retirement is owed and a read
  * grant was taken away while the newest key was in force (`revoked`, read only then: a retirement's change clears a
- * taking-away anyway), a repair of the newest key. A read of the grants that fails waits, to be read again first.
+ * taking-away anyway), or when `repair` asks for one, a repair of the newest key. A repair asked for while a removal's
+ * change is owed waits: that change is made first. A read of the grants that fails waits, to be read again first.
  * With `admittedFirst` (a change made whether or not the key is owed one, as a vault's secret is), a seat the roster
  * admitted that has filed no entry yet is waited for before `not-needed` too, so it is not left out of that change.
  */
 export async function removalWaitsHere(
   here: DirectoryHere, seat: DirectorySeat | undefined,
-  o: { readonly leaf?: string; readonly revoked?: () => Promise<number | null>; readonly admittedFirst?: boolean },
+  o: { readonly leaf?: string; readonly revoked?: () => Promise<number | null>; readonly admittedFirst?: boolean; readonly repair?: boolean },
   mayAct: (seat: DirectorySeat) => string | null, doors: Pick<RotationDoors, 'leaving' | 'admitted'>,
 ): Promise<RemovalWaited> {
   if (seat === undefined) return { state: 'not-this-seat', why: 'this device\'s seat has no entry in the company\'s directory' };
@@ -120,8 +121,11 @@ export async function removalWaitsHere(
       return { state: 'waits', why: `${(e as Error)?.message ?? String(e)}; the company's read grants are read again first` };
     }
   }
-  const repairs = revokedAt !== null && revokedAt >= (last?.epoch ?? 0) ? last?.epoch ?? 0 : null;
+  const repairs = o.repair === true || (revokedAt !== null && revokedAt >= (last?.epoch ?? 0)) ? last?.epoch ?? 0 : null;
   if (owed === null && repairs === null) return (o.admittedFirst === true ? await admittedWaits(here, doors) : null) ?? { state: 'not-needed' };
+  if (o.repair === true && owed !== null) {
+    return { state: 'waits', why: 'a signer\'s removal owes the company a change of its key, with a new payout seed, which is made before any repair: the next action of a signer who stays makes it at its start' };
+  }
   if (owed !== null && !here.records.directory.has(owed.after)) return { state: 'waits', why: 'the retirement of the leaving seat is filed and not yet anchored' };
   const stillHeld = owed === null ? [] : here.dir.seats.filter((x) => x.retired !== null && (x.retiredAt ?? 0) > owed.since && here.holders.seats.includes(x.seat));
   if (stillHeld.some((x) => !here.records.directory.has(x.retiredAt ?? 0)) || (stillHeld.length > 0 && !stayersApproveAlone(here))) {

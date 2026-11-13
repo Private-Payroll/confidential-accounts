@@ -163,6 +163,11 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
     expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
     expect(screen.getByText(`shielded token ${TOKEN}`)).toBeTruthy();
     expect(screen.getByText(VAULT)).toBeTruthy();
+    /* RED WHEN: the screen says the service checks the vault's committee: it checks only that the vault is pinned to the company's account. */
+    expect(document.querySelector('[data-vault-check]')!.textContent).toMatch(/not pinned to the company.s account on the chain/);
+    /* RED WHEN: the check reads as one this wallet or any page gives: only the company's own service makes it. */
+    expect(document.querySelector('[data-vault-check]')!.textContent).toMatch(/If this page is run by the company.s own service.*A page run by someone else gives you no such check/);
+    expect(document.body.textContent).not.toMatch(/committee does not hold/);
     expect(screen.getByText('You pay no network fee. The company pays it.')).toBeTruthy();
     await settled(20);
     expect(answers).toEqual([]);

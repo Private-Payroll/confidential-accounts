@@ -22,7 +22,7 @@ export type InviteKind = (typeof INVITE_KIND)[keyof typeof INVITE_KIND];
 export const INVITE_WAY = { link: 'link', address: 'address' } as const;
 type InviteWay = (typeof INVITE_WAY)[keyof typeof INVITE_WAY];
 
-/** The roles an invitation can give (`SIGNER_ROLES`), and the reader roles the form shows but does not offer (`READER_ROLES`): a reader is given a read grant, not an invitation. `ROLES` is both, signer roles first. */
+/** The roles an invitation can give (`SIGNER_ROLES`), and the reader roles the form offers and sends to the Roles page (`READER_ROLES`): a reader is given a read grant, not an invitation. `ROLES` is both, signer roles first. */
 export const ROLE = Object.freeze(Object.fromEntries(ROLES.map((r) => [r, r])) as { readonly [R in Role]: R });
 export { READER_ROLES, ROLES, SIGNER_ROLES };
 /** The on-screen keypad an amount field asks a phone for. */
@@ -65,7 +65,7 @@ export const MADE = { ask: 'ask', problem: 'problem', units: 'units' } as const;
 export const PROBLEM = {
   noName: 'no-name', noStart: 'no-start', badStart: 'bad-start', badEnd: 'bad-end', endBeforeStart: 'end-before-start', badEmail: 'bad-email',
   noAsset: 'no-asset', noAmount: 'no-amount', badAmount: 'bad-amount', zeroAmount: 'zero-amount', tooManyDecimals: 'too-many-decimals',
-  noAddress: 'no-address', badAddress: 'bad-address', notPrivateAddress: 'not-private-address', noRole: 'no-role', roleLater: 'role-later',
+  noAddress: 'no-address', badAddress: 'bad-address', notPrivateAddress: 'not-private-address', noRole: 'no-role', roleReader: 'role-reader',
   superAdmin: 'super-admin', badThreshold: 'bad-threshold', thresholdTooHigh: 'threshold-too-high', thresholdRefused: 'threshold-refused',
 } as const;
 export type InviteProblem = (typeof PROBLEM)[keyof typeof PROBLEM];
@@ -128,7 +128,7 @@ export function askOf(
   const company = { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
   if (d.kind === INVITE_KIND.signer) {
     if (!(SIGNER_ROLES as readonly string[]).includes(d.role)) {
-      return problem(FIELD.role, (READER_ROLES as readonly string[]).includes(d.role) ? PROBLEM.roleLater : PROBLEM.noRole);
+      return problem(FIELD.role, (READER_ROLES as readonly string[]).includes(d.role) ? PROBLEM.roleReader : PROBLEM.noRole);
     }
     const wrong = addressProblem(d.address, true, network);
     if (wrong !== null) return problem(FIELD.address, wrong);
@@ -195,6 +195,8 @@ export const WHY = {
   noOpening: 'no-opening',
   ownAddress: 'own-address',
   widerScope: 'wider-scope',
+  notVaults: 'not-vaults',
+  vaultNotAdopted: 'vault-not-adopted',
   notAThreshold: 'not-a-threshold',
   thresholdRefused: 'threshold-refused',
   notMade: 'not-made',
@@ -223,8 +225,8 @@ export const WORDS_OF_SENT: ReadonlySet<InviteWhy> = new Set<InviteWhy>([WHY.rai
 export const INVITED = { done: 'done', stopped: 'stopped', refused: 'refused', problem: 'problem' } as const;
 /** `handedOver` on a stop: the wallet handed the page transactions before it stopped (sent or not confirmed), whatever the reason. */
 export type Invited =
-  | { readonly of: typeof INVITED.done; readonly link: string; readonly token: string; readonly already: boolean }
-  | { readonly of: typeof INVITED.stopped; readonly why: InviteWhy; readonly token: string; readonly keeps: boolean; readonly link: string | null; readonly handedOver: boolean }
+  | { readonly of: typeof INVITED.done; readonly link: string | null; readonly token: string | null; readonly already: boolean }
+  | { readonly of: typeof INVITED.stopped; readonly why: InviteWhy; readonly token: string | null; readonly keeps: boolean; readonly link: string | null; readonly handedOver: boolean }
   | { readonly of: typeof INVITED.refused; readonly why: ActRefusal }
   | { readonly of: typeof INVITED.problem; readonly problem: InviteProblem; readonly field: keyof InviteDraft; readonly most?: number; readonly says?: string };
 
@@ -233,9 +235,11 @@ const DONE = 'done';
 const STATE = 'state';
 const ALREADY_FILED = 'already-filed';
 /**
- * INVITES SOMEBODY FROM THE SHOWN COMPANY, through the person's wallet. `token`, when the last press of this same
- * invitation kept one, makes this press carry on that invitation; the wallet wrapper refuses a token that is not a whole
- * one before the wallet is asked, and that refusal comes back as a refusal. `seated` is the seats the chain holds, as the page read them,
+ * INVITES SOMEBODY FROM THE SHOWN COMPANY, through the person's wallet. For an employee or a vendor, `token`, when the
+ * last press of this same invitation kept one, makes this press carry on that invitation; the wallet wrapper refuses a
+ * token that is not a whole one before the wallet is asked, and that refusal comes back as a refusal. A signer's
+ * invitation is sent with no token and comes back with no token or link: the wallet makes both, carries a press again
+ * on under the invitation it kept for the address, and shows the link in its own window. `seated` is the seats the chain holds, as the page read them,
  * or null when it did not.
  */
 export async function sendInvite(
@@ -253,12 +257,13 @@ export async function sendInvite(
       const says = await seatThresholdRefusedOnThePage(companyId, { role: made.ask.role, threshold: made.ask.threshold });
       if (says !== null) return { of: INVITED.problem, problem: PROBLEM.thresholdRefused, field: FIELD.threshold, says };
     }
+    const signer = made.ask.kind === INVITE_KIND.signer;
     const sent = await inviteInTheWallet(made.ask, ACCOUNT_ORIGIN, {
       ...(onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) }),
-      ...(token === undefined ? {} : { token }),
+      ...(token === undefined || signer ? {} : { token }),
     });
-    const kept = tokenOfLink(sent.link);
-    if (kept === null) return { of: INVITED.refused, why: ACT_REFUSAL.didNotFinish };
+    const kept = sent.link === null ? null : tokenOfLink(sent.link);
+    if (!signer && kept === null) return { of: INVITED.refused, why: ACT_REFUSAL.didNotFinish };
     if (sent.ended.of === DONE) return { of: INVITED.done, link: sent.link, token: kept, already: sent.ended.outcome?.[STATE] === ALREADY_FILED };
     const why = whyOf(sent.ended.refused);
     return { of: INVITED.stopped, why, token: kept, keeps: KEEPS_ITS_TOKEN.has(why), link: why === WHY.raisedNotFiled ? sent.link : null,

@@ -15,7 +15,7 @@ import { StepRefused, type StepContext } from './definition.js';
  * change cannot be is refused before either runs; and the person confirms the change, with what the removal does on
  * the chain, before anything is raised.
  */
-const t = vi.hoisted(() => ({ ran: [] as Array<{ act: string; fields: Record<string, string> }> }));
+const t = vi.hoisted(() => ({ ran: [] as Array<{ act: string; fields: Record<string, string>; token?: string }> }));
 vi.mock('./remove-signer.js', async (real) => ({
   ...(await real<typeof import('./remove-signer.js')>()),
   removeSignerAction: () => ({ check: async () => null, steps: (i: ActIntent) => [
@@ -25,11 +25,11 @@ vi.mock('./remove-signer.js', async (real) => ({
 }));
 vi.mock('./invite.js', async (real) => ({
   ...(await real<typeof import('./invite.js')>()),
-  inviteAction: () => ({ check: async () => null, steps: (i: ActIntent) => [
-    { title: { key: 'act.invite.step.invite' }, run: async () => { t.ran.push({ act: 'invite', fields: { ...i.fields } }); } },
+  inviteAction: (_reach: unknown, own?: { token: string }) => ({ check: async () => null, steps: (i: ActIntent) => [
+    { title: { key: 'act.invite.step.invite' }, run: async () => { t.ran.push({ act: 'invite', fields: { ...i.fields }, ...(own === undefined ? {} : { token: own.token }) }); } },
   ] }),
 }));
-const { changeRoleAction } = await import('./change-role.js');
+const { changeRoleAction, dropRoleChangeAction } = await import('./change-role.js');
 
 const REMOVAL_DOES = ['retirement', 'other-changes', 'open-runs', 'checks', 'vault-secrets'].map((k) => `act.remove-signer.shown.${k}`);
 const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
@@ -37,24 +37,24 @@ const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 const LEAF = 'a4'.repeat(32);
 const OTHER = 'a1'.repeat(32);
-const TOKEN = '7e'.repeat(32);
 const addressOf = (n: number): string => addressFor(identityFromSecret(new Uint8Array(32).fill(n)).moneyAt(0).zswap, NETWORK as never).bech32;
 const DEES = addressOf(4);
 const coinOf = (address: string): string => String(checkShieldedAddress(address, NETWORK as never).coinPublicKey).toLowerCase();
 
 /* The company as this wallet reads it: the seats the chain holds, the directory's entry for the seat, and the coin key the roster records for it. */
-let company: { held: string[]; role: string | null; retired: unknown; coin: string | undefined; approvals?: number };
+let company: { held: string[]; role: string | null; retired: unknown; coin: string | undefined; approvals?: number; rights?: unknown; entry?: boolean; adopted?: string[] };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, companyKeys: {}, roster: async () => ({
     id: 'acc_1', name: 'Acme', notBelieved: [],
     signers: [{ id: 's4', name: 'Dee', status: 'active', leafCommitment: LEAF, ...(company.coin === undefined ? {} : { coinPublicKey: company.coin }) }],
   }),
-  holders: async () => ({ seats: company.held, committee: [], approvals: company.approvals ?? 1, seatBar: 1, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
-  judges: { directoryHereFor: () => async () => ({ dir: { seats: [{ seat: OTHER, role: 'admin', retired: null }, { seat: LEAF, role: company.role, retired: company.retired }] } }) },
+  holders: async () => ({ seats: company.held, committee: [], approvals: company.approvals ?? 1, seatBar: 1, policyBar: null, vaultThresholds: [], adoptedVaults: company.adopted ?? [], account: ACCOUNT }),
+  judges: { directoryHereFor: () => async () => ({ dir: { seats: [{ seat: OTHER, role: 'admin', retired: null }, ...(company.entry === false ? [] : [{ seat: LEAF, role: company.role, retired: company.retired, ...(company.rights === undefined ? {} : { rights: company.rights }) }])] } }) },
 });
 const reach = () => ({ chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0, commitments: async () => ({}) as never, reachFor: async () => reachOf() as never, afterCarried: async () => ({}) as never });
-const intentOf = (role: string, address = DEES, token = TOKEN): ActIntent =>
-  ({ name: 'change-role', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, leaf: LEAF, role, address, personName: 'Dee', token } }) as unknown as ActIntent;
+const intentOf = (role: string, address = DEES): ActIntent =>
+  ({ name: 'change-role', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, leaf: LEAF, role, address, personName: 'Dee' } }) as unknown as ActIntent;
+const keptToken = (): string => Object.values((saved as { roleChangesKept: Record<string, { token: string }> }).roleChangesKept)[0]!.token;
 /* The saved keys of the wallet pressing: what press 1 keeps, press 2 reads. */
 let saved: Record<string, unknown> = { accounts: {} };
 const runOf = async (i: ActIntent) => {
@@ -80,14 +80,14 @@ const refusalOf = async (p: Promise<unknown>): Promise<{ key: string; says: stri
 beforeEach(() => {
   t.ran.length = 0;
   saved = { accounts: {} };
-  company = { held: [OTHER, LEAF], role: 'admin', retired: null, coin: coinOf(DEES) };
+  company = { held: [OTHER, LEAF], role: 'admin', retired: null, coin: coinOf(DEES), rights: { every: true } };
 });
 
 describe('A SIGNER\'S ROLE IS CHANGED BY THE SEAT\'S REMOVAL, THEN AN INVITATION BY ADDRESS AT THE NEW ROLE', () => {
   it('while the chain holds the seat, a demotion raises the seat\'s removal, keeping the approvals in force, once the person confirms it with what the removal does on the chain', async () => {
     const { told, confirmed } = await runOf(intentOf('approver'));
     /* RED WHEN: a role change raises anything but the seat's removal while the chain holds the seat. */
-    expect(t.ran).toEqual([{ act: 'remove-signer', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, leaf: LEAF, threshold: '0' } }]);
+    expect(t.ran).toEqual([{ act: 'remove-signer', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, leaf: LEAF, threshold: '0', becomes: 'approver' } }]);
     expect(told).toContainEqual({ stage: 'remove' });
     /* RED WHEN: the person is not shown, before the removal is raised, all it does: the retirement, other changes and open runs, the checks, and every vault's secret change that holds deposits. */
     expect(confirmed).toEqual(['act.change-role.confirm.remove', ...REMOVAL_DOES]);
@@ -97,15 +97,16 @@ describe('A SIGNER\'S ROLE IS CHANGED BY THE SEAT\'S REMOVAL, THEN AN INVITATION
 
   it('once the chain no longer holds the seat, a demotion invites the person by the address given at the new role', async () => {
     await runOf(intentOf('approver'));
+    const made = keptToken();
     t.ran.length = 0;
     company = { ...company, held: [OTHER], retired: {} };
     const { told, confirmed } = await runOf(intentOf('approver'));
     /* RED WHEN: the second step removes the seat again, or invites at another role, address or name than asked. */
     expect(t.ran).toEqual([{ act: 'invite', fields: {
-      record: 'acc_1', company: LABEL, account: ACCOUNT, token: TOKEN, kind: 'signer', role: 'approver', address: DEES, personName: 'Dee',
-    } }]);
+      record: 'acc_1', company: LABEL, account: ACCOUNT, kind: 'signer', role: 'approver', address: DEES, personName: 'Dee',
+    }, token: made }]);
     expect(told).toContainEqual({ stage: 'invite' });
-    expect(confirmed).toEqual(['act.change-role.confirm.invite']);
+    expect(confirmed).toEqual(['act.change-role.confirm.invite', 'act.change-role.confirm.every-vault']);
     /* RED WHEN: once the invitation is filed, what the first press kept stays in the saved keys for good. */
     expect((saved as { roleChangesKept?: object }).roleChangesKept).toEqual({});
   });
@@ -126,13 +127,106 @@ describe('A SIGNER\'S ROLE IS CHANGED BY THE SEAT\'S REMOVAL, THEN AN INVITATION
     /* RED WHEN: a page sends another person's address, or another role, at the second press and it is invited. */
     expect((await refusalOf(runOf(intentOf('approver', addressOf(9))))).key).toBe('act.change-role.why.not-as-started');
     expect((await refusalOf(runOf(intentOf('initiator')))).key).toBe('act.change-role.why.not-as-started');
-    /* RED WHEN: a press under another invitation link raises a second invitation beside one the first link may already have filed. */
-    const another = await refusalOf(runOf(intentOf('approver', DEES, '9b'.repeat(32))));
-    expect(another.key).toBe('act.change-role.why.another-link');
-    expect(WORDS['act.change-role.why.another-link']).toMatch(/Press again with the link you used when you raised the removal/u);
     /* RED WHEN: a wallet that confirmed no removal for the seat invites on the page's word alone. */
     saved = { accounts: {} };
     expect((await refusalOf(runOf(intentOf('approver')))).key).toBe('act.change-role.why.not-started-here');
+    expect(t.ran).toEqual([]);
+  });
+
+  it('the first press makes the link\'s token in the wallet and keeps it, never telling the page, and the second press invites under it', async () => {
+    const { told } = await runOf(intentOf('approver'));
+    const made = keptToken();
+    /* RED WHEN: the first press keeps no token of the wallet's own, or tells the page the token, which opens the seat's offer. */
+    expect(made).toMatch(/^[0-9a-f]{64}$/u);
+    expect(JSON.stringify(told)).not.toContain(made);
+    t.ran.length = 0;
+    company = { ...company, held: [OTHER], retired: {} };
+    const second = await runOf(intentOf('approver'));
+    /* RED WHEN: the second press invites under any token but the one the first press kept, or the page is told it then. */
+    expect(t.ran.map((x) => [x.act, x.token])).toEqual([['invite', made]]);
+    expect(JSON.stringify(second.told)).not.toContain(made);
+  });
+
+  it('the person is invited again on the vaults the removed seat held, as the company\'s directory records them', async () => {
+    const [v1, v2] = ['0a'.repeat(32), '0b'.repeat(32)];
+    company = { ...company, rights: { mayApprove: true, everyVault: false, onVaults: [v1, v2] }, adopted: [v1, v2] };
+    await runOf(intentOf('approver'));
+    t.ran.length = 0;
+    company = { ...company, held: [OTHER], retired: {} };
+    const { confirmed } = await runOf(intentOf('approver'));
+    /* RED WHEN: a seat that held some vaults is invited again on every vault, so a role change widens what it may approve. */
+    expect(t.ran[0]!.fields['vaults']).toBe(`${v1},${v2}`);
+    expect(confirmed).toEqual(['act.change-role.confirm.invite', 'act.change-role.confirm.vaults']);
+  });
+
+  it('a seat that acts on a vault the company retired is not removed, since it could not be invited again on the same vaults, and the refusal says what clears it', async () => {
+    const [v1, v2] = ['0a'.repeat(32), '0b'.repeat(32)];
+    company = { ...company, rights: { mayApprove: true, everyVault: false, onVaults: [v1, v2] }, adopted: [v1] };
+    /* RED WHEN: the seat is removed first and only then refused its invitation, so the person who was to keep a seat loses it. */
+    const refused = await refusalOf(runOf(intentOf('approver')));
+    expect(refused.key).toBe('act.change-role.why.vaults-retired-first');
+    expect([t.ran, (saved as { roleChangesKept?: object }).roleChangesKept]).toEqual([[], undefined]);
+    expect(WORDS['act.change-role.why.vaults-retired-first']).toMatch(/Adopt the retired vault again.*then press again; or .*Invite/u);
+  });
+
+  it('a vault retired between the removal and the invitation is named, with what clears it, and nothing is sent', async () => {
+    const [v1, v2] = ['0a'.repeat(32), '0b'.repeat(32)];
+    company = { ...company, rights: { mayApprove: true, everyVault: false, onVaults: [v1, v2] }, adopted: [v1, v2] };
+    await runOf(intentOf('approver'));
+    t.ran.length = 0;
+    company = { ...company, held: [OTHER], retired: {}, adopted: [v1] };
+    /* RED WHEN: the invitation is refused in words that send the person to name vaults, which this act does not let them do. */
+    const refused = await refusalOf(runOf(intentOf('approver')));
+    expect(refused.key).toBe('act.change-role.why.vaults-retired');
+    expect(t.ran).toEqual([]);
+    expect(WORDS['act.change-role.why.vaults-retired']).toMatch(/Adopt the retired vault again.*then press again; or .*Invite/u);
+  });
+
+  it('a seat whose rights this device does not hold is not removed, since it could not be invited again on the same vaults', async () => {
+    company = { ...company, rights: undefined };
+    /* RED WHEN: a seat is removed whose vaults this device cannot name, so its invitation is then refused and the person loses the seat. */
+    const refused = await refusalOf(runOf(intentOf('approver')));
+    expect(refused.key).toBe('act.change-role.why.rights-unread');
+    expect(t.ran).toEqual([]);
+  });
+
+  it('a removed seat whose rights this device does not hold is not invited again on every vault, and the person is sent to Invite', async () => {
+    for (const unread of [{ rights: undefined }, { entry: false }]) {
+      saved = { accounts: {} };
+      company = { ...company, held: [OTHER, LEAF], retired: null, rights: { every: true }, entry: true };
+      await runOf(intentOf('approver'));
+      t.ran.length = 0;
+      company = { ...company, held: [OTHER], retired: {}, ...unread };
+      /* RED WHEN: a seat whose rights this device cannot read is invited again on every vault, widening what it may approve. */
+      const refused = await refusalOf(runOf(intentOf('approver')));
+      expect(refused.key, JSON.stringify(unread)).toBe('act.change-role.why.rights-unread');
+      expect(t.ran).toEqual([]);
+    }
+    expect(WORDS['act.change-role.why.rights-unread']).toMatch(/use Invite, naming the vaults/u);
+  });
+
+  it('a kept role change is dropped by its own act, and sends nothing', async () => {
+    await runOf(intentOf('approver'));
+    t.ran.length = 0;
+    const drop = { name: 'drop-role-change', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, leaf: LEAF } } as unknown as ActIntent;
+    const told: Array<Record<string, unknown>> = [];
+    const confirmed: string[] = [];
+    const ctx = {
+      intent: drop, tell: (x: Record<string, unknown>) => { told.push(x); },
+      confirm: async (lines: readonly { key: string }[]) => { confirmed.push(...lines.map((l) => l.key)); },
+      call: async () => { throw new Error('dropping a kept role change calls nothing'); },
+      keyring: { open: () => ({ read: () => saved }), keep: async (f: (k: any) => any) => { saved = f(saved); } },
+    } as unknown as StepContext;
+    const action = dropRoleChangeAction();
+    expect(await action.check(drop, {} as never)).toBeNull();
+    for (const step of action.steps(drop)) await step.run(ctx);
+    /* RED WHEN: a role change abandoned before its invitation stays in the saved keys, or dropping it is not confirmed first. */
+    expect((saved as { roleChangesKept?: object }).roleChangesKept).toEqual({});
+    expect(confirmed).toEqual(['act.drop-role-change.confirm.drop']);
+    expect(told).toContainEqual({ state: 'dropped' });
+    told.length = 0;
+    for (const step of action.steps(drop)) await step.run(ctx);
+    expect(told).toContainEqual({ state: 'not-kept' });
     expect(t.ran).toEqual([]);
   });
 
@@ -157,7 +251,7 @@ describe('A SIGNER\'S ROLE IS CHANGED BY THE SEAT\'S REMOVAL, THEN AN INVITATION
     /* RED WHEN: another person's address is invited in place of the one removed. */
     expect(await refusalOf(runOf(intentOf('approver', addressOf(9))))).toMatchObject({ key: 'act.change-role.why.refused', says: expect.stringMatching(/Give the address of the wallet that holds the seat/u) });
     /* RED WHEN: a signer's seat is changed into a reader's, which holds no seat on the chain. */
-    expect(await refusalOf(runOf(intentOf('accountant')))).toMatchObject({ says: expect.stringMatching(/^Limited and accountant people .*remove them first with Remove\. Giving read access is not on a screen yet\.$/u) });
+    expect(await refusalOf(runOf(intentOf('accountant')))).toMatchObject({ says: expect.stringMatching(/^Limited and accountant people .*remove them first with Remove\. Read access is given on the Roles tab in Settings\.$/u) });
     /* RED WHEN: a seat is removed to be invited again at the role it already holds. */
     expect(await refusalOf(runOf(intentOf('admin')))).toMatchObject({ says: expect.stringMatching(/already holds the role admin/u) });
     /* RED WHEN: a second removal is raised, or the person invited, while the seat's removal waits to be carried out. */

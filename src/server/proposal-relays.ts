@@ -97,7 +97,7 @@ export interface ProposalRelayDeps {
    */
   readonly proposalIdOf: (payloadHash: string, salt: string, vault?: string) => string;
   /** A vault's adoption proposal, its identity and payload, as the account's own functions make it (`adoptionRoundOf`). */
-  readonly adoptionOf?: (vault: Hex) => { readonly proposal: string; readonly payload: string };
+  readonly adoptionOf?: (vault: Hex, again?: Hex) => { readonly proposal: string; readonly payload: string };
   /** The vaults the company's account lists on the chain now: the ones it adopted. Null when the chain did not answer. */
   readonly vaultsAdopted?: (accountId: string) => Promise<readonly string[] | null>;
   /**
@@ -600,7 +600,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * so each refusal says the vault is not affected and what resolves it.
    */
   router.post('/api/proposals/:id/carried', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ vault: z.string().regex(HEX64), filer: FILER, run: SECRET_RUN_PARTS.optional() }).strict(), req.body,
+    const b = parsed(res, z.object({ vault: z.string().regex(HEX64), filer: FILER, run: SECRET_RUN_PARTS.optional(), again: z.string().regex(HEX64).optional() }).strict(), req.body,
       'a vault\'s adoption or secret run carried out on the chain');
     if (b === null) return;
     const p = deps.store.getProposal(String(req.params.id))!;
@@ -621,7 +621,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
           + 'Tell whoever runs this service');
         return;
       }
-      const round = deps.adoptionOf(vault);
+      const round = deps.adoptionOf(vault, b.again?.toLowerCase() as Hex | undefined);
       if (round.proposal.toLowerCase() !== p.chainId.toLowerCase() || round.payload.toLowerCase() !== p.digest.toLowerCase()) {
         refuse(409, 'this proposal is not the adoption of that vault, so it is not marked done here. The vault is not affected');
         return;

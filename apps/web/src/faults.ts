@@ -21,6 +21,7 @@ export const FAULT = {
   noClaimCheckInTheBuilder: 'web-14-no-claim-check-in-the-builder',
   noAccountToReadProposalsFrom: 'web-15-no-account-to-read-proposals-from',
   noIndexerToReadProposalsAt: 'web-16-no-indexer-to-read-proposals-at',
+  policyReadReadsNothingElse: 'web-17-policy-read-reads-nothing-else',
 } as const;
 
 export type FaultCode = (typeof FAULT)[keyof typeof FAULT];

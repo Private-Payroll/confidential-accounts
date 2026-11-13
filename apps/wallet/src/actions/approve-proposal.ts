@@ -1,8 +1,9 @@
 /**
  * **APPROVING A PROPOSAL OF THE COMPANY, IN THE WALLET**: one window and one passkey for every kind of proposal the page
  * names (`proposalKinds`). The wallet reads the company and this seat from the chain and the company's records; for a
- * kind whose approval is about what only the seat's keys open, it reads that in the same first step and waits for the
- * person's Confirm of it in the window (`confirmFirst`), before anything is sent. It then does what the company owes
+ * kind whose approval is about what only the seat's keys open, or what the person compares with what they are told (a
+ * seat's fingerprint), it reads that in the same first step and waits for the person's Confirm of it in the window
+ * (`confirmFirst`), before anything is sent. It then does what the company owes
  * first (the upkeep), approves through the one approve step, carries the proposal out where its
  * kind does so here and the approvals are given, and ends with the upkeep's anchor. The page gets back only where the
  * proposal got to, its approvals and the approvals it needs, each read from the chain through this wallet's indexer.
@@ -12,7 +13,7 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { companyReachFor, keptReach, type CompanyReach } from './company-reach.js';
 import type { ActionDefinition, ActionStep, ShownLine, StepContext, Words } from './definition.js';
-import { approveStep, approving, confirmFirst, isChainOnly, proposalKinds, type ProposalKindsReach } from './proposal-kinds.js';
+import { approveStep, approving, confirmFirst, isChainOnly, proposalKinds, readsFirstFor, type ProposalKindsReach } from './proposal-kinds.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
 /** What the action reads beside the company; `reachFor` stands in for the company read in tests. */
@@ -65,7 +66,7 @@ export function approveProposalAction(reach: ApproveProposalReach): ActionDefini
       const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
       const here = approving();
       const seat: ActionStep = {
-        title: { key: kind.readsFirst === true ? 'act.approve-proposal.step.seat-and-confirm' : 'act.approve-proposal.step.seat' },
+        title: { key: readsFirstFor(kind, intent) ? 'act.approve-proposal.step.seat-and-confirm' : 'act.approve-proposal.step.seat' },
         run: async (ctx) => { await confirmFirst(kind, intent, await read.at(ctx), here, ctx); },
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, kind.upkeep ?? {});

@@ -18,15 +18,9 @@ import { AccountService } from './account.js';
 import { canonical, newSigningKeypair, newWrappingKeypair, seal, type Hex } from './crypto.js';
 import { NothingWasSent } from './jobs.js';
 import { NO_ASSET } from './assets.js';
-import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
+import { provenBy } from '../testing/a-seat-request-proved.js';
 import { anInvitee, theInviteeTakesTheSeat, type Invitee } from '../testing/an-invitee.js';
 
-/** What the invited person's device sends beside its keys: the proof its link let it make. */
-const provenBy = (
-  viewingKey: string, invite: { accountId: string; name?: string; role?: string },
-  signingPublicKey: string, wrappingPublicKey: string, leafCommitment: string,
-) => proveSeatKeys(newSeatInvitation(viewingKey, invite.accountId, invite.name!, invite.role!),
-  { signingPublicKey, wrappingPublicKey, leafCommitment });
 
 let ledger: SimulatedLedger;
 let accounts: AccountService;
@@ -48,7 +42,7 @@ beforeEach(async () => {
   const raw = accounts.inviteSigner(company, 'Bo', 'bo@example.test', 'approver');
   const boWrapping = newWrappingKeypair().publicKey;
   bo = { signerId: accounts.acceptSignerInvite(raw.token, 'usr_bo', pair.publicKey, boWrapping, at.leaf,
-    provenBy(viewingKey, raw, pair.publicKey, boWrapping, at.leaf)).id, at };
+    ...provenBy(viewingKey, raw, pair.publicKey, boWrapping, at.leaf)).id, at };
 });
 
 /**

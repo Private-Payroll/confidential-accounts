@@ -59,12 +59,12 @@ describe('the ask made from the form', () => {
     expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: 'hello' }, NAMED)).toMatchObject({ of: 'problem', problem: 'bad-address', field: 'address' });
   });
 
-  /* RED WHEN: a super admin yields an ask, or a limited or accountant signer does. */
-  it('refuses a super admin and the roles shown for later, and sends nothing for them', async () => {
+  /* RED WHEN: a super admin yields an ask, or a limited or accountant signer does, or a reader role is told as no role at all. */
+  it('refuses a super admin and a reader role, which is given as read access, and sends nothing for them', async () => {
     const m = await load();
     expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' }, NAMED)).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });
     for (const role of m.READER_ROLES) {
-      expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', role, address: PRIVATE }, NAMED), role).toEqual({ of: 'problem', problem: 'role-later', field: 'role' });
+      expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', role, address: PRIVATE }, NAMED), role).toEqual({ of: 'problem', problem: 'role-reader', field: 'role' });
     }
     kr.calls = 0;
     expect(await m.sendInvite('u1', 'acc_Company00001', { ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' })).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });

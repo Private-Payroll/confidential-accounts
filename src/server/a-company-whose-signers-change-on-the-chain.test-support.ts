@@ -193,16 +193,22 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
 
 /** Where each proposal stands on the test's chain, as each person's own wallet reads it. */
 /**
- * The invited person's own wallet taking the seat a proposal to add them approved, as the account's `seatInvited`
- * takes it: the proposal must invite `address`, and hold the approvals the seat bar asks. The seat goes on the end of
- * the list. This chain checks no proof and no wallet key: the contract's own tests hold those.
+ * A wallet taking the seat a proposal to add a signer approved, as the account's `seatInvited` takes it: the address
+ * is made here from the coin key of the wallet taking it and the address salt it holds, as the circuit makes it, and
+ * the proposal must invite that address and hold the approvals the seat bar asks. Only the holder of the address the
+ * proposal names gets the seat, whoever the proposal was raised for; the seat it gets is the leaf its own keys make
+ * (`leaf`). The seat goes on the end of the list. This chain checks no proof that the wallet holds the coin key's
+ * secret: the contract's own tests hold that.
  */
-export const theInviteeTakesTheSeatHere = (proposal: string, address: string, leaf: string): void => {
+export const theInviteeTakesTheSeatHere = (
+  proposal: string, holder: { readonly coinPublicKey: string; readonly addressSalt: string }, leaf: string,
+): void => {
   const h = holdingNow();
   const id = proposal.toLowerCase();
   const o = open.get(id);
   if (o === undefined) throw new Error('there is no open proposal with that id');
-  if (o.change !== 'add' || o.leaf !== address.toLowerCase()) throw new Error('that proposal does not invite this wallet with these rights');
+  const address = MidnightCommitments.inviteAddressOf(holder.coinPublicKey.toLowerCase() as Hex, holder.addressSalt.toLowerCase() as Hex).toLowerCase();
+  if (o.change !== 'add' || o.leaf !== address) throw new Error('that proposal does not invite this wallet with these rights');
   if (o.approvedBy.size < h.seatBar) throw new Error('not enough approvals');
   const seat = leaf.toLowerCase();
   if (h.seats.seats.includes(seat)) throw new Error('that signer is already seated on this account');

@@ -7,11 +7,12 @@ import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.j
  * through `checkedChannel`: a keyring or unlock answer, an action's relays, its calls for the service, the saved keys
  * it hands back to be kept and its end answer. Each is refused, and nothing is sent, when its serialised form holds a
  * secret of the saved keys this wallet opened for the ask - any seat's signing secret, wrapping secret or blinding, a
- * seat opening's blinding or salt - or the key they are sealed under, the key they were sealed under before, or the
- * parent both come from. It looks for the bytes, not for a name: the secret is refused however the code that built the
+ * seat opening's blinding or salt, an invitation token kept or made for a signer - or the key they are sealed under,
+ * the key they were sealed under before, or the parent both come from. It looks for the bytes, not for a name: the secret is refused however the code that built the
  * message reached it, as lower- or upper-case hex, base64 or base64url.
  *
- * What is watched is filled where the secrets are made or opened (`held-keyring.ts`) and forgotten once the ask's
+ * What is watched is filled where the secrets are made or opened (`held-keyring.ts`, and the invite and change-role
+ * actions for the token they make) and forgotten once the ask's
  * terminal message has gone. It lives in this wallet's own code, which no page loads.
  */
 
@@ -57,13 +58,17 @@ export function watchFor(secret: Uint8Array | string): void {
 
 type SeatLike = { signingSecret?: unknown; wrappingSecret?: unknown; blinding?: unknown; opening?: { blinding?: unknown; salt?: unknown } };
 
-/** Watches every seat's secrets in saved keys: the seats held, the seats sealed before their leaf and the seats set aside. */
+/** Watches every seat's secrets in saved keys (the seats held, the seats sealed before their leaf and the seats set aside) and every invitation token kept there. */
 export function watchTheSavedKeys(k: Keyring): void {
   const seats = [...Object.values(k.accounts ?? {}), ...Object.values(k.pendingSeats ?? {}), ...Object.values(k.formerSeats ?? {})] as SeatLike[];
   for (const seat of seats) {
     for (const v of [seat.signingSecret, seat.wrappingSecret, seat.blinding, seat.opening?.blinding, seat.opening?.salt]) {
       if (typeof v === 'string') watchFor(v);
     }
+  }
+  /* An invitation's token opens its sealed offer, with the seat's secret in it: no page is ever handed one. */
+  for (const kept of [...Object.values(k.seatInvitationsKept ?? {}), ...Object.values(k.roleChangesKept ?? {})]) {
+    if (typeof kept.token === 'string') watchFor(kept.token);
   }
 }
 

@@ -2,14 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { FileSecurityIcon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, Button, EmptyState, FieldLegend, FieldSet, Section, useText } from 'vaults-ui';
 import {
-  approveRecovery, carryOutRecovery, FILE_REFUSED, openRecoveryFile, RECOVERED, RECOVERY_ACT, RECOVERY_FILE_ACCEPT, RECOVERY_STATE, RECOVERY_WHY, RECOVERY_WITHIN, raiseRecovery,
-  readRecordsStates, recoveryStanding, saveRecoveryFile, type RecordsStates, type FileRefusal, type RecoveryAct, type RecoveryActed, type RecoveryHere, type RecoveryStanding, type RecoveryWhy, type RecoveryWithin,
+  approveRecovery, carryOutRecovery, FILE_REFUSED, openRecoveryFile, RECOVERED, RECOVERY_ACT, RECOVERY_FILE_ACCEPT, RECOVERY_STATE, RECOVERY_WHY, RECOVERY_WINDOW_RANGE,
+  RECOVERY_WITHIN, raiseRecovery, readRecordsStates, recoveryStanding, recoveryWithinUpTo, saveRecoveryFile, type RecordsStates, type FileRefusal, type RecoveryAct, type RecoveryActed, type RecoveryHere, type RecoveryStanding, type RecoveryWhy, type RecoveryWithin,
 } from '../adapters/recovery.js';
 import { READ, type Read } from '../adapters/reads.js';
 import { useMoment } from '../records/parts.js';
 import { useCompanyRecords } from '../records/company-records.js';
 import { ActDone, ActOutcome, ActStopped, type ActStep } from '../records/proposal-act.js';
 import { useSession } from '../session.js';
+import { RecoveryWindowSection } from '../actions/recovery-window.js';
 
 type Words = ReturnType<typeof useText>;
 
@@ -19,6 +20,8 @@ const withinSays = (t: Words, id: RecoveryWithin): string => {
     case 'day': return t('recovery.within.day');
     case 'three-days': return t('recovery.within.three-days');
     case 'six-days': return t('recovery.within.six-days');
+    case 'two-weeks': return t('recovery.within.two-weeks');
+    case 'longest': return t('recovery.within.longest', { days: RECOVERY_WINDOW_RANGE.longest / (24 * 60 * 60) });
   }
 };
 const FILE_SAYS = (t: Words): Record<FileRefusal, string> => ({
@@ -36,7 +39,7 @@ const WHY_SAYS = (t: Words): Record<RecoveryWhy, string> => ({
   [RECOVERY_WHY.notARecovery]: t('recovery.why.not-a-recovery'), [RECOVERY_WHY.notRaised]: t('recovery.why.not-raised'), [RECOVERY_WHY.closed]: t('recovery.why.closed'),
   [RECOVERY_WHY.outrun]: t('recovery.why.outrun'), [RECOVERY_WHY.stillOpen]: t('recovery.why.still-open'), [RECOVERY_WHY.mayBeSent]: t('recovery.why.may-be-sent'),
   [RECOVERY_WHY.notDone]: t('recovery.why.other'), [RECOVERY_WHY.noWallet]: t('recovery.why.no-wallet'), [RECOVERY_WHY.stopped]: t('recovery.why.stopped'),
-  [RECOVERY_WHY.other]: t('recovery.why.other'),
+  [RECOVERY_WHY.other]: t('recovery.why.other'), [RECOVERY_WHY.windowUnread]: t('recovery.why.window-unread'),
 });
 
 type Phase = (ActStep & { readonly act: RecoveryAct }) | null;
@@ -52,6 +55,9 @@ export function Recovery() {
   const { person, company } = useSession();
   const { reload } = useCompanyRecords();
   const [within, setWithin] = useState<RecoveryWithin>(RECOVERY_WITHIN[1].id);
+  const [windowInForce, setWindowInForce] = useState<number | null>(null);
+  const choices = recoveryWithinUpTo(windowInForce);
+  const chosen = choices.some((w) => w.id === within) ? within : (choices[choices.length - 1]?.id ?? within);
   const [held, setHeld] = useState<RecoveryHere | null>(null);
   const [phase, setPhase] = useState<Phase>(null);
   const [result, setResult] = useState<RecoveryActed | null>(null);
@@ -105,21 +111,22 @@ export function Recovery() {
       <p className="text-muted-foreground" data-recovery-intro>{t('recovery.intro')}</p>
       <RecordsStandingSays read={records} />
       <Section title={t('recovery.raise.heading')} list={false}>
-        <form className="flex flex-col gap-4" data-recovery-raise onSubmit={(e) => { e.preventDefault(); if (company !== null) void press(RECOVERY_ACT.raise, (onStep) => raiseRecovery(person.id, company, within, onStep)); }}>
+        <form className="flex flex-col gap-4" data-recovery-raise onSubmit={(e) => { e.preventDefault(); if (company !== null) void press(RECOVERY_ACT.raise, (onStep) => raiseRecovery(person.id, company, chosen, onStep)); }}>
           <FieldSet disabled={busy}>
             <FieldLegend variant="label">{t('recovery.raise.within')}</FieldLegend>
             <div className="flex flex-wrap gap-2" role="group" aria-label={t('recovery.raise.within')}>
-              {RECOVERY_WITHIN.map((w) => (
-                <Button key={w.id} type="button" size="sm" variant={w.id === within ? 'default' : 'outline'} aria-pressed={w.id === within} disabled={busy} data-within={w.id} onClick={() => setWithin(w.id)}>
+              {choices.map((w) => (
+                <Button key={w.id} type="button" size="sm" variant={w.id === chosen ? 'default' : 'outline'} aria-pressed={w.id === chosen} disabled={busy} data-within={w.id} onClick={() => setWithin(w.id)}>
                   {withinSays(t, w.id)}
                 </Button>
               ))}
             </div>
           </FieldSet>
-          <p className="text-muted-foreground" data-recovery-horizon>{t('recovery.horizon')}</p>
+          <p className="text-muted-foreground" data-recovery-horizon>{t('recovery.horizon', { days: RECOVERY_WINDOW_RANGE.longest / (24 * 60 * 60) })}</p>
           <div><Button type="submit" disabled={busy || company === null} data-action="raise-recovery">{t('recovery.raise.press')}</Button></div>
         </form>
       </Section>
+      <RecoveryWindowSection personId={person.id} company={company} onRead={setWindowInForce} />
       <Section title={t('recovery.held.heading')} list={false} data-recovery-held>
         {held === null ? <EmptyState icon={FileSecurityIcon}>{t('recovery.held.nothing')}</EmptyState> : (
           <HeldRecovery

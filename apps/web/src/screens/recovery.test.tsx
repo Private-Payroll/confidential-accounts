@@ -14,6 +14,7 @@ import { ENGLISH } from '../english.test-support.js';
 vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
 const kr = vi.hoisted(() => ({
   acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown, steps: [] as { step: number; steps: number }[],
+  window: { of: 'read', inForce: null, waiting: null } as unknown,
   hold: null as Promise<void> | null, reads: 0, standings: 0, records: { of: 'unreadable' } as unknown, recordReads: 0, round: { held: 'open', approvals: 1, needed: 2 } as unknown,
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
@@ -37,6 +38,10 @@ vi.mock('../adapters/vault-builder.js', async (real) => ({
 vi.mock('../adapters/recovery.js', async (real) => ({
   ...(await real<typeof import('../adapters/recovery.js')>()),
   readRecordsStates: async () => { kr.recordReads += 1; return kr.records; },
+}));
+vi.mock('../adapters/recovery-window.js', async (real) => ({
+  ...(await real<typeof import('../adapters/recovery-window.js')>()),
+  readRecoveryWindow: async () => kr.window,
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
@@ -94,6 +99,7 @@ const raised = async () => { kr.ended = { of: 'done', steps: 3, relayed: 0, outc
 
 const saved: { blobs: Blob[]; names: string[] } = { blobs: [], names: [] };
 beforeEach(() => {
+  kr.window = { of: 'read', inForce: null, waiting: null };
   kr.acts = []; kr.steps = []; kr.hold = null; kr.reads = 0; kr.standings = 0; kr.records = { of: 'unreadable' }; kr.recordReads = 0; kr.round = { held: 'open', approvals: 1, needed: 2 };
   kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: told() };
   saved.blobs = []; saved.names = [];
@@ -108,26 +114,48 @@ describe('raising', () => {
   it('draws what it raises, holds and has checked as the kit\'s sections, and nothing held as the kit\'s empty state', async () => {
     await draw();
     const sections = [...document.body.querySelectorAll('[data-screen=recovery] > [data-slot=section]')];
-    expect(sections.map((e) => e.querySelector('h2')?.textContent)).toEqual([words('recovery.records.heading'), words('recovery.raise.heading'), words('recovery.held.heading')]);
-    expect(document.body.querySelectorAll('[data-screen=recovery] h2:not([data-slot=empty-state-title])')).toHaveLength(3);
+    expect(sections.map((e) => e.querySelector('h2')?.textContent)).toEqual([
+      words('recovery.records.heading'), words('recovery.raise.heading'), words('recovery.window.heading'), words('recovery.held.heading'),
+    ]);
+    expect(document.body.querySelectorAll('[data-screen=recovery] h2:not([data-slot=empty-state-title])')).toHaveLength(4);
     expect(q('[data-recovery-held] > [data-slot=empty-state] [data-slot=empty-state-line]')?.textContent).toBe(words('recovery.held.nothing'));
     expect(q('[data-recovery-held] > p')).toBeNull();
   });
 
-  /* RED WHEN: the screen offers a time past the week the wallet allows, or none after now, or presses without asking the wallet for the choice made. */
-  it('offers four times, none past six days, and asks the wallet for the one chosen, after now', async () => {
+  /* RED WHEN: the screen offers a time past the company's recovery window in force, or none after now, or presses without asking the wallet for the choice made. */
+  it('offers only times within the window in force, and asks the wallet for the one chosen, after now', async () => {
+    kr.window = { of: 'read', inForce: 3 * 86400, waiting: null };
     await draw();
     const offered = [...document.body.querySelectorAll('[data-within]')].map((b) => b.getAttribute('data-within'));
-    expect(offered).toEqual(['hour', 'day', 'three-days', 'six-days']);
-    expect(q('[data-within=day]')!.getAttribute('aria-pressed')).toBe('true');
-    await press('[data-within=six-days]');
+    expect(offered).toEqual(['hour', 'day', 'three-days']);
+    expect(text('[data-window-in-force]')).toBe(words('recovery.window.in-force', { length: '3 days' }));
+    await press('[data-within=three-days]');
     const before = Math.floor(Date.now() / 1000);
     await press('[data-action=raise-recovery]');
     expect(kr.acts).toHaveLength(1);
     expect(kr.acts[0]).toMatchObject({ name: 'recovery', record: 'c-1', company: 'label-1', step: 'raise' });
     const latest = Number(kr.acts[0]!['latest']);
-    expect(latest - before).toBeGreaterThanOrEqual(6 * 86400);
-    expect(latest - before).toBeLessThan(7 * 86400);
+    expect(latest - before).toBeGreaterThanOrEqual(3 * 86400);
+    expect(latest - before).toBeLessThan(3 * 86400 + 60);
+  });
+
+  /* RED WHEN: with no window in force the screen offers a time past the window a device then holds, or says another. */
+  it('with no window in force offers only times within the window a device then holds, and says so', async () => {
+    await draw();
+    const offered = [...document.body.querySelectorAll('[data-within]')].map((b) => b.getAttribute('data-within'));
+    expect(offered).toEqual(['hour', 'day', 'three-days', 'six-days']);
+    expect(text('[data-window-in-force]')).toBe(words('recovery.window.unchosen', { length: '7 days' }));
+  });
+
+  /* RED WHEN: the window's press does not ask the wallet to set the length chosen, or a change waiting is not shown with its signatures. */
+  it('shows a change waiting with its signatures, and asks the wallet to sign it', async () => {
+    kr.window = { of: 'read', inForce: null, waiting: { seconds: 6 * 86400, signed: 1, needed: 2 } };
+    kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: 'in-force', signed: 2, needed: 2 } };
+    await draw();
+    expect(text('[data-window-waiting]')).toBe(words('recovery.window.waiting', { length: '6 days', signed: 1, needed: 2 }));
+    await press('[data-action=set-recovery-window]');
+    expect(kr.acts).toEqual([expect.objectContaining({ name: 'set-recovery-window', record: 'c-1', seconds: String(6 * 86400) })]);
+    expect(text('[data-window-done]')).toBe(words('recovery.window.done.in-force'));
   });
 
   /* RED WHEN: a raised recovery is not held on the page with the time it may be carried out, where the chain holds it and its file to save, or its words do not say the file goes to the other signers. */
@@ -300,7 +328,7 @@ describe('the company\'s records, each state in its own words', () => {
     await draw();
     expect(text('[data-records-state=unread]')).toBe(words('recovery.records.unread'));
     expect(q('[data-records-state=stopped]')).toBeNull();
-    expect(text('[data-recovery-horizon]')).toBe(words('recovery.horizon'));
+    expect(text('[data-recovery-horizon]')).toBe(words('recovery.horizon', { days: 30 }));
   });
 
   /* RED WHEN: a quiet read hides where the check began or says there is a stop, or batch -1 is said as a batch. */

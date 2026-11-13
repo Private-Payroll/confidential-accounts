@@ -14,17 +14,18 @@ import { StepRefused, type StepContext } from './definition.js';
  */
 
 const t = vi.hoisted(() => ({
-  onDevice: [] as Array<{ kind: string; input: any }>,
+  onDevice: [] as Array<{ kind: string; input: any; doors: any }>,
   outcome: null as null | ((kind: string, input: any) => unknown),
   opened: null as unknown,
   chain: {} as Record<string, unknown>,
   called: [] as string[],
   outrun: {} as Record<string, number>,
+  anchored: [] as string[],
 }));
 vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
-  changeThresholdOnDevice: async (_doors: unknown, input: any) => { t.onDevice.push({ kind: 'threshold', input }); return t.outcome!('threshold', input); },
-  changeVaultThresholdOnDevice: async (_doors: unknown, input: any) => { t.onDevice.push({ kind: 'vault-threshold', input }); return t.outcome!('vault-threshold', input); },
+  changeThresholdOnDevice: async (doors: any, input: any) => { t.onDevice.push({ kind: 'threshold', input, doors }); return t.outcome!('threshold', input); },
+  changeVaultThresholdOnDevice: async (doors: any, input: any) => { t.onDevice.push({ kind: 'vault-threshold', input, doors }); return t.outcome!('vault-threshold', input); },
 }));
 vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/round-opened-here.js')>()),
@@ -38,6 +39,7 @@ vi.mock('./upkeep.js', async (real) => {
       first: { title: { key: 'act.upkeep.step.first' }, run: async (c: unknown) => { await company.reach(c); company.renew(); } },
       last: { title: { key: 'act.upkeep.step.last' }, run: async (c: unknown) => { await company.reach(c); } },
     }),
+    anchorDirectoryDoorIn: (r: { accountId: string }, handed: { over: boolean }) => async () => { handed.over = true; t.anchored.push(r.accountId); },
   };
 });
 
@@ -131,6 +133,7 @@ beforeEach(() => {
   t.opened = null;
   t.chain = {};
   t.outrun = {};
+  t.anchored.length = 0;
   company = { approvals: 1, policyBar: null, seatBar: 1, vaultThresholds: [], rights: [undefined, undefined, undefined], proposals: [] };
 });
 
@@ -222,6 +225,23 @@ describe('A THRESHOLD CHANGE THAT BREAKS A RULE IS REFUSED BEFORE ANYTHING IS BU
     expect(WORDS['act.change-threshold.shown.every-signer-vault']).toMatch(/one lost key leaves this vault unable to pay, and no signer can be added or removed/u);
     expect(WORDS['act.change-threshold.check.chain']).toMatch(/has not added can be given no more approvals than adding or removing a signer needs/u);
     expect(WORDS['act.change-threshold.check.vaults']).toMatch(/bands ask for are not counted/u);
+  });
+
+  it('every send of a threshold change can anchor the company\'s directory first, so a rise never waits for another device to anchor it', async () => {
+    company.approvals = 2;
+    const raise = intent('change-threshold', { ...BASE, threshold: '2' });
+    await run(changeThresholdAction(reach()), raise, ctxOf(raise).ctx);
+    t.opened = { chainId: CHAIN_ID, governance: { kind: 'threshold', threshold: '2' } };
+    const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'threshold', threshold: '2' });
+    await run(approveProposalAction(reach() as never), approve, ctxOf(approve).ctx);
+    expect(t.onDevice.length).toBeGreaterThanOrEqual(2);
+    /* RED WHEN: the raise, the approval or the carrying out is handed doors that cannot anchor the directory, so a rise refuses instead. */
+    for (const c of t.onDevice) {
+      expect(typeof c.doors.anchorDirectory, c.kind).toBe('function');
+      t.anchored.length = 0;
+      await c.doors.anchorDirectory();
+      expect(t.anchored).toEqual(['acc_1']);
+    }
   });
 
   it('the same check is handed to the shared code, which runs it before every send', async () => {

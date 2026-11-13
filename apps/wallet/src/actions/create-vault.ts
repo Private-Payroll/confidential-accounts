@@ -1,9 +1,10 @@
 import type { Hex } from '../../../../src/core/crypto.js';
 import {
-  createCompanyVault, NOT_BUILT, START_READ_STOP, START_STOP, VaultNotBuilt, VaultNotTheCompanys, VaultStartOwed,
+  createCompanyVault, NOT_BUILT, type CreateVaultDoors, START_READ_STOP, START_STOP, VaultNotBuilt, VaultNotTheCompanys, VaultStartOwed,
   type SecretKeptHere,
 } from '../../../../packages/web-shared/src/vault-operation.js';
 import { VaultInfoRefused } from '../../../../packages/web-shared/src/vault-info-here.js';
+import { RetireRefused, retiredBy } from '../../../../packages/web-shared/src/vault-retire-round.js';
 import { readAccountAddress, readCompanyLabel, readVaultAddress } from 'midnight-identity/profile/company-label';
 import { StepRefused, type ActionDefinition, type ActionStep, type StepContext, type Words } from './definition.js';
 import { vaultKeysShown, vaultKeysSteps, type VaultKeysReach } from './give-vault-keys.js';
@@ -58,6 +59,17 @@ export const startRefusalOf = (e: unknown, ctx: Pick<StepContext, 'tell'>): Step
 };
 
 /** Create a vault: the seat's vault keys given first, then the vault built, started and its secret set, in one action. */
+/** The doors a start acts through: for a retired vault adopted again, carrying the proposal that retired it as the chain shows it. */
+const adoptedAgainFrom = async (doors: CreateVaultDoors, vault: Hex | undefined, retired: string | undefined): Promise<CreateVaultDoors> => {
+  if (retired === undefined || vault === undefined) return doors;
+  try {
+    return { ...doors, again: await retiredBy(doors, { vault, proposal: retired }) };
+  } catch (e) {
+    if (e instanceof RetireRefused) throw new StepRefused(why('not-retired', { says: e.message }));
+    throw e;
+  }
+};
+
 export function createVaultAction(reach: CreateVaultReach): ActionDefinition {
   return Object.freeze({
     headline: 'act.create-vault.headline',
@@ -98,6 +110,9 @@ export function createVaultAction(reach: CreateVaultReach): ActionDefinition {
       if (held.wallet === undefined) return why('no-record');
       if (intent.fields['record'] === undefined) return why('not-a-company');
       if (intent.fields['vault'] !== undefined && readVaultAddress(intent.fields['vault']) === null) return why('not-a-vault');
+    /* A retired vault adopted again names the company's record of the retire that retired it, and is always a vault already made. */
+    const retired = intent.fields['retired'];
+    if (retired !== undefined && (intent.fields['vault'] === undefined || !/^[A-Za-z0-9_-]{1,64}$/u.test(retired))) return why('not-a-retire');
       return null;
     },
     steps: (intent) => {
@@ -113,7 +128,8 @@ export function createVaultAction(reach: CreateVaultReach): ActionDefinition {
           const title = intent.fields['title'];
           const info = title === undefined ? undefined : { name: title, description: intent.fields['about'] ?? '' };
           try {
-            const done = await createCompanyVault(vaultDoorsFor(ctx, r, reach), vault as Hex | undefined, info);
+            const doors = await adoptedAgainFrom(vaultDoorsFor(ctx, r, reach), vault as Hex | undefined, intent.fields['retired']);
+            const done = await createCompanyVault(doors, vault as Hex | undefined, info);
             ctx.tell({ vault: done.vault.toLowerCase(), ...(done.saidCodes === undefined || done.saidCodes.length === 0 ? {} : { said: done.saidCodes.join(',') }) });
             if (done.state === 'awaiting-approvals') {
               ctx.tell({ round: done.awaiting.round, approvals: done.awaiting.approvals, needed: done.awaiting.needed });

@@ -74,7 +74,7 @@ describe('the words a screen loads', () => {
   /* RED WHEN: the walk finds no first download or no screens, so every rule below passes over an empty list; or a page is not named by the folder of its screen's own file. */
   it('finds the first download and every screen, each with the folder of its own name', () => {
     expect(FIRST.size).toBeGreaterThan(20);
-    expect(SCREENS.length).toBe(15);
+    expect(SCREENS.length).toBe(22);
     expect(SCREENS.filter((s) => basename(s.module, '.tsx') !== s.folder)).toEqual([]);
     expect([...CLOSURE.values()].every((c) => c.size > 0)).toBe(true);
     expect(readdirSync(join(LOCALES, 'pages')).sort()).toEqual(FOLDERS.sort().filter((f) => Object.keys(PAGE(f)).length > 0));

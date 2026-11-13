@@ -275,7 +275,7 @@ export const namedFor = async (companyId: string): Promise<{ record: string; com
  * action got to.
  */
 async function run(
-  personId: string, companyId: string, onStage: (stage: Creating) => void, resume?: string, info?: VaultInfoGiven,
+  personId: string, companyId: string, onStage: (stage: Creating) => void, resume?: string, info?: VaultInfoGiven, retired?: string,
 ): Promise<VaultCreated> {
   try {
     if (ACCOUNT_ORIGIN === '') return { of: ACTED.refused, why: ACT_REFUSAL.notSetUp };
@@ -287,6 +287,7 @@ async function run(
       name: WALLET.createVault, ...named,
       ...(resume === undefined ? {} : { vault: resume.toLowerCase() }),
       ...(info === undefined ? {} : { title: info.name.trim(), about: info.description.trim() }),
+      ...(retired === undefined ? {} : { retired }),
     }, ACCOUNT_ORIGIN, { onStep: (at) => onStage(stageOfTheStep(at)) });
     const told = ended.outcome ?? {};
     const toldVault = told[WALLET.vault], toldSaid = told[WALLET.said];
@@ -345,6 +346,15 @@ export const createVault = (personId: string, companyId: string, onStage: (stage
 export const finishStarting = (
   personId: string, companyId: string, vault: string, onStage: (stage: Creating) => void, info?: VaultInfoGiven,
 ): Promise<VaultCreated> => run(personId, companyId, onStage, vault, info);
+
+/**
+ * ADOPT AGAIN the vault `vault`, which the company retired under its record `retired` and which still holds money: the
+ * set-up carried on from any signer's wallet, which makes the adoption from the retire the chain shows carried out, so
+ * every way of paying out of the vault opens again.
+ */
+export const adoptAgain = (
+  personId: string, companyId: string, vault: string, retired: string, onStage: (stage: Creating) => void,
+): Promise<VaultCreated> => run(personId, companyId, onStage, vault, undefined, retired);
 
 /**
  * GIVE YOUR VAULT KEYS to the company `companyId`, on their own: one action in

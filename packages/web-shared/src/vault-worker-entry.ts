@@ -17,17 +17,16 @@
  * files, and is never trusted to say which ones are right.
  */
 import {
-  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, newestTimeToLive, readTransaction, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
-  buildWriteSecretCopy, notesForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment, buildMerge,
-  type SecretRunOnTheWire, type VaultBuilderDeps,
+  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, newestTimeToLive, readTransaction, buildPublicDeposit, buildPublicPayout, buildVaultDeploy,
+  notesForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment, buildMerge,
+  type VaultBuilderDeps,
 } from './vault-builder.js';
-import {
-  secretRunOf, startStandingOf, type AccountLedgerForAStart, type AccountStartPure, type SecretRun,
-  type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
-} from '../../../src/midnight/vault-start.js';
+import { setNonceSecretAnswered, startStandingAnswered, writeSecretCopyAnswered } from './vault-worker-start.js';
+import { fromBase64, toBase64 } from './base64-bytes.js';
+import { retireAnswered } from './vault-retire-built.js';
 import {
   accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, buildSeatInvitedCall, identityOfAChange, roundsOnChainIn, runsOutrunIn, vouchingRunsIn, vouchedRunIdentityOf,
-  spendingPolicyKeysOf, approvalMarkerOf, type AnchorsOnChain, type GovernedCallDeps, type InvitedSeatInput, type RoundOnChain,
+  spendingPolicyKeysOf, type AnchorsOnChain, type GovernedCallDeps, type InvitedSeatInput, type RoundOnChain,
 } from './governed-call-builder.js';
 import { seatingsIn, seatsInvitedIn, type Seating } from './seats-invited-in.js';
 import { accountCircuitsBeside, networkCircuitsBeside } from './circuits-served-beside.js';
@@ -41,39 +40,28 @@ import { publishedByMidnight } from '../../../src/midnight/proving-parameter-dig
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../../src/midnight/vault-contract.js';
 import { zkConfigOver, byCircuitName } from './zk-config.js';
 import type {
-  CreatingTransactionAnswer, StartStandingOnTheWire, VaultAsk, VaultAnswer, VaultRebuildAsked, VaultRebuilt,
+  CreatingTransactionAnswer, VaultAsk, VaultAnswer, VaultRebuildAsked, VaultRebuilt,
 } from './vault-worker-client.js';
 import { ASK_STARTED, CHAIN_READS, WALLET_VAULT_BUILDER } from './vault-worker-client.js';
 import { SERVICE_READ_BOUND_MS } from './read-bound.js';
 import type { EventOnTheWire } from './vault-builder.js';
 import {
-  establishCreatingTransaction, indexerTransactionsByIdentifier, NoteIndexRefused, vaultCallByIdentifiers, type ServedEvent,
+  establishCreatingTransaction, indexerTransactionsByIdentifier, NoteIndexRefused, type ServedEvent,
 } from '../../../src/midnight/note-index.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { ensureBuffer } from 'midnight-identity/browser';
 import { whyItFailed } from './why-it-failed.js';
 import { proofProviderOnWorkers } from './vault-proof-workers.js';
 import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
-import { startingLedgerFrom, vaultBornHeldRefusal } from '../../../src/midnight/vault-circuits.js';
 import { VAULT_CIRCUITS } from '../../../src/midnight/vault-contract.js';
-import type { Committee } from '../../../src/midnight/vault-committee.js';
+import { vaultAsDeployed } from './vault-as-deployed.js';
+import { vaultCallOnChainAnswered } from './vault-call-on-chain-answered.js';
+import { superAdminAnswered } from './super-admins-answered.js';
 import type { AccountHolds } from './secret-set-on-the-chain.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 /** Where this application serves the vault's public proving material. */
 export const VAULT_ARTEFACT_BASE = '/artefacts/vault';
-
-const fromBase64 = (text: string): Uint8Array => {
-  const binary = atob(text);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
-  return out;
-};
-const toBase64 = (bytes: Uint8Array): string => {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-};
 
 /** The folder the network's own shielded circuits are served from and pinned under, the same name in both. */
 const NETWORK_KEYS_FOLDER = 'zswap/9';
@@ -433,61 +421,6 @@ export const checkedAccountKeys = (
   return {
     getVerifierKey: one,
     getVerifierKeys: async (cs) => Promise.all(cs.map(async (c): Promise<[string, Uint8Array]> => [c, await one(c)])),
-  };
-};
-
-/**
- * **A VAULT AS ITS DEPLOY MADE IT, READ ON THIS DEVICE** before the vault is
- * adopted or its set-up carried on: the state the chain recorded its deploy
- * leaving at the vault's own address, read from the indexer the person's own
- * wallet names, never a deploy anybody serves. Read with the one reading the
- * service makes before paying for a deploy (`vaultBornHeldRefusal`), against
- * this build's keys, each checked against the compiled vault's own digest. Null
- * when the vault was born held.
- */
-export const vaultAsDeployed = async (
-  d: Pick<WorkerDeps, 'ledger' | 'runtimeState' | 'vault' | 'vaultKeys'>,
-  ask: { vault: string; account: string; holders: Committee },
-  source: Pick<import('./vault-on-chain-here.js').VaultChainSource, 'deployState'>,
-): Promise<string | null> => {
-  const what = 'a vault this company can use';
-  const initialState = await source.deployState(ask.vault);
-  if (initialState === null || initialState === undefined) {
-    return `this is not ${what} yet: the chain holds no deploy at this vault's address. Nothing was sent.`;
-  }
-  const verifierKeys = new Map(await d.vaultKeys.getVerifierKeys(VAULT_CIRCUITS));
-  return vaultBornHeldRefusal(initialState, {
-    account: ask.account, holders: ask.holders, verifierKeys,
-    startingLedgerOf: (state) => startingLedgerFrom(
-      d.vault.ledger((d.runtimeState as any).deserialize((state as { serialize(): Uint8Array }).serialize()).data),
-      d.vault.pureCircuits.copiesWrittenKey()),
-  }, what);
-};
-
-/** The first secret run, as it crosses to the page. */
-const secretRunToWire = (r: SecretRun): SecretRunOnTheWire => ({
-  vault: r.vault, previous: r.previous, commitment: r.commitment, copiesRoot: r.copiesRoot, count: r.count.toString(),
-  edge: r.edge.map((s) => ({ sibling: s.sibling.toString(), goesLeft: s.goesLeft })),
-  details: r.details, nonce: r.nonce, salt: r.salt, asset: r.asset, root: r.root, payees: r.payees.toString(),
-  path: r.path.map((s) => ({ sibling: s.sibling.toString(), siblingSum: s.siblingSum.toString(), goesLeft: s.goesLeft })),
-  copies: r.copies.map((c) => ({
-    reader: c.reader, parts: [...c.parts], path: c.path.map((s) => ({ sibling: s.sibling.toString(), goesLeft: s.goesLeft })),
-  })),
-});
-
-/** Where a vault's start stands, as it crosses to the page. */
-const standingToWire = (s: StartStanding): StartStandingOnTheWire => {
-  if (s.secret === undefined) return { adopted: s.adopted, adoption: s.adoption, removals: s.removals };
-  const { run, raise, written, ...rest } = s.secret;
-  return {
-    adopted: s.adopted,
-    adoption: s.adoption, removals: s.removals,
-    secret: {
-      ...rest,
-      run: run === null ? null : { ...run, opensAt: run.opensAt.toString(), closesAt: run.closesAt.toString() },
-      ...(raise === undefined ? {} : { raise: { ...raise, opensAt: raise.opensAt.toString(), closesAt: raise.closesAt.toString() } }),
-      written: [...written],
-    },
   };
 };
 
@@ -1133,56 +1066,15 @@ export const answerVaultAsk = async (
         id: ask.id, ok: true, ask: 'run-charged',
         standing: runChargeStandingOf(d, { accountState: fromBase64(ask.accountState), proposal: ask.proposal }),
       };
-    case 'start-standing': {
-      /*
-       * **HOW FAR A VAULT'S START HAS GOT, READ HERE FROM BOTH CONTRACTS AS ONE
-       * BLOCK SAW THEM.** With the secret the page opened from the company's
-       * record, the first secret run is made here too, with the contracts' own
-       * functions, and handed back for the steps the page then asks for.
-       */
-      const circuits = { vault: d.vault.pureCircuits as VaultStartPure, account: d.accountPure as unknown as AccountStartPure };
-      const run = ask.secret === undefined
-        ? undefined
-        : secretRunOf(circuits, { vault: ask.vault, secret: ask.secret, readers: ask.readers ?? [], ...(ask.previous === undefined ? {} : { previous: ask.previous }) });
-      const ledgerOf = (b64: string, read: (data: unknown) => unknown) =>
-        read((d.runtimeState.deserialize(fromBase64(b64)) as { data: unknown }).data);
-      const account = ledgerOf(ask.accountState, d.accountLedger) as AccountLedgerForAStart & { readonly approvals: { member(m: Uint8Array): boolean } };
-      /* This seat's approval marker, made with the account's own derivation; the signing secret stays in this worker. */
-      const markerOf = ask.seat === undefined ? undefined : approvalMarkerOf(d, { account: ask.account, signingSecret: ask.seat });
-      const standing = startStandingOf(circuits, {
-        vault: ask.vault,
-        account,
-        vaultLedger: ledgerOf(ask.vaultState, d.vault.ledger) as VaultLedgerForAStart,
-        ...(run === undefined ? {} : { run, ...(ask.earlier === undefined ? {} : { earlier: ask.earlier }) }),
-        now: BigInt(ask.now),
-        ...(ask.window === undefined ? {} : { window: { opensAt: BigInt(ask.window.opensAt), closesAt: BigInt(ask.window.closesAt) } }),
-        ...(markerOf === undefined ? {} : { approvedHere: (id: Uint8Array) => account.approvals.member(markerOf(id)) }),
-      });
-      return {
-        id: ask.id, ok: true, ask: 'start-standing', standing: standingToWire(standing),
-        ...(run === undefined ? {} : { run: secretRunToWire(run) }),
-      };
-    }
-    case 'set-nonce-secret': {
-      const built = await buildSetNonceSecret(withNetwork, {
-        vault: ask.vault, account: ask.account, run: ask.run, secret: ask.secret, earlier: ask.earlier, proposal: ask.proposal, opensAt: ask.opensAt, closesAt: ask.closesAt,
-        chain: {
-          blockHash: ask.chain.blockHash,
-          vaultState: fromBase64(ask.chain.vaultState),
-          zswapState: fromBase64(ask.chain.zswapState),
-          parameters: fromBase64(ask.chain.parameters),
-          accountState: fromBase64(ask.chain.accountState),
-        },
-      });
-      return { id: ask.id, ok: true, ask: 'set-nonce-secret', tx: toBase64(built.proven) };
-    }
-    case 'write-secret-copy': {
-      const built = await buildWriteSecretCopy(withNetwork, {
-        vault: ask.vault, run: ask.run, place: ask.place, state: fromBase64(ask.state),
-        parameters: typeof ask.parameters === 'string' ? fromBase64(ask.parameters) : new Uint8Array(0),
-      });
-      return { id: ask.id, ok: true, ask: 'write-secret-copy', tx: toBase64(built.proven) };
-    }
+    case 'start-standing':
+      return startStandingAnswered(d, ask);
+    case 'set-nonce-secret':
+      return setNonceSecretAnswered(withNetwork, ask);
+    case 'write-secret-copy':
+      return writeSecretCopyAnswered(withNetwork, ask);
+    case 'retire':
+    case 'forget-unshielded':
+      return retireAnswered(withNetwork, ask);
     case 'warm-proving': {
       await d.provingWarmed();
       return { id: ask.id, ok: true, ask: 'warm-proving' };
@@ -1231,26 +1123,14 @@ export const answerVaultAsk = async (
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
       return { id: ask.id, ok: true, ask: 'created-by', found: await readCreatedBy(source, ask.vault, ask.commitment) };
     }
-    case 'vault-call-on-chain': {
-      /*
-       * The call is looked for by the identifiers of the transaction this device holds, read here from its bytes. The
-       * service merges its fee in as a separate intent, which changes the hash and leaves every identifier as it was, so
-       * the service's hash is never needed and never believed. Which part of the transaction carries the call is read
-       * from the same bytes, because the indexer names none.
-       */
-      if (!/^[0-9a-f]{64}$/iu.test(ask.vault)) throw new Error('that is not a vault, so no call to it was looked for.');
-      if (!Array.isArray(ask.entryPoints) || ask.entryPoints.length === 0 || !ask.entryPoints.every((e) => typeof e === 'string')) {
-        throw new Error('no circuit of the vault was named, so no call to it was looked for.');
-      }
-      const { refuseEndpointsThatCannotWork } = await import('./public-data.js');
-      refuseEndpointsThatCannotWork(ask.indexer);
-      const held = readTransaction(withNetwork, fromBase64(ask.transaction));
-      if (held === null) throw new Error('the transaction could not be read, so it cannot be looked for on the chain.');
-      if (held.identifiers.length === 0) throw new Error('the transaction names no identifier, so it cannot be looked for on the chain.');
-      const reader = (d.transactionsAt ?? ((i) => indexerTransactionsByIdentifier(i.indexerUri)))(ask.indexer);
-      const seen = await vaultCallByIdentifiers(reader, held, { vault: ask.vault, entryPoints: ask.entryPoints });
-      return { id: ask.id, ok: true, ask: 'vault-call-on-chain', seen };
-    }
+    case 'vault-call-on-chain':
+      return vaultCallOnChainAnswered(d, withNetwork, ask);
+    case 'account-committee':
+    case 'contract-authority':
+    case 'super-admin-update':
+    case 'super-admin-signed':
+    case 'super-admin-joined':
+      return superAdminAnswered(d, ask);
     case 'transaction-read':
       return { id: ask.id, ok: true, ask: 'transaction-read', read: readTransaction(withNetwork, fromBase64(ask.transaction)) };
     case 'step-kept': {

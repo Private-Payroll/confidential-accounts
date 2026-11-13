@@ -170,7 +170,7 @@ const seatTaken = async (
   const blinding = seatBlinding(walletKey, salt) as Hex;
   const leaf = storedSignerLeaf({ signingSecret, blinding, scope }, MidnightCommitments).toLowerCase() as Hex;
   committeeKeyOfLeaf.set(leaf, key as never);
-  theInviteeTakesTheSeatHere(i.offer.invited.terms.proposal!, i.offer.invited.terms.invite!.address, leaf);
+  theInviteeTakesTheSeatHere(i.offer.invited.terms.proposal!, { coinPublicKey: coinKeyAt(addressOf(who.fill)), addressSalt: i.offer.invited.terms.invite!.salt }, leaf);
   const published = {
     signingPublicKey: signingPublicKeyOf(signingSecret).toLowerCase() as Hex, wrappingPublicKey: toHex(x25519.getPublicKey(keys.wrappingSecret)) as Hex,
     leafCommitment: leaf,
@@ -178,7 +178,8 @@ const seatTaken = async (
   const waiting = {
     name: who.name, role: 'approver', ...published, person: o.person ?? who.name, invited: i.offer.invited,
     opening: { publicKey: MidnightCommitments.signerPublicKey(signingSecret).toLowerCase(), scope, blinding, walletKey, salt },
-    seatProof: proveSeatKeys({ accountId: CO, nonce: i.offer.seat.nonce, secret: i.offer.seat.secret }, published),
+    seatProof: proveSeatKeys({ accountId: CO, nonce: i.offer.seat.nonce, secret: i.offer.seat.secret }, published,
+      { person: o.person ?? who.name, invitationId: i.offer.invited.terms.invitation }),
     ...(o.sealed ?? {}),
   } as unknown as PendingSignerPayload;
   const token = tokenOfLink(i.made.link)!;
@@ -415,7 +416,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     await approveSeatInvitationOnDevice(seatingDevice(BO), { viewingKey: KEY, shown: hal.shown }, inviteAddressOf);
     /* Ada's seat signs a second invitation for the same proposal, address, role and rights, naming another person, with a seat secret made for that name, and Hal's request carries it. */
     const renamed = signSeatInvitation({ ...hal.offer.invited.terms, name: 'mallory' }, ADA.signingSecret as Hex);
-    const seat = newSeatInvitation(sealingWith(KEY, 0).key, CO, 'mallory', 'approver');
+    const seat = newSeatInvitation(sealingWith(KEY, 0).key, CO, 'mallory', 'approver', renamed.terms.invitation);
     const forged = { ...hal, offer: { ...hal.offer, name: 'mallory', invited: renamed, seat: { nonce: seat.nonce, secret: seat.secret } } };
     const signerId = await seatTaken(HAL, forged, { sealed: { name: 'mallory' } });
     await expect(admitSignerHere(withCommitments(ADA), { signerId, readOut: '', name: 'mallory' }))

@@ -8,7 +8,7 @@ import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, Roste
 import type { RefusedEntry, RosterEntryRefusal } from '../../../../src/core/roster-record.js';
 import { api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
 import { companyKeysQuietlyFor, directoryHereFor, filingJudgeFor, openedQuietly, rosterReadsFor, walletIndexerFor } from './filing-judge.js';
-import { KIND_FIELD, NEVER_WITHDRAWN, POLICY_KINDS, RUN_FORM, RUN_LIST, WALLET_KIND, type RunForm, type RunList } from 'vaults-web-shared/proposal-in-the-wallet.js';
+import { KIND_FIELD, NEVER_WITHDRAWN, RUN_FORM, RUN_LIST, WALLET_KIND, type RunForm, type RunList } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import type { RoundOnChain } from 'vaults-web-shared/governed-call-builder.js';
 import { VAULT, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
 import type { ClosedAs } from 'vaults-web-shared/run-rebuilt-here.js';
@@ -34,7 +34,7 @@ import { addSignerByAddressIn, type AddSignerByAddress } from '../../../../src/c
 import { HttpCompanyRecordStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { oneOffHere } from 'vaults-web-shared/one-off-here.js';
 import {
-  ASKS_UNREAD, listedKindOf, NOT_READ, proposalAsksHere, type Asked, type AsksReads, type AsksUnread, type OneOffHere, type ProposalAsks,
+  ASKS_UNREAD, NOT_READ, proposalAsksHere, type Asked, type AsksReads, type AsksUnread, type OneOffHere, type ProposalAsks,
 } from 'vaults-web-shared/proposal-asks-here.js';
 import { approvalsForSigners, signerStandings, signersInvitedIn, type ChainSeats, type SignerInvited, type SignerStanding, type SignersApprovals } from './signers.js';
 
@@ -107,8 +107,8 @@ const UNREADABLE = 'unreadable' as const;
 export interface ProposalRow {
   id: string;
   /**
-   * What it does, by kind; a change to a spending policy or to the approvals one needs is `change-policy`, whichever its
-   * record is sealed as; `unreadable` for a proposal this device does not believe or cannot open.
+   * What it does, by the kind its record is sealed as; `unreadable` for a proposal this device does not believe or cannot
+   * open.
    */
   kind: ProposalKind | typeof UNREADABLE;
   /**
@@ -300,7 +300,7 @@ const VAULT_STANDINGS: readonly string[] = Object.values(VAULT);
  * of approvals the vault's runs need as the chain holds it (the vault's own number where it has one, else the company's), and is
  * absent where the chain gave none.
  */
-export interface VaultRow { vault: string; createdAt: string; standing: VaultStanding; adopted?: true; approvals?: number }
+export interface VaultRow { vault: string; createdAt: string; standing: VaultStanding; adopted?: true; approvals?: number; retired?: true }
 
 /** Who an invitation is for: somebody to sign, or somebody to be paid (an employee or a vendor). Another kind of invitation is not listed. */
 export const INVITED = { signer: 'signer', employee: 'employee', vendor: 'vendor' } as const;
@@ -370,12 +370,8 @@ export interface VendorsRead {
  * WHICH PRESSES A PROPOSAL OR A LEG IS OFFERED, from the records alone: what the records and the chain show of it. The wallet decides
  * again, with its words, before it signs anything.
  */
-/** The wallet's name for a row's kind; a change of policy is named by the change its asks say it is. */
-export const walletKindOf = (row: ProposalRow): string | undefined => {
-  const policy = row.asks?.[KIND_FIELD];
-  if (row.kind === 'change-policy') return typeof policy === 'string' && POLICY_KINDS.has(policy) ? policy : undefined;
-  return WALLET_KIND[row.kind];
-};
+/** The wallet's name for a row's kind, read off the wallet's one list of kinds; none for a kind the wallet does not act on. */
+export const walletKindOf = (row: ProposalRow): string | undefined => WALLET_KIND[row.kind];
 
 /**
  * The one rule for every kind: a waiting proposal of a kind the wallet knows, and, where its kind takes fields, the row carries them. The only kind that takes
@@ -663,7 +659,7 @@ function runsPaidOnChain(runs: readonly RunRow[], paid: Readonly<Record<string, 
  * newest state at the indexer the person's wallet names. When it cannot be read, the runs come back unread, never as
  * unpaid and never as paid.
  */
-async function runsPaidFromTheChain(sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>, runs: readonly RunRow[]): Promise<RunRow[]> {
+export async function runsPaidFromTheChain(sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>, runs: readonly RunRow[]): Promise<RunRow[]> {
   const label = sealed.companyLabel ?? null;
   const address = sealed.contractAddress ?? null;
   const leaves = [...new Set(runs.flatMap((r) => r.legs.flatMap((l) => [...(l.leaves ?? []), ...(l.retries ?? []).flatMap((x) => x.leaves ?? [])])))];
@@ -715,7 +711,7 @@ const namedThoughNotBelieved = (why: RosterEntryRefusal): boolean =>
   why === 'seat-not-on-the-chain' || why === 'seat-retired' || why === 'no-entry-of-their-own';
 
 /** A proposal for a screen. */
-function proposalRow(
+export function proposalRow(
   p: Proposal, standing: ProposalStanding, signers: readonly (SignerRow & { readonly signingPublicKey?: string })[], runs: readonly PayrollRun[],
   registry: AssetRegistry = assets, refused: readonly RefusedEntry[] = [],
 ): ProposalRow {
@@ -726,7 +722,7 @@ function proposalRow(
   const notBelieved = filer !== undefined ? undefined : refused.find((r) => r.signerId === p.proposedBy);
   const leg = run === undefined ? undefined : Object.entries(run.proposalIds ?? {}).find(([, id]) => id === p.id)?.[0] ?? retryOf(run);
   return {
-    id: p.id, kind: listedKindOf(p.kind), status: standing.shown,
+    id: p.id, kind: p.kind, status: standing.shown,
     raisedBy: filer?.name ?? (notBelieved !== undefined && namedThoughNotBelieved(notBelieved.why) ? notBelieved.name : null),
     raiserNotBelieved: notBelieved?.why ?? null,
     approvals: standing.approvals,
@@ -754,9 +750,9 @@ interface ProposalHere { readonly rec: SealedProposal; readonly opened: Proposal
  * name, one whose filing does not check, one that does not open. Refused, so the proposals read as unreadable, when the company has no account on the
  * network, the wallet names no indexer, or the chain or the records cannot be read.
  */
-async function proposalsHere(
+export async function proposalsHere(
   companyId: string, sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>, served: readonly SealedProposal[],
-  directory: DirectoryRead | null, viewingKey: CompanyKeys,
+  directory: DirectoryRead | null, readWith: Parameters<typeof openProposal>[1],
 ): Promise<{ readonly believed: readonly (ProposalHere & { readonly standing: ProposalStanding })[]; readonly unreadable: readonly ProposalRow[] }> {
   const label = sealed.companyLabel ?? null;
   const address = sealed.contractAddress ?? null;
@@ -799,7 +795,7 @@ async function proposalsHere(
     let filer: string | null;
     try {
       filer = await believedFilerHere({ directory }, companyId, rec);
-      opened = openProposal(rec, viewingKey);
+      opened = openProposal(rec, readWith);
     } catch {
       unreadable.push(unreadableRow(rec.id, rec.createdAt));
       continue;
@@ -907,14 +903,15 @@ const approvalsOfVault = (numbers: VaultNumbers, vault: string): number | null =
  * chain gave them (a vault not yet adopted has none).
  */
 export const vaultsAsTheChainHoldsThem = (
-  served: readonly ServedVault[], adopted: readonly string[], numbers?: VaultNumbers,
+  served: readonly ServedVault[], adopted: readonly string[], numbers?: VaultNumbers, retired: ReadonlySet<string> = new Set(),
 ): Read<readonly VaultRow[]> => {
   const held = new Set(adopted.map((v) => v.toLowerCase()));
   const listed = new Set(served.map((r) => r.vault.toLowerCase()));
   if ([...held].some((v) => !listed.has(v))) return { of: READ.unreadable };
   return {
     of: READ.read,
-    value: served.filter((r) => held.has(r.vault.toLowerCase()) || NOT_YET_ADOPTED.has(r.state)).map((r) => {
+    value: served.filter((r) => held.has(r.vault.toLowerCase()) || NOT_YET_ADOPTED.has(r.state) || retired.has(r.vault.toLowerCase())).map((r) => {
+      if (!held.has(r.vault.toLowerCase()) && retired.has(r.vault.toLowerCase())) return { ...vaultRow(r), retired: true as const };
       const approvals = numbers === undefined || !held.has(r.vault.toLowerCase()) ? null : approvalsOfVault(numbers, r.vault);
       return { ...vaultRow(r, held.has(r.vault.toLowerCase())), ...(approvals === null ? {} : { approvals }) };
     }),
@@ -938,6 +935,24 @@ const seatsTakenOnChain = async (
   return alone(() => seatsTakenAsked(invitedSeats, ids));
 };
 
+/** The name of the ask a retire's record carries the vault it retired under, read by the code and never shown. */
+const RETIRE_ASKS = 'vault';
+
+/** The vault a carried-out retire in the company's records retired, in lower case; null for any other record. */
+export const retiredBy = (p: ProposalRow): string | null => {
+  const vault = p.asks?.[RETIRE_ASKS];
+  return p.kind === 'retire-vault' && p.status === 'executed' && typeof vault === 'string' ? vault.toLowerCase() : null;
+};
+
+/**
+ * The vaults the company retired, as its own records this device opened and believed say: each named by a retire the
+ * records hold carried out. Only these, of the vaults the account no longer holds, are listed, so a vault the service
+ * calls the company's that the company never retired is still never shown.
+ */
+const retiredInTheRecords = (proposals: Read<readonly ProposalRow[]>): ReadonlySet<string> => new Set(proposals.of !== READ.read ? []
+  : proposals.value.flatMap((p) => { const vault = retiredBy(p); return vault === null ? [] : [vault]; }));
+
+
 /**
  * WHAT THE PERSON'S OWN WALLET READS OF THE COMPANY'S ACCOUNT IN ONE ASK, with the service's list of its vaults: the
  * vaults the account has adopted, each with the service's row for it, and how many signers must approve. The approvals
@@ -947,7 +962,7 @@ const seatsTakenOnChain = async (
  */
 async function chainOfTheCompany(
   companyId: string, sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>, read: (path: string) => Promise<unknown> = api,
-): Promise<{ vaults: Read<readonly VaultRow[]>; approvals: Read<number>; holders: Read<ChainSeats> }> {
+): Promise<{ vaults: Read<readonly VaultRow[]>; approvals: Read<number>; holders: Read<ChainSeats>; retiredToo?: (retired: ReadonlySet<string>) => Read<readonly VaultRow[]> }> {
   const label = sealed.companyLabel ?? null;
   const address = sealed.contractAddress ?? null;
   if (label === null || address === null) return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable }, holders: { of: READ.unreadable } };
@@ -958,10 +973,10 @@ async function chainOfTheCompany(
   if (wallet === null) return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable }, holders: { of: READ.unreadable } };
   const needed = wallet.holders.approvals;
   const approvals: Read<number> = Number.isSafeInteger(needed) && needed >= 1 ? { of: READ.read, value: needed } : { of: READ.unreadable };
-  const vaults: Read<readonly VaultRow[]> = Array.isArray(answer?.rows)
-    ? vaultsAsTheChainHoldsThem(answer.rows as ServedVault[], wallet.holders.adoptedVaults, { company: approvals.of === READ.read ? approvals.value : null, own: wallet.holders.vaultThresholds ?? [] })
-    : { of: READ.unreadable };
-  return { vaults, approvals, holders: { of: READ.read, value: wallet.holders } };
+  const listed = (retired?: ReadonlySet<string>): Read<readonly VaultRow[]> => (Array.isArray(answer?.rows)
+    ? vaultsAsTheChainHoldsThem(answer.rows as ServedVault[], wallet.holders.adoptedVaults, { company: approvals.of === READ.read ? approvals.value : null, own: wallet.holders.vaultThresholds ?? [] }, retired)
+    : { of: READ.unreadable });
+  return { vaults: listed(), approvals, holders: { of: READ.read, value: wallet.holders }, retiredToo: listed };
 }
 
 /**
@@ -1176,7 +1191,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
     }));
   return {
     of: OPENED.open, id: companyId, name: account.name, notOpened: viewingKey.notOpened ?? [], signers, approvalsNeeded: chain.approvals,
-    proposals, runs: rows, people, vaults: chain.vaults, invitations,
+    proposals, runs: rows, people, vaults: chain.retiredToo?.(retiredInTheRecords(proposals)) ?? chain.vaults, invitations,
     peopleBelief, vendors, vendorsBelief, signerStandings: standings, approvalsForSigners: forSigners, signersInvited,
   };
 }

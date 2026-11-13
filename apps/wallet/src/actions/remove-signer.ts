@@ -24,6 +24,7 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
 import type { Hex } from '../../../../src/core/crypto.js';
+import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
 import { removalRefusal } from '../../../../src/core/vault-approvers.js';
 import type { GovernanceOnTheWire } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import {
@@ -92,14 +93,16 @@ const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const LEAF = /^[0-9a-f]{64}$/u;
 const WHOLE = /^(0|[1-9][0-9]{0,8})$/u;
 
-type Asked = { readonly leaf: Hex; readonly threshold: number };
+type Asked = { readonly leaf: Hex; readonly threshold: number; readonly becomes?: SignerRole };
 
 /** The leaf to remove and the threshold to leave the company at, as the page named them: 0 or none keeps the one in force. */
 const askedOf = (intent: ActIntent): Asked | Words => {
   const leaf = intent.fields['leaf'] ?? '';
   const threshold = intent.fields['threshold'] ?? '0';
   if (!LEAF.test(leaf) || !WHOLE.test(threshold)) return why('not-a-removal');
-  return { leaf: leaf as Hex, threshold: Number(threshold) };
+  /* Only a change of role names the role the seat becomes; the page's own removal never does. */
+  const becomes = intent.fields['becomes'];
+  return { leaf: leaf as Hex, threshold: Number(threshold), ...(isSignerRole(becomes) ? { becomes } : {}) };
 };
 
 /** Whether a proposal this wallet opened removes exactly the leaf asked, at exactly the threshold asked. */
@@ -224,7 +227,10 @@ const doorsOf = (r: CompanyReach, reach: Pick<RemoveSignerReach, 'pause' | 'wait
  * confirmed, read once in the first step: the name the raise seals in its summary, never read again here.
  */
 const onDevice = async (doors: RemovalDoors, r: CompanyReach, a: Asked, leaving: Leaving, steps: ThresholdChangeSteps): Promise<RemovalOutcome> =>
-  removeSignerOnDevice(doors, withCompanyKeys({ leaf: a.leaf, name: leaving.name, newThreshold: a.threshold, ...steps }, r.companyKeys));
+  removeSignerOnDevice(doors, withCompanyKeys({
+    leaf: a.leaf, name: leaving.name, newThreshold: a.threshold, ...steps,
+    ...(a.becomes === undefined ? {} : { summary: `Change ${leaving.name}'s role to ${a.becomes}: remove them as a signer, then invite them again` }),
+  }, r.companyKeys));
 
 /** A stop, worded for what was handed over by then. */
 const stoppedAs = (e: unknown, handed: Handed, notSent: string, whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words): never => {
@@ -242,7 +248,10 @@ const carryOutFor = (reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyM
   const a = askedOf(intent);
   if ('key' in a) throw new StepRefused(a);
   const out = await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, why), { approveOnly: round.chainId, carryOnly: true });
-  if (out.state === 'waiting-for-the-retirement') return { state: REMOVE_SIGNER_STATE.retirement };
+  if (out.state === 'waiting-for-the-retirement') {
+    ctx.tell({ retirementSigned: out.signed, retirementNeeded: out.needed });
+    return { state: REMOVE_SIGNER_STATE.retirement };
+  }
   if (out.state !== 'done') {
     throw Object.assign(new Error('the company\'s records do not show this removal at the approvals it needs yet, so it was not carried out.'), { nothingWasSent: true });
   }
@@ -313,10 +322,12 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       const doors = doorsOf(r, reach, ctx, { over: false }, a.leaf);
       let governance: GovernanceOnTheWire | undefined;
       let chainId: string;
+      let summary: string;
       try {
         const opened = await openTheRoundHere(doors.service, r.accountId, id, r.companyKeys, false, doors.records, doors.leaves, false, 'remove-signer');
         governance = opened.governance as GovernanceOnTheWire | undefined;
         chainId = opened.chainId;
+        summary = opened.summary;
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         throw new StepRefused(kindWhy('not-approved', { says: said(e) }), codeOfError(e));
@@ -325,11 +336,12 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       /* Whose seat it is comes from the company's list of signers as this wallet opened it, never from the page. */
       const { read, confirm, over } = await leavingRead(r, a, kindWhy);
       ctx.show(over);
-      return { id, chainId, read, confirm };
+      /* The name the raising seat filed it under, so a removal raised as a change of role is seen as one. */
+      return { id, chainId, read, confirm: [...confirm, { key: 'act.remove-signer.confirm.named', values: { summary } }] };
     },
     needed: (round, held: AccountGovernance) => Math.max(round.needed ?? 0, held.approvals, held.seatBar),
     approve: async (ctx, r, intent, round, handed) => {
-          const a = askedOf(intent);
+      const a = askedOf(intent);
       if ('key' in a) throw new StepRefused(a);
       try {
         await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, kindWhy), { approveOnly: round.chainId, stopBeforeCarry: true });
@@ -400,7 +412,7 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
       const raise: ActionStep = {
         title: { key: 'act.remove-signer.step.raise' },
         run: async (ctx) => {
-                  const r = await read.at(ctx);
+          const r = await read.at(ctx);
           const a = askedOf(intent);
           if ('key' in a) throw new StepRefused(a);
           const handed: Handed = { over: false };
@@ -412,7 +424,7 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
             return stoppedAs(e, handed, 'not-raised', why);
           }
           if (out.state === 'waiting-for-the-retirement') {
-            ctx.tell({ state: REMOVE_SIGNER_STATE.retirement });
+            ctx.tell({ state: REMOVE_SIGNER_STATE.retirement, retirementSigned: out.signed, retirementNeeded: out.needed });
             return;
           }
           if (out.round === null) throw new StepRefused(why('not-raised', { says: 'The company holds no record of the removal raised. Nothing more was sent.' }));

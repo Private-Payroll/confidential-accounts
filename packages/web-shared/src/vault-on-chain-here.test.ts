@@ -15,7 +15,8 @@ import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { accountPresenceAt, accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
-import { answerVaultAsk, vaultAsDeployed } from './vault-worker-entry.js';
+import { answerVaultAsk } from './vault-worker-entry.js';
+import { vaultAsDeployed } from './vault-as-deployed.js';
 import { newestTimeToLive, readTransaction } from './vault-builder.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -46,9 +47,10 @@ const made = await new V.Contract(noCircuit).initialState(
 
 /**
  * This build's vault as the chain would hold it: held by `KEY` alone, holding `notes`, and - when `started` - its first
- * secret's commitment set and the mark the last sealed copy leaves written.
+ * secret's commitment set and the mark the last sealed copy leaves written; listing `tokens` as the public tokens it
+ * was ever paid in.
  */
-const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean; split?: [string, string] }): { serialize(): Uint8Array } => {
+const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean; split?: [string, string]; tokens?: string[] }): { serialize(): Uint8Array } => {
   const state = R.ContractState.deserialize(made.currentContractState.serialize());
   state.maintenanceAuthority = new R.ContractMaintenanceAuthority([KEY], 1, 0n);
   const fields: any[] = state.data.state.asArray();
@@ -56,9 +58,12 @@ const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean; split?:
   const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
   let notes = fields[1].asMap();
   for (const n of o.notes) notes = notes.insert(aligned(bytes(n)), R.StateValue.newNull());
+  let tokens = fields[2].asMap();
+  for (const t of o.tokens ?? []) tokens = tokens.insert(aligned(bytes(t)), R.StateValue.newNull());
   const held = V.pureCircuits.secretCommitmentOf(bytes(VAULT), bytes('51'.repeat(32)));
   const next = fields.map((f, i) => {
     if (i === 1) return R.StateValue.newMap(notes);
+    if (i === 2) return R.StateValue.newMap(tokens);
     if (o.started && i === 5) return R.StateValue.newCell({ value: [held], alignment: f.asCell().alignment });
     if (o.split !== undefined && i === 6) return R.StateValue.newMap(f.asMap().insert(aligned(bytes(o.split[0])), R.StateValue.newCell(aligned(bytes(o.split[1])))));
     if (o.started && i === 7) return R.StateValue.newMap(f.asMap().insert(aligned(V.pureCircuits.copiesWrittenKey()), R.StateValue.newCell(aligned(held))));
@@ -288,6 +293,18 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
     /* RED WHEN: a balance that cannot be read is handed on as holding nothing. */
     expect(read).not.toHaveProperty('publicBalances');
     expect((read as { publicBalancesWhy?: string }).publicBalancesWhy).toMatch(/Skipping it would understate/);
+  });
+
+  it('READS THE PUBLIC TOKENS THE VAULT LISTS, WHICH ITS RETIRE REFUSES ON, BESIDE WHAT IT HOLDS OF THEM, AND NONE FROM A LEDGER OF ANOTHER SHAPE', async () => {
+    const token = '0a'.repeat(32);
+    /* RED WHEN: the list the vault's retire asserts empty is not read, so a vault paid in and back to nothing is read as ready to retire. */
+    expect(await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true, tokens: [token] })), VAULT))
+      .toMatchObject({ onChain: true, unshieldedTokens: [token], publicBalances: [] });
+    expect(await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true })), VAULT)).toMatchObject({ unshieldedTokens: [] });
+    /* RED WHEN: a list read off a ledger of another shape is handed on as the vault's, or handed on as empty. */
+    const other = await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true, tokens: [token], fewer: true })), VAULT);
+    expect(other).not.toHaveProperty('unshieldedTokens');
+    expect((other as { unshieldedTokensWhy?: string }).unshieldedTokensWhy).toEqual((other as { notesWhy?: string }).notesWhy);
   });
 
   it('A VAULT\'S DEPLOY IS READ FROM THE CHAIN AT ITS OWN ADDRESS, AND ONE THE CHAIN HOLDS NONE FOR IS NO VAULT THIS COMPANY CAN USE', async () => {

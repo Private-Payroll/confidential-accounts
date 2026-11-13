@@ -111,7 +111,12 @@ const TERMS = {
 };
 const VAULT = 'fa'.repeat(32);
 
-describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICES [needs contracts/managed/keys; `npm run compact` builds them]', () => {
+/*
+ * A policy, a bar or an approval set from a device is proved there, and several tests prove three to six of them in
+ * a row, which takes more than half a minute on a busy machine. Each test gets two minutes, so a slow proof is not
+ * read as a hang.
+ */
+describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICES [needs contracts/managed/keys; `npm run compact` builds them]', { timeout: 120_000 }, () => {
   let chain: Chain;
   let company: string;
   let founder: AccountPrivateState;

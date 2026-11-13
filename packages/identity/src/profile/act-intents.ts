@@ -22,11 +22,12 @@
  * token as the ledger names it, or the asset a one-off payment is made in), the
  * service's own name for a company's record (`record`, a short id the wallet
  * only ever uses to say which record it asks the page for, and checks nothing
- * by), or the page's own words (`words`, a short text such as a vault's name,
+ * by), the page's own words (`words`, a short text such as a vault's name,
  * which the wallet shows as the page's and never treats as anything it read
- * itself).
+ * itself), or a join code a person's own wallet wrote (`join-code`), which the
+ * wallet reads and checks itself.
  */
-export type IntentFieldKind = 'company' | 'account' | 'vault' | 'seat' | 'amount' | 'token' | 'record' | 'words';
+export type IntentFieldKind = 'company' | 'account' | 'vault' | 'seat' | 'amount' | 'token' | 'record' | 'words' | 'join-code';
 
 /**
  * A call to the service an action may ask the page to make for it, and the
@@ -124,21 +125,16 @@ export function sendsIn(route: CallRoute, body: string | undefined): boolean {
 
 import {
   FINISH_COMPANY_RELAYS, FINISH_COMPANY_CALLS, COMPANY_RECORD_CALLS, UPKEEP_CALLS, CREATE_VAULT_CALLS,
-  PRIVATE_DEPOSIT_CALLS, ONE_OFF_PAYMENT_CALLS, INVITE_CALLS, APPROVE_PROPOSAL_CALLS, CHANGE_THRESHOLD_CALLS,
-  RAISE_RUN_CALLS, PAY_RUN_CALLS, WITHDRAW_PROPOSAL_CALLS, REMOVE_SIGNER_CALLS, ROTATE_VAULT_SECRETS_CALLS,
+  PRIVATE_DEPOSIT_CALLS, ONE_OFF_PAYMENT_CALLS, INVITE_CALLS, APPROVE_PROPOSAL_CALLS, CHANGE_THRESHOLD_CALLS, RETIRE_VAULT_CALLS,
+  RAISE_RUN_CALLS, PAY_RUN_CALLS, WITHDRAW_PROPOSAL_CALLS, REMOVE_SIGNER_CALLS, ROTATE_VAULT_SECRETS_CALLS, SET_POLICY_CALLS,
   ADMIT_SIGNER_CALLS, ADMIT_PERSON_CALLS, CHANGE_PERSON_CALLS, CHOOSE_COMPANY_SERVICE_CALLS, GRANT_READ_CALLS, CHANGE_ROLE_CALLS,
+  READER_KEYS_CALLS, WITHDRAW_WAITING_SIGNER_CALLS, REISSUE_INVITATION_CALLS, TAKE_REISSUE_CALLS, ADD_SIGNER_BY_CODE_CALLS,
+  RAISE_WAITING_SIGNER_CALLS,
 } from './act-intent-calls.js';
 
 export { FINISH_COMPANY_RELAYS };
 
-/** What a seat action's upkeep says it did: all done, or some left for the next action; and how many records it anchored. */
-const UPKEEP_OUTCOME = Object.freeze({ upkeep: 'code' as const, anchored: 'count' as const });
-
-/** What changing the vault secrets tells the page: how many vaults ended in each state, never which. */
-const VAULTS_CHANGED_OUTCOME = Object.freeze({
-  vaultsRotated: 'count' as const, vaultsAwaiting: 'count' as const, vaultsOwed: 'count' as const, vaultsWaiting: 'count' as const,
-  vaultsNotChanged: 'count' as const,
-});
+import { RETIREMENT_OUTCOME, UPKEEP_OUTCOME, VAULTS_CHANGED_OUTCOME } from './act-outcomes.js';
 
 /** Every action a wallet runs, by name. */
 export const ACT_INTENTS = Object.freeze({
@@ -163,14 +159,15 @@ export const ACT_INTENTS = Object.freeze({
    * Create a vault, or carry on setting one up (`vault`): the vault keys given
    * first, then the vault built, started and its secret set, with the upkeep every seat action does. `title` and
    * `about` are the vault's name and description, and `readers` the names of
-   * the signers as the page lists them: all three the page's words.
+   * the signers as the page lists them: all three the page's words. With `retired`, the company's record of the
+   * retire that retired `vault`, the vault is adopted again under the proposal that retire carried out.
    */
   'create-vault': Object.freeze({
     fields: Object.freeze({
       record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const,
-      title: 'words' as const, about: 'words' as const, readers: 'words' as const,
+      title: 'words' as const, about: 'words' as const, readers: 'words' as const, retired: 'record' as const,
     }),
-    optional: Object.freeze(['vault', 'title', 'about', 'readers']),
+    optional: Object.freeze(['vault', 'title', 'about', 'readers', 'retired']),
     calls: CREATE_VAULT_CALLS,
     outcome: Object.freeze({
       vault: 'vault' as const, round: 'code' as const, approvals: 'count' as const, needed: 'count' as const,
@@ -250,12 +247,12 @@ export const ACT_INTENTS = Object.freeze({
    * invitation, the offer and the first record are sealed and signed in the wallet and filed, and a signer, invited
    * only by a private address, gets the proposal to seat that address raised with this seat's approval, the
    * invitation kept in the saved keys before the raise; `threshold`, where given, is the approvals the account needs
-   * once the seat is taken, bound in the proposal. `token` is the page's own token for the link, so the page
-   * makes the link itself and nothing secret comes back. The person's details are the page's words, and never reach
-   * the service but sealed. It tells the page where the invitation got to, for a signer the approvals the proposal
-   * holds and needs as the chain shows them, whether the upkeep was all done and how many records it anchored. When a press goes
-   * on under the invitation kept for the same address, not under the token the page sent, it names that invitation's own token
-   * (sixty-four hex characters, the token the page made the link from before it lost it), so the page gives the link filed.
+   * once the seat is taken, bound in the proposal; `vaults`, where given, the vaults a signer's seat may act on, every
+   * vault when none. For an employee or a vendor, `token` is the page's own token for the link, so the page makes
+   * the link itself; a signer's token is made in the wallet, which shows the link in its own window, and a page never
+   * gives or gets one. The person's details are the page's words, and never reach the service but sealed. It tells the
+   * page where the invitation got to, for a signer the approvals the proposal holds and needs as the chain shows them,
+   * whether the upkeep was all done and how many records it anchored.
    */
   invite: Object.freeze({
     fields: Object.freeze({
@@ -263,14 +260,14 @@ export const ACT_INTENTS = Object.freeze({
       personName: 'words' as const, email: 'words' as const, title: 'words' as const, startDate: 'words' as const, endDate: 'words' as const,
       classification: 'words' as const, address: 'words' as const, asset: 'token' as const, amount: 'amount' as const,
       terms: 'words' as const, termsAsset: 'token' as const, termsAmount: 'amount' as const, role: 'words' as const, scope: 'seat' as const,
-      threshold: 'amount' as const,
+      threshold: 'amount' as const, vaults: 'words' as const,
     }),
     optional: Object.freeze([
-      'email', 'title', 'startDate', 'endDate', 'classification', 'address', 'asset', 'amount', 'terms', 'termsAsset', 'termsAmount', 'role', 'scope',
-      'threshold',
+      'token', 'email', 'title', 'startDate', 'endDate', 'classification', 'address', 'asset', 'amount', 'terms', 'termsAsset', 'termsAmount', 'role',
+      'scope', 'threshold', 'vaults',
     ]),
     calls: INVITE_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, token: 'vault' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
    * A signer invited by address takes the seat from their own wallet: the wallet opens the offer with the link's
@@ -342,9 +339,22 @@ export const ACT_INTENTS = Object.freeze({
     calls: APPROVE_PROPOSAL_CALLS,
     outcome: Object.freeze({
       state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, charge: 'code' as const, said: 'code' as const,
-      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME,
+      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...RETIREMENT_OUTCOME,
       ...UPKEEP_OUTCOME,
     }),
+  }),
+  /*
+   * Retire, with the seat this wallet holds, `vault` from the company's account: the wallet reads the vault holding no
+   * money on the chain and refuses otherwise, raises the retire with this seat's approval counted, or carries on the one
+   * the company's records already hold, and has the vault carry it out once the chain counts the company's threshold.
+   * It tells the page where the retire got to, the approvals the chain shows and needs, whether the upkeep was all done
+   * and how many records it anchored.
+   */
+  'retire-vault': Object.freeze({
+    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const }),
+    optional: Object.freeze([]),
+    calls: RETIRE_VAULT_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, said: 'code' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
    * Change, with the seat this wallet holds, the approvals the company's account needs to `threshold`, or with `vault`
@@ -361,6 +371,32 @@ export const ACT_INTENTS = Object.freeze({
     optional: Object.freeze(['vault']),
     calls: CHANGE_THRESHOLD_CALLS,
     outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Set, with the seat this wallet holds, `vault`'s spending policy for the currency `token`: four bands written
+   * `ceiling:approvals` and separated by commas, the limit in each period, the first period's start and the period's
+   * length in seconds. The wallet refuses it from a seat whose role does not set spending policies; files the policy as
+   * a version of its sealed record signed by this seat; raises the proposal, or approves the same change already
+   * raised; and carries it out when the chain counts its bar. It tells the page where the proposal got to and its name,
+   * the approvals the chain shows and needs, whether the upkeep was all done and how many records it anchored.
+   */
+  'set-spending-policy': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const, token: 'token' as const,
+      periodLimit: 'amount' as const, periodStart: 'amount' as const, periodLength: 'amount' as const, bands: 'words' as const,
+    }),
+    calls: SET_POLICY_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, proposal: 'record' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Change, with the seat this wallet holds, the approvals any change to a spending policy needs to `bar`, which is
+   * also the least that adding, removing or re-seating a signer needs. Any seat may raise it. It tells the page what
+   * `set-spending-policy` tells.
+   */
+  'set-policy-bar': Object.freeze({
+    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, bar: 'amount' as const }),
+    calls: SET_POLICY_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, proposal: 'record' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
   /**
    * Raises a payroll run's leg, or a retry of some of its people, from a vault, in the wallet: opens the run and refuses
@@ -451,7 +487,7 @@ export const ACT_INTENTS = Object.freeze({
     calls: REMOVE_SIGNER_CALLS,
     outcome: Object.freeze({
       state: 'code' as const, approvals: 'count' as const, needed: 'count' as const,
-      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...UPKEEP_OUTCOME,
+      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...RETIREMENT_OUTCOME, ...UPKEEP_OUTCOME,
     }),
   }),
   /*
@@ -479,6 +515,70 @@ export const ACT_INTENTS = Object.freeze({
       personName: 'words' as const,
     }),
     calls: ADMIT_SIGNER_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Withdraw, with the seat this wallet holds, the person waiting for a seat under `signer`, whom no proposal can still
+   * seat as the wallet reads the chain itself: the withdrawal is signed in the wallet and the service lets the request go
+   * and marks its invitation withdrawn. `personName` is the name the page showed. It tells the page whether it was done,
+   * and how the upkeep went.
+   */
+  'withdraw-waiting-signer': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, signer: 'record' as const,
+      personName: 'words' as const,
+    }),
+    calls: WITHDRAW_WAITING_SIGNER_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Sign again, with the seat this wallet holds, the invitation the person seated at `leaf` was proposed under, with
+   * every term unchanged, under a new link the wallet shows in its own window and never hands the page. `personName` is
+   * the name the page showed. It tells the page whether it was done, and how the upkeep went.
+   */
+  'reissue-invitation': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const,
+      personName: 'words' as const,
+    }),
+    calls: REISSUE_INVITATION_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Keep, in the wallet of the person it is for, the re-issued invitation under the link's `token` for the seat this
+   * wallet holds on the company, with the seat that signed it as who invited them. Nothing is sent. It tells the page
+   * whether it was kept.
+   */
+  'take-reissue': Object.freeze({
+    fields: Object.freeze({ company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const }),
+    calls: TAKE_REISSUE_CALLS,
+    outcome: Object.freeze({ state: 'code' as const }),
+  }),
+  /*
+   * File, with the seat this wallet holds, an invitation and a request for a seat from the `code` a person's own wallet
+   * made, at the `role` the page names (a code's seat is for every vault, so only an admin's), under `personName`. The
+   * fingerprint to compare is shown in the wallet's own window. It tells the page whether it was filed, the request's
+   * id (`signer`) to propose the seat by, and how the upkeep went.
+   */
+  'add-signer-by-code': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, code: 'join-code' as const,
+      personName: 'words' as const, role: 'words' as const,
+    }),
+    calls: ADD_SIGNER_BY_CODE_CALLS,
+    outcome: Object.freeze({ state: 'code' as const, signer: 'record' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Raise, with the seat this wallet holds, the proposal to seat the person waiting under `signer` who joined by a link
+   * or a code, at the address their own wallet signed, once `readOut` is the fingerprint their request makes.
+   * `personName` is the name the page showed. It tells the page where the proposal got to, and how the upkeep went.
+   */
+  'raise-waiting-signer': Object.freeze({
+    fields: Object.freeze({
+      record: 'record' as const, company: 'company' as const, account: 'account' as const, signer: 'record' as const,
+      personName: 'words' as const, readOut: 'words' as const,
+    }),
+    calls: RAISE_WAITING_SIGNER_CALLS,
     outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
@@ -536,8 +636,8 @@ export const ACT_INTENTS = Object.freeze({
     outcome: Object.freeze({ state: 'code' as const, filed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
-   * Give a read grant (`recipient`, the reader's wrapping key; `person`, its person id or server label; `role`, limited
-   * or accountant), or take one away from `recipient` (`away`, yes), signed with the seat this wallet holds and filed as
+   * Give a read grant (`code`, the join code the reader's own wallet signed over its key for this company and its person
+   * id; `role`, limited or accountant), or take one away from `recipient`, the reader's key (`away`, yes), signed with the seat this wallet holds and filed as
    * the next version of the company's read grants, sealed to every seat and reader. It comes into force once signers at
    * the seat bar have each signed it in their own wallets; once in force the readers are handed to the service, and a
    * taking-away changes the company's key. It tells the page whether the change is in force, how many signers have
@@ -546,28 +646,70 @@ export const ACT_INTENTS = Object.freeze({
   'grant-read': Object.freeze({
     fields: Object.freeze({
       record: 'record' as const, company: 'company' as const, account: 'account' as const, recipient: 'seat' as const,
-      person: 'words' as const, role: 'words' as const, away: 'words' as const,
+      code: 'words' as const, role: 'words' as const, away: 'words' as const,
     }),
-    optional: Object.freeze(['person', 'role', 'away']),
+    optional: Object.freeze(['recipient', 'code', 'role', 'away']),
     calls: GRANT_READ_CALLS,
     outcome: Object.freeze({ state: 'code' as const, filed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
    * Change a signer's role (`leaf`, the seat; `role`, the new signer role): while the chain holds the seat, its removal
    * is raised; once the removal is carried out, pressed again, the person is invited by `address` at the new role,
-   * named `personName`, under the page's `token`. It tells the page which step the change is at (`stage`), and what
-   * the removal or the invitation tells.
+   * named `personName`, on the vaults the seat held, under the token the first press made and kept in the wallet,
+   * which the page never gives or gets; the link is shown in the wallet's own window. It tells the page which step the
+   * change is at (`stage`), and what the removal or the invitation tells.
    */
   'change-role': Object.freeze({
     fields: Object.freeze({
       record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const, role: 'words' as const,
-      address: 'words' as const, personName: 'words' as const, token: 'token' as const,
+      address: 'words' as const, personName: 'words' as const,
     }),
     calls: CHANGE_ROLE_CALLS,
     outcome: Object.freeze({
-      stage: 'code' as const, state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, token: 'vault' as const,
-      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...UPKEEP_OUTCOME,
+      stage: 'code' as const, state: 'code' as const, approvals: 'count' as const, needed: 'count' as const,
+      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...RETIREMENT_OUTCOME, ...UPKEEP_OUTCOME,
     }),
+  }),
+  /*
+   * Repair the company's key from this seat: a new key made from the newest one this seat holds, wrapped to every signer
+   * who stays, the payout seed kept, for when a signer's copy of the newest key does not open. Refused for a seat that
+   * does not hold the newest key. It ends with the upkeep, which wraps the read grants again to the new key. It tells
+   * the page what became of the key (`state`) and its new `epoch`, and what the upkeep did.
+   */
+  'repair-company-key': Object.freeze({
+    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const }),
+    calls: Object.freeze([...COMPANY_RECORD_CALLS, ...UPKEEP_CALLS]),
+    outcome: Object.freeze({ state: 'code' as const, epoch: 'count' as const, ...UPKEEP_OUTCOME }),
+  }),
+  /*
+   * Drop the role change this wallet keeps for one seat (`leaf`), so a role change abandoned before its invitation is
+   * filed leaves nothing behind. It sends nothing and changes nothing on the chain or in the company's records; a
+   * removal already raised stays raised. It tells the page whether there was one to drop (`state`).
+   */
+  'drop-role-change': Object.freeze({
+    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const }),
+    calls: Object.freeze([]) as readonly CallRoute[],
+    outcome: Object.freeze({ state: 'code' as const }),
+  }),
+  /*
+   * Read a company as one of its readers: this wallet works out its reader key for the company, believes the newest
+   * read grant sealed to it that signers at the seat bar signed, from the company's directory and the chain, and hands
+   * the page only the keys that grant wraps to it, for this one company. It signs and sends nothing and needs no seat. It tells the page nothing else.
+   */
+  'reader-keys': Object.freeze({
+    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const }),
+    calls: READER_KEYS_CALLS,
+  }),
+  /*
+   * Set the company's recovery window to `seconds`, or add this seat's signature to a change to that length still
+   * gathering signatures: signed with the seat this wallet holds, filed as the next version of the window, sealed to
+   * every seat and to the company's key. Any seat signs; only a seat whose role files policy (an admin, or a seat with no role set) starts a change. It tells
+   * the page whether the change is in force, how many signers have signed it and how many it needs, and how the upkeep went.
+   */
+  'set-recovery-window': Object.freeze({
+    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, seconds: 'amount' as const }),
+    calls: Object.freeze([...COMPANY_RECORD_CALLS, ...UPKEEP_CALLS]),
+    outcome: Object.freeze({ state: 'code' as const, signed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
 }) satisfies Readonly<Record<string, IntentShape>>;
 

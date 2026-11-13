@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { RECOVERY_WINDOW_RANGE } from '../../../src/midnight/recovery-window-record.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 
@@ -105,12 +106,19 @@ describe('why the wallet stopped', () => {
     expect(m.recoveryOutcomeOf(ended(undefined))).toEqual({ state: null, approvals: null, needed: null });
   });
 
-  /* RED WHEN: a choice of time reaches the week the wallet allows, or is not after now. */
-  it('offers only times after now and short of seven days', () => {
+  /* RED WHEN: a choice of time passes the longest the recovery window's range allows, or is not after now, or one past the window in force is offered. */
+  it('offers only times after now, within the window\'s range, and within the window in force', () => {
     for (const w of m.RECOVERY_WITHIN) {
       expect(w.seconds).toBeGreaterThan(0);
-      expect(w.seconds).toBeLessThan(7 * 24 * 60 * 60);
+      expect(w.seconds).toBeLessThanOrEqual(RECOVERY_WINDOW_RANGE.longest);
     }
+    expect(m.recoveryWithinUpTo(24 * 60 * 60).map((w) => w.id)).toEqual(['hour', 'day']);
+    expect(m.recoveryWithinUpTo(null).map((w) => w.id)).toEqual(['hour', 'day', 'three-days', 'six-days']);
+  });
+
+  /* RED WHEN: the wallet's refusal for a window not read is shown as another stop, so the person is not told what clears it. */
+  it('reads the wallet\'s refusal for a window not read as its own', () => {
+    expect(m.recoveryWhyOf('act.recovery.why.window-unread')).toBe(m.RECOVERY_WHY.windowUnread);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Tabs, TabsList, TabsTrigger, useText } from 'vaults-ui';
+import { PageHeader, Tabs, TabsList, TabsTrigger, useText } from 'vaults-ui';
 import { outerOf, pagesInside, PAGES, type Page, type PageId } from '../pages.js';
 import { go, PageLink, useCurrentPage } from '../router.js';
 
@@ -9,7 +9,8 @@ import { go, PageLink, useCurrentPage } from '../router.js';
  * top, and the section open below them. Each tab is a link to its section's
  * own address. At Settings itself, with no section open, the space below asks
  * the person to choose one. A tab carries no Coming soon pill: a section not
- * built yet says so in its own heading. The same screen serves the company's settings and
+ * built yet says so in its own pill and empty state, under the one heading
+ * this screen draws. The same screen serves the company's settings and
  * a person's own, each listing its own sections.
  */
 export function Settings({ children }: { children?: ReactNode }) {
@@ -19,7 +20,7 @@ export function Settings({ children }: { children?: ReactNode }) {
   const sections = pagesInside(section);
   return (
     <div className="flex flex-col gap-6" data-screen="settings">
-      <h1 className="text-xl font-semibold">{PAGES[section].name(t)}</h1>
+      <PageHeader title={PAGES[section].name(t)} />
       {/* Each tab is a link to its own address, so the arrow keys only move between tabs; pressing one goes there. */}
       <Tabs value={id} onValueChange={(v) => go(v as PageId)} activationMode="manual">
         <TabsList aria-label={PAGES[section].name(t)} data-settings-sections>

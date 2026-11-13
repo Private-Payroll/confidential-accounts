@@ -39,16 +39,21 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * page's characters need. A build whose first download is larger than the
  * budget stops, and so does one with any file other than a font over the
  * size at which the bundler warns. The budget is the first download as it
- * was last measured (730,766 bytes, from the built application, on 8 Nov IST); a
+ * was last measured (701,168 bytes, from the built application, on 13 Nov IST); a
  * test holds it within a kilobyte of what is built, so when the download falls
  * the budget is lowered with it.
  *
- * Most of that size is two things every page pays for: the language file, which
- * the first page loads whole, carries every page's words, and the sign-in path
- * loads the curve library that checks a committee key is a point on its curve,
- * 36,633 bytes that sign-in itself never uses.
+ * The largest part every page pays for is the language file, which the first
+ * page loads whole and which carries every page's words. As measured on 13 Nov
+ * IST, no curve library is in the first download.
  *
- * The budget is the measured 730,766 bytes (8 Nov). It grew by 5,066 bytes from 725,700 when the first page began to
+ * The budget is the measured 701,168 bytes (13 Nov IST). It fell by 5,779 bytes from 706,947 when the super admins'
+ * page stopped loading the ledger, the contract runtime and the account's compiled contract and asked the vault worker
+ * instead: in a build measured beside it, tslib and the bundler's own runtime chunk then left the first download. Earlier:
+ * it fell from 730,766 when the companies a reader opened this
+ * visit, and what a change of who is seated costs, were loaded with the keyring after the service's first answer
+ * rather than with the page: the page had begun to import them without waiting, which took the first download to
+ * 1,193,718 bytes. Earlier: the budget was the measured 730,766 bytes (8 Nov). It grew by 5,066 bytes from 725,700 when the first page began to
  * show a company the wallet has not opened on this visit as "Not opened yet", with an "Open with your wallet" press, the
  * refusal under it and their words, and the refusal codes moved to a module of their own so the first page names them
  * without loading the keyring. Of the first download, 4,824 bytes are the lists of files the bundler preloads for what
@@ -66,7 +71,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * they use. Earlier: it grew by 46 bytes from 724,929 when apps/web/src/records/parts.tsx, records/counts.ts and screens/proposals.tsx
  * changed.
  */
-export const FIRST_DOWNLOAD_BUDGET = 730_766;
+export const FIRST_DOWNLOAD_BUDGET = 701_168;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

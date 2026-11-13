@@ -12,6 +12,8 @@ import type { DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { treeKeptHere } from 'vaults-web-shared/tree-kept-here.js';
 import { companyJudges } from 'vaults-web-shared/company-judges.js';
+import { readerDirectoryFor } from 'vaults-web-shared/reader-directory-here.js';
+import type { PurposeWrapsHeld } from 'vaults-web-shared/purpose-wraps.js';
 import { Fault, FAULT } from '../faults.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
@@ -79,6 +81,13 @@ export const directoryHereFor: (
 export const directoryWithItsRecordsFor: (
   companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
 ) => DirectoryRead = judges.directoryWithItsRecordsFor;
+/** The company's directory as a reader's page believes it: read with the purpose keys the reader's wallet released, never a company key, and with no anchor checkpoint kept. */
+export const readerDirectoryHereFor = (companyId: string, company: CompanyLabel, account: AccountAddress): ((held: PurposeWrapsHeld) => DirectoryRead) =>
+  readerDirectoryFor({
+    accountId: companyId, label: company, account, api: (path, init) => api(path, init), holders: () => holdersHere(company, account),
+    leaves: judges.leavesFor(account), anchored: judges.anchoredForAReader(companyId, company, account),
+    invitedSeats: judges.invitedSeatsFor(company, account), proposalIdentity: judges.identityHere,
+  });
 /** The company's key of each epoch this page can use, every one found in the directory's filings and believed there. */
 export const companyKeysFor: (
   companyId: string, sealed: SealedAccount, keys: { readonly signingPublicKey: Hex },

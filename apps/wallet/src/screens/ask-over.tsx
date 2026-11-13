@@ -86,6 +86,8 @@ export function ActOver({ end, framed }: { readonly end: EndedHere; readonly fra
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => { heading.current?.focus(); }, []);
   const { ended, says } = end;
+  const shown = says === null ? [] : [says, ...(end.more ?? [])];
+  const shownAtTheEnd = shown.map((w, i) => <p key={i} className="m-0 font-mono" data-act-shown-at-the-end>{t(w.key, { ...(w.values ?? {}) })}</p>);
   const stopped = ended.ended === 'stopped';
   const awaiting = awaitingOf(ended);
   return (
@@ -108,7 +110,7 @@ export function ActOver({ end, framed }: { readonly end: EndedHere; readonly fra
       ) : (
         <>
           <p className="lede" data-act-relayed>{t('act.over.done', { steps: ended.steps, relayed: ended.relayed })}</p>
-          {says !== null && <p className="m-0 font-mono" data-act-shown-at-the-end>{t(says.key, { ...(says.values ?? {}) })}</p>}
+          {shownAtTheEnd}
         </>
       )}
       <p className="m-0 text-sm text-muted-foreground" data-act-locked>

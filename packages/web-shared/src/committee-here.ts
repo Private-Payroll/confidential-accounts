@@ -19,14 +19,15 @@
  * believes is named beside a key only where its entry's opening proves that
  * key, for display, and a key no seat proves is a super admin all the same.
  *
- * Runs where the ledger's reader runs (the vault worker, or a test): `deps`
- * hands in the runtime's state reader and the account's compiled reader.
+ * The chain is read through `reads` (`committee-reads.ts`): where the ledger
+ * loads, its readers over the indexer; on the page, the vault worker asked for
+ * the same reads.
  */
-import { authorityIn, type ContractAuthority } from 'midnight-identity/profile/contract-authority';
+import type { ContractAuthority } from 'midnight-identity/profile/contract-authority';
 import { whyNotInstallable } from 'midnight-identity/profile/request';
 import { sameCommittee } from '../../../src/midnight/vault-committee.js';
 import type { DirectorySeat } from '../../../src/midnight/seat-directory.js';
-import type { VaultChainSource } from './vault-on-chain-here.js';
+import type { CommitteeReads } from './committee-reads.js';
 
 /**
  * **A CHANGE OF THE SUPER ADMINS IN PROGRESS**: the committee it installs on
@@ -69,24 +70,11 @@ export interface SuperAdminsHere {
   readonly behind: readonly string[];
 }
 
-/** What this device reads with: the runtime's state reader and the account's compiled reader. */
-interface ReadersHere {
-  readonly runtimeState: { deserialize(bytes: Uint8Array): unknown };
-  readonly accountLedger: (data: unknown) => unknown;
-}
-
 const HEX64 = /^[0-9a-f]{64}$/u;
-const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-
-/** A contract's state at the wallet's indexer, deserialized, or null when the indexer holds none there. */
-async function stateAt(deps: ReadersHere, chain: Pick<VaultChainSource, 'contractState'>, address: string): Promise<unknown | null> {
-  const served = await chain.contractState(address);
-  return served === null || served === undefined ? null : deps.runtimeState.deserialize(served.serialize());
-}
 
 /**
  * **THE SUPER ADMINS AND EVERY CONTRACT THE COMPANY HAS MADE, READ AT THE
- * INDEXER THE PERSON'S OWN WALLET NAMES (`chain`).** Returns the account's
+ * INDEXER THE PERSON'S OWN WALLET NAMES (`reads`).** Returns the account's
  * committee and threshold as the super admins; every contract, each with its
  * own authority from the chain; and which of them are behind - not holding
  * `inProgress`'s committee while a change of the super admins is in progress,
@@ -97,8 +85,7 @@ async function stateAt(deps: ReadersHere, chain: Pick<VaultChainSource, 'contrac
  * the super admins from anything else.
  */
 export async function superAdminsHere(
-  deps: { readonly runtimeState: { deserialize(bytes: Uint8Array): unknown }; readonly accountLedger: (data: unknown) => unknown },
-  chain: Pick<VaultChainSource, 'contractState'>,
+  reads: CommitteeReads,
   input: {
     readonly account: string;
     readonly createdByTheCompany: readonly string[];
@@ -107,17 +94,14 @@ export async function superAdminsHere(
 ): Promise<SuperAdminsHere> {
   const account = input.account.toLowerCase();
   if (!HEX64.test(account)) throw new Error('a company\'s account is named by its sixty-four character address, and this is not one. Name the account by its address as the page shows it.');
-  const state = await stateAt(deps, chain, account);
-  if (state === null) {
+  const read = await reads.accountAt(account);
+  if (read === null) {
     throw new Error('the indexer your wallet names does not hold the company\'s account yet, so who its super admins are cannot '
       + 'be read. Wait for your wallet to catch up, then try again.');
   }
-  const held = authorityIn(state);
+  const held = read.authority;
   if ('why' in held) throw new Error(`who holds the company's account cannot be read, so its super admins are not known: ${held.why}`);
-  const view = deps.accountLedger((state as { data: unknown }).data) as {
-    vaults?: Iterable<Uint8Array>; retiredAt?: Iterable<[Uint8Array, unknown]>;
-  } | null;
-  if (view?.vaults === undefined || view.retiredAt === undefined) {
+  if (read.vaults === null) {
     throw new Error('the company\'s account does not list the vaults it adopted and retired, so its contracts cannot be found. '
       + 'Reload the page; if it happens again, contact support.');
   }
@@ -127,8 +111,8 @@ export async function superAdminsHere(
     if (at === account) return;
     found.set(at, [...(found.get(at) ?? []), by]);
   };
-  for (const v of view.vaults) add(hexOf(v), 'adopted');
-  for (const [v] of view.retiredAt) add(hexOf(v), 'retired');
+  for (const v of read.vaults.adopted) add(v, 'adopted');
+  for (const v of read.vaults.retired) add(v, 'retired');
   for (const v of input.createdByTheCompany) {
     if (!HEX64.test(v.toLowerCase())) {
       throw new Error(`the company's records name a vault by "${v}", which is not an address, so the records are damaged. Reload the page.`);
@@ -145,11 +129,11 @@ export async function superAdminsHere(
     { contract: 'account', address: account, foundBy: [], authority: held, why: null, current: isCurrent(held) },
   ];
   for (const [address, foundBy] of found) {
-    const vault = await stateAt(deps, chain, address);
-    const read = vault === null ? { why: 'the indexer your wallet names holds no contract at this address.' } : authorityIn(vault);
-    contracts.push('why' in read
-      ? { contract: 'vault', address, foundBy, authority: null, why: read.why, current: false }
-      : { contract: 'vault', address, foundBy, authority: read, why: null, current: isCurrent(read) });
+    const vault = await reads.authorityAt(address);
+    const at = vault === null ? { why: 'the indexer your wallet names holds no contract at this address.' } : vault;
+    contracts.push('why' in at
+      ? { contract: 'vault', address, foundBy, authority: null, why: at.why, current: false }
+      : { contract: 'vault', address, foundBy, authority: at, why: null, current: isCurrent(at) });
   }
   return {
     account,
@@ -167,13 +151,9 @@ export async function superAdminsHere(
  * holds no contract there or its authority cannot be read. A send is judged by
  * this read and never by what the service says it did.
  */
-export async function authorityHere(
-  deps: ReadersHere, chain: Pick<VaultChainSource, 'contractState'>, address: string,
-): Promise<ContractAuthority | null> {
-  const state = await stateAt(deps, chain, address.toLowerCase());
-  if (state === null) return null;
-  const read = authorityIn(state);
-  return 'why' in read ? null : read;
+export async function authorityHere(reads: CommitteeReads, address: string): Promise<ContractAuthority | null> {
+  const read = await reads.authorityAt(address.toLowerCase());
+  return read === null || 'why' in read ? null : read;
 }
 
 /** One super admin as a device shows it: the key the chain's committee holds, and the seat it is named by where one is. */
@@ -250,14 +230,13 @@ export interface SuperAdminsSeen extends SuperAdminsHere {
  * shown as it is.
  */
 export async function superAdminsSeenHere(
-  deps: ReadersHere,
-  chain: Pick<VaultChainSource, 'contractState'>,
-  input: Parameters<typeof superAdminsHere>[2] & {
+  reads: CommitteeReads,
+  input: Parameters<typeof superAdminsHere>[1] & {
     readonly seats: Parameters<typeof superAdminsShown>[1];
     readonly ownWalletKey: { readonly tag: string; readonly value: string } | null;
   },
 ): Promise<SuperAdminsSeen> {
-  const here = await superAdminsHere(deps, chain, input);
+  const here = await superAdminsHere(reads, input);
   const { shown, iAmOne } = superAdminsShown(here.superAdmins, input.seats, input.ownWalletKey);
   return { ...here, shown, iAmOne, warning: committeeWarning(here.superAdmins) };
 }

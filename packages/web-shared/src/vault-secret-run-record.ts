@@ -80,6 +80,8 @@ interface StartRecordOpened {
   readonly previous?: Hex;
   /** Every reader's sealed copy of a secret run's secret; absent in a record sealed before runs carried them. */
   readonly copies?: readonly { readonly reader: Hex; readonly parts: readonly Hex[] }[];
+  /** For the adoption of a vault the company retired, the proposal that retired it, which the adoption is made from. */
+  readonly again?: Hex;
 }
 
 const copiesIn = (x: unknown): StartRecordOpened['copies'] | null => {
@@ -99,16 +101,18 @@ export const startRecordOpened = (keys: KeysHeld, rec: SealedProposal): StartRec
   try {
     const key = keyOf(keys, rec.keyEpoch);
     const envelope = openRecord<{ kind: string; sealedPayload: Sealed }>('proposals', rec.accountId, rec.sealed, key);
-    const body = parseCanonical<{ vault?: unknown; opensAt?: unknown; closesAt?: unknown; previous?: unknown; copies?: unknown }>(unseal(envelope.sealedPayload, key));
+    const body = parseCanonical<{ vault?: unknown; opensAt?: unknown; closesAt?: unknown; previous?: unknown; copies?: unknown; again?: unknown }>(unseal(envelope.sealedPayload, key));
     if (typeof body.vault !== 'string') return null;
     const digits = (x: unknown): x is string => typeof x === 'string' && /^[0-9]{1,20}$/u.test(x);
     const window = digits(body.opensAt) && digits(body.closesAt) ? { opensAt: BigInt(body.opensAt), closesAt: BigInt(body.closesAt) } : undefined;
     if (body.previous !== undefined && (typeof body.previous !== 'string' || !HEX64.test(body.previous))) return null;
+    if (body.again !== undefined && (typeof body.again !== 'string' || !HEX64.test(body.again))) return null;
     const copies = body.copies === undefined ? undefined : copiesIn(body.copies);
     if (copies === null) return null;
     return {
       kind: envelope.kind, vault: body.vault.toLowerCase(), ...(window === undefined ? {} : { window }),
       ...(body.previous === undefined ? {} : { previous: body.previous as Hex }), ...(copies === undefined ? {} : { copies }),
+      ...(body.again === undefined ? {} : { again: body.again as Hex }),
     };
   } catch {
     /* A record this device cannot open is no record of a start round to it: it is passed over, as one of another kind is. */

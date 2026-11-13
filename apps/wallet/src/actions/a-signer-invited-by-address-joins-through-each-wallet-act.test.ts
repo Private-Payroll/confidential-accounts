@@ -20,7 +20,7 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
-import { acceptanceProofOf, invitationIdOf, newInvitationToken, openOffer, type SignerOffer } from '../../../../src/core/invitation.js';
+import { acceptanceProofOf, invitationIdOf, invitationLink, openOffer, tokenOfLink, type SignerOffer } from '../../../../src/core/invitation.js';
 import { fromHex, signingPublicKeyOf, toHex, unwrapKey, wrapKey, type Hex } from '../../../../src/core/crypto.js';
 import { seatBlinding } from '../../../../src/core/seat-opening.js';
 import { storedSignerLeaf } from '../../../../src/core/signer-leaf.js';
@@ -139,7 +139,9 @@ const seatProofOf = async (input: InvitedSeatOnTheWire): Promise<string> => {
   if (String(made.chainId).toLowerCase() !== input.proposal.toLowerCase()) throw new Error('the proposal named is not the one this address, rights, threshold and salt make');
   const leaf = storedSignerLeaf(input.material as never, MidnightCommitments).toLowerCase();
   committeeKeyOfLeaf.set(leaf, committeeKeyFor(invitee.identity, LABEL) as never);
-  return Buffer.from(JSON.stringify({ proposal: input.proposal, address, leaf, threshold: input.newThreshold })).toString('base64');
+  return Buffer.from(JSON.stringify({
+    proposal: input.proposal, address, leaf, threshold: input.newThreshold, coinPublicKey: coinKeyOf(invitee), addressSalt: input.invite.addressSalt,
+  })).toString('base64');
 };
 
 /* The leaf each seated signer's saved keys stand for; any other seat's leaf is the one its own material makes. */
@@ -171,9 +173,11 @@ const callAs = (person: string) => async (method: 'GET' | 'PUT' | 'POST', path: 
   if (method === 'POST' && /^\/api\/invites\/[^/]+\/seat$/u.test(path)) {
     const { acceptance, tx } = JSON.parse(body!) as { acceptance: string; tx: string };
     seatsSent.push({ path, acceptance });
-    const { proposal, address, leaf, threshold } = JSON.parse(Buffer.from(tx, 'base64').toString('utf8')) as { proposal: string; address: string; leaf: string; threshold: string };
+    const { proposal, leaf, threshold, coinPublicKey, addressSalt } = JSON.parse(Buffer.from(tx, 'base64').toString('utf8')) as {
+      proposal: string; leaf: string; threshold: string; coinPublicKey: string; addressSalt: string;
+    };
     try {
-      theInviteeTakesTheSeatHere(proposal, address, leaf);
+      theInviteeTakesTheSeatHere(proposal, { coinPublicKey, addressSalt }, leaf);
     } catch (e) {
       return { status: 409, body: { error: (e as Error).message } };
     }
@@ -210,6 +214,10 @@ const inItsOwnBrowser = (w: Wallet): void => {
   if (!databases.has(w.person)) databases.set(w.person, new IDBFactory());
   (globalThis as { indexedDB?: IDBFactory }).indexedDB = databases.get(w.person);
 };
+/* The links the inviting wallets showed in their own windows, as the person inviting copies them to send. */
+const linksShown: string[] = [];
+/** The token of the last link a wallet showed: what the invitee's wallet is handed when they open the link sent to them. */
+const tokenShown = (): string => tokenOfLink(linksShown.at(-1) ?? '') ?? '';
 const ctxOf = (w: Wallet, intent: ActIntent, step: number, steps: number, told: Record<string, string | number>): StepContext => (inItsOwnBrowser(w), {
   intent, asker: { origin: ORIGIN, name: 'Payroll', rdns: 'example.payroll' }, person: w.person,
   held: {
@@ -224,8 +232,9 @@ const ctxOf = (w: Wallet, intent: ActIntent, step: number, steps: number, told: 
   relay: async () => { throw new Error('nothing in joining a signer is relayed by the page'); },
   call: callAs(w.person),
   tell: (o) => { Object.assign(told, o); },
-  show: () => {},
+  show: (words) => { const link = words.values?.['link']; if (typeof link === 'string') linksShown.push(link); },
   confirm: async () => { throw new Error('nothing in joining a signer waits on a Confirm in the window'); },
+  releaseReadKeys: () => { throw new Error('nothing in joining a signer hands a page read keys'); },
   /* What the wallet sends itself, and finds on the chain, is counted by the run for the window's end; these acts end in the test. */
   sentByTheWallet: () => {}, seenOnTheChain: () => {},
   keyring: { open: () => ({ read: () => w.kept }) as never, keep: async (change) => { w.kept = change(w.kept); } },
@@ -299,9 +308,16 @@ const hexOf = (x: string | Uint8Array): string => (typeof x === 'string' ? x : t
 /* The records key a wallet attests for this company: the public half of the key its company key makes. */
 const recordsKeyOf = (w: Wallet): string => hexOf(recordsKeypairFrom(fromHex(companyKeyHeldBy(w))).publicKey);
 
-describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING WHAT THE ONE BEFORE IT LEFT', () => {
-  const TOKEN = newInvitationToken();
-  const ID = invitationIdOf(TOKEN);
+/*
+ * Each act below proves on the wallet's own worker, and a raise, an approval or a seat taken proves more than once, so
+ * one act can take most of half a minute on a busy machine. Each block's acts get two minutes, so a slow proof is not
+ * read as a hang.
+ */
+const PROVES = { timeout: 120_000 };
+
+describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING WHAT THE ONE BEFORE IT LEFT', PROVES, () => {
+  let TOKEN = '';
+  let ID = '';
   let offer: SignerOffer;
   let inviter: unknown;
   let proposal: SealedProposal;
@@ -309,8 +325,13 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
   let leaf: Hex;
 
   it('the inviting seat\'s wallet invites a signer by address and raises the proposal its kept invitation names', async () => {
-    const told = await run(ACTS.invite, ada, 'invite', { ...companyFields, token: TOKEN, kind: 'signer', personName: 'dee', role: 'approver', address: DEES_ADDRESS });
+    const told = await run(ACTS.invite, ada, 'invite', { ...companyFields, kind: 'signer', personName: 'dee', role: 'approver', address: DEES_ADDRESS });
     expect(told.state).toBe('filed');
+    TOKEN = tokenShown();
+    ID = invitationIdOf(TOKEN);
+    /* RED WHEN: the inviting wallet shows no link for the page that asked, made from the token it made, or tells the page that token. */
+    expect(linksShown.at(-1)).toBe(invitationLink(ORIGIN, TOKEN));
+    expect(JSON.stringify(told)).not.toContain(TOKEN);
     const kept = ada.kept.seatInvitationsKept?.[ID];
     expect(kept).toBeDefined();
     offer = kept!.offer.offer.for as SignerOffer;
@@ -458,15 +479,16 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
   });
 });
 
-describe('AT ONE APPROVAL TO ADD A SIGNER, THE RAISING SEAT FINISHES ADDING THE PERSON IT INVITED', () => {
-  const TOKEN = newInvitationToken();
+describe('AT ONE APPROVAL TO ADD A SIGNER, THE RAISING SEAT FINISHES ADDING THE PERSON IT INVITED', PROVES, () => {
+  let TOKEN = '';
   let proposal: SealedProposal;
   let shown: NonNullable<ReturnType<typeof addSignerByAddressIn>>;
 
   it('the raising seat invites a second person by address once the company asks one approval, and its raise is the approval', async () => {
     const h = chains.get(CO)!;
     chains.set(CO, { ...h, approvals: 1, seatBar: 1 });
-    await run(ACTS.invite, ada, 'invite', { ...companyFields, token: TOKEN, kind: 'signer', personName: 'eve', role: 'approver', address: EVES_ADDRESS });
+    await run(ACTS.invite, ada, 'invite', { ...companyFields, kind: 'signer', personName: 'eve', role: 'approver', address: EVES_ADDRESS });
+    TOKEN = tokenShown();
     const offer = ada.kept.seatInvitationsKept?.[invitationIdOf(TOKEN)]!.offer.offer.for as SignerOffer;
     proposal = (store.listProposals(CO) as SealedProposal[]).find((p) => String(p.chainId).toLowerCase() === offer.invited.terms.proposal!.toLowerCase())!;
     shown = addSignerByAddressIn(proposal as never, CO, KEY as never)!;
@@ -518,8 +540,8 @@ describe('AT ONE APPROVAL TO ADD A SIGNER, THE RAISING SEAT FINISHES ADDING THE 
   });
 });
 
-describe('A SIGNER INVITED WITH A NEW THRESHOLD IS SEATED WITH IT, AND ONE NO SEATS COULD MEET IS REFUSED BEFORE ANY WINDOW SENDS', () => {
-  const TOKEN = newInvitationToken();
+describe('A SIGNER INVITED WITH A NEW THRESHOLD IS SEATED WITH IT, AND ONE NO SEATS COULD MEET IS REFUSED BEFORE ANY WINDOW SENDS', PROVES, () => {
+  let TOKEN = '';
   let proposal: SealedProposal;
   let shown: NonNullable<ReturnType<typeof addSignerByAddressIn>>;
   const approveAs = (threshold?: string) => ({
@@ -531,19 +553,20 @@ describe('A SIGNER INVITED WITH A NEW THRESHOLD IS SEATED WITH IT, AND ONE NO SE
     const h = chains.get(CO)!;
     chains.set(CO, { ...h, approvals: 1, seatBar: 2 });
     const seats = h.seats.seats.length;
-    const token = newInvitationToken();
+    const keptBefore = Object.keys(ada.kept.seatInvitationsKept ?? {});
     const before = events.length;
     await expect(run(ACTS.invite, ada, 'invite', {
-      ...companyFields, token, kind: 'signer', personName: 'gil', role: 'approver', address: GILS_ADDRESS, threshold: String(seats + 2),
+      ...companyFields, kind: 'signer', personName: 'gil', role: 'approver', address: GILS_ADDRESS, threshold: String(seats + 2),
     })).rejects.toThrow(new RegExp(`act\\.invite\\.why\\.threshold-refused .*Once this seat is taken the company has ${seats + 1} signers, so it cannot need ${seats + 2} approvals`, 'u'));
-    expect(ada.kept.seatInvitationsKept?.[invitationIdOf(token)]).toBeUndefined();
+    expect(Object.keys(ada.kept.seatInvitationsKept ?? {})).toEqual(keptBefore);
     expect(events.slice(before)).not.toContain('chain propose');
   });
 
   it('the inviting seat raises the seat with its new threshold bound in the signed invitation, and tells the page the approvals it holds and needs', async () => {
     const told = await run(ACTS.invite, ada, 'invite', {
-      ...companyFields, token: TOKEN, kind: 'signer', personName: 'fay', role: 'approver', address: FAYS_ADDRESS, threshold: '3',
+      ...companyFields, kind: 'signer', personName: 'fay', role: 'approver', address: FAYS_ADDRESS, threshold: '3',
     });
+    TOKEN = tokenShown();
     const offer = ada.kept.seatInvitationsKept?.[invitationIdOf(TOKEN)]!.offer.offer.for as SignerOffer;
     /* RED WHEN: the threshold asked is not in the invitation the signers approve. */
     expect(offer.invited.terms.invite!.threshold).toBe('3');
@@ -554,6 +577,7 @@ describe('A SIGNER INVITED WITH A NEW THRESHOLD IS SEATED WITH IT, AND ONE NO SE
   });
 
   it('another seat approves it only at the threshold its window showed', async () => {
+    expect(proposal, 'the raise before this one did not finish, so there is no proposal to approve').toBeDefined();
     const before = events.length;
     /* RED WHEN: a seat is approved whose proposal sets another threshold than the window showed, or one where the window showed none. */
     await expect(run(ACTS.approve, bo, 'approve-proposal', approveAs('4'))).rejects.toThrow(/act\.approve-proposal\.why\.not-approved .*sets the approvals needed to 3/u);
@@ -565,6 +589,7 @@ describe('A SIGNER INVITED WITH A NEW THRESHOLD IS SEATED WITH IT, AND ONE NO SE
   });
 
   it('the invitee\'s wallet takes the seat with the threshold the signers approved, and the account needs that many approvals from then on', async () => {
+    expect(TOKEN, 'the raise before this one did not finish, so there is no invitation to take the seat by').not.toBe('');
     await run(ACTS.seat, fay, 'seat-invited', { ...companyFields, token: TOKEN });
     /* RED WHEN: the seat is proved with another threshold than the signed invitation's, which the chain refuses. */
     expect(seatsProved.at(-1)!.newThreshold).toBe('3');

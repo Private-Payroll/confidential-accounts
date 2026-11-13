@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { pureCircuits as P } from '../../contracts/managed/contract/index.js';
 import { pureCircuits as V } from '../../contracts/managed-vault/contract/index.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { fromHex, toHex } from '../core/crypto.js';
 import {
   adoptionRoundOf, firstSecretRunCarriedOf, secretRunOf, secretRunProposalOf, startStandingOf,
@@ -92,6 +93,27 @@ describe('A VAULT\'S START', () => {
     /* RED WHEN: a governance round raised before a removal is read as one that can still be carried out. */
     expect(stale.adoption.stale).toBe(true);
     expect(startStandingOf(circuits, { vault: VAULT, now, vaultLedger: vaultLedger(), account: accountLedger({ vaults: [VAULT] }) }).adopted).toBe(true);
+  });
+
+  it('ADOPTS A RETIRED VAULT AGAIN UNDER A NEW PROPOSAL, MADE FROM THE VAULT AND THE PROPOSAL THAT RETIRED IT', () => {
+    const first = adoptionRoundOf(P as never, VAULT);
+    const RETIRED_BY = '7c'.repeat(32);
+    const again = adoptionRoundOf(P as never, VAULT, RETIRED_BY);
+    const salt = toHex(sha256(new Uint8Array([...new TextEncoder().encode('confidential-accounts/vault-adoption-salt/v1'), ...fromHex(VAULT), ...fromHex(RETIRED_BY)])));
+    /* RED WHEN: adopting a retired vault again reuses the first adoption's proposal, whose approvals the account already spent. */
+    expect(again.salt).toBe(salt);
+    expect(again.proposal).not.toBe(first.proposal);
+    expect(again.payload).toBe(first.payload);
+    expect(toHex(P.proposalIdOf(fromHex(again.payload), P.noVault(), fromHex(salt)))).toBe(again.proposal);
+    /* A second retire and adoption chain from the second retire's proposal. */
+    expect(adoptionRoundOf(P as never, VAULT, '7d'.repeat(32)).proposal).not.toBe(again.proposal);
+    const read = startStandingOf(circuits, {
+      vault: VAULT, now: 1n, vaultLedger: vaultLedger(), again: RETIRED_BY,
+      account: accountLedger({ threshold: 2n, open: { [again.proposal]: { approvals: 1n, needed: 2n } } }),
+    });
+    /* RED WHEN: the standing of a vault adopted again reads the first adoption, closed long ago, instead of the open one. */
+    expect(read.adoption).toMatchObject({ proposal: again.proposal, salt, open: true, approvals: 1, needed: 2 });
+    expect(() => adoptionRoundOf(P as never, VAULT, 'not a proposal')).toThrow(/proposal that retired this vault/u);
   });
 
   it("SAYS WHETHER THIS SEAT'S APPROVAL IS ON THE CHAIN FOR EACH ROUND OF THE START, ASKED BY THAT ROUND'S OWN IDENTITY", () => {

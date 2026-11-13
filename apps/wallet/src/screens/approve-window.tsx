@@ -190,6 +190,7 @@ export function ApproveWindow({
   const headline = request.kind === 'balance' && pays === 'public'
     ? t('ask.balance.headline-public', { origin })
     : request.kind === 'join' ? t('ask.join.headline', { origin })
+      : request.kind === 'committee' && request.press === 'request' ? t('ask.committee.request-headline', { origin })
       : request.kind === 'act' ? t(action?.headline ?? 'ask.act.headline', { origin })
       : t(`ask.${request.kind === 'addresses-and-balances' ? 'addresses' : request.kind}.headline`, { origin });
 
@@ -311,13 +312,7 @@ function WhatItDoes({ request, payment, action, shown }: {
           <p className="m-0 text-sm text-muted-foreground break-all" data-vault>{t('ask.balance.vault', { vault: request.vault })}</p>
         </Section>
       );
-    case 'committee': return (
-      <>
-        {lede(t(`ask.committee.${request.press}`))}
-        <p className="m-0 text-sm" data-new-committee>{t('ask.committee.to', { count: request.to.committee.length, threshold: request.to.threshold })}</p>
-        <p className="m-0 text-sm" data-checked-after-the-passkey>{t('ask.committee.check')}</p>
-      </>
-    );
+    case 'committee': return <CommitteeAskShown request={request} />;
     case 'records-key': return (
       <>
         {lede(t('ask.records-key.lede'))}
@@ -334,7 +329,7 @@ function WhatItDoes({ request, payment, action, shown }: {
     );
     case 'join-code': return (
       <>
-        {lede(request.parts.kind === 'signer' ? t('ask.join-code.lede-signer') : t('ask.join-code.lede-payee', { address: request.parts.address }))}
+        {lede(request.parts.kind === 'signer' ? t('ask.join-code.lede-signer') : request.parts.kind === 'payee' ? t('ask.join-code.lede-payee', { address: request.parts.address }) : t('ask.join-code.lede-reader'))}
         <p className="m-0 text-sm break-all" data-join-code-person>{t('ask.join-code.person', { person: request.person })}</p>
       </>
     );
@@ -366,6 +361,26 @@ function WhatItDoes({ request, payment, action, shown }: {
 }
 
 /** The warnings a screen gives about this ask, kept in sight above Approve. */
+/** What a committee ask does, before the passkey: a request to the company's service changes nothing; a change says what it installs. */
+function CommitteeAskShown({ request }: { request: Extract<Ask, { kind: 'committee' }> }) {
+  const t = useText();
+  if (request.press === 'request') {
+    return (
+      <>
+        <p className="lede" data-what-it-does>{t('ask.committee.request')}</p>
+        <p className="m-0 text-sm" data-checked-after-the-passkey>{t('ask.committee.request-check')}</p>
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="lede" data-what-it-does>{t(`ask.committee.${request.press}`)}</p>
+      <p className="m-0 text-sm" data-new-committee>{t('ask.committee.to', { count: request.to.committee.length, threshold: request.to.threshold })}</p>
+      <p className="m-0 text-sm" data-checked-after-the-passkey>{t('ask.committee.check')}</p>
+    </>
+  );
+}
+
 function Warnings({ request, pays, payment }: {
   readonly request: Ask; readonly pays: PageAskPays | null; readonly payment: Payment;
 }): ReactNode {

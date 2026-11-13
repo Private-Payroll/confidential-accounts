@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { policyBarKey } from '../../../src/midnight/spending-policy.js';
 import { superAdminsHere, superAdminsShown, type SuperAdminChangeInProgress, type SuperAdminsHere } from './committee-here.js';
+import { committeeReadsOf } from './committee-reads.js';
 
 /*
  * Who the company's super admins are, read on this device from the account's
@@ -70,7 +71,7 @@ const ask = (inProgress: SuperAdminChangeInProgress | null = null) => ({ account
 describe('WHO THE SUPER ADMINS ARE, READ ON THIS DEVICE FROM THE ACCOUNT ON THE CHAIN', () => {
   it('are the account\'s committee and threshold, and every contract the company made is read with its own authority', async () => {
     const c = chainOf(company());
-    const got = await superAdminsHere(c.deps, c.chain, ask());
+    const got = await superAdminsHere(committeeReadsOf(c.deps, c.chain), ask());
     expect(got.superAdmins).toEqual({ committee: [K1, K2], threshold: 2, counter: 3n });
     expect(got.refused).toBeNull();
     /* RED WHEN: a vault the account adopted, one it retired, or one the company's own records say it created is left out. */
@@ -91,7 +92,7 @@ describe('WHO THE SUPER ADMINS ARE, READ ON THIS DEVICE FROM THE ACCOUNT ON THE 
   });
 
   it('A SIGNER\'S CHANGE, A VAULT\'S BAR OR A BAND NEVER MOVES THE SUPER ADMINS OR WHICH CONTRACTS ARE BEHIND', async () => {
-    const before: SuperAdminsHere = await (async () => { const c = chainOf(company()); return superAdminsHere(c.deps, c.chain, ask()); })();
+    const before: SuperAdminsHere = await (async () => { const c = chainOf(company()); return superAdminsHere(committeeReadsOf(c.deps, c.chain), ask()); })();
     /* Two more signers seated, a vault's threshold of three, a band and a policy bar of four, the signers' threshold at three. */
     const moved = chainOf(company({
       [ACCOUNT]: {
@@ -103,7 +104,7 @@ describe('WHO THE SUPER ADMINS ARE, READ ON THIS DEVICE FROM THE ACCOUNT ON THE 
         }),
       },
     }));
-    const after = await superAdminsHere(moved.deps, moved.chain, ask());
+    const after = await superAdminsHere(committeeReadsOf(moved.deps, moved.chain), ask());
     /* RED WHEN: a signer's change, a vault bar or a band moves the super admins, their threshold, or which contracts are behind. */
     expect(after.superAdmins).toEqual(before.superAdmins);
     expect(after.behind).toEqual(before.behind);
@@ -116,7 +117,7 @@ describe('WHO THE SUPER ADMINS ARE, READ ON THIS DEVICE FROM THE ACCOUNT ON THE 
       contracts: [{ address: ACCOUNT, counter: 3n }, { address: ADOPTED, counter: 1n }],
     };
     const c = chainOf(company({ [ADOPTED]: { committee: [K1, K2, K3], threshold: 2, counter: 2n } }));
-    const got = await superAdminsHere(c.deps, c.chain, ask(change));
+    const got = await superAdminsHere(committeeReadsOf(c.deps, c.chain), ask(change));
     /* RED WHEN: any contract is judged against anything but the change in progress while one is. */
     expect(got.contracts.filter((x) => x.current).map((x) => x.address)).toEqual([ADOPTED]);
     expect(got.behind).toEqual([ACCOUNT, RETIRED, CREATED, NOWHERE]);
@@ -127,14 +128,14 @@ describe('WHO THE SUPER ADMINS ARE, READ ON THIS DEVICE FROM THE ACCOUNT ON THE 
   it('A CONTRACT HOLDING THE RIGHT KEYS AT ANOTHER THRESHOLD IS BEHIND, WHETHER OR NOT THE SUPER ADMINS ARE CHANGING', async () => {
     const c = chainOf(company({ [ADOPTED]: { committee: [K1, K2], threshold: 1, counter: 1n } }));
     /* RED WHEN: a vault is judged current on its keys alone, while the account requires two of them and it one. */
-    expect((await superAdminsHere(c.deps, c.chain, ask())).behind).toContain(ADOPTED);
+    expect((await superAdminsHere(committeeReadsOf(c.deps, c.chain), ask())).behind).toContain(ADOPTED);
     const change: SuperAdminChangeInProgress = { committee: [K1, K2, K3], threshold: 2, contracts: [] };
     const during = chainOf(company({ [ADOPTED]: { committee: [K1, K2, K3], threshold: 3, counter: 2n } }));
     /* RED WHEN: during a change, a contract holding its keys at another threshold than it installs is judged current. */
-    expect((await superAdminsHere(during.deps, during.chain, ask(change))).behind).toContain(ADOPTED);
+    expect((await superAdminsHere(committeeReadsOf(during.deps, during.chain), ask(change))).behind).toContain(ADOPTED);
     /* A change naming its keys in capitals is the same committee as the chain's lower-case keys. */
     const shouted: SuperAdminChangeInProgress = { ...change, threshold: 3, committee: change.committee.map((k) => ({ ...k, value: k.value.toUpperCase() })) };
-    expect((await superAdminsHere(during.deps, during.chain, ask(shouted))).behind).not.toContain(ADOPTED);
+    expect((await superAdminsHere(committeeReadsOf(during.deps, during.chain), ask(shouted))).behind).not.toContain(ADOPTED);
   });
 
   it('names an account held by a committee the one install rule refuses', async () => {
@@ -143,18 +144,18 @@ describe('WHO THE SUPER ADMINS ARE, READ ON THIS DEVICE FROM THE ACCOUNT ON THE 
     ] as const) {
       const c = chainOf(company({ [ACCOUNT]: { committee, threshold, counter: 3n, view: accountView() } }));
       /* RED WHEN: a world-writable or unchangeable account, or one whose threshold counts a key twice, is not named. */
-      expect((await superAdminsHere(c.deps, c.chain, ask())).refused).toMatch(why);
+      expect((await superAdminsHere(committeeReadsOf(c.deps, c.chain), ask())).refused).toMatch(why);
     }
   });
 
   it('believes nothing about the super admins when the account cannot be read at the wallet\'s indexer', async () => {
     const absent = chainOf({});
     /* RED WHEN: the super admins are named from anything but the account's state on the chain. */
-    await expect(superAdminsHere(absent.deps, absent.chain, ask())).rejects.toThrow(/does not hold the company's account yet/);
+    await expect(superAdminsHere(committeeReadsOf(absent.deps, absent.chain), ask())).rejects.toThrow(/does not hold the company's account yet/);
     const unreadable = chainOf(company({ [ACCOUNT]: { committee: [{ tag: 'schnorr', value: 'zz' }], threshold: 1, counter: 3n, view: accountView() } }));
-    await expect(superAdminsHere(unreadable.deps, unreadable.chain, ask())).rejects.toThrow(/super admins are not known/);
+    await expect(superAdminsHere(committeeReadsOf(unreadable.deps, unreadable.chain), ask())).rejects.toThrow(/super admins are not known/);
     const noLists = chainOf(company({ [ACCOUNT]: { committee: [K1], threshold: 1, counter: 3n, view: {} } }));
-    await expect(superAdminsHere(noLists.deps, noLists.chain, ask())).rejects.toThrow(/does not list the vaults it adopted and retired/);
+    await expect(superAdminsHere(committeeReadsOf(noLists.deps, noLists.chain), ask())).rejects.toThrow(/does not list the vaults it adopted and retired/);
   });
 });
 
@@ -169,7 +170,7 @@ describe('EVERY SUPER ADMIN SHOWN BY THE KEY THE CHAIN HOLDS, WITH A SEAT ONLY W
 
   it('a device whose own wallet key is on the committee reads itself a super admin, with no seat at all', async () => {
     const c = chainOf(company());
-    const { superAdmins } = await superAdminsHere(c.deps, c.chain, ask());
+    const { superAdmins } = await superAdminsHere(committeeReadsOf(c.deps, c.chain), ask());
     /* RED WHEN: a device decides it is a super admin from a seat, a stored role or anything but its own key on the chain's committee. */
     const mine = superAdminsShown(superAdmins, [], { ...K2, value: K2.value.toUpperCase() });
     expect(mine.iAmOne).toBe(true);
@@ -181,7 +182,7 @@ describe('EVERY SUPER ADMIN SHOWN BY THE KEY THE CHAIN HOLDS, WITH A SEAT ONLY W
 
   it('a committee key no seat proves is listed as a super admin by its key and flagged for nothing; one a believed seat proves carries that seat', async () => {
     const c = chainOf(company());
-    const { superAdmins } = await superAdminsHere(c.deps, c.chain, ask());
+    const { superAdmins } = await superAdminsHere(committeeReadsOf(c.deps, c.chain), ask());
     const got = superAdminsShown(superAdmins, seats, null);
     /* RED WHEN: a committee key no seat proves is left out, marked for removal, or shown as anything but a full super admin. */
     expect(got.shown).toEqual([

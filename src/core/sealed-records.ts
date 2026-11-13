@@ -54,6 +54,8 @@ export const PURPOSES = Object.freeze([
   'roster', 'policy', 'payroll', 'people', 'inbox', 'proposals', 'vaults', 'one-offs', 'vendors', 'company-service',
 ] as const);
 export type Purpose = (typeof PURPOSES)[number];
+/** Whether `x` names one of the company's purposes. */
+export const isPurpose = (x: string): x is Purpose => (PURPOSES as readonly string[]).includes(x);
 
 /**
  * One key per purpose, derived from the account's viewing key.

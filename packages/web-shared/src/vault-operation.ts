@@ -282,7 +282,9 @@ async function theCommitteeAVaultIsBornHeldBy(doors: CreateVaultDoors): Promise<
  * SET-UP IS CARRIED ON**: the chain shows it, and the deploy its
  * address was made from was held by the company's committee at counter 0, ran
  * this build's circuits and wrote nothing. Every later change needs the
- * committee's signatures, so this one read is enough. Both chain reads, the
+ * committee's signatures, so this one read is enough; a vault adopted again
+ * (`doors.again`) is read as held by the committee the company holds now, since
+ * a change of super admins since moved it. Both chain reads, the
  * vault's notes and how it was deployed, are asked inside one wait: a read that
  * ran out of time is asked again, and a wait in which every read ran out stops
  * as a chain this device could not read.
@@ -301,7 +303,7 @@ async function readBornHeld(doors: CreateVaultDoors, vault: Hex): Promise<void> 
     if (!v.onChain) return null;
     deployedWith ??= await bornHeldReadWith(doors, vault);
     try {
-      return await doors.builder.vaultAsDeployed!({ vault, account: doors.account, ...deployedWith });
+      return await doors.builder.vaultAsDeployed!({ vault, account: doors.account, ...deployedWith, ...(doors.again === undefined ? {} : { again: true }) });
     } catch (e) {
       if (ranOutOfTime(e)) return RAN_OUT;
       throw e;
@@ -310,8 +312,8 @@ async function readBornHeld(doors: CreateVaultDoors, vault: Hex): Promise<void> 
   if (asDeployed === RAN_OUT) throw new VaultStartOwed(vault, `it was sent, and ${NOT_READ_IN_TIME}`, START_READ_STOP.chainUnread);
   if (asDeployed === null) throw new VaultStartOwed(vault, 'it was sent and the chain has not shown it yet.');
   if (asDeployed.refusal !== null) {
-    throw new VaultNotTheCompanys(vault, `${asDeployed.refusal.replace(/ Nothing was sent\.$/u, '')} This vault is not set up and no money `
-      + 'is put into it; create a new vault.');
+    const why = asDeployed.refusal.replace(/ Nothing was sent\.$/u, '');
+    throw new VaultNotTheCompanys(vault, doors.again !== undefined ? why : `${why} This vault is not set up and no money is put into it; create a new vault.`);
   }
 }
 

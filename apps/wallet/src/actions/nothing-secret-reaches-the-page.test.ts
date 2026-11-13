@@ -41,7 +41,17 @@ const KEY = toHex(keyringSealKeyFor(identity, { requester: REQUESTER, person: 'u
 const SEAT = {
   signerId: 'sig_1', signingSecret: '5a'.repeat(32), wrappingSecret: '6b'.repeat(32), blinding: 'fb'.repeat(32), scope: '44'.repeat(32),
 };
-const sealed = () => ({ sealed: sealKeyring({ accounts: { acc_A: SEAT } }, KEY).sealed, version: 5 });
+/* An invitation's token, kept for a seat offered by address and for a role change: it opens the seat's offer. */
+const INVITE_TOKEN = '7c'.repeat(32);
+const ROLE_TOKEN = '7d'.repeat(32);
+const sealed = () => ({
+  sealed: sealKeyring({
+    accounts: { acc_A: SEAT },
+    seatInvitationsKept: { ['ab'.repeat(32)]: { company: 'acc_A', id: 'ab'.repeat(32), token: INVITE_TOKEN, link: 'l', offer: {} as never } },
+    roleChangesKept: { 'acc_A|x': { accountId: 'acc_A', leaf: 'x', coinPublicKey: 'c', role: 'approver', token: ROLE_TOKEN } },
+  }, KEY).sealed,
+  version: 5,
+});
 
 const request = (): ActRequest => ({
   schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: REQUESTER, purpose: 'A test.', nonce: 'n1',
@@ -140,6 +150,32 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
     expect(channel.answer(answer as never)).toBe(true);
     expect(page.ended).toHaveLength(1);
     expect(() => channel.answer({ seats: { acc_A: SEAT } } as never)).not.toThrow();
+  });
+
+  it('an invitation token kept in the saved keys is not sent to the page, however it is carried', async () => {
+    for (const token of [INVITE_TOKEN, ROLE_TOKEN]) {
+      forgetWatched();
+      const page = aPage();
+      const end = await run([{
+        title: { key: 'x' },
+        run: async (c) => { c.keyring!.open(); await c.call('PUT', '/api/accounts/acc_A/vault-keys', JSON.stringify({ link: `https://app.example/join/x#${token.toUpperCase()}` })); },
+      }], page);
+      /* RED WHEN: a token that opens a seat's offer can cross to the page in a call, as a kept invitation's or a role change's. */
+      expect(page.handed).toEqual([]);
+      expect(end.ended).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
+    }
+  });
+
+  it('every set of words a step shows stays in the wallet\'s window, in order, and none is in the end answer', async () => {
+    const page = aPage();
+    const end = await run([{
+      title: { key: 'x' },
+      run: async (c) => { c.show({ key: 'one', values: { link: 'https://app.example/join/a#b' } }); c.show({ key: 'two' }); },
+    }], page);
+    /* RED WHEN: a later show replaces an earlier one, so an invitation's link is lost to a warning shown after it. */
+    expect([end.says, ...end.more]).toEqual([{ key: 'one', values: { link: 'https://app.example/join/a#b' } }, { key: 'two' }]);
+    /* RED WHEN: what the window shows is sent to the page. */
+    expect(JSON.stringify(page.ended)).not.toContain('join/a#b');
   });
 
   it('a value the wallet never opened is no secret of the saved keys, and passes', async () => {

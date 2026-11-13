@@ -528,12 +528,14 @@ const policyDoorsOf = (doors: PolicyGovernanceDoors, viewingKey: KeysHeld, what:
  * CAN.** The opening is the one filed for exactly these terms, or a new one
  * filed now, before the proposal is raised; the same call approves the same
  * policy already raised, and carries it out once the chain counts the approvals
- * any policy change needs. Another signer approving a policy they did not raise
- * takes `approveSpendingPolicyOnDevice`, which files nothing.
+ * any policy change needs, unless asked to stop before that (`stopBeforeCarry`);
+ * `before` is the caller's own check, run again before each send. Another
+ * signer approving a policy they did not raise takes
+ * `approveSpendingPolicyOnDevice`, which files nothing.
  */
 export async function setSpendingPolicyOnDevice(
   doors: PolicyGovernanceDoors,
-  input: { viewingKey: KeysHeld; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire },
+  input: { viewingKey: KeysHeld; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire } & PolicySteps,
 ): Promise<GovernedOutcome> {
   const here = policyDoorsOf(doors, input.viewingKey, 'set');
   if (!/^[0-9a-f]{64}$/iu.test(input.vault)) throw new PolicyNotOpenedHere('That is not a vault\'s address.');
@@ -546,7 +548,7 @@ export async function setSpendingPolicyOnDevice(
   const onChain = (await policiesOf(here.records).onChain([keys.policyKey])).get(keys.policyKey.toLowerCase()) ?? null;
   const opening = await openingToRaise(here, vault, asset, terms, keys, onChain);
   const commitment = await commitmentHere(here, vault, asset)(opening);
-  return policyGoverned(doors, here, { vault, asset, keys }, opening, commitment, {});
+  return policyGoverned(doors, here, { vault, asset, keys }, opening, commitment, input);
 }
 
 /** A spending policy another seat raised, as this device opened it from the proposal and the company's records. */

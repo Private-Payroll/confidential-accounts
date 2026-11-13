@@ -104,6 +104,12 @@ type Stage =
   | { of: 'failed'; says: string; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'sent'; at: number; leaves: LeavesTheWallet[]; pays: PageAskPays };
 
+/** What this wallet cannot check of the vault, and the one check that is made: by the company's own service, and only there. */
+const VAULT_CHECK = 'This wallet cannot check that the vault belongs to that company. If this page is run by the company\u2019s own service, '
+  + 'that service will not send a deposit into a vault it did not see created for the company and that is not pinned to the '
+  + 'company\u2019s account on the chain. A page run by someone else gives you no such check. Compare the vault with one the '
+  + 'company gave you another way.';
+
 export function ApproveBalance({
   request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
   doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader, answerAtOnce = false,
@@ -333,10 +339,7 @@ export function ApproveBalance({
       />
       <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
       <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>{request.vault}</p>
-      <p className="m-0 text-sm text-muted-foreground">
-        This wallet cannot check that the vault belongs to that company. The company&rsquo;s own service refuses a
-        deposit into a vault whose rules its committee does not hold.
-      </p>
+      <p className="m-0 text-sm text-muted-foreground" data-vault-check>{VAULT_CHECK}</p>
     </Section>
   );
 

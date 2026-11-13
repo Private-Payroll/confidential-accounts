@@ -14,9 +14,7 @@
  */
 import type { SignSegment } from '@midnightntwrk/wallet-sdk-facade';
 import { ourServiceTookNothing, serviceNotReached, type ChainCall } from '../../../../packages/web-shared/src/hand-over.js';
-import {
-  refusalForMerge, refusalForPayout, refusalForPublicPayout, refusalForSecretCopy, refusalForSetNonceSecret,
-} from '../../../../src/wiring/vault-submission.js';
+import { isVaultCallKind, movesNothing, vaultCallRefusal } from '../../../../src/wiring/vault-call-checks.js';
 import {
   base64FromBytes, bytesFromBase64, untilItHasReadTheChain, whyThePaymentFailed, type BalanceDoors, type LedgerForBalancing, type WalletPartForBalancing,
 } from './balance-for-page.js';
@@ -462,23 +460,16 @@ function owesMoreThanItsFee(tx: unknown): string | null {
 /**
  * Why the proven call is not what `expected` says is sent, or null when it is: one call to the company's account
  * moving nothing (`notOneCallRefusal`), or the same check the service holds a vault's call to before it relays it
- * (`refusalForSetNonceSecret`, `refusalForSecretCopy`, `refusalForPayout`, `refusalForMerge`,
- * `refusalForPublicPayout`), so the chain path sends nothing the service's shape checks would refuse. A payout, a
- * merge and a public payout move only the vault's own coins: the wallet still adds DUST alone, held to
- * `moreThanTheFeeRefusal`, so none of the person's own money goes in.
+ * (`vaultCallRefusal`, one table for both), so the chain path sends nothing the service's shape checks would refuse.
+ * A call that moves no coin is also held to owing nothing but its fee. A payout, a merge and a public payout move only
+ * the vault's own coins: the wallet still adds DUST alone, held to `moreThanTheFeeRefusal`, so none of the person's own
+ * money goes in.
  */
 export function notWhatIsSentRefusal(tx: unknown, expected: ChainCall): string | null {
-  const vaultCall = (check: (account: string) => string | null): string | null =>
-    (expected.account === undefined ? 'it names no account for the vault it calls' : check(expected.account));
-  switch (expected.kind) {
-    case 'account-call': return notOneCallRefusal(tx, expected.contract, expected.circuit);
-    case 'vault-secret': return vaultCall((account) => refusalForSetNonceSecret(tx, { vault: expected.contract, account })) ?? owesMoreThanItsFee(tx);
-    case 'vault-copy': return refusalForSecretCopy(tx, { vault: expected.contract }) ?? owesMoreThanItsFee(tx);
-    case 'payout': return vaultCall((account) => refusalForPayout(tx, { vault: expected.contract, account }));
-    case 'merge': return refusalForMerge(tx, { vault: expected.contract });
-    case 'public-payout': return vaultCall((account) => refusalForPublicPayout(tx, { vault: expected.contract, account }));
-    default: return 'it is not a kind of call this wallet sends';
-  }
+  if (expected.kind === 'account-call') return notOneCallRefusal(tx, expected.contract, expected.circuit);
+  if (!isVaultCallKind(expected.kind)) return 'it is not a kind of call this wallet sends';
+  const refused = vaultCallRefusal(expected.kind, tx, { vault: expected.contract, account: expected.account });
+  return refused ?? (movesNothing(expected.kind) ? owesMoreThanItsFee(tx) : null);
 }
 
 /**

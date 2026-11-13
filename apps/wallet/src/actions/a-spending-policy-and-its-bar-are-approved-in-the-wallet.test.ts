@@ -30,6 +30,13 @@ const t = vi.hoisted(() => ({
   stops: false,
   /* Each read of who is leaving: whether it was asked strictly. */
   leavingAsked: [] as unknown[],
+  /* The vault's name as the company's records hold it, and each vault it was read for. */
+  named: { state: 'none' } as Record<string, unknown>,
+  namedFor: [] as string[],
+}));
+vi.mock('../../../../packages/web-shared/src/vault-info-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-info-here.js')>()),
+  vaultInfoHere: async (_doors: unknown, vault: string) => { t.namedFor.push(vault); return t.named; },
 }));
 vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
@@ -111,6 +118,7 @@ const reachOf = () => ({
     directoryHereFor: () => async () => ({ dir: { seats: [] }, records: { history: new Map() } }),
     leavesFor: () => async () => [],
     rosterReadsFor: () => ({}),
+    filingJudgeFor: () => async () => ({}),
   },
   sealed: {}, companyKeys: KEYS,
   roster: async () => ({ id: 'acc_1', name: 'Acme', notBelieved: [], signers: SEATS.map((leaf, i) => ({ id: `s${i + 1}`, status: 'active', leafCommitment: leaf })) }),
@@ -159,6 +167,8 @@ beforeEach(() => {
   t.called.length = 0;
   t.events.length = 0;
   t.stops = false;
+  t.named = { state: 'none' };
+  t.namedFor.length = 0;
   t.chain = { [CHAIN_ID]: { held: 'open', approvals: 1, needed: 2, raisedAt: 1 } };
   t.opened = { chainId: CHAIN_ID, governance: { kind: 'policy-bar', bar: '2' } };
   t.read = { chainId: CHAIN_ID, commitment: 'c5'.repeat(32), opening: { terms: TERMS, blinding: 'b5'.repeat(32) }, asset: TOKEN };
@@ -391,6 +401,20 @@ describe('THE WINDOW SAYS WHAT CARRYING A POLICY OR A BAR OUT DOES, IN MONEY THE
     expect(confirmed).toContainEqual({ key: 'act.approve-policy.shown.policy', values: { vault: PAYROLL, token: 'tPAY' } });
     /* RED WHEN: the window does not say the policy raises the approvals a change of who is seated needs to its highest band. */
     expect(confirmed).toContainEqual({ key: 'act.approve-policy.shown.raises-the-seat-bar', values: { approvals: '3' } });
+  });
+
+  it('the Confirm names the vault by the name the company\'s records hold, beside its address, and says when it holds none', async () => {
+    t.named = { state: 'named', name: 'Payroll', description: '', version: 1 };
+    const named = await confirmedOf();
+    /* RED WHEN: a policy is confirmed with the vault named only by its address while the company's records name it. */
+    expect(named).toContainEqual({ key: 'act.approve-policy.shown.policy-named', values: { name: 'Payroll', vault: PAYROLL, token: 'tPAY' } });
+    expect(t.namedFor).toEqual([PAYROLL]);
+    expect(WORDS['act.approve-policy.shown.policy-named']).toMatch(/\{name\} \(\{vault\}\)/u);
+    t.named = { state: 'unread', why: 'withheld', version: null };
+    /* RED WHEN: a name this wallet could not read is shown as if the vault had none, or the policy refused for it. */
+    expect(await confirmedOf()).toContainEqual({ key: 'act.approve-policy.shown.vault-name-unread' });
+    t.named = { state: 'none' };
+    expect(await confirmedOf()).toContainEqual({ key: 'act.approve-policy.shown.vault-unnamed' });
   });
 
   it('a bar\'s window says it also governs who is seated, and warns when it is every signer', async () => {

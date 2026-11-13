@@ -194,6 +194,28 @@ export function authorityOfState(contractState: unknown): (Committee & { readonl
   };
 }
 
+/** Why a vault's deploy is not held by exactly `holders`, untouched since, or null. */
+function bornHeldByRefusal(state: unknown, holders: Committee, what: string): string | null {
+  const authority = authorityOfState(state);
+  if (authority === null || authority.counter !== 0n
+    || !sameCommittee({ committee: authority.committee, threshold: authority.threshold }, holders)) {
+    return `this is not ${what}: a vault is held from its first transaction by the company's committee, at the `
+      + 'company\'s threshold, and this one is held by other keys, at another threshold, or was changed. Nothing was sent.';
+  }
+  return null;
+}
+
+/** Why a vault's state today is not held by exactly `holders`, the committee the company holds now, or null. */
+function heldNowByRefusal(state: unknown, holders: Committee, what: string): string | null {
+  const authority = authorityOfState(state);
+  if (authority === null || !sameCommittee({ committee: authority.committee, threshold: authority.threshold }, holders)) {
+    return `this is not ${what}: it is held now by other keys, or at another threshold, than your company's super admins hold. `
+      + 'Have the super admins make their change again, which moves every vault the company holds or retired, then adopt it '
+      + 'again. Nothing was sent.';
+  }
+  return null;
+}
+
 /**
  * **A VAULT AS IT WAS DEPLOYED IS BORN HELD, OR THE SENTENCE THAT SAYS IT IS
  * NOT.** Held by exactly the company's committee at the company's threshold,
@@ -207,21 +229,23 @@ export function authorityOfState(contractState: unknown): (Committee & { readonl
  * address was made from with it before the vault is adopted or set up. After
  * that, changing who holds the vault or which circuits it runs needs the
  * committee's signatures, and its state changes only through those circuits,
- * so nothing later is read for it.
+ * so nothing later is read for it, except for a vault adopted again.
+ *
+ * With `now`, the vault's state as the chain holds it today, the vault is one
+ * the company retired and adopts again: a change of super admins since its
+ * deploy moved it with the company's other vaults, so who holds it is read off
+ * `now` against the committee the company holds now, never off the deploy, and
+ * so are its circuits. Everything else is still read off the deploy.
  */
-export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHeldExpectations, what: string): string | null {
+export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHeldExpectations, what: string, now?: { readonly state: unknown }): string | null {
   const state = initialState as Record<string, unknown> | null;
-  const authority = authorityOfState(state);
-  if (authority === null || authority.counter !== 0n
-    || !sameCommittee({ committee: authority.committee, threshold: authority.threshold }, expect.holders)) {
-    return `this is not ${what}: a vault is held from its first transaction by the company's committee, at the `
-      + 'company\'s threshold, and this one is held by other keys, at another threshold, or was changed. Nothing was sent.';
-  }
+  const held = now === undefined ? bornHeldByRefusal(state, expect.holders, what) : heldNowByRefusal(now.state, expect.holders, what);
+  if (held !== null) return held;
   const notInstallable = whyNotInstallable(expect.holders);
   if (notInstallable !== null) return `this is not ${what}: ${notInstallable} Nothing was sent.`;
   const money = startsHoldingMoney(state, `this is not ${what}`);
   if (money !== null) return money;
-  const circuits = circuitsRefusal(state, expect.verifierKeys, `this is not ${what}`);
+  const circuits = circuitsRefusal(now === undefined ? state : now.state as Record<string, unknown> | null, expect.verifierKeys, `this is not ${what}`);
   if (circuits !== null) return circuits;
   let start: VaultStartingLedger;
   try {

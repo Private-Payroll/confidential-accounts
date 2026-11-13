@@ -45,11 +45,14 @@
  * **FOR A CHANGE OF WHO HOLDS THE CONTRACTS THIS SERVICE IS A STORE AND A
  * RELAY.** It keeps and hands back each contract's signatures, checking only
  * their shape, that each verifies under the committee holding that contract
- * on the chain, and the counter the chain holds; it sends an update only when
- * a device asks, and pays the fee only once the signatures that verify reach
- * that committee's threshold on the chain. It holds no copy of who the super
- * admins are and has no committee of its own: the only committee it reads is
- * the one holding the company's account on the chain.
+ * on the chain, and the counter the chain holds; it keeps anything only when a
+ * signature given counts, and each place on a committee signs for one change
+ * at a time; it sends an update only when a device asks, and pays the fee only
+ * once the signatures that verify reach that committee's threshold on the
+ * chain. Its four routes admit a member, or a super admin with no seat whose
+ * request its committee key signed (`superAdminOrMember`). It holds no copy of
+ * who the super admins are and has no committee of its own: the only committee
+ * it reads is the one holding the company's account on the chain.
  */
 import express from 'express';
 import { randomUUID } from 'node:crypto';
@@ -67,6 +70,9 @@ import { publicHoldingsOf, PublicBalanceUnreadable } from '../midnight/public-ba
 import { authorityView, type ContractAuthorityView, type PlaceSignature } from '../midnight/company-authority.js';
 import { contractsOwingAChange, type ContractOwingAChange } from '../midnight/committee-change.js';
 import type { CollectedCommitteeSignatures } from '../core/store.js';
+import { aGivenSignatureCounts, committeeSignaturesKept, NONE_COUNTS } from './committee-signatures-kept.js';
+import { superAdminOrMember } from './super-admin-guard.js';
+import { changesKeptFor, changesNamingAt, superAdminChangeRoutes, type SuperAdminChangesStore } from './super-admin-changes-kept.js';
 import { VAULT, vaultStandingIsFunded } from '../../packages/web-shared/src/vault-standing.js';
 import { whyNotInstallable } from 'midnight-identity/profile/request';
 import { joinedBy, superAdminChangeBytes } from 'midnight-identity/profile/committee-sign';
@@ -75,6 +81,7 @@ import {
   refusalForPublicDeposit, refusalForPublicPayout, refusalForSecretCopy, refusalForSetNonceSecret, refusalForStartAccountCall,
   refusalToPutMoneyIn, vaultIsTheCompanys, type ContractAnswer, type FundingFacts, type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
+import { movesNothing, vaultCallRefusal } from '../wiring/vault-call-checks.js';
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
@@ -165,7 +172,7 @@ export interface ServedEventOnTheWire {
 export interface CompanyVaultDeps {
   readonly signedIn: express.RequestHandler;
   readonly member: express.RequestHandler;
-  readonly store: {
+  readonly store: SuperAdminChangesStore & {
     getAccount(id: string): SealedAccount | null;
     putCompanyVault(v: CompanyVault): void;
     getCompanyVault(vault: string): CompanyVault | null;
@@ -989,9 +996,9 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    * **ONLY THE NETWORK FEE, ADDED TO ONE CALL A SEAT'S DEVICE PROVED, AND
    * HANDED BACK FINISHED** for whoever submits it: the company's own service,
    * or the person's wallet straight to the chain. This service pays only for a
-   * call of this company's: one call to the company's own account, or one of
-   * the vault calls its own routes pay for, to a vault of this company's, held
-   * to the same check that route holds it to. The contract checks that the
+   * call of this company's: one call to the company's own account, or one
+   * call to a vault of this company's, held to the check `vaultCallRefusal`
+   * names for its kind, the same a route that sends it holds it to. The contract checks that the
    * seat that proved it may make it; this service checks the call's shape, as
    * the routes that send it do, and a vault's first secret or sealed copy only
    * when its start route would send it (`startStepMayGo`). Nothing is
@@ -1004,7 +1011,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
   r.post('/api/accounts/:id/fee', ...guard, async (req, res) => {
     const body = z.object({
       tx: z.string().min(1).max(VAULT_TX_LIMIT),
-      kind: z.enum(['account-call', 'vault-secret', 'vault-copy', 'payout', 'merge', 'public-payout']),
+      kind: z.enum(['account-call', 'vault-secret', 'vault-copy', 'vault-retire', 'vault-forget', 'payout', 'merge', 'public-payout']),
       contract: z.string().min(1).max(130),
       circuit: z.string().min(1).max(128),
     }).strict().safeParse(req.body);
@@ -1049,15 +1056,8 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         }
       }
       const vault = record.vault;
-      const checks: Record<'vault-secret' | 'vault-copy' | 'payout' | 'merge' | 'public-payout', (tx: unknown) => string | null> = {
-        'vault-secret': (tx) => refusalForSetNonceSecret(tx, { vault, account: company.address }),
-        'vault-copy': (tx) => refusalForSecretCopy(tx, { vault }),
-        payout: (tx) => refusalForPayout(tx, { vault, account: company.address }),
-        merge: (tx) => refusalForMerge(tx, { vault }),
-        'public-payout': (tx) => refusalForPublicPayout(tx, { vault, account: company.address }),
-      };
-      check = checks[kind];
-      arrival = kind === 'vault-secret' || kind === 'vault-copy' ? 'proven-moving-nothing' : 'proven-moving-the-vaults-own-coins';
+      check = (tx) => vaultCallRefusal(kind, tx, { vault, account: company.address });
+      arrival = movesNothing(kind) ? 'proven-moving-nothing' : 'proven-moving-the-vaults-own-coins';
     }
     const member = personOf(req);
     const busy = [...handedBack.values()].find((h) => h.expires > now().getTime() && (h.company === account.id || h.member === member));
@@ -1294,30 +1294,22 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
   /* ---- a change of who holds the company's contracts ---- */
 
   /*
-   * **THE SIGNATURES KEPT FOR ONE CONTRACT'S UPDATE TO `to`, AT `counter`.**
-   * Signatures kept for a counter the chain has moved past are never handed on:
-   * they can never count again.
+   * **THE SIGNATURES KEPT, AND WHO MAY USE THE FOUR ROUTES BELOW**: a member, or
+   * a super admin whose signed request `superAdminOrMember` lets in.
    */
-  const keptRecord = (accountId: string, address: string, counter: bigint): CollectedCommitteeSignatures | null => {
-    const kept = deps.store.getCommitteeSignatures(accountId, address);
-    return kept !== null && kept.counter === counter.toString() && Array.isArray(kept.proposed) ? kept : null;
+  const { keptRecord, keptFor, keep } = committeeSignaturesKept(deps);
+  /* For a vault, which other committees kept for it can still be sent: only the one the account holds on the chain now. */
+  const sendableFor = async (contract: 'account' | 'vault', companyAddress: Hex): Promise<((c: Committee) => boolean) | undefined> => {
+    const accountNow = contract === 'vault' ? await authorityOf(companyAddress) : null;
+    if (accountNow?.state !== 'read') return undefined;
+    const held: Committee = { committee: accountNow.authority.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: accountNow.authority.threshold };
+    return (c) => sameCommittee(c, held);
   };
-  const keptFor = (accountId: string, address: string, counter: bigint, to: Committee): PlaceSignature[] =>
-    (keptRecord(accountId, address, counter)?.proposed.find((p) => sameCommittee(p.to as Committee, to))?.signatures ?? [])
-      .map((x) => ({ index: x.index, signature: { tag: x.signature.tag, value: x.signature.value } }));
-  /** Keeps `counted` as the signatures for `to` at `counter`, and whether an update at that counter was sent. */
-  const keep = (accountId: string, address: string, counter: bigint, to: Committee, counted: readonly PlaceSignature[], sentAt?: string | null) => {
-    const before = keptRecord(accountId, address, counter);
-    const others = (before?.proposed ?? []).filter((p) => !sameCommittee(p.to as Committee, to));
-    deps.store.putCommitteeSignatures({
-      accountId, address: fold(address), counter: counter.toString(),
-      proposed: [...others, {
-        to: { committee: to.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: to.threshold },
-        signatures: counted.map((c) => ({ index: c.index, signature: { tag: c.signature.tag, value: c.signature.value } })),
-      }],
-      sentAt: sentAt === undefined ? before?.sentAt ?? null : sentAt,
-    });
-  };
+  const superAdmins = [deps.signedIn, express.json({ limit: '4mb' }), superAdminOrMember({
+    member: deps.member, accountExists: (id) => deps.store.getAccount(id) !== null,
+    companyAddress: async (id) => (await deps.company(id))?.address ?? null, authorityOf,
+    changesKept: (id, address, counter) => [...(keptRecord(id, address, counter)?.proposed ?? []), ...changesNamingAt(deps.store, id, address, counter)],
+  })];
 
   /*
    * **WHICH OF THIS COMPANY'S CONTRACTS AN ADDRESS IS, READ FROM THE CHAIN**:
@@ -1347,6 +1339,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     void settled.then(() => { if (inTurn.get(key) === settled) inTurn.delete(key); });
     return mine;
   };
+  superAdminChangeRoutes(r, { superAdmins, store: deps.store, company: deps.company, authorityOf, oneAtATime });
 
   /*
    * **THE VAULTS NOT HOLDING THE COMMITTEE THAT HOLDS THE COMPANY'S ACCOUNT ON
@@ -1356,7 +1349,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    * places on that committee whose signatures are kept. Nothing taken from a
    * change in progress is offered.
    */
-  r.get('/api/accounts/:id/committee-change', ...guard, async (req, res) => {
+  r.get('/api/accounts/:id/committee-change', ...superAdmins, async (req, res) => {
     const account = accountOf(req);
     const { company, committee, why } = await accountCommittee(account);
     if (company === null || committee === null) {
@@ -1394,11 +1387,13 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    * For each contract named: that it is the company's on the chain, the
    * counter the chain holds it at, and each signature verifying, at the place
    * it names, under the committee holding it on the chain, over
-   * `committeeUpdateOf`'s bytes for `to`. What verifies is kept; nothing is
-   * sent. No role, seat or signer is read, and `to` is whatever committee the
-   * signatures are over, refused only by the one install rule.
+   * `committeeUpdateOf`'s bytes for `to`. What verifies is kept, and only when
+   * a signature this request gave is among it, each place's newest signature
+   * replacing its older ones (`keep`); nothing is sent. No role, seat or signer is read,
+   * and `to` is whatever committee the signatures are over, refused only by the
+   * one install rule.
    */
-  r.post('/api/accounts/:id/committee-change/signatures', ...guard, async (req, res) => {
+  r.post('/api/accounts/:id/committee-change/signatures', ...superAdmins, async (req, res) => {
     const body = z.object({
       to: TO,
       signatures: z.array(z.object({
@@ -1445,17 +1440,16 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
           });
           return;
         }
+        const places = given.map((g) => ({ index: g.index, signature: g.signature }));
         let assembled: Awaited<ReturnType<NonNullable<CompanyVaultDeps['committeeChange']>>>;
         try {
-          assembled = await assemble({
-            read, to, label: which.label,
-            signatures: [...keptFor(account.id, address, read.authority.counter, to), ...given.map((g) => ({ index: g.index, signature: g.signature }))],
-          });
+          assembled = await assemble({ read, to, label: which.label, signatures: [...keptFor(account.id, address, read.authority.counter, to), ...places] });
         } catch (e) {
           results.push({ address, state: 'refused', nothingWasSent: true, error: (e as Error)?.message ?? String(e) });
           return;
         }
-        keep(account.id, address, read.authority.counter, to, assembled.counted);
+        if (!aGivenSignatureCounts(places, assembled.counted)) { results.push({ address, state: 'refused', nothingWasSent: true, error: NONE_COUNTS }); return; }
+        keep(account.id, address, read.authority.counter, to, assembled.counted, undefined, await sendableFor(which.contract, company.address));
         results.push({ address, state: 'kept', have: assembled.have, required: assembled.required, indexesSigned: assembled.indexesSigned });
       });
     }
@@ -1463,12 +1457,13 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
   });
 
   /* **EVERY SIGNATURE KEPT FOR THIS COMPANY'S CONTRACTS, HANDED BACK**, for each device to count only where it verifies. */
-  r.get('/api/accounts/:id/committee-change/signatures', ...guard, (req, res) => {
+  r.get('/api/accounts/:id/committee-change/signatures', ...superAdmins, (req, res) => {
     const kept = deps.store.listCommitteeSignatures(accountOf(req).id);
     res.json({
       signatures: kept.filter((k) => Array.isArray(k.proposed)).flatMap((k) => k.proposed.flatMap((p) => p.signatures.map((x) => ({
         address: k.address, counter: k.counter, index: x.index, signature: x.signature, to: p.to,
       })))),
+      changes: changesKeptFor(deps.store, accountOf(req).id),
     });
   });
 
@@ -1504,12 +1499,13 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    *     restart or a second process sees it too;
    *   - and only once the signatures that verify, the kept and the given, reach
    *     the threshold of the committee holding the contract on the chain: the
-   *     one count the chain makes, read before any fee is paid.
+   *     one count the chain makes, read before any fee is paid. A request
+   *     short of it keeps what counted only as the signatures route would.
    *
    * No role, seat or signer is read, and nothing here decides which committee
    * the super admins may choose.
    */
-  r.post('/api/accounts/:id/committee-change/send', ...guard, async (req, res) => {
+  r.post('/api/accounts/:id/committee-change/send', ...superAdmins, async (req, res) => {
     const body = z.object({
       address: z.string().regex(HEX64),
       counter: z.string().regex(/^[0-9]{1,20}$/u),
@@ -1601,7 +1597,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         });
       } catch (e) { refuse(409, (e as Error)?.message ?? String(e)); return; }
       if (assembled.proven === null) {
-        keep(account.id, address, read.authority.counter, to, assembled.counted);
+        if (aGivenSignatureCounts(body.data.signatures ?? [], assembled.counted)) keep(account.id, address, read.authority.counter, to, assembled.counted, undefined, await sendableFor(which.contract, company.address));
         refuse(409, `${assembled.have} of the ${assembled.required} signatures the committee holding ${which.label} on the chain needs `
           + 'verify, and the chain refuses an update short of that before it takes it.');
         return;

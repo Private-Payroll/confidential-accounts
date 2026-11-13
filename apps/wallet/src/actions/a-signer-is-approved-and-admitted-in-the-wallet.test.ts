@@ -57,7 +57,7 @@ vi.mock('./upkeep.js', async (real) => {
 const { approveProposalAction } = await import('./approve-proposal.js');
 /* No removal is carried out in these tests: the hook that changes the vault secrets after one is never reached. */
 const AFTER_A_REMOVAL = { afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); } };
-const { addSignerKind } = await import('./proposal-kinds.js');
+const { addSignerKind } = await import('./add-signer-kind.js');
 const { admitSignerAction, ADMIT_STATE } = await import('./admit-signer.js');
 const { ApprovalNotOwed, InvitationNotBound, NothingToApprove } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
 const { runAction } = await import('./run.js');
@@ -173,6 +173,8 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED IN THE WALLET, EXACTLY AS THE 
     /* RED WHEN: the proposal approved is held to anything but what the window showed. */
     expect(asked[1].shown).toEqual({ proposal: APPROVE.proposal, name: 'Eve', role: 'approver', address: APPROVE.address, scope: ALL, coinPublicKey: APPROVE.coinKey });
     expect(Object.values(asked[1])).toContain(KEYS);
+    /* RED WHEN: an approval that sets a new threshold cannot anchor the company's directory first, so it refuses instead. */
+    expect(typeof asked[0].anchorDirectory).toBe('function');
     /* RED WHEN: the coin key is held to an address by anything but the account's own commitments. */
     expect(asked[2]('cc'.repeat(32), '0d'.repeat(32))).toBe(MidnightCommitments.inviteAddressOf('cc'.repeat(32) as never, '0d'.repeat(32) as never));
     /* RED WHEN: the page is told a count or a bar the service or the shared code answered, not the chain's after the approval. */

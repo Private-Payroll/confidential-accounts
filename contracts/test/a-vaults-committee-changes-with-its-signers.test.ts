@@ -759,7 +759,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
           nonce, expiresAt: Date.now() + 600_000, ...ask,
         })));
         const parsed = parseAsk(wire, ORIGIN, Date.now());
-        if (parsed.kind !== 'committee') throw new Error('not a committee change');
+        if (parsed.kind !== 'committee' || parsed.press === 'request') throw new Error('not a committee change');
         asked.push(parsed);
         /* The wallet reads who holds each contract on the chain itself; every vault here is pinned to the company's account. */
         const seen: ChainRead = new Map(contractsToRead(parsed).map((address) => {

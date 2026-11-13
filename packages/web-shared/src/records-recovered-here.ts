@@ -38,7 +38,8 @@ import {
 import type { AnchorsOnChain } from './governed-call-builder.js';
 import type { TreeService } from './record-entered-here.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
-import { keptWith, type CheckedHeadsStore, type HeadersKeptStore } from './tree-kept-here.js';
+import { keptWith, type CheckedHeadsStore, type HeadersKeptStore, type KeptRecoveryWindow } from './tree-kept-here.js';
+import { durationSaid, RECOVERY_WINDOW_RANGE, windowWhenNoneInForce } from '../../../src/midnight/recovery-window-record.js';
 import {
   approveFromAFile, callStateHere, fileCheckedAgainstTheChain, PROPOSAL_FILE_FORMAT, raiseFromTheChain, sentFromHere, standingNow,
   type FromTheChainDoors, type ProposalFile, type SentBy,
@@ -61,6 +62,8 @@ export interface RecoveryDoors extends FromTheChainDoors {
   /** Where the service keeps the company's headers; absent or refusing, the recovery's header is kept on this device only. */
   readonly tree?: Pick<TreeService, 'fileHeader'>;
   readonly now?: () => Date;
+  /** The recovery window this wallet kept as of the last records it checked (`KeptRecoveryWindow`); null when it kept none. */
+  readonly window: () => Promise<KeptRecoveryWindow | null>;
 }
 
 /** Where this device's own read of the company's records stands, and whether the service could be reached for it. */
@@ -196,21 +199,33 @@ const refusedVoid = (approved: string, latest: string, step: string): void => {
   }
 };
 
+/** A recovery refused because the window the records name was not read for the batch it resumes from. */
+export class RecoveryWindowNotRead extends Error {}
+
 /**
  * **HOW FAR AHEAD A RECOVERY'S LAST TIME MAY BE**, from the moment a device
- * raises or approves it: seven days. A recovery needs a quorum, and an honest
- * approver's device refuses one further ahead, so an approval never stays good
- * long after the records have moved on. Read only through
- * `recoveryHorizonSeconds`, so the company can later set it without the checks
- * changing.
+ * raises or approves it: the company's recovery window, as this wallet kept it
+ * for the batch the recovery resumes from (`KeptRecoveryWindow`). A recovery
+ * needs a quorum, and an honest approver's device refuses one further ahead, so
+ * an approval never stays good long after the records have moved on. The chain
+ * does not hold the window, and carrying a recovery out applies none: each
+ * signer's device holds it when it raises or approves.
+ * With no window kept for that batch, the longest the window's range allows,
+ * so a recovery is never refused for being slower than the company chose; with
+ * none in force in the records read, `windowWhenNoneInForce`. A window the
+ * records name that this device holds no key to open refuses the recovery,
+ * until an upkeep reads it.
  */
-const RECOVERY_HORIZON_DAYS = 7;
-
-/** The horizon, in seconds, for the company `accountId`: today the one named value for every company. */
-const recoveryHorizonSeconds = (_accountId: string): number => RECOVERY_HORIZON_DAYS * 24 * 60 * 60;
-
-/** The horizon in whole days, as it is said to the person. */
-const horizonSaid = (accountId: string): string => `${Math.floor(recoveryHorizonSeconds(accountId) / (24 * 60 * 60))} days`;
+async function recoveryHorizonSeconds(doors: Pick<RecoveryDoors, 'window'>, at: { readonly seq: number; readonly head: string }): Promise<number> {
+  const kept = await doors.window();
+  if (kept === null || kept.head.toLowerCase() !== at.head.toLowerCase()) return RECOVERY_WINDOW_RANGE.longest;
+  if (kept.unread !== undefined) {
+    throw new RecoveryWindowNotRead(`this wallet could not read the company's recovery window as of batch ${at.seq}, the batch the recovery resumes from (${kept.unread.replace(/\.\s*$/u, '')}), `
+      + 'so it holds no length for the recovery. Nothing was built or sent. Do an act on this company in your wallet that does the company\'s upkeep '
+      + '(for example setting the recovery window), while its service answers: its last step reads the window again. Then try again');
+  }
+  return kept.seconds ?? windowWhenNoneInForce();
+}
 
 /** The time this device reads now, in whole seconds since 1970, as the chain's block time counts them. */
 const secondsNow = (doors: Pick<RecoveryDoors, 'now'>): number => Math.floor((doors.now ?? (() => new Date()))().getTime() / 1000);
@@ -243,12 +258,13 @@ export async function raiseRecoveryHere(
   if (!Number.isSafeInteger(latest) || latest <= secondsNow(doors)) {
     throw new Error('the last time to carry out a recovery must be later than now. Nothing was sent. Choose a later time');
   }
-  if (latest > secondsNow(doors) + recoveryHorizonSeconds(doors.accountId)) {
-    throw new Error(`the last time to carry out a recovery may be at most ${horizonSaid(doors.accountId)} from now. Nothing was sent. Choose a nearer time`);
-  }
   const own = await ownStandingHere(doors);
   if (own.reached.seq < 0) {
     throw new Error('this device has checked no batch of the company\'s records, so there is nothing a recovery could resume from. Nothing was sent');
+  }
+  const horizon = await recoveryHorizonSeconds(doors, own.reached);
+  if (latest > secondsNow(doors) + horizon) {
+    throw new Error(`the last time to carry out a recovery may be at most ${durationSaid(horizon)} from now, the company's recovery window. Nothing was sent. Choose a nearer time`);
   }
   const resumesFrom: ResumesFrom = { seq: own.reached.seq, head: own.reached.head, root: own.reached.root };
   await standingFor(doors, resumesFrom, input.withoutTheService === true);
@@ -306,8 +322,9 @@ export async function approveRecoveryHere(
 ): Promise<{ readonly sentBy: SentBy; readonly approvalsBefore: number }> {
   const { resumesFrom, latest, lastRecovery } = recoveryOf(file);
   refusedPast(doors, latest, 'approving it now');
-  if (latest > secondsNow(doors) + recoveryHorizonSeconds(doors.accountId)) {
-    throw new Error(`this recovery may be carried out until ${new Date(latest * 1000).toISOString()}, more than ${horizonSaid(doors.accountId)} after now, `
+  const horizon = await recoveryHorizonSeconds(doors, resumesFrom);
+  if (latest > secondsNow(doors) + horizon) {
+    throw new Error(`this recovery may be carried out until ${new Date(latest * 1000).toISOString()}, more than ${durationSaid(horizon)} after now, the company's recovery window, `
       + 'so this device does not approve it: an approval good for that long could be carried out long after the company\'s records have moved on. '
       + 'Nothing was built or sent. Ask the signer who raised it to raise it again with a nearer time');
   }

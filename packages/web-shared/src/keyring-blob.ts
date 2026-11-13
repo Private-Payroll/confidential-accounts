@@ -405,6 +405,27 @@ export function withPaidBy(k: Keyring, company: CompanyLabel): Keyring {
   return { ...k, paidBy: [...listed, company] };
 }
 
+/**
+ * The keyring keeping a re-issued invitation for its seat on `accountId`: the seat that signed it becomes the seat's
+ * inviter and the invitation the one the seat holds, and a directory entry still owed carries the new invitation, so
+ * neither the wallet's records-key check nor the entry filed later names an inviter who left. Refuses a company it
+ * holds no seat on, since a re-issue gives no seat of its own.
+ */
+export function withReissuedInvitationKept(
+  k: Keyring, accountId: string, reissued: { readonly inviter: Inviter; readonly invited: SignedSeatInvitation },
+): Keyring {
+  const seat = k.accounts[accountId];
+  if (seat === undefined) {
+    throw new Error('these saved keys hold no seat on this company, so a re-issued invitation for one is not kept. Nothing was changed.');
+  }
+  const owed = k.directoryEntriesOwed?.[accountId];
+  return {
+    ...k,
+    accounts: { ...k.accounts, [accountId]: { ...seat, invitedBy: reissued.inviter, invited: reissued.invited } },
+    ...(owed === undefined ? {} : { directoryEntriesOwed: { ...k.directoryEntriesOwed, [accountId]: { ...owed, invited: reissued.invited } } }),
+  };
+}
+
 /** The keyring owing this company's directory the entry given: it replaces one owed before, which a newer signing supersedes. */
 export function withOwedEntry(k: Keyring, accountId: string, owed: OwedDirectoryEntry): Keyring {
   return { ...k, directoryEntriesOwed: { ...(k.directoryEntriesOwed ?? {}), [accountId]: owed } };
