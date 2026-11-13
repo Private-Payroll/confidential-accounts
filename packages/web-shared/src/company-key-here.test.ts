@@ -709,6 +709,38 @@ describe('a seat whose copy of the newest key does not open', () => {
     expect(await deviceOn(w, ADA).rotate()).toMatchObject({ state: 'not-needed' });
   });
 
+  it('is repaired on request by a seat holding the newest key, and never by a seat that does not hold it', async () => {
+    const w = aWorld([ADA, BO, CY]);
+    w.retire(CY);
+    await aBadCopyForAda(w);
+    const repair = (p: Person) => rotateTheCompanyKeyHere(deviceOn(w, p).doors, { repair: true });
+    /* RED WHEN: a seat whose own copy of the newest key does not open files a repair, under a key it cannot vouch for. */
+    expect(await repair(ADA)).toMatchObject({ state: 'not-rotated', why: expect.stringMatching(/holds no copy of the company's newest key/u) });
+    /* RED WHEN: a seat holding the newest key cannot repair it when asked, so a seat whose copy does not open stays shut out. */
+    expect(await repair(BO)).toMatchObject({ state: 'rotated', epoch: 2 });
+    const made = newestRotation(w);
+    /* A repair is a new key for every staying seat, made from the newest one, with the payout seed kept. */
+    expect([made.repairs, made.seed, made.wraps.map((x) => x.seat).sort()]).toEqual([1, undefined, [ADA.seat, BO.seat].sort()]);
+    const ada = await deviceOn(w, ADA).key();
+    expect([ada.epoch, ada.notSealing]).toEqual([2, null]);
+    /* RED WHEN: a repair is filed with nothing asked and nothing owed. */
+    expect(await deviceOn(w, BO).rotate()).toMatchObject({ state: 'not-needed' });
+  });
+
+  it('a repair asked for while a removal\'s change of the key is owed files nothing, and the owed change is made first', async () => {
+    const w = aWorld([ADA, BO, CY]);
+    w.retire(CY);
+    const before = w.filings.length;
+    /* RED WHEN: a repair asked for files the change a removal owes, with a new payout seed, under the words of a repair. */
+    expect(await rotateTheCompanyKeyHere(deviceOn(w, BO).doors, { repair: true })).toMatchObject({
+      state: 'waits', why: expect.stringMatching(/next action of a signer who stays makes it at its start/u),
+    });
+    expect(w.filings).toHaveLength(before);
+    /* The owed change itself is made by the ordinary change, with its own seed. */
+    expect(await deviceOn(w, BO).rotate()).toMatchObject({ state: 'rotated', epoch: 1 });
+    expect(newestRotation(w).seed).toBeDefined();
+  });
+
   it('a change of the key this device does not believe is refused without promising a change no device makes', async () => {
     const w = aWorld([ADA, BO, CY]);
     w.retire(CY);

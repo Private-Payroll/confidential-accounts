@@ -79,7 +79,7 @@ aCompanyOfTwoSeats((app, deps) => {
     signedIn: deps.signedIn, member: deps.member, ownsProposal, refuseSigningSecret,
     store, ledger, directoryOf: deps.directoryOf, recordRefusal: () => undefined,
     proposalIdOf: (h, salt, vault) => MidnightCommitments.proposalId(h as Hex, salt as Hex, vault as Hex | undefined),
-    adoptionOf: (vault) => adoptionRoundOf(pureCircuits as unknown as AccountStartPure, vault),
+    adoptionOf: (vault, again) => adoptionRoundOf(pureCircuits as unknown as AccountStartPure, vault, again),
     vaultsAdopted: async () => (chain.unreadable ? null : [...adopted]),
     firstSecretRunOf: (vault, parts) => firstSecretRunCarriedOf({ vault: vaultPure as never, account: pureCircuits as never }, vault, parts),
     vaultSecretOf: async (vault) => (chain.unreadable ? null : { commitment: secrets.get(vault) ?? '00'.repeat(32), started: started.has(vault) }),

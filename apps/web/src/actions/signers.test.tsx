@@ -17,6 +17,8 @@ const kr = vi.hoisted(() => ({
   hold: null as Promise<void> | null, company: null as unknown, reads: 0, reloads: 0, user: { id: 'u1' } as { id: string } | null,
   /** Where the company stands, as the committee change reads it, and what signing a change comes to. */
   handover: { of: 'held' } as Record<string, unknown>, signed: { of: 'done' } as Record<string, unknown>, signs: 0,
+  /** What this seat's own read of the company comes to: a refusal word, or the seat, its key and the directory. */
+  seat: 'no-keys-here' as unknown,
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -52,6 +54,13 @@ vi.mock('../adapters/handover-state.js', async (real) => ({
 }));
 vi.mock('../adapters/committee-change.js', () => ({
   signChange: vi.fn(async () => { kr.signs += 1; return kr.signed; }),
+}));
+vi.mock('../adapters/vault-private-money.js', async (real) => ({
+  ...(await real<typeof import('../adapters/vault-private-money.js')>()),
+  seatAndRecordsHere: async () => kr.seat,
+}));
+vi.mock('../adapters/vault-secrets-owed.js', () => ({
+  vaultSecretsOwed: async () => ({ of: 'read', owed: [], unread: [] }),
 }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
@@ -110,7 +119,7 @@ const draw = async (node: React.ReactNode = <Signers />) => { inPage(node); awai
 
 beforeEach(() => {
   kr.acts = []; kr.steps = []; kr.hold = null; kr.reads = 0; kr.reloads = 0; kr.user = { id: 'u1' }; kr.company = records();
-  kr.handover = { of: 'held' }; kr.signed = { of: 'done' }; kr.signs = 0;
+  kr.handover = { of: 'held' }; kr.signed = { of: 'done' }; kr.signs = 0; kr.seat = 'no-keys-here';
   kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'approved' } };
 });
 afterEach(cleanup);
@@ -414,7 +423,7 @@ describe('approving an invitation', () => {
     kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'approved' } };
     await draw();
     await press('[data-invited=prop_1] [data-action=approve-signer]');
-    expect(q('[data-next-steps]')!.textContent).toBe(en('signers.done.next_other').replace('{count}', '3').replace('{name}', 'Sam'));
+    expect(q('[data-next-steps]')!.textContent).toBe(en('signers.done.next').replace('{needs}', en('invite.approvals.raisedUnnamed_other').replace('{count}', '3')).replace('{name}', 'Sam'));
     expect(q('[data-next-steps]')!.textContent).toMatch(/other signers give the rest.*takes the seat from their own wallet.*presses Finish adding/);
     cleanup(); kr.company = records({ approvalsForSigners: { of: 'unreadable' } });
     await draw();
@@ -512,7 +521,7 @@ describe('approving an invitation', () => {
     kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'waiting-for-approvals', approvals: 1 } };
     await draw();
     await press('[data-invited=prop_1] [data-action=approve-signer]');
-    expect(q('[data-next-steps]')!.textContent).toBe(en('signers.done.next_other').replace('{count}', '3').replace('{name}', 'Sam'));
+    expect(q('[data-next-steps]')!.textContent).toBe(en('signers.done.next').replace('{needs}', en('invite.approvals.raisedUnnamed_other').replace('{count}', '3')).replace('{name}', 'Sam'));
   });
 
   /* RED WHEN: an invitation that carries no coin key can be pressed to approve, or sends the person to a Withdraw this page does not have, or does not say plainly it cannot be approved and who to ask. */
@@ -532,10 +541,15 @@ describe('approving an invitation', () => {
     /* The reasons only a removal or the vault secrets' change gives are tried in signers-remove.test.tsx, through those presses. */
     const ofTheSwitch = new Set<string>([
       WHY.notARemoval, WHY.removalRefused, WHY.notRaised, WHY.notCarried, WHY.notAsShown, WHY.notRead, WHY.notReadToRaise, WHY.noSuchSeat, WHY.noSuchSeatToRaise,
-      WHY.unreadSeatFirst, WHY.outrun, WHY.noPerson, WHY.notAVault,
+      WHY.unreadSeatFirst, WHY.outrun, WHY.noPerson, WHY.notAVault, WHY.notRotated, WHY.waits, WHY.notThisSeat, WHY.notNeeded, WHY.notRepaired,
+    ]);
+    /* The reasons only withdrawing, sending an invitation again or adding from a code gives are tried below, through those presses. */
+    const ofAWaitingSigner = new Set<string>([
+      WHY.mayNot, WHY.notWithdrawn, WHY.withheld, WHY.notASeat, WHY.notMade, WHY.notTaken, WHY.noRole, WHY.notACode, WHY.notWaiting, WHY.notOpened,
+      WHY.noScope, WHY.noOpening,
     ]);
     for (const [key, code] of Object.entries(WHY)) {
-      if (giving.has(code) || ofTheSwitch.has(code)) continue;
+      if (giving.has(code) || ofTheSwitch.has(code) || ofAWaitingSigner.has(code)) continue;
       cleanup(); kr.acts = [];
       const refused = code === WHY.stopped ? undefined : `act.approve-proposal.why.${code}`;
       kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', ...(refused === undefined ? {} : { refused }) };
@@ -703,26 +717,154 @@ describe('one act, one read of the records', () => {
   });
 });
 
-describe('the committee change inside it', () => {
-  /* RED WHEN: the component leaves out the committee change (who holds the company, and a change owed), or draws it twice, so the page and the wizard's step would not show the same thing. */
-  it('draws the committee change once, below the signers, with what holds the company', async () => {
+describe('the committee change', () => {
+  /* RED WHEN: the signers page draws the change of the super admins again, so the page shows a control that belongs to Super admins. */
+  it('is not drawn on the signers page', async () => {
     kr.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
     await draw();
-    expect(qa('[data-action=committee-change]')).toHaveLength(1);
-    expect(q('[data-action=committee-change]')!.getAttribute('data-state')).toBe('change-owed');
-    expect(q('[data-action=signers]')!.compareDocumentPosition(q('[data-action=committee-change]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(qa('[data-change-owed] li').map((li) => li.textContent)).toEqual(['1 of 2 signed']);
+    expect(qa('[data-action=committee-change]')).toHaveLength(0);
+  });
+});
+
+const ADMIN = HEX(2);
+const seatOf = (role: string, over: { epoch?: number; newest?: number; retired?: boolean; onChain?: boolean } = {}) => ({
+  leaf: ADMIN,
+  viewingKey: { epoch: over.epoch ?? 2, newest: over.newest ?? 2 },
+  directory: async () => ({
+    dir: { seats: [{ seat: ADMIN, role, retired: over.retired === true ? 3 : null }] },
+    holders: { seats: over.onChain === false ? [] : [ADMIN] },
+  }),
+});
+
+describe('repairing the company key', () => {
+  /* RED WHEN: the repair is shown to a seat that is not on the chain, is leaving, holds an older key than the newest, or has a role that files no proposal, or is not shown to one that may. */
+  it('is offered only to a seat on the chain that holds the newest key and may invite', async () => {
+    const shown = async (seat: unknown): Promise<boolean> => { cleanup(); kr.seat = seat; await draw(); return q('[data-repair-key]') !== null; };
+    expect(await shown(seatOf('admin'))).toBe(true);
+    expect(await shown('no-keys-here')).toBe(false);
+    expect(await shown(seatOf('accountant'))).toBe(false);
+    expect(await shown(seatOf('admin', { epoch: 1, newest: 2 }))).toBe(false);
+    expect(await shown(seatOf('admin', { retired: true }))).toBe(false);
+    expect(await shown(seatOf('admin', { onChain: false }))).toBe(false);
   });
 
-  /* RED WHEN: signing the change owed does not tell the step that called the component, so the wizard goes on showing what it read before. */
-  it('tells the caller when the change owed is signed', async () => {
-    kr.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
-    const onChanged = vi.fn();
-    await draw(<Signers onChanged={onChanged} />);
-    await press('[data-action=sign-change]');
-    fireEvent.click([...document.body.querySelectorAll('button')].find((b) => b.textContent === en('kit.confirm.confirm'))!);
-    await settle();
-    expect(kr.signs).toBe(1);
-    expect(onChanged).toHaveBeenCalledTimes(1);
+  /* RED WHEN: the repair says nothing of who asks whom when a copy of the company's key does not open, or says readers keep their access without saying the wallet can refuse the wrapping. */
+  it('says a signer whose copy does not open asks a signer like this one, and what readers keep only as the wallet can deliver it', async () => {
+    kr.seat = seatOf('admin');
+    await draw();
+    expect(q('[data-repair-ask]')!.textContent).toBe(en('signers.repair.ask'));
+    expect(q('[data-repair-readers]')!.textContent).toBe(en('signers.repair.readers'));
+    expect(en('signers.repair.readers')).toMatch(/can refuse/);
+  });
+
+  /* RED WHEN: the press asks the wallet for another act or company, tells what became of the key in the wrong words, or says the work after the repair was all done when the wallet said some was left. */
+  it('asks the wallet to repair this company\'s key and says what became of it and of the work after it', async () => {
+    kr.seat = seatOf('admin');
+    kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'rotated', epoch: 3, upkeep: 'done' } };
+    await draw();
+    await press('[data-action=repair-company-key]');
+    expect(kr.acts).toEqual([{ name: 'repair-company-key', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32) }]);
+    expect(q('[data-acted=repair-company-key]')!.textContent).toBe(en('signers.rotation.rotated'));
+    expect(q('[data-repair-upkeep]')!.textContent).toBe(en('signers.repair.upkeepDone'));
+    cleanup();
+    kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'filed-not-anchored', epoch: 3, upkeep: 'partial' } };
+    await draw();
+    await press('[data-action=repair-company-key]');
+    expect(q('[data-acted=repair-company-key]')!.textContent).toBe(en('signers.rotation.filed-not-anchored'));
+    expect(q('[data-repair-upkeep]')!.textContent).toBe(en('signers.repair.upkeepPartial'));
+    cleanup();
+    kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'nonsense' } };
+    await draw();
+    await press('[data-action=repair-company-key]');
+    expect(q('[data-acted=repair-company-key]')!.textContent).toBe(en('signers.repair.unknownState'));
+  });
+
+  /* RED WHEN: a refusal of the repair is told in another act's words, or a stop that may have gone part of the way does not say to press again. */
+  it('tells each stop of the repair in its own words, and offers the press again only after one that may have gone part of the way', async () => {
+    for (const code of [WHY.notRotated, WHY.waits, WHY.notThisSeat, WHY.notNeeded, WHY.notRepaired]) {
+      cleanup(); kr.seat = seatOf('admin');
+      kr.ended = { of: 'stopped', step: 2, steps: 5, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: `act.repair-company-key.why.${code}` };
+      await draw();
+      await press('[data-action=repair-company-key]');
+      const shown = q('[data-signer-stopped]')!;
+      expect(shown.dataset['signerStopped'], code).toBe(code);
+      expect(shown.textContent, code).toContain(en(`signers.why.${code}`));
+      expect(shown.textContent!.includes(en('signers.partial')), code).toBe(code === WHY.notRepaired);
+    }
+  });
+});
+
+describe('a person waiting is withdrawn, an invitation sent again, and a signer added from their code', () => {
+  /* Tia accepted and waits for a seat the network does not hold; Uma is seated and her entry is not in the directory; Vik's could not be read. */
+  const waiting = () => records({
+    signerStandings: read([standing('s1', 'Priya', false, true, { you: true, entryFiled: true }), standing('s3', 'Tia', true, false), standing('s5', 'Uma', false, true, { entryFiled: false }),
+      standing('s6', 'Vik', false, true, { entryFiled: null })]),
+  });
+  const BASE = { record: 'c-1', company: 'label-1', account: 'c0'.repeat(32) };
+
+  it('offers Withdraw only to a person who accepted and waits, and asks the wallet to withdraw that request', async () => {
+    kr.company = waiting();
+    kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: 'withdrawn' } };
+    await draw();
+    /* RED WHEN: Withdraw is offered on a seated signer, whose seat a withdrawal cannot undo. */
+    expect(qa('[data-action=withdraw-waiting-signer]').map((b) => b.closest('[data-signer]')!.getAttribute('data-signer'))).toEqual(['s3']);
+    await press('[data-action=withdraw-waiting-signer]');
+    /* RED WHEN: the wallet is asked to withdraw another request than the one pressed. */
+    expect(kr.acts).toEqual([{ name: 'withdraw-waiting-signer', ...BASE, signer: 's3', personName: 'Tia' }]);
+    expect(q('[data-acted=withdraw-waiting-signer]')!.textContent).toBe(en('signers.done.withdrawn').replace('{name}', 'Tia'));
+  });
+
+  it('offers to send the invitation again only to another signer seated whose entry is not filed, by their seat, and never tells the page the link', async () => {
+    kr.company = waiting();
+    kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: 'reissued' } };
+    await draw();
+    /* RED WHEN: sending again is offered to your own seat, to one whose entry is filed or unread, or to someone not seated. */
+    expect(qa('[data-action=reissue-invitation]').map((b) => b.closest('[data-signer]')!.getAttribute('data-signer'))).toEqual(['s5']);
+    await press('[data-action=reissue-invitation]');
+    expect(kr.acts).toEqual([{ name: 'reissue-invitation', ...BASE, leaf: HEX(5), personName: 'Uma' }]);
+    /* RED WHEN: the page says it holds the link, which only the wallet's window shows. */
+    expect(q('[data-acted=reissue-invitation]')!.textContent).toBe(en('signers.done.reissued').replace('{name}', 'Uma'));
+    expect(en('signers.done.reissued')).toMatch(/in its own window/u);
+  });
+
+  it('adds a signer from their code as an admin, then proposes their seat with the fingerprint they read out', async () => {
+    kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: 'filed', signer: 'sgn_gil' } };
+    await draw();
+    fireEvent.change(q('[data-code-field=code]')!, { target: { value: ' mnjoin1.abc ' } });
+    fireEvent.change(q('[data-code-field=name]')!, { target: { value: 'Gil' } });
+    await press('[data-action=add-signer-by-code]');
+    /* RED WHEN: a code is added at another role than an admin's, or with the page's spaces around it. */
+    expect(kr.acts).toEqual([{ name: 'add-signer-by-code', ...BASE, code: 'mnjoin1.abc', personName: 'Gil', role: 'admin' }]);
+    expect(q('[data-acted=add-signer-by-code]')!.textContent).toBe(en('signers.code.filed').replace('{name}', 'Gil'));
+    kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'waiting-for-approvals' } };
+    fireEvent.change(q('[data-code-field=read-out]')!, { target: { value: ' FP-12 ' } });
+    await press('[data-action=raise-waiting-signer]');
+    /* RED WHEN: the seat proposed is not the request the wallet filed from the code, or the fingerprint read out is not passed on. */
+    expect(kr.acts[1]).toEqual({ name: 'raise-waiting-signer', ...BASE, signer: 'sgn_gil', personName: 'Gil', readOut: 'FP-12' });
+    expect(q('[data-acted=raise-waiting-signer]')!.textContent).toBe(en('signers.code.raised').replaceAll('{name}', 'Gil'));
+  });
+
+  it('says each reason the wallet stops these for in the page\'s own words', async () => {
+    const tried: Array<[string, string, string]> = [
+      ['withdraw-waiting-signer', WHY.mayNot, 'signers.why.may-not'], ['withdraw-waiting-signer', WHY.notWithdrawn, 'signers.why.not-withdrawn'],
+      ['withdraw-waiting-signer', WHY.withheld, 'signers.why.withheld'], ['withdraw-waiting-signer', WHY.chainUnread, 'signers.why.withdraw.chain-unread'],
+      ['withdraw-waiting-signer', WHY.noOpening, 'signers.why.no-opening'], ['withdraw-waiting-signer', 'refused', 'signers.why.service-refused'],
+      ['reissue-invitation', WHY.notASeat, 'signers.why.not-a-seat'], ['reissue-invitation', WHY.notMade, 'signers.why.not-made'],
+      ['reissue-invitation', WHY.notRead, 'signers.why.reissue.not-read'],
+      ['add-signer-by-code', WHY.notTaken, 'signers.why.not-taken'], ['add-signer-by-code', WHY.noRole, 'signers.why.no-role'],
+      ['add-signer-by-code', WHY.notACode, 'signers.why.not-a-code'],
+    ];
+    for (const [act, code, words] of tried) {
+      cleanup(); kr.acts = []; kr.company = waiting();
+      kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: `act.${act}.why.${code}` };
+      await draw();
+      if (act === 'add-signer-by-code') {
+        fireEvent.change(q('[data-code-field=code]')!, { target: { value: 'mnjoin1.abc' } });
+        fireEvent.change(q('[data-code-field=name]')!, { target: { value: 'Gil' } });
+      }
+      await press(`[data-action=${act}]`);
+      /* RED WHEN: a stop of these is said in another act's words, or in none. */
+      expect(q('[data-signer-stopped]')!.textContent, `${act} ${code}`).toContain(en(words));
+    }
   });
 });

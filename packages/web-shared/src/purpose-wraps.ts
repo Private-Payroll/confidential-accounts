@@ -4,7 +4,7 @@
  * device believes (`grantsHere`): its filer as every filing is, its signers counted at the chain's seat bar (as the
  * company's records anchored it, for a version they anchor: `grantsCountAsAnchored`), its change in order
  * (`grantsInForceOf`). From the grants in force:
- *   - a reader's own purpose keys, unwrapped from its own wraps (`purposeWrapsHeldFrom`), which the keys-by-purpose seam
+ *   - a reader's own purpose keys, unwrapped from its own wraps in its own wallet (`readerKeysHere`, `purposeWrapsHeldFrom`), which the keys-by-purpose seam
  *     answers for a reader in place of the company key; they never answer `formerKeyFor`, so a reader never opens a
  *     person sealed under `payroll` before people had a purpose of their own;
  *   - the readers a spending policy is sealed to beside the seats (`policyReadersIn`);
@@ -17,14 +17,15 @@ import type { PurposeKeys, Purpose } from '../../../src/core/sealed-records.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { fromHex } from '../../../src/core/crypto.js';
 import {
-  GRANTS_RECORD, grantsInForceOf, openGrants, readerIdOf, type Grants, type GrantsCount, type GrantsInForce,
+  GRANTS_RECORD, grantsInForceOf, openGrants, readerIdOf, type Grants, type GrantsCount, type GrantsInForce, type GrantsQuorum, type GrantsVersion,
 } from '../../../src/midnight/grants-record.js';
-import { companyRecordEntry, recordKeyOf } from '../../../src/midnight/record-manifest.js';
+import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import { companyWirePaths, fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { judgeIn, kindAsked, type DirectoryHere, type DirectoryRead } from './vault-page-doors.js';
 import { barReadable } from '../../../src/midnight/seat-quorum.js';
+import { countAsAnchoredFor, versionsWithheldIn } from './signed-record-here.js';
 
 /**
  * A reader's purpose keys, by key epoch, unwrapped from the grants in force: what the keys-by-purpose seam answers for a
@@ -113,17 +114,9 @@ class GrantsUnread extends Error {
  * not serve, so a taking-away could be hidden; or why the record was not given at all though they name one. Null when
  * every version they name was served.
  */
-const grantsWithheldIn = (here: DirectoryHere, served: readonly SealedCompanyRecord[]): string | null => {
-  const read = { store: 'company' as const, kind: GRANTS_RECORD.kind, id: GRANTS_RECORD.id };
-  if (served.length === 0) return judgeIn(here).withheld?.(read) ?? null;
-  const named = [
-    ...(here.records.history.get(recordKeyOf(read)) ?? []).map((v) => v.version),
-    ...here.records.notYetAnchored.filter((e) => e.store === 'company' && e.kind === read.kind && e.id === read.id).map((e) => e.version),
-  ];
-  const missing = named.filter((v) => !served.some((r) => r.version === v));
-  return missing.length === 0 ? null : `the company's records name version ${Math.max(...missing)} of them and the service did not give it. `
-    + 'Reload the page; if it happens again, the service is withholding the company\'s read grants';
-};
+const grantsWithheldIn = (here: DirectoryHere, served: readonly SealedCompanyRecord[]): string | null =>
+  versionsWithheldIn(here, served, GRANTS_RECORD, (version) => `the company's records name version ${version} of them and the service did not give it. `
+    + 'Reload the page; if it happens again, the service is withholding the company\'s read grants', judgeIn(here).withheld);
 
 const AS_ANCHORED_UNREAD = 'who held the company\'s account when the records anchored a version of them could not be read, so no '
   + 'signature on it is counted. Reload the page; if it happens again, the service is withholding the company\'s directory '
@@ -136,17 +129,8 @@ const AS_ANCHORED_UNREAD = 'who held the company\'s account when the records anc
  * now. An anchored version whose count cannot be read here, or served as other bytes than the anchor holds, stops the
  * read (`GrantsUnread`): counted against today instead, a signer removed since could bring back a reader taken away.
  */
-const grantsCountAsAnchored = (here: DirectoryHere, filed: readonly SealedCompanyRecord[]) => (version: number): GrantsCount | undefined => {
-  const anchored = (here.records.history.get(recordKeyOf({ store: 'company', ...GRANTS_RECORD })) ?? []).find((v) => v.version === version);
-  if (anchored === undefined) return undefined;
-  const rec = filed.find((r) => r.version === version);
-  const held = here.records.held?.(anchored.dirVersion) ?? null;
-  const then = held === null ? null : here.at(anchored.dirVersion);
-  if (rec === undefined || companyRecordEntry(rec).digest !== anchored.digest || held === null || then === null) {
-    throw new GrantsUnread(AS_ANCHORED_UNREAD);
-  }
-  return { seats: then.dir.seats, held: (seat) => held.seats.includes(seat.seat), bar: held.seatBar };
-};
+const grantsCountAsAnchored = (here: DirectoryHere, filed: readonly SealedCompanyRecord[]): (version: number) => GrantsCount | undefined =>
+  countAsAnchoredFor(here, filed, GRANTS_RECORD, () => new GrantsUnread(AS_ANCHORED_UNREAD));
 
 /**
  * **THE GRANTS IN FORCE AS THIS DEVICE BELIEVES THEM.** A version whose filer the directory refuses is not opened. Read
@@ -154,6 +138,20 @@ const grantsCountAsAnchored = (here: DirectoryHere, filed: readonly SealedCompan
  * seat bar, throws (`GrantsUnread`), so no device reads a taking-away as absent.
  */
 export async function grantsHere(doors: GrantsDoors): Promise<GrantsHere> {
+  const { ours, here, filed, quorum } = await grantsJudgedHere(doors);
+  const judged = grantsInForceOf(doors.accountId, filed.map((rec) => ({ version: rec.version, keyEpoch: rec.keyEpoch, grants: openGrants(rec, doors.me) })), quorum);
+  const sealedTo = ours.find((rec) => rec.version === judged.inForce?.version)?.wrapped.map((w) => String(w.signerId).toLowerCase()) ?? [];
+  return { ...judged, here, highest: ours.reduce((n, r) => Math.max(n, r.version), 0), inForceSealedTo: sealedTo };
+}
+
+/**
+ * The company's grants as served, the directory they are judged by, the versions whose filer it believes, and the
+ * quorum each version's signatures are counted against: the chain's seats and seat bar, or as the records anchored it.
+ * Throws as `grantsHere` does for a version withheld or a chain read with no seat bar.
+ */
+async function grantsJudgedHere(doors: Pick<GrantsDoors, 'accountId' | 'versions' | 'directory'>): Promise<{
+  readonly ours: readonly SealedCompanyRecord[]; readonly here: DirectoryHere; readonly filed: readonly SealedCompanyRecord[]; readonly quorum: GrantsQuorum;
+}> {
   const [served, here] = await Promise.all([doors.versions(), doors.directory(kindAsked('company', GRANTS_RECORD.kind))]);
   const judge = judgeIn(here);
   const ours = served.filter((rec) => rec.company === doors.accountId && rec.kind === GRANTS_RECORD.kind && rec.id === GRANTS_RECORD.id);
@@ -164,12 +162,11 @@ export async function grantsHere(doors: GrantsDoors): Promise<GrantsHere> {
   }
   const filed = ours.filter((rec) =>
     judge(verifiedCompanyFiler(rec), GRANTS_RECORD.kind, companyRecordKey(GRANTS_RECORD.kind, GRANTS_RECORD.id), companyRecordEntry(rec)) === null);
-  const judged = grantsInForceOf(doors.accountId, filed.map((rec) => ({ version: rec.version, keyEpoch: rec.keyEpoch, grants: openGrants(rec, doors.me) })), {
+  const quorum: GrantsQuorum = {
     seats: here.dir.seats, held: (seat) => here.holders.seats.includes(seat.seat), bar: Number(here.holders.seatBar),
     newest: (here.dir.rotations ?? []).reduce((n, r) => Math.max(n, r.epoch), 0), asAnchored: grantsCountAsAnchored(here, filed),
-  });
-  const sealedTo = ours.find((rec) => rec.version === judged.inForce?.version)?.wrapped.map((w) => String(w.signerId).toLowerCase()) ?? [];
-  return { ...judged, here, highest: ours.reduce((n, r) => Math.max(n, r.version), 0), inForceSealedTo: sealedTo };
+  };
+  return { ours, here, filed, quorum };
 }
 
 /** The readers a spending policy is sealed to beside the seats: each entry of the grants in force that reads `policy`. */
@@ -214,21 +211,59 @@ export const grantsServedBy = (api: (path: string) => Promise<unknown>, accountI
     ? b!.versions.map((m) => fromCompanyWire(m, { company: accountId, kind: GRANTS_RECORD.kind, id: GRANTS_RECORD.id }).sealed) : [];
 };
 
+/** What a reader's own device finds in the grants: its keys, a grant in force that takes it away, or neither. */
+export type ReaderKeysFound =
+  | { readonly of: 'held'; readonly held: PurposeWrapsHeld }
+  | { readonly of: 'taken-away'; readonly version: number }
+  | { readonly of: 'none' };
+
 /**
- * **A READER'S PURPOSE KEYS, FROM ITS OWN DEVICE.** The newest version of the grants sealed to the reader gives the
- * roster key it opens the company's directory with; the grants are then judged by that directory, and the keys are
- * the reader's own wraps in the grants in force. Null when no version names it. A reader whose grant was taken away
- * holds only the keys wrapped to it before: nothing sealed after the company's key changed opens with them.
+ * The version in force as the company's devices fold the grants (`grantsInForceOf`), over only the versions this reader
+ * opens. A reader is sealed every version from its grant to the change that takes it away, so it follows that run of
+ * changes as every device does; across a gap (a version it cannot open) it takes up the fold again with no prior. At
+ * each change of the grants the fold is given the version decided at the change before, if any, and every version
+ * filed at this one: the first at the bar decides its entries (a later one with other entries is refused), the newest
+ * with those entries gives its wraps, and a change that only narrows counts as the company counts it. The latest change
+ * that decides a version is the one in force.
+ */
+export function inForceForAReader(accountId: string, opened: readonly GrantsVersion[], quorum: GrantsQuorum): GrantsVersion | null {
+  const sequences = [...new Set(opened.map((v) => v.grants.sequence))].sort((a, b) => a - b);
+  const decided = new Map<number, GrantsVersion>();
+  for (const s of sequences) {
+    const before = decided.get(s - 1);
+    const at = opened.filter((v) => v.grants.sequence === s).sort((a, b) => a.version - b.version);
+    const now = grantsInForceOf(accountId, before === undefined ? at : [before, ...at], quorum).inForce;
+    if (now !== null && now.grants.sequence === s) decided.set(s, now);
+  }
+  const latest = Math.max(-1, ...decided.keys());
+  return decided.get(latest) ?? null;
+}
+
+/**
+ * **A READER'S PURPOSE KEYS, FROM ITS OWN DEVICE.** The newest version of the grants that wraps the reader keys gives
+ * the roster key it opens the company's directory with; the versions sealed to it are then judged by that directory as
+ * every device judges them (filer believed, none withheld that the records name, a chain read with its seat bar), and
+ * folded as every device folds them (`inForceForAReader`). Where the version in force wraps the reader keys, those
+ * are its keys; where it was sealed to the reader with none, it takes the reader away and nothing is handed; a reader
+ * given again reads the grant it was given again. One seat alone, below the bar, neither takes a reader away nor gives
+ * back an older grant. None when no version it opens is in force.
  */
 export async function readerKeysHere(doors: {
   readonly accountId: string; readonly versions: () => Promise<readonly SealedCompanyRecord[]>;
   readonly directoryFor: (held: PurposeWrapsHeld) => DirectoryRead; readonly me: { readonly recipient: string; readonly wrappingSecret: Hex };
-}): Promise<PurposeWrapsHeld | null> {
+}): Promise<ReaderKeysFound> {
   const served = await doors.versions();
   const me = { signerId: readerIdOf(doors.me.recipient), wrappingSecret: doors.me.wrappingSecret };
-  const newest = [...served].sort((a, b) => b.version - a.version).map((rec) => openGrants(rec, me)).find((g) => g !== null) ?? null;
-  const first = newest === null ? null : purposeWrapsHeldFrom(doors.accountId, newest, doors.me);
-  if (first === null) return null;
-  const g = await grantsHere({ accountId: doors.accountId, versions: async () => served, directory: doors.directoryFor(first), me });
-  return g.inForce === null ? null : purposeWrapsHeldFrom(doors.accountId, g.inForce.grants, doors.me);
+  const first = [...served].sort((a, b) => b.version - a.version).map((rec) => openGrants(rec, me))
+    .map((g) => (g === null ? null : purposeWrapsHeldFrom(doors.accountId, g, doors.me))).find((h) => h !== null) ?? null;
+  if (first === null) return { of: 'none' };
+  const { filed, quorum } = await grantsJudgedHere({ accountId: doors.accountId, versions: async () => served, directory: doors.directoryFor(first) });
+  const opened = filed.flatMap((rec) => {
+    const grants = openGrants(rec, me);
+    return grants === null ? [] : [{ version: rec.version, keyEpoch: rec.keyEpoch, grants }];
+  });
+  const decides = inForceForAReader(doors.accountId, opened, quorum);
+  if (decides === null) return { of: 'none' };
+  const held = purposeWrapsHeldFrom(doors.accountId, decides.grants, doors.me);
+  return held === null ? { of: 'taken-away', version: decides.version } : { of: 'held', held };
 }

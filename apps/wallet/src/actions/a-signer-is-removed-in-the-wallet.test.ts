@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
+import { readOutcome } from 'midnight-identity/profile/act-channel';
 import { StepRefused, type StepContext } from './definition.js';
 import type { VaultsChangedTold } from './vault-secrets-changed-here.js';
 
@@ -255,14 +256,18 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
   it('an approval names the seat removed from the wallet\'s own list of signers, and refuses a seat that list does not hold', async () => {
     t.chain[CHAIN_ID] = { held: 'open', approvals: 1, needed: 2, raisedAt: 1 };
     company.seatBar = 2;
-    t.opened = { chainId: CHAIN_ID, governance: { kind: 'remove-signer', leaf: LEAVER } };
+    t.opened = { chainId: CHAIN_ID, governance: { kind: 'remove-signer', leaf: LEAVER }, summary: 'Remove Dee as a signer' };
     const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: LEAVER });
     expect(await approveProposalAction(reach() as never).shown(approve)).toContainEqual({ key: 'act.remove-signer.shown.named-here', from: 'action' });
     const named = ctxOf(approve);
     await run(approveProposalAction(reach() as never), approve, named.ctx);
     /* RED WHEN: the approver is told whose seat it is only after their approval is on its way, or not asked to confirm it. */
     expect(named.confirmed).toEqual([{
-      lines: [{ key: 'act.remove-signer.confirm.removing', values: { name: 'Dee', leaf: LEAVER } }, { key: 'act.remove-signer.shown.keeps-the-threshold' }],
+      lines: [
+        { key: 'act.remove-signer.confirm.removing', values: { name: 'Dee', leaf: LEAVER } }, { key: 'act.remove-signer.shown.keeps-the-threshold' },
+        /* RED WHEN: the approver is not shown the name the raising seat filed the removal under, so a role change reads as a plain removal. */
+        { key: 'act.remove-signer.confirm.named', values: { summary: 'Remove Dee as a signer' } },
+      ],
       handedBefore: 0,
     }]);
     /* RED WHEN: the name sealed in the approval is read again after it was shown, or is not the one confirmed. */
@@ -415,6 +420,21 @@ describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL 
     expect(after).toHaveLength(1);
   });
 
+  it('a removal raised as a change of role is filed under a name that says so, and a plain removal under its own', async () => {
+    const asRole = intent('remove-signer', { ...BASE, leaf: LEAVER, becomes: 'approver' });
+    await run(removeSignerAction(reach()), asRole, ctxOf(asRole).ctx);
+    /* RED WHEN: a removal raised by a change of role reaches its approvers named only as a removal. */
+    expect(t.onDevice[0]!.input.summary).toBe('Change Dee\'s role to approver: remove them as a signer, then invite them again');
+    t.onDevice.length = 0;
+    for (const fields of [{ ...BASE, leaf: LEAVER }, { ...BASE, leaf: LEAVER, becomes: 'limited' }]) {
+      const plain = intent('remove-signer', fields);
+      await run(removeSignerAction(reach()), plain, ctxOf(plain).ctx);
+      /* RED WHEN: a removal not raised as a change to a signer's role is named as one. */
+      expect(t.onDevice[0]!.input.summary, JSON.stringify(fields)).toBeUndefined();
+      t.onDevice.length = 0;
+    }
+  });
+
   it('a removal whose retirement is not yet signed by enough seats says so, and the hook does not run', async () => {
     carriedAs = 'waiting-for-the-retirement';
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
@@ -422,8 +442,26 @@ describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL 
     await run(removeSignerAction(reach()), i, ctx);
     /* RED WHEN: a removal still waiting on its retirement is told to the page as carried out, or the rotation runs before it is. */
     expect(told).toContainEqual({ state: 'waiting-for-the-retirement', approvals: 1, needed: 1 });
+    /* RED WHEN: the page is not told how many seats have signed the retirement and how many it needs. */
+    expect(told).toContainEqual({ retirementSigned: 1, retirementNeeded: 2 });
     expect(told.map((x) => x['state'])).not.toContain('carried-out');
     expect(after).toEqual([]);
+  });
+
+  it('a raise that finds the removal waiting on its retirement tells the page the signatures it has and needs', async () => {
+    t.outcome = () => ({ state: 'waiting-for-the-retirement', round: null, signed: 2, needed: 3 });
+    const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
+    const { ctx, told } = ctxOf(i);
+    await run(removeSignerAction(reach()), i, ctx);
+    /* RED WHEN: a removal waiting on its retirement is told without the signatures it has and needs. */
+    expect(told).toContainEqual({ state: 'waiting-for-the-retirement', retirementSigned: 2, retirementNeeded: 3 });
+  });
+
+  it('every act that can run a removal may tell the page the retirement\'s signatures', () => {
+    /* RED WHEN: an act that tells the retirement's counts has an outcome that does not list them, so the page reads no outcome at all. */
+    for (const name of ['remove-signer', 'change-role', 'approve-proposal']) {
+      expect(readOutcome({ state: 'waiting-for-the-retirement', retirementSigned: 1, retirementNeeded: 2 }, name), name).not.toBeNull();
+    }
   });
 });
 

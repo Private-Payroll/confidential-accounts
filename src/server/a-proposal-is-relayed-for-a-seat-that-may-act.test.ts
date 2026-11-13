@@ -251,6 +251,20 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       expect(sent).toEqual([]);
     });
 
+    it('writes down a retired vault\'s adoption made again from the proposal that retired it, and only under that proposal', async () => {
+      const RETIRED_BY = '7c'.repeat(32);
+      const again = adoptionRoundOf(pureCircuits as unknown as AccountStartPure, V, RETIRED_BY);
+      store.putProposal(adoption({ chainId: again.proposal, digest: again.payload }));
+      adopted.add(V);
+      /* RED WHEN: a vault adopted again stays open on every screen, because its record is checked against the first adoption. */
+      expect((await carried('ada', A, { vault: V, again: RETIRED_BY })).body).toMatchObject({ status: 'executed' });
+      store.putProposal(adoption({ chainId: again.proposal, digest: again.payload }));
+      /* RED WHEN: a re-adoption is written down without the proposal it was made from, or under another one. */
+      expect((await carried('ada')).status).toBe(409);
+      expect((await carried('ada', A, { vault: V, again: '7d'.repeat(32) })).status).toBe(409);
+      expect(sent).toEqual([]);
+    });
+
     it('refuses a run that closed unpaid, any proposal that is not that vault\'s adoption, and one withdrawn', async () => {
       adopted.add(V);
       /* A run raised, approved and never paid, closed on the chain once its window passed: no longer open there. */

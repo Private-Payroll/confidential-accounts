@@ -18,6 +18,8 @@ import {
 } from './governance-from-the-chain.js';
 import { governancePayloadOf } from './governed-call-builder.js';
 import { EVERY_SUPER_ADMIN_NEEDED, ONE_SUPER_ADMIN_LEFT, type SuperAdminShown } from './committee-here.js';
+import { committeeReadsOf } from './committee-reads.js';
+import { superAdminLedgerOf, type LedgerHere } from './super-admin-ledger.js';
 
 /*
  * A change of the company's super admins, carried from one device to the next
@@ -138,7 +140,7 @@ const joinSignatureOf = (who: ReturnType<typeof person>, b: Uint8Array): string 
 
 type World = ReturnType<typeof world>;
 const doorsOf = (w: World, who: ReturnType<typeof person>, over: Partial<SuperAdminDoors> = {}): SuperAdminDoors => ({
-  readers: w.readers, chain: w.chain, ledger: L as unknown as SuperAdminDoors['ledger'],
+  chain: committeeReadsOf(w.readers, w.chain), ledger: superAdminLedgerOf(L as unknown as LedgerHere),
   createdByTheCompany: [CREATED],
   seats: [{ seat: 's'.repeat(64), person: 'alice', committeeKey: A }] as SuperAdminDoors['seats'],
   wallet: walletOf(who), service: w.service,

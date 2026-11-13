@@ -47,6 +47,8 @@ import { invitationByAddressRefusal } from './invitation-signed-by-a-seat.js';
 import type { DirectoryWitness } from '../../../src/core/roster-record.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
 import { anAddress, theInviteeTakesTheSeat } from '../../../src/testing/an-invitee.js';
+import { aJoinersWallet, aWalletSecret } from '../../../src/testing/a-joiners-wallet.js';
+import { signSeatAddress } from '../../../src/core/seat-address.js';
 import { seatRoundBound } from '../../../src/testing/seat-round-bound.js';
 import { governanceIdentityOfTheContract } from '../../../src/testing/invitation-approved.js';
 import { scopeOfRole } from '../../../src/core/seat-rights.js';
@@ -76,28 +78,40 @@ const company = created.account.id;
 const viewingKey = created.viewingKey;
 const [ada, bo] = created.secrets as [typeof created.secrets[0], typeof created.secrets[0]];
 
+/* Dana's own wallet: its key for the company, and the address it takes her seat with. */
+const DANAS_WALLET_SECRET = aWalletSecret();
+const DANAS_WALLET = aJoinersWallet(DANAS_WALLET_SECRET, 21);
 /* Dana is invited, and accepts on her own device with the proof her link let it make. */
 const invite = accounts.inviteSigner(company, 'Dana', 'dana@swapped.example', 'approver');
-const dana = keysOf();
-const danaProof = proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver'), dana);
-const waiting = accounts.acceptSignerInvite(invite.token, 'usr_dana', dana.signingPublicKey, dana.wrappingPublicKey,
-  dana.leafCommitment, danaProof);
+const dana = keysOf(DANAS_WALLET.walletKey);
 /* Who the seat is for, as Ada's seat signed it when it invited Dana. */
 const DANAS_INVITATION: SeatInvitationTerms = {
   company, invitation: invitationIdOf(newInvitationToken()), person: 'usr_dana', name: 'Dana', role: 'approver',
 };
-/** Dana's seat request as her device seals it: her keys, their proof and opening, her sign-in, and the invitation behind it. */
+/* What Dana's proof is for: her sign-in and the invitation she answers. */
+const DANAS_BOUND = { person: DANAS_INVITATION.person, invitationId: DANAS_INVITATION.invitation };
+/* The secret Dana's link carries, which whoever holds the link holds too. */
+const DANAS_SEAT_INVITATION = newSeatInvitation(viewingKey, company, 'Dana', 'approver', DANAS_INVITATION.invitation);
+const danaProof = proveSeatKeys(DANAS_SEAT_INVITATION, dana, DANAS_BOUND);
+const waiting = accounts.acceptSignerInvite(invite.token, 'usr_dana', dana.signingPublicKey, dana.wrappingPublicKey,
+  dana.leafCommitment, danaProof);
+/* The address Dana is invited at, its salt, and the rights her seat will carry. */
+const DANAS_AT = DANAS_WALLET.at;
+const DANAS_ADDRESS = { address: DANAS_AT.address, salt: DANAS_AT.addressSalt, scope };
+/** The address Dana's wallet signed for her seat, as her device carries it. */
+/** The account's own function making an address from a coin key and a salt. */
+const INVITE_ADDRESS_OF = (c: Hex, salt: Hex) => MidnightCommitments.inviteAddressOf(c, salt);
+const DANAS_SIGNED_ADDRESS = signSeatAddress(DANAS_WALLET_SECRET, company, dana.leafCommitment,
+  { coinPublicKey: DANAS_WALLET.holds.coinPublicKey, salt: DANAS_AT.addressSalt }, INVITE_ADDRESS_OF);
+/** Dana's seat request as her device seals it: her keys, their proof and opening, her sign-in, the invitation behind it and her wallet's address. */
 const danasRequest = (): PendingSignerPayload => ({
   name: 'Dana', role: 'approver', ...dana, seatProof: danaProof, person: 'usr_dana',
-  invited: signSeatInvitation(DANAS_INVITATION, ada.signingSecret as Hex),
+  invited: signSeatInvitation(DANAS_INVITATION, ada.signingSecret as Hex), seatAddress: DANAS_SIGNED_ADDRESS,
 });
 {
   const rec = store.getAccount(company)!;
   store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.map((p) => (p.id === waiting.id ? { ...p, sealed: sealToInbox(danasRequest(), rec.inboxPublicKey) } : p)) });
 }
-/* The address Dana is invited at, its salt, and the rights her seat will carry. */
-const DANAS_AT = anAddress(MidnightCommitments, 21);
-const DANAS_ADDRESS = { address: DANAS_AT.address, salt: DANAS_AT.addressSalt, scope };
 /* Raised with the invitation Ada's seat signed for that address, as Ada's device raises it. */
 /** The same proposal as the old service raised it: under a salt of its own, its invitation naming no proposal. */
 let UNBOUND: SealedProposal;
@@ -203,6 +217,23 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
     }
   });
 
+  it('a seat proposal for Dana\'s leaf that sets a new threshold is opened by no device, since no approver is shown one', async () => {
+    putBack();
+    const bound = store.getProposal(seatRound.id)!;
+    /* Raised at Dana's own signed address, setting the approvals the company needs to one once the seat is taken. */
+    seatRoundBound(store, company, seatRound.id, viewingKey as Hex, ada.signingSecret as Hex, { invite: { ...DANAS_ADDRESS, threshold: '1' } });
+    try {
+      const opened = await Promise.allSettled([true, false].map((forARaise) => openTheRoundHere(service(), company, seatRound.id, viewingKey, forARaise, recordsHere, leaves)));
+      /* RED WHEN: a device opens, to raise or approve, a seat for a person who joined by a link that changes the approvals needed. */
+      for (const o of opened) {
+        expect(o.status).toBe('rejected');
+        expect(String((o as PromiseRejectedResult).reason?.message)).toMatch(/sets the approvals the company needs once the seat is taken/u);
+      }
+    } finally {
+      store.putProposal(bound);
+    }
+  });
+
   it('a seat proposal raised under a salt its invitation does not make is opened by no device, so nobody approves a role it does not commit to', async () => {
     putBack();
     const bound = store.getProposal(seatRound.id)!;
@@ -231,10 +262,10 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
       ...dana, signingPublicKey: keysOf().signingPublicKey, seatProof: danaProof })],
     ['Dana\'s own keys and proof, under another name', () => ({ ...dana, name: 'Mallory', seatProof: danaProof })],
     ['Dana\'s own keys and proof, with the nonce of another invitation', () => ({
-      ...dana, seatProof: { nonce: newSeatInvitation(viewingKey, company, 'Dana', 'approver').nonce, proof: danaProof.proof } })],
+      ...dana, seatProof: { nonce: newSeatInvitation(viewingKey, company, 'Dana', 'approver', DANAS_INVITATION.invitation).nonce, proof: danaProof.proof } })],
     ['keys with a proof made under a key the writer chose', () => {
       const k = keysOf();
-      return { ...k, seatProof: proveSeatKeys(newSeatInvitation('ab'.repeat(32), company, 'Dana', 'approver'), k) };
+      return { ...k, seatProof: proveSeatKeys(newSeatInvitation('ab'.repeat(32), company, 'Dana', 'approver', DANAS_INVITATION.invitation), k, DANAS_BOUND) };
     }],
   ] as Array<[string, () => Partial<PendingSignerPayload>]>)('%s: refused on every device, by name, and nothing is proved', async (_what, swapped) => {
     swapInTheInbox(swapped());
@@ -270,7 +301,7 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
       const out = seatSignerOnDevice({
         ...doors, roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_swappedseat1', entered: enteredHere() },
         approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
-      }, { viewingKey, signerId: waiting.id, readOut: 'read out by Dana', invite: DANAS_ADDRESS });
+      }, { companyKeys: viewingKey, signerId: waiting.id, readOut: 'read out by Dana', invite: DANAS_ADDRESS, inviteAddressOf: INVITE_ADDRESS_OF });
       /* RED WHEN: the device raises, approves, carries out or admits a seat before it has checked the key in the inbox. */
       await expect(out).rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
       expect(built).toEqual([]);
@@ -298,7 +329,7 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
       await expect(seatSignerOnDevice({
         ...aDevice(built), roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_copiedseat01', entered: enteredHere() },
         approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
-      }, { viewingKey, signerId: 'sgn_copy', readOut: 'read out by Dana', invite: DANAS_ADDRESS })).rejects.toThrow(/already belong to another signer/u);
+      }, { companyKeys: viewingKey, signerId: 'sgn_copy', readOut: 'read out by Dana', invite: DANAS_ADDRESS, inviteAddressOf: INVITE_ADDRESS_OF })).rejects.toThrow(/already belong to another signer/u);
       expect(built).toEqual([]);
     } finally {
       putBack();
@@ -334,7 +365,7 @@ const seatingDevice = (request: PendingSignerPayload) => {
     ...aDevice(built), material: { ...aDevice(built).material, signingSecret: ada.signingSecret }, records: { directory: async () => { throw new Error('every check passed'); } } as unknown as CompanyRecordsHere,
     roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_invitedseat1', entered: enteredHere() },
     approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
-  }, { viewingKey, signerId: waiting.id, readOut: seatRequestFingerprint(request), invite: DANAS_ADDRESS });
+  }, { companyKeys: viewingKey, signerId: waiting.id, readOut: seatRequestFingerprint(request), invite: DANAS_ADDRESS, inviteAddressOf: INVITE_ADDRESS_OF });
   return { out, built };
 };
 
@@ -366,7 +397,7 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
       const out = seatSignerOnDevice({
         ...aDevice(built), roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_notaseat0001', entered: enteredHere() },
         approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
-      }, { viewingKey, signerId: waiting.id, readOut: seatRequestFingerprint(request), invite: DANAS_ADDRESS });
+      }, { companyKeys: viewingKey, signerId: waiting.id, readOut: seatRequestFingerprint(request), invite: DANAS_ADDRESS, inviteAddressOf: INVITE_ADDRESS_OF });
       /* RED WHEN: the raising device raises an invitation before holding it to the rule every approving device holds it to. */
       await expect(out).rejects.toBeInstanceOf(InvitationNotBound);
       await expect(out).rejects.toThrow(/not one this device believes is seated[^]*raise the invitation again from the device of a seated signer who may invite/u);
@@ -428,6 +459,36 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
     }
   });
 
+  it('a seat is not approved on an address the person\'s own wallet did not sign for it', async () => {
+    const someoneElse = aJoinersWallet(aWalletSecret(), 22);
+    const cases: ReadonlyArray<readonly [string, PendingSignerPayload]> = [
+      /* RED WHEN: a request carrying no address its wallet signed is approved: the proposal's address could be anybody's. */
+      ['no address', { ...danasRequest(), seatAddress: undefined }],
+      /* RED WHEN: an address signed by another wallet than the one Dana's leaf is made for is approved. */
+      ['another wallet\'s signature', { ...danasRequest(), seatAddress: signSeatAddress(aWalletSecret(), company, dana.leafCommitment, { coinPublicKey: DANAS_WALLET.holds.coinPublicKey, salt: DANAS_AT.addressSalt }, INVITE_ADDRESS_OF) }],
+      /* RED WHEN: another wallet's coin key is put under Dana's signature, so the address checks would be made for the wrong wallet. */
+      ['another coin key under her signature', { ...danasRequest(), seatAddress: { ...DANAS_SIGNED_ADDRESS, coinPublicKey: someoneElse.holds.coinPublicKey } }],
+      /* RED WHEN: an address put under Dana's signature by whoever wrote to the inbox is approved. */
+      ['another address under her signature', { ...danasRequest(), seatAddress: { ...DANAS_SIGNED_ADDRESS, address: someoneElse.at.address } }],
+    ];
+    try {
+      for (const [why, request] of cases) {
+        inTheInbox(request);
+        const { outcomes, built } = await everyReading(waiting.id);
+        /* Every opening of the proposal refuses it by the address, and nothing is built. */
+        expect([why, outcomes.map((o) => o.status)]).toEqual([why, ['rejected', 'rejected', 'rejected']]);
+        for (const o of outcomes) expect([why, String((o as PromiseRejectedResult).reason?.message)]).toEqual([why, expect.stringMatching(/does not carry an address their own wallet signed for this seat/u)]);
+        expect(built).toEqual([]);
+        /* The device raising it refuses it too, before it reads anything else. */
+        const seat = seatingDevice(request);
+        await expect(seat.out).rejects.toThrow(/does not carry an address their own wallet signed for the seat.*nothing was raised and nothing was sent.*Invite the person by their private address/u);
+        expect(seat.built).toEqual([]);
+      }
+    } finally {
+      putBack();
+    }
+  });
+
   it('a seat is not approved on an invitation no seat this device believes signed', async () => {
     const stranger = newSigningKeypair();
     const signed = signSeatInvitation(DANAS_INVITATION, ada.signingSecret as Hex);
@@ -436,11 +497,14 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
       const byAStranger = { ...danasRequest(), invited: signSeatInvitation(DANAS_INVITATION, stranger.secret as Hex) };
       inTheInbox(byAStranger);
       await refusedOnEveryReading(byAStranger, /not one this device believes is seated/u);
-      /* RED WHEN: an invitation changed after its seat signed it, or none at all, seats anybody. */
-      for (const request of [{ ...danasRequest(), invited: { ...signed, terms: { ...signed.terms, person: 'usr_mallory' } } }, { ...danasRequest(), invited: undefined }]) {
-        inTheInbox(request);
-        await refusedOnEveryReading(request, /does not carry who the seat is for/u);
-      }
+      /* RED WHEN: an invitation changed after its seat signed it seats anybody. */
+      const changed = { ...danasRequest(), invited: { ...signed, terms: { ...signed.terms, person: 'usr_mallory' } } };
+      inTheInbox(changed);
+      await refusedOnEveryReading(changed, /does not carry who the seat is for/u);
+      /* RED WHEN: a request carrying no invitation at all seats anybody: its proof names none, so it holds for none. */
+      const none = { ...danasRequest(), invited: undefined };
+      inTheInbox(none);
+      await refusedOnEveryReading(none, /could not be confirmed as coming from the person you invited/u);
       /* RED WHEN: a request asks for another role than the invitation its seat signed gives. */
       const promoted = { ...danasRequest(), invited: signSeatInvitation({ ...DANAS_INVITATION, role: 'admin' }, ada.signingSecret as Hex) };
       inTheInbox(promoted);
@@ -452,8 +516,15 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
 
   it('a seat is not approved for a person or a sign-in the invitation does not name', async () => {
     try {
-      /* RED WHEN: somebody holding Dana's link seats themselves: their request and their sign-in are theirs, the invitation is Dana's. */
-      const theirs = { ...danasRequest(), person: 'usr_mallory' };
+      /* RED WHEN: Dana's proof is carried under another sign-in: it was made for hers, so it holds for no other. */
+      const carried = { ...danasRequest(), person: 'usr_mallory' };
+      inTheInbox(carried, 'usr_mallory');
+      await refusedOnEveryReading(carried, /could not be confirmed as coming from the person you invited/u);
+      /* RED WHEN: somebody holding Dana's link seats themselves, with a proof the link let them make for their own sign-in. */
+      const theirs = {
+        ...danasRequest(), person: 'usr_mallory',
+        seatProof: proveSeatKeys(DANAS_SEAT_INVITATION, dana, { person: 'usr_mallory', invitationId: DANAS_INVITATION.invitation }),
+      };
       inTheInbox(theirs, 'usr_mallory');
       await refusedOnEveryReading(theirs, /not for the person the invitation names/u);
       /* RED WHEN: the service files Dana's own request under another sign-in, which the seat would make a member. */
@@ -467,7 +538,7 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
   it('a second request answering the same invitation leaves both unseated', async () => {
     const eve = keysOf();
     const evesRequest: PendingSignerPayload = {
-      name: 'Dana', role: 'approver', ...eve, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver'), eve),
+      name: 'Dana', role: 'approver', ...eve, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver', DANAS_INVITATION.invitation), eve, DANAS_BOUND),
       person: 'usr_dana', invited: signSeatInvitation(DANAS_INVITATION, ada.signingSecret as Hex),
     };
     inTheInbox(danasRequest(), 'usr_dana', [{ id: 'sgn_second', userId: 'usr_dana', request: evesRequest }]);
@@ -482,7 +553,7 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
   it('a request on the same invitation that fails its own checks does not stop the seating of the one that passes', async () => {
     const eve = keysOf();
     const evesRequest: PendingSignerPayload = {
-      name: 'Dana', role: 'approver', ...eve, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver'), eve),
+      name: 'Dana', role: 'approver', ...eve, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver', DANAS_INVITATION.invitation), eve, DANAS_BOUND),
       person: 'usr_dana', invited: signSeatInvitation(DANAS_INVITATION, ada.signingSecret as Hex),
     };
     /* The invitation is genuine, but the request was filed under another sign-in than the person it names. */
@@ -500,7 +571,7 @@ describe('A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THE WALLET IT IS MA
   it('a decoy request on the same invitation, signed by no seat this device believes, does not stop the seating', async () => {
     const decoy = keysOf();
     const decoysRequest: PendingSignerPayload = {
-      name: 'Dana', role: 'approver', ...decoy, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver'), decoy),
+      name: 'Dana', role: 'approver', ...decoy, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver', DANAS_INVITATION.invitation), decoy, DANAS_BOUND),
       person: 'usr_dana', invited: signSeatInvitation(DANAS_INVITATION, newSigningKeypair().secret as Hex),
     };
     inTheInbox(danasRequest(), 'usr_dana', [{ id: 'sgn_decoy', userId: 'usr_decoy', request: decoysRequest }]);
@@ -548,13 +619,16 @@ const recorded = async () => {
       leafCommitment: storedSignerLeaf({ signingSecret: s.secret, blinding, scope }, MidnightCommitments),
     };
     const inv = accounts.inviteSigner(at, name, `${name}@recorded.example`, 'approver');
-    const seat = accounts.acceptSignerInvite(inv.token, `usr_${name}`, keys.signingPublicKey, keys.wrappingPublicKey,
-      keys.leafCommitment, proveSeatKeys(newSeatInvitation(made.viewingKey, at, name, 'approver'), keys));
+    /* Their request is for their own sign-in, under the invitation a seat signed for them. */
+    const person = `usr_${name}`;
+    const invited = signSeatInvitation({ company: at, invitation: invitationIdOf(newInvitationToken()), person, name, role: 'approver' }, adaHere.signingSecret as Hex);
+    const seat = accounts.acceptSignerInvite(inv.token, person, keys.signingPublicKey, keys.wrappingPublicKey,
+      keys.leafCommitment, proveSeatKeys(newSeatInvitation(made.viewingKey, at, name, 'approver', invited.terms.invitation), keys, { person, invitationId: invited.terms.invitation }), invited);
     /* What the person's own wallet takes the seat with: the address they were invited at, and their seat's key and blinding. */
     const invitee = {
       ...anAddress(MidnightCommitments, name.length + 30), signerPublicKey: MidnightCommitments.signerPublicKey(s.secret), blinding, scope,
     };
-    return { ...keys, wrappingSecret: w.secret, id: seat.id, invitee, invite: { address: invitee.address, scope } };
+    return { ...keys, wrappingSecret: w.secret, id: seat.id, invitee, invite: { address: invitee.address, scope }, person, invited };
   };
   const dana = accept('Dana');
   const eve = accept('Eve');
@@ -589,8 +663,9 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
     for (const [what, payload] of swapsKeepingDanasLeaf(r.dana)) {
       r.swap(payload === 'keep-proof'
         ? { signingPublicKey: r.dana.signingPublicKey, wrappingPublicKey: newWrappingKeypair().publicKey,
-          leafCommitment: r.dana.leafCommitment,
-          seatProof: proveSeatKeys(newSeatInvitation(r.made.viewingKey, r.at, 'Dana', 'approver'), r.dana) }
+          leafCommitment: r.dana.leafCommitment, person: r.dana.person, invited: r.dana.invited,
+          seatProof: proveSeatKeys(newSeatInvitation(r.made.viewingKey, r.at, 'Dana', 'approver', r.dana.invited.terms.invitation), r.dana,
+            { person: r.dana.person, invitationId: r.dana.invited.terms.invitation }) }
         : payload);
       /* RED WHEN: the record's half of a seat trusts the inbox - the viewing key is then wrapped to the writer. */
       await expect(accounts.grantAccess(r.at, r.made.viewingKey, r.dana.id), what).rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
@@ -730,9 +805,11 @@ describe('WHO MAY INVITE, AND ONE PERSON ONE SEAT, ON THE DEVICE THAT APPROVES T
 
   const anotherRequestForDana = (by: Hex): PendingSignerPayload => {
     const other = keysOf();
+    const invitation = invitationIdOf(newInvitationToken());
     return {
-      name: 'Dana', role: 'approver', ...other, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver'), other),
-      person: 'usr_dana', invited: signSeatInvitation({ ...DANAS_INVITATION, invitation: invitationIdOf(newInvitationToken()) }, by),
+      name: 'Dana', role: 'approver', ...other,
+      seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', 'approver', invitation), other, { person: 'usr_dana', invitationId: invitation }),
+      person: 'usr_dana', invited: signSeatInvitation({ ...DANAS_INVITATION, invitation }, by),
     };
   };
 

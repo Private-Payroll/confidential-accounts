@@ -278,6 +278,15 @@ describe('the window promises no more privacy for the vault than the page is giv
 });
 
 describe('a refused start names its kind of stop to the page only from the start\'s own codes', () => {
+  it('takes a retired vault to adopt again only with the vault and the company\'s record of the retire that retired it', async () => {
+    const def = createVaultAction({} as never);
+    const held = { wallet: {} } as never;
+    /* RED WHEN: an adoption made again for no vault, or under something that is no record's name, is let through to be built. */
+    expect(await def.check(intent({ retired: 'prp_retire1' }), held)).toEqual(why('act.create-vault.why.not-a-retire'));
+    expect(await def.check(intent({ vault: 'ab'.repeat(32), retired: 'not a record' }), held)).toEqual(why('act.create-vault.why.not-a-retire'));
+    expect(await def.check(intent({ vault: 'ab'.repeat(32), retired: 'prp_retire1' }), held)).toBeNull();
+  });
+
   it('names a start\'s stop, a read that failed and a vault not built, and nothing else', async () => {
     const { NOT_BUILT, START_READ_STOP, START_STOP } = await import('../../../../packages/web-shared/src/vault-operation.js');
     /* RED WHEN: a kind of stop the start names is not carried, so the page cannot say which read or check stopped it. */

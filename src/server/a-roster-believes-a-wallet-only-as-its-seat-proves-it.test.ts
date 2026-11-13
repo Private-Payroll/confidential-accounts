@@ -139,12 +139,13 @@ const adaFiles = async (next: RosterSecrets) => {
 const requestOf = (s: Seat, o: { person?: string; invitedBy?: Seat; opening?: boolean; invited?: boolean } = {}) => {
   const person = o.person ?? s.person;
   const keys = { signingPublicKey: s.statement.signingKey as Hex, wrappingPublicKey: newWrappingKeypair().publicKey, leafCommitment: s.seat as Hex };
+  const invitationId = invitationIdOf(newInvitationToken());
   const payload: PendingSignerPayload = {
-    name: person, role: 'admin', ...keys, seatProof: proveSeatKeys(newSeatInvitation(KEY, CO, person, 'admin'), keys), person,
+    name: person, role: 'admin', ...keys, seatProof: proveSeatKeys(newSeatInvitation(KEY, CO, person, 'admin', invitationId), keys, { person, invitationId }), person,
     ...(o.opening === false ? {} : { opening: s.opening }),
     ...(o.invited === false ? {} : {
       invited: signSeatInvitation({
-        company: CO, invitation: invitationIdOf(newInvitationToken()), person, name: person, role: 'admin', leaf: s.seat as Hex,
+        company: CO, invitation: invitationId, person, name: person, role: 'admin', leaf: s.seat as Hex,
       }, (o.invitedBy ?? ADA).signingSecret as Hex),
     }),
   };

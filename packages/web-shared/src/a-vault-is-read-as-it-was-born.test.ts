@@ -12,7 +12,8 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { keysOnDisk, VAULT_KEYS } from '../../../contracts/test/keys-on-disk.js';
 import type { Committee } from '../../../src/midnight/vault-committee.js';
 import { buildVaultBornHeld, type VaultBuilderDeps } from './vault-builder.js';
-import { checkedAccountKeys, vaultAsDeployed } from './vault-worker-entry.js';
+import { checkedAccountKeys } from './vault-worker-entry.js';
+import { vaultAsDeployed } from './vault-as-deployed.js';
 
 /*
  * A vault, built on the device held by the company's committee from its first
@@ -43,8 +44,10 @@ const deployStateOf = (proven: Uint8Array): unknown => {
   return [...(tx.intents?.values() ?? [])][0]?.actions?.[0]?.initialState;
 };
 /** The indexer the wallet names, standing in: it holds `deploys` by address, and nothing else. */
-const chainHolding = (deploys: Record<string, Uint8Array>) => ({
+const chainHolding = (deploys: Record<string, Uint8Array>, now: Record<string, Uint8Array> = deploys) => ({
   deployState: async (address: string) => (deploys[address] === undefined ? null : deployStateOf(deploys[address]!)),
+  /* The vault's state now: by default the one its deploy left; with `now`, a state held as another build's deploy left it. */
+  contractState: async (address: string) => (now[address] === undefined ? null : deployStateOf(now[address]!) as never),
 });
 const reader = (fetchKey = keyFile) => ({
   ledger: L, runtimeState: (runtime as any).ContractState, vault: vaultModule,
@@ -59,7 +62,7 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
     born = await buildVaultBornHeld(deps(), { account: ACCOUNT, holders: committee });
     other = await buildVaultBornHeld(deps(), { account: ACCOUNT, holders: { committee: [vk(3)], threshold: 1 } });
   }, 120_000);
-  const ask = (over: Partial<{ vault: string; account: string; holders: Committee }> = {}) =>
+  const ask = (over: Partial<{ vault: string; account: string; holders: Committee; again: boolean }> = {}) =>
     ({ vault: born.address, account: ACCOUNT, holders: committee, ...over });
   const chain = () => chainHolding({ [born.address]: born.proven, [other.address]: other.proven });
 
@@ -97,5 +100,20 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
     const swapped = async (c: string) => (c === 'payout' ? keyFile('deposit') : keyFile(c));
     /* RED WHEN: the keys the deploy is compared with are taken as served, unchecked. */
     await expect(vaultAsDeployed(reader(swapped), ask(), chain())).rejects.toThrow('the verifying key served for the vault\'s payout circuit is not this build\'s');
+  });
+
+  it('A VAULT ADOPTED AGAIN IS HELD BY THE COMMITTEE THE COMPANY HOLDS NOW, SO A CHANGE OF SUPER ADMINS SINCE ITS DEPLOY STRANDS NOTHING', async () => {
+    const moved = { committee: [vk(3)], threshold: 1 };
+    /* The super admins changed: the vault, born held by the first committee, is held now as the change left it. */
+    const changed = chainHolding({ [born.address]: born.proven }, { [born.address]: other.proven });
+    /* RED WHEN: a retired vault adopted again is held to the committee of its deploy, which no change since can ever match, so the money paid into it is reached by no device. */
+    expect(await vaultAsDeployed(reader(), ask({ holders: moved, again: true }), changed)).toBeNull();
+    /* RED WHEN: a first adoption is no longer held to its deploy's committee. */
+    expect(await vaultAsDeployed(reader(), ask({ holders: moved }), changed)).toMatch(/held from its first transaction by the company's committee/);
+    /* RED WHEN: a vault held now by other keys than the company's is adopted again, or refused without saying what clears it. */
+    expect(await vaultAsDeployed(reader(), ask({ holders: moved, again: true }), chain()))
+      .toMatch(/held now by other keys, or at another threshold, than your company's super admins hold\. Have the super admins make their change again.*Nothing was sent\.$/);
+    /* RED WHEN: the account a vault adopted again is pinned to is not compared. */
+    expect(await vaultAsDeployed(reader(), ask({ holders: moved, again: true, account: 'd0'.repeat(32) }), changed)).toMatch(/pinned to a different company's account/);
   });
 });

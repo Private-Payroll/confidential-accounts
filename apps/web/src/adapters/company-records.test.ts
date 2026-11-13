@@ -1372,7 +1372,7 @@ describe('how many must approve, in the one list of companies', () => {
     expect((await session.approvalsNeededFor('u1')).size).toBe(0);
     const listed = await session.whoIsSignedIn();
     expect(JSON.stringify(listed)).not.toContain('approvalsNeeded');
-    expect([...(await session.approvalsNeededFor('u1')).entries()]).toEqual([['c1', 2]]);
+    expect([...(await session.approvalsNeededFor('u1')).entries()]).toEqual([['c1', { needed: 2, because: 'account' }]]);
     kr.approvals = undefined;
     expect([...(await session.approvalsNeededFor('somebody else')).entries()]).toEqual([]);
     vi.unstubAllGlobals();
@@ -1555,9 +1555,9 @@ describe('what an open proposal carries for the wallet to approve it', () => {
       'q-out0': { kind: 'remove-signer', approvable: true, asks: { leaf: LEAF } },
       'q-bar': { kind: 'set-threshold', approvable: true, asks: { threshold: 2 } },
       'q-vbar': { kind: 'set-vault-threshold', approvable: true, asks: { threshold: 3, vault: W } },
-      'q-pbar': { kind: 'change-policy', approvable: true, asks: { kind: 'policy-bar', bar: 2 } },
+      'q-pbar': { kind: 'set-policy-bar', approvable: true, asks: { kind: 'policy-bar', bar: 2 } },
       /* RED WHEN: a spending policy is not offered Approve, or its row names anything of the policy but its vault: the terms open only in the signer's wallet. */
-      'q-pol': { kind: 'change-policy', approvable: true, asks: { kind: 'spending-policy', vault: W } },
+      'q-pol': { kind: 'set-spending-policy', approvable: true, asks: { kind: 'spending-policy', vault: W } },
       'q-adopt': { kind: 'adopt-vault', approvable: true, asks: { vault: W } },
       'q-secret': { kind: 'vault-secret', approvable: true, asks: { vault: W } },
       'q-key': { kind: 'pay-key', approvable: true, asks: {} },
@@ -1589,7 +1589,7 @@ describe('what an open proposal carries for the wallet to approve it', () => {
     ]);
     expect(Object.values(rows).map((r) => r.approvable)).toEqual([false, false, false, false, false, false]);
     expect(rows['q-done']!.kind).toBe('set-threshold');
-    expect(rows['q-pol']).toEqual({ kind: 'change-policy', approvable: false, asks: undefined, unread: 'not-read' });
+    expect(rows['q-pol']).toEqual({ kind: 'set-spending-policy', approvable: false, asks: undefined, unread: 'not-read' });
     expect([rows['q-add']!.asks, rows['q-one']!.asks, rows['q-run']!.asks, rows['q-out']!.asks, rows['q-done']!.asks]).toEqual([undefined, undefined, undefined, undefined, undefined]);
     /*
      * RED WHEN: a waiting proposal of a kind this page approves whose record, run or one-off was not read or believed here

@@ -32,7 +32,7 @@ vi.mock('./adapters/session.js', async (real) => {
     ? actual.signIn(asking)
     : { of: 'refused', why: signing.refuse, retryAfterSeconds: null }),
   /* What the person's own wallet reads off the chain for the companies listed below. */
-  approvalsNeededFor: async () => new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]),
+  approvalsNeededFor: async () => new Map([['c-2', { needed: 2, because: 'account' as const }], ['c-3', { needed: 1, because: 'account' as const }], ['c-1', { needed: 3, because: 'policy-bar' as const }]]),
   companyNamesFor: async () => Object.assign(new Map(names), { whyNot: new Map(whyNot) }),
   });
 });
@@ -225,7 +225,7 @@ describe('the landing page, once signed in', () => {
     const { container } = await open(PAGES.landing.path);
     /* A company this device holds no name for is shown as a company the person started on the day it was made, with its approvals as M/N Approval. */
     expect([...container.querySelectorAll('[data-choose-a-company] [data-company]')].map((e) => e.textContent))
-      .toEqual([`${STARTED('2026-09-01T12:00:00.000Z')}2/3 Approval`, `${STARTED('2026-09-20T12:00:00.000Z')}1/1 Approval`, `${STARTED('2026-08-01T12:00:00.000Z')}3/5 Approval`]);
+      .toEqual([`${STARTED('2026-09-01T12:00:00.000Z')}2/3 Approval${EN['switcher.because.account']}`, `${STARTED('2026-09-20T12:00:00.000Z')}1/1 Approval${EN['switcher.because.account']}`, `${STARTED('2026-08-01T12:00:00.000Z')}3/5 Approval${EN['switcher.because.policyBar']}`]);
     await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-company=c-3]')!); await settle(); });
     expect(window.location.pathname).toBe(PAGES.home.path);
     await untilPageShown(container);

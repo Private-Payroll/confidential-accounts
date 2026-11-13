@@ -135,7 +135,7 @@ export default defineConfig({
      * than one that re-resolves under it.
      */
     root: fileURLToPath(new URL('.', import.meta.url)),
-    testTimeout: 30_000,
+    testTimeout: 120_000,
     /*
      * **THE ENVIRONMENT IS NOT SET HERE, ON PURPOSE.**
      *

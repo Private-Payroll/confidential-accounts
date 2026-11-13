@@ -67,6 +67,8 @@ export function useVaultActions() {
   return {
     inPanel,
     start: (vault: string): void => inPanel(t('createVault.finishStart'), (props) => <CreateVault {...props} starting={vault} />),
+    /* A retired vault holding money, adopted again under the company's record of the retire that retired it. */
+    adoptAgain: (vault: string, retired: string): void => inPanel(t('vault.adoptAgain'), (props) => <CreateVault {...props} starting={vault} retired={retired} />),
     committeeChange: (): void => inPanel(t('committeeChange.name'), (props) => <CommitteeChange onChanged={props.onChanged} />),
   };
 }

@@ -92,6 +92,40 @@ describe('A CALL SENT STRAIGHT TO THE CHAIN', () => {
   });
 });
 
+describe('A VAULT\'S RETIRE SENT STRAIGHT TO THE CHAIN', () => {
+  const RETIRE = { kind: 'vault-retire', contract: VAULT, circuit: 'retire', account: ACCOUNT } as const;
+  it('is paid for in DUST alone only as this vault\'s retire asking this company\'s account, and refused before anything is paid otherwise', async () => {
+    const sent = async (calls: Array<{ circuit: string; to: string }>) => {
+      const log: string[] = [];
+      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true)(b64({ calls }), RETIRE).then(() => null, (x: unknown) => x);
+      return { log, e };
+    };
+    expect((await sent([{ circuit: 'retire', to: VAULT }, { circuit: 'retireVault', to: ACCOUNT }])).log).toEqual(['fee in dust', 'sent', 'stopped']);
+    /* RED WHEN: the person's wallet pays for the account's retire without the vault's own, which is what refuses a vault holding money. */
+    const alone = await sent([{ circuit: 'retireVault', to: ACCOUNT }]);
+    expect((alone.e as { nothingWasSent?: unknown }).nothingWasSent).toBe(true);
+    expect(alone.log).toEqual(['stopped']);
+  });
+});
+
+describe('A PUBLIC TOKEN TAKEN OFF A VAULT\'S LIST, SENT STRAIGHT TO THE CHAIN', () => {
+  const FORGET = { kind: 'vault-forget', contract: VAULT, circuit: 'forgetUnshielded' } as const;
+  it('is paid for in DUST alone only as one forgetUnshielded call to this vault, and refused before anything is paid otherwise', async () => {
+    const sent = async (calls: Array<{ circuit: string; to: string }>) => {
+      const log: string[] = [];
+      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true)(b64({ calls }), FORGET).then(() => null, (x: unknown) => x);
+      return { log, e };
+    };
+    expect((await sent([{ circuit: 'forgetUnshielded', to: VAULT }])).log).toEqual(['fee in dust', 'sent', 'stopped']);
+    /* RED WHEN: the person's wallet pays for another call of the vault, or one riding beside the forget, as a token taken off its list. */
+    for (const calls of [[{ circuit: 'payoutUnshielded', to: VAULT }], [{ circuit: 'forgetUnshielded', to: VAULT }, { circuit: 'retire', to: VAULT }]]) {
+      const other = await sent(calls);
+      expect((other.e as { nothingWasSent?: unknown }).nothingWasSent).toBe(true);
+      expect(other.log).toEqual(['stopped']);
+    }
+  });
+});
+
 describe('THE FEE IS OUR SPONSORSHIP\'S, AND THE PERSON\'S OWN DUST ONLY WHEN SPONSORSHIP CANNOT PAY', () => {
   const CALL = { circuit: 'approve', to: ACCOUNT };
   const APPROVE = { kind: 'account-call', contract: ACCOUNT, circuit: 'approve' } as const;

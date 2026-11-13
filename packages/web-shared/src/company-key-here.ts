@@ -443,10 +443,11 @@ export type KeyRotated =
  * (its copy did not open, or this device does not believe that change) changes the key
  * from the newest key it holds (`replaces`) once every newer change was filed by a seat
  * retired since and off the chain, and otherwise files nothing. When no removal is owed one
- * and a read grant was taken away while the newest key was in force (`revoked`), it repairs the
- * newest key instead: a new key, wrapped to the same seats, keeping the payout seed.
+ * and a read grant was taken away while the newest key was in force (`revoked`), or `repair` asks
+ * for it, it repairs the newest key instead: a new key, wrapped to the same seats, keeping the
+ * payout seed, and only from a seat that holds the newest key.
  */
-export async function rotateTheCompanyKeyHere(doors: RotationDoors, o: { readonly leaf?: string } = {}): Promise<KeyRotated> {
+export async function rotateTheCompanyKeyHere(doors: RotationDoors, o: { readonly leaf?: string; readonly repair?: boolean } = {}): Promise<KeyRotated> {
   const outcome = await rotatedHere(doors, o);
   triedHere.set(doors.accountId, outcome);
   return outcome;
@@ -457,13 +458,13 @@ export async function rotateTheCompanyKeyHere(doors: RotationDoors, o: { readonl
  * when no removal is owed a change: a removal's change never waits on them, and clears any taking-away anyway.
  */
 const keyChangeWaited = async (
-  doors: RotationDoors, here: DirectoryHere, o: { readonly leaf?: string },
+  doors: RotationDoors, here: DirectoryHere, o: { readonly leaf?: string; readonly repair?: boolean },
 ): Promise<Awaited<ReturnType<typeof removalWaitsHere>>> => {
   const mayAct = (s: DirectorySeat): string | null => (mayInvite(s) ? null : 'this seat\'s role files no proposal, so it does not change the company\'s key');
   return removalWaitsHere(here, ownSeatIn(here, doors.material), { ...o, revoked: doors.revoked }, mayAct, doors);
 };
 
-const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string }): Promise<KeyRotated> => {
+const rotatedHere = async (doors: RotationDoors, o: { readonly leaf?: string; readonly repair?: boolean }): Promise<KeyRotated> => {
   const here = await doors.records.directory();
   const waited = await keyChangeWaited(doors, here, o);
   if (waited.state !== 'ready') return waited;

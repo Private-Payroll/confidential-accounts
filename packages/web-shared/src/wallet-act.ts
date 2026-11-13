@@ -91,6 +91,8 @@ export type ActOutcome = (
   readonly outcome?: Readonly<Record<string, string | number>>;
   /** When the action opened the saved keys: what they hold that is not secret, as it left them (`KeysRead`). */
   readonly keys?: NonNullable<ActEnded['keys']>;
+  /** At the end of a reader's `reader-keys` action that ended done: the read keys its grant in force wraps to it. */
+  readonly readKeys?: NonNullable<ActEnded['readKeys']>;
 };
 
 export interface ActAsked {
@@ -353,7 +355,10 @@ export async function actInTheWallet(
         why: 'went-quiet' as const,
       });
     }
-    const told = { ...(ended.outcome === undefined ? {} : { outcome: ended.outcome }), ...(ended.keys === undefined ? {} : { keys: ended.keys }) };
+    const told = {
+      ...(ended.outcome === undefined ? {} : { outcome: ended.outcome }), ...(ended.keys === undefined ? {} : { keys: ended.keys }),
+      ...(ended.readKeys === undefined ? {} : { readKeys: ended.readKeys }),
+    };
     if (ended.ended === 'done') return Object.freeze({ of: 'done' as const, steps: ended.steps, relayed, ...told });
     /*
      * The wallet's own end counts every transaction it handed over, to this page or to the chain itself; a send it made

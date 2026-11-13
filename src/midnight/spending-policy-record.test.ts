@@ -8,7 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import { newWrappingKeypair, type Hex } from '../core/crypto.js';
 import {
-  openSpendingPolicy, policyOpeningFor, policyOpeningFromWire, retryArgsOf, sealSpendingPolicy, type PolicyOpeningOnTheWire,
+  openSpendingPolicy, policyOpeningFor, policyOpeningFromWire, policyPeriodNamed, POLICY_PERIODS, retryArgsOf, sealSpendingPolicy,
+  type PolicyOpeningOnTheWire,
 } from './spending-policy-record.js';
 
 const ada = newWrappingKeypair();
@@ -79,5 +80,20 @@ describe('WHAT A CHARGE NAMES ABOUT THE RUN IT RETRIES', () => {
     const leg = new Uint8Array(32).fill(1);
     /* RED WHEN the four arguments leave clearRun's order: leg, fresh, legTop, legTotal. */
     expect(retryArgsOf(fresh, { leg, legTop: 3n, legTotal: 4n })).toEqual([leg, fresh, 3n, 4n]);
+  });
+});
+
+describe('HOW LONG A SPENDING POLICY\'S PERIOD IS, AS A PAGE NAMES IT', () => {
+  it('each length a page offers is named, and is the number of seconds it says', () => {
+    /* RED WHEN: a listed length is a day off, or a year is not three hundred and sixty-five days. */
+    expect(POLICY_PERIODS.map((p) => [p.id, p.seconds / 86_400n])).toEqual([['week', 7n], ['two-weeks', 14n], ['four-weeks', 28n], ['year', 365n]]);
+    expect(policyPeriodNamed(1_209_600n)).toEqual({ id: 'two-weeks' });
+  });
+
+  it('a length not on the list is shown in days as it is, never refused or rounded', () => {
+    /* RED WHEN: a length off the list is refused, or taken for the nearest one on it. */
+    expect(policyPeriodNamed(864_000n)).toEqual({ days: 10 });
+    /* RED WHEN: part of a day is rounded away. */
+    expect(policyPeriodNamed(60n)).toEqual({ days: 60 / 86_400 });
   });
 });

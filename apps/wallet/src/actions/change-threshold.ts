@@ -29,7 +29,7 @@ import {
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { approving, carryStep, onTheChain, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
-import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
+import { anchorDirectoryDoorIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
 /** What the wallet reads: the company's chain and builder, its pause, and how long it waits for the chain. */
 export interface ChangeThresholdReach {
@@ -107,10 +107,13 @@ const onDevice = async (doors: GovernanceDoors, r: CompanyReach, a: Asked, steps
     : changeVaultThresholdOnDevice(doors, withCompanyKeys({ vault: a.vault, newThreshold: a.threshold, seated, ...steps, before }, r.companyKeys));
 };
 
-const doorsOf = (r: CompanyReach, reach: Pick<ChangeThresholdReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, handed: Handed) =>
-  governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
+/** The shared code's doors, with the directory anchored first by this wallet when a rise finds a change of it not yet anchored. */
+const doorsOf = (r: CompanyReach, reach: Pick<ChangeThresholdReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, handed: Handed) => ({
+  ...governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
     ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
-  });
+  }),
+  anchorDirectory: anchorDirectoryDoorIn(r, handed),
+});
 
 /** A stop in the shared code, in the words of `notSent` when nothing was handed over to be sent. */
 const stoppedAs = (e: unknown, handed: Handed, notSent: string, whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words): never => {

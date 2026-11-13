@@ -7,7 +7,8 @@
  * call is built with are read exactly as the circuit would get them.
  */
 import { describe, it, expect } from 'vitest';
-import { buildSetNonceSecret, type SecretRunOnTheWire, type VaultBuilderDeps } from './vault-builder.js';
+import type { VaultBuilderDeps } from './vault-builder.js';
+import { buildSetNonceSecret, type SecretRunOnTheWire } from './vault-secret-built.js';
 
 const VAULT = 'cd'.repeat(32);
 const ACCOUNT = 'ef'.repeat(32);

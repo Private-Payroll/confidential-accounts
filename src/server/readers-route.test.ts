@@ -1,17 +1,21 @@
 /**
  * **THE SERVICE KEEPS A COMPANY'S READERS ONLY AS ITS SIGNERS AT THE SEAT BAR SIGNED THEM, AND LETS THEM READ ONLY.**
  * The route counts the signatures of seats the chain holds over the plain list of readers, the change's number and the
- * entries' digest, one key one vote, and keeps the list apart from the members once they reach the chain's seat bar;
- * the member gate then admits those readers on a read and on nothing else. Over real HTTP; the directory and the chain
- * the route reads are stand-ins.
+ * entries' digest, one key one vote, holds the entries handed in to that digest, and keeps the list apart from the
+ * members once they reach the chain's seat bar; the member gate then admits those readers on a read, of a kind of
+ * record their grant reads, and on nothing else. Over real HTTP; the directory and the chain the route reads are
+ * stand-ins.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
 import { connect, type AddressInfo } from 'node:net';
 import { newSymmetricKey, sign, signingPublicKeyOf, type Hex } from '../core/crypto.js';
-import { readersMessage } from '../midnight/grants-record.js';
+import {
+  entriesDigestOf, entriesInOrder, grantEntryOf, kindsAReaderFetches, readersMessage, readersNamedIn, type GrantEntry,
+} from '../midnight/grants-record.js';
+import type { ReaderRole } from '../core/roles.js';
 import type { DirectorySeat } from '../midnight/seat-directory.js';
-import { memberOrReaderReading, readersOf, readersRoutes, type AccountWithReaders } from './readers-route.js';
+import { memberOrReaderReading, readersOf, readersRoutes, withoutReaders, type AccountWithReaders } from './readers-route.js';
 import type { DirectoryNow } from './seat-directory-route.js';
 
 const CO = 'acc_readers';
@@ -23,7 +27,6 @@ const seat = (n: number) => {
 const ADA = seat(1);
 const BO = seat(2);
 const GONE = seat(3);
-const ENTRIES = 'e1'.repeat(32);
 let account = { id: CO, memberUserIds: ['ada', 'bo'] } as AccountWithReaders;
 const store = { getAccount: (id: string) => (id === CO ? account : null), putAccount: (a: AccountWithReaders) => { account = a; } };
 /* The chain holds Ada and Bo at a seat bar of two; the directory also names a seat the chain no longer holds. */
@@ -32,8 +35,21 @@ const directoryOf = async (): Promise<DirectoryNow> => ({
   dir: { company: CO, version: 3, seats: [ADA.s, BO.s, GONE.s] },
   chain: { seats: { committee: [], threshold: 1, seats: [ADA.s.seat, BO.s.seat] }, approvals: 1, seatBar },
 });
-const signed = (sequence: number, readers: readonly string[], by: readonly { secret: Hex }[]) =>
-  by.map((x) => ({ publicKey: signingPublicKeyOf(x.secret).toLowerCase(), signature: sign(readersMessage(CO, sequence, readers, ENTRIES), x.secret) }));
+/* Each reader's entry, with a recipient key of its own; a limited reader by default. */
+const ROLES: Readonly<Record<string, ReaderRole>> = { abe: 'accountant' };
+const entryOf = (person: string): GrantEntry => grantEntryOf({
+  recipient: [...person].map((c) => c.charCodeAt(0).toString(16)).join('').padEnd(64, '0'), person, role: ROLES[person] ?? 'limited',
+});
+/* A list as a signer's wallet hands it in: the readers, the entries' digest, the entries, and signatures over the first two. */
+const listOf = (sequence: number, persons: readonly string[], by: readonly { secret: Hex }[]) => {
+  const granted = entriesInOrder(persons.map(entryOf));
+  const readers = readersNamedIn(granted);
+  const entries = entriesDigestOf(granted);
+  return {
+    sequence, readers, entries, granted,
+    signatures: by.map((x) => ({ publicKey: signingPublicKeyOf(x.secret).toLowerCase(), signature: sign(readersMessage(CO, sequence, readers, entries), x.secret) })),
+  };
+};
 
 let base = '';
 let server: ReturnType<express.Express['listen']>;
@@ -48,6 +64,7 @@ beforeAll(async () => {
   app.post('/api/accounts/:id/manifest/newest', signedIn, member, (_req, res) => { res.json({ newest: true }); });
   app.get('/api/accounts/:id/invites', signedIn, member, (_req, res) => { res.json([{ name: 'Dana', email: 'dana@acme.co' }]); });
   app.get('/api/accounts/:id/runs', signedIn, member, (_req, res) => { res.json([]); });
+  app.get('/api/accounts/:id/proposals', signedIn, member, (_req, res) => { res.json([]); });
   /* Reads served by routers, as the service mounts its route files: one at the root, one under the account's path. */
   const routed = express.Router();
   routed.get('/api/accounts/:id/directory', signedIn, member, (_req, res) => { res.json({ directory: true }); });
@@ -81,14 +98,15 @@ describe('A COMPANY\'S READERS, AS THE SERVICE KEEPS THEM', () => {
   it('KEEPS A LIST ONLY AT THE SEAT BAR OF HELD SEATS, LETS ITS READERS READ AND NOTHING ELSE, AND NEVER GOES BACK TO AN EARLIER CHANGE', async () => {
     const readers = ['abe', 'rhea'];
     /* RED WHEN: one signer's signature puts a reader in, so one wallet alone could open the company's records to a stranger. */
-    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, { sequence: 1, readers, entries: ENTRIES, signatures: signed(1, readers, [ADA]) }))
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(1, readers, [ADA])))
       .toMatchObject({ status: 403, body: { refused: 'below-quorum' } });
     /* RED WHEN: a seat the chain no longer holds counts toward the bar. */
-    expect((await as('ada', 'POST', `/api/accounts/${CO}/readers`, { sequence: 1, readers, entries: ENTRIES, signatures: signed(1, readers, [ADA, GONE]) })).status).toBe(403);
+    expect((await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(1, readers, [ADA, GONE]))).status).toBe(403);
     /* RED WHEN: a signature over other readers counts. */
-    expect((await as('ada', 'POST', `/api/accounts/${CO}/readers`, { sequence: 1, readers: ['abe', 'eve'], entries: ENTRIES, signatures: signed(1, readers, [ADA, BO]) })).status).toBe(422);
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, { ...listOf(1, readers, []), signatures: listOf(1, ['abe', 'eve'], [ADA, BO]).signatures }))
+      .toMatchObject({ status: 422, body: { refused: 'not-signed' } });
     expect((await as('rhea', 'GET', `/api/accounts/${CO}/records/grants/read-grants/versions`)).status).toBe(404);
-    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, { sequence: 1, readers, entries: ENTRIES, signatures: signed(1, readers, [ADA, BO]) }))
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(1, readers, [ADA, BO])))
       .toMatchObject({ status: 201, body: { kept: true, sequence: 1 } });
     /* RED WHEN: the readers are kept among the members, where every write route would let them in. */
     expect([account.memberUserIds, readersOf(account)]).toEqual([['ada', 'bo'], readers]);
@@ -96,25 +114,25 @@ describe('A COMPANY\'S READERS, AS THE SERVICE KEEPS THEM', () => {
     expect(await as('rhea', 'GET', `/api/accounts/${CO}/records/grants/read-grants/versions`)).toEqual({ status: 200, body: { read: true } });
     /* RED WHEN: the member gate admits a reader on a write, or a reader may hand in a list of readers. */
     expect((await as('rhea', 'PUT', `/api/accounts/${CO}/records/grants/read-grants/9`, {})).status).toBe(404);
-    expect((await as('rhea', 'POST', `/api/accounts/${CO}/readers`, { sequence: 2, readers, entries: ENTRIES, signatures: signed(2, readers, [ADA, BO]) })).status).toBe(404);
+    expect((await as('rhea', 'POST', `/api/accounts/${CO}/readers`, listOf(2, readers, [ADA, BO]))).status).toBe(404);
     expect((await as('eve', 'GET', `/api/accounts/${CO}/records/grants/read-grants/versions`)).status).toBe(404);
     /* The manifest's read that proves a version anchored is a POST a reader may make. */
     expect((await as('rhea', 'POST', `/api/accounts/${CO}/manifest/newest`, {})).status).toBe(200);
-    /* RED WHEN: a reader passes the gate on a read that hands names, emails or run details in plain. */
+    /* RED WHEN: a reader passes the gate on a read that hands names or emails in plain, or on the runs its grant does not read. */
     expect((await as('rhea', 'GET', `/api/accounts/${CO}/invites`)).status).toBe(404);
     expect((await as('rhea', 'GET', `/api/accounts/${CO}/runs`)).status).toBe(404);
     expect((await as('ada', 'GET', `/api/accounts/${CO}/invites`)).status).toBe(200);
     /* RED WHEN: a list of an earlier change, signed when it was in force, is kept again, giving back a reader taken away. */
     const later = ['abe'];
-    expect((await as('bo', 'POST', `/api/accounts/${CO}/readers`, { sequence: 2, readers: later, entries: ENTRIES, signatures: signed(2, later, [ADA, BO]) })).status).toBe(201);
-    expect(await as('bo', 'POST', `/api/accounts/${CO}/readers`, { sequence: 1, readers, entries: ENTRIES, signatures: signed(1, readers, [ADA, BO]) }))
+    expect((await as('bo', 'POST', `/api/accounts/${CO}/readers`, listOf(2, later, [ADA, BO]))).status).toBe(201);
+    expect(await as('bo', 'POST', `/api/accounts/${CO}/readers`, listOf(1, readers, [ADA, BO])))
       .toMatchObject({ status: 409, body: { refused: 'not-a-later-change' } });
     expect((await as('rhea', 'GET', `/api/accounts/${CO}/records/grants/read-grants/versions`)).status).toBe(404);
   });
 
   it('JUDGES A READ BY THE PATH IT WAS ROUTED BY, THROUGH A ROUTER AT THE ROOT OR UNDER THE ACCOUNT, WITH OR WITHOUT A QUERY', async () => {
     const readers = ['quill'];
-    expect((await as('ada', 'POST', `/api/accounts/${CO}/readers`, { sequence: 5, readers, entries: ENTRIES, signatures: signed(5, readers, [ADA, BO]) })).status).toBe(201);
+    expect((await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(5, readers, [ADA, BO]))).status).toBe(201);
     /* RED WHEN: the gate does not admit a reader on a read a router at the root serves, or on one whose address carries a query. */
     expect(await as('quill', 'GET', `/api/accounts/${CO}/directory`)).toEqual({ status: 200, body: { directory: true } });
     expect((await as('quill', 'GET', `/api/accounts/${CO}/directory?after=1`)).status).toBe(200);
@@ -152,9 +170,72 @@ describe('A COMPANY\'S READERS, AS THE SERVICE KEEPS THEM', () => {
     const readers = ['zed'];
     seatBar = Number.NaN;
     /* RED WHEN: a chain read with no readable bar counts one signature as the bar. */
-    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, { sequence: 9, readers, entries: ENTRIES, signatures: signed(9, readers, [ADA]) }))
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(9, readers, [ADA])))
       .toMatchObject({ status: 503 });
     seatBar = 2;
     expect(readersOf(account)).not.toContain('zed');
+  });
+
+  it('A LIMITED READER IS REFUSED THE PEOPLE AND THE RUNS, AND AN ACCOUNTANT READS THEM, AS THE SIGNED ENTRIES SAY', async () => {
+    expect((await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(11, ['abe', 'rhea'], [ADA, BO]))).status).toBe(201);
+    const versions = (kind: string) => `/api/accounts/${CO}/records/${kind}/r1/versions`;
+    /* RED WHEN: a limited reader fetches a person record, and learns how many people there are and who has left. */
+    expect((await as('rhea', 'GET', versions('person'))).status).toBe(404);
+    /* RED WHEN: a reader is refused the grants or the roster, which every reader's wallet reads to open what it is given. */
+    for (const kind of ['grants', 'roster', 'spending-policy']) expect((await as('rhea', 'GET', versions(kind))).status).toBe(200);
+    /* RED WHEN: a reader fetches a kind of record its grant does not read. */
+    for (const kind of ['vault-info', 'state', 'transfer']) expect((await as('rhea', 'GET', versions(kind))).status).toBe(404);
+    /* RED WHEN: a limited reader reads the runs, or a reader is refused the proposals its grant reads. */
+    expect((await as('rhea', 'GET', `/api/accounts/${CO}/runs`)).status).toBe(404);
+    expect((await as('rhea', 'GET', `/api/accounts/${CO}/proposals`)).status).toBe(200);
+    /* RED WHEN: an accountant is refused the people or the runs its grant reads. */
+    expect((await as('abe', 'GET', versions('person'))).status).toBe(200);
+    expect((await as('abe', 'GET', `/api/accounts/${CO}/runs`)).status).toBe(200);
+    expect(account.readers?.kinds).toEqual({
+      abe: ['grants', 'person', 'policy', 'proposal', 'roster', 'run', 'spending-policy'],
+      rhea: ['grants', 'policy', 'proposal', 'roster', 'spending-policy'],
+    });
+    /* RED WHEN: a reader granted the company's choice of service cannot fetch the policy record it is filed as. */
+    expect(kindsAReaderFetches(['company-service'])).toEqual(['grants', 'policy', 'roster']);
+  });
+
+  it('KEEPS NOTHING WHEN THE ENTRIES HANDED IN ARE NOT THE ONES THE SIGNATURES NAME', async () => {
+    const signedFor = listOf(12, ['abe', 'rhea'], [ADA, BO]);
+    const widened = signedFor.granted.map((e) => (e.person === 'rhea' ? { ...e, role: 'accountant' as const, purposes: entryOf('abe').purposes } : e));
+    /* RED WHEN: entries other than the signed ones are kept, so a reader's kinds widen with no signer signing it. */
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, { ...signedFor, granted: widened }))
+      .toMatchObject({ status: 422, body: { refused: 'not-the-signed-entries' } });
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, { ...signedFor, granted: undefined }))
+      .toMatchObject({ status: 400, body: { refused: 'not-a-list' } });
+    expect(account.readers?.sequence).toBe(11);
+    expect((await as('rhea', 'GET', `/api/accounts/${CO}/runs`)).status).toBe(404);
+  });
+
+  it('A LIST KEPT WITHOUT ITS KINDS LETS ITS READERS FETCH NO RECORD UNTIL THE SAME CHANGE IS HANDED IN WITH ITS ENTRIES', async () => {
+    account = { ...account, readers: { sequence: 20, userIds: ['rhea'] } };
+    const grants = `/api/accounts/${CO}/records/grants/read-grants/versions`;
+    expect((await as('rhea', 'GET', grants)).status).toBe(404);
+    /* RED WHEN: the same change handed in again is answered as kept, so its readers never gain their kinds. */
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(20, ['rhea'], [ADA, BO]))).toMatchObject({ status: 201, body: { kept: true } });
+    expect((await as('rhea', 'GET', grants)).status).toBe(200);
+    expect(await as('bo', 'POST', `/api/accounts/${CO}/readers`, listOf(20, ['rhea'], [ADA, BO]))).toMatchObject({ status: 200, body: { kept: true } });
+  });
+
+  it('A CHANGE THAT ONLY TAKES READING AWAY COUNTS A SIGNER WHO HAS LEFT, AS EVERY DEVICE DOES; ONE THAT GIVES DOES NOT', async () => {
+    expect((await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(30, ['abe', 'rhea'], [ADA, BO]))).status).toBe(201);
+    /* RED WHEN: the service keeps an accountant's people and runs that every device's fold holds taken away, because one of its two signers has left. */
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(31, ['rhea'], [ADA, GONE]))).toMatchObject({ status: 201, body: { kept: true } });
+    expect((await as('abe', 'GET', `/api/accounts/${CO}/runs`)).status).toBe(404);
+    /* RED WHEN: a seat that has left helps give a reader access. */
+    expect(await as('ada', 'POST', `/api/accounts/${CO}/readers`, listOf(32, ['abe', 'rhea'], [ADA, GONE]))).toMatchObject({ status: 403, body: { refused: 'below-quorum' } });
+    expect(readersOf(account)).toEqual(['rhea']);
+  });
+
+  it('SERVES A COMPANY\'S ACCOUNT RECORD WITHOUT THE READERS IT KEEPS OR THE KINDS EACH READS', () => {
+    const served = withoutReaders(account);
+    /* RED WHEN: the account record a member or a reader is served names the company's readers and what each may read. */
+    expect('readers' in served).toBe(false);
+    expect(served).toMatchObject({ id: CO, memberUserIds: ['ada', 'bo'] });
+    expect(readersOf(account)).toEqual(['rhea']);
   });
 });

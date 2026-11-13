@@ -65,7 +65,14 @@ export type VaultInfoRead =
 
 
 const VAULT = /^[0-9a-f]{64}$/u;
+/** A refusal in the words it was thrown with: the error's message, or what was thrown when it carries none. */
 export const said = (e: unknown): string => String((e as Error)?.message ?? e);
+
+/** The same words without their closing full stop, for quoting inside a sentence that goes on after them. */
+export const saidWithoutStop = (e: unknown): string => said(e).replace(/\.\s*$/u, '');
+
+/** An address or identity on the chain in lower case, the one case it is compared in. */
+export const lowerHex = (h: string): Hex => String(h).toLowerCase() as Hex;
 
 export const vaultOf = (vault: string): Hex => {
   const v = String(vault).toLowerCase();

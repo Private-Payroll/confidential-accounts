@@ -46,7 +46,7 @@ import { inboxPublicKey as inboxOf, sealToInbox } from '../../../src/core/sealed
 import { sealPerson } from '../../../src/core/person-record.js';
 import { openVendor, sealVendor, vendorTermsRefusal, type VendorRecord, type VendorTerms } from '../../../src/core/vendor-record.js';
 import { assets as defaultAssets, whyTheMoneyCannotReach, type AssetId } from '../../../src/core/assets.js';
-import { invitationSecret, newSeatInvitation, proveSeatKeys, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
+import { invitationSecret, newSeatInvitation, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
 import {
   acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, invitationProposalSalt,
   invitationThresholdRefusal, newInvitationToken, offerExpiredRefusal, openOffer, seatByAddressChangeOf, type ProposalIdentityOf,
@@ -70,12 +70,13 @@ import { FiledNotEntered, type RecordsEntered } from './record-entered-here.js';
 import type { LeafScheme } from '../../../src/core/signer-leaf.js';
 import type { SealedHandover } from '../../../src/core/invite-handover.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { readJoinCode, writeJoinCode, JOIN_CODE_REFUSAL, type JoinCode, type PayeeParts, type SignerParts } from 'midnight-identity/profile/join-code';
+import { writeJoinCode, type JoinCode, type PayeeParts, type SignerParts } from 'midnight-identity/profile/join-code';
 import { payeeCodeFingerprint, seatKeyFingerprint } from 'midnight-identity/profile/fingerprint';
 
 import { seatRequestFingerprint } from './seat-request-fingerprint.js';
 import { acceptSeatOnThisDevice, type AcceptedSeat, type SeatDoors } from './accept-seat.js';
-import { walletKeyProvedBy, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
+import type { WalletKey } from '../../../src/core/seat-opening.js';
+import { seatAddressSignedFor, type InviteAddressOf, type SeatAddress } from '../../../src/core/seat-address.js';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
 import { typedAddressIsShielded } from 'midnight-identity/profile/address-claim';
 import type { NetworkName } from '../../../src/midnight/network.js';
@@ -146,13 +147,13 @@ export class SeatMayNotInvite extends Error {
   }
 }
 
-/** Refuses unless this device's seat is one not retired whose role may file a proposal: the one rule every member's device holds it to. */
 /** Refused, with nothing signed, when this seat would offer vaults beyond its own (`vaultsOfferedRefusal`); `instead` says what else clears it. */
-const refuseVaultsBeyondTheSeat = (seat: Pick<InvitingSeat, 'held'>, vaults: readonly Hex[] | undefined, instead = ''): void => {
+export const refuseVaultsBeyondTheSeat = (seat: Pick<InvitingSeat, 'held'>, vaults: readonly Hex[] | undefined, instead = ''): void => {
   const why = vaultsOfferedRefusal(seat.held?.rights ?? NO_VAULT_COUNTED, vaults);
   if (why !== null) throw new SeatMayNotInvite(`This invitation was not made: ${why}${instead}.`);
 };
 
+/** Refuses unless this device's seat is one not retired whose role may file a proposal: the one rule every member's device holds it to. */
 export const refuseASeatThatMayNotInvite = (seat: Pick<InvitingSeat, 'held'>): void => {
   if (seat.held === undefined) {
     throw new SeatMayNotInvite('This device has not read your seat\'s role from the company\'s directory, so it invites and withdraws nobody. Reload the page.');
@@ -208,7 +209,7 @@ async function filed(
 }
 
 /** Who an employee is, what they are paid and when they work, as the person inviting them enters it. */
-interface EmployeeSpec {
+export interface EmployeeSpec {
   readonly name: string;
   readonly email: string | null;
   readonly title: string;
@@ -337,7 +338,7 @@ export interface InviteSpecs {
 }
 
 /** An employee's invitation and first person record, made here and filed together; the token stays on this device. */
-async function filePayeeInvitation(
+export async function filePayeeInvitation(
   company: InvitingCompany, seat: InvitingSeat, spec: EmployeeSpec, send: InvitationSend, given?: Hex,
 ): Promise<{ token: Hex; id: Hex; person: string; sealing: Sealing }> {
   refuseASeatThatMayNotInvite(seat);
@@ -446,14 +447,14 @@ const vendorAddedHere = (company: InvitingCompany, spec: VendorSpec, id: string,
  * (`signSeatInvitation`) and travels inside the sealed offer; for a seat added
  * from a code it also names the leaf the code carries (`leaf`).
  */
-async function fileSignerInvitation(
+export async function fileSignerInvitation(
   company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec, send: InvitationSend, leaf?: Hex, given?: Hex,
 ): Promise<{ token: Hex; id: Hex; proved: SeatInvitation; invited: SignedSeatInvitation; sealing: Sealing }> {
   refuseASeatThatMayNotInvite(seat);
   refuseVaultsBeyondTheSeat(seat, signer.vaults);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
-  const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role);
   const token = tokenFor(given);
+  const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role, invitationIdOf(token));
   const invited = signSeatInvitation({
     company: company.id, invitation: invitationIdOf(token), person: signer.person, name: signer.name, role: signer.role,
     ...(signer.vaults === undefined ? {} : { vaults: signer.vaults }), ...(leaf === undefined ? {} : { leaf }),
@@ -518,7 +519,7 @@ async function fileSignerByAddress(
   const proposalSalt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(seat.signingSecret) });
   const { chainId } = await doors.identity(seatByAddressChangeOf(invite), proposalSalt);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
-  const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role);
+  const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role, terms.invitation);
   const invited = signSeatInvitation({ ...terms, proposal: chainId.toLowerCase() as Hex }, seat.signingSecret);
   const inviter: Inviter = { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening };
   const forWhom: InvitationOffer['for'] = {
@@ -721,7 +722,7 @@ async function resumeSignerByAddress(
   if (held !== null) throw new InvitationNotMade(held);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const inbox = inboxOf(sealing.key, company.id);
-  const secret = invitationSecret(sealing.key, company.id, forWhom.seat.nonce, forWhom.name, forWhom.role);
+  const secret = invitationSecret(sealing.key, company.id, forWhom.seat.nonce, forWhom.name, forWhom.role, invitationIdOf(kept.token));
   let resumed = kept;
   if (offer.inboxPublicKey !== inbox || forWhom.seat.secret !== secret) {
     resumed = { ...kept, offer: signOffer({ ...offer, inboxPublicKey: inbox, for: { ...forWhom, seat: { nonce: forWhom.seat.nonce, secret } } }, seat.signingSecret) };
@@ -913,18 +914,28 @@ const filedToOf = async (opened: OpenedInvitation, send: InvitationSend): Promis
  * (`offerNotForTheCompanyRefusal`), and only for the person the invitation
  * names; the public halves, the leaf and its opening, the proof of their keys,
  * the name and role the offer gave them, and who the seat is for as the
- * inviting seat signed it are sealed here to the company's inbox key and filed
- * as the seat request.
+ * inviting seat signed it, and the address their own wallet signed that they
+ * take the seat with (`seatAddress`), are sealed here to the company's inbox
+ * key and filed as the seat request. An address the wallet did not sign for
+ * this seat, or that its coin key does not make, is refused before anything
+ * is sent.
  * Returns, with the seat, the fingerprint of the keys for the person to read
  * to whoever seats them. Refuses an offer of pay, and a super admin's, which
  * joins under the committee's own rules.
  */
 export async function acceptAsSignerHere(
-  opened: OpenedInvitation, commitments: LeafScheme, doors: Omit<SeatDoors, 'publish'>, send: InvitationSend,
+  opened: OpenedInvitation, commitments: LeafScheme & { readonly inviteAddressOf: InviteAddressOf }, doors: Omit<SeatDoors, 'publish'>, send: InvitationSend,
   /** The sign-in accepting it: sealed into the request, and held to the member the company would make of it when it is seated. */
   person: string,
   /** The person's own wallet key for the company, asked of their wallet with the offer's label and account. */
   walletKey: (company: { readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress }) => Promise<WalletKey>,
+  /**
+   * The address the person's own wallet takes the seat with: its coin key and a salt, signed under `walletKey` for the
+   * company and the seat's leaf, the address made from them (`signSeatAddress`). The chain seats whoever holds the
+   * address the proposal names, so it is never anybody else's to choose; this device works it out again from the coin
+   * key (`commitments.inviteAddressOf`) and checks the signature before anything is sent.
+   */
+  seatAddress: (company: { readonly accountId: string }, leaf: Hex) => Promise<SeatAddress>,
 ): Promise<AcceptedSeat & { readonly fingerprint: string }> {
   const o = opened.signed.offer;
   if (o.for.kind === 'super-admin') throw new Error(SUPER_ADMIN_JOINS_BY_THE_COMMITTEE);
@@ -947,7 +958,10 @@ export async function acceptAsSignerHere(
     seal: (seat) => doors.seal({ ...seat, invitedBy: o.inviter, invited: offer.invited }),
     publish: async (payload) => {
       /* Who the seat is for, as the seat that invited signed it, travels with the keys for every approving device to check. */
-      const waiting: PendingSignerPayload = { name: offer.name, role: offer.role, ...payload, person, invited: offer.invited };
+      const signed = seatAddressSignedFor(await seatAddress({ accountId: o.company }, payload.leafCommitment), key, o.company, payload.leafCommitment,
+        (c, salt) => commitments.inviteAddressOf(c, salt));
+      if (typeof signed === 'string') throw new Error(WALLET_SIGNED_NO_ADDRESS);
+      const waiting: PendingSignerPayload = { name: offer.name, role: offer.role, ...payload, person, invited: offer.invited, seatAddress: signed };
       fingerprint = seatRequestFingerprint(waiting);
       const b = answered(await send(`/api/invites/${invitationIdOf(opened.token)}/accept-signer`, {
         method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(opened.token), waiting: sealToInbox(waiting, o.inboxPublicKey) }),
@@ -955,28 +969,21 @@ export async function acceptAsSignerHere(
       if (typeof b.id !== 'string') throw new Error('the service did not say which seat request it filed, so this device cannot finish it.');
       return { id: b.id };
     },
-  }, key, { accountId: o.company, nonce: offer.seat.nonce, secret: offer.seat.secret }, offer.invited.terms);
+  }, key, { accountId: o.company, nonce: offer.seat.nonce, secret: offer.seat.secret, person, invitationId: offer.invited.terms.invitation }, offer.invited.terms);
   return { ...seated, fingerprint };
 }
 
+/** Why a seat request is not sent when the wallet's address for it does not check, and what clears it. */
+const WALLET_SIGNED_NO_ADDRESS = 'your wallet did not sign, for this seat, an address made from its own coin key, so no seat '
+  + 'request was sent. No wallet signs that address yet; that comes with joining by a link in the wallet. Ask whoever invited you '
+  + 'to invite you by your private address instead.';
+
+/** Why no code is made when the wallet's address for the seat does not check, and what clears it. */
+const WALLET_SIGNED_NO_ADDRESS_IN_A_CODE = 'your wallet did not sign, for this seat, an address made from its own coin key, so no code '
+  + 'was made. No wallet adds that address to a code yet; that comes with joining by a code in the wallet. Ask the company to '
+  + 'invite you by your private address instead.';
+
 /* ------------------------------------------------------------------ codes */
-
-/** Thrown for a pasted code this device will not add anybody from; nothing was filed. */
-export class CodeNotTaken extends Error {
-  constructor(why: string) {
-    super(`${why} Nothing was filed.`);
-    this.name = 'CodeNotTaken';
-  }
-}
-
-const codeFor = (text: string, company: InvitingCompany, kind: 'signer' | 'payee'): JoinCode => {
-  const code = readJoinCode(text, company.label);
-  if (typeof code === 'string') throw new CodeNotTaken(JOIN_CODE_REFUSAL[code]);
-  if (code.parts.kind !== kind) {
-    throw new CodeNotTaken(kind === 'signer' ? 'This is a code for being paid, not for a seat.' : 'This is a code for a seat, not for being paid.');
-  }
-  return code;
-};
 
 /**
  * **WHAT A PAYEE HANDS OVER, WHICHEVER WAY THEY JOIN**: their code, sealed to
@@ -989,23 +996,29 @@ export const payeeHandoverOf = (code: JoinCode, inboxPublicKey: Hex): SealedHand
 /**
  * **A SIGNER'S CODE, MADE ON THEIR OWN DEVICE THROUGH THE ONE SEAT PATH.** The
  * keys are made and kept here (`doors`); their public halves and leaf go out
- * as a code their wallet signs (`sign`), with the leaf's opening beside it,
+ * as a code their wallet signs (`sign`), with the leaf's opening and the
+ * address their wallet signed for the seat (`seatAddress`) beside it,
  * instead of as a seat request: the seat request is filed by whoever pastes
  * the code. Returns the code and the fingerprint the person reads to them.
  */
 export async function makeSignerCodeHere(
-  accountId: string, commitments: LeafScheme, doors: Omit<SeatDoors, 'publish' | 'promote'>,
+  accountId: string, commitments: LeafScheme & { readonly inviteAddressOf: InviteAddressOf }, doors: Omit<SeatDoors, 'publish' | 'promote'>,
   sign: (parts: SignerParts) => Promise<JoinCode>,
   /** The person's own wallet key for the company, as their wallet gave it: the key the seat's leaf commits to. */
   walletKey: WalletKey,
+  /** The address the person's own wallet takes the seat with, made from its coin key and signed for the company and the leaf (`signSeatAddress`). */
+  seatAddress: (company: { readonly accountId: string }, leaf: Hex) => Promise<SeatAddress>,
 ): Promise<{ readonly code: string; readonly fingerprint: string }> {
   let made: JoinCode | null = null;
   await acceptSeatOnThisDevice(accountId, commitments, {
     ...doors,
     publish: async (payload) => {
       const signed = await sign({ kind: 'signer', signingPublicKey: payload.signingPublicKey, wrappingPublicKey: payload.wrappingPublicKey, leafCommitment: payload.leafCommitment });
-      /* The leaf's opening rides beside the signature: it proves itself against the leaf the wallet signed. */
-      made = { ...signed, opening: payload.opening };
+      /* The leaf's opening and the address ride beside the signature: each proves itself against the leaf the wallet signed. */
+      const address = seatAddressSignedFor(await seatAddress({ accountId }, payload.leafCommitment), walletKey, accountId, payload.leafCommitment,
+        (c, salt) => commitments.inviteAddressOf(c, salt));
+      if (typeof address === 'string') throw new Error(WALLET_SIGNED_NO_ADDRESS_IN_A_CODE);
+      made = { ...signed, opening: payload.opening, seatAddress: address };
       return { id: null };
     },
     promote: async () => { throw new Error('a seat made for a code is bound to its seat once that seat is filed, not here.'); },
@@ -1013,82 +1026,6 @@ export async function makeSignerCodeHere(
   const code = made as JoinCode | null;
   if (code === null || code.parts.kind !== 'signer') throw new Error('the wallet made no code, so there is nothing to give.');
   return { code: writeJoinCode(code), fingerprint: seatKeyFingerprint(code.parts) };
-}
-
-/**
- * **A SIGNER ADDED FROM A CODE THEY GAVE.** This device checks the code's
- * signature and company, and that the opening beside it makes the code's leaf
- * for the wallet that signed the code (`walletKeyProvedBy`, with the leaf this
- * device's vault worker works out, `leaves`). It then makes a real invitation
- * for them through the same filing as a link (kept, listed with the company's
- * invitations, and spent by this seat request), signed for the sign-in the
- * code names and for the leaf it carries, and files the seat request a link's
- * acceptance files. Returns the seat request and the fingerprint to compare
- * with the one the person reads out.
- */
-export async function addSignerFromCodeHere(
-  company: InvitingCompany, seat: InvitingSeat, text: string, signer: { readonly name: string; readonly role: Role }, send: InvitationSend,
-  /** The leaf each opening makes, worked out in this device's vault worker. */
-  leaves: (openings: readonly SeatOpening[]) => Promise<readonly (string | null)[]>,
-): Promise<{ readonly id: string; readonly fingerprint: string }> {
-  refuseASeatThatMayNotInvite(seat);
-  const code = codeFor(text, company, 'signer');
-  const parts = code.parts as SignerParts;
-  const keys = { signingPublicKey: parts.signingPublicKey, wrappingPublicKey: parts.wrappingPublicKey, leafCommitment: parts.leafCommitment };
-  const opening = code.opening;
-  const [leaf] = opening === undefined ? [null] : await leaves([opening]);
-  const proved = walletKeyProvedBy(opening, parts.leafCommitment, () => leaf ?? null);
-  if (opening === undefined || proved === null || proved.value.toLowerCase() !== code.committeeKey.value.toLowerCase()) {
-    throw new CodeNotTaken('This code does not show that its seat is made for the wallet that signed it, so nobody can be added '
-      + 'from it. Ask the person to make a new code.');
-  }
-  /*
-   * A code's seat is made before anybody chose its role, for every right on every vault (`makeSignerCodeHere`): it is
-   * added only as an admin, whose rights those are. Any other role is given by address, where the seat is made for it.
-   */
-  if (signer.role !== 'admin') {
-    throw new CodeNotTaken(`A seat joined by a code is made for every right on every vault, so it can be added only as an admin, `
-      + `not as an ${signer.role}. Invite this person by their address to give them that role.`);
-  }
-  refuseVaultsBeyondTheSeat(seat, undefined, '; invite this person by their address instead, naming vaults within your own');
-  /* The invitation names the leaf the joiner's wallet signed, and the person it signed for. */
-  const made = await fileSignerInvitation(company, seat, { ...signer, person: code.person }, send, parts.leafCommitment);
-  /*
-   * **THE PROOF HERE SAYS THIS DEVICE VOUCHED FOR EXACTLY THESE KEYS**, under
-   * the invitation it has just made and holds the secret of: it does not say
-   * the joiner made them. What ties the keys to the joiner is the code's
-   * signature by their wallet, the opening that makes its leaf for that wallet,
-   * and the fingerprint they read out, which the person adding them compares
-   * with `fingerprint` below. The seat request is then the one a link's
-   * acceptance files, and every seat has one invitation behind it.
-   */
-  const waiting: PendingSignerPayload = {
-    name: signer.name, role: signer.role, ...keys, seatProof: proveSeatKeys(made.proved, keys), person: code.person,
-    opening, invited: made.invited,
-  };
-  const b = answered(await send(`/api/invites/${made.id}/accept-signer`, {
-    method: 'POST',
-    body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), waiting: sealToInbox(waiting, inboxOf(made.sealing.key, company.id)), for: code.person }),
-  }), 201);
-  if (typeof b.id !== 'string') throw new Error('the service did not say which seat request it filed.');
-  return { id: b.id, fingerprint: seatKeyFingerprint(keys) };
-}
-
-/**
- * **AN EMPLOYEE ADDED FROM A CODE THEY GAVE.** Their first person record and a real
- * invitation are made and filed as for a link, and the invitation is accepted
- * here with their code as what they hand over. Admitting them is a separate
- * act. Returns the person and the fingerprint of the address they are paid at.
- */
-export async function addPayeeFromCodeHere(
-  company: InvitingCompany, seat: InvitingSeat, text: string, spec: EmployeeSpec, send: InvitationSend,
-): Promise<{ readonly person: string; readonly fingerprint: string }> {
-  const code = codeFor(text, company, 'payee');
-  const made = await filePayeeInvitation(company, seat, spec, send);
-  answered(await send(`/api/invites/${made.id}/accept-payee`, {
-    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), handover: payeeHandoverOf(code, inboxOf(made.sealing.key, company.id)), kind: 'employee' }),
-  }), 201);
-  return { person: made.person, fingerprint: payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }) };
 }
 
 /* ------------------------------------------------------------------ an inviter who left */
@@ -1139,14 +1076,21 @@ const replacedFor = (proposals: Reissued['proposals'], accountId: string, viewin
  * device keeps both in place of what it kept (`takeTheReissueHere`), so their
  * wallet keeps the company's account on a seat it holds, and their own entry
  * carries an invitation from a seat not retired. Refused before anything is
- * signed when this seat may not invite, when the invitation offers vaults
- * beyond this seat's own, when it names no leaf or another company, or when
- * the chain does not hold that leaf now.
+ * signed when this seat may not invite or the chain does not hold it now, when
+ * the invitation offers vaults beyond this seat's own, when it names no leaf or
+ * another company, or when the chain does not hold that leaf now. The link's
+ * token is `own.token` when the caller made it, so the caller can watch it.
+ * Returns the link with the name the invitation itself carries, which is the
+ * name to show beside the link, never the one a page asked under.
  */
 export async function reissueInvitationHere(
-  company: InvitingCompany, seat: InvitingSeat, reissued: Reissued, origin: string, send: InvitationSend,
-): Promise<MadeInvitation> {
+  company: InvitingCompany, seat: InvitingSeat, reissued: Reissued, origin: string, send: InvitationSend, own: { readonly token?: Hex } = {},
+): Promise<MadeInvitation & { readonly name: string }> {
   refuseASeatThatMayNotInvite(seat);
+  if (!reissued.onTheChain.some((x) => x.toLowerCase() === seat.statement.seat.toLowerCase())) {
+    throw new SeatMayNotInvite('Your seat is not one the company\'s account holds now, so the person\'s wallet would not take you as '
+      + 'their inviter. Send it again from the device of a signer whose seat the account holds.');
+  }
   const original = replacedFor(reissued.proposals, company.id, company.viewingKey, reissued.leaf);
   const t = original?.terms;
   if (original === null || t === undefined || seatInvitationRefusal(original) !== null || t.company !== company.id || t.leaf?.toLowerCase() !== reissued.leaf.toLowerCase()) {
@@ -1159,7 +1103,7 @@ export async function reissueInvitationHere(
   }
   refuseVaultsBeyondTheSeat(seat, t.vaults);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
-  const token = newInvitationToken();
+  const token = own.token ?? newInvitationToken();
   /*
    * Every term the signers approved - the person, name, role, vaults, seat, address and proposal - and the invitation
    * it replaces, for every member's device to hold it to: only the invitation's id is new.
@@ -1169,7 +1113,7 @@ export async function reissueInvitationHere(
     ...approved, invitation: invitationIdOf(token), replaces: { invitation: t.invitation, signedBy: original.signedBy, signature: original.signature },
   }, seat.signingSecret);
   const invitation = await filed(company, seat, 'signer', { kind: 'reissue', name: t.name, role: t.role, invited }, sealing, token, send);
-  return { link: invitationLink(origin, token), id: invitation.id };
+  return { link: invitationLink(origin, token), id: invitation.id, name: t.name };
 }
 
 /**
@@ -1177,12 +1121,16 @@ export async function reissueInvitationHere(
  * the person signed in and for this device's own seat: the seat that signed it
  * and the invitation are kept together (`keep`), in place of the inviter and
  * invitation this device kept, for their wallet's next records-key ask and
- * their own directory entry. Nothing is sent.
+ * their own directory entry. Refused when the seat that re-issued it is not
+ * one the chain holds now, so an inviter who left after sending it is never
+ * kept. Nothing is sent.
  */
 export async function takeTheReissueHere(
-  opened: OpenedInvitation, mine: { readonly accountId: string; readonly person: string; readonly seat: string; readonly viewingKey: KeysHeld },
+  opened: OpenedInvitation, mine: { readonly accountId: string; readonly person: string; readonly seat: string; readonly companyKeys: KeysHeld },
   /** The company's proposals: the one that seated this device's seat carries the invitation the re-issue must replace. */
   proposals: Reissued['proposals'],
+  /** The seats the chain holds now, as this device reads it. */
+  onTheChain: readonly string[],
   keep: (reissued: { readonly inviter: Inviter; readonly invited: SignedSeatInvitation }) => Promise<void>,
 ): Promise<void> {
   const o = opened.signed.offer;
@@ -1195,11 +1143,15 @@ export async function takeTheReissueHere(
     throw new Error('that re-issued invitation names another seat than the one this device holds for you, so nothing was kept.');
   }
   /* Only exactly the invitation your seat was proposed under, signed again: the same person, name, role and seat. */
-  const original = replacedFor(proposals, mine.accountId, mine.viewingKey, mine.seat);
+  const original = replacedFor(proposals, mine.accountId, mine.companyKeys, mine.seat);
   const replaced = replacedBy(o.for.invited);
   if (original === null || replaced === null || canonical(replaced) !== canonical(original)) {
     throw new Error('that re-issued invitation is not the one your seat was proposed under, for the same name and role, so nothing was kept. '
       + 'Ask the signer who sent it to re-issue it again.');
+  }
+  if (!onTheChain.some((x) => x.toLowerCase() === o.inviter.statement.seat.toLowerCase())) {
+    throw new Error('the signer who sent this re-issued invitation no longer holds a seat on the company\'s account, so nothing was kept. '
+      + 'Ask a signer whose seat the account holds to send it again.');
   }
   await keep({ inviter: o.inviter, invited: o.for.invited });
 }

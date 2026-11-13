@@ -15,7 +15,7 @@ import {
 } from './vault-page-doors.js';
 import type { FreshJudge } from './http-sealed-pool-store.js';
 import { manifestServiceFor, treeServiceFor } from './record-entered-here.js';
-import type { TreeKept } from './tree-kept-here.js';
+import { treeKeptInMemory, type TreeKept } from './tree-kept-here.js';
 import { anchorsOnChainAt, heldFor, type AnchorDoors } from './records-anchored-here.js';
 import { tagSeatsHere } from './seat-openings-here.js';
 import { grantsServedBy, revokedAtHere } from './purpose-wraps.js';
@@ -201,6 +201,18 @@ export function companyJudges(d: CompanyJudgeDoors) {
     builder: await d.builder(), vouching: vouchingFor(companyId), tagSeats: tagSeatsFor(account),
   })(directory, asked);
 
+  /*
+   * The same records as a reader's wallet holds them: it has no seat and no company key, so it reads no run that vouched
+   * for an anchor and tags no seat. An anchor this cannot reach is refused, never taken on the service's word; the next
+   * act of any seat files a newer anchor that it reaches. **IT KEEPS NO CHECKPOINT BETWEEN READS**: a reader's act is
+   * given its record id, label and account by the page, and nothing ties them together before the read, so the heads it
+   * checks are held for that one read only and can never stand in for the heads this device keeps for the company.
+   */
+  const anchoredForAReader = (companyId: string, company: CompanyLabel, account: AccountAddress): DirectoryHereDeps['anchored'] => async (directory, asked) => heldFor({
+    accountId: companyId, tree: treeServiceFor(d.api), manifest: manifestServiceFor(d.api), ...treeKeptInMemory(), onChain: anchorsOnChainFor(company, account),
+    builder: await d.builder(),
+  })(directory, asked);
+
   /** The leaf of each published opening, worked out by the builder, so a directory entry is matched to the seat the chain holds. */
   const leavesFor = (account: AccountAddress): DirectoryHereDeps['leaves'] => async (openings) =>
     (await (await d.builder()).seatOpenings({
@@ -335,7 +347,7 @@ export function companyJudges(d: CompanyJudgeDoors) {
   ): DirectoryRead => (asked) => directoryWithItsRecordsHere(directoryDeps(companyId, company, account, viewingKey, roster), asked);
 
   return Object.freeze({
-    anchorsOnChainFor, keysFoundFor, vouchingFor, tagSeatsFor, anchoredHere, leavesFor, rosterReadsFor, releasedOnceHere,
+    anchorsOnChainFor, keysFoundFor, vouchingFor, tagSeatsFor, anchoredHere, anchoredForAReader, leavesFor, invitedSeatsFor, identityHere, rosterReadsFor, releasedOnceHere,
     companyKeysFor, openedHere, openedQuietlyHere, seatsAdmittedOn, filingJudgeFor, directoryHereFor, directoryWithItsRecordsFor,
   });
 }

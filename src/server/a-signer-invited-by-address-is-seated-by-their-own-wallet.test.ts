@@ -101,7 +101,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     /* Dee's wallet takes the seat: its own seat 0, which the account does not hold. The chain checks the address. */
     const dee = deesSeat(0, terms.invite!.scope as Hex);
     committeeKeyOfLeaf.set(dee.leaf, DEES_KEY as never);
-    theInviteeTakesTheSeatHere(terms.proposal!, terms.invite!.address, dee.leaf);
+    theInviteeTakesTheSeatHere(terms.proposal!, { coinPublicKey: coinKey, addressSalt: terms.invite!.salt }, dee.leaf);
     expect(seatsOnTheChain()).toContain(dee.leaf);
     expect(seatsTakenByInvitation.get(terms.proposal!.toLowerCase())).toBe(dee.leaf);
 
@@ -110,7 +110,8 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const published = { signingPublicKey: dee.signingPublicKey, wrappingPublicKey: dee.wrappingPublicKey, leafCommitment: dee.leaf as Hex };
     const waiting = (leaf: Hex = dee.leaf as Hex): PendingSignerPayload => ({
       name: 'dee', role: 'approver', ...published, leafCommitment: leaf, opening: dee.opening as never, person: 'dee', invited: offer.invited,
-      seatProof: proveSeatKeys({ accountId: CO, nonce: offer.seat.nonce, secret: offer.seat.secret }, { ...published, leafCommitment: leaf }),
+      seatProof: proveSeatKeys({ accountId: CO, nonce: offer.seat.nonce, secret: offer.seat.secret }, { ...published, leafCommitment: leaf },
+        { person: 'dee', invitationId: offer.invited.terms.invitation }),
     } as PendingSignerPayload);
     const asked = await sendAs('dee')(`/api/invites/${invitationIdOf(token)}/accept-signer`, {
       method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(token), waiting: sealToInbox(waiting(), opened.signed.offer.inboxPublicKey) }),
@@ -326,12 +327,13 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const scope = terms.invite!.scope as Hex;
     const leaf = storedSignerLeaf({ signingSecret, blinding, scope }, MidnightCommitments).toLowerCase();
     committeeKeyOfLeaf.set(leaf, committeeKeyFor(wallet, LABEL) as never);
-    theInviteeTakesTheSeatHere(terms.proposal!, terms.invite!.address, leaf);
+    theInviteeTakesTheSeatHere(terms.proposal!, { coinPublicKey: coinKeyAt(address), addressSalt: terms.invite!.salt }, leaf);
     const published = { signingPublicKey: signingPublicKeyOf(signingSecret).toLowerCase() as Hex, wrappingPublicKey: toHex(x25519.getPublicKey(keys.wrappingSecret)) as Hex, leafCommitment: leaf as Hex };
     const waiting = {
       name: 'una', role: 'approver', ...published, opening: { publicKey: MidnightCommitments.signerPublicKey(signingSecret).toLowerCase(), scope, blinding, walletKey, salt },
       person: 'una', invited: offer.invited,
-      seatProof: proveSeatKeys({ accountId: CO, nonce: offer.seat.nonce, secret: offer.seat.secret }, published),
+      seatProof: proveSeatKeys({ accountId: CO, nonce: offer.seat.nonce, secret: offer.seat.secret }, published,
+        { person: 'una', invitationId: offer.invited.terms.invitation }),
     } as unknown as PendingSignerPayload;
     const asking = await sendAs('una')(`/api/invites/${invitationIdOf(token)}/accept-signer`, {
       method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(token), waiting: sealToInbox(waiting, opened.signed.offer.inboxPublicKey) }),

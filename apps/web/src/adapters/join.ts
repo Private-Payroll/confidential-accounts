@@ -19,8 +19,8 @@ import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
  * act that kind and way need. The page is told nothing secret: the payee's fingerprint is shown in the wallet's window only.
  */
 
-/** The three ways a person takes an invitation, each its own wallet act. */
-export const WAY = { seat: 'seat', code: 'code', claim: 'claim' } as const;
+/** The ways a person takes an invitation, each its own wallet act: a re-issued one is kept for the seat they hold. */
+export const WAY = { seat: 'seat', code: 'code', claim: 'claim', reissue: 'reissue' } as const;
 type Way = (typeof WAY)[keyof typeof WAY];
 
 /** What opening an invitation came to. */
@@ -31,13 +31,13 @@ const SEAT_KIND = 'signer';
 export const FULL_TIME: NonNullable<Offered['classification']> = EMPLOYEE_CLASSIFICATIONS[0];
 
 /** The wallet's name for the act that takes a seat, and what a stop of an act is called. */
-const ACT = { seatInvited: 'seat-invited' } as const;
+const ACT = { seatInvited: 'seat-invited', takeReissue: 'take-reissue' } as const;
 const AFTER = { stopped: 'stopped' } as const;
 
 /** Why an invitation is not offered. The first five are the service's own refusals of a closed invitation. */
 export const CLOSED = {
   notFound: 'not-found', withdrawn: 'withdrawn', expired: 'expired', used: 'used', notAccepted: 'not-accepted',
-  notOpened: 'not-opened', superAdmin: 'super-admin', reissue: 'reissue', seatByAddressOnly: 'seat-by-address-only', unreachable: 'unreachable',
+  notOpened: 'not-opened', superAdmin: 'super-admin', seatByAddressOnly: 'seat-by-address-only', unreachable: 'unreachable',
 } as const;
 export type ClosedWhy = (typeof CLOSED)[keyof typeof CLOSED];
 
@@ -78,11 +78,16 @@ function offeredFrom(id: string, opened: Opened): Opening {
   const o = (opened.signed as SignedOffer).offer;
   const f = o.for;
   if (f.kind === 'super-admin') return closed(CLOSED.superAdmin);
-  if (f.kind === 'reissue') return closed(CLOSED.reissue);
   const base = {
     id, token: opened.token, record: o.company, label: o.label as string, account: o.account as string, companyName: o.companyName, name: f.name,
     expiresAt: opened.expiresAt, opened,
   };
+  if (f.kind === 'reissue') {
+    return {
+      of: OPENED.offered,
+      offer: { ...base, kind: SEAT_KIND, way: WAY.reissue, title: null, role: f.role, classification: null, startDate: null, endDate: null, address: null },
+    };
+  }
   if (f.kind === SEAT_KIND) {
     const terms = f.invited.terms;
     if (f.byAddress === undefined || terms.invite === undefined || terms.proposal === undefined) return closed(CLOSED.seatByAddressOnly);
@@ -179,7 +184,7 @@ export async function joinTheCompany(personId: string, offer: Offered, onStep: (
     const ended = offer.way === WAY.code
       ? await joinByCodeInTheWallet(ask as never, ACCOUNT_ORIGIN, watch)
       : await actOnACompanyInTheWallet(
-        offer.way === WAY.claim ? { ...claimIntentOf(offer.opened) } : { name: ACT.seatInvited, ...ask }, ACCOUNT_ORIGIN, watch,
+        offer.way === WAY.claim ? { ...claimIntentOf(offer.opened) } : { name: offer.way === WAY.reissue ? ACT.takeReissue : ACT.seatInvited, ...ask }, ACCOUNT_ORIGIN, watch,
       );
     if (ended.of === 'done') return { of: ACTED.done };
     return { of: AFTER.stopped, why: stoppedAs(ended.refused), step: ended.step, steps: ended.steps, handedOver: ended.relayed > 0 || ended.unconfirmed > 0 };

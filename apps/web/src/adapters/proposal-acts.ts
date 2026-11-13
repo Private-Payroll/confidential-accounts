@@ -9,6 +9,7 @@ import {
   type PayRunWhy, type WindowProblem, type ProposalAct, type RaiseRunWhy, type ProposalWhy, type RunForm, type RunList, type ThresholdKnown, type ThresholdProblem,
 } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
+import { actOnACompanyInTheWallet } from 'vaults-web-shared/keyring.js';
 import { canApprove, canPay, canWithdraw, oneOffLegOf, walletKindOf, type ProposalAsks, type ProposalRow, type RunLeg } from './company-records.js';
 import { namedFor } from './create-vault.js';
 import { keyringFor } from './keyring-person.js';
@@ -116,6 +117,27 @@ export async function changeThreshold(
   }
 }
 
+
+/** The wallet's act that retires a vault. */
+const RETIRE_VAULT_ACT = 'retire-vault';
+
+/**
+ * RETIRE the vault `vault` of the company `companyId`, as one action in the person's wallet, which reads the vault empty
+ * on the chain first, raises the retire with this seat's approval counted, and carries it out by the vault itself once
+ * the company's threshold is met. The page names the company and the vault, and reads back where the retire got to; a
+ * retire stops for the reasons an approval does.
+ */
+export async function retireVault(personId: string, companyId: string, vault: string, onStep?: (step: number, steps: number) => void): Promise<ProposalActed> {
+  try {
+    const named = await namedBefore(personId, companyId);
+    if (typeof named === 'string') return refused(named);
+    const ended = await actOnACompanyInTheWallet({ name: RETIRE_VAULT_ACT, ...named, vault: vault.toLowerCase() }, ACCOUNT_ORIGIN,
+      onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
+    return actedOf(PROPOSAL_ACT.approve, ended);
+  } catch (e) {
+    return refused(refusalOf(e));
+  }
+}
 
 /** The leg of a run the page shows, as the wallet's pay-run act is asked to pay it. `form` is the leg's own (`shielded` pays privately). */
 interface PayRunLeg {

@@ -15,7 +15,7 @@ vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:518
 const kr = vi.hoisted(() => ({
   acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown, steps: [] as { step: number; steps: number }[],
   hold: null as Promise<void> | null, company: null as unknown, reads: 0, user: { id: 'u1' } as { id: string } | null,
-  told: null as unknown,
+  told: null as unknown, held: { of: 'unreadable' } as unknown,
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -34,6 +34,10 @@ vi.mock('../adapters/proposal-acts.js', async (real) => {
   const actual = await real<typeof import('../adapters/proposal-acts.js')>();
   return { ...actual, changeThreshold: (...ask: Parameters<typeof actual.changeThreshold>) => (kr.told === null ? actual.changeThreshold(...ask) : Promise.resolve(kr.told)) };
 });
+vi.mock('../adapters/policy-acts.js', async (real) => ({
+  ...(await real<typeof import('../adapters/policy-acts.js')>()),
+  readHolders: async () => kr.held,
+}));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => { kr.reads += 1; return kr.company; },
@@ -87,7 +91,7 @@ const draw = async (node: React.ReactNode = <ChangeThreshold />) => { inPage(nod
 const stopped = (refused?: string) => ({ of: 'stopped', step: 3, steps: 4, relayed: 0, unconfirmed: 0, why: refused === undefined ? 'relay-refused' : 'check-failed', ...(refused === undefined ? {} : { refused }) });
 
 beforeEach(() => {
-  kr.acts = []; kr.steps = []; kr.hold = null; kr.reads = 0; kr.user = { id: 'u1' }; kr.company = records(); kr.told = null;
+  kr.acts = []; kr.steps = []; kr.hold = null; kr.reads = 0; kr.user = { id: 'u1' }; kr.company = records(); kr.told = null; kr.held = { of: 'unreadable' };
   kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'carried-out', approvals: 2, needed: 2 } };
 });
 afterEach(cleanup);
@@ -311,5 +315,58 @@ describe('one vault\'s approvals', () => {
     await press('[data-panel] [data-action=raise-threshold]');
     expect(kr.reads).toBe(2);
     expect(document.body.querySelector('[data-panel] [data-acted]')!.textContent).toContain(words('changeThreshold.vault.done.carried', { count: 3, vault: words('vaults.tile.name', { number: 1 }) }));
+  });
+});
+
+
+describe('what the chosen number costs and which bar sets it', () => {
+  const HELD = { approvals: 2, policyBar: null, seatBar: 2, vaultThresholds: [] as { vault: string; threshold: number }[], seated: 4 };
+  const holders = (over: Record<string, unknown> = {}) => { kr.held = read({ ...HELD, ...over }); };
+  const text = (selector: string): string => q(selector)?.textContent ?? '';
+
+  /* RED WHEN: the company's number is changed without saying that the account sets how many approvals the change needs, or a number that asks for every signer is not warned about, or is refused. */
+  it('says the account sets what changing the company\'s number needs, and warns when the number asks for every signer seated', async () => {
+    holders();
+    await draw();
+    await press('[data-action=threshold-more]');
+    expect(text('[data-review-needs]')).toBe(`${words('changeThreshold.review.needs', { count: 2 })} ${words('changeThreshold.review.because.account')}`);
+    expect(q('[data-warning=every-signer]')).toBeNull();
+    await press('[data-action=threshold-more]');
+    await press('[data-action=threshold-more]');
+    expect(text('[data-warning=every-signer]')).toBe(words('changeThreshold.warn.every-signer', { seated: 4 }));
+    expect((q('[data-action=raise-threshold]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  /* RED WHEN: lowering the account's number is not told to leave the policy bar where it is, so the person thinks the bar fell with it. */
+  it('says the policy bar stays above a lowered account number', async () => {
+    holders({ policyBar: 3, seatBar: 3 });
+    await draw();
+    await press('[data-action=threshold-fewer]');
+    expect(text('[data-warning=bar-stays]')).toBe(words('changeThreshold.warn.bar-stays', { bar: 3, approvals: 1 }));
+  });
+
+  /* RED WHEN: a vault's number is changed without naming the vault or the policy that sets the approvals it needs, or without saying when it raises the policy bar or asks for every signer. */
+  it('names the account, the vault or the policy bar that sets what a vault\'s change needs, and the bar it raises', async () => {
+    kr.company = withVaults(3);
+    holders({ policyBar: 3, seatBar: 3, vaultThresholds: [{ vault: VAULT, threshold: 3 }] });
+    await draw(<ChangeThreshold vault={VAULT} />);
+    await press('[data-action=threshold-fewer]');
+    expect(text('[data-review-needs]')).toBe(`${words('changeThreshold.review.needs', { count: 3 })} ${words('changeThreshold.review.because.vault', { vault: 'Vault 1' })}`);
+    cleanup(); kr.company = withVaults(2);
+    holders({ vaultThresholds: [{ vault: VAULT, threshold: 2 }] });
+    await draw(<ChangeThreshold vault={VAULT} />);
+    await press('[data-action=threshold-more]');
+    expect(text('[data-review-needs]')).toBe(`${words('changeThreshold.review.needs', { count: 2 })} ${words('changeThreshold.review.because.account')}`);
+    expect(text('[data-warning=bar-raised]')).toBe(words('changeThreshold.warn.bar-raised', { bar: 3 }));
+    await press('[data-action=threshold-more]');
+    expect(text('[data-warning=every-signer]')).toBe(words('changeThreshold.vault.warn.every-signer', { seated: 4, vault: 'Vault 1' }));
+  });
+
+  /* RED WHEN: the figures the chain holds could not be read and the screen still says what the change needs or warns of a bar it did not read. */
+  it('says none of it when the approvals the chain holds could not be read', async () => {
+    await draw();
+    await press('[data-action=threshold-more]');
+    expect(q('[data-threshold-review]')).toBeNull();
+    expect((q('[data-action=raise-threshold]') as HTMLButtonElement).disabled).toBe(false);
   });
 });

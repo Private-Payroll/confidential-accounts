@@ -1,4 +1,4 @@
-import { BASE_COLORS, Card, CardDescription, CardHeader, CardTitle, Label, RadioGroup, RadioGroupItem, useText, type BaseColor } from 'vaults-ui';
+import { BASE_COLORS, Card, CardDescription, CardHeader, CardTitle, Label, RadioGroup, RadioGroupItem, Section, useText, type BaseColor } from 'vaults-ui';
 import { MODE_NAMES, MODES, type Mode } from '../preferences.js';
 import { useCurrentPage } from '../router.js';
 import { useSession } from '../session.js';
@@ -25,11 +25,7 @@ export function Appearance() {
   const { preferences, choose } = useSession();
   const { page } = useCurrentPage();
   return (
-    <section className="flex max-w-3xl flex-col gap-8" data-screen="appearance">
-      <header className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold">{page.name(t)}</h2>
-        <p className="text-sm text-muted-foreground">{t('appearance.description')}</p>
-      </header>
+    <Section title={page.name(t)} description={t('appearance.description')} list={false} data-screen="appearance">
       <fieldset className="flex flex-col gap-3">
         <legend className="pb-3 text-sm font-medium">{t('appearance.mode.title')}</legend>
         <RadioGroup value={preferences.mode} onValueChange={(m) => choose({ mode: m as Mode })} className="grid gap-3 sm:grid-cols-3" data-choice="mode">
@@ -59,6 +55,6 @@ export function Appearance() {
           ))}
         </RadioGroup>
       </fieldset>
-    </section>
+    </Section>
   );
 }

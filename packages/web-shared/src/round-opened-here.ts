@@ -298,7 +298,7 @@ async function addSignerOpenedHere(
   if (unbound !== null) {
     throw new NotOpenedOnThisDevice(`${NOT_APPROVED_SAID[unbound]}, so this device does not approve it. Do not approve it. Withdraw it, and invite the person again.`);
   }
-  const notTheirs = waiting === null ? null : linkInvitationRefusal(invited, waiting);
+  const notTheirs = waiting === null ? null : linkInvitationRefusal(accountId, invited, waiting, null);
   if (notTheirs !== null) throw new NotOpenedOnThisDevice(notTheirs);
   /* The threshold the seat sets once taken is the signed invitation's too: none keeps the one in force. */
   return seatByAddressChangeOf(invited.terms.invite!);

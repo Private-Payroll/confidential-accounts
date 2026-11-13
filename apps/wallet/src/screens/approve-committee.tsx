@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity/keys/derivation';
-import type { CommitteeKeyOnTheWire, CommitteeRequest } from 'midnight-identity/profile/request';
+import type { CommitteeAsk, CommitteeKeyOnTheWire, CommitteeRequest } from 'midnight-identity/profile/request';
 import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import type { Channel } from 'midnight-identity/profile/channel';
 import {
@@ -14,6 +14,7 @@ import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyChec
 import type { LabelReader } from './company-on-chain.js';
 import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
+import { ApproveSuperAdminRequest } from './approve-super-admin-request.js';
 import { hrefOf } from '../routes.js';
 import type { Consent } from '../framing.js';
 
@@ -53,11 +54,8 @@ type Stage =
 
 const keyText = (k: CommitteeKeyOnTheWire): string => `${k.value.slice(0, 12)}…${k.value.slice(-8)}`;
 
-export function ApproveCommittee({
-  request, identity, channel, consent, whoIsAsking, onDecline,
-  ledger = liveCommitteeLedger, now = Date.now, readLabel = liveLabelReader, readChain = liveChainReader,
-}: {
-  readonly request: CommitteeRequest;
+type ScreenProps<R> = {
+  readonly request: R;
   readonly identity: Identity;
   readonly channel: Channel | null;
   readonly consent: Consent;
@@ -67,7 +65,27 @@ export function ApproveCommittee({
   readonly now?: () => number;
   readonly readLabel?: LabelReader;
   readonly readChain?: ChainReader;
-}): ReactNode {
+};
+
+/** The committee screen: a super admin's request to the company's service has its own press; every change of a contract's committee is shown and signed below. */
+export function ApproveCommittee(props: ScreenProps<CommitteeAsk>): ReactNode {
+  const { request } = props;
+  if (request.press === 'request') {
+    return (
+      <ApproveSuperAdminRequest
+        request={request} identity={props.identity} channel={props.channel} consent={props.consent} whoIsAsking={props.whoIsAsking}
+        onDecline={props.onDecline} ledger={props.ledger ?? liveCommitteeLedger}
+        {...(props.now === undefined ? {} : { now: props.now })} {...(props.readLabel === undefined ? {} : { readLabel: props.readLabel })}
+      />
+    );
+  }
+  return <ApproveCommitteeChange {...props} request={request} />;
+}
+
+function ApproveCommitteeChange({
+  request, identity, channel, consent, whoIsAsking, onDecline,
+  ledger = liveCommitteeLedger, now = Date.now, readLabel = liveLabelReader, readChain = liveChainReader,
+}: ScreenProps<CommitteeRequest>): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'reading' });
   const check = useCompanyCheck(request.company, request.account, readLabel);
   const onChain = accountCarriesTheLabel(check, request.company);

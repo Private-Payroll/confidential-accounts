@@ -21,6 +21,7 @@ import { storedSignerLeaf } from '../../../../src/core/signer-leaf.js';
 import type { PendingSignerPayload } from '../../../../src/core/types.js';
 import type { InvitedSeatOnTheWire } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { seatInvitedAction } from './seat-invited.js';
+import { proveSeatKeys } from '../../../../src/core/seat-invite-proof.js';
 import { carriesASecret, forgetWatched } from '../keyring/nothing-secret-crosses.js';
 import { pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { StepRefused, type StepContext } from './definition.js';
@@ -107,6 +108,8 @@ interface Opts {
   directory?: readonly unknown[] | 'unread';
   /* The action made once for the wallet's lifetime, as the registry makes it, shared by the runs given it. */
   action?: ReturnType<typeof seatInvitedAction>;
+  /* The sign-in the page names: Dee's unless a case gives another, or none. */
+  person?: string | null;
 }
 
 /* The person's own wallet: reads the proven seat as the one call to `seatInvited`, pays its fee in DUST, hands it to the network and loses the answer. */
@@ -170,7 +173,7 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
   const answers = [...(opts.acceptAnswers ?? [])];
   const ctx = {
     intent: { name: 'seat-invited', fields: { company: LABEL, account: ACCOUNT, record: COMPANY, token: o.token } } as unknown as ActIntent,
-    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'dee',
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: opts.person === undefined ? 'dee' : opts.person,
     held: { identity: dee, secret: newSecret(), account: 0 }, at: { step: 1, steps: 2 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a seat is relayed through its invitation'); },
     call: async (method: string, path: string, body?: string) => {
@@ -220,6 +223,15 @@ const retiredIn = (leaf: string): unknown[] => {
 };
 
 describe('a seat invited by address is taken in the wallet, by the wallet that holds the address', () => {
+  it('with no sign-in named by the page, nothing is kept, proved or sent, and no seat is taken', async () => {
+    const seen = newSeen();
+    /* RED WHEN: the seat is taken on the network, and the threshold maybe raised, for a request every device would refuse. */
+    await expect(run(anOffer(), {}, { person: null, into: seen })).rejects.toMatchObject({ words: { key: 'act.seat-invited.why.no-sign-in' } });
+    expect(seen.asked).toEqual([]);
+    expect(seen.order).toEqual([]);
+    expect(seen.built).toEqual([]);
+  });
+
   it('the wallet hands the seat builder its own seat\'s keys and the address\'s coin key, relays what the builder returns through the invitation, and asks to be admitted', async () => {
     const o = anOffer();
     const { relayed, asked, built, kept, order } = await run(o);
@@ -238,6 +250,11 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     /* The request to be admitted opens with the company's key and carries the seat's public halves, not its secrets. */
     const waiting = openFromInbox<PendingSignerPayload>(asked[0]!.waiting as never, COMPANY, KEY);
     expect(waiting).toMatchObject({ name: 'dee', role: 'approver', person: 'dee', signingPublicKey: signingPublicKeyOf(toHex(own.signingSecret) as Hex).toLowerCase() });
+    /* RED WHEN: the request's proof does not cover the sign-in it is sealed for and the invitation it answers. */
+    const published = { signingPublicKey: waiting.signingPublicKey, wrappingPublicKey: waiting.wrappingPublicKey, leafCommitment: waiting.leafCommitment };
+    const seatOffered = { accountId: COMPANY, nonce: '9a'.repeat(32) as Hex, secret: '9b'.repeat(32) as Hex };
+    expect(waiting.seatProof).toEqual(proveSeatKeys(seatOffered, published, { person: 'dee', invitationId: invitationIdOf(o.token) }));
+    expect(waiting.seatProof).not.toEqual(proveSeatKeys(seatOffered, published, { person: 'mallory', invitationId: invitationIdOf(o.token) }));
     expect(JSON.stringify(asked)).not.toContain(toHex(own.signingSecret));
     expect(JSON.stringify(asked)).not.toContain(b.invite.coinSecretKey);
     /* RED WHEN: the seat taken is not kept in the saved keys, under the request the company filed. */
@@ -339,7 +356,9 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     await refusedWith(anOffer(), {}, { held: { accounts: { [COMPANY]: unscoped } } });
     /* Nothing is kept, proved, relayed or asked for. */
     const into = newSeen();
-    await run(anOffer(), { seats: [deesSeat(0, all).leaf] }, { into }).catch(() => {});
+    const stopped = await run(anOffer(), { seats: [deesSeat(0, all).leaf] }, { into }).catch((e: unknown) => e);
+    /* RED WHEN: a setup error that stops the run before the seat is read passes as the refusal this checks. */
+    expect(stopped).toMatchObject({ words: { key: 'act.seat-invited.why.already-seated' } });
     expect([into.order, into.kept]).toEqual([[], { accounts: {} }]);
   });
 

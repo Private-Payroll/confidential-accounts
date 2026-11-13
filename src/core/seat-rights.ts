@@ -97,8 +97,8 @@ export const scopeOfRole = (role: SignerRole, vaults?: readonly Hex[]): Hex => {
  */
 export const seatScopeRefusal = (role: Role, vaults: readonly Hex[] | undefined, scope: string): string | null => {
   if (isReaderRole(role)) {
-    return 'limited and accountant people read the company\'s records and hold no seat, so nobody is seated as one. Giving read '
-      + 'access is not on a screen yet';
+    return 'limited and accountant people read the company\'s records and hold no seat, so nobody is seated as one. Read '
+      + 'access is given on the Roles tab in Settings';
   }
   if (!isSignerRole(role)) return 'the role it names is not one a seat of a company can hold';
   const vaultsWrong = vaultsRefusal(vaults);

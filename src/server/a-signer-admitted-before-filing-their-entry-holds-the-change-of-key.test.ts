@@ -10,7 +10,7 @@
  * the way. Bo's device enters it with the entry Ada's seat signed and the version carries, and believes the roster.
  */
 import { describe, it, expect } from 'vitest';
-import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { identityFromSecret } from 'midnight-identity';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
@@ -24,11 +24,17 @@ import { ACME, ORIGIN, fromAda } from './a-company-of-two-seats.test-support.js'
 import {
   aCompanyWhoseSignersChange, ADA, BO, chains, CO, committeeKeyOfLeaf, CY, deviceOf, KEY, LABEL, rosterDoorsOf, sendAs, store,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
+import { aJoinersWallet } from '../testing/a-joiners-wallet.js';
+import type { Hex } from '../core/crypto.js';
 
 aCompanyWhoseSignersChange();
 
 const DEES_KEY = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(5)), LABEL) as { tag: string; value: string };
+/** Dees's wallet, which signs the address it takes the seat with. */
+const DEES_SIGNS = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new Uint8Array(32).fill(5)), LABEL).value as Hex, 41);
 const EVES_KEY = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(6)), LABEL) as { tag: string; value: string };
+/** Eves's wallet, which signs the address it takes the seat with. */
+const EVES_SIGNS = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new Uint8Array(32).fill(6)), LABEL).value as Hex, 42);
 
 describe('A SIGNER ADMITTED BEFORE A SIGNER LEAVES, WITH NO ENTRY YET', () => {
   it('holds up the change of the company\'s key until they file their entry', async () => {
@@ -36,7 +42,7 @@ describe('A SIGNER ADMITTED BEFORE A SIGNER LEAVES, WITH NO ENTRY YET', () => {
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
-    }, sendAs('dee'), 'dee', async () => DEES_KEY);
+    }, sendAs('dee'), 'dee', async () => DEES_KEY, DEES_SIGNS.seatAddress);
     const leaf = leafOfTheContract(kept[0]!.opening!)!;
     committeeKeyOfLeaf.set(leaf, DEES_KEY);
     const held = chains.get(CO)!;
@@ -60,7 +66,7 @@ describe('A ROSTER VERSION WHOSE ENTRY WAS LOST', () => {
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
-    }, sendAs('eve'), 'eve', async () => EVES_KEY);
+    }, sendAs('eve'), 'eve', async () => EVES_KEY, EVES_SIGNS.seatAddress);
     const leaf = leafOfTheContract(kept[0]!.opening!)!;
     committeeKeyOfLeaf.set(leaf, EVES_KEY);
     const held = chains.get(CO)!;

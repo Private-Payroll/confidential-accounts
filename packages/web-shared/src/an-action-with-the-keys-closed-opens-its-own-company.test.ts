@@ -181,7 +181,7 @@ describe('A PRIVATE DEPOSIT IS ASKED OF THE WALLET AS ONE ACTION', () => {
   });
 });
 
-describe('AN INVITATION IS ASKED OF THE WALLET AS ONE ACTION, WITH THE PAGE\'S OWN TOKEN', () => {
+describe('AN INVITATION IS ASKED OF THE WALLET AS ONE ACTION, WITH THE PAGE\'S OWN TOKEN FOR AN EMPLOYEE OR A VENDOR, AND NONE FOR A SIGNER', () => {
   const at = { record: OWN, company: LABEL, account: ACCOUNT as AccountAddress };
   const token = '02'.repeat(32);
   const askOf = async (ask: InviteAsk) => {
@@ -215,6 +215,8 @@ describe('AN INVITATION IS ASKED OF THE WALLET AS ONE ACTION, WITH THE PAGE\'S O
     /* RED WHEN: a signer's address or role does not reach the wallet that checks them. */
     expect(signer.fields).toMatchObject({ kind: 'signer', role: 'approver', address: ADDRESS });
     expect(Object.keys(signer.fields)).not.toContain('scope');
+    /* RED WHEN: the page hands a signer's wallet a token, which would then open the seat's offer from the page. */
+    expect(Object.keys(signer.fields)).not.toContain('token');
   });
 });
 

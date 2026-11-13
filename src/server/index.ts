@@ -51,7 +51,7 @@ import {
   type VaultAccountReader,
 } from './vault-records-authority.js';
 import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
-import { memberOrReaderReading, readersRoutes } from './readers-route.js';
+import { memberOrReaderReading, readersRoutes, withoutReaders } from './readers-route.js';
 import { companyRecordsRoutes, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
 import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
@@ -621,7 +621,7 @@ app.use(cors());
     /* A proposal's identity is the contract's on every wiring, as the device that raised it made it. */
     proposalIdOf: (payloadHash, salt, vault) => MidnightCommitments.proposalId(payloadHash as Hex, salt as Hex, vault as Hex | undefined),
     /* A vault's adoption, as the account's own functions make it, and the vaults its account lists on the chain now. */
-    adoptionOf: (vault) => adoptionRoundOf(accountPure as unknown as AccountStartPure, vault),
+    adoptionOf: (vault, again) => adoptionRoundOf(accountPure as unknown as AccountStartPure, vault, again),
     /* How the chain closed a proposal, read from the account's own history at this deployment's indexer. */
     closedOnChain: async (accountId, chainId) => {
       if (!startup.started) return 'unknown';
@@ -1399,10 +1399,12 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
 /*
  * **A COMPANY AS IT IS SERVED: ITS ACCOUNT RECORD, AND ITS ROSTER RECORD WHERE
  * IT HAS ONE**, newest version, sealed as filed. A device opens both; nothing
- * here opens either, and nothing is stored twice to serve them together.
+ * here opens either, and nothing is stored twice to serve them together. The
+ * readers the service keeps, and the kinds each reads, are left out: they are
+ * the gate's own list, and no device reads them from here.
  */
-const withRoster = <T extends { id: string }>(rec: T): T & { roster: ReturnType<typeof store.newestRoster> } =>
-  ({ ...rec, roster: store.newestRoster(rec.id) });
+const withRoster = <T extends { id: string }>(rec: T) =>
+  ({ ...withoutReaders(rec), roster: store.newestRoster(rec.id) });
 
 app.get('/api/accounts', authed, wrap(async (req, res) => {
   answerList(res, store.accountsForUser(req.userId!).map(withRoster));

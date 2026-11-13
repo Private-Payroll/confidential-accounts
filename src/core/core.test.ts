@@ -31,7 +31,7 @@ import {
 import type { DataStore } from './store.js';
 import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
-import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
+import { personOf, provenBy } from '../testing/a-seat-request-proved.js';
 
 import { TEST_TOKEN } from '../testing/assets.js';
 import { TEST_SETTLEMENT_ASSET } from './assets.js';
@@ -40,12 +40,6 @@ function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
   return value;
 }
-/** What the invited person's device sends beside its keys: the proof its link let it make. */
-const provenBy = (
-  viewingKey: string, invite: { accountId: string; name?: string; role?: string },
-  signingPublicKey: string, wrappingPublicKey: string, leafCommitment: string,
-) => proveSeatKeys(newSeatInvitation(viewingKey, invite.accountId, invite.name!, invite.role!),
-  { signingPublicKey, wrappingPublicKey, leafCommitment });
 
 
 /**
@@ -426,8 +420,8 @@ describe('onboarding', () => {
     // The invitee's device generates its own keys. Only public halves travel.
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const invitee = anInvitee(SimulatedCommitments, 1);
-    const pending = h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, invitee.leaf,
-      provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
+    const pending = h.accounts.acceptSignerInvite(invite.token, personOf(invite), sk.publicKey, wk.publicKey, invitee.leaf,
+      ...provenBy(viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
     expect(pending.status).toBe('pending');
 
     // No wrapped key exists for them, so they cannot reach the viewing key.
@@ -1919,7 +1913,7 @@ describe('multi-tenancy', () => {
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const invitee = anInvitee(SimulatedCommitments, 2);
     const pending = h.accounts.acceptSignerInvite(invite.token, blake.id, sk.publicKey, wk.publicKey, invitee.leaf,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
+      ...provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf, blake.id));
 
     // On the account, but not yet a member: an invite is not a grant.
     expect(pending.status).toBe('pending');
@@ -2285,8 +2279,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const invitee = anInvitee(SimulatedCommitments, 3);
     const blake = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, invitee.leaf,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
+      invite.token, personOf(invite), sk.publicKey, wk.publicKey, invitee.leaf,
+      ...provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
 
     const seat = await h.accounts.proposeSigner(
       c.account.id, c.viewingKey, blake.id, present(c.secrets[0]).signerId, invitee.invite,
@@ -2327,8 +2321,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const invitee = anInvitee(SimulatedCommitments, 4);
     const blake = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, invitee.leaf,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
+      invite.token, personOf(invite), sk.publicKey, wk.publicKey, invitee.leaf,
+      ...provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, invitee.leaf));
 
     /* RED WHEN: access is granted before the chain holds the person's seat. */
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, blake.id))
@@ -2375,8 +2369,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const danaAt = anInvitee(SimulatedCommitments, 7);
     const dana = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, danaAt.leaf,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, danaAt.leaf));
+      invite.token, personOf(invite), sk.publicKey, wk.publicKey, danaAt.leaf,
+      ...provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, danaAt.leaf));
 
     const seat = await h.accounts.proposeSigner(
       c.account.id, c.viewingKey, dana.id, present(c.secrets[0]).signerId, danaAt.invite,
@@ -2403,8 +2397,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const mk = (name: string, at: ReturnType<typeof anInvitee>) => {
       const invite = h.accounts.inviteSigner(c.account.id, name, `${name}@acme.co`, 'approver');
       const sk = newSigningKeypair(); const wk = newWrappingKeypair();
-      return h.accounts.acceptSignerInvite(invite.token, null, sk.publicKey, wk.publicKey, at.leaf,
-        provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, at.leaf));
+      return h.accounts.acceptSignerInvite(invite.token, personOf(invite), sk.publicKey, wk.publicKey, at.leaf,
+        ...provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, at.leaf));
     };
     const blakeAt = anInvitee(SimulatedCommitments, 8);
     const malloryAt = anInvitee(SimulatedCommitments, 9);
@@ -2435,8 +2429,8 @@ describe('granting access puts the signer in the on-chain set', () => {
     const sk = newSigningKeypair(); const wk = newWrappingKeypair();
     const danaAt = anInvitee(SimulatedCommitments, 10);
     const dana = h.accounts.acceptSignerInvite(
-      invite.token, null, sk.publicKey, wk.publicKey, danaAt.leaf,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, danaAt.leaf));
+      invite.token, personOf(invite), sk.publicKey, wk.publicKey, danaAt.leaf,
+      ...provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, danaAt.leaf));
     await expect(h.accounts.grantAccess(c.account.id, c.viewingKey, dana.id))
       .rejects.toThrow(/has not taken their seat on the chain yet/i);
   });
@@ -2561,7 +2555,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     const pendingLeaf = devi.leaf;
     const pending = h.accounts.acceptSignerInvite(
       invite.token, blake.id, sk.publicKey, wk.publicKey, pendingLeaf,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, pendingLeaf));
+      ...provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, pendingLeaf, blake.id));
 
     return { h, c, ada, blake, pending, pendingLeaf, sk, wk, devi };
   }

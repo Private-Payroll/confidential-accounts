@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as L from '@midnightntwrk/ledger-v9';
-import { committeeOf, committeeReplacement, sameCommittee, whyNoCommittee } from './vault-committee.js';
+import { committeeOf, committeeReplacement, sameCommittee, sameCommitteeKey, whyNoCommittee } from './vault-committee.js';
 
 const key = (n: number) => ({ tag: 'schnorr', value: n.toString(16).padStart(2, '0').repeat(32) });
 
@@ -64,5 +64,20 @@ describe('THE ONE UPDATE THE TEMPORARY KEY SIGNS', () => {
     expect(() => committeeReplacement(L as never, { vault, counter: 0n, to: { ...to, threshold: 3 } })).toThrow(/threshold is 3/);
     expect(() => committeeReplacement(L as never, { vault: 'xyz', counter: 0n, to })).toThrow(/sixty-four character/);
     expect(() => committeeReplacement(L as never, { vault, counter: -1n, to })).toThrow(/never below zero/);
+  });
+});
+
+describe('one committee key is the same key as another', () => {
+  const bare = { tag: 'schnorr', value: 'ab'.repeat(32) };
+  it('ONLY IN THE ONE SPELLING THE SERVICE TAKES: BARE HEX, IN EITHER CASE, OF EITHER TAG CASE', () => {
+    expect(sameCommitteeKey(bare, { tag: 'Schnorr', value: 'AB'.repeat(32) })).toBe(true);
+    /*
+     * RED WHEN: a key written with 0x is read as the same key, on either side, though the service refuses that spelling
+     * before it compares: a page would then show a person as a super admin that the service never lets in.
+     */
+    expect(sameCommitteeKey(bare, { tag: 'schnorr', value: `0x${'ab'.repeat(32)}` })).toBe(false);
+    expect(sameCommitteeKey({ tag: 'schnorr', value: `0x${'ab'.repeat(32)}` }, bare)).toBe(false);
+    expect(sameCommitteeKey(bare, { tag: 'schnorr', value: 'cd'.repeat(32) })).toBe(false);
+    expect(sameCommitteeKey(bare, { tag: 'other', value: 'ab'.repeat(32) })).toBe(false);
   });
 });

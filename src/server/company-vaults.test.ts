@@ -66,6 +66,8 @@ const aFeePayerThatCountsWhatItIsAskedFor = (): { sendVault: CompanyVaultDeps['l
   return { sendVault: (accountId, what, arrival, bytes, check, read) => ledger.sendVault(accountId, what, arrival, bytes, check, read), asked };
 };
 import { companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company-vaults.js';
+import { NONE_COUNTS } from './committee-signatures-kept.js';
+import { SUPER_ADMIN_HEADER, superAdminHeaderFor, superAdminRequestBytes } from '../midnight/super-admin-request.js';
 import type { VaultKey } from '../core/vault-keys.js';
 
 /*
@@ -1133,9 +1135,9 @@ describe('A CHANGE OF WHO HOLDS THE CONTRACTS: KEPT AND HANDED BACK, AND SENT ON
     const r = await keep('bo', { to: proposed, signatures: [sig(VAULT, '1', 0)] });
     expect(r.body.results[0]).toMatchObject({ state: 'kept', have: 1 });
     expect(store.getCommitteeSignatures('acc_1', VAULT)!.proposed.map((x) => x.to)).toEqual([proposed]);
-    /* And signatures for two committees at one counter are kept apart. */
+    /* And the same place's later signature, for another committee, replaces its earlier one. */
     await keep('ada', { to, signatures: [sig(VAULT, '1', 0, 'cd')] });
-    expect(store.getCommitteeSignatures('acc_1', VAULT)!.proposed.map((x) => x.to)).toEqual([proposed, to]);
+    expect(store.getCommitteeSignatures('acc_1', VAULT)!.proposed.map((x) => x.to)).toEqual([to]);
   });
 
   it('HANDS BACK EVERY SIGNATURE KEPT FOR THE COMPANY, WITH THE COMMITTEE IT IS OVER, TO A MEMBER', async () => {
@@ -1145,6 +1147,8 @@ describe('A CHANGE OF WHO HOLDS THE CONTRACTS: KEPT AND HANDED BACK, AND SENT ON
     /* RED WHEN: the route stops handing signatures back - a device then has only its own file to count from. */
     expect((await call('/api/accounts/acc_1/committee-change/signatures', 'bo')).body).toEqual({
       signatures: [{ address: VAULT, counter: '1', index: 0, signature: { tag: 'schnorr', value: 'ab' }, to }],
+      /* No change of the super admins is kept until its raiser's signature counts. */
+      changes: [],
     });
     expect((await call('/api/accounts/acc_1/committee-change/signatures', 'carol')).status).toBe(404);
   });
@@ -1363,6 +1367,79 @@ describe('A CHANGE OF WHO HOLDS THE CONTRACTS: KEPT AND HANDED BACK, AND SENT ON
     await keep('ada', { to, signatures: [sig(ACCOUNT, '2'), sig(VAULT)] });
     /* RED WHEN: a vault's threshold, the account's highest bar or a band is handed to what puts the change together. */
     expect(given).toEqual([[ACCOUNT, ['label', 'read', 'signatures', 'to']], [VAULT, ['label', 'read', 'signatures', 'to']]]);
+  });
+
+  it('KEEPS NOTHING WHEN NO SIGNATURE GIVEN COUNTS, ON EITHER ROUTE', async () => {
+    behind();
+    standIn();
+    /* RED WHEN: a request whose signatures count for nothing still grows what is kept for the company. */
+    expect((await keep('ada', { to, signatures: [sig(VAULT, '1', 0, 'bad')] })).body.results[0]).toMatchObject({ state: 'refused', error: NONE_COUNTS });
+    expect((await sendNow('ada', { address: VAULT, counter: '1', to, signatures: [{ index: 0, signature: { tag: 'schnorr', value: 'bad' } }] })).status).toBe(409);
+    expect(store.getCommitteeSignatures('acc_1', VAULT)).toBeNull();
+  });
+
+  it('A PLACE SIGNS FOR ONE CHANGE AT A TIME, SO CHANGES ITS SIGNERS ABANDONED NEVER STAND IN THE WAY OF ANOTHER', async () => {
+    behind();
+    standIn();
+    const proposed = (n: number) => ({ committee: [key(1), key(n)], threshold: 1 });
+    const kept = (address: string) => store.getCommitteeSignatures('acc_1', address)!.proposed.map((x) => x.to);
+    await keep('ada', { to: proposed(3), signatures: [sig(ACCOUNT, '2', 0)] });
+    await keep('bo', { to: proposed(4), signatures: [sig(ACCOUNT, '2', 1)] });
+    expect(kept(ACCOUNT)).toEqual([proposed(3), proposed(4)]);
+    /* RED WHEN: a place's newer signature leaves its older one kept, so changes nobody will finish pile up for the contract. */
+    for (let n = 5; n < 16; n += 1) expect((await keep('ada', { to: proposed(n), signatures: [sig(ACCOUNT, '2', 0)] })).body.results[0].state).toBe('kept');
+    expect(kept(ACCOUNT)).toEqual([proposed(4), proposed(15)]);
+    /* RED WHEN: a vault keeps a change the account does not hold, which the vault's update can never be sent to. */
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    await keep('ada', { to: proposed(6), signatures: [sig(VAULT, '1', 0)] });
+    await keep('bo', { to, signatures: [sig(VAULT, '1', 1)] });
+    expect(kept(VAULT)).toEqual([to]);
+  });
+
+  it('A SUPER ADMIN WITH NO SEAT KEEPS SIGNATURES AND READS THEM BACK WITH A REQUEST ITS KEY ON THE COMMITTEE SIGNED', async () => {
+    behind();
+    standIn();
+    const L = await import('@midnightntwrk/ledger-v9');
+    const secret = L.sampleSigningKey();
+    const mine = L.signatureVerifyingKey(secret);
+    accountAuthority = { committee: [mine], threshold: 1, counter: 2n };
+    const header = superAdminHeaderFor({ key: mine, signature: L.signData(secret, superAdminRequestBytes('acc_1', 'carol', ACCOUNT)).value });
+    const asCarol = (path: string, method = 'GET', body?: unknown) => fetch(base + path, {
+      method, headers: { 'content-type': 'application/json', 'x-test-person': 'carol', [SUPER_ADMIN_HEADER]: header }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }).then(async (r) => ({ status: r.status, body: await r.json() as { results?: unknown[] } }));
+    /* RED WHEN: the four routes still admit only members, so a super admin with no seat can neither keep nor read a change. */
+    expect((await asCarol('/api/accounts/acc_1/committee-change')).status).toBe(200);
+    expect((await asCarol('/api/accounts/acc_1/committee-change/signatures', 'POST', { to, signatures: [sig(VAULT)] })).body.results?.[0]).toMatchObject({ state: 'kept' });
+    expect((await asCarol('/api/accounts/acc_1/committee-change/signatures')).status).toBe(200);
+    expect((await call('/api/accounts/acc_1/committee-change/signatures', 'carol')).status).toBe(404);
+  });
+
+  it('A KEY WITH NO SEAT IS LET IN AS JOINING ONLY ONCE A CHANGE NAMING IT IS KEPT, RAISED BY A KEY ON THE CHAIN\'S COMMITTEE', async () => {
+    behind();
+    standIn();
+    const L = await import('@midnightntwrk/ledger-v9');
+    const { superAdminChangeBytes } = await import('midnight-identity/profile/committee-sign');
+    const [raiserSecret, joinerSecret] = [L.sampleSigningKey(), L.sampleSigningKey()];
+    const [raiser, joiner] = [L.signatureVerifyingKey(raiserSecret), L.signatureVerifyingKey(joinerSecret)].map((k) => ({ tag: 'schnorr', value: String(k.value).toLowerCase() }));
+    accountAuthority = { committee: [raiser!], threshold: 1, counter: 2n };
+    const asWho = (secret: string, key: { tag: string; value: string }, person: string) => (path: string, method = 'GET', body?: unknown) => fetch(base + path, {
+      method, headers: { 'content-type': 'application/json', 'x-test-person': person,
+        [SUPER_ADMIN_HEADER]: superAdminHeaderFor({ key, signature: L.signData(secret as never, superAdminRequestBytes('acc_1', person, ACCOUNT)).value }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }).then(async (r) => ({ status: r.status, body: await r.json() as Record<string, unknown> }));
+    const asJoiner = asWho(joinerSecret as never, joiner!, 'dana');
+    /* RED WHEN: a key on no committee and in no kept change is let in. */
+    expect((await asJoiner('/api/accounts/acc_1/committee-change')).status).toBe(403);
+    const change = { kind: 'super-admins' as const, from: { committee: [raiser!], threshold: 1 }, committee: [raiser!, joiner!].sort((a, b) => (a.value < b.value ? -1 : 1)), threshold: 1,
+      contracts: [{ contract: 'account' as const, address: ACCOUNT, counter: '2' }] };
+    const salt = '5a'.repeat(32);
+    const signature = L.signData(raiserSecret, superAdminChangeBytes('co_label', ACCOUNT, salt, change)).value;
+    const raised = await asWho(raiserSecret as never, raiser!, 'carol')('/api/accounts/acc_1/committee-change/raise', 'POST', { company: 'co_label', salt, change, raisedBy: { key: raiser, signature } });
+    expect(raised).toMatchObject({ status: 200, body: { state: 'kept' } });
+    /* RED WHEN: the change kept on the service does not let in the key it adds. */
+    expect((await asJoiner('/api/accounts/acc_1/committee-change')).status).toBe(200);
+    const kept = (await asJoiner('/api/accounts/acc_1/committee-change/signatures')).body.changes as Array<{ chainId: string }>;
+    expect(kept.map((c) => c.chainId)).toEqual([raised.body.chainId]);
   });
 });
 
@@ -1726,6 +1803,16 @@ describe('A VAULT\'S START IS PAID FOR ON ITS FEE ALONE ONLY WHEN ITS OWN ROUTE 
     startedNow = true;
     expect(await call('/api/accounts/acc_1/fee', 'ada', 'POST', copy)).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already written/u) } });
     expect(sent).toEqual([]);
+  });
+
+  it('a vault\'s retire is paid for on its fee alone only as this vault\'s retire asking this company\'s account', async () => {
+    await heldVault(); const retire = { tx: START, kind: 'vault-retire', contract: VAULT, circuit: 'retire' };
+    const calls = (vault: string) => ({ intents: new Map([[1, { actions: [[vault, 'retire'], [hex(0xc0), 'retireVault']].map(([address, c]) => ({ address, entryPoint: new TextEncoder().encode(c) })) }]]) });
+    /* RED WHEN: another vault's retire is paid for under this vault's route, so a vault is retired that nobody here asked for. */
+    startShape = calls(hex(0xc3)); expect([(await call('/api/accounts/acc_1/fee', 'ada', 'POST', retire)).status, sent]).toEqual([422, []]);
+    /* RED WHEN: this vault's retire is paid for as a public token taken off its list, a kind whose call must be one forgetUnshielded alone. */
+    startShape = calls(VAULT); expect([(await call('/api/accounts/acc_1/fee', 'ada', 'POST', { ...retire, kind: 'vault-forget', circuit: 'forgetUnshielded' })).status, sent]).toEqual([422, []]);
+    expect([(await call('/api/accounts/acc_1/fee', 'ada', 'POST', retire)).status, sent]).toEqual([200, ['fee for a call whose fee alone is paid here']]);
   });
 
   /* RED WHEN: a start step is paid for on a vault pinned to another account. */

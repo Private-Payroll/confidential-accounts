@@ -105,6 +105,28 @@ export const periodOf = (policy: PolicyOpening, window: { opensAt: bigint; close
   return window.closesAt <= periodWindowOf(policy, period).until ? period : null;
 };
 
+/**
+ * The period lengths a page offers when a spending policy is set, in seconds.
+ * The chain takes a period of any length, so a policy set elsewhere may hold
+ * one that is not here: `policyPeriodNamed` shows it in days, never refuses it.
+ */
+export const POLICY_PERIODS = Object.freeze([
+  { id: 'week', seconds: 604_800n },
+  { id: 'two-weeks', seconds: 1_209_600n },
+  { id: 'four-weeks', seconds: 2_419_200n },
+  { id: 'year', seconds: 31_536_000n },
+] as const);
+
+export type PolicyPeriodId = (typeof POLICY_PERIODS)[number]['id'];
+
+const SECONDS_A_DAY = 86_400;
+
+/** A period's length as a page names it: its id when it is on the list, otherwise its length in days as it is. */
+export const policyPeriodNamed = (seconds: bigint): { readonly id: PolicyPeriodId } | { readonly days: number } => {
+  const listed = POLICY_PERIODS.find((p) => p.seconds === seconds);
+  return listed === undefined ? { days: Number(seconds) / SECONDS_A_DAY } : { id: listed.id };
+};
+
 /** One band, as it travels: decimal digits. */
 export interface PolicyBandOnTheWire {
   readonly ceiling: string;

@@ -508,6 +508,20 @@ describe('the stopped window says truly what had left the wallet, and what press
     /* RED WHEN: a payment carried out is not told as done. */
     expect(document.querySelector('[data-ask-over]')?.textContent).toBe(words['act.over.done-title']);
   });
+
+  it('a done action shows every set of words its steps gave, in order', () => {
+    const end = {
+      ended: { schema: ACT_ENDED_SCHEMA, nonce: 'n', intent: 'invite', ended: 'done', step: 4, steps: 4, relayed: 1, unconfirmed: 0, outcome: { state: 'filed' } },
+      says: { key: 'act.invite.over.link', values: { name: 'Dee', link: 'https://app.example/join/a#b' } }, more: [{ key: 'act.upkeep.left.seat-rights-unread', values: { seats: 's1' } }],
+      abandoned: false,
+    } as never;
+    render(<ActOver end={end} framed={false} />);
+    /* RED WHEN: an invitation's link, or a warning shown after it, is not on the window once the action is done. */
+    expect([...document.querySelectorAll('[data-act-shown-at-the-end]')].map((p) => p.textContent)).toEqual([
+      words['act.invite.over.link']!.replace('{name}', 'Dee').replace('{link}', 'https://app.example/join/a#b'),
+      words['act.upkeep.left.seat-rights-unread']!.replace('{seats}', 's1'),
+    ]);
+  });
 });
 
 describe('the running window lists a passed step that had nothing to do as not needed', () => {

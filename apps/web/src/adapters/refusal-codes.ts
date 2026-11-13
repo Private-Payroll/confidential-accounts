@@ -21,3 +21,9 @@ export type ActRefusal = (typeof ACT_REFUSAL)[keyof typeof ACT_REFUSAL];
 
 /** What an action's answer is. */
 export const ACTED = { done: 'done', refused: 'refused' } as const;
+
+/**
+ * The wallet's codes for a stop because this person's seat could not act for the company: no company, no saved keys, no
+ * seat, a seat not held, no account on the chain, or a roster that did not open. Each act turns them into its own `seat`.
+ */
+export const SEAT_REFUSALS = ['not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened'] as const;

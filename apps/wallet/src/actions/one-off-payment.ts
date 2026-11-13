@@ -24,7 +24,7 @@ import type { CompanyRecordsHere } from '../../../../packages/web-shared/src/run
 import { deviceVaultHoldings } from '../../../../packages/web-shared/src/device-vault-holdings.js';
 import {
   payPrivatelyFromCompanyVault, payPubliclyFromCompanyVault, PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen,
-  PaymentStillInFlight, PublicPaymentNotYetSeen, seatHereIn, wireOf, type PaymentsInFlight, type PayoutDoors, type SecretKeptHere,
+  PaymentStillInFlight, PublicPaymentNotYetSeen, seatHereIn, vaultNotesHere, wireOf, type PaymentsInFlight, type PayoutDoors, type SecretKeptHere,
 } from '../../../../packages/web-shared/src/vault-operation.js';
 import { browserChargesInFlight, browserInFlightRecords, browserPaymentsInFlight } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import {
@@ -39,7 +39,7 @@ import {
   companyReachFor, companyRecordsFor, enteredFor, handOverMarked, keptReach, paidAmongFor, pureCircuits, type CompanyChain, type CompanyReach,
   type CompanyRecordsInTheWallet, type PureCircuits,
 } from './company-reach.js';
-import { anchorDoorsIn, anchoredAtTheEnd, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
+import { anchorDoorsIn, anchoredAtTheEnd, rebuildDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { approveStep, approving, atTheBar, type Approving, type ApprovalStop, type ProposalKind, type ReadCompany } from './proposal-kinds.js';
@@ -250,6 +250,10 @@ export const governedDoorsFor = (
 /**
  * The raise's doors: the governed-call doors, the vault's holdings as this device reads its pool and the chain, the
  * one-off's record filed signed with this seat's key, the account's pure circuits, and the anchor of what was filed.
+ * A pool that a seat which left filed past its boundary, or one the chain contradicts, is filed again from here before
+ * the payment is fitted (`vaultNotesHere`), so a payment is never refused only because no balance read came first.
+ * What the re-file found is held against the payment only when it could not file the vault again, and then with why;
+ * the pool it filed is still checked against the chain.
  */
 export function raiseDoorsFor(
   ctx: StepContext, r: CompanyReach, reach: OneOffPaymentReach, records: CompanyRecordsInTheWallet, pure: PureCircuits,
@@ -269,6 +273,14 @@ export function raiseDoorsFor(
       paymentsFit: (notes, payments) => r.builder.paymentsFit({
         notes: notes.map(wireOf), payments: payments.map((p) => ({ token: p.token, amount: p.amount.toString() })),
       }),
+      fileAgain: async (v) => {
+        const rebuilt = await vaultNotesHere(rebuildDoorsIn(ctx, r, r.api, r.send, { coins: () => pay.kept }), v);
+        const cured = rebuilt.of === 'as-filed' || rebuilt.of === 'filed';
+        return {
+          answer: 'the-newest', said: cured ? [] : [...(rebuilt.leaver ?? []), ...rebuilt.said],
+          ...(rebuilt.of === 'not-read' ? {} : { notes: rebuilt.notes }),
+        };
+      },
     }),
     assets: records.registry!,
     oneOffFiling: { put: (rec) => filing.put(rec), served: async () => null },

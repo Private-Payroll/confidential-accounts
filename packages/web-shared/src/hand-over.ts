@@ -8,6 +8,8 @@
  * believes what happened only from its own read of the chain.
  */
 
+import type { VaultCallKind } from '../../../src/wiring/vault-call-checks.js';
+
 /**
  * Which way a finished call goes: through our service, through the company's own service at its address, or
  * straight to the chain.
@@ -17,9 +19,11 @@ type HandOverWay = 'service' | 'chain' | 'company-service';
 /**
  * What a call sent straight to the chain must be, checked by the wallet before it pays anything, as the service
  * checks what it relays: one call to the company's account; a vault's first secret set with the account's approval
- * of it, or one sealed copy of it written; and a payout, a merge or a public payout of the vault's own coins.
+ * of it, or one sealed copy of it written; a vault's retire asking the account to retire it; one public token taken off
+ * a vault's list before its retire; and a payout, a merge or a public payout of the vault's own coins. The vault calls
+ * are `VaultCallKind`, the one table the service and the wallet both check them by.
  */
-type ChainCallKind = 'account-call' | 'vault-secret' | 'vault-copy' | 'payout' | 'merge' | 'public-payout';
+type ChainCallKind = 'account-call' | VaultCallKind;
 
 export interface ChainCall {
   readonly kind: ChainCallKind;

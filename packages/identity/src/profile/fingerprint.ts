@@ -149,6 +149,8 @@ const RECEIVING_ADDRESS_LABEL = 'midnight-identity/receiving-address-fingerprint
 const SEAT_KEY_LABEL = 'midnight-identity/seat-key-fingerprint/v1/';
 /** Its own domain, so a payee's code never shares a fingerprint with an address, a seat or a company. */
 const PAYEE_CODE_LABEL = 'midnight-identity/payee-code-fingerprint/v1/';
+/** Its own domain, so a reader's code never shares a fingerprint with a payee's code, an address, a seat or a company. */
+const READER_CODE_LABEL = 'midnight-identity/reader-code-fingerprint/v1/';
 
 /**
  * **WHAT A RECEIVING ADDRESS HAS TO LOOK LIKE BEFORE IT IS RENDERED, AND WHY
@@ -321,4 +323,23 @@ export function payeeCodeFingerprint(code: { readonly committeeKey: { readonly v
     throw new FingerprintError('a payee\'s code fingerprint is worked out from the wallet that signed it, its address and its payslip key, and those given are not all three.');
   }
   return render(PAYEE_CODE_LABEL, [signer.toLowerCase(), address.toLowerCase(), payslipKey.toLowerCase()].join('/'));
+}
+
+/**
+ * **THE FINGERPRINT OF A READER'S CODE**: the wallet that signed it, the
+ * person it names and the key the company's read grants are to wrap their keys
+ * to. The reader's wallet shows it beside the code it made; the wallet giving
+ * read access works it out from what was pasted, and the two people compare.
+ * A code swapped anywhere on the way - another wallet's, another person's,
+ * another key - has another fingerprint.
+ */
+export function readerCodeFingerprint(code: { readonly committeeKey: { readonly value: string }; readonly person: string; readonly parts: { readonly readerKey: string } }): string {
+  const signer = code?.committeeKey?.value;
+  const person = code?.person;
+  const readerKey = code?.parts?.readerKey;
+  if (typeof signer !== 'string' || !/^[0-9a-fA-F]{64,}$/u.test(signer) || typeof person !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(person)
+    || typeof readerKey !== 'string' || !/^[0-9a-fA-F]{64}$/u.test(readerKey)) {
+    throw new FingerprintError('a reader\'s code fingerprint is worked out from the wallet that signed it, the person it names and its key, and those given are not all three.');
+  }
+  return render(READER_CODE_LABEL, [signer.toLowerCase(), person, readerKey.toLowerCase()].join('/'));
 }

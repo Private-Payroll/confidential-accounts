@@ -4,9 +4,11 @@ import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import { NETWORK } from 'midnight-identity/network';
 import { assets as theAssets, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { fromHex, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
-import { EMPLOYEE_CLASSIFICATIONS, invitationIdOf, invitationThresholdRefusal, type EmployeeClassification } from '../../../../src/core/invitation.js';
+import {
+  EMPLOYEE_CLASSIFICATIONS, invitationIdOf, invitationLink, invitationThresholdRefusal, newInvitationToken, type EmployeeClassification,
+} from '../../../../src/core/invitation.js';
 import { refusalSaid, seatThresholdRefusal, type SeatRights } from '../../../../src/core/vault-approvers.js';
-import { invitedSeatRightsOf, NO_VAULT_COUNTED, scopeOfRole, vaultsOfferedRefusal } from '../../../../src/core/seat-rights.js';
+import { invitedSeatRightsOf, NO_VAULT_COUNTED, RIGHTS_VAULT_PLACES, scopeOfRole, vaultsOfferedRefusal } from '../../../../src/core/seat-rights.js';
 import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
 import type { VendorTerms } from '../../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
@@ -32,11 +34,13 @@ import {
 } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
-import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
+import { watchFor } from '../keyring/nothing-secret-crosses.js';
+import { anchorDirectoryDoorIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
 /*
- * INVITING SOMEBODY TO THE COMPANY, IN THE WALLET. The page names the company, the kind of invitation, the person's
- * details in its own words and the token for the link it will send; the wallet reads the company and its own seat
+ * INVITING SOMEBODY TO THE COMPANY, IN THE WALLET. The page names the company, the kind of invitation and the person's
+ * details in its own words, and for an employee or a vendor the token for the link it will send; a signer's token is
+ * made in this wallet and never reaches the page. The wallet reads the company and its own seat
  * from its own reach, seals and signs the invitation, the offer and the first record with that seat, and files them.
  * A signer is invited only by a private address: the wallet refuses an address it holds itself, a wallet already
  * seated or invited here, and rights wider than its own seat's, and a new threshold the seat would set once taken
@@ -44,7 +48,9 @@ import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
  * only then raises the proposal to seat the address with this seat's approval, then tells the page the approvals the
  * proposal holds and needs, read from the chain. A press again under a token already used goes on
  * only with the kind and details of the first press under it, kept or filed, and is otherwise refused before anything
- * is signed; a record the first press filed and did not enter is entered then, signed by this seat. Nothing secret comes back to the page: it makes the link from its own token.
+ * is signed; a record the first press filed and did not enter is entered then, signed by this seat. Nothing secret comes back to the page:
+ * it makes an employee's or a vendor's link from its own token, and a signer's link is shown in this wallet's own window, for the
+ * person inviting to send.
  */
 
 /** What the invite action reads the company with: the wallet's own chain and builder, its clock and its waits. */
@@ -76,6 +82,17 @@ type Asked =
   | { readonly kind: 'employee'; readonly spec: InviteSpecs['employee'] }
   | { readonly kind: 'vendor'; readonly spec: InviteSpecs['vendor'] }
   | { readonly kind: 'signer'; readonly spec: InviteSpecs['signer'] & { readonly address: string } };
+
+/**
+ * The vaults a signer is invited on, as the page lists them: none for every vault, or up to four vault addresses, each
+ * named once, separated by commas. Refused when the list is anything else, so it is never read as other rights.
+ */
+const vaultsAskedOf = (listed: string | undefined): readonly Hex[] | Words | undefined => {
+  if (listed === undefined) return undefined;
+  const vaults = listed.split(',').map((v) => v.trim().toLowerCase());
+  if (vaults.length > RIGHTS_VAULT_PLACES || vaults.some((v) => !HEX64.test(v)) || new Set(vaults).size !== vaults.length) return why('not-vaults');
+  return vaults as Hex[];
+};
 
 /**
  * The invitation the page asked for, read field by field, or why it is not one: a kind this wallet invites, and the
@@ -127,16 +144,18 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
       if (!isSignerRole(role)) return why('no-role');
       const address = opt('address');
       if (address === undefined) return why('signer-by-address');
+      const vaults = vaultsAskedOf(opt('vaults'));
+      if (vaults !== undefined && 'key' in vaults) return vaults;
+      /* A scope the page names must be exactly the rights the role gives on the vaults named, or on every vault. */
+      if (opt('scope') !== undefined && f['scope']!.toLowerCase() !== scopeOfRole(role, vaults)) return why('wider-scope');
       /* "0", like none, keeps the threshold in force; anything else is the approvals needed once the seat is taken. */
-      /* The page offers every vault; a scope it names must be exactly the rights the role gives there. */
-      if (opt('scope') !== undefined && f['scope']!.toLowerCase() !== scopeOfRole(role)) return why('wider-scope');
       const threshold = opt('threshold') === '0' ? undefined : opt('threshold');
       if (threshold !== undefined && invitationThresholdRefusal(threshold) !== null) return why('not-a-threshold');
       return {
         kind: 'signer',
         spec: {
           name, role, person: 'by-address', address: address.trim(),
-          ...(threshold === undefined ? {} : { threshold }),
+          ...(vaults === undefined ? {} : { vaults }), ...(threshold === undefined ? {} : { threshold }),
         },
       };
     }
@@ -149,10 +168,11 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
  * This wallet's seat as the invitation is made with it: its signing key, the records it files entered under that key,
  * its role and whether it is retired as the company's directory shows them here, and the inviter record the
  * invitee's wallet checks the seat by (this wallet's committee key, an entry it signs now for the seat it holds, and
- * the seat's opening). Refuses a seat whose saved keys keep no opening: its inviter record could not be checked.
+ * the seat's opening). Refuses a seat whose saved keys keep no opening, in the calling action's `words`: its inviter
+ * record could not be checked.
  */
-async function invitingSeatOf(ctx: StepContext, r: CompanyReach): Promise<InvitingSeat> {
-  if (r.seat.opening === undefined) throw new StepRefused(why('no-opening'));
+export async function invitingSeatOf(ctx: StepContext, r: CompanyReach, words: (key: string) => Words = why): Promise<InvitingSeat> {
+  if (r.seat.opening === undefined) throw new StepRefused(words('no-opening'));
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const held = await seatHereIn(directory, r.seat.signingSecret);
   const signingKey = signingPublicKeyOf(r.seat.signingSecret).toLowerCase();
@@ -167,7 +187,11 @@ async function invitingSeatOf(ctx: StepContext, r: CompanyReach): Promise<Inviti
 }
 
 /** The action that invites an employee, a vendor or a signer from this wallet's seat on the company. */
-export function inviteAction(reach: InviteReach): ActionDefinition {
+/**
+ * The invite action. `own` is a token this wallet already made for a signer's invitation (a role change's): the
+ * invitation goes on under it; a page never gives a signer's token.
+ */
+export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }): ActionDefinition {
   const network = reach.network ?? (NETWORK as NetworkName);
   const registry = reach.assets ?? theAssets;
   return Object.freeze({
@@ -186,8 +210,10 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
         ...(f['termsAmount'] === undefined ? [] : [page('terms-amount', { amount: f['termsAmount'], asset: f['termsAsset'] ?? '' })]),
       ];
       const threshold = f['threshold'] === undefined || f['threshold'] === '' || f['threshold'] === '0' ? null : f['threshold'];
+      const vaults = f['vaults'] === undefined || f['vaults'] === '' ? null : f['vaults'];
       const signer: ShownLine[] = kind !== 'signer' ? [] : [
-        f['scope'] === undefined ? { key: 'act.invite.shown.every-vault', from: 'action' } : page('scope', { scope: f['scope'] }),
+        ...(vaults === null ? [] : [page('vaults', { vaults })]),
+        ...(f['scope'] !== undefined ? [page('scope', { scope: f['scope'] })] : vaults === null ? [{ key: 'act.invite.shown.every-vault', from: 'action' as const }] : []),
         ...(threshold === null ? [] : [page('threshold', { threshold })]),
         { key: 'act.invite.shown.signer-checks', from: 'action' },
         { key: 'act.invite.shown.kept', from: 'action' },
@@ -209,7 +235,8 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
     ],
     check: async (intent) => {
       if (intent.fields['record'] === undefined) return why('not-a-company');
-      if (!HEX64.test(intent.fields['token'] ?? '')) return why('not-a-token');
+      const paid = intent.fields['kind'] === 'employee' || intent.fields['kind'] === 'vendor';
+      if (paid && !HEX64.test(intent.fields['token'] ?? '')) return why('not-a-token');
       const asked = askedOf(intent, network, registry);
       return 'key' in asked ? asked : null;
     },
@@ -238,10 +265,15 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
            */
           const notTheFirstAsk = (no: string): StepRefused => new StepRefused(why('not-made', { says: said(new InvitationNotMade(no)) }));
           const notEntered = (e: FiledNotEntered): StepRefused => new StepRefused(why('filed-not-entered', { says: e.why }));
-          const found = await keptInvitationFor(ctx, r, reach.now(), send, asked, intent.fields['token']!.toLowerCase() as Hex);
+          const given = asked.kind === 'signer' ? own?.token ?? null : intent.fields['token']!.toLowerCase() as Hex;
+          const found = await keptInvitationFor(ctx, r, reach.now(), send, asked, given);
           if ('refused' in found) throw notTheFirstAsk(found.refused);
           const { kept, token } = found;
+          watchFor(token);
           const id = invitationIdOf(token);
+          const linkShown = (): void => {
+            if (asked.kind === 'signer') ctx.show({ key: 'act.invite.over.link', values: { name: asked.spec.name, link: invitationLink(ctx.asker.origin, token) } });
+          };
           if (kept !== undefined) {
             const no = firstAskRefusal(kept.offer.offer.for, asked.kind, asked.spec as never);
             if (no !== null) throw notTheFirstAsk(no);
@@ -265,6 +297,7 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
               if (no !== null) throw notTheFirstAsk(no);
             }
             ctx.tell({ state: INVITE_STATE.alreadyFiled });
+            linkShown();
             if (asked.kind === 'signer') await tellTheBar(ctx, r, opened.filed.offer.for);
             return;
           }
@@ -297,6 +330,7 @@ export function inviteAction(reach: InviteReach): ActionDefinition {
             throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? 'not-made' : 'may-be-sent', { says: said(e) }));
           }
           ctx.tell({ state: INVITE_STATE.filed });
+          linkShown();
           if (asked.kind === 'signer') await tellTheBar(ctx, r, ctx.keyring.open().read().seatInvitationsKept?.[id]?.offer.offer.for);
         },
       };
@@ -332,23 +366,25 @@ const holdsTheCoinKeyOf = (identity: Identity, network: NetworkName, address: st
  * A signer invited by the private address the page typed, from this wallet's seat: refused when the address carries
  * a coin key this wallet holds itself, or when the rights offered are wider than this seat's own (a seat with the rights of every
  * vault may offer any; any other may offer only its own). The invitation is kept in the saved keys before the
- * proposal is raised, and one kept by an earlier attempt for this token is taken up again instead of made anew (the
+ * proposal is raised, and one kept by an earlier attempt for this address is taken up again instead of made anew (the
  * step has already refused one kept for another ask).
  */
 /**
- * The invitation this wallet kept for a press, and the token it goes on under. The page's own token names its own; when
- * nothing is kept under it, a signer's press takes up the one invitation kept for the same company and address that can
- * still be taken, and goes on under that one's token, which the page is told, so a page that lost its token does not
- * start a second invitation for an address whose first proposal is still open and gives the link that was filed. One
- * whose link the service says is used, expired or withdrawn, or whose proposal the chain holds closed, is passed over
- * and let go of. Nothing kept: the page's token, to make a new one.
+ * The invitation this wallet kept for a press, and the token it goes on under. An employee's or a vendor's goes on under
+ * the page's token, and so does a signer's under a token this wallet made for it (`given`) when one is kept under it;
+ * otherwise a signer's press takes up the one invitation kept for the same company and address that can still be taken,
+ * and goes on under that one's token, so a press again does not start a second invitation for an address whose first
+ * proposal is still open, and the link shown is the one filed. One whose link the service says is used, expired or
+ * withdrawn, or whose proposal the chain holds closed, is passed over and let go of. Nothing kept: the token given, or
+ * a new one made here.
  */
 async function keptInvitationFor(
-  ctx: StepContext, r: CompanyReach, now: number, send: InvitationSend, asked: Asked, pageToken: Hex,
+  ctx: StepContext, r: CompanyReach, now: number, send: InvitationSend, asked: Asked, given: Hex | null,
 ): Promise<{ readonly kept: KeptSeatInvitation | undefined; readonly token: Hex } | { readonly refused: string }> {
   const keyring = ctx.keyring!;
-  const byToken = keyring.open().read().seatInvitationsKept?.[invitationIdOf(pageToken)];
-  if (byToken !== undefined || asked.kind !== 'signer') return { kept: byToken, token: pageToken };
+  const byToken = given === null ? undefined : keyring.open().read().seatInvitationsKept?.[invitationIdOf(given)];
+  if (asked.kind !== 'signer') return { kept: byToken, token: given ?? newInvitationToken() };
+  if (given !== null && byToken !== undefined) return { kept: byToken, token: given };
   const stillOpen = async (x: KeptSeatInvitation): Promise<boolean> => {
     const answer = await send(`/api/invites/${x.id}/offer`, { method: 'GET' });
     if (answer.status === 410) return false;
@@ -366,8 +402,7 @@ async function keptInvitationFor(
   const found = await keptSeatInvitationForAddress(keyring.open().read(), r.accountId, asked.spec.address, now, stillOpen);
   if (found.passedOver.length > 0) await keyring.keep((k) => withoutSeatInvitationsKept(k, found.passedOver));
   if (found.refused !== null) return { refused: found.refused };
-  if (found.kept === null) return { kept: undefined, token: pageToken };
-  ctx.tell({ token: found.kept.token });
+  if (found.kept === null) return { kept: undefined, token: given ?? newInvitationToken() };
   return { kept: found.kept, token: found.kept.token };
 }
 
@@ -380,6 +415,7 @@ async function inviteASigner(
   const commitments = await reach.commitments();
   /* Offered only within the inviting seat's own rights as its directory holds them: the one check on this path (`vaultsOfferedRefusal`). */
   if (vaultsOfferedRefusal(inviting.held?.rights ?? NO_VAULT_COUNTED, spec.vaults) !== null) throw new StepRefused(why('wider-scope'));
+  await refuseVaultsNotAdopted(r, spec.vaults);
   if (spec.threshold !== undefined) {
     await refuseASeatThresholdInTheWallet(r, invitedSeatRightsOf(spec, scopeOfRole(spec.role as SignerRole, spec.vaults)), Number(spec.threshold));
   }
@@ -388,13 +424,29 @@ async function inviteASigner(
     await ctx.keyring.keep((k) => withSeatInvitationKept(k, kept, reach.now()));
     ctx.tell({ state: INVITE_STATE.kept });
   };
-  const doors = governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
-    ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
-  });
+  const doors = {
+    ...governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
+      ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
+    }),
+    anchorDirectory: anchorDirectoryDoorIn(r, handed),
+  };
   const resume = ctx.keyring?.open().read().seatInvitationsKept?.[invitationIdOf(token)];
   const opts: InviteOptions = { token, ...(resume === undefined ? {} : { resume }) };
   await inviteHere(company, inviting, 'signer', spec, ctx.asker.origin, send, signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep, chainTimeOf(r)), opts);
 }
+
+/** The vaults of `vaults` the company's account does not hold among `adopted`; none where `vaults` names every vault. */
+export const vaultsNotAdopted = (adopted: readonly string[], vaults: readonly string[] | undefined): readonly string[] => {
+  if (vaults === undefined) return [];
+  const held = new Set(adopted.map((v) => String(v).toLowerCase()));
+  return vaults.filter((v) => !held.has(v.toLowerCase()));
+};
+
+/** Refuses a seat on a vault the company's account on the chain does not hold, as this wallet reads it: the seat could never act there. */
+const refuseVaultsNotAdopted = async (r: CompanyReach, vaults: readonly Hex[] | undefined): Promise<void> => {
+  const missing = vaultsNotAdopted((await r.holders()).adoptedVaults, vaults);
+  if (missing.length > 0) throw new StepRefused(why('vault-not-adopted', { vaults: missing.join(', ') }));
+};
 
 /**
  * **A SEAT OFFERED WITH A NEW THRESHOLD IS CHECKED BEFORE ANYTHING IS KEPT, SIGNED OR RAISED** (`seatThresholdRefusal`):

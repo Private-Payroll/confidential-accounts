@@ -39,7 +39,8 @@ export const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire)
     }
     case 'remove-signer': return same(a.leaf, (b as typeof a).leaf) && sameRemovalThreshold(a.threshold, (b as typeof a).threshold);
     case 'vault-threshold': return same(a.vault, (b as typeof a).vault) && sameNumber(a.threshold, (b as typeof a).threshold);
-    case 'adopt-vault': return same(a.vault, (b as typeof a).vault);
+    case 'adopt-vault':
+    case 'retire-vault': return same(a.vault, (b as typeof a).vault);
     case 'pay-key': return same(a.commitment, (b as typeof a).commitment);
     case 'spending-policy': {
       const o = b as typeof a;

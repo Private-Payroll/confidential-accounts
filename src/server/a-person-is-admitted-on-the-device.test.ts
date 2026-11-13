@@ -16,9 +16,8 @@ import { openPerson, sealPerson } from '../core/person-record.js';
 import { theNetwork } from '../midnight/network.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { signCompanyFiling, toCompanyWire, verifiedCompanyFiler } from '../midnight/sealed-record-wire.js';
-import {
-  addPayeeFromCodeHere, acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany,
-} from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { addPayeeFromCodeHere } from 'vaults-web-shared/invitation-by-code.js';
 import {
   admitHere, makeMyselfPayableHere, PersonNotChanged, readPeopleHere, setStatusHere, type PeopleDevice, type PeopleHere, type PersonHere,
 } from 'vaults-web-shared/people-on-device.js';

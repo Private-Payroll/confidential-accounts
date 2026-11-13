@@ -14,8 +14,9 @@ import { ENGLISH } from './english.test-support.js';
  * opens is drawn in the kit's page layout, or, for a page its entry marks
  * focused, in the kit's focused layout with no menu. And every file a page is
  * drawn from is read, so that no page paints its own background, chooses its
- * own width, or builds its own section, list, table or empty state: those
- * are the kit's, so every page looks like every other.
+ * own width, builds its own section, list, table or empty state, or draws
+ * its heading as a raw h1: those are the kit's, so every page looks like every
+ * other.
  *
  * THE PAGES NOT MOVED TO THE KIT YET are each named below with what moves
  * them, and each is held to still breaking the rule it is named for, so the
@@ -60,6 +61,8 @@ const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const SIGNER: Viewer = { signedIn: true, view: VIEWS.company, signs: true };
 const EMPLOYEE: Viewer = { signedIn: true, view: VIEWS.employee, signs: false };
 const VISITOR: Viewer = { signedIn: false, view: VIEWS.employee, signs: false };
+/** Someone whose wallet released read keys for a company on this visit: a reader's page opens for them only. */
+const READER: Viewer = { signedIn: true, view: VIEWS.employee, signs: false, reads: ['x1'] };
 
 /** Draw a page in the frame its entry names, for `viewer`, with every value its address stands for filled, and wait until it is on screen. */
 async function draw(id: PageId, viewer: Viewer) {
@@ -101,7 +104,7 @@ describe('every page in the kit\'s layout', () => {
    * drawn in the frame with the menu; or the layout loses its maximum width.
    */
   it.each(EVERY_PAGE.filter((p) => !OUTSIDE_A_FRAME.includes(p.id)).map((p) => p.id))('%s', async (id) => {
-    const viewer = [SIGNER, EMPLOYEE].find((v) => mayOpen(PAGES[id], v))!;
+    const viewer = [SIGNER, EMPLOYEE, READER].find((v) => mayOpen(PAGES[id], v))!;
     const c = await draw(id, viewer);
     const screen = c.querySelector('[data-screen]')!;
     if ((PAGES[id] as Page).focused !== undefined) {
@@ -162,6 +165,12 @@ const PAGE_CODE: Source[] = [
   ...['apps/web/src/shell/coming-soon-page.tsx', 'apps/web/src/shell/no-page.tsx'].map((p) => ({ path: p, text: readFileSync(`${ROOT}/${p}`, 'utf8') })),
 ];
 
+/** The files a page's heading is drawn from: those a page is drawn from, and the application's own file, which draws the screens shown before any page can open. */
+const HEADING_CODE: Source[] = [...PAGE_CODE, { path: 'apps/web/src/app.tsx', text: readFileSync(`${ROOT}/apps/web/src/app.tsx`, 'utf8') }];
+
+/** Source with its comments taken out, so a comment that names a thing is not taken for the thing drawn. */
+const withoutComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
 /** A class that paints a background, in any state. */
 const paintsBackground = (s: Source): string[] => classWordsOf(s).map((w) => w.word).filter((w) => /^bg-/.test(utilityOf(w)));
 /**
@@ -173,6 +182,9 @@ const paintsBackground = (s: Source): string[] => classWordsOf(s).map((w) => w.w
 const setsPageWidth = (s: Source): string[] => classWordsOf(s).map((w) => w.word)
   .filter((w) => /^(?:mx-auto|container|w-screen|h-screen|min-h-(?:svh|dvh|lvh|screen)|max-w-(?:screen\S*|[2-7]xl|full|none)|(?:min-w|max-w|w)-[[(].*)$/.test(utilityOf(w)));
 /** An element that builds a section, a list or a table, by its tag or its role: the kit's section, rows and table draw these. */
+/** A page heading drawn as a raw h1 instead of the kit's page header. */
+const drawsItsOwnHeading = (s: Source): string[] => [...withoutComments(s.text).matchAll(/<h1\b/g)].map(() => 'h1');
+
 const buildsSectionsOrLists = (s: Source): string[] => [
   ...[...s.text.matchAll(/<(section|ul|ol|li|dl|table|thead|tbody|tr|td|th)\b/g)].map((m) => m[1]!),
   ...[...s.text.matchAll(/\brole=\{?\s*["'`](list|listitem|table|row|cell|rowgroup|grid|region)["'`]/g)].map((m) => `role ${m[1]!}`),
@@ -201,16 +213,17 @@ const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> 
   },
   width: {
     'apps/web/src/screens/landing.tsx': 'the landing page, drawn before anyone is signed in, redrawn on the kit\'s layouts with the app\'s polish',
-    'apps/web/src/screens/appearance.tsx': 'Settings\' sections, held to a width of their own until they move to the kit\'s sections with the rest of Settings',
-    'apps/web/src/screens/language.tsx': 'Settings\' sections, held to a width of their own until they move to the kit\'s sections with the rest of Settings',
   },
   lists: {
     'apps/web/src/screens/landing.tsx': 'the landing page, redrawn on the kit\'s layouts with the app\'s polish',
-    'apps/web/src/screens/appearance.tsx': 'moved to the kit\'s sections with the rest of Settings',
-    'apps/web/src/screens/language.tsx': 'moved to the kit\'s sections with the rest of Settings',
   },
   empty: {
     'apps/web/src/screens/landing.tsx': 'the landing page, redrawn on the kit\'s layouts with the app\'s polish',
+  },
+  heading: {
+    'apps/web/src/screens/landing.tsx': 'the landing page, drawn before anyone is signed in with no page layout around it, redrawn on the kit\'s layouts with the app\'s polish',
+    'apps/web/src/screens/setup.tsx': 'the wizard\'s current step, named in its tab beside the step\'s icon and pill, in the focused layout that has no page header',
+    'apps/web/src/app.tsx': 'the two full-screen notices shown when the service cannot be reached or the records disagree, drawn before any page or layout exists',
   },
 };
 /**
@@ -223,7 +236,9 @@ const READINGS_OF_NOTHING: Readonly<Record<string, { path: string; why: string }
   'vaults.money.none': { path: 'apps/web/src/records/parts.tsx', why: 'a vault\'s money read privately and publicly and found to hold none of the currencies this app shows, said on its tile where the amounts would be' },
 };
 const emptyStatesByHandBut = (s: Source): string[] => emptyStatesByHand(s).filter((k) => READINGS_OF_NOTHING[k]?.path !== s.path);
-const RULES = { background: paintsBackground, width: setsPageWidth, lists: buildsSectionsOrLists, empty: emptyStatesByHandBut } as const;
+const RULES = { background: paintsBackground, width: setsPageWidth, lists: buildsSectionsOrLists, empty: emptyStatesByHandBut, heading: drawsItsOwnHeading } as const;
+/** The files each rule reads: a page's own code, and for the heading also the application's own file. */
+const READ_BY = (rule: keyof typeof RULES): Source[] => (rule === 'heading' ? HEADING_CODE : PAGE_CODE);
 
 describe('no page draws what the kit draws', () => {
   /* RED WHEN: the files a page is drawn from are not read, so every rule below passes over nothing. */
@@ -235,11 +250,12 @@ describe('no page draws what the kit draws', () => {
 
   /*
    * RED WHEN: a page paints its own background, sets its own width, builds its
-   * own section, list or table, or its own empty state, outside the files
-   * named as not moved yet.
+   * own section, list or table, or its own empty state, or draws its heading as
+   * a raw h1 instead of the kit's page header, outside the files named as not
+   * moved yet.
    */
   it.each(Object.keys(RULES) as (keyof typeof RULES)[])('%s', (rule) => {
-    const found = PAGE_CODE.filter((f) => !(f.path in NOT_MOVED_YET[rule]!)).map((f) => ({ path: f.path, found: RULES[rule](f) })).filter((x) => x.found.length > 0);
+    const found = READ_BY(rule).filter((f) => !(f.path in NOT_MOVED_YET[rule]!)).map((f) => ({ path: f.path, found: RULES[rule](f) })).filter((x) => x.found.length > 0);
     expect(found).toEqual([]);
   });
 
@@ -258,7 +274,7 @@ describe('no page draws what the kit draws', () => {
   it('names as not moved yet only files that still are', () => {
     for (const [rule, files] of Object.entries(NOT_MOVED_YET)) {
       for (const [path, why] of Object.entries(files)) {
-        const f = PAGE_CODE.find((x) => x.path === path);
+        const f = READ_BY(rule as keyof typeof RULES).find((x) => x.path === path);
         expect(f, `${rule} ${path}`).toBeDefined();
         expect(RULES[rule as keyof typeof RULES](f!).length, `${rule} ${path}`).toBeGreaterThan(0);
         expect(why.length, path).toBeGreaterThan(20);
@@ -292,8 +308,7 @@ describe('no page draws what the kit draws', () => {
    */
   it('draws what is loading only with the kit\'s loading states', () => {
     /* Read without comments, so a comment naming a loading state is not taken for one drawn. */
-    const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-    const files = [...PAGE_CODE, { path: 'apps/web/src/app.tsx', text: readFileSync(`${ROOT}/apps/web/src/app.tsx`, 'utf8') }].map((f) => ({ path: f.path, text: code(f.text) }));
+    const files = HEADING_CODE.map((f) => ({ path: f.path, text: withoutComments(f.text) }));
     expect(files.filter((f) => /\bSkeleton\b|\banimate-pulse\b/.test(f.text)).map((f) => f.path)).toEqual([]);
     /* A busy mark of its own is a loading state drawn by hand. The one allowed: the blank page before the service says who is signed in, when there is no frame yet to draw a page loading in. */
     const busy = files.flatMap((f) => [...f.text.matchAll(/aria-busy/g)].map(() => f.path));
@@ -304,8 +319,10 @@ describe('no page draws what the kit draws', () => {
 
   /* RED WHEN: Home, the setup wizard or the parts every page shares are named as not moved yet. */
   it('holds Home, the wizard and the shared parts to every rule', () => {
-    for (const files of Object.values(NOT_MOVED_YET)) {
-      expect(Object.keys(files).filter((p) => /\/(home|setup)\.tsx$|\/records\//.test(p))).toEqual([]);
+    for (const [rule, files] of Object.entries(NOT_MOVED_YET)) {
+      /* The wizard's one raw h1 is the one thing it is let keep: its step's name, in a tab of the focused layout. */
+      const held = Object.keys(files).filter((p) => /\/(home|setup)\.tsx$|\/records\//.test(p));
+      expect(held, rule).toEqual(rule === 'heading' ? ['apps/web/src/screens/setup.tsx'] : []);
     }
   });
 
@@ -321,6 +338,8 @@ describe('no page draws what the kit draws', () => {
     expect(buildsSectionsOrLists(f('<section><ul><li /></ul><table><tr><td /></tr></table></section>'))).toEqual(['section', 'ul', 'li', 'table', 'tr', 'td']);
     expect(buildsSectionsOrLists(f('<div role="list"><div role={"listitem"} /></div>'))).toEqual(['role list', 'role listitem']);
     expect(buildsSectionsOrLists(f('<Section title="x"><SectionRow /></Section><Table />'))).toEqual([]);
+    expect(drawsItsOwnHeading(f('<h1 className="text-xl">{title}</h1>'))).toEqual(['h1']);
+    expect(drawsItsOwnHeading(f('<PageHeader title={title} /><h2>x</h2>{/* <h1> */}\n// <h1>'))).toEqual([]);
     expect(emptyStatesByHand(f("<p>{t('people.none')}</p>"))).toEqual(['people.none']);
     expect(emptyStatesByHand(f("<EmptyState icon={X}>{t('people.none')}</EmptyState>"))).toEqual([]);
     expect(emptyStatesByHand(f("<EmptyState icon={X}>{t('a.b')}</EmptyState><p>{t('people.none')}</p>"))).toEqual(['people.none']);

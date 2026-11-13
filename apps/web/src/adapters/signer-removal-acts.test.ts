@@ -47,11 +47,14 @@ describe('removing a signer', () => {
     } };
     expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toEqual({
       of: 'done', state: 'carried-out',
-      removal: { approvals: 2, needed: 2, rotation: 'rotated', vaultSecrets: null, vaultSecretsWhy: null, vaults: { rotated: 1, awaiting: 2, owed: 0, waiting: 3, notChanged: 4 } },
+      removal: {
+        approvals: 2, needed: 2, rotation: 'rotated', vaultSecrets: null, vaultSecretsWhy: null, vaults: { rotated: 1, awaiting: 2, owed: 0, waiting: 3, notChanged: 4 },
+        retirementSigned: null, retirementNeeded: null,
+      },
     } satisfies SignerActed);
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-approvals', approvals: 1, rotation: 'not-tried', vaultSecrets: 'not-started', vaultsRotated: 1 } };
     expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toEqual({
-      of: 'done', state: 'waiting-for-approvals', removal: { approvals: 1, needed: null, rotation: 'not-tried', vaultSecrets: 'not-started', vaultSecretsWhy: null, vaults: null },
+      of: 'done', state: 'waiting-for-approvals', removal: { approvals: 1, needed: null, rotation: 'not-tried', vaultSecrets: 'not-started', vaultSecretsWhy: null, vaults: null, retirementSigned: null, retirementNeeded: null },
     } satisfies SignerActed);
     /* RED WHEN: what stopped the vault secrets' change, as the wallet told it, is lost on the way to the page. */
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'carried-out', rotation: 'rotated', vaultSecrets: 'not-started', vaultSecretsWhy: 'vault-records-not-read' } };
@@ -72,6 +75,26 @@ describe('removing a signer', () => {
     }
     kr.ended = stopped('act.rotate-vault-secrets.why.not-a-vault');
     expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toMatchObject({ why: m.WHY.other, partial: true });
+  });
+
+  /* RED WHEN: the signatures on the leaving seat's retirement and the number it needs, as the wallet told them, are lost on the way to the page, or a count the wallet did not tell is made up. */
+  it('tells how many signatures the retirement has and needs while the removal waits on it, and none it did not tell', async () => {
+    const m = await load();
+    kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-the-retirement', retirementSigned: 1, retirementNeeded: 3 } };
+    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toMatchObject({ state: 'waiting-for-the-retirement', removal: { retirementSigned: 1, retirementNeeded: 3 } });
+    kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-the-retirement', retirementSigned: 'many' } };
+    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toMatchObject({ removal: { retirementSigned: null, retirementNeeded: null } });
+  });
+
+  /* RED WHEN: the code the wallet gives for a removal with no retirement to record is lost, so the page cannot say nothing was sent, or a stop without a code is given one. */
+  it('keeps the wallet\'s code on a stop, and gives none when it gave none', async () => {
+    const m = await load();
+    kr.ended = stopped('act.remove-signer.why.not-carried', { code: 'no-retirement-to-file' });
+    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toEqual({
+      of: 'stopped', act: m.SIGNER_ACT.remove, why: 'not-carried', partial: true, handedOver: false, code: m.NO_RETIREMENT_TO_FILE,
+    } satisfies SignerActed);
+    kr.ended = stopped('act.remove-signer.why.not-carried');
+    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).not.toHaveProperty('code');
   });
 
   /* RED WHEN: a removal is asked of the wallet with nobody signed in. */
@@ -107,5 +130,32 @@ describe('changing the vault secrets after a signer left', () => {
     }
     kr.ended = stopped(undefined, { relayed: 1 });
     expect(await m.changeVaultSecrets('u1', 'acc_Company00001')).toMatchObject({ why: m.WHY.stopped, partial: true, handedOver: true });
+  });
+});
+
+
+describe('repairing the company key', () => {
+  /* RED WHEN: the wallet is asked to repair anything but this company's key, or what it told of the key's epoch and the work after the repair is lost or made up. */
+  it('asks the wallet to repair this company\'s key, and tells its new epoch and whether the work after it was all done', async () => {
+    const m = await load();
+    kr.acts.length = 0; kr.user = { id: 'u1' };
+    kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'rotated', epoch: 4, upkeep: 'partial', anchored: 2 } };
+    expect(await m.repairCompanyKey('u1', 'acc_Company00001')).toEqual({ of: 'done', state: 'rotated', repair: { epoch: 4, upkeep: 'partial' } } satisfies SignerActed);
+    expect(kr.acts).toEqual([{ name: m.SIGNER_ACT.repair, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32) }]);
+    expect(m.SIGNER_ACT.repair).toBe('repair-company-key');
+    kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'rotated-elsewhere' } };
+    expect(await m.repairCompanyKey('u1', 'acc_Company00001')).toEqual({ of: 'done', state: 'rotated-elsewhere', repair: { epoch: null, upkeep: null } } satisfies SignerActed);
+  });
+
+  /* RED WHEN: a reason the wallet gives for refusing the repair is told as one the page does not know, or a stop that sent nothing is offered as part done. */
+  it('gives back the wallet\'s reason, and says only a stopped repair may have gone part of the way', async () => {
+    const m = await load();
+    for (const [code, partial] of [['not-rotated', false], ['waits', false], ['not-this-seat', false], ['not-needed', false], ['not-repaired', true], ['no-seat', false]] as const) {
+      kr.ended = stopped(`act.repair-company-key.why.${code}`);
+      expect(await m.repairCompanyKey('u1', 'acc_Company00001'), code).toEqual({ of: 'stopped', act: m.SIGNER_ACT.repair, why: code, partial, handedOver: false } satisfies SignerActed);
+    }
+    kr.user = null;
+    expect(await m.repairCompanyKey('u1', 'acc_Company00001')).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    kr.user = { id: 'u1' };
   });
 });

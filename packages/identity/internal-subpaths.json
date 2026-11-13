@@ -30,6 +30,7 @@
     "profile/act-intents",
     "profile/act-shape",
     "profile/inbox-poll",
+    "profile/read-keys-release",
     "profile/seal",
     "profile/store",
     "recovery/pieces"

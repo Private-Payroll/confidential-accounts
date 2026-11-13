@@ -35,6 +35,13 @@ vi.mock('./round-opened-here.js', async (real) => ({
   openTheRoundHere: async () => { if (round.opened === null) throw new Error('no proposal is opened here'); return round.opened; },
 }));
 
+/* Each change handed to the shared governed call, as it was handed: followed in its own tests, only watched here. */
+const governed = vi.hoisted(() => ({ inputs: [] as Array<Record<string, unknown>> }));
+vi.mock('./governed-call-on-device.js', async (real) => {
+  const actual = await real<typeof import('./governed-call-on-device.js')>();
+  return { ...actual, governOnDevice: (d: never, i: Record<string, unknown>) => { governed.inputs.push(i); return actual.governOnDevice(d, i as never); } };
+});
+
 const COMPANY = 'acme';
 const VAULT = 'fa'.repeat(32);
 const VIEWING = 'cd'.repeat(32);
@@ -151,6 +158,26 @@ describe('A VAULT\'S SPENDING POLICY, READ AND SET ON THIS DEVICE', () => {
     await expect(setSpendingPolicyOnDevice(again, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms: TERMS }))
       .rejects.toThrow(/already has exactly this spending policy/u);
     expect([filed.length, sent]).toEqual([1, []]);
+  });
+
+  it('A POLICY RAISED HERE STOPS BEFORE IT IS CARRIED OUT WHEN ASKED, AND CHECKS WHAT IT IS GIVEN BEFORE IT SENDS', async () => {
+    const sent: string[] = [];
+    const doors = {
+      ...reader(new Map(), []),
+      service: new Proxy({}, { get: (_t, name) => async () => { sent.push(String(name)); throw new Error('nothing is sent here'); } }),
+      material: { signingSecret: founder.secret, blinding: '00'.repeat(32), scope: '00'.repeat(32) },
+      filing: { seat: SEAT, keyEpoch: 0, salt: () => '11'.repeat(32), newId: () => 'p1' },
+      approvers: async () => { throw new Error('not read here'); }, vaultName: () => 'the vault',
+      builder: { policyBarKey: async () => made('bar') },
+    } as unknown as PolicyGovernanceDoors;
+    governed.inputs.length = 0;
+    const before = async (): Promise<void> => { throw new Error('the caller refuses this raise'); };
+    await expect(setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms: TERMS, stopBeforeCarry: true, before }))
+      .rejects.toThrow(/nothing is sent here/u);
+    /* RED WHEN: a raise asked to stop before the carrying out is carried out by the same call, or the caller's own check is never run before a send. */
+    expect(governed.inputs).toHaveLength(1);
+    expect(governed.inputs[0]).toMatchObject({ stopBeforeCarry: true });
+    await expect((governed.inputs[0]!['before'] as () => Promise<void>)()).rejects.toThrow(/the caller refuses this raise/u);
   });
 
   it('THE APPROVALS A POLICY CHANGE NEEDS ARE NEVER NONE, AND NEVER MORE THAN THE SIGNERS SEATED', async () => {

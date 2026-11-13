@@ -9,6 +9,7 @@ import { api, companyKeyReleasedFor, currentUser, holdersFromTheWallet, seatShow
 import { browserInFlightRecords } from 'vaults-web-shared/in-flight-in-this-browser.js';
 import { deviceSignerFrom, readersIn, recordsReadHere, type DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
 import type { DeviceRecords, DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
+import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { VaultBuilderClient } from 'vaults-web-shared/vault-worker-client.js';
 import { vaultNotesHere, wireOf } from 'vaults-web-shared/vault-operation.js';
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
@@ -120,6 +121,10 @@ export interface SeatAndRecordsHere {
   readonly companyKey: Hex;
   /** This signer's seat and the records key their copies are wrapped to. */
   readonly mine: DeviceSigner;
+  /** The seat's leaf as the company's believed directory names it, which `mine` is made from: what a read of the company's spending policies derives its own seat from. */
+  readonly leaf: string;
+  /** Every epoch of the company's key this signer's seat holds, as the company's own judges open them; the sealed records are read with it. */
+  readonly viewingKey: CompanyKeyHere;
   readonly directory: DirectoryRead;
   readonly readers: ReturnType<typeof readersIn>;
   readonly records: DeviceRecords;
@@ -169,7 +174,7 @@ export async function seatAndRecordsHere(
   const mine = deviceSignerFrom(own.seat, companyKey);
   const readers = readersIn(directory);
   const records = recordsReadHere(judge, () => currentUser()?.id ?? null);
-  return { sealed, company, account, opened, builder, companyKey, mine, directory, readers, records };
+  return { sealed, company, account, opened, builder, companyKey, mine, leaf: own.seat, viewingKey, directory, readers, records };
 }
 
 /**

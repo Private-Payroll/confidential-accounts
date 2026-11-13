@@ -56,7 +56,7 @@ describe('the rights a seat is offered follow its role', () => {
 
   it('a reader role is never seated on the chain', () => {
     /* RED WHEN: a limited or accountant seat is given a leaf. */
-    expect(seatScopeRefusal('limited', undefined, ALL_VAULTS)).toMatch(/hold no seat, so nobody is seated as one\. Giving read access is not on a screen yet$/u);
+    expect(seatScopeRefusal('limited', undefined, ALL_VAULTS)).toMatch(/hold no seat, so nobody is seated as one\. Read access is given on the Roles tab in Settings$/u);
     expect(seatScopeRefusal('accountant', undefined, ALL_VAULTS)).toMatch(/hold no seat, so nobody is seated as one/u);
   });
 

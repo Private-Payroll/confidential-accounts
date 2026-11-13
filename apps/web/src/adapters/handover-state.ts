@@ -49,6 +49,7 @@ export const SERVICE = {
   read: 'read',
   company: '/api/accounts/', authority: '/authority', change: '/committee-change',
   signatures: '/committee-change/signatures', send: '/committee-change/send', post: 'POST',
+  raiseAt: '/committee-change/raise', joinAt: '/committee-change/join', vaults: '/vaults',
 } as const;
 
 /** The service's address for `route` of the company `companyId`. */

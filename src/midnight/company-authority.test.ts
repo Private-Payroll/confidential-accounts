@@ -177,8 +177,7 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
      * listed twice - and `committee-sign.test.ts` pins each of those. RED WHEN: any other wallet file constructs one.
      */
     expect(named.sort()).toEqual([
-      'packages/identity/src/profile/committee-sign.ts',
-      'src/midnight/authority-replacement.ts', 'src/midnight/vault-committee.ts',
+      'packages/identity/src/profile/committee-sign.ts', 'src/midnight/authority-replacement.ts',
     ]);
     expect(sdk).toEqual([]);
     expect(hits).toHaveLength(2);

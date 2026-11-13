@@ -1,4 +1,4 @@
-import { useText } from 'vaults-ui';
+import { Section, useText } from 'vaults-ui';
 import { Signers } from '../actions/signers.js';
 import { useDay } from '../records/parts.js';
 import { useSession } from '../session.js';
@@ -14,7 +14,11 @@ export function CompanyCreated() {
   const { companies, company } = useSession();
   const shown = companies.find((c) => c.id === company);
   if (shown === undefined) return null;
-  return <p className="text-sm" data-company-created>{t('settingsCompany.created', { date: day(shown.createdAt) })}</p>;
+  return (
+    <Section title={t('page.settingsCompany.name')} description={<span data-company-created>{t('settingsCompany.created', { date: day(shown.createdAt) })}</span>} list={false} box={false}>
+      {null}
+    </Section>
+  );
 }
 
 /**
@@ -28,9 +32,8 @@ export function CompanyCreated() {
 export function SignersBuilt() {
   const t = useText();
   return (
-    <>
-      <p className="text-sm text-muted-foreground" data-public-facts>{t('settingsSigners.publicFacts')}</p>
+    <Section title={t('page.settingsSigners.name')} description={<span data-public-facts>{t('settingsSigners.publicFacts')}</span>} list={false} box={false}>
       <Signers />
-    </>
+    </Section>
   );
 }

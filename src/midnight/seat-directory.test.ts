@@ -404,6 +404,24 @@ describe('A SEAT GOES TO THE PERSON A SEAT OF THE COMPANY INVITED: EVERY ENTRY B
     expect(judged(deesWith(reissueOf(strangers)), afterBoLeft)).toBe('not-the-invitation-it-replaces');
   });
 
+  it('an entry filed under the invitation of an inviter who left, then filed again under its re-issue, is believed only as the second', () => {
+    const both = believedDirectory(CO, [claim(ADA, 1), claim(BO, 2)], LABEL, ACCOUNT);
+    const retireBo = quorum(both, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 }, [ADA]);
+    const bos = forDee({}, BO.signing.secret);
+    const reissued = signSeatInvitation({
+      ...bos.terms, invitation: sha('dee re-issued'), replaces: { invitation: bos.terms.invitation, signedBy: bos.signedBy, signature: bos.signature },
+    }, FOUNDER.secret);
+    const filings = [claim(ADA, 1), claim(BO, 2), retireBo];
+    const first = claimOf(deesWith(bos), filings.length + 1);
+    const again = claimOf(deesWith(reissued), filings.length + 2);
+    const replayed = directoryReplayed(CO, [...filings, first, again], LABEL, ACCOUNT);
+    /* RED WHEN: the entry under the invitation of an inviter who left is believed, so a seat nobody now vouches for is entered. */
+    expect(replayed.refused.get(first.version)).toBe('inviter-not-seated');
+    /* RED WHEN: the same seat's entry filed again under its re-issue is refused for the first one, so the person stays locked out. */
+    expect(replayed.refused.has(again.version)).toBe(false);
+    expect(replayed.dir.seats.some((x) => x.seat === deesWith(reissued).statement.seat)).toBe(true);
+  });
+
   it('an entry whose invitation was signed by a seat whose role may not file a proposal is not believed', () => {
     /* No change gives a seat such a role, so the directory holding one is made here as the judge would read it. */
     const both = believedDirectory(CO, [claim(ADA, 1), claim(BO, 2)], LABEL, ACCOUNT);

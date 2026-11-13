@@ -42,6 +42,7 @@ import {
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { adoptionRoundOf, type AccountStartPure } from '../../src/midnight/vault-start.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const VAULT_NOW = 1_800_000_000;
@@ -417,5 +418,47 @@ describe('an account keeps a register of its own vaults', () => {
     /* And the account recorded it. */
     expect(accountLedger((paid.context as any).queryContexts[sim.address as never].state)
       .movements.member(pureCircuits.paidOnceOf(bytes(0xc1)))).toBe(true);
+  });
+  it('A RETIRED VAULT PAID INTO IS ADOPTED AGAIN AT THE COMPANY\'S THRESHOLD AND PAID OUT OF', async () => {
+    const P = pureCircuits as unknown as AccountStartPure;
+    const first = adoptionRoundOf(P, vaultAddr);
+    const c1 = { ...govChange(110), salt: fromHex(first.salt) };
+    await sim.as(carrying(sim, A, c1)).adopt(vaultBytes(), await adoptionRound(vaultBytes(), c1));
+    await startHere();
+    const c2 = govChange(111);
+    const retiredBy = await retirementRound(vaultBytes(), c2);
+    await retire(retiredBy, c2);
+    /* Money paid in after the retire: the vault takes it whatever the account holds. */
+    await fund();
+
+    /* The first adoption made again is the same proposal, and the account remembers both seats approved it once. */
+    await sim.as(carrying(sim, A, c1)).propose(pureCircuits.adoptVaultPayload(vaultBytes()));
+    await expect(sim.as(carrying(sim, B, c1)).approve(fromHex(first.proposal))).rejects.toThrow(/already approved/u);
+    await sim.as(carrying(sim, A, c1)).cancel(fromHex(first.proposal));
+
+    const again = adoptionRoundOf(P, vaultAddr, toHex(retiredBy));
+    const c3 = { ...govChange(112), salt: fromHex(again.salt) };
+    const id = await adoptionRound(vaultBytes(), c3);
+    /* RED WHEN: a retired vault's adoption made again is the first one, which can never gather its approvals, so its money is stuck. */
+    expect(toHex(id)).toBe(again.proposal);
+    await sim.as(carrying(sim, A, c3)).adopt(vaultBytes(), id);
+    expect(sim.adopted(vaultBytes())).toBe(true);
+
+    const c4 = govChange(113);
+    const leaves: PayoutLeafInput[] = [{
+      details: toHex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, 250n, bytes(0x40))),
+      nonce: toHex(bytes(0xc2)),
+    }];
+    const tree = payoutTreeOf(leaves, [250n], TOKEN_BYTES);
+    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
+    await sim.as(carrying(sim, A, c4)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes() });
+    const run = sim.proposalId(payload, c4.salt, vaultBytes());
+    await sim.as(carrying(sim, B, c4)).approve(run);
+    const paid = await vault.impureCircuits.payout(
+      ctx('payout'),
+      vaultRunOf({ proposal: run, vault: vaultBytes(), tree, i: 0, opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c4.salt, nonce: bytes(0xc2) }),
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
+    /* RED WHEN: the money paid into the retired vault cannot be paid out once the vault is adopted again. */
+    expect(vaultLedger(paid.context.callContext.currentQueryContext.state as never).payments).toBe(1n);
   });
 });

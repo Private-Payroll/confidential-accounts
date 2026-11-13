@@ -34,7 +34,11 @@
  * It serves the headers a page at a time, one read's proofs against one root in
  * one answer, the entries not yet anchored at a root, and the newest version
  * entered of each record a filer asks about; a device checks all but the last,
- * which only numbers a filer's next entry.
+ * which only numbers a filer's next entry. A reader the member gate admits is
+ * refused the newest versions and the proofs of any name outside its grant's
+ * kinds, and is served the entries not yet anchored without those of other
+ * kinds (`readerAskedBeyondItsKinds`, `aReaderMay`); the proofs are refused
+ * rather than cut, because a device checks them whole against the root.
  */
 import express from 'express';
 import { z } from 'zod';
@@ -51,6 +55,7 @@ import type { Hex } from '../core/crypto.js';
 import type { SealedProposal, SealedRun } from '../core/types.js';
 import { COMPANY_RECORD_KINDS, WIRE_RECORDS, type CompanyRecordKind, type CompanyRecordStore, type WireRecord } from '../midnight/sealed-record-wire.js';
 import type { SealedPoolStore } from '../midnight/vault-pool.js';
+import { aReaderMay, readerAskedBeyondItsKinds, readerKindsOf } from './readers-route.js';
 import { anchoringSeatThen, CHAIN_UNREAD, signerSeatNow, type DirectoryNow } from './seat-directory-route.js';
 
 /** What this route needs of the store. */
@@ -121,6 +126,7 @@ export const recordManifestRoutes = (deps: {
       res.status(400).json({ error: `name at most ${ENTRIES_AT_ONCE * 4} records to read the newest version of. Nothing was read.` });
       return;
     }
+    if (readerAskedBeyondItsKinds(res, b.data.records)) return;
     res.json({ versions: b.data.records.map((r) => deps.store.newestEntered(company, recordKeyOf(r))) });
   });
 
@@ -275,7 +281,8 @@ export const recordManifestRoutes = (deps: {
         + 'against it. Reload the page; if it happens again, the service is withholding the company\'s records' });
       return;
     }
-    res.json({ entries: pending });
+    const reader = readerKindsOf(res);
+    res.json({ entries: reader === null ? pending : pending.filter((e) => aReaderMay(reader, e)) });
   });
 
   /* Every kind a company files, in each store, so a device can ask about all of them in one read. */
@@ -290,6 +297,7 @@ export const recordManifestRoutes = (deps: {
       res.status(400).json({ error: `name the root to prove against and at most ${PROVEN_AT_ONCE} records and ${KINDS_AT_ONCE} kinds. Nothing was read.` });
       return;
     }
+    if (readerAskedBeyondItsKinds(res, [...b.data.records, ...b.data.kinds])) return;
     const given = proofsOf(deps.store.keptTreeOf(company), b.data);
     if (given === null) {
       /* Answered, not failed: a root not kept here is an answer the device acts on (it reads the head again). */

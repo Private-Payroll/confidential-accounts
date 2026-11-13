@@ -789,6 +789,25 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     expect(co.log.filter((x) => x.startsWith('raise'))).toEqual(['raise remove bo']);
   });
 
+  it('a removal is filed under the name its caller gives, and under its own when none is given', async () => {
+    const co = aCompany();
+    await removeSignerOnDevice(co.deviceOf(ADA).doors, { viewingKey: KEY, leaf: BO.seat, name: 'bo', summary: 'Change bo\'s role to approver' });
+    /* RED WHEN: the name a change of role gives its removal is not the one sealed in the proposal its approvers open. */
+    expect([...co.rounds.values()].map((r) => r.opened.summary)).toEqual(['Change bo\'s role to approver']);
+    const plain = aCompany();
+    await plain.deviceOf(ADA).remove(BO);
+    expect([...plain.rounds.values()].map((r) => r.opened.summary)).toEqual(['Remove bo as a signer']);
+  });
+
+  it('a seat the chain no longer holds, with no retirement any device can file, is refused under a name of its own', async () => {
+    const co = aCompany();
+    co.chain.delete(BO.seat);
+    const refused = await co.deviceOf(ADA).remove(BO).then(() => null, (e: unknown) => e as Error);
+    /* RED WHEN: the refusal that only a device holding the retirement can clear reaches the page as an unnamed error. */
+    expect(refused?.name).toBe('NoRetirementToFile');
+    expect(refused?.message).toMatch(/finds no retirement of their seat to file/u);
+  });
+
   it('EACH APPROVING DEVICE KEEPS ITS OWN SIGNATURE AND EVERY ONE IT READ, SO A SERVICE THAT STOPS SERVING THEM HOLDS NOTHING UP', async () => {
     const co = aCompany();
     await co.deviceOf(ADA).remove(BO);

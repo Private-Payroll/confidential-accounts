@@ -231,6 +231,19 @@ export const CHANGE_THRESHOLD_CALLS: readonly CallRoute[] = Object.freeze([
   ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
 ].map((r) => Object.freeze(r)) as CallRoute[]);
 
+/*
+ * What retiring a vault reads and writes: what changing the approvals needed does, besides the vault itself read on the
+ * chain by the wallet; the vault's own retire goes from the wallet to the chain, its fee paid by the sponsorship the
+ * upkeep's routes list.
+ */
+export const RETIRE_VAULT_CALLS: readonly CallRoute[] = CHANGE_THRESHOLD_CALLS;
+
+/*
+ * What raising a change of policy reads and writes: what changing the approvals needed does, the policy's own sealed
+ * record filed through the records route the upkeep already lists.
+ */
+export const SET_POLICY_CALLS: readonly CallRoute[] = CHANGE_THRESHOLD_CALLS;
+
 /**
  * What raising a payroll run asks of the page: the company's records, its runs (read, and filed when the run is
  * drawn here), its people and vendors, the vaults' records the vault's money is read from, the proposal filed with
@@ -386,3 +399,77 @@ export const GRANT_READ_CALLS: readonly CallRoute[] = Object.freeze([
 export const CHANGE_ROLE_CALLS: readonly CallRoute[] = Object.freeze([...REMOVE_SIGNER_CALLS, ...INVITE_CALLS]
   .filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
   .map((r) => Object.freeze({ ...r })) as CallRoute[]);
+
+/*
+ * What a reader's wallet reads to believe the read grants in force: the company, its directory, the grants' versions
+ * and the anchor of its records. Every one is a read a reader of the company may make; nothing is written or sent.
+ */
+export const READER_KEYS_CALLS: readonly CallRoute[] = Object.freeze([
+  { method: 'GET', path: '/api/accounts/:record' },
+  { method: 'GET', path: '/api/accounts/:record/directory' },
+  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
+  { method: 'POST', path: '/api/accounts/:record/manifest/newest', reads: true },
+  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs', reads: true },
+  { method: 'GET', path: '/api/accounts/:record/manifest/tree/pending', query: ['root'] },
+  { method: 'GET', path: '/api/accounts/:record/manifest/tree/headers', query: ['after', 'limit'] },
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/** The upkeep's routes a list built on the company's records does not already name. */
+const UPKEEP_BEYOND_RECORDS: readonly CallRoute[] = UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path));
+
+/*
+ * What withdrawing a person waiting for a seat reads and writes: the company's records its proposals and the seat are
+ * read from, and the one withdrawal signed by this seat, plus the upkeep's routes. Which proposals the chain holds is
+ * read from the chain by the wallet itself, never asked of the service.
+ */
+export const WITHDRAW_WAITING_SIGNER_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/accounts/:record/signers/:signer/withdraw' },
+  ...UPKEEP_BEYOND_RECORDS,
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What sending a signer's invitation again reads and writes: the company's records the seat and the proposal that
+ * seated the person are read from, and the new invitation filed, plus the upkeep's routes.
+ */
+export const REISSUE_INVITATION_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/accounts/:record/invites' },
+  ...UPKEEP_BEYOND_RECORDS,
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What taking a re-issued invitation reads: the company's records this wallet's seat and the proposal that seated it
+ * are read from, and the re-issued offer. Nothing is written.
+ */
+export const TAKE_REISSUE_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'GET', path: '/api/invites/:invitation/offer' },
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What adding a signer from their code reads and writes: the company's records the seat is read from, the invitation
+ * filed, and the person's request for a seat filed under it, sealed to the company, plus the upkeep's routes.
+ */
+export const ADD_SIGNER_BY_CODE_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'POST', path: '/api/accounts/:record/invites' },
+  { method: 'POST', path: '/api/invites/:invitation/accept-signer' },
+  ...UPKEEP_BEYOND_RECORDS,
+].map((r) => Object.freeze(r)) as CallRoute[]);
+
+/*
+ * What proposing the seat of a person waiting reads and writes: the company's records, its runs and its roster read,
+ * the proposal written down and raised with this seat's approval and its standing read, and the person admitted when
+ * the chain already holds their seat, plus the upkeep's routes.
+ */
+export const RAISE_WAITING_SIGNER_CALLS: readonly CallRoute[] = Object.freeze([
+  ...COMPANY_RECORD_CALLS,
+  { method: 'GET', path: '/api/accounts/:record/runs' },
+  { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
+  { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
+  { method: 'POST', path: '/api/proposals/:proposal/standing' },
+  { method: 'POST', path: '/api/accounts/:record/signers/:signer/admit' },
+  ...UPKEEP_BEYOND_RECORDS,
+].map((r) => Object.freeze(r)) as CallRoute[]);

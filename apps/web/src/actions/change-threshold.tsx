@@ -1,7 +1,9 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Alert, AlertDescription, Button, FieldDescription, FieldError, FieldLegend, FieldSet, useText } from 'vaults-ui';
 import { changeThreshold, THRESHOLD_ACTED, THRESHOLD_PROBLEM, type ThresholdActed, type ThresholdProblem } from '../adapters/proposal-acts.js';
-import { OPENED, READ } from '../adapters/reads.js';
+import { readHolders, whatAChangeCosts, type ChangeHolders } from '../adapters/policy-acts.js';
+import { CHANGE_ASKED } from '../adapters/change-asked.js';
+import { OPENED, READ, type Read } from '../adapters/reads.js';
 import { ActedSays, type ActPhase } from '../records/proposal-act.js';
 import { useCompanyRecords } from '../records/company-records.js';
 import { PanelFooter } from '../shell/right-panel.js';
@@ -17,6 +19,10 @@ type Asked = { readonly wanted: number; readonly acted: ThresholdActed };
  * wallet window opens, and the wallet checks every vault again. Under the number it says why. For the company it cannot say which
  * vault would be left short (the wallet's refusal carries no vault), so it says the wallet checks every vault. For a vault it names
  * that vault and its number, and says the wallet checks the rest. A vault whose number was not read is not changed from here.
+ * Once a number is chosen and the approvals the chain holds are read (the account's, every vault's, the policy bar), it says how many
+ * approvals the change itself needs and which of them sets that (the account, a named vault or the policy bar), warns when the
+ * number asks for every signer seated, and says when the policy bar is raised or stays above the account's number. A read that
+ * fails shows none of it: nothing is claimed that was not read.
  * Where it is drawn under the page's records, a records reload empties them and unmounts it with its result: the vault page
  * therefore draws it in the shell's panel.
  */
@@ -28,6 +34,7 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
   const [chosen, setChosen] = useState<number | null>(null);
   const [phase, setPhase] = useState<ActPhase>(null);
   const [asked, setAsked] = useState<Asked | null>(null);
+  const [held, setHeld] = useState<Read<ChangeHolders> | null>(null);
   const open = company?.of === OPENED.open ? company : null;
   const vaultsRead = open?.vaults;
   const vaultRows = vaultsRead?.of === READ.read ? vaultsRead.value : null;
@@ -44,6 +51,14 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
   const canMore = readable && from < seated;
   const canFewer = readable && from > 1;
   const shown = chosen !== null ? t('changeThreshold.value', { count: chosen }) : now === null ? '' : t('changeThreshold.keeps', { count: now });
+
+  useEffect(() => {
+    if (companyId === null) return undefined;
+    let alive = true;
+    setHeld(null);
+    void readHolders(person.id, companyId).then((read) => { if (alive) setHeld(read); });
+    return () => { alive = false; };
+  }, [person.id, companyId, company]);
 
   const raise = async (): Promise<void> => {
     if (companyId === null || busy || chosen === null) return;
@@ -72,6 +87,7 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
         {readable ? null : <FieldError data-change-threshold-unread>{vault === undefined ? t('changeThreshold.unread') : t('changeThreshold.vault.unread')}</FieldError>}
       </FieldSet>
       {now === null ? null : <p className="text-muted-foreground" data-needed-because>{vaultName === null ? t('changeThreshold.because', { count: now }) : t('changeThreshold.vault.because', { count: now, vault: vaultName })}</p>}
+      {chosen === null || chosen === now || held?.of !== READ.read ? null : <ThresholdReview held={held.value} chosen={chosen} vault={vault} vaultName={vaultName} />}
       {vault !== undefined ? null : <p className="text-muted-foreground" data-checks-every-vault>{t('changeThreshold.checks')}</p>}
       <p className="text-muted-foreground">{t('changeThreshold.walletNote')}</p>
       <PanelFooter>
@@ -83,6 +99,36 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
         </div>
       </PanelFooter>
     </form>
+  );
+}
+
+/**
+ * What the chosen number costs, from the chain's own figures: how many approvals the change itself needs and what sets that, the
+ * warning for a number that asks for every signer seated (a company's choice to make, never refused here), and the policy bar when
+ * the change raises it or leaves it above the account's number. A vault's change is counted by `whatAChangeCosts`; the account's is
+ * carried at the account's own number.
+ */
+function ThresholdReview({ held, chosen, vault, vaultName }: { held: ChangeHolders; chosen: number; vault: string | undefined; vaultName: string | null }) {
+  const t = useText();
+  const cost = vault === undefined || vaultName === null ? null : whatAChangeCosts(held, { kind: CHANGE_ASKED.vaultThreshold, vault, threshold: chosen });
+  const needed = cost?.needed ?? held.approvals;
+  const because = cost === null || cost.because === 'account' ? t('changeThreshold.review.because.account')
+    : cost.because === 'policy-bar' ? t('changeThreshold.review.because.bar') : t('changeThreshold.review.because.vault', { vault: vaultName ?? '' });
+  const after = cost?.barRaisedTo ?? held.seatBar;
+  const staysRaised = cost === null ? chosen < held.approvals && (held.policyBar ?? 0) > chosen : cost.barRaisedTo === undefined && after > held.approvals;
+  return (
+    <div className="flex flex-col gap-2 text-muted-foreground" data-threshold-review>
+      <p data-review-needs={needed}>{t('changeThreshold.review.needs', { count: needed })} <span data-review-because>{because}</span></p>
+      {chosen !== held.seated || held.seated < 2 ? null : (
+        <Alert variant="destructive" data-warning="every-signer">
+          <AlertDescription>{vaultName === null ? t('changeThreshold.warn.every-signer', { seated: held.seated }) : t('changeThreshold.vault.warn.every-signer', { seated: held.seated, vault: vaultName })}</AlertDescription>
+        </Alert>
+      )}
+      {cost?.barRaisedTo === undefined ? null : <Alert data-warning="bar-raised"><AlertDescription>{t('changeThreshold.warn.bar-raised', { bar: cost.barRaisedTo })}</AlertDescription></Alert>}
+      {!staysRaised ? null : (
+        <Alert data-warning="bar-stays"><AlertDescription>{t('changeThreshold.warn.bar-stays', { bar: cost === null ? held.policyBar ?? after : after, approvals: cost === null ? chosen : held.approvals })}</AlertDescription></Alert>
+      )}
+    </div>
   );
 }
 

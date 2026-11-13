@@ -8,7 +8,7 @@
  * every older one.
  */
 import { describe, it, expect } from 'vitest';
-import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { identityFromSecret } from 'midnight-identity';
 import { unwrapKey, type Hex } from '../core/crypto.js';
 import { openAccount } from '../core/account.js';
@@ -29,10 +29,13 @@ import {
   aCompanyWhoseSignersChange, ADA, BO, chains, CO, committeeKeyOfLeaf, companyKeyDoorsOf, CY, deviceOf, KEY, LABEL, rosterDoorsOf,
   seatsOnTheChain, sendAs, store,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
+import { aJoinersWallet } from '../testing/a-joiners-wallet.js';
 
 aCompanyWhoseSignersChange();
 
 const DEES_KEY = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(4)), LABEL) as { tag: string; value: string };
+/** Dees's wallet, which signs the address it takes the seat with. */
+const DEES_SIGNS = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new Uint8Array(32).fill(4)), LABEL).value as Hex, 41);
 
 describe('A PERSON SEATED ON THE CHAIN BEFORE A SIGNER LEAVES IS ADMITTED AFTER THE KEY CHANGES', () => {
   it('the change of key does not wait for Dee, names her request, and Ada admits her with the new key, which Dee then reads', async () => {
@@ -41,7 +44,7 @@ describe('A PERSON SEATED ON THE CHAIN BEFORE A SIGNER LEAVES IS ADMITTED AFTER 
     const made_: NewSeatKeys[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: (w) => { const k = newSeatKeys(w); made_.push(k); return k; }, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
-    }, sendAs('dee'), 'dee', async () => DEES_KEY);
+    }, sendAs('dee'), 'dee', async () => DEES_KEY, DEES_SIGNS.seatAddress);
     const leaf = leafOfTheContract(kept[0]!.opening!)!;
     committeeKeyOfLeaf.set(leaf, DEES_KEY);
     const signerId = accepted.signerId!;

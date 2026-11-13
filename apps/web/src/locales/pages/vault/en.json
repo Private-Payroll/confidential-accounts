@@ -1,5 +1,10 @@
 {
   "vault.back": "All vaults",
+  "vault.retire": "Retire",
+  "vault.retire.what": "Retiring takes this vault off your company's list. Nothing can be paid from it until the company adopts it again.",
+  "vault.retire.checked": "Your wallet checks on the network that the vault holds no money first, and retires it only then. Pay out or move any money it holds before you retire it.",
+  "vault.retire.again": "Money paid into the vault after it is retired waits there, and the vault shows Adopt again, which opens every way of paying out of it.",
+  "vault.retire.done": "The retire is with the network. Once it has the approvals your company needs, the vault is retired.",
   "vault.notFound": "There is no vault here. It may belong to another company: switch company from the menu at the top to open it.",
   "vault.approvals_one": "This vault asks for {count} approval from the signers.",
   "vault.approvals_other": "This vault asks for {count} approvals from the signers.",

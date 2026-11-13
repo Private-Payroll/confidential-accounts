@@ -43,7 +43,7 @@ import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-recor
 import { ApproveCommittee, type ChainReader } from './approve-committee.js';
 import { ApproveRecordsKey } from './approve-records-key.js';
 import { ApproveJoinCode } from './approve-join-code.js';
-import { payslipKeyOfThisWallet } from './join-code-payslip-key.js';
+import { ownJoinKeysOf } from './join-code-reader-key.js';
 import { AnswerHolders } from './answer-holders.js';
 import { AskOver } from './ask-over.js';
 import { ApproveAddressesAndBalances } from './approve-addresses-and-balances.js';
@@ -1504,8 +1504,7 @@ export function Approve({
         whoIsAsking={whoIsAsking}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         receives={receivingAddressesOf(identity, NETWORK)}
-        ownPayslipKey={request.parts.kind === 'payee'
-          ? payslipKeyOfThisWallet(identity, request) : null}
+        {...ownJoinKeysOf(identity, request)}
         fingerprintClass={FINGERPRINT_TEXT}
         readLabel={readLabel}
         answerAtOnce={atOnce}

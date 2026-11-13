@@ -1212,9 +1212,10 @@ export type GovernedOutcome =
  * The changes this device raises, approves and carries out through the company's
  * records (`governOnDevice`). A recovery of the record anchor never is: it runs
  * while those records are stopped, from the chain and a file its raiser hands
- * over (`records-recovered-here.ts`).
+ * over (`records-recovered-here.ts`). Nor is a vault's retire, which the vault
+ * itself carries out once it holds no money (`carryRetireHere`).
  */
-type GovernedThroughTheRecords = Exclude<GovernanceOnTheWire, { readonly kind: 'recover-anchor' }>;
+type GovernedThroughTheRecords = Exclude<GovernanceOnTheWire, { readonly kind: 'recover-anchor' } | { readonly kind: 'retire-vault' }>;
 
 /** Each change's kind, as a proposal's sealed record names it. */
 const KIND_OF: Readonly<Record<GovernedThroughTheRecords['kind'],
@@ -2819,7 +2820,7 @@ export async function ownRemovalApprovedHere(doors: GovernanceDoors, viewingKey:
 const removalFinishedHere = async (doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, here: DirectoryHere): Promise<RemovalOutcome> =>
   rotatedAfter(doors, viewingKey, leaf, await retirementFinishedHere(doors, viewingKey, leaf, here));
 
-/** What finishing a removal the chain carried out leaves to file: the retirement, from this device. */
+/** What finishing a removal the chain carried out leaves to file: the retirement, from this device; `NoRetirementToFile` when it holds none. */
 async function retirementFinishedHere(doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, here: DirectoryHere): Promise<RemovalOutcome> {
   const seat = here.dir.seats.find((x) => x.seat === leaf);
   if (seat === undefined || seat.retired !== null) return { state: 'done', round: null };
@@ -2841,8 +2842,8 @@ async function retirementFinishedHere(doors: RemovalDoors, viewingKey: KeysHeld,
     }
   }
   if (short !== null) return { state: 'waiting-for-the-retirement', round: null, signed: short.signed, needed: short.needed };
-  throw new Error('The chain no longer holds this signer, and this device finds no retirement of their seat to file. Nothing was sent. '
-    + 'Open the company on the device of a signer who approved the removal, which keeps its retirement and files it.');
+  throw Object.assign(new Error('The chain no longer holds this signer, and this device finds no retirement of their seat to file. Nothing '
+    + 'was sent. Open the company on the device of a signer who approved the removal, which keeps its retirement and files it.'), { name: 'NoRetirementToFile' });
 }
 
 /**
@@ -2861,13 +2862,13 @@ async function retirementFinishedHere(doors: RemovalDoors, viewingKey: KeysHeld,
  * out already is read from the chain, never from the service's words: a
  * removal the chain carried out first is finished here by filing its
  * retirement. Once the removal is done, the company's key is changed from
- * here where these doors can (`rotatedAfter`). The wallet's removal action is
- * its caller. A removal waits while a seat whose invitation raises the
+ * here where these doors can (`rotatedAfter`). `summary`, where given, is the
+ * name the removal is filed under. The wallet's removal action is its caller. A removal waits while a seat whose invitation raises the
  * threshold above the bar the removal is approved at is open
  * (`seatRaisingTheBarHere`).
  */
 export async function removeSignerOnDevice(
-  doors: RemovalDoors, input: { viewingKey: KeysHeld; leaf: string; name: string; newThreshold?: number } & ThresholdChangeSteps,
+  doors: RemovalDoors, input: { viewingKey: KeysHeld; leaf: string; name: string; newThreshold?: number; summary?: string } & ThresholdChangeSteps,
 ): Promise<RemovalOutcome> {
   if (doors.records === undefined) {
     throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot remove a signer. Reload the page to get '
@@ -2927,7 +2928,7 @@ export async function removeSignerOnDevice(
     return await rotatedAfter(doors, input.viewingKey, leaf, await governOnDevice(doors, {
       viewingKey: input.viewingKey,
       change: asked,
-      summary: newThreshold === 0 ? `Remove ${input.name} as a signer` : `Remove ${input.name} as a signer, and need ${newThreshold} approvals`,
+      summary: input.summary ?? (newThreshold === 0 ? `Remove ${input.name} as a signer` : `Remove ${input.name} as a signer, and need ${newThreshold} approvals`),
       body: { leaf: leaf as Hex, ...(newThreshold === 0 ? {} : { newThreshold }), ...(made === undefined ? {} : { retirement: made }) },
       /*
        * Before a raise, the terms about to be raised; at an approval or the carrying out, the proposal's own, judged

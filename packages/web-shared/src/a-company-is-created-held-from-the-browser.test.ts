@@ -868,8 +868,8 @@ describe('AN INVITEE\'S DEVICE ASKS ITS OWN WALLET FOR ITS KEY FOR THE COMPANY I
   });
 });
 
-describe('AN INVITATION RE-ISSUED FOR A SEAT IS KEPT WITH ITS KEYS, IN PLACE OF THE ONE IT JOINED BY', () => {
-  it('KEEPS THE SEAT THAT RE-ISSUED IT AND THE INVITATION TOGETHER, FOR THE WALLET AND FOR THE ENTRY STILL OWED', async () => {
+describe('A DIRECTORY ENTRY STILL OWED IS KEPT BY THE WALLET, NEVER BY THIS PAGE', () => {
+  it('this page writes no owed entry into the saved keys, and the seat it read keeps no inviter or invitation of the page\'s', async () => {
     const service = aService();
     signIn();
     await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
@@ -877,10 +877,6 @@ describe('AN INVITATION RE-ISSUED FOR A SEAT IS KEPT WITH ITS KEYS, IN PLACE OF 
     const signed = { committeeKey: { tag: 'schnorr', value: 'aa'.repeat(32) }, entry: { seat: 'ab'.repeat(32) } } as never;
     /* RED WHEN: this page writes an owed directory entry into the saved keys. */
     await expect(keyring.oweDirectoryEntry(id, { person: A.id, company: A_COMPANY as never, signed })).rejects.toThrow(/no longer writes your saved keys/u);
-    const inviter = { committeeKey: { tag: 'schnorr', value: 'bb'.repeat(32) }, statement: { seat: 'cc'.repeat(32) }, opening: { salt: 'dd'.repeat(32) } } as never;
-    const invited = { terms: { person: A.id, leaf: 'ab'.repeat(32) }, signedBy: 'ee'.repeat(32), signature: 'ff'.repeat(64) } as never;
-    /* RED WHEN: this page writes a re-issued invitation into the saved keys, which only the wallet changes now. */
-    await expect(keyring.keepTheReissuedInvitation(id, { inviter, invited })).rejects.toThrow(/no longer writes your saved keys/u);
     expect([seatSavedFor(id)!.invitedBy, seatSavedFor(id)!.invited]).toEqual([undefined, undefined]);
     expect(service.savesBy(A.id)).toHaveLength(1);
   });

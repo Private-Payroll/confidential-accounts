@@ -1,7 +1,8 @@
 /*
  * APPROVING AND WITHDRAWING A PROPOSAL FROM THE PAGE, RAISING A RUN OR A ONE-OFF PAYMENT, REMOVING A SIGNER AND CHANGING THE
- * VAULT SECRETS AFTER ONE LEAVES: the approve-proposal, withdraw-proposal, raise-run, one-off-payment, remove-signer and
- * rotate-vault-secrets actions asked of the person's wallet, as every action on a company is
+ * VAULT SECRETS AFTER ONE LEAVES, SETTING A SPENDING POLICY OR THE POLICY BAR, GIVING OR TAKING AWAY READ ACCESS, CHANGING A SIGNER'S ROLE: the approve-proposal,
+ * withdraw-proposal, raise-run, one-off-payment, remove-signer, rotate-vault-secrets, set-spending-policy, set-policy-bar,
+ * grant-read and change-role actions asked of the person's wallet, as every action on a company is
  * (`actOnACompanyInTheWallet`). What the page read of the proposal for
  * the wallet to show and check is handed on as the action carries it, a count or an amount as a whole number in decimal;
  * the wallet opens the proposal itself and refuses one that says otherwise.
@@ -17,17 +18,10 @@ import type { ActOutcome } from './wallet-act.js';
 export const PROPOSAL_ACT = { approve: 'approve-proposal', withdraw: 'withdraw-proposal' } as const;
 export type ProposalAct = (typeof PROPOSAL_ACT)[keyof typeof PROPOSAL_ACT];
 
-/** The wallet's name for each kind of proposal, by the kind the page lists it as. A change of policy is one of two, named by its asks. */
-export const WALLET_KIND: Readonly<Record<string, string>> = {
-  transfer: 'one-off', payroll: 'payroll', 'add-signer': 'add-signer', 'remove-signer': 'removal', 'set-threshold': 'threshold',
-  'set-vault-threshold': 'vault-threshold', 'adopt-vault': 'adopt-vault', 'vault-secret': 'vault-secret', 'pay-key': 'pay-key',
-};
-/** The wallet's names for the two changes of policy. */
-export const POLICY_KINDS: ReadonlySet<string> = new Set(['spending-policy', 'policy-bar']);
-/** The field a change of policy says which change it is under: sent to the wallet as the kind, never among the fields. */
+/** The wallet's name for each kind, and the kinds never offered for withdrawal: both read off the wallet's one list. */
+export { NEVER_WITHDRAWN, WALLET_KIND } from './proposal-kinds-in-the-wallet.js';
+/** The field a page's reading of a policy proposal names its kind under: sent to the wallet as the kind, never among the fields. */
 export const KIND_FIELD = 'kind';
-/** The kinds the wallet never withdraws: it refuses them in its own words. */
-export const NEVER_WITHDRAWN: ReadonlySet<string> = new Set(['pay-key', 'adopt-vault', 'vault-secret', 'change-policy']);
 
 /** Why the wallet stopped an act on a proposal, as a page names it. */
 export const PROPOSAL_WHY = {
@@ -356,6 +350,8 @@ export function oneOffInTheWallet(
 /** The wallet's names for removing a signer and for changing the company's vault secrets after one leaves. */
 export const REMOVE_SIGNER = 'remove-signer';
 export const ROTATE_VAULT_SECRETS = 'rotate-vault-secrets';
+const SET_SPENDING_POLICY = 'set-spending-policy';
+const SET_POLICY_BAR = 'set-policy-bar';
 
 /** How many vaults ended in each state on a press of the wallet's vault secret change, as it counts them; a vault that owed nothing is in none. */
 export interface VaultsTold { readonly rotated: number; readonly awaiting: number; readonly owed: number; readonly waiting: number; readonly notChanged: number }
@@ -405,4 +401,123 @@ export function rotateVaultSecretsInTheWallet(
   return actOnACompanyInTheWallet({
     name: ROTATE_VAULT_SECRETS, record: ask.record, company: ask.company, account: ask.account,
   }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/**
+ * **ASKS THE PERSON'S WALLET TO SET A VAULT'S SPENDING POLICY** for one currency: four bands, each a ceiling in the currency's smallest unit and the
+ * approvals it needs, the limit for each period, the first period's start in seconds and the period's length in seconds. Each is handed on as a whole
+ * number in decimal, the bands as four `ceiling:approvals` pairs; the wallet reads them back, refuses what is not a policy, and judges whether this
+ * seat may set one.
+ */
+export function setSpendingPolicyInTheWallet(
+  ask: {
+    readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress; readonly vault: string; readonly token: string;
+    readonly periodLimit: bigint; readonly periodStart: bigint; readonly periodLength: bigint;
+    readonly bands: readonly { readonly ceiling: bigint; readonly approvals: number }[];
+  },
+  walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  return actOnACompanyInTheWallet({
+    name: SET_SPENDING_POLICY, record: ask.record, company: ask.company, account: ask.account, vault: ask.vault, token: ask.token,
+    periodLimit: ask.periodLimit.toString(), periodStart: ask.periodStart.toString(), periodLength: ask.periodLength.toString(),
+    bands: ask.bands.map((b) => `${b.ceiling}:${b.approvals}`).join(','),
+  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/** **ASKS THE PERSON'S WALLET TO CHANGE THE APPROVALS ANY CHANGE TO A SPENDING POLICY NEEDS** (the policy bar), which is also the least a change of who is seated needs. */
+export function setPolicyBarInTheWallet(
+  ask: { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress; readonly bar: number },
+  walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  return actOnACompanyInTheWallet({
+    name: SET_POLICY_BAR, record: ask.record, company: ask.company, account: ask.account, bar: ask.bar.toString(),
+  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/** A count a policy holds as a whole number of any size, as the plain number a page counts with; refused when it is too big to be one. */
+export function countOf(whole: bigint): number {
+  if (whole < 0n || whole > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('that count is too big to be a number of approvals');
+  return Number(whole);
+}
+
+const GRANT_READ = 'grant-read';
+
+/** Where a change of read access stands once the wallet has signed it: in force, or waiting for more signers. */
+export const GRANT_STATE = { inForce: 'in-force', waiting: 'waiting-for-signers' } as const;
+
+/** What a change of read access asks: a reader's code and the role to give, or the key of the reader whose access ends. */
+export type GrantAsked = { readonly code: string; readonly role: string } | { readonly takeAway: string };
+
+/**
+ * **ASKS THE PERSON'S WALLET TO GIVE OR TAKE AWAY A READER'S ACCESS** and sign the change with the person's seat. A give carries
+ * the reader's code, which the wallet checks was signed by the reader's own wallet; it never carries a key. A take-away names the
+ * reader's key as the grants in force hold it. The page sends nothing to the service: the wallet hands the readers in itself.
+ */
+export function grantReadInTheWallet(
+  ask: { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress } & GrantAsked,
+  walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  const named = { name: GRANT_READ, record: ask.record, company: ask.company, account: ask.account };
+  return actOnACompanyInTheWallet('takeAway' in ask ? { ...named, recipient: ask.takeAway, away: 'yes' } : { ...named, code: ask.code, role: ask.role },
+    walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/** Where the change stands and how many signers have signed it of how many it needs, as the wallet told them; null for any it did not tell. */
+export function grantOutcomeOf(ended: ActOutcome): { readonly state: string | null; readonly signed: number | null; readonly needed: number | null } {
+  const state = ended.outcome?.['state'];
+  return { state: typeof state === 'string' ? state : null, signed: count(ended.outcome?.['filed']), needed: count(ended.outcome?.['needed']) };
+}
+
+const CHOOSE_COMPANY_SERVICE = 'choose-company-service';
+
+/** Where the company's choice of service stands once filed, as the wallet's act tells it. */
+export const SERVICE_STATE = { inForce: 'in-force', waiting: 'waiting-for-signers' } as const;
+
+/** The company's choice of service: ours, none, or its own at one https address. */
+export type ServiceAsked = { readonly service: 'ours' | 'none' } | { readonly service: 'own'; readonly at: string };
+
+/** Files the company's choice of service through the wallet, which seals it to every seated signer and counts who has filed it. */
+export function chooseServiceInTheWallet(
+  ask: { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress } & ServiceAsked,
+  walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  const named = { name: CHOOSE_COMPANY_SERVICE, record: ask.record, company: ask.company, account: ask.account, service: ask.service };
+  return actOnACompanyInTheWallet(ask.service === 'own' ? { ...named, at: ask.at } : named,
+    walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/** Where the choice stands and how many signers have filed it of how many it needs, as the wallet told them; null for any it did not tell. */
+export function serviceOutcomeOf(ended: ActOutcome): { readonly state: string | null; readonly filed: number | null; readonly needed: number | null } {
+  const state = ended.outcome?.['state'];
+  return { state: typeof state === 'string' ? state : null, filed: count(ended.outcome?.['filed']), needed: count(ended.outcome?.['needed']) };
+}
+
+const CHANGE_ROLE = 'change-role';
+
+/** The step a change of role has reached when the wallet tells: the seat's removal raised, or the person invited again at the new role. */
+export const ROLE_STAGE = { remove: 'remove', invite: 'invite' } as const;
+
+/**
+ * **ASKS THE PERSON'S WALLET TO CHANGE A SIGNER'S ROLE**, which a seat keeps for life, so it is two steps each approved as any is:
+ * the seat's removal, then (once the network has carried it out) the person invited again at the new role. The same ask, with
+ * the same address and role, is made again for the second step. No invitation token is sent or told: the wallet makes and keeps
+ * it, and shows the link in its own window.
+ */
+export function changeRoleInTheWallet(
+  ask: {
+    readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress; readonly leaf: string; readonly role: string;
+    readonly address: string; readonly personName: string;
+  },
+  walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+): Promise<ActOutcome> {
+  return actOnACompanyInTheWallet({
+    name: CHANGE_ROLE, record: ask.record, company: ask.company, account: ask.account, leaf: ask.leaf, role: ask.role,
+    address: ask.address, personName: ask.personName,
+  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+}
+
+/** Which step ran, and where the approvals stand as the wallet told them; null for any it did not tell. */
+export function changeRoleOutcomeOf(ended: ActOutcome): { readonly stage: string | null; readonly state: string | null; readonly approvals: number | null; readonly needed: number | null } {
+  const stage = ended.outcome?.['stage'];
+  return { stage: typeof stage === 'string' ? stage : null, ...proposalOutcomeOf(ended) };
 }

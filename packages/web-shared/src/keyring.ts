@@ -24,7 +24,6 @@
  */
 import { isReadMethod, notePreparing, serviceRead } from './read-bound.js';
 import type { KeysHeld } from '../../../src/core/company-key.js';
-import type { Inviter, SignedSeatInvitation } from '../../../src/core/invitation.js';
 import type { DirectoryHereDeps, OwedDirectoryEntry } from './vault-page-doors.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
@@ -1073,22 +1072,6 @@ export async function signCommitteeChangeFromTheWallet(
 }
 
 /**
- * **THE SEAT THAT INVITED THIS SIGNER, AS A RECORDS-KEY ASK CARRIES IT**: its
- * wallet key, its signed entry and its own seat's opening, and nothing of any
- * other seat. The wallet checks the entry against a schnorr key and the
- * opening against the inviter's seat on the chain, so an inviter named under
- * any other kind of key is left out and the ask is made without one.
- */
-export const invitedByForTheWallet = (inviter: Inviter | undefined): Pick<RecordsKeyAsked, 'invitedBy'> =>
-  inviter === undefined || inviter.committeeKey.tag !== 'schnorr' || inviter.opening?.walletKey?.tag !== 'schnorr' ? {}
-    : {
-      invitedBy: {
-        committeeKey: { tag: 'schnorr', value: inviter.committeeKey.value }, statement: inviter.statement,
-        opening: { ...inviter.opening, walletKey: { tag: 'schnorr', value: inviter.opening.walletKey.value } },
-      },
-    };
-
-/**
  * **THIS PERSON'S RECORDS KEY FOR THEIR SEAT, SIGNED BY THEIR OWN WALLET, AND WHO
  * HOLDS THE COMPANY'S ACCOUNT NOW AS THAT WALLET READ IT.** Asked right before a
  * vault's secret is approved, so what it is checked against is read then.
@@ -1263,13 +1246,6 @@ export async function sealPendingSeat(_seat: PendingSeat): Promise<void> { await
 
 /** Kept a signed directory entry owed in the saved keys. Refuses: see `writesNoSavedKeys`. */
 export async function oweDirectoryEntry(_accountId: string, _owed: Omit<OwedDirectoryEntry, 'opening' | 'invited'>): Promise<void> {
-  await writesNoSavedKeys();
-}
-
-/** Kept a re-issued invitation in the saved keys. Refuses: see `writesNoSavedKeys`. */
-export async function keepTheReissuedInvitation(
-  _accountId: string, _reissued: { readonly inviter: Inviter; readonly invited: SignedSeatInvitation },
-): Promise<void> {
   await writesNoSavedKeys();
 }
 

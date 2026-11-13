@@ -5,8 +5,8 @@ import {
 import { DECIMAL_KEYPAD, payAssets, TERMS, VENDOR_TERMS } from '../adapters/invite.js';
 
 /*
- * THE FIELDS THE INVITE FORM AND THE PEOPLE AND VENDORS PANELS SHARE, each written once: an amount typed, an amount with its token, how a
- * vendor is paid, and a date set or taken off. They only draw and report what is typed; nothing here asks the wallet or reads a record, and
+ * THE FIELDS THE INVITE FORM AND THE PEOPLE AND VENDORS PANELS SHARE, each written once: an amount typed, a whole number typed, an amount
+ * with its token, how a vendor is paid, and a date set or taken off. They only draw and report what is typed; nothing here asks the wallet or reads a record, and
  * the names they take from the invite adapter are the ones it holds for the form (the keypad, the token list, the two kinds of terms).
  * A form that needs one imports it from here, never from another form's file, so a mistake is told beside the field it is about in every form.
  */
@@ -14,6 +14,14 @@ import { DECIMAL_KEYPAD, payAssets, TERMS, VENDOR_TERMS } from '../adapters/invi
 /** An amount typed, on the keypad a phone offers for decimals: the one field every form types an amount in. */
 export function AmountInput({ id, field, value, disabled, invalid, onChange }: { id: string; field: string; value: string; disabled: boolean; invalid?: boolean; onChange: (entry: string) => void }) {
   return <Input id={id} data-field={field} inputMode={DECIMAL_KEYPAD} value={value} disabled={disabled} aria-invalid={invalid === true} onChange={(e) => onChange(e.target.value)} />;
+}
+
+/** The keypad a whole number asks a phone for; an attribute value, not wording. */
+const WHOLE_KEYPAD = 'numeric';
+
+/** A whole number typed, such as how many approvals a change needs, on the keypad a phone offers for whole numbers. */
+export function CountInput({ id, value, onChange, ...marks }: { id: string; value: string | number; onChange: (entry: string) => void } & { readonly [mark: `data-${string}`]: boolean | string }) {
+  return <Input id={id} inputMode={WHOLE_KEYPAD} value={value} onChange={(e) => onChange(e.target.value)} {...marks} />;
 }
 
 /** An amount and the token it is in, with what is wrong with it told beside it. */

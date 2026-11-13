@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { identityFromSecret } from '../keys/derivation.js';
 import { committeeKeyFor } from './committee-key.js';
 import type { CompanyLabel } from './company-label.js';
-import { addressFingerprint, payeeCodeFingerprint, seatKeyFingerprint, tidyFingerprint } from './fingerprint.js';
+import { addressFingerprint, payeeCodeFingerprint, readerCodeFingerprint, seatKeyFingerprint, tidyFingerprint } from './fingerprint.js';
 import {
   JOIN_CODE_PREFIX, JoinCodeRefused, joinCodeAnswerFor, joinCodeSignedBy, readJoinCode, signJoinCode, whyNoJoinCode, writeJoinCode,
-  type JoinCode, type PayeeParts, type SignerParts,
+  type JoinCode, type PayeeParts, type ReaderParts, type SignerParts,
 } from './join-code.js';
 import { parseAsk, type JoinCodeRequest } from './request.js';
 
@@ -100,7 +100,14 @@ describe('A JOIN CODE', () => {
     expect(() => joinCodeAnswerFor(me, payee(own), [ADDRESS], null)).toThrow(JoinCodeRefused);
     expect(whyNoJoinCode(payee(own), [ADDRESS], own)).toBeNull();
     expect(joinCodeSignedBy(joinCodeAnswerFor(me, payee(own), [ADDRESS], own))).toBe(true);
-    expect(joinCodeSignedBy(joinCodeAnswerFor(me, ask() as JoinCodeRequest, [], null))).toBe(true);
+  });
+
+  it('THE WALLET MAKES NO CODE FOR A SEAT, SINCE IT CANNOT YET ADD THE ADDRESS IT WOULD TAKE THE SEAT WITH', () => {
+    /* RED WHEN: the wallet signs a seat's keys a page handed it, a code no company can add anybody from. */
+    expect(whyNoJoinCode(ask() as JoinCodeRequest, [ADDRESS], null)).toMatch(/does not make a code for a seat yet/u);
+    expect(() => joinCodeAnswerFor(me, ask() as JoinCodeRequest, [ADDRESS], null)).toThrow(JoinCodeRefused);
+    /* The refusal names what does seat the person today. */
+    expect(whyNoJoinCode(ask() as JoinCodeRequest, [], null)).toMatch(/invite you by your private address/u);
   });
 
   it('THE ASK IS READ WHOLE: A PERSON, PARTS OF ONE KIND, AND NOTHING MORE', () => {
@@ -108,8 +115,8 @@ describe('A JOIN CODE', () => {
     /* RED WHEN: an ask carrying more than a code carries is taken. */
     expect(() => ask({ seat: '5a'.repeat(32) })).toThrow();
     expect(() => ask({ wants: [] })).toThrow();
-    /* RED WHEN: parts of neither kind are taken. */
-    expect(() => ask({ parts: { kind: 'signer', signingPublicKey: '11'.repeat(32) } })).toThrow(/neither a signer's keys nor a payee's/);
+    /* RED WHEN: parts of no kind are taken. */
+    expect(() => ask({ parts: { kind: 'signer', signingPublicKey: '11'.repeat(32) } })).toThrow(/not a signer's keys, a payee's, or a reader's with no key named/);
     expect(() => ask({ person: 'not a sign-in!' })).toThrow(/not a sign-in/);
     /* RED WHEN: a join-code ask is read without the account the wallet shows the company's fingerprint from, or with a label in its place. */
     expect((ask() as JoinCodeRequest).account).toBe('ab'.repeat(32));
@@ -121,4 +128,36 @@ describe('A JOIN CODE', () => {
       nonce: 'n', expiresAt: NOW + 1000, company: CO, account: 'ab'.repeat(32), seat: '5a'.repeat(32), parts: SIGNER,
     }, ORIGIN, NOW)).toThrow(/parts of a join code/);
   });
+
+  it('A READER\'S CODE CARRIES ITS KEY AND PERSON UNDER THE SIGNATURE, AND HAS A FINGERPRINT OF ITS OWN', () => {
+    const READER: ReaderParts = { kind: 'reader', readerKey: '44'.repeat(32) };
+    const code = signJoinCode(me, CO, 'usr_rhea', READER);
+    expect(readJoinCode(writeJoinCode(code), CO)).toEqual(code);
+    /* RED WHEN: a reader's key is not under the code's signature, so a page could swap in its own key. */
+    expect(readJoinCode(writeJoinCode({ ...code, parts: { kind: 'reader', readerKey: '45'.repeat(32) } }), CO)).toBe('not-signed');
+    expect(readJoinCode(writeJoinCode({ ...code, person: 'usr_mallory' }), CO)).toBe('not-signed');
+    const print = readerCodeFingerprint(code as JoinCode & { parts: ReaderParts });
+    /* RED WHEN: a reader's code swapped for one with another key, person or signing wallet reads out the same fingerprint. */
+    expect(readerCodeFingerprint({ ...code, parts: { readerKey: '45'.repeat(32) } })).not.toBe(print);
+    expect(readerCodeFingerprint({ ...code, parts: READER, person: 'usr_mallory' })).not.toBe(print);
+    expect(readerCodeFingerprint(signJoinCode(someoneElse, CO, 'usr_rhea', READER) as JoinCode & { parts: ReaderParts })).not.toBe(print);
+  });
+
+  it('A PAGE ASKS FOR A READER\'S CODE WITHOUT A KEY, AND THE WALLET SIGNS ONLY ITS OWN', () => {
+    const own = '46'.repeat(32);
+    const reader = ask({ parts: { kind: 'reader' } }) as JoinCodeRequest;
+    expect(reader.parts).toEqual({ kind: 'reader' });
+    /* RED WHEN: a page names the key a reader's code is to carry, so a wallet signs a key that is not its own. */
+    expect(() => ask({ parts: { kind: 'reader', readerKey: own } })).toThrow(/a reader's with no key named/);
+    expect(() => ask({ parts: { kind: 'reader', extra: 1 } })).toThrow(/a reader's with no key named/);
+    /* RED WHEN: the code the wallet makes for a reader carries anything but this wallet's own key for the company. */
+    const made = joinCodeAnswerFor(me, reader, [], null, own);
+    expect(made.parts).toEqual({ kind: 'reader', readerKey: own });
+    expect(made.person).toBe('usr_ada');
+    expect(joinCodeSignedBy(made)).toBe(true);
+    /* RED WHEN: a wallet with no reader key of its own for the company still makes a reader's code. */
+    expect(whyNoJoinCode(reader, [], null, null)).toMatch(/could not work out the key/);
+    expect(() => joinCodeAnswerFor(me, reader, [], null, null)).toThrow(JoinCodeRefused);
+  });
 });
+

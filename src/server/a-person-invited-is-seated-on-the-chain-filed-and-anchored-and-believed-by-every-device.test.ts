@@ -20,7 +20,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
-import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import type { Hex } from '../core/crypto.js';
 import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
@@ -29,7 +29,6 @@ import type { PendingSignerPayload } from '../core/types.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { directoryEntryMade } from '../midnight/seat-directory.js';
 import { leafOfTheContract, leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
-import { anAddress } from '../testing/an-invitee.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
 import { seatSignerOnDevice } from 'vaults-web-shared/signer-by-link.js';
@@ -45,12 +44,15 @@ import {
   aCompanyWhoseSignersChange, ADA, ADDRESS, anchorDoorsOf, api, BO, CO, committeeKeyOfLeaf, companyNow, deviceOf, directoryOf, events, KEY, LABEL,
   recordsReadBy, rosterDoorsOf, seatsOnTheChain, sendAs, store, theInviteeTakesTheSeatHere, walletOf, type Seat,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
+import { aJoinersWallet } from '../testing/a-joiners-wallet.js';
 
 aCompanyWhoseSignersChange();
 
 /** Dee's wallet, and the key it gives for the company: the key her seat's leaf commits to. */
 const DEES_WALLET = identityFromSecret(new Uint8Array(32).fill(4));
 const DEES_KEY = committeeKeyFor(DEES_WALLET, LABEL) as { tag: string; value: string };
+/** Dees's wallet, which signs the address it takes the seat with. */
+const DEES_SIGNS = aJoinersWallet(committeeSigningKeyFor(DEES_WALLET, LABEL).value as Hex, 41);
 /** The company key Dee's wallet releases, which her records key is made from. */
 const DEES_COMPANY_KEY = new Uint8Array(32).fill(104);
 
@@ -67,7 +69,7 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
-    }, sendAs('dee'), 'dee', async () => DEES_KEY);
+    }, sendAs('dee'), 'dee', async () => DEES_KEY, DEES_SIGNS.seatAddress);
     const dee = kept[0]!;
     const leaf = leafOfTheContract(dee.opening!)!;
     committeeKeyOfLeaf.set(leaf, DEES_KEY);
@@ -85,13 +87,13 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
       .rejects.toThrow(/not made for the wallet it names/u);
 
     /*
-     * Ada's device raises the proposal to invite Dee's address, which is her approval; Bo's device approves it. Dee's own
+     * Ada's device raises the proposal to invite the address Dee's wallet signed, which is her approval; Bo's device approves it. Dee's own
      * wallet then takes the seat, and Bo's device admits her.
      */
-    const at = anAddress(MidnightCommitments, 41);
-    /* At the rights Dee's own seat was made with: an approver's, as her invitation offers. */
-    const invite = { address: at.address, salt: at.addressSalt, scope: dee.scope };
-    const raised = await seatSignerOnDevice(seatingDevice(ADA), { viewingKey: KEY, signerId, readOut: accepted.fingerprint, invite });
+    const at = DEES_SIGNS.at;
+    /* At the rights Dee's own seat was made with: an approver's, as her invitation offers; at the address her wallet signed. */
+    const invite = { scope: dee.scope };
+    const raised = await seatSignerOnDevice(seatingDevice(ADA), { companyKeys: KEY, signerId, readOut: accepted.fingerprint, invite, inviteAddressOf: (c: Hex, salt: Hex) => MidnightCommitments.inviteAddressOf(c, salt) });
     expect(raised.state).toBe('waiting-for-approvals');
     /*
      * RED WHEN: the proposal Bo approves is raised under a salt that does not commit to the invitation it carries, so the
@@ -100,9 +102,9 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
     const raisedUnder = seatInvitationIn(store.listProposals(CO), CO, KEY, leaf)!;
     expect([raisedUnder.terms.role, raisedUnder.terms.proposal, proposalMadeByHere(raisedUnder)]).toEqual(['approver', raised.round!.chainId.toLowerCase(), raised.round!.chainId.toLowerCase()]);
     /* RED WHEN: the approved proposal is carried out by a signer's device, and not left for the person invited. */
-    expect((await seatSignerOnDevice(seatingDevice(BO), { viewingKey: KEY, signerId, readOut: accepted.fingerprint, invite })).state)
+    expect((await seatSignerOnDevice(seatingDevice(BO), { companyKeys: KEY, signerId, readOut: accepted.fingerprint, invite, inviteAddressOf: (c: Hex, salt: Hex) => MidnightCommitments.inviteAddressOf(c, salt) })).state)
       .toBe('waiting-for-the-invitee');
-    theInviteeTakesTheSeatHere(raised.round!.chainId, invite.address, leaf);
+    theInviteeTakesTheSeatHere(raised.round!.chainId, { coinPublicKey: MidnightCommitments.coinPublicKeyOf(at.coinSecretKey), addressSalt: at.addressSalt }, leaf);
     /* RED WHEN: she is not admitted once the chain holds her seat. */
     await admitSignerHere(rosterDoorsOf(BO), { signerId, readOut: accepted.fingerprint });
     expect(events).toEqual(['chain propose', 'chain approve', `chain seatInvited ${leaf}`]);

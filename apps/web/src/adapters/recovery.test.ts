@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { RECOVERY_WINDOW_RANGE } from '../../../../src/midnight/recovery-window-record.js';
 import { describe, expect, it, vi } from 'vitest';
 import { recoveryFileTextOf } from 'vaults-web-shared/recovery-in-the-wallet.js';
 import { ACT_REFUSAL } from './refusals.js';
@@ -68,7 +69,7 @@ const here = async (m: Awaited<ReturnType<typeof load>>) => {
 
 describe('raising a recovery', () => {
   /*
-   * RED WHEN: the last time is not a moment after now by the choice made, or reaches the week the wallet allows, or the wallet is asked
+   * RED WHEN: the last time is not a moment after now by the choice made, or passes the longest the recovery window allows, or the wallet is asked
    * anything but the company, the step and the time; or the page names a coin, a call or a relay for a recovery.
    */
   it('asks the wallet for the company, the raise step and a moment after now by the choice made', async () => {
@@ -78,7 +79,7 @@ describe('raising a recovery', () => {
     expect(kr.acts).toEqual([{ name: 'recovery', record: 'c-1', company: 'label-1', account: ACCOUNT, step: 'raise', latest: String(NOW / 1000 + 3 * 86400) }]);
     for (const w of m.RECOVERY_WITHIN) {
       expect(w.seconds).toBeGreaterThan(0);
-      expect(w.seconds).toBeLessThan(7 * 24 * 60 * 60);
+      expect(w.seconds).toBeLessThanOrEqual(RECOVERY_WINDOW_RANGE.longest);
     }
     expect((await m.raiseRecovery('u1', 'c-1', 'nope' as never, undefined, () => NOW)).of).toBe('refused');
     expect(kr.acts).toHaveLength(1);

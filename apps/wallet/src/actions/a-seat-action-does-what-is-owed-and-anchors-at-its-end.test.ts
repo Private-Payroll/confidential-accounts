@@ -39,6 +39,27 @@ const t = vi.hoisted(() => ({
   /** Each change of the vault secrets the upkeep asked for, and what each answers. */
   changed: [] as { may: unknown; o: unknown }[],
   change: [] as unknown[],
+  /** What sealing the spending policies again answers, and the doors it was handed. */
+  resealed: null as unknown,
+  resealDoors: null as null | Record<string, any>,
+  /** Whether the anchor's read of who is leaving could be made; unread, it binds nobody new and says why. */
+  leavingRead: true,
+}));
+vi.mock('./leaving-read-in-the-wallet.js', async (real) => ({
+  ...(await real<typeof import('./leaving-read-in-the-wallet.js')>()),
+  leavingForTheAnchor: (_r: unknown, _api: unknown, _key: unknown, unread?: (why: string) => void) => async () => {
+    if (!t.leavingRead) unread?.('the seat bar of the company was not read');
+    return new Map([['ee'.repeat(32), {}]]);
+  },
+}));
+vi.mock('../../../../packages/web-shared/src/policies-resealed-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/policies-resealed-here.js')>()),
+  sealPoliciesToNewSignersHere: async (doors: Record<string, any>) => {
+    t.order.push('reseal');
+    t.resealDoors = doors;
+    if (t.resealed instanceof Error) throw t.resealed;
+    return t.resealed ?? { sealed: [], refused: [], skipped: [], owed: [], notThisSeat: true };
+  },
 }));
 vi.mock('./vault-secrets-changed-here.js', async (real) => ({
   ...(await real<typeof import('./vault-secrets-changed-here.js')>()),
@@ -188,7 +209,7 @@ const company = (reaches = [reachWith()]) => {
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', {});
-  t.changed = []; t.change = [];
+  t.changed = []; t.change = []; t.resealed = null; t.resealDoors = null; t.leavingRead = true;
   t.order = []; t.rotated = []; t.rotationDoors = null; t.anchorDoors = []; t.rebuilt = []; t.owedFiled = []; t.gives = []; t.give = null; t.store = null; t.givenOut = [];
   t.onTheWayIn = { anchored: 2, head: '00' }; t.anchorNow = { anchored: 3, head: '00' };
   t.roster = async () => null; t.notes = { of: 'as-filed', notes: [], unexplained: 0, said: [] };
@@ -219,7 +240,7 @@ describe('every seat action starts with what the company is owed of its seat and
     for (const action of [giveVaultKeysAction(vaults), createVaultAction(vaults)]) {
       const shown = await action.shown({ name: 'create-vault', fields } as ActIntent);
       /* RED WHEN: a rotation, a roster filing, a vault's records filed again or an anchor is done in the window without being listed before the passkey, or is marked as something this wallet read or only the page says. */
-      for (const line of ['may', 'rotation', 'roster', 'vaults', 'secrets', 'anchor']) expect(shown, line).toContainEqual({ key: `act.upkeep.shown.${line}`, from: 'action' });
+      for (const line of ['may', 'rotation', 'roster', 'vaults', 'secrets', 'policies', 'anchor']) expect(shown, line).toContainEqual({ key: `act.upkeep.shown.${line}`, from: 'action' });
       /* RED WHEN: the window says the action is done before the upkeep it also runs is listed. */
       expect(shown.findIndex((l) => l.key === 'act.upkeep.shown.anchor')).toBeLessThan(shown.findIndex((l) => l.key.endsWith('.shown.nothing-else')));
       expect(action.checks).toContainEqual({ key: 'act.upkeep.check.worked-out' });
@@ -385,6 +406,82 @@ describe('the tail finishes a change of a vault secret that stopped part way, an
   });
 });
 
+describe('the anchor in the wallet is told who is leaving, on the wallet\'s own reads', () => {
+  it('hands the anchor who is leaving, and an unread read leaves the upkeep partial without stopping the anchor', async () => {
+    t.onTheWayIn = async (doors: Record<string, any>) => { t.order.push(`leaving ${[...(await doors['leaving']()).keys()].join()}`); return { anchored: 2, head: '00' }; };
+    const { ctx, told } = ctxWith('private-deposit');
+    await upkeepSteps(company().doors, {}).last.run(ctx);
+    /* RED WHEN: the anchor in the wallet is not told of an approved removal, so it anchors what the leaver filed past the boundary. */
+    expect(t.order).toContain(`leaving ${'ee'.repeat(32)}`);
+    expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
+    t.leavingRead = false;
+    const again = ctxWith('private-deposit');
+    const shown: unknown[] = [];
+    await upkeepSteps(company().doors, {}).last.run(Object.assign(again.ctx, { show: (w: unknown) => { shown.push(w); } }));
+    /* RED WHEN: who is leaving went unread and the upkeep still reads as done in full. */
+    expect(again.told).toEqual({ upkeep: UPKEEP.partial, anchored: 2 });
+    /* RED WHEN: the person is not told why the upkeep was left partial, or told it once for each read the anchor made. */
+    expect(shown).toEqual([{ key: 'act.upkeep.left.leaving-unread', values: { why: 'the seat bar of the company was not read' } }]);
+  });
+
+  it('a read of who is leaving that failed in the head is never said as a refused offer of vault keys', async () => {
+    t.rotated = [{ state: 'filed-not-anchored' }];
+    t.leavingRead = false;
+    t.onTheWayIn = async (doors: Record<string, any>) => { await doors['leaving'](); return { anchored: 2, head: '00' }; };
+    const shown: unknown[] = [];
+    const { ctx } = ctxWith('create-vault');
+    await upkeepSteps(company().doors, {}).first.run(Object.assign(ctx, { show: (w: unknown) => { shown.push(w); } }));
+    /* RED WHEN: a failed read of who is leaving tells the person seats cannot sign for any vault and to give their keys again. */
+    expect(shown).not.toContainEqual(expect.objectContaining({ key: 'act.upkeep.left.vault-keys-refused' }));
+    expect(shown).toContainEqual({ key: 'act.upkeep.left.leaving-unread', values: { why: 'the seat bar of the company was not read' } });
+  });
+});
+
+describe('the tail seals each spending policy in force again to the signers seated since, before the anchor', () => {
+  it('seals after giving the vaults\' secrets and before the anchor, as this seat, with the company\'s keys and a filing door', async () => {
+    t.resealed = { sealed: ['p1'], refused: [], skipped: [], owed: [], notThisSeat: false };
+    const { ctx, told } = ctxWith('admit-signer');
+    await upkeepSteps(company([givingReach()]).doors, {}).last.run(ctx);
+    /* RED WHEN: a signer admitted by the act is never sealed into the vault's spending policy, so they can never raise or approve a run from it. */
+    expect(t.order.indexOf('reseal')).toBeGreaterThan(Math.max(...t.order.map((x, at) => (x.startsWith('give') ? at : -1))));
+    expect(t.order.indexOf('reseal')).toBeLessThan(t.order.indexOf('anchor'));
+    expect(t.resealDoors).toMatchObject({ accountId: 'acc_1', filingKey: signingPublicKeyOf(SEAT.signingSecret) });
+    expect(typeof t.resealDoors!['records'].spendingPolicies.file).toBe('function');
+    expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
+  });
+
+  it('says each policy it could not seal again and leaves the upkeep partial, refusing nothing', async () => {
+    t.resealed = { sealed: [], refused: [{ id: 'p1', why: 'version 2 is already filed' }], skipped: [], owed: [], notThisSeat: false };
+    const shown: unknown[] = [];
+    const { ctx, told } = ctxWith('admit-signer');
+    await expect(upkeepSteps(company([givingReach()]).doors, {}).last.run(Object.assign(ctx, { show: (w: unknown) => { shown.push(w); } }))).resolves.toBeUndefined();
+    /* RED WHEN: a policy left unsealed to a signer who stays is hidden, or the upkeep reads as all done. */
+    expect(shown).toContainEqual({ key: 'act.upkeep.left.policies-not-sealed', values: { policies: 'p1: version 2 is already filed' } });
+    expect(told).toEqual({ upkeep: UPKEEP.partial, anchored: 2 });
+    t.resealed = new Error('the service did not answer');
+    shown.length = 0;
+    const again = ctxWith('admit-signer');
+    await upkeepSteps(company([givingReach()]).doors, {}).last.run(Object.assign(again.ctx, { show: (w: unknown) => { shown.push(w); } }));
+    /* RED WHEN: a re-seal that failed outright is swallowed, so nobody learns a policy was not sealed again. */
+    expect(shown).toContainEqual({ key: 'act.upkeep.left.policies-not-sealed', values: { policies: 'the service did not answer' } });
+    expect(again.told).toMatchObject({ upkeep: UPKEEP.partial });
+  });
+
+  it('a seat that may not set a policy seals none, reads as done when nothing is owed, and names each policy owed', async () => {
+    const { ctx, told } = ctxWith('admit-signer');
+    await upkeepSteps(company([givingReach('approver')]).doors, {}).last.run(ctx);
+    /* RED WHEN: every action of a seat that may not set policies reads as left partial for a re-seal nobody owes. */
+    expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
+    t.resealed = { sealed: [], refused: [], skipped: [], owed: ['p1'], notThisSeat: true };
+    const shown: unknown[] = [];
+    const again = ctxWith('admit-signer');
+    await upkeepSteps(company([givingReach('approver')]).doors, {}).last.run(Object.assign(again.ctx, { show: (w: unknown) => { shown.push(w); } }));
+    /* RED WHEN: a signer seated since cannot read a policy and the seat that cannot seal it again says nothing of it. */
+    expect(shown).toContainEqual({ key: 'act.upkeep.left.policies-owed', values: { policies: 'p1' } });
+    expect(again.told).toMatchObject({ upkeep: UPKEEP.partial });
+  });
+});
+
 describe('the tail files each vault again with this seat, then anchors what the action filed', () => {
   it('files again every vault the chain names, with this seat and the coins this wallet kept', async () => {
     const coins = { isTheWalletsCoins: true };
@@ -450,13 +547,13 @@ describe('the tail files each vault again with this seat, then anchors what the 
     await upkeepSteps(company([r]).doors, {}).last.run(ctx);
     /* RED WHEN: the vaults' secrets are not given in the action's last step, are given after the anchor so a copy is filed and never anchored, or this seat gives one to itself. */
     expect(t.gives.map((g) => g['seats'])).toEqual([[JOINER], [JOINER]]);
-    expect(t.order).toEqual([`refile d1d1`, `refile d2d2`, `finish`, `give bbbb d1d1`, `give bbbb d2d2`, 'anchor']);
+    expect(t.order).toEqual([`refile d1d1`, `refile d2d2`, `finish`, `give bbbb d1d1`, `give bbbb d2d2`, 'reseal', 'anchor']);
     for (const g of t.gives) {
       expect(g['me'].signerId).toBe(LEAF);
       expect(typeof g['records']).toBe('function');
     }
-    /* RED WHEN: the directory is read again for every vault instead of once for the step. */
-    expect(reads).toBe(1);
+    /* RED WHEN: the directory is read again for every vault instead of once for the gives, and once more for the recovery window the step keeps. */
+    expect(reads).toBe(2);
     expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
   });
 

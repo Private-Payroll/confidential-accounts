@@ -25,6 +25,8 @@ import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { fullCheckHere } from './records-anchored-here.js';
 import { treeKeptInMemory, type TreeKept } from './tree-kept-here.js';
+import { RECOVERY_WINDOW_RANGE, RECOVERY_WINDOW_WHEN_NONE } from '../../../src/midnight/recovery-window-record.js';
+import { keepRecoveryWindowHere } from './recovery-window-here.js';
 import {
   PROPOSAL_FILE_FORMAT, proposalFileRead, proposalFileText, sentFromHere, type ProposalFile,
 } from './governance-from-the-chain.js';
@@ -48,6 +50,7 @@ const person = (id: string, version: number, digest: string): ManifestEntryBody 
 const b64 = (s: string) => Buffer.from(s).toString('base64');
 /** Every device's clock in these tests, and the last time each recovery is raised to be carried out by. */
 const NOW = new Date('2026-10-11T00:00:00Z');
+const DAY_S = 24 * 60 * 60;
 const LATEST = new Date('2026-10-12T00:00:00Z');
 const LATEST_SECONDS = String(LATEST.getTime() / 1000);
 
@@ -212,7 +215,7 @@ const aDevice = (
       if (over.serviceGone === true) throw new Error('the service did not answer');
       return fullCheckHere({ accountId: COMPANY, tree: c.service, onChain: c.onChain, headsOf: headsByTheAccount, seatOf: (k: Hex) => seats.get(k) ?? null, checked: kept.checked });
     },
-    checked: kept.checked, headers: kept.headers, onChain: c.onChain,
+    checked: kept.checked, headers: kept.headers, onChain: c.onChain, window: () => kept.windows.read(COMPANY),
     ...(over.serviceGone === true ? {} : { tree: { fileHeader: async (_: string, h: TreeHeader) => { asked.push('service kept a header'); await c.keep(h); } } }),
     now: () => d.clock, random: (n: number) => new Uint8Array(n).fill(who === A ? 0xa5 : who === B ? 0xb5 : 0xc5),
   };
@@ -479,28 +482,80 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     expect(a.asked).not.toContain('the person chose their own wallet');
   });
 
-  it('A RECOVERY\'S LAST TIME IS AT MOST SEVEN DAYS AHEAD: THE RAISING DEVICE AND EVERY APPROVING DEVICE REFUSE ONE FURTHER', async () => {
+  it('A RECOVERY\'S LAST TIME IS AT MOST THE COMPANY\'S RECOVERY WINDOW AHEAD, AS KEPT FOR THE BATCH IT RESUMES FROM: THE RAISING DEVICE AND EVERY APPROVING DEVICE REFUSE ONE FURTHER', async () => {
     const c = await aCompany();
     const chain = aChain(c);
     c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
-    await readTo(b);
-    const DAYS_7 = 7 * 24 * 60 * 60 * 1000;
-    /* RED WHEN: a device raises a recovery whose approval would stay good for more than seven days. */
-    await expect(raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + DAYS_7 + 1000) }))
-      .rejects.toThrow(/at most 7 days from now. Nothing was sent. Choose a nearer time/u);
+    const { reached } = await readTo(b);
+    const window = { head: reached.head, seq: reached.seq, seconds: 2 * DAY_S };
+    await a.kept.windows.write(COMPANY, window);
+    await b.kept.windows.write(COMPANY, window);
+    const DAYS_2 = 2 * DAY_S * 1000;
+    /* RED WHEN: a device raises a recovery whose approval would stay good for longer than the company's window. */
+    await expect(raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + DAYS_2 + 1000) }))
+      .rejects.toThrow(/at most 2 days from now, the company's recovery window. Nothing was sent. Choose a nearer time/u);
     expect(chain.sent).toEqual([]);
-    const { file } = await raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + DAYS_7) });
-    /* B's device reads the time an hour earlier: the recovery's last time is then more than seven days after it approves. */
+    const { file } = await raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + DAYS_2) });
+    /* B's device reads the time an hour earlier: the recovery's last time is then more than the window after it approves. */
     b.at(new Date(NOW.getTime() - 3600 * 1000));
-    /* RED WHEN: an approving device approves a recovery whose last time is more than seven days after the moment it approves. */
+    /* RED WHEN: an approving device approves a recovery whose last time is further ahead than the company's window. */
     await expect(approveRecoveryHere(b.doors, file))
-      .rejects.toThrow(/more than 7 days after now.*raise it again with a nearer time/su);
+      .rejects.toThrow(/more than 2 days after now, the company's recovery window.*raise it again with a nearer time/su);
     expect(chain.sent).toEqual(['propose']);
     b.at(NOW);
     await approveRecoveryHere(b.doors, file);
     expect(chain.sent).toEqual(['propose', 'approve']);
+  });
+
+  it('WITH NO WINDOW KEPT FOR THE BATCH A RECOVERY RESUMES FROM, IT MAY BE AT MOST THE LONGEST THE WINDOW\'S RANGE ALLOWS AHEAD', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const { reached } = await readTo(a);
+    /* A window kept for an earlier batch is not this batch's: the device holds the longest the range allows. */
+    await a.kept.windows.write(COMPANY, { head: 'ab'.repeat(32), seq: reached.seq - 1, seconds: RECOVERY_WINDOW_RANGE.shortest });
+    const longest = RECOVERY_WINDOW_RANGE.longest * 1000;
+    /* RED WHEN: a device with no window kept for the batch refuses a wait the company may have chosen, or allows one past the range. */
+    await expect(raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + longest + 1000) })).rejects.toThrow(/at most 30 days from now/u);
+    await raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + longest) });
+    expect(chain.sent).toEqual(['propose']);
+  });
+
+  it('A COMPANY WHOSE RECORDS PUT NO WINDOW IN FORCE WAITS THE WINDOW WRITTEN FOR THAT CASE, AND A SERVICE THAT FAILS THE READ DOES NOT STOP THE RECOVERY', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const { reached } = await readTo(a);
+    /* The upkeep read the directory, which names no window, and the service then failed the read of its versions. */
+    await keepRecoveryWindowHere(COMPANY, async () => ({ unread: 'the service answered 503', at: { head: reached.head, seq: reached.seq }, named: [] }), a.kept);
+    expect(await a.kept.windows.read(COMPANY)).toEqual({ head: reached.head, seq: reached.seq, seconds: null });
+    const none = RECOVERY_WINDOW_WHEN_NONE * 1000;
+    /* RED WHEN: a company with no window in force is held to another length than the one written for it, or a failed read refuses the recovery. */
+    await expect(raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + none + 1000) })).rejects.toThrow(/at most 7 days from now/u);
+    await raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + none) });
+    expect(chain.sent).toEqual(['propose']);
+  });
+
+  it('A RECOVERY WINDOW THE RECORDS NAME THAT WAS NOT READ FOR THE BATCH REFUSES THE RECOVERY, AND SAYS WHAT CLEARS IT', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const b = aDevice(c, chain, B);
+    const { reached } = await readTo(a);
+    await readTo(b);
+    const { file } = await raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + 3600 * 1000) });
+    await a.kept.windows.write(COMPANY, { head: reached.head, seq: reached.seq, seconds: null, unread: 'version 2 of the recovery window does not open here' });
+    await b.kept.windows.write(COMPANY, { head: reached.head, seq: reached.seq, seconds: null, unread: 'the service did not give version 2' });
+    /* RED WHEN: a device raises or approves a recovery though the window the records name was not read for its batch. */
+    await expect(raiseRecoveryHere(a.doors, { latest: new Date(NOW.getTime() + 3600 * 1000) }))
+      .rejects.toThrow(/could not read the company's recovery window as of batch .*Do an act on this company in your wallet that does the company's upkeep.*while its service answers/su);
+    await expect(approveRecoveryHere(b.doors, file)).rejects.toThrow(/could not read the company's recovery window/u);
+    expect(chain.sent).toEqual(['propose']);
   });
 
   it('A FILE IS BELIEVED IN NOTHING: ANOTHER COMPANY\'S, ONE WHOSE SALT MAKES ANOTHER PROPOSAL, OR ONE THE CHAIN DOES NOT HOLD OPEN, IS REFUSED BEFORE ANYTHING IS SENT', async () => {

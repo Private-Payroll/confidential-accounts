@@ -26,6 +26,11 @@ import { StepRefused, type StepContext } from './definition.js';
  * The stand-in judge believes a version signed by a seat of the directory whose entry in the company's records names
  * its bytes. Its refusals are given by their code, as the real judge's words are read by `filingRefusalCodeOf`.
  */
+/* Who is leaving the company is not this file's subject, and this company's stand-in reads no proposals: no seat here is leaving. */
+vi.mock('./leaving-read-in-the-wallet.js', async (real) => ({
+  ...(await real<typeof import('./leaving-read-in-the-wallet.js')>()),
+  stopsFor: () => async () => null,
+}));
 vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => {
   const actual = await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>();
   type Here = { dir: { seats: { signingKey: string }[] }; records: { notYetAnchored: { version: number; digest?: string }[] } };

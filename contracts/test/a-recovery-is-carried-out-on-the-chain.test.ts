@@ -188,7 +188,7 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
     builder: { ...client, accountCallChain: async () => callState() },
     send,
     read: async () => ({ reached, stop: { stop: 'not-given', seq: reached.seq + 1, what: 'its header' } }),
-    onChain, headers: treeKeptInMemory().headers,
+    onChain, headers: treeKeptInMemory().headers, window: async () => null,
     watch: { everyMs: 1000, withinMs: 3000, sleep: async () => {} },
   });
   /** A recovery raised from the founding seat's device, whose raise is that seat's approval (the chain counts 1 and the seat's own `approve` is refused): the file, handed over as text. */

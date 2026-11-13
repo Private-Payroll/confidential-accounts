@@ -738,10 +738,12 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
 
   /**
    * **A FILE WHOSE `vaults` IS NOT THE VAULT RECORD'S MAP, BY THE EXACT
-   * READINGS THAT SAY SO.** In `committee-here.ts`, `view` is the company
+   * READINGS THAT SAY SO.** In `committee-reads.ts`, `view` is the company
    * account's ledger and its `vaults` the account's own set of adopted vault
-   * addresses, iterated beside the vaults it retired: no name is turned into a
-   * vault there. Every other file here reads the list of vault addresses a
+   * addresses, read beside the vaults it retired; `committee-here.ts` walks
+   * those two lists of addresses (`read.vaults`), retired vaults included, as a
+   * change of the super admins moves every contract: no name is turned into a
+   * vault there, and there is no record of named vaults to ask. Every other file here reads the list of vault addresses a
    * seat's rights name (`readonly Hex[]`, never a map from names): on a seat
    * invitation's terms, on a rights record, or on what a signer is offered.
    * None of those files imports the vault record. Only these readings are
@@ -749,7 +751,10 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
    * a lookup.
    */
   const READINGS_THAT_ARE_NOT_THE_MAP: Readonly<Record<string, readonly string[]>> = {
-    'packages/web-shared/src/committee-here.ts': ['view?.vaults === undefined', 'for (const v of view.vaults)'],
+    'packages/web-shared/src/committee-here.ts': [
+      'read.vaults === null', 'for (const v of read.vaults.adopted)', 'for (const v of read.vaults.retired)',
+    ],
+    'packages/web-shared/src/committee-reads.ts': ['view?.vaults === undefined', '[...view.vaults].map(hexOf)'],
     /* `terms` and `t` are a seat invitation's terms (`SeatInvitationTerms`): `vaults` the addresses its rights name. */
     'src/core/invitation.ts': [
       '...(terms.vaults === undefined ? {} : { vaults: terms.vaults.map((v) => v.toLowerCase() as Hex) })',

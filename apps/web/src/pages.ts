@@ -1,9 +1,9 @@
 import { createElement, lazy, type ComponentType, type ReactNode } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
-  Activity01Icon, Analytics01Icon, ArrowDataTransferHorizontalIcon, Building03Icon, CheckListIcon, CreditCardIcon, DocumentValidationIcon, File01Icon,
+  Activity01Icon, Analytics01Icon, ArrowDataTransferHorizontalIcon, Building03Icon, CheckListIcon, CloudServerIcon, CreditCardIcon, DocumentValidationIcon, File01Icon,
   Folder01Icon, GridViewIcon, Home01Icon, Invoice01Icon, Key01Icon, LanguageSquareIcon, MailSend01Icon, MoneyReceive01Icon, Notification01Icon,
-  PaintBoardIcon, PolicyIcon, Rocket01Icon, SafeIcon, Settings01Icon, ShieldUserIcon, Store01Icon, UserAccountIcon, UserGroupIcon, UserIcon,
+  PaintBoardIcon, PolicyIcon, Rocket01Icon, SafeIcon, Settings01Icon, ShieldKeyIcon, ShieldUserIcon, Store01Icon, UserAccountIcon, UserGroupIcon, UserIcon,
 } from '@hugeicons/core-free-icons';
 import { WithMessages, type useText } from 'vaults-ui';
 import type { CompanyRecords } from './adapters/company-records.js';
@@ -41,14 +41,15 @@ export type Text = ReturnType<typeof useText>;
 
 /**
  * Who may open a page. "everyone" is anyone, signed in or not; only the
- * landing page and the joining page have it: the landing page signs a visitor
- * in and shows a signed-in person their companies, and an invitation link
- * opens the joining page before and after signing in. A visitor is anyone not signed in. A company page is
+ * landing page, the joining page and the reader's sign-up page have it: the landing page signs a visitor
+ * in and shows a signed-in person their companies, and an invitation link or a reader's link
+ * opens its page before and after signing in. A visitor is anyone not signed in. A reader's page is for anyone signed in
+ * whose wallet released read keys for a company on this visit. A company page is
  * for a person who signs for a company, in the company view; an employee page
  * is for anyone signed in, in the view of their own pay. A page for anyone
  * signed in is reached from both views.
  */
-export type Audience = 'everyone' | 'visitor' | 'signed-in' | 'company' | 'employee';
+export type Audience = 'everyone' | 'visitor' | 'signed-in' | 'company' | 'employee' | 'reader';
 
 /** The groups of the left menu, in the order it shows them. The first and the last have no heading. */
 export const MENU_GROUPS = {
@@ -135,6 +136,18 @@ export const PAGES = {
     path: '/join/:id', name: (t) => t('page.join.name'), icon: MailSend01Icon, group: null, audience: 'everyone', holdsLinkToken: true,
     shows: { screen: onDemand(() => import('./screens/join.js'), 'Join', 'join') },
   },
+  readerSignUp: {
+    path: '/read/:id/:label/:account', name: (t) => t('page.readerSignUp.name'), icon: Key01Icon, group: null, audience: 'everyone',
+    shows: { screen: onDemand(() => import('./screens/reader.js'), 'ReaderSignUp', 'reader') },
+  },
+  reader: {
+    path: '/reader/:id/:label/:account', name: (t) => t('page.reader.name'), icon: Invoice01Icon, group: null, audience: 'reader',
+    shows: { screen: onDemand(() => import('./screens/reader.js'), 'Reader', 'reader') },
+  },
+  superAdminsByLink: {
+    path: '/super-admins/:id/:label/:account', name: (t) => t('page.superAdminsByLink.name'), words: (t) => t('page.superAdminsByLink.words'), icon: ShieldKeyIcon, group: null, audience: 'signed-in',
+    shows: { screen: onDemand(() => import('./screens/super-admins.js'), 'SuperAdminsByLink', 'super-admins') },
+  },
   setup: {
     path: '/setup', name: (t) => t('page.setup.name'), words: (t) => t('page.setup.words'), icon: Rocket01Icon, group: null, audience: 'signed-in',
     focused: { exit: (t) => t('page.setup.exit') },
@@ -191,7 +204,7 @@ export const PAGES = {
   },
   policies: {
     path: '/policies', name: (t) => t('page.policies.name'), icon: PolicyIcon, group: 'compliance', audience: 'company',
-    shows: { comingSoon: (t) => t('page.policies.soon') },
+    shows: { screen: onDemand(() => import('./screens/policies.js'), 'Policies', 'policies') },
   },
   activity: {
     path: '/activity', name: (t) => t('page.activity.name'), icon: Activity01Icon, group: 'compliance', audience: 'company',
@@ -215,7 +228,19 @@ export const PAGES = {
   },
   settingsRoles: {
     path: '/settings/roles', name: (t) => t('page.settingsRoles.name'), icon: Key01Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsRoles.soon') },
+    shows: { screen: onDemand(() => import('./screens/roles.js'), 'Roles', 'roles') },
+  },
+  settingsSuperAdmins: {
+    path: '/settings/super-admins', name: (t) => t('page.settingsSuperAdmins.name'), icon: ShieldKeyIcon, group: null, inside: 'settings', audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/super-admins.js'), 'SuperAdmins', 'super-admins') },
+  },
+  settingsRecovery: {
+    path: '/settings/recovery', name: (t) => t('page.settingsRecovery.name'), icon: Folder01Icon, group: null, inside: 'settings', audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/recovery.js'), 'Recovery', 'recovery') },
+  },
+  settingsService: {
+    path: '/settings/service', name: (t) => t('page.settingsService.name'), icon: CloudServerIcon, group: null, inside: 'settings', audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/service.js'), 'Service', 'service') },
   },
   settingsAppearance: {
     path: '/settings/appearance', name: (t) => t('page.settingsAppearance.name'), words: (t) => t('page.settingsAppearance.words'), icon: PaintBoardIcon, group: null, inside: 'settings', audience: 'company',
@@ -236,10 +261,6 @@ export const PAGES = {
   settingsBilling: {
     path: '/settings/billing', name: (t) => t('page.settingsBilling.name'), icon: CreditCardIcon, group: null, inside: 'settings', audience: 'company',
     shows: { comingSoon: (t) => t('page.settingsBilling.soon') },
-  },
-  settingsRecovery: {
-    path: '/settings/recovery', name: (t) => t('page.settingsRecovery.name'), icon: Folder01Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/recovery.js'), 'Recovery', 'recovery') },
   },
 
   payHome: {
@@ -309,6 +330,8 @@ export interface Viewer {
   view: View;
   /** They sign for at least one company, so the company view is theirs. */
   signs: boolean;
+  /** The companies whose records this person's wallet released read keys for on this visit; a reader's page opens only with one. */
+  reads?: readonly string[];
 }
 
 /**
@@ -322,6 +345,7 @@ export function mayOpen(page: Pick<Page, 'audience'>, viewer: Viewer): boolean {
   if (!viewer.signedIn) return false;
   if (page.audience === 'signed-in') return true;
   if (page.audience === 'company') return viewer.view === 'company' && viewer.signs;
+  if (page.audience === 'reader') return (viewer.reads ?? []).length > 0;
   return viewer.view === 'employee' || !viewer.signs;
 }
 

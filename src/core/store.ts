@@ -100,6 +100,11 @@ export interface Shape {
    */
   committeeSignatures: Record<string, CollectedCommitteeSignatures>;
   /**
+   * The changes of the super admins kept here, each with the signature of the super admin who raised it and the
+   * joining keys' own signatures, keyed by company and change. Absent from files written before it existed.
+   */
+  superAdminChanges?: Record<string, KeptSuperAdminChange>;
+  /**
    * **EVERY LEDGER OBSERVED WRITING HERE, IN THE ORDER IT WAS FIRST SEEN.**
    *
    * Appended to by every write below that carries a marker, including one that
@@ -143,6 +148,29 @@ export interface CollectedCommitteeSignatures {
   }>;
   /** When an update at this counter was last sent from here, ISO; null when none was. */
   readonly sentAt: string | null;
+}
+
+/**
+ * **A CHANGE OF THE SUPER ADMINS, KEPT SO EVERY SUPER ADMIN FINDS IT.** Kept only once a key the chain lists on the
+ * company's account committee has signed the change's bytes (`raisedBy`); each joining key's own signature is added
+ * as it arrives. Nothing here is believed by a device: each reads the chain and checks every signature itself.
+ */
+export interface KeptSuperAdminChange {
+  readonly accountId: string;
+  /** The sha256 of the change's bytes, in hex: the identity every device gives the change. */
+  readonly chainId: string;
+  /** The company's label, as the change's bytes name it. */
+  readonly company: string;
+  readonly salt: string;
+  readonly change: {
+    readonly kind: 'super-admins';
+    readonly from: { readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>; readonly threshold: number };
+    readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>;
+    readonly threshold: number;
+    readonly contracts: ReadonlyArray<{ readonly contract: 'account' | 'vault'; readonly address: string; readonly counter: string }>;
+  };
+  readonly raisedBy: { readonly key: { readonly tag: string; readonly value: string }; readonly signature: string };
+  readonly joined: ReadonlyArray<{ readonly key: { readonly tag: string; readonly value: string }; readonly signature: string }>;
 }
 
 /** One company's manifest, as it is kept and served. */
@@ -884,6 +912,16 @@ export class MemoryStore {
   /** Every contract's kept committee signatures for one company. */
   listCommitteeSignatures(accountId: string): CollectedCommitteeSignatures[] {
     return Object.values(this.data.committeeSignatures).filter((c) => c.accountId === accountId);
+  }
+  /** Every change of the super admins kept for one company. */
+  listSuperAdminChanges(accountId: string): KeptSuperAdminChange[] {
+    return Object.values(this.data.superAdminChanges ?? {}).filter((c) => c.accountId === accountId);
+  }
+  /** Keeps exactly `changes` as one company's changes of the super admins, dropping every other it had. */
+  setSuperAdminChanges(accountId: string, changes: readonly KeptSuperAdminChange[]) {
+    const others = Object.entries(this.data.superAdminChanges ?? {}).filter(([, c]) => c.accountId !== accountId);
+    this.data.superAdminChanges = Object.fromEntries([...others, ...changes.map((c) => [`${accountId} ${c.chainId}`, c] as const)]);
+    this.flush();
   }
 }
 

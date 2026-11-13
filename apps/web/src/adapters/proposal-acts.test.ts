@@ -111,6 +111,7 @@ describe('approving a proposal from the list', () => {
     for (const [kind, wallet] of [
       ['transfer', 'one-off'], ['payroll', 'payroll'], ['add-signer', 'add-signer'], ['remove-signer', 'removal'], ['set-threshold', 'threshold'],
       ['set-vault-threshold', 'vault-threshold'], ['adopt-vault', 'adopt-vault'], ['vault-secret', 'vault-secret'], ['pay-key', 'pay-key'],
+      ['set-spending-policy', 'spending-policy'], ['set-policy-bar', 'policy-bar'],
     ] as const) {
       kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'approved', approvals: 1, needed: 2 } };
       await m.approveProposal('u1', 'acc_Company00001', row({ kind, asks }));
@@ -125,8 +126,8 @@ describe('approving a proposal from the list', () => {
     const asks = { vault: 'v1' };
     expect([
       row(), row({ status: 'approved' }), row({ status: 'executed' }), row({ status: 'cancelled' }), row({ kind: 'unreadable', status: 'unreadable' }),
-      row({ kind: 'payroll' }), row({ kind: 'payroll', asks }), row({ kind: 'change-policy', asks }), row({ kind: 'change-policy', asks: { ...asks, kind: 'policy-bar' } }),
-    ].map(m.canApprove)).toEqual([true, false, false, false, false, false, true, false, true]);
+      row({ kind: 'payroll' }), row({ kind: 'payroll', asks }), row({ kind: 'set-spending-policy', asks }), row({ kind: 'set-policy-bar', asks: { bar: 2 } }), row({ kind: 'set-policy-bar' }),
+    ].map(m.canApprove)).toEqual([true, false, false, false, false, false, true, true, true, false]);
     expect(await m.approveProposal('u1', 'acc_Company00001', row({ kind: 'payroll' }))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
   });
@@ -159,7 +160,7 @@ describe('withdrawing a proposal from the list', () => {
   /* RED WHEN: the wallet is asked to withdraw a proposal other than the one pressed, or under a kind other than the wallet's name for it. */
   it('asks the wallet to withdraw exactly the proposal pressed, under the wallet\'s name for its kind', async () => {
     const m = await load();
-    for (const [kind, wallet] of [['add-signer', 'add-signer'], ['remove-signer', 'removal'], ['set-threshold', 'threshold'], ['set-vault-threshold', 'vault-threshold'], ['payroll', 'payroll'], ['transfer', 'one-off']] as const) {
+    for (const [kind, wallet] of [['add-signer', 'add-signer'], ['remove-signer', 'removal'], ['set-threshold', 'threshold'], ['set-vault-threshold', 'vault-threshold'], ['payroll', 'payroll'], ['transfer', 'one-off'], ['set-spending-policy', 'spending-policy'], ['set-policy-bar', 'policy-bar']] as const) {
       kr.acts.length = 0; kr.ended = { of: 'done', steps: 3, relayed: 1, outcome: { state: 'withdrawn', proposal: 'prop_0001' } };
       expect(await m.withdrawProposal('u1', 'acc_Company00001', row({ kind })), kind).toMatchObject({ of: m.PROPOSAL_ACTED.done, state: 'withdrawn' });
       expect(kr.acts, kind).toEqual([{ name: m.PROPOSAL_ACT.withdraw, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_0001', kind: wallet }]);
@@ -173,14 +174,14 @@ describe('withdrawing a proposal from the list', () => {
    */
   it('offers Withdraw on a change to the company only to the seat that filed it, never by name, and never on a kind the wallet refuses', async () => {
     const m = await load();
-    for (const kind of ['add-signer', 'set-threshold', 'set-vault-threshold', 'remove-signer', 'transfer'] as const) {
+    for (const kind of ['add-signer', 'set-threshold', 'set-vault-threshold', 'remove-signer', 'transfer', 'set-spending-policy', 'set-policy-bar'] as const) {
       expect(m.canWithdraw(row({ kind, raisedByYou: true })), kind).toBe(true);
       expect(m.canWithdraw(row({ kind, raisedByYou: false })), kind).toBe(false);
       expect(m.canWithdraw(row({ kind })), kind).toBe(false);
     }
     expect(m.canWithdraw(row({ kind: 'remove-signer', raisedByYou: true, raiserNotBelieved: 'seat-retired' }))).toBe(false);
     expect(m.canWithdraw(row({ kind: 'add-signer', raisedByYou: true, status: 'executed' }))).toBe(false);
-    for (const kind of ['pay-key', 'adopt-vault', 'vault-secret', 'change-policy', 'unreadable'] as const) expect(m.canWithdraw(row({ kind, raisedByYou: true })), kind).toBe(false);
+    for (const kind of ['pay-key', 'adopt-vault', 'vault-secret', 'unreadable'] as const) expect(m.canWithdraw(row({ kind, raisedByYou: true })), kind).toBe(false);
   });
 
   /*

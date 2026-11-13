@@ -20,7 +20,9 @@ import { openTheRoundHere } from '../../../../packages/web-shared/src/round-open
 import {
   approveSpendingPolicyOnDevice, PolicyNotOpenedHere, policyReadHere, setPolicyBarOnDevice, type PolicyGovernanceDoors, type PolicyRead, type PolicySteps,
 } from '../../../../packages/web-shared/src/spending-policy-here.js';
-import { governanceDoorsFor, spendingPoliciesFor, type CompanyReach, type Handed } from './company-reach.js';
+import { vaultInfoHere, vaultInfoRecordsFor, type VaultInfoRead } from '../../../../packages/web-shared/src/vault-info-here.js';
+import { governanceDoorsFor, type CompanyReach, type Handed } from './company-reach.js';
+import { policiesInTheWallet } from './policy-doors-in-the-wallet.js';
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
 import { carryStep, type ApprovalStop, type CarryOut, type ProposalKind, type RoundHere } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
@@ -67,19 +69,37 @@ const daysOf = (seconds: string): string => {
 };
 
 /**
- * The lines this wallet shows of the policy it read, in the currency's own units, for the person to confirm, or a
- * refusal when the terms cannot be shown: other than four bands, a number that is not whole, or a first period no date
- * can name.
+ * The vault's name as the company's records hold it, opened in this wallet with the company's keys and judged as every
+ * record it reads is. Never a refusal: a vault with no name filed, or one this wallet cannot read, is shown by its
+ * address alone with a line saying which.
  */
-const readShown = (read: PolicyRead, asset: Asset, vault: string): Words[] => {
-  const t = read.opening.terms;
+export const vaultNameHere = async (r: CompanyReach, vault: string): Promise<VaultInfoRead> => {
+  try {
+    const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
+    return await vaultInfoHere({ companyKeys: r.companyKeys, records: vaultInfoRecordsFor(r.accountId, null, judge, () => null, r.send) }, vault);
+  } catch (e) {
+    if (e instanceof ActionStopped) throw e;
+    return { state: 'unread', why: said(e), version: null };
+  }
+};
+
+/** The line naming the vault and currency a policy is for: by the vault's name beside its address where the records name it. */
+export const policyVaultShown = (vault: string, token: string, named: VaultInfoRead): Words[] => (named.state === 'named'
+  ? [{ key: 'act.approve-policy.shown.policy-named', values: { name: named.name, vault, token } }]
+  : [{ key: 'act.approve-policy.shown.policy', values: { vault, token } },
+    { key: named.state === 'none' ? 'act.approve-policy.shown.vault-unnamed' : 'act.approve-policy.shown.vault-name-unread' }]);
+
+/**
+ * The lines a policy's terms are shown in, in the currency's own units, or a refusal when they cannot be shown: other
+ * than four bands, a number that is not whole, or a first period no date can name.
+ */
+export const termsShown = (t: PolicyRead['opening']['terms'], asset: Asset): Words[] => {
   const numbers = [t.periodLimit, t.periodStart, t.periodLength, ...t.bands.flatMap((b) => [b.ceiling, b.approvals])].map(String);
   if (t.bands.length !== 4 || !numbers.every((x) => DIGITS.test(x)) || BigInt(t.periodStart) * 1000n > MOST_MS) {
     throw new StepRefused(why('cannot-show'));
   }
   const limit = formatAmount(BigInt(t.periodLimit), asset);
   return [
-    { key: 'act.approve-policy.shown.policy', values: { vault, token: asset.symbol } },
     ...t.bands.map((b, i): Words => ({
       key: 'act.approve-policy.shown.band', values: { n: i + 1, ceiling: formatAmount(BigInt(b.ceiling), asset), symbol: asset.symbol, approvals: String(b.approvals) },
     })),
@@ -94,6 +114,10 @@ const readShown = (read: PolicyRead, asset: Asset, vault: string): Words[] => {
   ];
 };
 
+/** The lines this wallet shows of the policy it read, for the person to confirm: the vault and currency, then its terms. */
+const readShown = (read: PolicyRead, asset: Asset, vault: string, named: VaultInfoRead): Words[] =>
+  [...policyVaultShown(vault, asset.symbol, named), ...termsShown(read.opening.terms, asset)];
+
 /** What the first step read of a policy, as the approval and the carrying out are handed it; refused when nothing was read. */
 const policyReadOf = (round: RoundHere): PolicyRead => {
   const read = round.read as PolicyRead | undefined;
@@ -105,16 +129,18 @@ const policyReadOf = (round: RoundHere): PolicyRead => {
 
 /**
  * The doors the shared code takes a policy change through: the governance doors of every change to the company, with
- * the company's spending policies read and never filed (`spendingPoliciesFor`), and the seats under a raised removal
- * read from the company's proposals, refusing when they cannot be read in full.
+ * the company's spending policies read, and filed only with `files` (`policiesInTheWallet`), and the seats under a
+ * raised removal read from the company's proposals, refusing when they cannot be read in full.
  */
-const policyDoorsFor = (r: CompanyReach, reach: PolicyKindsReach, ctx: StepContext, handed: Handed): PolicyGovernanceDoors => {
+export const policyDoorsFor = (
+  r: CompanyReach, reach: Pick<PolicyKindsReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, handed: Handed, o: { readonly files?: true } = {},
+): PolicyGovernanceDoors => {
   const doors = governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
     ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
   });
   return {
     ...doors,
-    records: { ...doors.records!, spendingPolicies: spendingPoliciesFor(r) },
+    records: { ...doors.records!, spendingPolicies: policiesInTheWallet(r, o) },
     builder: r.builder,
     leaving: () => seatsUnderARaisedRemovalHere(doors, r.companyKeys, true),
   };
@@ -187,7 +213,7 @@ export function spendingPolicyKind(reach: PolicyKindsReach): ProposalKind {
       const asset = registry.find(read.asset);
       if (asset === null) throw new StepRefused(why('not-a-known-currency'));
       const chainId = read.chainId.toLowerCase();
-      return { id: intent.fields['proposal']!, chainId, read: { ...read, chainId }, confirm: readShown(read, asset, vaultOf(intent)) };
+      return { id: intent.fields['proposal']!, chainId, read: { ...read, chainId }, confirm: readShown(read, asset, vaultOf(intent), await vaultNameHere(r, vaultOf(intent))) };
     },
     needed: (round, held) => Math.max(round.needed ?? 0, held.seatBar),
     approve: async (ctx, r, intent, round, handed) => {
@@ -211,6 +237,25 @@ const barRefusal = (bar: number, seats: number): string | null => (bar > seats
   : null);
 
 /**
+ * A bar handed to the shared code, refused first while it is more than the seats the chain holds, and checked against
+ * the seats again before every send: raised, approved or carried out as `steps` say.
+ */
+export const policyBarOnDevice = async (
+  reach: Pick<PolicyKindsReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, r: CompanyReach, bar: number, handed: Handed, steps: PolicySteps,
+): Promise<GovernedOutcome> => {
+  const seated = async (): Promise<number> => (await r.holders()).seats.length;
+  const no = barRefusal(bar, await seated());
+  if (no !== null) throw new StepRefused(why('refused', { says: no }));
+  return setPolicyBarOnDevice(policyDoorsFor(r, reach, ctx, handed), withCompanyKeys({
+    newBar: bar, seated: await seated(), ...steps,
+    before: async () => {
+      const again = barRefusal(bar, await seated());
+      if (again !== null) throw new PolicyNotOpenedHere(again.replace(/ Nothing was sent\.$/u, ''));
+    },
+  }, r.companyKeys));
+};
+
+/**
  * **THE APPROVALS ANY CHANGE TO A SPENDING POLICY NEEDS.** Opened from the proposal and refused unless it sets the
  * number shown; refused while that number is more than the seats the chain holds, which `setPolicyBar` refuses when it
  * is carried out, checked again before every send. Judged at the seat bar, which `setPolicyBar` asks for.
@@ -221,19 +266,8 @@ export function policyBarKind(reach: PolicyKindsReach): ProposalKind {
     if (!WHOLE.test(f)) throw new StepRefused(why('not-a-bar'));
     return Number(f);
   };
-  const onDevice = async (ctx: StepContext, r: CompanyReach, intent: ActIntent, handed: Handed, steps: PolicySteps & { readonly approveOnly: string }) => {
-    const bar = barOf(intent);
-    const seated = async (): Promise<number> => (await r.holders()).seats.length;
-    const no = barRefusal(bar, await seated());
-    if (no !== null) throw new StepRefused(why('refused', { says: no }));
-    return setPolicyBarOnDevice(policyDoorsFor(r, reach, ctx, handed), withCompanyKeys({
-      newBar: bar, seated: await seated(), ...steps,
-      before: async () => {
-        const again = barRefusal(bar, await seated());
-        if (again !== null) throw new PolicyNotOpenedHere(again.replace(/ Nothing was sent\.$/u, ''));
-      },
-    }, r.companyKeys));
-  };
+  const onDevice = (ctx: StepContext, r: CompanyReach, intent: ActIntent, handed: Handed, steps: PolicySteps & { readonly approveOnly: string }) =>
+    policyBarOnDevice(reach, ctx, r, barOf(intent), handed, steps);
   const carryOut: CarryOut = async (ctx, r, intent, round, handed) => {
     carriedOr(await onDevice(ctx, r, intent, handed, { approveOnly: round.chainId, carryOnly: true }));
   };

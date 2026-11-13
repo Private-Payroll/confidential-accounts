@@ -16,6 +16,7 @@
  *     wallet keeps the company's account and their own entry is filed again.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { newSigningKeypair, newSymmetricKey, type Hex } from '../core/crypto.js';
 import { SimulatedCommitments } from '../core/ledger.js';
 import { openSeatProof, seatOpeningRefusal } from '../core/seat-opening.js';
@@ -33,6 +34,9 @@ import {
   acceptAsSignerHere, inviteHere, openInvitationHere, reissueInvitationHere, SeatMayNotInvite, takeTheReissueHere,
   withdrawWaitingSignerHere, type InvitationSend,
 } from 'vaults-web-shared/invitation-on-device.js';
+import { withdrawalReadsHere, WITHDRAWAL_ROUND_NOT_READ, WITHDRAWAL_TIME_NOT_READ } from 'vaults-web-shared/waiting-signer-withdrawn.js';
+import { kindKeyOf } from '../midnight/records-held.js';
+import { signingPublicKeyOf } from '../core/crypto.js';
 import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
@@ -40,11 +44,14 @@ import { invitedAsRaised, proposalMadeByHere } from '../testing/invitation-appro
 import {
   aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chainRead, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { aJoinersWallet, aWalletSecret } from '../testing/a-joiners-wallet.js';
 
 aCompanyOfTwoSeats();
 
 /** The key a joiner's wallet gives for the company, the key their seat's leaf commits to. */
-const WALLET_KEY = { tag: 'schnorr', value: '5d'.repeat(32) };
+/** The joiners' wallet: its key for the company, and the address it signs for each seat it asks for. */
+const WALLET = aJoinersWallet(aWalletSecret(), 47, SimulatedCommitments);
+const WALLET_KEY = WALLET.walletKey;
 /** Every seat the company's account holds now, as the test's chain holds it. */
 const onTheChain = (): readonly string[] => chains.get(CO)!.seats.seats;
 const asInviter = (s: Seat): Inviter => ({ committeeKey: s.committeeKey, statement: s.statement, opening: s.opening });
@@ -55,7 +62,7 @@ const waitingFor = async (person: string) => {
   const opened = await openInvitationHere(made.link, sendAs(null));
   const seat = await acceptAsSignerHere(opened, SimulatedCommitments, {
     newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
-  }, sendAs(person), person, async () => WALLET_KEY);
+  }, sendAs(person), person, async () => WALLET_KEY, WALLET.seatAddress);
   return { signerId: seat.signerId!, invitation: made.id, link: made.link };
 };
 const isWaiting = (signerId: string): boolean => store.getAccount(CO)!.pendingSigners.some((p) => p.id === signerId);
@@ -66,12 +73,12 @@ const leafOf = (signerId: string): Hex => openFromInbox<PendingSignerPayload>(
  * A proposal to add a seat, as a seat's device seals and files it: `body` its sealed change, with an invitation to a
  * placeholder address, signed over its id on the chain by `filer` (none: a record nobody signed).
  */
-const anAddSigner = (body: { signerId: string; invited?: SignedSeatInvitation }, chainId: Hex, filer: Hex | null = ADA.signingSecret): SealedProposal => {
+const anAddSigner = (body: { signerId: string; invited?: SignedSeatInvitation }, chainId: Hex, filer: Hex | null = ADA.signingSecret, writtenAt = 0): SealedProposal => {
   const sealed = sealGovernanceProposal({
     accountId: CO, viewingKey: KEY, kind: 'add-signer', summary: 'Add a signer', noVault: '00'.repeat(32) as Hex,
     body: { ...body, invite: { address: '0a'.repeat(32), scope: '0b'.repeat(32) } }, change: { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: '01'.repeat(32) as Hex }, proposedBy: ADA.seat,
   });
-  const filing = { id: `prp_${chainId.slice(0, 12)}`, digest: '02'.repeat(32) as Hex, chainId, keyEpoch: 0, createdAt: new Date(0).toISOString(), sealed };
+  const filing = { id: `prp_${chainId.slice(0, 12)}`, digest: '02'.repeat(32) as Hex, chainId, keyEpoch: 0, createdAt: new Date(writtenAt).toISOString(), sealed };
   return { accountId: CO, status: 'open', approvalCount: 0, ...(filer === null ? filing : signProposalFiling(CO, filing, filer)) } as unknown as SealedProposal;
 };
 const postWithdrawal = (signerId: string, withdrawal: unknown, as: InvitationSend = fromAda, company = CO) =>
@@ -87,9 +94,9 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     const again = await inviteHere(ACME, ADA, 'signer', { name: 'kit', role: 'approver', person: 'kit' }, ORIGIN, fromAda);
     const reopened = await openInvitationHere(again.link, sendAs(null));
     const acceptAgain = () => acceptAsSignerHere(reopened, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {}, promote: async () => {} },
-      sendAs('kit'), 'kit', async () => WALLET_KEY);
+      sendAs('kit'), 'kit', async () => WALLET_KEY, WALLET.seatAddress);
     await expect(acceptAgain()).rejects.toMatchObject({ refused: 'already-on-this-account' });
-    await withdrawWaitingSignerHere({ id: CO, viewingKey: KEY }, ADA, kit.signerId, adasReads(), fromAda);
+    await withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, ADA, kit.signerId, adasReads(), fromAda, 'kit');
     /* RED WHEN: a withdrawal is answered and the request is kept, so the person stays locked out. */
     expect(isWaiting(kit.signerId)).toBe(false);
     /* RED WHEN: the link a withdrawn request answered still reads as used rather than withdrawn. */
@@ -103,7 +110,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     const lin = await waitingFor('lin');
     const key1 = newSymmetricKey() as Hex;
     const after = { epoch: 1, key: key1, newest: 1, keyAt: (e: number) => (e === 0 ? KEY : key1), sealing: () => ({ key: key1, epoch: 1 }), answered: new Map() };
-    await withdrawWaitingSignerHere({ id: CO, viewingKey: after as never }, ADA, lin.signerId, adasReads(), fromAda);
+    await withdrawWaitingSignerHere({ id: CO, companyKeys: after as never }, ADA, lin.signerId, adasReads(), fromAda, 'lin');
     /* RED WHEN: a request no change of key named, sealed to the old inbox, cannot be withdrawn, so its person stays locked out. */
     expect(isWaiting(lin.signerId)).toBe(false);
   });
@@ -166,7 +173,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
   it('a device whose seat may not withdraw anybody, or whose request could still be seated, signs and sends nothing', async () => {
     const ned = await waitingFor('ned');
     const sent = wire.length;
-    const withdraw = (seat: Seat, reads = adasReads()) => withdrawWaitingSignerHere({ id: CO, viewingKey: KEY }, seat, ned.signerId, reads, fromAda);
+    const withdraw = (seat: Seat, reads = adasReads(), named = 'ned') => withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, seat, ned.signerId, reads, fromAda, named);
     /* RED WHEN: a limited seat's seat, or a retired one, withdraws somebody. */
     await expect(withdraw({ ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
     await expect(withdraw({ ...ADA, held: { role: 'admin', retired: true, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
@@ -178,6 +185,8 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     await expect(withdraw(ADA, adasReads([seating], [chainId]))).rejects.toThrow(/proposal to seat this person is still open/u);
     /* RED WHEN: a proposal whose id on the chain no seat signed is taken as closed, so the service's word decides. */
     await expect(withdraw(ADA, adasReads([anAddSigner({ signerId: ned.signerId }, chainId, null)], []))).rejects.toThrow(/proposal to seat this person is still open/u);
+    /* RED WHEN: a request is withdrawn for a name it does not carry, so a page can show one person and have another withdrawn. */
+    await expect(withdraw(ADA, adasReads(), 'bob')).rejects.toThrow(/not the person you were shown/u);
     expect(wire.length).toBe(sent);
     expect(isWaiting(ned.signerId)).toBe(true);
     /* A proposal the chain no longer holds open seats nobody, whatever the service says of it: the request is withdrawn. */
@@ -190,7 +199,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     const leaf = leafOf(ned.signerId);
     const was = chains.get(CO)!;
     chains.set(CO, { ...was, seats: { ...was.seats, seats: [...was.seats.seats, leaf] } });
-    const withdraw = () => withdrawWaitingSignerHere({ id: CO, viewingKey: KEY }, ADA, ned.signerId, adasReads(), fromAda);
+    const withdraw = () => withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, ADA, ned.signerId, adasReads(), fromAda, 'ned');
     try {
       /* RED WHEN: the test chain's read answers seats nobody asked about, as the service's own read never does, so a route that forgets to ask about the seat it decides on still sees it. */
       expect([(await chainRead(CO, []))?.seats.seats, (await chainRead(CO, [leaf.toUpperCase()]))?.seats.seats]).toEqual([[], [leaf]]);
@@ -207,6 +216,12 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
       /* RED WHEN: an admin's device refuses to withdraw a request filed late for a seat the chain holds, so a junk one waits for good. */
       await withdraw();
       expect(isWaiting(ned.signerId)).toBe(false);
+      /* RED WHEN: letting a late request go closes the invitation, which still belongs to the person it seated. */
+      expect(store.invitationById(ned.invitation)!.revokedAt).toBeFalsy();
+      /* RED WHEN: the wallet or the page says the link always closes on a withdrawal, though a late request leaves it open. */
+      const wallet = JSON.parse(readFileSync(new URL('../../apps/wallet/src/locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+      const web = JSON.parse(readFileSync(new URL('../../apps/web/src/locales/common/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+      for (const said of [wallet['act.withdraw-waiting-signer.shown.withdraw']!, web['signers.done.withdrawn']!]) expect(said).toMatch(/unless .*already seated/u);
     } finally {
       chains.set(CO, was);
     }
@@ -231,6 +246,73 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
   });
 });
 
+describe('WHICH PROPOSALS COULD STILL SEAT A PERSON WAITING IS READ FROM THE CHAIN ON THE DEVICE', () => {
+  /* The company's anchored records name no proposal, so every proposal the service lists is read; Ada's seat sits. */
+  const directoryHere = async () => ({
+    records: { history: new Map(), notYetAnchored: [], asked: { records: new Set(), kinds: new Set([kindKeyOf({ store: 'proposal', kind: 'proposal' })]) } },
+    dir: { seats: [{ seat: ADA.seat, retired: null, signingKey: signingPublicKeyOf(ADA.signingSecret) }] },
+    holders: { seats: [ADA.seat] },
+  }) as never;
+  const T = Date.parse('2026-11-13T00:00:00Z');
+  const ids = { open: '1a'.repeat(32), cleared: '1b'.repeat(32), closed: '1c'.repeat(32), never: '1d'.repeat(32), late: '1e'.repeat(32), byALeaver: '1f'.repeat(32), ahead: '21'.repeat(32) } as const;
+  const proposals = [
+    anAddSigner({ signerId: 'sgn_wes' }, ids.open as Hex), anAddSigner({ signerId: 'sgn_wes' }, ids.cleared as Hex),
+    anAddSigner({ signerId: 'sgn_wes' }, ids.closed as Hex), anAddSigner({ signerId: 'sgn_wes' }, ids.never as Hex, ADA.signingSecret, T),
+    anAddSigner({ signerId: 'sgn_wes' }, ids.late as Hex, ADA.signingSecret, T - 3 * 86_400_000),
+    anAddSigner({ signerId: 'sgn_wes' }, ids.byALeaver as Hex, BO.signingSecret, T),
+    anAddSigner({ signerId: 'sgn_wes' }, ids.ahead as Hex, ADA.signingSecret, T + 2 * 86_400_000),
+    anAddSigner({ signerId: 'sgn_someone_else' }, '20'.repeat(32) as Hex),
+  ];
+  const asked: string[][] = [];
+  /* The chain answers every id it is asked, as never raised where it holds no round; `unanswered` it leaves out. */
+  const reads = (chainTime: () => Promise<number>, unanswered: readonly string[] = []) => ({
+    directory: directoryHere, proposals: async () => proposals, chainTime,
+    roundsOnChain: async (chainIds: readonly string[]) => {
+      asked.push([...chainIds]);
+      const held = { [ids.open]: 'open', [ids.cleared]: 'cleared', [ids.closed]: 'closed' } as Record<string, string>;
+      return Object.fromEntries(chainIds.filter((id) => !unanswered.includes(id)).map((id) => [id, { held: held[id] ?? 'never', approvals: 0 }])) as never;
+    },
+  });
+  const read = (chainTime: () => Promise<number>, unanswered: readonly string[] = []) =>
+    withdrawalReadsHere(reads(chainTime, unanswered), store.getAccount(CO)!, CO, KEY, 'sgn_wes');
+
+  it('counts a proposal the chain holds open or approved, and one written down by a seat that sits whose raise may still land', async () => {
+    const got = await read(async () => T + 60_000);
+    /* RED WHEN: a proposal the chain holds open, approved or not, is not counted, so a person it could still seat is withdrawn. */
+    /* RED WHEN: a proposal written down and not on the chain yet is not counted while its raise may still land. */
+    expect([...got.openOnTheChain].sort()).toEqual([ids.ahead, ids.cleared, ids.never, ids.open].sort());
+    /* RED WHEN: the chain is asked about another request's proposals, or the service's word on a proposal's standing is used. */
+    expect(asked.at(-1)!.sort()).toEqual(Object.values(ids).sort());
+    expect(got.onTheChain).toEqual([ADA.seat.toLowerCase()]);
+  });
+
+  it('a proposal whose raise can no longer land, or one written down by a seat that has left, holds nobody', async () => {
+    const got = await read(async () => T + 3 * 86_400_000);
+    /* RED WHEN: a proposal written down long ago, which the chain would refuse, keeps the person from ever being withdrawn. */
+    expect([...got.openOnTheChain].sort()).toEqual([ids.cleared, ids.open].sort());
+    /* RED WHEN: a seat that has left keeps a person waiting for good by writing proposals down. */
+    expect(got.openOnTheChain).not.toContain(ids.byALeaver);
+  });
+
+  it('a proposal written down by a device whose clock runs ahead holds the person until its raise can no longer land', async () => {
+    /* RED WHEN: a proposal written down with a clock far ahead is not counted, so the person is withdrawn and the proposal can still seat them. */
+    expect((await read(async () => T + 60_000)).openOnTheChain).toContain(ids.ahead);
+    expect((await read(async () => T + 2 * 86_400_000 + 86_400_000 - 1_000)).openOnTheChain).toContain(ids.ahead);
+    /* RED WHEN: such a proposal holds the person past the time the chain would still take its raise. */
+    expect((await read(async () => T + 3 * 86_400_000)).openOnTheChain).not.toContain(ids.ahead);
+  });
+
+  it('a proposal to seat the person that the chain read leaves out withdraws nobody, rather than passing as never raised', async () => {
+    /* RED WHEN: a proposal the chain read did not answer for is taken as never raised, so a raised one filed by a seat that has left lets the person go. */
+    await expect(read(async () => T + 60_000, [ids.byALeaver])).rejects.toThrow(WITHDRAWAL_ROUND_NOT_READ);
+  });
+
+  it('when the chain\'s time cannot be read while a proposal waits to be raised, nobody is withdrawn on a guess', async () => {
+    /* RED WHEN: a chain time not read lets a proposal still waiting to be raised pass as gone. */
+    await expect(read(async () => { throw new Error('no indexer'); })).rejects.toThrow(WITHDRAWAL_TIME_NOT_READ);
+  });
+});
+
 describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   /* Lee was invited by Bo and the chain seated Lee's leaf; Bo has left, so the account holds Ada and Lee. */
   const LEE = seatOf('lee', 7, LABEL, ADDRESS, CO, BO);
@@ -248,8 +330,8 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   const asAnAdmin = (t: SeatInvitationTerms): SeatInvitationTerms => ({ ...t, role: 'admin', invite: { ...t.invite!, scope: scopeOfRole('admin', t.vaults) } });
   /** Lee's device taking a re-issue, with the company's proposals it reads. */
   const leeTakes = (opened: Parameters<typeof takeTheReissueHere>[0], kept: unknown[], proposals: readonly SealedProposal[] = seatedLee,
-    mine: { accountId: string; person: string; seat: string } = { accountId: CO, person: 'lee', seat: LEE.seat }) =>
-    takeTheReissueHere(opened, { ...mine, viewingKey: KEY }, proposals, async (x) => { kept.push(x); });
+    mine: { accountId: string; person: string; seat: string } = { accountId: CO, person: 'lee', seat: LEE.seat }, chain: readonly string[] = leesChain) =>
+    takeTheReissueHere(opened, { ...mine, companyKeys: KEY }, proposals, chain, async (x) => { kept.push(x); });
   /** Lee's wallet, judging the inviter it is handed against the account as it reads it. */
   const leesWallet = (invitedBy: Inviter) => whyTheInvitationDoesNotNameIt(
     { kind: 'records-key', company: LABEL, account: ADDRESS, seat: LEE.seat, invitedBy } as never,
@@ -274,7 +356,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     expect(leesWallet(kept[0]!.inviter)).toBeNull();
     /* A re-issue offers no new seat: the link makes no seat request. */
     await expect(acceptAsSignerHere(opened, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {}, promote: async () => {} },
-      sendAs('lee'), 'lee', async () => WALLET_KEY)).rejects.toThrow(/offers pay, not a seat|not accepted as a signer/u);
+      sendAs('lee'), 'lee', async () => WALLET_KEY, WALLET.seatAddress)).rejects.toThrow(/offers pay, not a seat|not accepted as a signer/u);
   });
 
   it('a re-issue is refused for a seat that may not invite, a seat the chain does not hold, or an invitation for no seat, and nothing is sent', async () => {
@@ -289,6 +371,8 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     await expect(reissue({ ...ADA, held: { role: 'admin', retired: false, rights: elsewhere } })).rejects.toThrow(/beyond the ones the inviting seat holds/u);
     /* RED WHEN: an invitation is re-issued for a leaf the chain does not hold: somebody waiting is withdrawn and invited again instead. */
     await expect(reissue(ADA, original, [ADA.seat])).rejects.toThrow(/not one the company's account holds now/u);
+    /* RED WHEN: a seat the chain no longer holds re-issues an invitation, which the person's wallet would then refuse as their inviter. */
+    await expect(reissue(ADA, original, [LEE.seat])).rejects.toThrow(/Your seat is not one the company's account holds now/u);
     /* RED WHEN: an invitation naming no seat, or another company's, is re-issued, so it could seat whoever holds the link. */
     const { leaf: _none, ...noLeaf } = original.terms;
     await expect(reissue(ADA, signSeatInvitation(noLeaf, BO.signingSecret))).rejects.toThrow(SeatMayNotInvite);
@@ -300,6 +384,15 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     const asAdmin = signSeatInvitation(asAnAdmin(original.terms), BO.signingSecret);
     await expect(reissue(ADA, asAdmin, leesChain, [anAddSigner({ signerId: 'sgn_lee', invited: original }, '0d'.repeat(32) as Hex)])).rejects.toThrow(/does not carry an invitation a signer made for them/u);
     expect(wire.length).toBe(sent);
+  });
+
+  it('a re-issue from a seat the account no longer holds is not kept, so the person asks a signer who sits to send it again', async () => {
+    const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, fromAda);
+    const opened = await openInvitationHere(made.link, sendAs('lee'));
+    const kept: unknown[] = [];
+    /* RED WHEN: a re-issue is kept with an inviter whose seat left between sending it and taking it. */
+    await expect(leeTakes(opened, kept, seatedLee, undefined, [LEE.seat])).rejects.toThrow(/ask a signer whose seat the account holds/iu);
+    expect(kept).toHaveLength(0);
   });
 
   it('a re-issue is kept only for the person signed in and the seat this device holds, and only under its own link', async () => {

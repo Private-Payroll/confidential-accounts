@@ -19,6 +19,7 @@ import {
 } from './vault-secret-run-record.js';
 import { kindAsked, listedHere } from './vault-page-doors.js';
 import { refuseLeavingAVaultShort } from '../../../src/core/vault-approvers.js';
+import { ADOPTED_AGAIN_SINCE, adoptionAlreadyClosed } from './vault-adopt-again.js';
 
 /* ------------------------------------------------------------ a round of a vault's start, approved by another signer */
 
@@ -49,6 +50,8 @@ export class StartRoundRefused extends Error {
 
 /** The proposal as this device found it: its identity on the chain, where the chain shows its start, and whether it is done. */
 interface StartRoundFound {
+  /** The doors to read and act with: for a re-adoption, carrying the proposal that retired the vault. */
+  readonly doors: CreateVaultDoors;
   readonly chainId: Hex;
   readonly at: StartStanding;
   readonly secret?: RunSecret;
@@ -69,7 +72,8 @@ const asRefused = (e: unknown): unknown => (e instanceof VaultStartOwed ? new St
  * records hold, read back), the readers and the replaced commitment the record names, and its window. A record whose
  * identity or payload is not that one is refused, and so is one withdrawn: it stands for nothing on the chain.
  */
-async function startRoundFoundHere(doors: CreateVaultDoors, named: StartRoundNamed): Promise<StartRoundFound> {
+async function startRoundFoundHere(asked: CreateVaultDoors, named: StartRoundNamed): Promise<StartRoundFound> {
+  let doors = asked;
   const p = doors.proposals;
   const vault = named.vault.toLowerCase() as Hex;
   const called = named.round === 'adoption' ? 'adoption' : 'secret run';
@@ -90,6 +94,8 @@ async function startRoundFoundHere(doors: CreateVaultDoors, named: StartRoundNam
     throw new StartRoundRefused(`the company's records hold no ${called} of this vault under that name that this device can open and believe. `
       + 'Nothing was sent. Reload the page.');
   }
+  /* The adoption of a vault the company retired is made from the proposal that retired it, as its record says. */
+  if (opened.again !== undefined) doors = { ...doors, again: opened.again };
   const notThisOne = (): StartRoundRefused => new StartRoundRefused(`the company's record under that name is not the ${called} of this vault `
     + 'as this device makes it from the chain and the company\'s records. Nothing was sent. Do not approve it.');
   try {
@@ -97,7 +103,10 @@ async function startRoundFoundHere(doors: CreateVaultDoors, named: StartRoundNam
       const at = await standingNow(doors, vault);
       const a = at.standing.adoption;
       if (a.proposal.toLowerCase() !== String(rec.chainId).toLowerCase() || a.payload.toLowerCase() !== String(rec.digest).toLowerCase()) throw notThisOne();
-      return { chainId: a.proposal.toLowerCase() as Hex, at, done: at.standing.adopted };
+      if (opened.again !== undefined && !at.standing.adopted && await adoptionAlreadyClosed(doors, vault, a.proposal.toLowerCase() as Hex)) {
+        throw new StartRoundRefused(ADOPTED_AGAIN_SINCE);
+      }
+      return { doors, chainId: a.proposal.toLowerCase() as Hex, at, done: at.standing.adopted };
     }
     let secret: RunSecret | null;
     try {
@@ -115,7 +124,7 @@ async function startRoundFoundHere(doors: CreateVaultDoors, named: StartRoundNam
     if (raise === undefined || raise.proposal.toLowerCase() !== String(rec.chainId).toLowerCase()
       || raise.payload.toLowerCase() !== String(rec.digest).toLowerCase()) throw notThisOne();
     return {
-      chainId: raise.proposal.toLowerCase() as Hex, at, secret,
+      doors, chainId: raise.proposal.toLowerCase() as Hex, at, secret,
       done: at.standing.secret?.started === true, set: at.standing.secret?.set === true,
     };
   } catch (e) {
@@ -131,6 +140,7 @@ async function startRoundFoundHere(doors: CreateVaultDoors, named: StartRoundNam
  */
 export async function startRoundOpenedHere(doors: CreateVaultDoors, named: StartRoundNamed): Promise<{ readonly chainId: Hex; readonly said: string | null }> {
   const found = await startRoundFoundHere(doors, named);
+  doors = found.doors;
   return { chainId: found.chainId, said: found.done ? await writtenDownOnceDone(doors, named.vault.toLowerCase() as Hex, named.round, found) : null };
 }
 
@@ -224,6 +234,7 @@ async function copiesOfASetSecretWritten(doors: CreateVaultDoors, vault: Hex, fo
 export async function approveStartRoundHere(doors: CreateVaultDoors, named: StartRoundNamed): Promise<'approved' | 'counted' | 'carried-out'> {
   const vault = named.vault.toLowerCase() as Hex;
   const found = await startRoundFoundHere(doors, named);
+  doors = found.doors;
   if (found.done || found.set === true) return 'carried-out';
   try {
     if (named.round === 'adoption') {
@@ -262,6 +273,7 @@ export async function carryStartRoundHere(
 ): Promise<{ readonly state: 'carried-out' | 'waiting'; readonly said: string | null }> {
   const vault = named.vault.toLowerCase() as Hex;
   const found = await startRoundFoundHere(doors, named);
+  doors = found.doors;
   try {
     let at = found.at;
     if (!found.done && named.round === 'adoption') {
@@ -304,6 +316,7 @@ export async function finishedSecretRunHere(
   if (named.round !== 'first-secret') return null;
   const vault = named.vault.toLowerCase() as Hex;
   const found = await startRoundFoundHere(doors, named);
+  doors = found.doors;
   if (found.set !== true) return null;
   try {
     const at = found.done ? found.at : await copiesOfASetSecretWritten(doors, vault, found, found.at);

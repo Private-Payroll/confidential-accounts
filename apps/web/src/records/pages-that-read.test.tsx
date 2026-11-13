@@ -1407,18 +1407,15 @@ describe('vaults and a vault', () => {
   });
 
   /*
-   * RED WHEN: the signers page does not show the committee change - what holds the company, and for a change owed the
-   * signatures it has and needs - or shows it twice; or the page shows the change of the approvals needed other than once;
-   * or the page carries a Coming soon pill again.
+   * RED WHEN: the signers page shows the committee change, which belongs to Super admins; or the page shows the change of the
+   * approvals needed other than once; or the page carries a Coming soon pill again.
    */
-  it('shows the committee change and the change of the approvals needed on the signers page, once each, with no Coming soon', async () => {
+  it('shows the change of the approvals needed on the signers page once, without the committee change, with no Coming soon', async () => {
     state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
     const c = await draw('settingsSigners');
     await settle();
-    expect(all(c, '[data-action=committee-change]')).toHaveLength(1);
-    expect(q(c, '[data-public-facts]')!.textContent).toBe(EN['settingsSigners.publicFacts']);
-    expect(all(c, '[data-change-owed] li').map((li) => li.textContent)).toEqual(['1 of 2 signed']);
-    expect(q(c, '[data-action=sign-change]')).not.toBeNull();
+    expect(all(c, '[data-action=committee-change]')).toHaveLength(0);
+    expect(q(c, '[data-action=sign-change]')).toBeNull();
     expect(all(c, '[data-action=change-threshold]')).toHaveLength(1);
     expect(q(c, '[data-screen=coming-soon]')).toBeNull();
     expect(q(c, '[data-screen=settings] [data-slot=coming-soon]')).toBeNull();

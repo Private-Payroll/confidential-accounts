@@ -67,10 +67,14 @@ describe('the join page opens the invitation its link carried', () => {
     expect(await offeredOf(anInvitation('signer'))).toMatchObject({ kind: 'signer', way: WAY.seat, role: 'approver', name: 'Dee' });
   });
 
-  /* RED WHEN: an invitation this page cannot take (a super admin's, a re-issued seat, a signer's seat not made at an address) is offered. */
+  /* RED WHEN: a re-issued invitation for a seat the person holds is closed, or offered as a new seat to take. */
+  it('offers a re-issued seat the way that keeps it for the seat the person holds, with the role', async () => {
+    expect(await offeredOf(anInvitation('reissue'))).toMatchObject({ kind: 'signer', way: WAY.reissue, role: 'approver', name: 'Dee' });
+  });
+
+  /* RED WHEN: an invitation this page cannot take (a super admin's, a signer's seat not made at an address) is offered. */
   it.each([
     ['a super admin\'s', anInvitation('super-admin'), CLOSED.superAdmin],
-    ['a re-issued seat', anInvitation('reissue'), CLOSED.reissue],
     ['a signer\'s seat not made at an address', anInvitation('signer', { seatByLink: true }), CLOSED.seatByAddressOnly],
   ] as const)('does not offer %s', async (_what, i, why) => {
     serve(() => offerAnswer(i));

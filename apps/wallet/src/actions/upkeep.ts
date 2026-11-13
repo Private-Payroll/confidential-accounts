@@ -3,7 +3,7 @@
  * company's pages signs nothing; instead every seat action in this wallet starts by changing the company's key when a
  * removed signer's key is still the one in use, and following a roster no device believes, and ends by filing each
  * vault's records again for the signers seated since its last write, giving each vault's secret to every other seat
- * that lacks it, and anchoring on the chain what was filed. What is
+ * that lacks it, sealing each spending policy in force again to them, and anchoring on the chain what was filed. What is
  * owed is worked out from this wallet's own reads: the chain through its own indexer, the company's records as the
  * judges believe them, and the seat in the saved keys. A list the page or the service keeps is never asked.
  * Upkeep never stops the action it rides on for what it could not do; it says so in the action's outcome, and the
@@ -17,12 +17,14 @@ import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors, type Seal
 import { grantsServedBy, revokedAtHere } from '../../../../packages/web-shared/src/purpose-wraps.js';
 import { grantsWrappedAgainHere } from '../../../../packages/web-shared/src/grants-filed-here.js';
 import { grantsFilingDoorsIn } from './grant-read.js';
-import { governedCallServiceFor, seatsLeavingHere } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceFor, seatsLeavingHere, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import {
   anchoredOnTheWayIn, anchorServiceFor, anchorTheRecordsHere, directoryChangeFiledHere, type AnchorDoors,
 } from '../../../../packages/web-shared/src/records-anchored-here.js';
-import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from '../../../../packages/web-shared/src/record-entered-here.js';
+import { manifestServiceFor, treeServiceFor } from '../../../../packages/web-shared/src/record-entered-here.js';
+import { sealPoliciesToNewSignersHere } from '../../../../packages/web-shared/src/policies-resealed-here.js';
 import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here.js';
+import { keepRecoveryWindowHere, recoveryWindowHere } from '../../../../packages/web-shared/src/recovery-window-here.js';
 import { ownEntryFiled, rosterFollowed } from '../../../../packages/web-shared/src/vault-keys-given.js';
 import { withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
@@ -35,7 +37,9 @@ import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packa
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import { intentShapeOf, routeOf, sendsIn } from 'midnight-identity/profile/request';
-import { apiOver, sendOver, type CompanyReach } from './company-reach.js';
+import { apiOver, enteredFor, governanceRecordsFor, sendOver, type CompanyReach, type Handed } from './company-reach.js';
+import { leavingForTheAnchor } from './leaving-read-in-the-wallet.js';
+import { policiesInTheWallet } from './policy-doors-in-the-wallet.js';
 import { StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { mayFile } from '../../../../src/midnight/seat-directory.js';
@@ -127,9 +131,11 @@ const rosterOrNone = (r: CompanyReach) => async () => {
  * The anchor's doors, every one on this wallet's own reads: the chain's anchors and the account's call state through its
  * own indexer, the directory as its judges believe it, and the seat from the saved keys. The service is asked only for
  * the records and headers the anchor then checks, and to send the proven transaction unless the act sends its calls
- * straight to the chain (`handOverFor`).
+ * straight to the chain (`handOverFor`). Who is leaving is read on the same reads (`leavingForTheAnchor`); when it cannot
+ * be read, or a proposal this wallet cannot open was passed over in reading it, the anchor binds only what it read and
+ * retirements already anchored, and `unread` is told why so the act says it was left partial.
  */
-export async function anchorDoorsIn(r: CompanyReach, api: Api): Promise<AnchorDoors> {
+export async function anchorDoorsIn(r: CompanyReach, api: Api, unread?: (why: string) => void): Promise<AnchorDoors> {
   const found = await r.judges.keysFoundFor(r.accountId, r.sealed);
   const service = anchorServiceFor(api);
   return {
@@ -144,6 +150,7 @@ export async function anchorDoorsIn(r: CompanyReach, api: Api): Promise<AnchorDo
     onChain: r.judges.anchorsOnChainFor(r.label, r.account),
     vouching: r.judges.vouchingFor(r.accountId),
     tagSeats: r.judges.tagSeatsFor(r.account),
+    leaving: leavingForTheAnchor(r, api, found, unread),
     service: {
       ...service,
       callState: async () => {
@@ -156,6 +163,15 @@ export async function anchorDoorsIn(r: CompanyReach, api: Api): Promise<AnchorDo
     ...(r.handOver === undefined ? {} : { handOver: r.handOver }),
   };
 }
+
+/**
+ * The door a change that raises the approvals needed asks to anchor the company's directory first, so a directory
+ * change filed and not yet anchored is never counted at the higher number. Marks the press as having sent something.
+ */
+export const anchorDirectoryDoorIn = (r: CompanyReach, handed: Handed) => async (): Promise<unknown> => {
+  handed.over = true;
+  return anchorTheRecordsHere(await anchorDoorsIn(r, r.api));
+};
 
 /**
  * What changing the company's key needs, from this wallet alone: the directory and the rounds on the chain as it reads
@@ -219,7 +235,7 @@ export function rebuildDoorsIn(
     indexer: async () => r.chain.indexer,
     onChain: async () => ({ holders: await r.holders() }),
     me,
-    records: deviceRecordsFor(r.seat.signingSecret, judge, () => person, recordsEnteredFor(manifestServiceFor(api), r.accountId, r.seat.signingSecret), send),
+    records: deviceRecordsFor(r.seat.signingSecret, judge, () => person, enteredFor(r, api), send),
     signers: readersIn(directory).signers,
     seatHere: () => seatHereIn(directory, r.seat.signingSecret),
     ...(kept === undefined ? {} : { kept }),
@@ -309,6 +325,35 @@ async function vaultSecretsFinished(
   w.rethrow();
 }
 
+/**
+ * Each spending policy in force whose version in force is not believed or leaves out a signer who stays sealed again
+ * to every signer this wallet believes and every policy reader, after the act's own admission and before the anchor so
+ * what it files is anchored with the act's own records. A seat that may not file a policy (its role, or a seat this
+ * wallet does not believe) seals none and names each policy a seat that may still owes a seal; a policy this wallet
+ * could not seal again, or a read that failed, is said. Either leaves the upkeep partial for the next seat action that
+ * runs the upkeep. What it left alone because nothing was owed is not said.
+ */
+async function policiesSealedAgain(ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedCalls>, left: () => void): Promise<void> {
+  let notSealed: readonly string[];
+  let owed: readonly string[] = [];
+  try {
+    const here = { ...r, api: w.api, send: w.send };
+    const done = await sealPoliciesToNewSignersHere(withCompanyKeys({
+      records: { ...governanceRecordsFor(here), spendingPolicies: policiesInTheWallet(here, { files: true }) },
+      accountId: r.accountId, keyEpoch: r.companyKeys.epoch, filingKey: signingPublicKeyOf(r.seat.signingSecret as Hex),
+    }, r.companyKeys));
+    notSealed = done.refused.map((x) => `${x.id}: ${x.why}`);
+    owed = done.owed;
+  } catch (e) {
+    if (e instanceof ActionStopped) throw e;
+    notSealed = [String((e as Error)?.message ?? e)];
+  }
+  w.rethrow();
+  if (notSealed.length > 0 || owed.length > 0) left();
+  if (notSealed.length > 0) ctx.show({ key: 'act.upkeep.left.policies-not-sealed', values: { policies: notSealed.join('; ') } });
+  if (owed.length > 0) ctx.show({ key: 'act.upkeep.left.policies-owed', values: { policies: owed.join(', ') } });
+}
+
 const ROTATED: ReadonlySet<KeyRotated['state']> = new Set(['rotated', 'rotated-elsewhere']);
 const NOT_YET_ANCHORED = /not yet anchored/u;
 
@@ -319,13 +364,23 @@ const NOT_YET_ANCHORED = /not yet anchored/u;
  * on its own anchor), then follows a roster no device believes. Whenever it anchored or filed anything, the company is
  * read again before the action's own steps, so they seal under what the company's records now hold: a retirement it
  * anchored and could not follow with a change of the key pauses the company for them. The tail files each vault's
- * records again and anchors. Either step stops the action when a transaction it sent was not confirmed.
+ * records again, gives each vault's secret, seals each spending policy again, and anchors. Either step stops the action when a transaction it sent was not confirmed.
  */
 export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { readonly ownEntry?: boolean } = {}) {
   let partial = false;
   const offersRefused: string[] = [];
   /* Something left for the next seat action; an offer of vault keys the fold refused is named, seat and reason, to the person in this window. */
   const left = (offerRefused?: string): void => { partial = true; if (offerRefused !== undefined) offersRefused.push(offerRefused); };
+  /* Why who is leaving went unread for the anchor: its own line with its own remedy, said once for each step. */
+  const leavingUnread = (ctx: StepContext) => {
+    const said = new Set<string>();
+    return (why: string): void => {
+      partial = true;
+      if (said.has(why)) return;
+      said.add(why);
+      ctx.show({ key: 'act.upkeep.left.leaving-unread', values: { why } });
+    };
+  };
 
   const first: ActionStep = {
     title: { key: 'act.upkeep.step.first' },
@@ -362,7 +417,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       w.rethrow();
       if (rotated !== null && (rotated.state === 'filed-not-anchored' || (rotated.state === 'waits' && NOT_YET_ANCHORED.test(rotated.why)))) {
         changed = true;
-        const anchored = await anchoredAtTheEnd(await anchorDoorsIn(r, w.api)).catch((e: unknown) => {
+        const anchored = await anchoredAtTheEnd(await anchorDoorsIn(r, w.api, leavingUnread(ctx))).catch((e: unknown) => {
           if (e instanceof ActionStopped) throw e;
           return { notAnchored: String(e) };
         });
@@ -390,7 +445,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         const followed = await rosterFollowed({
           api: w.api, accountId: r.accountId, companyKeys, signingSecret: r.seat.signingSecret as Hex, label: r.label, account: r.account,
           reads: r.judges.rosterReadsFor(r.accountId, r.label, r.account),
-          entered: recordsEnteredFor(manifestServiceFor(w.api), r.accountId, r.seat.signingSecret as Hex),
+          entered: enteredFor(r, w.api),
         });
         if (followed.changed) changed = true;
         for (const offer of followed.refused) left(`seat ${offer.seat}: ${offer.why}`);
@@ -432,14 +487,21 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       }
       await vaultSecretsFinished(ctx, r, w, reach, vaults, left);
       await vaultSecretsGiven(ctx, r, w, reach, vaults, seats, left);
+      await policiesSealedAgain(ctx, r, w, left);
       let anchored = 0;
       try {
-        const done = await anchoredAtTheEnd(await anchorDoorsIn(r, w.api));
+        const done = await anchoredAtTheEnd(await anchorDoorsIn(r, w.api, leavingUnread(ctx)));
         if ('notAnchored' in done) left(); else anchored = done.anchored;
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         left();
       }
+      w.rethrow();
+      const window = await keepRecoveryWindowHere(r.accountId, () => recoveryWindowHere({ ...r, api: w.api }, { anchoredOnly: true }), treeKeptHere()).catch((e: unknown) => {
+        if (e instanceof ActionStopped) throw e;
+        return null;
+      });
+      if (window?.unread !== undefined) left();
       w.rethrow();
       ctx.tell({ upkeep: partial ? UPKEEP.partial : UPKEEP.done, anchored });
       if (w.seen.unconfirmed > 0) throw new StepRefused(why('not-confirmed'));
@@ -458,6 +520,7 @@ export const upkeepShown = (o: { readonly ownEntry?: boolean } = {}): ShownLine[
   { key: 'act.upkeep.shown.vaults', from: 'action' },
   { key: 'act.upkeep.shown.finish', from: 'action' },
   { key: 'act.upkeep.shown.secrets', from: 'action' },
+  { key: 'act.upkeep.shown.policies', from: 'action' },
   { key: 'act.upkeep.shown.anchor', from: 'action' },
 ];
 

@@ -209,7 +209,7 @@ const aWallet = async (c: Awaited<ReturnType<typeof aCompany>>, chain: ReturnTyp
   };
   const doors = (): RecoveryDoors => ({
     accountId: COMPANY, account: ACCOUNT, material: { signingSecret: who.secret, blinding: who.blinding, scope: SCOPE }, indexer: INDEXER,
-    builder: builder as unknown as RecoveryDoors['builder'], onChain: c.onChain, checked: kept.checked, headers: kept.headers,
+    builder: builder as unknown as RecoveryDoors['builder'], onChain: c.onChain, checked: kept.checked, headers: kept.headers, window: () => kept.windows.read(COMPANY),
     send: { ownWallet: { send: async (tx: string) => chain.takes(tx), chosen: async () => true } },
     watch: { everyMs: 1000, withinMs: 3000, sleep: async () => {} }, now: () => NOW,
   });

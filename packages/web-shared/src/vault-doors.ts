@@ -143,6 +143,11 @@ export interface CreateVaultDoors extends PoolDoors {
    * The seat, keys and entry are the ones the proposals are filed with.
    */
   readonly vaultInfo?: VaultInfoRecords;
+  /**
+   * For a vault the company retired and now adopts again, the proposal that retired it: the adoption is made from it,
+   * so it is a new proposal the signers can approve. Absent for a vault never retired.
+   */
+  readonly again?: Hex;
 }
 
 /**
@@ -168,7 +173,7 @@ export interface VaultStartProposals {
    * Asks the service to write the vault's adoption, or with `run` its first secret run, down as carried out, for this
    * seat; it checks the proposal and the chain itself. `run` is the run's public parts, given only once its secret is set.
    */
-  readonly carried?: (proposalId: string, body: { readonly vault: string; readonly filer: string; readonly run?: FirstSecretRunParts }) => Promise<unknown>;
+  readonly carried?: (proposalId: string, body: { readonly vault: string; readonly filer: string; readonly run?: FirstSecretRunParts; readonly again?: string }) => Promise<unknown>;
 }
 
 /**

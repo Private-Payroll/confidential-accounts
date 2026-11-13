@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ContractHistoryEntry } from '../../../src/midnight/contract-history.js';
 import { removalsWhenTheSecretWasSet } from './secret-set-on-the-chain.js';
-import { secretMustChange } from './who-holds-the-vaults-secret.js';
+import { removedSinceSet, secretMustChange } from './who-holds-the-vaults-secret.js';
 
 const bytes = (n: number) => new Uint8Array(32).fill(n);
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -76,5 +76,18 @@ describe('when a vault\'s secret was set, read off the chain\'s history', () => 
   it('REFUSES WHEN THE VAULT\'S HISTORY DOES NOT YET SHOW THE SECRET SET', () => {
     expect(() => removalsWhenTheSecretWasSet(read, { vault: [step('a', 1, 1)], account: [step('p', 2, 10)] }, hex(SECOND)),
       'RED WHEN: a history that has not caught up is answered as a set point').toThrow(/does not yet show/);
+  });
+});
+
+describe('whether the chain has counted a removal since a vault\'s secret was set', () => {
+  it('a removal counted after the secret was set owes the vault a new secret', async () => {
+    expect(await removedSinceSet(2, async () => 1), 'RED WHEN: a signer removed after the vault\'s secret was set is not counted as able to open it').toBe(true);
+  });
+
+  it('no removal since the secret was set owes nothing, and a chain that counted no removal never asks its history', async () => {
+    let asked = 0;
+    expect(await removedSinceSet(2, async () => 2)).toBe(false);
+    expect(await removedSinceSet(0, async () => { asked += 1; return 0; })).toBe(false);
+    expect(asked, 'RED WHEN: a company that never removed a signer has the chain\'s history read for every vault').toBe(0);
   });
 });

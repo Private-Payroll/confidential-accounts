@@ -37,7 +37,9 @@ vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real)
   },
 }));
 
-const { withdrawProposalAction, WITHDRAWN_KINDS } = await import('./withdraw-proposal.js');
+const withdrawModule = await import('./withdraw-proposal.js');
+const { withdrawProposalAction } = withdrawModule;
+const { KINDS_IN_THE_WALLET, NEVER_WITHDRAWN, neverWithdrawn } = await import('../../../../packages/web-shared/src/proposal-kinds-in-the-wallet.js');
 
 const identity = identityFromSecret(newSecret());
 const LABEL = drawCompanyLabel();
@@ -161,6 +163,14 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     /* RED WHEN: a run raised by another seat cannot be withdrawn before its window opens, as the chain allows. */
     expect(await withdrawn('payroll')).toEqual([{ state: 'withdrawn', proposal: 'prp_1' }]);
     expect(sent()).toHaveLength(2);
+  });
+
+  it('a vault\'s retire is withdrawn by the seat that raised it, so a retire nobody will approve does not stand open', async () => {
+    t.opened = opened('retire-vault');
+    t.chain[CHAIN_ID] = held({ raisedHere: true });
+    /* RED WHEN: a retire cannot be withdrawn from the wallet, or is withdrawn under another kind than its record names. */
+    expect(await withdrawn('retire-vault')).toEqual([{ state: 'withdrawn', proposal: 'prp_1' }]);
+    expect(sent()).toEqual([`build cancel ${CHAIN_ID}`, 'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}']);
   });
 
   it('a removal raised elsewhere can be withdrawn through the registered withdrawal', async () => {
@@ -313,6 +323,19 @@ describe('THE KINDS THE WALLET NEVER WITHDRAWS, AND WHAT THE ACTION ASKS THE PAG
     expect(WORDS[`act.withdraw-proposal.why.${key}`]).toMatch(/Nothing was signed or sent\.$/u);
   });
 
+  it('the wallet refuses or sends a withdrawal by the one list of kinds the page offers Withdraw from', async () => {
+    /* RED WHEN: the wallet keeps a list of kinds of its own beside the one the page reads. */
+    expect('WITHDRAWN_KINDS' in withdrawModule).toBe(false);
+    const def = withdrawProposalAction(reach());
+    for (const [named, k] of Object.entries(KINDS_IN_THE_WALLET)) {
+      const refused = await def.check(intent(named), {} as never);
+      /* RED WHEN: the wallet refuses a kind the list says it withdraws, or lets through a kind it never withdraws. */
+      expect(refused === null, named).toBe(!neverWithdrawn(k));
+      /* RED WHEN: the page offers Withdraw on a kind the wallet refuses before it opens anything. */
+      if (k.sealedAs !== undefined && neverWithdrawn(k)) expect(NEVER_WITHDRAWN.has(k.sealedAs), named).toBe(true);
+    }
+  });
+
   it('the withdrawal route is marked as sending only with a proven call, and every word the action uses is written', async () => {
     const route = routeOf(intentShapeOf('withdraw-proposal')!, 'POST', '/api/proposals/prp_1/cancel');
     /* RED WHEN: a withdrawal carrying a proven call is not counted as a send, or one with none is. */
@@ -322,7 +345,7 @@ describe('THE KINDS THE WALLET NEVER WITHDRAWS, AND WHAT THE ACTION ASKS THE PAG
     const keys = [
       def.headline, ...(await def.shown(intent('threshold'))).map((l) => l.key), ...def.checks.map((c) => c.key),
       ...def.steps(intent('threshold')).map((s) => s.title.key),
-      ...Object.values(WITHDRAWN_KINDS).flatMap((k) => ('never' in k ? [`act.withdraw-proposal.why.${k.never}`] : [])),
+      ...Object.values(KINDS_IN_THE_WALLET).flatMap((k) => (k.never === undefined ? [] : [`act.withdraw-proposal.why.${k.never}`])),
       ...['not-a-proposal', 'not-as-shown', 'one-off-held', 'never-pay-key', 'closed', 'started', 'sent-not-yet-seen', 'filed-by-another', 'not-raised-here',
         'raiser-not-read', 'chain-time-not-read', 'started-may-be-paid', 'started-charged', 'clock-ahead', 'may-still-land', 'retirement-filed', 'not-withdrawn', 'may-be-sent', 'not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain',
         'roster-not-opened'].map((k) => `act.withdraw-proposal.why.${k}`),

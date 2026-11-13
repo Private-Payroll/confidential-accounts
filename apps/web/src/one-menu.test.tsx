@@ -58,6 +58,8 @@ const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const SIGNER: Viewer = { signedIn: true, view: VIEWS.company, signs: true };
 const EMPLOYEE: Viewer = { signedIn: true, view: VIEWS.employee, signs: false };
 const VISITOR: Viewer = { signedIn: false, view: VIEWS.employee, signs: false };
+/** Someone whose wallet released read keys for a company on this visit: a reader's page opens for them only. */
+const READER: Viewer = { signedIn: true, view: VIEWS.employee, signs: false, reads: ['x1'] };
 
 /** A company whose records opened, with one of each record, so what a page draws from them is drawn too. */
 const OPEN: Company = {
@@ -84,7 +86,7 @@ const KIT_CODE = walk('packages/ui/src').filter((f) => !/\.test(-support)?\.tsx?
 /** Draw a page in the frame its entry names, for a viewer who may open it, with every value its address stands for filled, and read nothing yet. */
 function drawNow(id: PageId) {
   const page = EVERY_PAGE.find((p) => p.id === id)!;
-  const viewer = [SIGNER, EMPLOYEE, VISITOR].find((v) => mayOpen(page, v))!;
+  const viewer = [SIGNER, EMPLOYEE, VISITOR, READER].find((v) => mayOpen(page, v))!;
   const params = Object.fromEntries([...page.path.matchAll(/:(\w+)/g)].map((m) => [m[1]!, 'x1']));
   window.history.replaceState(null, '', addressOf(id, params));
   const session = {
@@ -226,12 +228,14 @@ describe('one menu, in every file', () => {
    * panel on the vault pages to the setup step that makes it possible, and
    * the way from a company whose creation is not finished, opened from any
    * list of companies, to the step that finishes it, and the way on from the
-   * joining page, once a person has joined or left, to where their view begins.
+   * joining page, once a person has joined or left, to where their view begins,
+   * and the way from a reader's sign-up page to the reader's page once the wallet has given
+   * read keys, and back to the sign-up page when a check of the access gives none.
    */
   it('goes to a page from code only where it is named', () => {
     expect(APP_CODE.filter((f) => GOES.test(f.text) && f.path !== 'apps/web/src/router.tsx').map((f) => f.path).sort()).toEqual([
       'apps/web/src/app.tsx', 'apps/web/src/records/vault-pending.tsx', 'apps/web/src/screens/home.tsx', 'apps/web/src/screens/join.tsx', 'apps/web/src/screens/landing.tsx',
-      'apps/web/src/screens/settings.tsx', 'apps/web/src/setup/asked.ts', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
+      'apps/web/src/screens/reader.tsx', 'apps/web/src/screens/settings.tsx', 'apps/web/src/setup/asked.ts', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
       'apps/web/src/shell/shell.tsx',
     ]);
   });

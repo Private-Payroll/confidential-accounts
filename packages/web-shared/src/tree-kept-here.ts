@@ -122,6 +122,34 @@ export interface DirectoryChangesKeptStore {
 }
 
 /**
+ * **THE RECOVERY WINDOW THIS WALLET READ, AS OF THE LAST RECORDS IT CHECKED** (`head`, `seq`): the length in force
+ * (`seconds`), null when none is in force, or why a version the records name does not open here for want of the company's key (`unread`). Written by the
+ * upkeep each time it reads the window; a recovery, which asks the service nothing, holds the window kept for the very
+ * batch it resumes from.
+ */
+export interface KeptRecoveryWindow {
+  readonly head: Hex;
+  readonly seq: number;
+  readonly seconds: number | null;
+  readonly unread?: string;
+}
+
+/** Where a device keeps the recovery window it read, one company at a time. */
+export interface RecoveryWindowsKeptStore {
+  read(company: string): Promise<KeptRecoveryWindow | null>;
+  write(company: string, kept: KeptRecoveryWindow): Promise<void>;
+}
+
+/** A kept window as read back: believed in its shape only, else read as nothing kept. */
+const keptWindowOf = (x: unknown): KeptRecoveryWindow | null => {
+  const k = x as Partial<KeptRecoveryWindow> | null;
+  if (k === null || typeof k !== 'object' || typeof k.head !== 'string' || !HEAD_HEX.test(k.head) || !Number.isSafeInteger(k.seq)) return null;
+  if (k.unread !== undefined) return typeof k.unread === 'string' ? { head: k.head, seq: k.seq as number, seconds: null, unread: k.unread } : null;
+  return k.seconds === null || (typeof k.seconds === 'number' && Number.isSafeInteger(k.seconds) && k.seconds > 0)
+    ? { head: k.head, seq: k.seq as number, seconds: k.seconds } : null;
+};
+
+/**
  * A kept change as read back: believed in its shape only, and judged like any filing when it is filed again. Only a
  * quorum's retirement is read back: a change of the company's key is never kept or filed again.
  */
@@ -158,7 +186,12 @@ export const treeKeptInMemory = (): TreeKept => {
   const signed = new Map<string, KeptHeader[]>();
   const last = new Map<string, KeptHeader>();
   const changes = new Map<string, KeptDirectoryChange[]>();
+  const windows = new Map<string, KeptRecoveryWindow>();
   return {
+    windows: {
+      read: async (company) => windows.get(company) ?? null,
+      write: async (company, k) => { windows.set(company, k); },
+    },
     changes: {
       keep: async (company, k) => { changes.set(company, inOrder([...(changes.get(company) ?? []).filter((x) => x.signedAt !== k.signedAt), k])); },
       all: async (company) => changes.get(company) ?? [],
@@ -181,6 +214,7 @@ export interface TreeKept {
   readonly checked: CheckedHeadsStore;
   readonly headers: HeadersKeptStore;
   readonly changes: DirectoryChangesKeptStore;
+  readonly windows: RecoveryWindowsKeptStore;
 }
 
 const DATABASE = 'record-tree-kept';
@@ -188,6 +222,7 @@ const HEADS = 'checked-heads';
 const LATEST = 'checked-latest';
 const HEADERS = 'kept-headers';
 const CHANGES = 'kept-directory-changes';
+const WINDOWS = 'kept-recovery-windows';
 const pad = (n: number) => String(n).padStart(12, '0');
 
 /**
@@ -203,9 +238,9 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
   const open = () => new Promise<IDBDatabase>((resolve, reject) => {
     const f = where();
     if (f === null) { reject(new Error('this browser keeps no database')); return; }
-    const req = f.open(DATABASE, 2);
+    const req = f.open(DATABASE, 3);
     req.onupgradeneeded = () => {
-      for (const s of [HEADS, LATEST, HEADERS, CHANGES]) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s);
+      for (const s of [HEADS, LATEST, HEADERS, CHANGES, WINDOWS]) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error('this browser would not open its record of the company\'s records'));
@@ -345,7 +380,22 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
     },
     letGo: (company, v) => editChanges(company, (was) => was.filter((x) => x.signedAt !== v)),
   };
-  return { checked, headers, changes };
+  const windows: RecoveryWindowsKeptStore = {
+    read: async (company) => {
+      try {
+        return keptWindowOf(await step<unknown>([WINDOWS], 'readonly', (tx, done) => {
+          const r = tx.objectStore(WINDOWS).get(company);
+          r.onsuccess = () => done(r.result);
+        }));
+      } catch { return null; /* nothing read is nothing kept: a recovery then holds the longest window the range allows */ }
+    },
+    write: async (company, k) => {
+      try {
+        await step<void>([WINDOWS], 'readwrite', (tx, done) => { tx.objectStore(WINDOWS).put(structuredClone(k), company); done(undefined); });
+      } catch { /* not kept: the window kept before stays, and a recovery from another head holds the longest window the range allows */ }
+    },
+  };
+  return { checked, headers, changes, windows };
 };
 
 /**

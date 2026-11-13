@@ -24,7 +24,7 @@ import { isSignerRole, type Role } from '../../../src/core/roles.js';
 import { rightsScopeOf, seatRightsRecordOf } from '../../../src/core/seat-rights.js';
 import { newSeatBlinding, seatBlinding, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
-import { proveSeatKeys, type SeatInvitation, type SeatProof } from '../../../src/core/seat-invite-proof.js';
+import { proveSeatKeys, type SeatInvitation, type SeatProof, type SeatProofFor } from '../../../src/core/seat-invite-proof.js';
 
 /** The keys a new seat is made of. Public halves leave; the rest never does. */
 export interface NewSeatKeys {
@@ -124,11 +124,12 @@ export async function acceptSeatOnThisDevice(
   /** The person's own wallet key for the company, as their wallet gave it: the key the seat's leaf commits to. */
   walletKey: WalletKey,
   /**
-   * What the invitee's link carried. With it, the keys go out with the proof
-   * every signer's device asks for before it gives this person access; without
-   * it they go out with none, and are refused there.
+   * What the invitee's offer carried, with the sign-in the request is for and
+   * the invitation's id. With it, the keys go out with the proof every signer's
+   * device asks for before it gives this person access; without it they go out
+   * with none, and are refused there.
    */
-  invitation?: SeatInvitation,
+  invitation?: SeatInvitation & SeatProofFor,
   /**
    * The role and vaults the signed invitation offers, where the seat is made after it: the leaf commits to that role's
    * rights on those vaults. Without it, as for a code made before anybody chose a role, the seat is made for every
@@ -187,7 +188,7 @@ export async function acceptSeatOnThisDevice(
     leafCommitment,
   };
   const signer = await doors.publish(invitation
-    ? { ...published, opening, seatProof: proveSeatKeys(invitation, published) }
+    ? { ...published, opening, seatProof: proveSeatKeys(invitation, published, invitation) }
     : { ...published, opening });
 
   if (signer.id !== null) await doors.promote(keys.signingPublicKey, signer.id);

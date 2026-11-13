@@ -33,9 +33,9 @@ describe('THE ROLE ASKED IS ONE A SIGNER\'S SEAT CAN BE GIVEN', () => {
     expect(roleAskedRefusal('initiator', null)).toBeNull();
   });
 
-  it('REFUSES a reader role, naming the removal that comes first and that read access is not on a screen yet, and a role no seat can hold', () => {
+  it('REFUSES a reader role, naming the removal that comes first and where read access is given, and a role no seat can hold', () => {
     /* RED WHEN: a signer's seat is changed into a reader's, which holds no seat on the chain, or the person is sent to a screen that does not exist. */
-    expect(roleAskedRefusal('accountant', 'admin')).toMatch(/hold no seat.*remove them first with Remove\. Giving read access is not on a screen yet$/u);
+    expect(roleAskedRefusal('accountant', 'admin')).toMatch(/hold no seat.*remove them first with Remove\. Read access is given on the Roles tab in Settings$/u);
     expect(roleAskedRefusal('limited', 'admin')).not.toMatch(/\ba (?:accountant|limited)\b/u);
     expect(roleAskedRefusal('owner', 'admin')).toMatch(/not one a seat of a company can hold/u);
   });
@@ -67,27 +67,25 @@ describe('THE ADDRESS GIVEN IS THE ONE THE SEAT WAS INVITED AT, WHERE THE COMPAN
 describe('THE INVITATION AFTER THE REMOVAL IS HELD TO WHAT THE REMOVAL WAS RAISED FOR', () => {
   const kept = withRoleChangeKept({ accounts: {} }, 'acc_1', LEAF.toUpperCase(), 'ABCD', 'approver', LINK.toUpperCase());
   it('the address and role confirmed at the removal are let through', () => {
-    expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'abcd', 'approver', LINK)).toBeNull();
+    expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'abcd', 'approver')).toBeNull();
   });
   it('REFUSES another address or role, and a role change these saved keys did not start', () => {
     /* RED WHEN: the second press invites another person, or at another role, than the removal was raised for. */
-    expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'ef01', 'approver', LINK)).toBe('not-as-started');
-    expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'abcd', 'admin', LINK)).toBe('not-as-started');
+    expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'ef01', 'approver')).toBe('not-as-started');
+    expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'abcd', 'admin')).toBe('not-as-started');
     /* RED WHEN: a wallet that confirmed nothing for the seat invites at the second press on the page's word alone. */
-    expect(keptRoleChangeRefusal(kept, 'acc_2', LEAF, 'abcd', 'approver', LINK)).toBe('not-started-here');
-    expect(keptRoleChangeRefusal({ accounts: {} }, 'acc_1', LEAF, 'abcd', 'approver', LINK)).toBe('not-started-here');
-    /* RED WHEN: a press under another invitation link raises a second invitation for the person, beside one already filed under the first. */
-    expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'abcd', 'approver', '9b'.repeat(32))).toBe('another-link');
+    expect(keptRoleChangeRefusal(kept, 'acc_2', LEAF, 'abcd', 'approver')).toBe('not-started-here');
+    expect(keptRoleChangeRefusal({ accounts: {} }, 'acc_1', LEAF, 'abcd', 'approver')).toBe('not-started-here');
   });
   it('raising the same seat\'s removal again replaces what was kept, and once the invitation is filed what was kept is taken out', () => {
     const again = withRoleChangeKept(kept, 'acc_1', LEAF, 'ef01', 'initiator', LINK);
     /* RED WHEN: a second raise of the same seat's removal keeps a second entry, so the saved keys grow with every press. */
     expect(Object.keys(again.roleChangesKept ?? {})).toHaveLength(1);
-    expect(keptRoleChangeRefusal(again, 'acc_1', LEAF, 'ef01', 'initiator', LINK)).toBeNull();
+    expect(keptRoleChangeRefusal(again, 'acc_1', LEAF, 'ef01', 'initiator')).toBeNull();
     const done = withRoleChangeDone(again, 'acc_1', LEAF.toUpperCase());
     /* RED WHEN: a role change carried to its invitation stays kept for the life of the saved keys. */
     expect(done.roleChangesKept).toEqual({});
-    expect(keptRoleChangeRefusal(done, 'acc_1', LEAF, 'ef01', 'initiator', LINK)).toBe('not-started-here');
+    expect(keptRoleChangeRefusal(done, 'acc_1', LEAF, 'ef01', 'initiator')).toBe('not-started-here');
     expect(withRoleChangeDone({ accounts: {} }, 'acc_1', LEAF)).toEqual({ accounts: {} });
   });
 });

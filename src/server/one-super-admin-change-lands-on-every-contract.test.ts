@@ -21,7 +21,8 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import * as L from '@midnightntwrk/ledger-v9';
 import { identityFromWords, newWords } from 'midnight-identity';
-import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
+import { SUPER_ADMIN_HEADER, superAdminHeaderFor, superAdminRequestBytes } from '../midnight/super-admin-request.js';
 import {
   committeeJoinFor, committeeSignaturesFor, type ChainRead,
 } from 'midnight-identity/profile/committee-sign';
@@ -31,6 +32,12 @@ import {
   approveFromAFile, joinFromAFile, proposalFileRead, proposalFileText, raiseFromTheChain,
   type ProposalFile, type SuperAdminDoors, type SuperAdminSignature,
 } from 'vaults-web-shared/governance-from-the-chain.js';
+import {
+  keepApproval, keepJoin, keepRaisedChange, keptChangeFile, RaiserLeaves, type KeptChange, type SuperAdminService,
+} from 'vaults-web-shared/super-admins-on-the-service.js';
+import { committeeReadsOf } from 'vaults-web-shared/committee-reads.js';
+import { superAdminLedgerOf, type LedgerHere } from 'vaults-web-shared/super-admin-ledger.js';
+import type { KeptSuperAdminChange } from '../core/store.js';
 import { NothingWasSent } from '../core/jobs.js';
 import { readProvenTransaction } from '../wiring/proven-submission.js';
 import { companyVaultRoutes, type CompanyVaultDeps } from './company-vaults.js';
@@ -217,14 +224,24 @@ const walletOf = (chain: Chain, who: ReturnType<typeof person>): SuperAdminDoors
 });
 
 let server: ReturnType<express.Express['listen']>;
+/** While set, the service's chain reads go in pairs: each waits for another, so two requests read everything before either writes. */
+let pairUp = false;
+let waiting: (() => void) | null = null;
+const meet = (): Promise<void> => new Promise<void>((resolve) => {
+  if (waiting === null) { waiting = resolve; return; }
+  const other = waiting;
+  waiting = null;
+  other();
+  resolve();
+});
 let base = '';
 let chain: Chain;
 /** Every update a device asked the service to send, and whether the account read current at the indexer when it asked. */
 let asked: Array<{ address: string; accountReadCurrent: boolean }> = [];
 
-const call = async (path: string, method: 'GET' | 'POST', body?: unknown) => {
+const call = async (path: string, method: 'GET' | 'POST', body?: unknown, headers: Record<string, string> = {}) => {
   const res = await fetch(`${base}${path}`, {
-    method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    method, headers: { 'content-type': 'application/json', ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const json = await res.json() as Record<string, unknown>;
   if (!res.ok) throw new Error(String(json.error));
@@ -248,12 +265,11 @@ const serviceDoor = (raisedAt: () => bigint): NonNullable<SuperAdminDoors['servi
 
 /** A super admin's device: their wallet, the chain at their wallet's indexer, the service. No seat, no records, no directory. */
 const deviceOf = (who: ReturnType<typeof person>, raisedAt: () => bigint): SuperAdminDoors => only('a super admin\'s device', {
-  readers: only('the readers', {
+  chain: committeeReadsOf(only('the readers', {
     runtimeState: { deserialize: (b: Uint8Array) => stateAt(chain, hex(b)) },
     accountLedger: (data: unknown) => data,
-  }),
-  chain: only('the indexer', { contractState: async (address: string) => (chain.indexed(address) === undefined ? null : { serialize: () => bytes(address) }) }),
-  ledger: L as unknown as SuperAdminDoors['ledger'],
+  }), only('the indexer', { contractState: async (address: string) => (chain.indexed(address) === undefined ? null : { serialize: () => bytes(address) }) })),
+  ledger: superAdminLedgerOf(L as unknown as LedgerHere),
   createdByTheCompany: [],
   seats: [],
   wallet: walletOf(chain, who),
@@ -268,14 +284,23 @@ beforeEach(async () => {
   asked = [];
   chain = theChain();
   const kept = new Map<string, Parameters<CompanyVaultDeps['store']['putCommitteeSignatures']>[0]>();
+  let changes: KeptSuperAdminChange[] = [];
   const deps = only('the service\'s doors', {
-    signedIn: ((_req, _res, next) => next()) as express.RequestHandler,
+    signedIn: ((req, _res, next) => {
+      const p = req.headers['x-test-person'];
+      if (typeof p === 'string') (req as { userId?: string }).userId = p;
+      next();
+    }) as express.RequestHandler,
     member: ((_req, _res, next) => next()) as express.RequestHandler,
     store: only('the service\'s store', {
       getAccount: (id: string) => (id === COMPANY_ID ? only('the company as the service keeps it', { id: COMPANY_ID }) : null),
       getCommitteeSignatures: (accountId: string, address: string) => kept.get(`${accountId}/${address}`) ?? null,
       putCommitteeSignatures: (c: Parameters<CompanyVaultDeps['store']['putCommitteeSignatures']>[0]) => { kept.set(`${c.accountId}/${c.address}`, c); },
       listCommitteeSignatures: (accountId: string) => [...kept.values()].filter((c) => c.accountId === accountId),
+      listSuperAdminChanges: (accountId: string) => changes.filter((c) => c.accountId === accountId),
+      setSuperAdminChanges: (accountId: string, now: readonly KeptSuperAdminChange[]) => {
+        changes = [...changes.filter((c) => c.accountId !== accountId), ...now];
+      },
     }),
     company: async (id: string) => (id === COMPANY_ID ? only('the company on the chain', { address: ACCOUNT, seats: 1 }) : null),
     ledger: only('the chain\'s door', {
@@ -289,7 +314,7 @@ beforeEach(async () => {
       },
     }),
     chain: only('the indexer', {
-      contractState: async (address: string) => stateAt(chain, address.toLowerCase()),
+      contractState: async (address: string) => { if (pairUp) await meet(); return stateAt(chain, address.toLowerCase()); },
       accountVaults: async (account: string) => (account.toLowerCase() === ACCOUNT ? chain.vaults : []),
     }),
     readers: only('the readers', { proven: readProvenTransaction }),
@@ -376,5 +401,153 @@ describe('ONE CHANGE OF THE SUPER ADMINS, FROM A SUPER ADMIN\'S DEVICE TO EVERY 
     expect.soft(chain.landed).toEqual([]);
     /* RED WHEN: the service reads a signer, a seat, the signers' thresholds or the directory to judge the request. */
     expect.soft(reached).toEqual([]);
+  });
+});
+
+/**
+ * The company's service as one person's device reaches it for a change it keeps: signed in as that person, and, for a
+ * super admin, carrying their wallet's signed request; with no one named, as a member with no request.
+ */
+const serviceAs = (who: ReturnType<typeof person> | null, user = 'member'): SuperAdminService => {
+  const headers: Record<string, string> = { 'x-test-person': who === null ? user : `person-${keyOf(who).value.slice(0, 8)}` };
+  if (who !== null) {
+    const signature = L.signData(committeeSigningKeyFor(who, LABEL) as never, superAdminRequestBytes(COMPANY_ID, headers['x-test-person']!, ACCOUNT)).value;
+    headers[SUPER_ADMIN_HEADER] = superAdminHeaderFor({ key: keyOf(who), signature });
+  }
+  return {
+    raise: async (body) => call(`/api/accounts/${COMPANY_ID}/committee-change/raise`, 'POST', body, headers),
+    join: async (body) => call(`/api/accounts/${COMPANY_ID}/committee-change/join`, 'POST', body, headers),
+    kept: async () => (await call(`/api/accounts/${COMPANY_ID}/committee-change/signatures`, 'GET', undefined, headers)).changes as KeptChange[],
+    keepSignatures: async (body) => call(`/api/accounts/${COMPANY_ID}/committee-change/signatures`, 'POST', {
+      to: body.to, signatures: body.signatures.map((x) => ({ address: x.address, counter: x.counter, index: x.index, signature: x.signature })),
+    }, headers),
+  };
+};
+const member = serviceAs(null);
+const keptNow = async (chainId?: string): Promise<ProposalFile> => {
+  const all = await member.kept();
+  const one = chainId === undefined ? (all.length === 1 ? all[0] : undefined) : all.find((c) => c.chainId === chainId);
+  if (one === undefined) throw new Error(`the service keeps ${all.length} changes, and not the one asked for`);
+  return keptChangeFile(one, ACCOUNT);
+};
+const raisedBy = async (who: ReturnType<typeof person>, to: { committee: Key[]; threshold: number }): Promise<ProposalFile> => {
+  const raised = await raiseFromTheChain(deviceOf(who, () => 3n), {
+    change: { kind: 'super-admins', committee: to.committee, threshold: to.threshold }, company: LABEL, account: ACCOUNT, summary: '',
+  });
+  await keepRaisedChange(deviceOf(who, () => 3n), serviceAs(who), raised.file);
+  return raised.file;
+};
+const dave = person();
+const D = keyOf(dave);
+
+describe('A CHANGE OF THE SUPER ADMINS CARRIED BY THE SERVICE, WITH NO FILE PASSED BY HAND', () => {
+  it('raised by Alice, joined by Carol and approved by Bob and Alice, each reading it from the service, it lands on every contract', async () => {
+    const at = () => 3n;
+    const raised = await raisedBy(alice, TARGET);
+    const forCarol = await keptNow();
+    expect.soft(forCarol.chainId).toBe(raised.chainId);
+    await keepJoin(serviceAs(carol), forCarol, await joinFromAFile(deviceOf(carol, at), forCarol), C);
+    const forBob = await keptNow();
+    expect.soft(forBob.joined!.map((j) => j.key.value)).toEqual([C.value]);
+    const byBob = await approveFromAFile(deviceOf(bob, at), forBob);
+    await keepApproval(serviceAs(bob), forBob, byBob.file);
+    expect.soft(chain.landed).toEqual([]);
+    /* RED WHEN: Bob's signatures do not reach Alice's device through the service: one signature of two never sends. */
+    const byAlice = await approveFromAFile(deviceOf(alice, at), await keptNow());
+    chain.block();
+    for (const [address, counter] of BEFORE) {
+      const h = chain.onChain.get(address)!;
+      expect.soft([address, sameHeld(h, TARGET), h.counter]).toEqual([address, true, counter + 1n]);
+    }
+    expect.soft(byAlice.done).toBe(true);
+    expect.soft(reached).toEqual([]);
+  });
+
+  it('TWO SUPER ADMINS RAISE AT ONE COUNTER: BOTH CHANGES ARE KEPT AND LISTED, AND THE LATER ONE IS APPROVED AND LANDS FROM A SECOND PAGE', async () => {
+    const first = await raisedBy(alice, TARGET);
+    /* Bob raises after Alice: the two of them, one signature needed. */
+    const ONE_OF_TWO = { committee: [A, B], threshold: 1 };
+    const later = await raisedBy(bob, ONE_OF_TWO);
+    /* RED WHEN: a later raise at the counter is hidden behind the first, or replaces another raiser's change. */
+    const kept = await member.kept();
+    expect.soft(kept.map((c) => [c.chainId, c.raisedBy.key.value])).toEqual([[first.chainId, A.value], [later.chainId, B.value]]);
+    /* Bob's page approves the change he raised; Alice's page, a second one, finds it listed, approves it and sends it. */
+    const forBob = await keptNow(later.chainId);
+    await keepApproval(serviceAs(bob), forBob, (await approveFromAFile(deviceOf(bob, () => 3n), forBob)).file);
+    const forAlice = await keptNow(later.chainId);
+    const byAlice = await approveFromAFile(deviceOf(alice, () => 3n), forAlice);
+    chain.block();
+    for (const [address, counter] of BEFORE) {
+      const h = chain.onChain.get(address)!;
+      expect.soft([address, sameHeld(h, ONE_OF_TWO), h.counter]).toEqual([address, true, counter + 1n]);
+    }
+    expect.soft(byAlice.done).toBe(true);
+  });
+
+  it('A RAISE SIGNED BY A KEY NOT ON THE CHAIN\'S COMMITTEE KEEPS NOTHING', async () => {
+    const raised = await raiseFromTheChain(deviceOf(alice, () => 3n), {
+      change: { kind: 'super-admins', committee: TARGET.committee, threshold: TARGET.threshold }, company: LABEL, account: ACCOUNT, summary: '',
+    });
+    /* Carol's key is on the new committee, so her wallet signs the change; it is not on the account's committee now. */
+    const byCarol = keepRaisedChange(deviceOf(carol, () => 3n), serviceAs(carol), raised.file);
+    /* RED WHEN: the service keeps a change no super admin on the chain's committee signed. */
+    await expect.soft(byCarol).rejects.toThrow(/not on the committee holding the company's account|not a super admin|no change kept here names it/);
+    expect.soft(await member.kept()).toEqual([]);
+  });
+
+  it('A RAISE IS KEPT ONLY FROM ITS RAISER\'S OWN REQUEST: A MEMBER RE-POSTING IT WIPES NOTHING, AND AN OLDER RAISE DOES NOT DISPLACE A NEWER ONE', async () => {
+    const older = await raisedBy(alice, { committee: [A, B], threshold: 1 });
+    const olderKept = (await member.kept())[0]!;
+    const newer = await raisedBy(alice, TARGET);
+    await keepJoin(serviceAs(carol), await keptNow(newer.chainId), await joinFromAFile(deviceOf(carol, () => 3n), await keptNow(newer.chainId)), C);
+    const newerKept = (await member.kept()).find((c) => c.chainId === newer.chainId)!;
+    const { chainId: _n, joined: _j, ...again } = newerKept;
+    const { chainId: _o, joined: _k, ...olderAgain } = olderKept;
+    /* RED WHEN: a member with no request of the raiser's own keeps a raise, wiping the joins kept with it. */
+    await expect.soft(member.raise(again)).rejects.toThrow(/raiser's own signed request/);
+    /* RED WHEN: another super admin posts the raiser's older raise and it displaces the newer one. */
+    await expect.soft(serviceAs(bob).raise(olderAgain)).rejects.toThrow(/raiser's own signed request/);
+    /* The raiser posting a change already kept changes nothing: its joins stay. */
+    await serviceAs(alice).raise(again);
+    const now = await member.kept();
+    expect.soft(now.map((c) => [c.chainId, c.joined.map((j) => j.key.value)])).toEqual([[newer.chainId, [C.value]]]);
+    expect.soft(older.chainId).not.toBe(newer.chainId);
+  });
+
+  it('TWO JOINING KEYS SIGNING AT ONCE ARE BOTH KEPT', async () => {
+    const both = await raisedBy(alice, { committee: [A, B, C, D], threshold: 2 });
+    const file = await keptNow(both.chainId);
+    const [byCarol, byDave] = await Promise.all([joinFromAFile(deviceOf(carol, () => 3n), file), joinFromAFile(deviceOf(dave, () => 3n), file)]);
+    /* RED WHEN: one join written over another, read before either was kept, drops it. */
+    pairUp = true;
+    await Promise.all([keepJoin(serviceAs(carol), file, byCarol, C), keepJoin(serviceAs(dave), file, byDave, D)]).finally(() => { pairUp = false; });
+    expect.soft((await keptNow(both.chainId)).joined!.map((j) => j.key.value).sort()).toEqual([C.value, D.value].sort());
+  });
+
+  it('A JOIN FROM A KEY THE KEPT CHANGE DOES NOT ADD KEEPS NOTHING', async () => {
+    const raised = await raisedBy(alice, TARGET);
+    const file = await keptNow(raised.chainId);
+    const joinedByCarol = await joinFromAFile(deviceOf(carol, () => 3n), file);
+    const signature = joinedByCarol.joined![0]!.signature;
+    /* Bob stays on the committee, so the change does not add his key; a stranger's key is not in it at all. */
+    const stranger = keyOf(person());
+    for (const key of [B, stranger]) {
+      /* RED WHEN: the service keeps a joining signature from a key the change does not add. */
+      await expect.soft(member.join({ chainId: file.chainId, joined: { key, signature } })).rejects.toThrow(/not one the kept change adds/);
+    }
+    /* RED WHEN: a signature that is not the joining key's own is kept. */
+    await expect.soft(member.join({ chainId: file.chainId, joined: { key: C, signature: file.chainId.repeat(2) } })).rejects.toThrow(/not the joining key's own/);
+    expect.soft((await keptNow()).joined).toEqual([]);
+  });
+
+  it('a change that takes the raiser\'s own key off is refused on the raiser\'s device, saying another super admin raises it', async () => {
+    const raised = await raiseFromTheChain(deviceOf(alice, () => 3n), {
+      change: { kind: 'super-admins', committee: [B, C], threshold: 2 }, company: LABEL, account: ACCOUNT, summary: '',
+    });
+    /* RED WHEN: a raiser leaving the committee is asked to sign, or the refusal does not say what clears it. */
+    const refused = keepRaisedChange(deviceOf(alice, () => 3n), serviceAs(alice), raised.file);
+    await expect.soft(refused).rejects.toBeInstanceOf(RaiserLeaves);
+    await expect.soft(refused).rejects.toThrow(/another super admin raises it/);
+    expect.soft(await member.kept()).toEqual([]);
   });
 });

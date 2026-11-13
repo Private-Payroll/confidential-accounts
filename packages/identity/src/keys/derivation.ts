@@ -302,6 +302,24 @@ export const Purposes = {
    * rather than changing one.
    */
   Maintenance: 'maintenance',
+  /**
+   * THE ROOT OF THE KEY A PERSON READS A COMPANY'S RECORDS WITH WHEN THEY ARE ONE OF ITS READERS.
+   *
+   * A company's read grants wrap the keys of the records a reader's role reads to this key's public half; the key is
+   * an expansion of this parent under the company's label (`join-code-reader-key.ts` in the wallet), so it differs per
+   * company. **ONLY ITS PUBLIC HALF EVER LEAVES THE WALLET**, in the reader's join code; the wallet opens the wraps
+   * itself and hands a page only the keys the grant in force names.
+   *
+   * WHY NOT `Purposes.Unlock`, AT ANY INDEX. The unlock key is RELEASED to the company's page, and that purpose has one
+   * job and one index. A reader key a page could compute, or that shared a parent with a released key, would open every
+   * grant ever wrapped to that reader, with no passkey and no way to change it. **A different job gets a different
+   * parent.**
+   *
+   * ADDITIVE, AND THAT IS THE ONLY REASON IT IS ALLOWED HERE -- the same sentence every purpose after the first four
+   * was added under. The nine purposes above are untouched, so every credential already in existence derives to the
+   * same bytes; `derivation.portability.test.ts` ADDS a vector rather than changing one.
+   */
+  Reader: 'reader',
 } as const;
 
 export type Purpose = (typeof Purposes)[keyof typeof Purposes];

@@ -12,9 +12,10 @@ import type { AddSignerByAddress } from '../../../src/core/proposal-filing.js';
 import { assetOfLeg, formOfLeg, isRunLeg, legEmployees, listOfRun } from '../../../src/core/run-legs.js';
 import type { PayrollRun, Proposal, SealedProposal } from '../../../src/core/types.js';
 import type { ProposalAsked } from './proposal-in-the-wallet.js';
+import { WALLET_KIND } from './proposal-kinds-in-the-wallet.js';
 import type { OneOffOnTheWire } from './vault-worker-client.js';
 
-/** What the wallet is asked to check before it approves a proposal, under the names its approval reads them by. A change of policy names which change under `kind`. */
+/** What the wallet is asked to check before it approves a proposal, under the names its approval reads them by. A change of policy also names the wallet's kind for it under `kind`. */
 export type ProposalAsks = ProposalAsked;
 
 /**
@@ -25,13 +26,10 @@ export const ASKS_UNREAD = { notRead: 'not-read', notRaised: 'not-raised' } as c
 export type AsksUnread = (typeof ASKS_UNREAD)[keyof typeof ASKS_UNREAD];
 
 /**
- * The words a proposal's asks are read and written in, compared and sent, never shown: the kind a change of policy is
- * listed as, the kinds it is sealed as with the name the wallet approves each under, the fields of a sealed proposal's
- * body the asks are read from, and the wallet's words for how a leg pays.
+ * The words a proposal's asks are read and written in, compared and sent, never shown: the fields of a sealed
+ * proposal's body the asks are read from, and the wallet's words for how a leg pays.
  */
 const ASKED = {
-  changePolicy: 'change-policy',
-  policySealedAs: { 'set-spending-policy': 'spending-policy', 'set-policy-bar': 'policy-bar' } as Readonly<Record<string, string>>,
   body: { oneOff: 'oneOff', leaf: 'leaf', newThreshold: 'newThreshold', vault: 'vault', newPolicyBar: 'newPolicyBar', invited: 'invited' },
   form: { private: 'private', public: 'public' },
 } as const;
@@ -151,15 +149,13 @@ export async function proposalAsksHere(here: { readonly rec: SealedProposal; rea
     case 'remove-signer': return asked(removalAsks(body));
     case 'set-threshold': return asked(threshold === null ? undefined : { threshold });
     case 'set-vault-threshold': return asked(threshold === null || vault === null ? undefined : { threshold, vault });
-    case 'set-spending-policy': return asked(vault === null ? undefined : { kind: ASKED.policySealedAs[kind]!, vault });
+    case 'set-spending-policy': return asked(vault === null ? undefined : { kind: WALLET_KIND[kind]!, vault });
     case 'set-policy-bar': {
       const bar = wholeOf(body[ASKED.body.newPolicyBar]);
-      return asked(bar === null ? undefined : { kind: ASKED.policySealedAs[kind]!, bar });
+      return asked(bar === null ? undefined : { kind: WALLET_KIND[kind]!, bar });
     }
     case 'adopt-vault': case 'vault-secret': return asked(vault === null ? undefined : { vault });
+    case 'retire-vault': return asked(vault === null ? undefined : { kind: WALLET_KIND[kind]!, vault });
     default: return null;
   }
 }
-
-/** The kind a proposal is listed as: a change to a spending policy or to the approvals one needs is `change-policy`, whichever it is sealed as. */
-export const listedKindOf = <K extends string>(kind: K): K | typeof ASKED.changePolicy => ((kind as string) in ASKED.policySealedAs ? ASKED.changePolicy : kind);

@@ -5,6 +5,8 @@ import {
 import type { ActCall, ActEnded, ActKeep, ActRelay, ActStop } from './channel.js';
 import { readKeysRead, readSealedKeyring } from './unlock.js';
 import { ACT_INTENTS, type IntentShape } from './act-intents.js';
+import { READER_KEYS_INTENT, readReleasedReadKeys } from './read-keys-release.js';
+export { READER_KEYS_INTENT, readReleasedReadKeys } from './read-keys-release.js';
 export { routeOf, sendsIn } from './act-intents.js';
 export { intentShapeOf } from './act-shape.js';
 
@@ -12,7 +14,8 @@ export { intentShapeOf } from './act-shape.js';
  * READING WHAT AN ACTION HANDS THE PAGE. The messages a wallet sends while it
  * runs an action, and the answer it ends on, read by the page that relays
  * them: a transaction, saved keys sealed again, a call to the service, and how
- * the action ended. The wallet's own channel (`channel.ts`) reads its outgoing
+ * the action ended, with the read keys a reader's wallet hands over when that
+ * action is `reader-keys` and it ended done. The wallet's own channel (`channel.ts`) reads its outgoing
  * messages with the same readers before it sends them.
  *
  * They are their own module, apart from the channel's names and limits, because
@@ -119,7 +122,10 @@ export function readActEnded(raw: unknown, expecting: { readonly nonce: string; 
   if (outcome === null) return null;
   const keys = m['keys'] === undefined ? undefined : readKeysRead(m['keys']);
   if (keys === null || (keys !== undefined && (Object.keys(keys.viewing).length > 1 || keys.resealed !== null))) return null;
-  const told = { ...(outcome === undefined ? {} : { outcome }), ...(keys === undefined ? {} : { keys }) };
+  const readKeys = m['readKeys'] === undefined ? undefined
+    : expecting.intent === READER_KEYS_INTENT && m['ended'] === 'done' ? readReleasedReadKeys(m['readKeys']) : null;
+  if (readKeys === null) return null;
+  const told = { ...(outcome === undefined ? {} : { outcome }), ...(keys === undefined ? {} : { keys }), ...(readKeys === undefined ? {} : { readKeys }) };
   if (m['schema'] !== ACT_ENDED_SCHEMA || m['nonce'] !== expecting.nonce || m['intent'] !== expecting.intent) return null;
   if (!countFrom1(m['steps'], MOST_ACT_STEPS) || !countFrom1(m['step'], m['steps'] as number)) return null;
   const relayed = m['relayed'];

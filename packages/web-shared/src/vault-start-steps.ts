@@ -23,7 +23,7 @@ import { sealingWith } from '../../../src/core/company-key.js';
 /* ------------------------------------------------------------ starting a vault */
 
 export const ZERO_HEX = '00'.repeat(32);
-const randomHex = (): string => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join('');
+export const randomHex = (): string => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 /** One block's view of the vault and the company's account, read on this device at the indexer the person's own wallet names. */
 type ChainAtTheStart = Awaited<ReturnType<typeof chainAtOneBlockHere>>;
@@ -68,6 +68,7 @@ async function standingIfRead(
       ...(secret?.previous === undefined ? {} : { previous: secret.previous }),
       ...(secret?.earlier === undefined ? {} : { earlier: secret.earlier }),
       ...(window === undefined ? {} : { window: { opensAt: window.opensAt.toString(), closesAt: window.closesAt.toString() } }),
+      ...(doors.again === undefined ? {} : { again: doors.again }),
     });
   } catch (e) {
     throw new VaultStartOwed(vault, `where its start stands could not be worked out on this device (${(e as Error)?.message ?? e}).`, START_READ_STOP.standingUnread);
@@ -244,7 +245,8 @@ export async function carriedOutWrittenDown(doors: CreateVaultDoors, vault: Hex,
   try {
     const open = (await p.service.sealedProposals(p.accountId))
       .filter((r) => r.accountId === p.accountId && String(r.chainId).toLowerCase() === chainId && (r.status === 'open' || r.status === 'approved'));
-    for (const r of open) await p.carried(r.id, { vault, filer, ...(round.parts === undefined ? {} : { run: round.parts }) });
+    const again = round.parts === undefined && doors.again !== undefined ? { again: doors.again } : {};
+    for (const r of open) await p.carried(r.id, { vault, filer, ...(round.parts === undefined ? {} : { run: round.parts }), ...again });
     return null;
   } catch (e) {
     return `The vault's ${round.called} is carried out on the chain, and the company's proposals still show it open: `
@@ -517,7 +519,8 @@ export const adoptionRound = (doors: CreateVaultDoors, vault: Hex, a: StartStand
   what: 'raising its adoption', called: 'adoption', chainId: a.proposal, digest: a.payload, salt: a.salt,
   seal: (key) => sealGovernanceProposal({
     accountId: doors.proposals.accountId, viewingKey: key, kind: ADOPT_VAULT, summary, noVault: a.named as Hex,
-    body: { vault }, change: { asset: NO_ASSET, amount: 0n, batchDigest: ZERO_HEX as Hex, salt: a.salt as Hex },
+    body: { vault, ...(doors.again === undefined ? {} : { again: doors.again }) },
+    change: { asset: NO_ASSET, amount: 0n, batchDigest: ZERO_HEX as Hex, salt: a.salt as Hex },
     proposedBy: doors.me.signerId,
   }),
 });

@@ -55,7 +55,7 @@ import {
   proposalEntry, recordKeyOf, signManifestEntry, supersededSaid, WITNESSED_AS,
   type BatchHolders, type DirectoryAsAnchored, type ManifestEntry, type ManifestEntryBody,
 } from '../../../src/midnight/record-manifest.js';
-import { filingRefusalOf, mayFile, type AccountHeld, type DirectoryFiling, type QuorumChange, type SignedChange } from '../../../src/midnight/seat-directory.js';
+import { filingRefusalOf, mayFile, mayFileTheRecord, type AccountHeld, type DirectoryFiling, type QuorumChange, type SignedChange } from '../../../src/midnight/seat-directory.js';
 import {
   directoryNotYetAnchored, pastTheRaisedBoundary, type DirectoryBelieved, type HeldAsAnchored, type LeavingBoundaries, type RecordsHeldHere,
 } from './vault-page-doors.js';
@@ -253,7 +253,7 @@ const ANCHOR_ATTEMPTS = 3;
  * was served is replayed up to the version anchored with the batch, and every
  * version of it must be the bytes the anchor holds for that version. The seat
  * holding the key is then judged by the role it held and whether it had
- * retired, at that version: what a seat may file is `mayFile`'s. The chain's
+ * retired, at that version: what a seat may file is `mayFileTheRecord`'s. The chain's
  * own check when the batch landed is only that a signer sent the call; nothing
  * on chain ties the header's filing key to that signer. Each version of that
  * directory is counted against who held the account as the batch that first
@@ -272,7 +272,7 @@ export const seatAsAnchoredHere = (
   if (seat === undefined) return null;
   const may = mayFile(seat);
   if (entry === undefined) return seat.retired === null && may.includes(WITNESSED_AS) ? seat.seat : null;
-  if (!may.includes(filedKindOfEntry(entry))) return null;
+  if (!mayFileTheRecord(seat, filedKindOfEntry(entry), boundaryKeyOfEntry(entry))) return null;
   if (seat.retired === null) return seat.seat;
   const last = seat.retired[boundaryKeyOfEntry(entry)];
   return last !== undefined && entry.version <= last ? seat.seat : null;

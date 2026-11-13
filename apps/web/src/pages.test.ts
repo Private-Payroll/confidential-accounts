@@ -48,28 +48,34 @@ const VIEWERS: Record<string, Viewer> = {
   employee: { signedIn: true, view: viewFor(false, VIEWS.company), signs: false },
   /* Not a state the application makes (a person who signs for nothing is always shown their pay), but the rules must hold for it too. */
   nonSignerInTheCompanyView: { signedIn: true, view: VIEWS.company, signs: false },
+  /* Someone whose wallet released read keys for a company on this visit: a reader, who signs for nothing, and a signer who also reads another company. */
+  reader: { signedIn: true, view: viewFor(false, VIEWS.company), signs: false, reads: ['c-9'] },
+  signerWhoReads: { signedIn: true, view: VIEWS.company, signs: true, reads: ['c-9'] },
 };
 
 /** Who may see each audience, written out by hand rather than worked out, so the rule is compared with the promise. */
 const WHO_SEES: Record<Page['audience'], string[]> = {
-  everyone: ['visitor', 'signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView'],
+  everyone: ['visitor', 'signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView', 'reader', 'signerWhoReads'],
   visitor: ['visitor'],
-  'signed-in': ['signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView'],
-  company: ['signerInTheCompanyView'],
-  employee: ['signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView'],
+  'signed-in': ['signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView', 'reader', 'signerWhoReads'],
+  company: ['signerInTheCompanyView', 'signerWhoReads'],
+  employee: ['signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView', 'reader'],
+  reader: ['reader', 'signerWhoReads'],
 };
 
 describe('every page the design names is in the list', () => {
   /*
    * RED WHEN: a page the design names is dropped from the list, renamed, moved
    * to another view or another menu group, or the menu's order within a group
-   * changes. The design's page map and left menus, section 2, written out.
+   * changes, which includes the order of Settings' tabs (Company, Signers,
+   * Roles and permissions, Super admins, Recovery, Service, then Appearance and
+   * Language). The design's page map and left menus, section 2, written out.
    */
   it('has the design\'s pages, views and menu groups', () => {
     expect(EVERY_PAGE.filter((p) => p.holdsLinkToken === true).map((p) => p.id)).toEqual(['join']);
     const shape = EVERY_PAGE.map((p) => [p.id, p.audience, p.group ?? outerOf(p) ?? '-']);
     expect(shape).toEqual([
-      ['landing', 'everyone', '-'], ['join', 'everyone', '-'], ['setup', 'signed-in', '-'],
+      ['landing', 'everyone', '-'], ['join', 'everyone', '-'], ['readerSignUp', 'everyone', '-'], ['reader', 'reader', '-'], ['superAdminsByLink', 'signed-in', '-'], ['setup', 'signed-in', '-'],
       ['home', 'company', 'top'], ['proposals', 'company', 'top'],
       ['payroll', 'company', 'money'], ['run', 'company', 'payroll'], ['vaults', 'company', 'money'], ['vault', 'company', 'vaults'],
       ['transactions', 'company', 'money'], ['reports', 'company', 'money'],
@@ -77,8 +83,9 @@ describe('every page the design names is in the list', () => {
       ['disclosures', 'company', 'compliance'], ['policies', 'company', 'compliance'], ['activity', 'company', 'compliance'],
       ['apps', 'company', 'bottom'], ['settings', 'company', 'bottom'],
       ['settingsCompany', 'company', 'settings'], ['settingsSigners', 'company', 'settings'], ['settingsRoles', 'company', 'settings'],
+      ['settingsSuperAdmins', 'company', 'settings'], ['settingsRecovery', 'company', 'settings'], ['settingsService', 'company', 'settings'],
       ['settingsAppearance', 'company', 'settings'], ['settingsLanguage', 'company', 'settings'], ['settingsAccount', 'company', 'settings'],
-      ['settingsNotifications', 'company', 'settings'], ['settingsBilling', 'company', 'settings'], ['settingsRecovery', 'company', 'settings'],
+      ['settingsNotifications', 'company', 'settings'], ['settingsBilling', 'company', 'settings'],
       ['payHome', 'employee', 'top'], ['payslips', 'employee', 'top'], ['paymentsReceived', 'employee', 'top'], ['myDetails', 'employee', 'top'],
       ['documents', 'employee', 'top'], ['paySettings', 'employee', 'bottom'],
       ['payAppearance', 'employee', 'paySettings'], ['payLanguage', 'employee', 'paySettings'], ['payAccount', 'employee', 'paySettings'],
@@ -89,8 +96,8 @@ describe('every page the design names is in the list', () => {
   /* RED WHEN: a page that is built is shown as Coming soon, or a page not built yet is shown as working. */
   it('builds the frame\'s pages and the company pages that read, and shows every other page Coming soon', () => {
     expect(EVERY_PAGE.filter(isBuilt).map((p) => p.id)).toEqual([
-      'landing', 'join', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'apps',
-      'settings', 'settingsSigners', 'settingsAppearance', 'settingsLanguage', 'settingsRecovery', 'paySettings', 'payAppearance', 'payLanguage',
+      'landing', 'join', 'readerSignUp', 'reader', 'superAdminsByLink', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'policies', 'apps',
+      'settings', 'settingsSigners', 'settingsRoles', 'settingsSuperAdmins', 'settingsRecovery', 'settingsService', 'settingsAppearance', 'settingsLanguage', 'paySettings', 'payAppearance', 'payLanguage',
     ]);
   });
 
@@ -101,7 +108,7 @@ describe('every page the design names is in the list', () => {
    */
   it('loads every company page and the setup wizard when it is first opened', async () => {
     const onDemand = EVERY_PAGE.filter((p) => isBuilt(p) && typeof (p.shows.screen as { load?: unknown }).load === 'function').map((p) => p.id);
-    expect(onDemand).toEqual(['join', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'apps', 'settingsSigners', 'settingsRecovery']);
+    expect(onDemand).toEqual(['join', 'readerSignUp', 'reader', 'superAdminsByLink', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'policies', 'apps', 'settingsSigners', 'settingsRoles', 'settingsSuperAdmins', 'settingsRecovery', 'settingsService']);
     for (const id of onDemand) {
       const screen = PAGES[id].shows as { screen: { load: () => Promise<unknown>; screenName: string } };
       expect(typeof await screen.screen.load(), id).toBe('function');
@@ -270,7 +277,7 @@ describe('no two pages share an address or a shortcut', () => {
    */
   it('opens a page that stands for a value only with one, and never by name', () => {
     const viewer = VIEWERS.signerInTheCompanyView!;
-    expect(EVERY_PAGE.filter((p) => !reachedByName(p)).map((p) => [p.id, valuesOf(p)])).toEqual([['join', ['id']], ['run', ['run']], ['vault', ['vault']]]);
+    expect(EVERY_PAGE.filter((p) => !reachedByName(p)).map((p) => [p.id, valuesOf(p)])).toEqual([['join', ['id']], ['readerSignUp', ['id', 'label', 'account']], ['reader', ['id', 'label', 'account']], ['superAdminsByLink', ['id', 'label', 'account']], ['run', ['run']], ['vault', ['vault']]]);
     expect(resolve('/payroll/', viewer).of === RESOLVED.page ? (resolve('/payroll/', viewer) as { id: PageId }).id : null).toBe('payroll');
     expect(resolve('/payroll/r-1/more', viewer).of).toBe(RESOLVED.nothing);
     expect(() => addressOf('run')).toThrow();
@@ -347,6 +354,22 @@ describe('no page opens for a person who may not see it', () => {
       expect(listed, who).toEqual(EVERY_PAGE.filter((p) => p.group !== null && mayOpen(p, viewer)).map((p) => p.id));
     }
     expect(menuFor(VIEWERS.employee!).flatMap((g) => g.pages.map((p) => p.id))).toEqual(['payHome', 'payslips', 'paymentsReceived', 'myDetails', 'documents', 'paySettings']);
+  });
+
+  /*
+   * RED WHEN: the reader's page opens for a person whose wallet released no read keys on this visit, for a visitor, or after the set of
+   * companies read is empty again; or a reader with keys is shown the company's own pages or kept out of the sign-up page.
+   */
+  it('opens the reader\'s page only while the wallet has released read keys on this visit, and never to a visitor', () => {
+    const reader = PAGES.reader;
+    const base = { signedIn: true, view: VIEWS.employee, signs: false } as const;
+    expect(mayOpen(reader, base)).toBe(false);
+    expect(mayOpen(reader, { ...base, reads: [] })).toBe(false);
+    expect(mayOpen(reader, { ...base, reads: ['c-9'] })).toBe(true);
+    expect(mayOpen(reader, { ...base, signedIn: false, reads: ['c-9'] })).toBe(false);
+    expect(mayOpen(PAGES.home, { ...base, reads: ['c-9'] })).toBe(false);
+    expect(mayOpen(PAGES.readerSignUp, { ...base, signedIn: false })).toBe(true);
+    expect(PAGES.reader.group).toBeNull();
   });
 
   /* RED WHEN: a page's own shortcut goes to it for a viewer who may not open it, or does not go to it for one who may. */

@@ -10,37 +10,24 @@ import type { Committee } from '../../../src/midnight/vault-committee.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
-import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire, TransactionRead } from './vault-builder.js';
+import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, TransactionRead } from './vault-builder.js';
+import type { SecretRunOnTheWire } from './vault-secret-built.js';
 import type { OwnChainCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import type { VaultCallOnChain } from '../../../src/midnight/note-index.js';
-import type { RoundMadeOf, RoundStanding } from '../../../src/midnight/vault-start.js';
+import type { StartStandingOnTheWire } from './vault-worker-start.js';
+import type { StepOnTheWire, VaultRebuildAsked, VaultRebuilt } from './vault-rebuild-wire.js';
+import { superAdminWorkerOver, type SuperAdminAnswer, type SuperAdminAsk, type SuperAdminWorker } from './super-admin-asks.js';
+import type { ForgetUnshieldedAsk, RetireAsk } from './vault-retire-built.js';
 import { PROOF_CEILING_MS } from './proof-ceiling.js';
 import { FAILED_BECAUSE, VaultAskFailed, type VaultAskFailure } from './vault-ask-failed.js';
 import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
 
-export type { SecretRunOnTheWire } from './vault-builder.js';
+export type { SecretRunOnTheWire } from './vault-secret-built.js';
+export type { StartStandingOnTheWire };
+export type { VaultRebuildAsked, VaultRebuilt } from './vault-rebuild-wire.js';
 
-/**
- * **HOW FAR A VAULT'S START HAS GOT**, as the worker read it off the account's
- * and the vault's ledgers at one block: adopted or not, where the adoption round
- * stands, and, once the company's record of the secret has been read, where the
- * first secret run, the secret and each sealed copy stand.
- */
-export interface StartStandingOnTheWire {
-  readonly adopted: boolean; readonly removals: number;
-  readonly adoption: RoundStanding & RoundMadeOf;
-  readonly secret?: {
-    readonly set: boolean;
-    readonly another: boolean; readonly held: string; readonly landed: readonly string[]; readonly earlier?: { readonly secret: string } | { readonly unheld: true } | null;
-    readonly rootIsThisRuns: boolean;
-    readonly run: (RoundStanding & RoundMadeOf & { readonly opensAt: string; readonly closesAt: string; readonly inWindow: boolean; readonly beforeARemoval: boolean }) | null;
-    readonly raise?: RoundMadeOf & { readonly proposal: string; readonly opensAt: string; readonly closesAt: string };
-    readonly written: readonly boolean[];
-    readonly started: boolean;
-  };
-}
 import type {
-  AnchorPlacement, AnchorsOnChain, GovernanceOnTheWire, GovernedCallOrder, HeadStepAsked, OpenedRound, ProposalIdentity, RoundOnChain, SignerMaterial, SpendingPolicyKeys, VouchedRunOnTheWire,
+  AnchorPlacement, AnchorsOnChain, GovernedCallOrder, HeadStepAsked, OpenedRound, ProposalIdentity, RoundChangeOnTheWire, RoundOnChain, SignerMaterial, SpendingPolicyKeys, VouchedRunOnTheWire,
 } from './governed-call-builder.js';
 import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
@@ -108,7 +95,7 @@ export type VaultAsk =
    * exactly that committee, this build's circuits, nothing written.
    */
   | { id: number; network: string; ask: 'born-held-vault'; account: string; holders: Committee }
-  | { id: number; network: string; ask: 'vault-as-deployed'; vault: string; account: string; holders: Committee; indexer: { indexerUri: string; indexerWsUri: string } }
+  | { id: number; network: string; ask: 'vault-as-deployed'; vault: string; account: string; holders: Committee; again?: boolean; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'handover'; vault: string; counter: string; temporaryKey: SigningKeyOnTheWire; to: Committee }
   | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string; parameters: string }
   | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
@@ -171,12 +158,13 @@ export type VaultAsk =
   | {
     id: number; network: string; ask: 'start-standing'; vault: string; account: string;
     accountState: string; vaultState: string; secret?: string; readers?: readonly string[]; now: string;
-    window?: { opensAt: string; closesAt: string }; seat?: string; previous?: string; earlier?: readonly string[];
+    window?: { opensAt: string; closesAt: string }; seat?: string; previous?: string; earlier?: readonly string[]; again?: string;
   }
   | {
     id: number; network: string; ask: 'set-nonce-secret'; vault: string; account: string; run: SecretRunOnTheWire;
     secret: string; earlier?: string; proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
   }
+  | RetireAsk | ForgetUnshieldedAsk
   | {
     id: number; network: string; ask: 'write-secret-copy'; vault: string; run: SecretRunOnTheWire; place: number;
     state: string; parameters: string;
@@ -186,12 +174,11 @@ export type VaultAsk =
     payment: PrivatePaymentOnTheWire; chain: PayoutChainOnTheWire;
   }
   /*
-   * **THE ONE ASK THAT CARRIES A SIGNER'S OWN KEY MATERIAL**, from the page to
-   * the worker on the same device. The worker uses it for this one call and
-   * keeps none of it.
+   * A proposal's identity, made in the worker by the account's own functions from the change and its salt: a change of
+   * seats, thresholds, policies or a vault retired, a vault adopted, or the pay-record key committed.
    */
   | {
-    id: number; network: string; ask: 'proposal-identity'; change: GovernanceOnTheWire; salt: string;
+    id: number; network: string; ask: 'proposal-identity'; change: RoundChangeOnTheWire; salt: string;
   }
   | {
     id: number; network: string; ask: 'vouched-run-identity'; run: VouchedRunOnTheWire;
@@ -256,7 +243,9 @@ export type VaultAsk =
   /* What a call to the account alone is built on, at one block, read in the worker at the indexer the wallet names. */
   | { id: number; network: string; ask: 'account-call-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   /* Whether the indexer the wallet names holds a contract at the account, the chain's newest block time with it, and the newest time to live of the kept transactions. */
-  | { id: number; network: string; ask: 'account-presence'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] };
+  | { id: number; network: string; ask: 'account-presence'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] }
+  /* A change of the super admins: the chain's reads and the ledger's part, asked of the worker so the ledger loads only there. */
+  | SuperAdminAsk;
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
 
@@ -340,6 +329,9 @@ export type VaultAnswer =
   | Answered<'start-standing', { standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>
   | Answered<'set-nonce-secret', { tx: string }>
   | Answered<'write-secret-copy', { tx: string }>
+  | Answered<'retire', { tx: string }>
+  | Answered<'forget-unshielded', { tx: string }>
+  | SuperAdminAnswer
   | { id: number; ok: false; error: string; name?: string; kind?: string };
 
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
@@ -375,52 +367,12 @@ export type VaultOnChainOnTheWire =
     /** What it holds in public money, read off its state; absent, with why, when that could not be read. */
     readonly publicBalances?: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
     readonly publicBalancesWhy?: string;
+    /** The public tokens the vault lists, which its retire refuses on while any is listed; absent, with why, off a ledger of another shape. */
+    readonly unshieldedTokens?: readonly string[];
+    readonly unshieldedTokensWhy?: string;
     readonly circuits?: { readonly why: string; readonly circuit: string | null } | null;
     readonly accountCircuits?: { readonly why: string; readonly circuit: string | null } | null;
   };
-
-/**
- * What a rebuild of a vault's notes is asked over: the chain as one read gave it, the secrets the records hold, the
- * newest (or every) pool version, the journals' lines, the coins this device kept or was handed, and, for `walk`, the
- * company's own amounts. Amounts and values are decimal digits.
- */
-export interface VaultRebuildAsked {
-  readonly vault: string;
-  readonly state?: string;
-  readonly chain: {
-    readonly notes: readonly string[];
-    readonly everCreated: readonly string[];
-    readonly nonceCommitment?: string;
-    readonly splitJournal?: ReadonlyArray<readonly [string, string]>;
-  };
-  readonly secrets: readonly string[];
-  readonly copyFor?: string;
-  /** The secret this signer's own sealed copy opened to on the page: named with first when it is the one the vault holds now, and said when it is not. */
-  readonly copySecret?: string;
-  readonly versions: ReadonlyArray<{ readonly version: number; readonly notes: readonly CoinOnTheWire[] }>;
-  readonly attempted: { readonly deposits: readonly CoinOnTheWire[]; readonly payments: readonly StepOnTheWire[] };
-  readonly named?: readonly CoinOnTheWire[];
-  readonly walk?: {
-    readonly deposited: ReadonlyArray<{ readonly token: string; readonly value: string }>;
-    readonly paid: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
-  };
-}
-
-/** A rebuild's answer: each held note with its held and output commitments, the chain notes nothing named, the sealed copy, and what was said. */
-export interface VaultRebuilt {
-  readonly held: ReadonlyArray<{ readonly nonce: string; readonly token: string; readonly value: string; readonly held: string; readonly output: string }>;
-  readonly unexplained: readonly string[];
-  readonly copy: readonly string[] | null;
-  readonly said: readonly string[];
-}
-
-/** One step of the vault's payment journal as it crosses to the worker: its notes in place order, what left, and whether it was a merge. */
-interface StepOnTheWire {
-  readonly spent: NoteOnTheWire;
-  readonly further?: readonly NoteOnTheWire[];
-  readonly amount: string;
-  readonly merge?: boolean;
-}
 
 /** What the page needs from wherever vault transactions are built. */
 export interface VaultBuilderClient {
@@ -449,9 +401,10 @@ export interface VaultBuilderClient {
    * chain holds for its address, at the indexer the person's own wallet names:
    * null when it was born held by `holders`, pinned to `account`, with this
    * build's circuits and nothing written; otherwise the sentence that says what
-   * it is instead.
+   * it is instead. With `again`, a vault the company retired and adopts again,
+   * who holds it and its circuits are read off its state today instead.
    */
-  vaultAsDeployed?(input: { vault: string; account: string; holders: Committee; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ refusal: string | null }>;
+  vaultAsDeployed?(input: { vault: string; account: string; holders: Committee; again?: boolean; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ refusal: string | null }>;
   handover(input: { vault: string; counter: bigint; temporaryKey: SigningKeyOnTheWire; to: Committee }): Promise<{ tx: string }>;
   /** `state` and `parameters` are base64 of the vault's state and of the ledger parameters the chain holds now. */
   deposit(input: { vault: string; coin: CoinOnTheWire; state: string; parameters: string }): Promise<{ tx: string }>;
@@ -506,6 +459,11 @@ export interface VaultBuilderClient {
   }): Promise<VaultCallOnChain>;
   /** What a transaction (base64, finished or not yet bound) says of itself: its identifiers, its earliest time to live, its calls, the private coins it creates for contracts and the public tokens its calls take in (`readTransaction`). Null for bytes that are no transaction. */
   readTransaction?(input: { transaction: string }): Promise<TransactionRead | null>;
+  /**
+   * **A CHANGE OF THE SUPER ADMINS' READS AND LEDGER**, each asked of this worker: who holds each contract and which
+   * vaults the account lists, at the indexer the wallet names, and an update's bytes and each signature's check.
+   */
+  readonly superAdmins?: SuperAdminWorker;
   /**
    * The seat this signer's own key material makes on the company's account: the
    * leaf the account holds for them, worked out here and not taken from any record.
@@ -582,9 +540,10 @@ export interface VaultBuilderClient {
   /**
    * **A GOVERNANCE PROPOSAL'S IDENTITY, MADE HERE WITH THE CONTRACT'S OWN
    * FUNCTIONS**: the payload the change commits to, and its identity on the
-   * chain under the salt given and no vault.
+   * chain under the salt given and no vault. A vault's adoption and the
+   * pay-record key are named here as every other change is.
    */
-  proposalIdentity(change: GovernanceOnTheWire, salt: string): Promise<ProposalIdentity>;
+  proposalIdentity(change: RoundChangeOnTheWire, salt: string): Promise<ProposalIdentity>;
   /**
    * **THE IDENTITY ON CHAIN A LEG'S RUN WOULD HAVE, RAISED OVER THE HEAD IT
    * SEALS**, made here with the contract's own functions (`vouchedRunIdentityOf`);
@@ -768,6 +727,8 @@ export interface VaultBuilderClient {
     window?: { opensAt: string; closesAt: string };
     /** This device's signing secret: each round then says whether this seat's approval is already counted (`approvedHere`). */
     seat?: string;
+    /** For a vault the company retired and adopts again, the proposal that retired it, which its adoption is made from. */
+    again?: string;
   }): Promise<{ standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>;
   /** The vault's secret set under its approved run, carrying `earlier` when it replaces one, built against one block's view of both contracts. */
   setNonceSecret(input: {
@@ -776,6 +737,10 @@ export interface VaultBuilderClient {
   }): Promise<{ tx: string }>;
   /** One sealed copy of the run's secret written into the vault, by its place in the approved tree. */
   writeSecretCopy(input: { vault: string; run: SecretRunOnTheWire; place: number; state: string; parameters: string }): Promise<{ tx: string }>;
+  /** The vault retired under the proposal its signers approved and that proposal's salt, built against one block's view of both contracts. */
+  retire?(input: Omit<RetireAsk, 'id' | 'network' | 'ask'>): Promise<{ tx: string }>;
+  /** One public token the vault lists and holds none of taken off its list, which its retire refuses while any token is on it. */
+  forgetUnshielded?(input: Omit<ForgetUnshieldedAsk, 'id' | 'network' | 'ask'>): Promise<{ tx: string }>;
   /**
    * Has the worker fetch and check, ahead of any proof, the public parameters the
    * circuits this app proves need, through the same checked source a proof reads.
@@ -815,7 +780,7 @@ const START_MS = 30_000;
  */
 export const CHAIN_READS: ReadonlySet<string> = new Set([
   'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'vault-call-on-chain', 'anchors-on-chain', 'rounds-on-chain',
-  'paid-leaves', 'runs-outrun', 'invited-seats', 'account-call-chain', 'account-presence', 'secret-set-at',
+  'paid-leaves', 'runs-outrun', 'invited-seats', 'account-call-chain', 'account-presence', 'secret-set-at', 'account-committee', 'contract-authority',
 ]);
 
 /** What the worker says when its code is loaded and it starts on an ask: a read's time limit starts here. */
@@ -1084,6 +1049,7 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     eventsOf: async (input) => (await ask({ ask: 'events-of', ...input })).events,
     createdBy: async (input) => (await ask({ ask: 'created-by', ...input })).found,
     vaultCallOnChain: async (input) => (await ask({ ask: 'vault-call-on-chain', ...input })).seen,
+    superAdmins: superAdminWorkerOver((request) => ask(request)),
     readTransaction: async (input) => (await ask({ ask: 'transaction-read', ...input })).read,
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
     creationAgain: async (input) => {
@@ -1153,6 +1119,8 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     },
     setNonceSecret: async (input) => ({ tx: (await ask({ ask: 'set-nonce-secret', ...input })).tx }),
     writeSecretCopy: async (input) => ({ tx: (await ask({ ask: 'write-secret-copy', ...input })).tx }),
+    retire: async (input) => ({ tx: (await ask({ ask: 'retire', ...input })).tx }),
+    forgetUnshielded: async (input) => ({ tx: (await ask({ ask: 'forget-unshielded', ...input })).tx }),
     provingWarmed: async () => { await ask({ ask: 'warm-proving' }); },
   };
 }

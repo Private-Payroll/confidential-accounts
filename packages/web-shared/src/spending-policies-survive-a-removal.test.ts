@@ -29,6 +29,7 @@ import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import type { OpenedRound } from './governed-call-builder.js';
 import * as onDevice from './governed-call-on-device.js';
 import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
+import { POLICY_NOT_OPENED_HERE } from './policies-resealed-here.js';
 
 /* What each proposal opens as on this device: what this file says it raised. Opening real proposals is not this file's subject. */
 const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string) => Promise<OpenedRound> }));
@@ -204,7 +205,7 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     await expect(read(w)).rejects.toThrow(/None of the company's records/u);
     /* The chain holds it, approved at the bar: a signer who stays seals the same opening to the signers who stay, and not to Bo. */
     const recovered: World = { ...w, filed: [v1, v2] };
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(recovered), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toEqual({ sealed: [POLICY_KEY], refused: [] });
+    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(recovered), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
     /* RED WHEN: a policy the chain holds that no device believes is never sealed again to the signers who stay, so the vault never pays again. */
     expect(readersOf(recovered.filed[2]!)).toEqual([ADA.seat]);
     await expect(read(recovered)).resolves.toMatchObject({ state: 'set', version: 3, commitment: commitmentOf(OTHER_TERMS, B2) });
@@ -248,7 +249,7 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     const caughtUp = await read(w).then(versionHeld, (e: Error) => e.message.slice(0, 20));
     /* RED WHEN: a version is believed while a roster lags and refused once it catches up - a policy carried in between is then unreadable. */
     expect(lagging).toBe(caughtUp);
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toEqual({ sealed: [POLICY_KEY], refused: [] });
+    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
     /* RED WHEN: the policy the chain holds, opened by a version no device believes, is never sealed again to every signer who stays. */
     expect(readersOf(filed[2]!)).toEqual([ADA.seat, BO.seat, CY.seat].sort());
     await expect(read({ ...w, as: CY })).resolves.toMatchObject({ state: 'set', version: 3, commitment: commitmentOf(OTHER_TERMS, B2) });
@@ -345,7 +346,7 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     /* Cy cannot read it yet. */
     await expect(read({ ...w, as: CY })).rejects.toThrow(/None of the company's records/u);
     const done: PoliciesResealed = await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey });
-    expect(done).toEqual({ sealed: [POLICY_KEY], refused: [] });
+    expect(done).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
     /* RED WHEN: a newly seated signer is not sealed into the policy in force, so they can never raise or approve a run from the vault. */
     expect(filed).toHaveLength(2);
     expect(readersOf(filed[1]!)).toEqual([ADA.seat, BO.seat, CY.seat].sort());
@@ -358,6 +359,15 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     expect(filed).toHaveLength(2);
   });
 
+  it('A SEAT THAT MAY NOT SET A POLICY FILES NO RE-SEAL AND NAMES EACH POLICY A SEAT THAT MAY STILL HAS TO SEAL', async () => {
+    const filed = [versionOf(1, B1, [ADA, BO], ADA)];
+    const w: World = { seats: [{ who: ADA }, { who: BO, role: 'approver' }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1), filed, as: BO };
+    /* RED WHEN: a seat that may not set policies says nothing while a signer seated since cannot read the policy in force. */
+    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: BO.filing.publicKey }))
+      .toEqual({ sealed: [], refused: [], skipped: [], owed: [POLICY_KEY], notThisSeat: true });
+    expect(filed).toHaveLength(1);
+  });
+
   it('A RE-SEAL IS SEALED TO NO RETIRED SEAT, AND ONLY A SEAT THAT MAY FILE A POLICY AND CAN OPEN IT FILES ONE', async () => {
     const v1 = versionOf(1, B1, [ADA, BO], ADA);
     const filed = [v1];
@@ -367,10 +377,11 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     };
     /* RED WHEN: a device whose seat may not file a spending policy files a re-seal. */
     const approver: World = { ...w, seats: [{ who: ADA, role: 'approver' }, BO_RETIRED, { who: CY }] };
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(approver), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toEqual({ sealed: [], refused: [] });
+    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(approver), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toMatchObject({ sealed: [], refused: [], notThisSeat: true });
     expect(filed).toHaveLength(1);
-    /* RED WHEN: a device that cannot open the policy in force files anything for it. */
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf({ ...w, as: CY }), keyEpoch: 0, filingKey: CY.filing.publicKey })).toEqual({ sealed: [], refused: [] });
+    /* RED WHEN: a device that cannot open the policy in force files anything for it, or says nothing of the policy it left unsealed. */
+    expect(await sealPoliciesToNewSignersHere({ ...doorsOf({ ...w, as: CY }), keyEpoch: 0, filingKey: CY.filing.publicKey }))
+      .toEqual({ sealed: [], refused: [{ id: POLICY_KEY, why: POLICY_NOT_OPENED_HERE }], skipped: [], owed: [], notThisSeat: false });
     expect(filed).toHaveLength(1);
     await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey });
     /* RED WHEN: a retired seat is sealed into a re-seal - a signer who left reads the policy again. */
@@ -589,5 +600,48 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
       await expect(removeCy(c)).rejects.toThrow(/cannot open a spending policy one of the company's vaults holds now/u);
       expect(c.sent).toEqual([]);
     });
+  });
+});
+
+describe('A RE-SEAL AND A PERSON\'S OWN POLICY RAISE PICK THE SAME NEXT VERSION', () => {
+  /** The service keeps the first filing of a version and refuses a second, as its store does; `stale` is served until a filing is tried. */
+  const oneFilingPerVersion = (w: World, stale?: readonly SealedCompanyRecord[]): CompanyRecordsHere => {
+    const records = recordsOf(w);
+    const policies = records.spendingPolicies!;
+    let served = stale;
+    return {
+      ...records,
+      spendingPolicies: {
+        ...policies,
+        versions: async (id) => served ?? w.filed.filter((r) => r.id === id),
+        file: async (rec) => {
+          served = undefined;
+          if (w.filed.some((r) => r.id === rec.id && r.version === rec.version)) throw new Error(`version ${rec.version} is already filed`);
+          await policies.file(rec);
+        },
+      },
+    };
+  };
+
+  it('the one filed second is refused and said, and a re-seal after the raise never displaces it', async () => {
+    const v1 = versionOf(1, B1, [ADA, BO], ADA);
+    const raise = versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS);
+    const w: World = { seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1), filed: [v1] };
+    const doors = { accountId: COMPANY, viewingKey: VIEWING, keyEpoch: 0, filingKey: ADA.filing.publicKey };
+    /* The re-seal read the versions before the raise landed, then filed after it. */
+    const racing = oneFilingPerVersion(w, [v1]);
+    w.filed.push(raise);
+    const lost = await sealPoliciesToNewSignersHere({ ...doors, records: racing });
+    /* RED WHEN: a re-seal that loses the race for a version is hidden, or overwrites the raise filed at that version. */
+    expect(lost).toMatchObject({ sealed: [], refused: [{ id: POLICY_KEY, why: expect.stringMatching(/version 2 is already filed/u) }] });
+    expect(w.filed.map((r) => r.version)).toEqual([1, 2]);
+    expect(openSpendingPolicy(w.filed[1]!, { signerId: ADA.seat, wrappingSecret: ADA.wrap.secret as never }).secrets.opening.blinding).toBe(B2);
+    /* The next upkeep reads again: the policy in force is sealed to Cy at the version after the raise. */
+    expect(await sealPoliciesToNewSignersHere({ ...doors, records: oneFilingPerVersion(w) })).toMatchObject({ sealed: [POLICY_KEY], refused: [] });
+    expect(w.filed.map((r) => r.version)).toEqual([1, 2, 3]);
+    /* The raise is approved: the chain now commits to its terms. */
+    w.chain.set(POLICY_KEY, commitmentOf(OTHER_TERMS, B2));
+    /* RED WHEN: the re-sealed old terms, filed after the raise, are read as the policy in force once the raise is approved. */
+    await expect(read(w)).resolves.toMatchObject({ state: 'set', version: 2, commitment: commitmentOf(OTHER_TERMS, B2) });
   });
 });

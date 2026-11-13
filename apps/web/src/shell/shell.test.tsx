@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { untilPageShown, untilShown } from '../page-shown.test-support.js';
-const names = vi.hoisted(() => ({ opened: new Map<string, string>(), approvals: new Map<string, number>() }));
+const names = vi.hoisted(() => ({ opened: new Map<string, string>(), approvals: new Map<string, { needed: number; because: 'account' | 'policy-bar' | { vault: string } }>() }));
 /* The account's window, shown and put away by the test as the shared code would. */
 const wallet = vi.hoisted(() => ({
   shown: false, watchers: new Set<(shown: boolean) => void>(),
@@ -283,7 +283,7 @@ describe('the company switcher', () => {
    */
   it('lists the companies in the order the service gave, with no amounts, and says where their names open', async () => {
     names.opened = new Map();
-    names.approvals = new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]);
+    names.approvals = new Map([['c-2', { needed: 2, because: 'account' as const }], ['c-3', { needed: 1, because: 'policy-bar' as const }], ['c-1', { needed: 3, because: { vault: 'v1' } }]]);
     await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
@@ -299,18 +299,18 @@ describe('the company switcher', () => {
     expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).toBeNull();
     expect(menu.querySelector('[data-public-facts]')).toBeNull();
     expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual([
-      `${STARTED(COMPANIES[0]!.createdAt)}2/3 Approval`, `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval`, `${STARTED(COMPANIES[2]!.createdAt)}3/5 Approval`]);
+      `${STARTED(COMPANIES[0]!.createdAt)}2/3 Approval${EN['switcher.because.account']}`, `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval${EN['switcher.because.policyBar']}`, `${STARTED(COMPANIES[2]!.createdAt)}3/5 Approval${EN['switcher.because.vault']}`]);
     expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(`${STARTED(COMPANIES[0]!.createdAt)}2/3 Approval`);
   });
 
-  it('shows no approvals for a company until the chain has said, and never the list\'s own number', async () => {
+  it('shows the signer count alone, with no approvals and no reason, for a company the chain has not said, and never the list\'s own number', async () => {
     names.opened = new Map();
-    names.approvals = new Map([['c-3', 1]]);
+    names.approvals = new Map([['c-3', { needed: 1, because: 'account' as const }]]);
     await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
     expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual([
-      STARTED(COMPANIES[0]!.createdAt), `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval`, STARTED(COMPANIES[2]!.createdAt)]);
+      `${STARTED(COMPANIES[0]!.createdAt)}3 signers`, `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval${EN['switcher.because.account']}`, `${STARTED(COMPANIES[2]!.createdAt)}5 signers`]);
   });
 
   /*
@@ -324,11 +324,11 @@ describe('the company switcher', () => {
     const noDay = { id: 'c-4', createdAt: 'not a day', signers: 1 } as Company;
     await draw(sessionFor(signer, { companies: [...COMPANIES, noDay] }), 'settingsAppearance');
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(STARTED(COMPANIES[0]!.createdAt));
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(`${STARTED(COMPANIES[0]!.createdAt)}3 signers`);
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
     const listed = [...menu.querySelectorAll('[data-company]')].map((c) => c.textContent);
-    expect(listed).toEqual([STARTED(COMPANIES[0]!.createdAt), STARTED(COMPANIES[1]!.createdAt), 'Acme', EN['company.started']]);
+    expect(listed).toEqual([`${STARTED(COMPANIES[0]!.createdAt)}3 signers`, `${STARTED(COMPANIES[1]!.createdAt)}1 signer`, 'Acme5 signers', `${EN['company.started']}1 signer`]);
     expect(listed.every((l) => l !== null && l.trim() !== '')).toBe(true);
   });
 
@@ -369,7 +369,7 @@ describe('the company switcher', () => {
    */
   it('marks the company that is not finished, once, and no company whose read is unknown or failed', async () => {
     names.opened = new Map([['c-3', 'Test-001']]);
-    names.approvals = new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]);
+    names.approvals = new Map([['c-2', { needed: 2, because: 'account' as const }], ['c-3', { needed: 1, because: 'policy-bar' as const }], ['c-1', { needed: 3, because: { vault: 'v1' } }]]);
     creations.mark.set('c-3', 'not-finished');
     creations.throwing.add('c-1');
     await draw(sessionFor(signer), 'settingsAppearance');
@@ -381,7 +381,7 @@ describe('the company switcher', () => {
     expect(marks).toEqual([null, EN['company.notFinished'], null]);
     expect(menu.querySelector('[data-company=c-3] [data-not-finished]')!.getAttribute('data-slot')).toBe('badge');
     /* RED WHEN: a company not finished is listed in the switcher with no name, or without its name beside the mark. */
-    expect(menu.querySelector('[data-company=c-3]')!.textContent).toBe(`Test-0011/1 Approval${EN['company.notFinished']}`);
+    expect(menu.querySelector('[data-company=c-3]')!.textContent).toBe(`Test-0011/1 Approval${EN['switcher.because.policyBar']}${EN['company.notFinished']}`);
     expect(creations.reads.filter((id) => id === 'c-3')).toHaveLength(1);
   });
 
@@ -680,10 +680,11 @@ describe('the pages', () => {
       .toEqual(EVERY_PAGE.filter((p) => p.inside === 'settings').map((p) => p.id));
   });
 
-  /* RED WHEN: the colours offered are not the kit's list, the language list is not the application's language files, or a choice does not reach the session. */
+  /* RED WHEN: the colours offered are not the kit's list, the language list is not the application's language files, a choice does not reach the session, or the Language tab is not the kit's section or repeats its heading in a legend or a header of its own. */
   it('offers the kit\'s colours and the language files, and makes each choice through the session', async () => {
     const choose = vi.fn();
     const { container } = await draw(sessionFor(signer, { choose }), 'settingsAppearance');
+    expect(container.querySelector('[data-screen=appearance]')!.getAttribute('data-slot')).toBe('section');
     const { BASE_COLORS } = await import('vaults-ui');
     expect([...container.querySelectorAll('[data-colour]')].map((c) => c.getAttribute('data-colour'))).toEqual([...BASE_COLORS]);
     await act(() => { fireEvent.click(container.querySelector('[data-colour=olive] button')!); });
@@ -691,6 +692,11 @@ describe('the pages', () => {
     cleanup();
     const again = await draw(sessionFor(signer, { choose }), 'settingsLanguage');
     expect([...again.container.querySelectorAll('[data-language]')].map((c) => c.getAttribute('data-language'))).toEqual(['', ...LANGUAGES.map((l) => l.tag)]);
+    /* The tab is the kit's section, headed once: no legend repeats its heading, and no hand-built header or width of its own is drawn. */
+    const language = again.container.querySelector('[data-screen=language]') as HTMLElement;
+    expect(language.getAttribute('data-slot')).toBe('section');
+    expect([...language.querySelectorAll('h1, h2, h3, legend')].map((h) => h.textContent)).toEqual([EN['page.settingsLanguage.name']]);
+    expect(language.querySelector('header')).toBeNull();
     /* Date and number format is not built, so it is not shown at all. */
     expect(again.container.querySelector('[data-screen=language] [data-slot=coming-soon]')).toBeNull();
     expect(again.container.querySelector('[data-screen=language]')!.textContent).not.toMatch(/format/i);
@@ -700,21 +706,53 @@ describe('the pages', () => {
    * RED WHEN: a tab of Settings carries a Coming soon pill; the Company tab
    * does not show the day the company shown was created, or stops saying the
    * rest is Coming soon; or the line on what anyone can look up is not on the
-   * Signers tab, or that tab carries a Coming soon pill again.
+   * Signers tab, or that tab carries a Coming soon pill again, or draws a
+   * second h1 beside Settings' own; or either line is a bare paragraph
+   * instead of the description of the kit's section.
    */
   it('shows no pill on Settings\' tabs, the day created on Company and the public line on Signers', async () => {
     const company = await draw(sessionFor(signer, { company: 'c-3' }), 'settingsCompany');
     expect(company.container.querySelector('[data-settings-sections] [data-slot=coming-soon]')).toBeNull();
     expect(company.container.querySelector('[data-company-created]')!.textContent).toBe('Created Sep 20, 2026');
-    expect(company.container.querySelector('[data-screen=coming-soon] [data-slot=page-header] [data-slot=coming-soon]')).not.toBeNull();
+    expect(company.container.querySelector('[data-company-created]')!.closest('[data-slot=section-description]')).not.toBeNull();
+    expect(company.container.querySelector('[data-screen=settings] [data-screen=coming-soon] > div > [data-slot=coming-soon]')).not.toBeNull();
     expect(company.container.textContent).toContain(EN['page.settingsCompany.soon']);
     cleanup();
     const signers = await draw(sessionFor(signer), 'settingsSigners');
     expect(signers.container.querySelector('[data-public-facts]')!.textContent).toBe(EN['settingsSigners.publicFacts']);
+    expect(signers.container.querySelector('[data-public-facts]')!.closest('[data-slot=section-description]')).not.toBeNull();
     expect(EN['settingsSigners.publicFacts']).toMatch(/^Anyone can look up how many sign/);
     expect(signers.container.querySelector('[data-company-created]')).toBeNull();
     expect(signers.container.querySelector('[data-screen=coming-soon]')).toBeNull();
     expect(signers.container.querySelector('[data-screen=settings] [data-slot=coming-soon]')).toBeNull();
+    expect([...signers.container.querySelectorAll('[data-screen=settings] h1')].map((h) => h.textContent)).toEqual([EN['page.settings.name']]);
+  });
+
+  /*
+   * RED WHEN: a tab of Settings, one built or one shown as Coming soon, draws a
+   * second h1 beside Settings' own, or Settings' h1 is not the kit's page
+   * header, or a Coming soon tab inside Settings draws a page header of its
+   * own, or a tab's pill or empty state goes missing.
+   */
+  it('draws one h1 on every tab of Settings, from the kit\'s page header, and no page header in a Coming soon tab', async () => {
+    /* The signers tab and the recovery tab read the company's records before they are shown, which a second draw in this file does not get to finish; the signers tab's heading is held below, where it is drawn once, and neither draws a heading of its own. */
+    const reads: PageId[] = ['settingsSigners', 'settingsRecovery'];
+    const inSettings = EVERY_PAGE.filter((p) => (p.inside === 'settings' || p.inside === 'paySettings') && !reads.includes(p.id));
+    expect(inSettings.length).toBeGreaterThan(8);
+    for (const p of inSettings) {
+      const { container } = await draw(sessionFor(p.audience === 'employee' ? { ...signer, view: VIEWS.employee } : signer), p.id);
+      const settings = container.querySelector('[data-screen=settings]') as HTMLElement;
+      const heads = [...settings.querySelectorAll('h1')];
+      expect(heads.map((h) => [h.closest('[data-slot=page-header]') !== null, h.textContent]), p.id).toEqual([[true, EN['page.settings.name']]]);
+      const soon = settings.querySelector('[data-screen=coming-soon]');
+      expect(soon !== null, p.id).toBe(!isBuilt(p));
+      if (soon !== null) {
+        expect(soon.querySelector('[data-slot=page-header]'), p.id).toBeNull();
+        expect(soon.querySelector('[data-slot=coming-soon]'), p.id).not.toBeNull();
+        expect(soon.querySelector('[data-slot=empty-state]'), p.id).not.toBeNull();
+      }
+      cleanup();
+    }
   });
 
   /* RED WHEN: a signer looking at their own pay is not told so, or has no way back. */

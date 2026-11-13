@@ -44,11 +44,17 @@ export const grantsDoorsOf = async (s: Seat): Promise<GrantsFilingDoors> => ({
   },
 });
 
-/** The reader's purpose keys as its own device reads them, the directory opened with the roster key its newest grant wraps. */
-export const readerKeys = (r: typeof RHEA): Promise<PurposeWrapsHeld | null> => readerKeysHere({
+/** What the reader's own device finds in the grants, the directory opened with the roster key its newest grant wraps. */
+export const readerFinds = (r: typeof RHEA) => readerKeysHere({
   accountId: CO, versions: grantsKept, me: r,
   directoryFor: (held) => (asked) => directoryHere({ ...acmeDirectoryDeps([ADA, BO, CY]), viewingKey: held }, asked),
 });
+
+/** The reader's purpose keys as its own device reads them; null when it finds none or is taken away. */
+export const readerKeys = async (r: typeof RHEA): Promise<PurposeWrapsHeld | null> => {
+  const found = await readerFinds(r);
+  return found.of === 'held' ? found.held : null;
+};
 
 /** The company records `s`'s device reseals a policy through: read as its seat, with the policy readers it believes, filed and entered under its key. */
 export const policyFilingOf = async (s: Seat): Promise<CompanyRecordsHere> => {

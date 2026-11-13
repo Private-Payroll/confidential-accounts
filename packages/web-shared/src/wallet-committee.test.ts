@@ -7,7 +7,9 @@ import { parseAsk, type CommitteeRequest } from 'midnight-identity/profile/reque
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { committeeSignaturesFor, type ChainRead } from 'midnight-identity/profile/committee-sign';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { askWalletToSignCommittee, committeeAsk, WalletDidNotSign } from './wallet-committee.js';
+import { askWalletToSignCommittee, askWalletToSignTheRequest, committeeAsk, WalletDidNotSign } from './wallet-committee.js';
+import { committeeRequestFor, joinedBy, superAdminRequestBytes } from 'midnight-identity/profile/committee-sign';
+import type { SuperAdminRequestAsk } from 'midnight-identity/profile/request';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
 /* The page's side of a committee change: what it sends, and what it believes of the answer. */
@@ -74,6 +76,24 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN A COMMITTEE CHANGE', () => {
     ]) {
       const bent = walletAnswering((ask) => bend(JSON.parse(JSON.stringify(honestly(ask)))));
       await expect(askWalletToSignCommittee(bent.view, WALLET, input)).rejects.toBeInstanceOf(WalletDidNotSign);
+    }
+  });
+});
+
+describe('ASKING THE PERSON\'S WALLET TO SIGN A SUPER ADMIN\'S REQUEST TO THE SERVICE', () => {
+  const ask = { company: CO, account: ACCOUNT, record: 'acct_1', user: 'user_1', atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
+  const signs = (wire: unknown) => committeeRequestFor(L as never, identity, parseAsk(wire, US, 1_000) as SuperAdminRequestAsk, 1_000);
+
+  it('SENDS THE REQUEST PRESS THE WALLET READS, AND BELIEVES ONLY THE ANSWER TO IT', async () => {
+    const good = walletAnswering(signs);
+    const read = await askWalletToSignTheRequest(good.view, WALLET, ask);
+    /* RED WHEN: the ask is not the request press, or names another company at the service or another person. */
+    expect(parseAsk(good.asked.find((m) => (m as { kind?: string }).kind === 'committee'), US, 1_000)).toMatchObject({ press: 'request', record: 'acct_1', user: 'user_1' });
+    expect(joinedBy(L as never, superAdminRequestBytes('acct_1', 'user_1', ACCOUNT), read.signer, read.signature)).toBe(true);
+    /* RED WHEN: an answer to another ask, or for another company, is taken. */
+    for (const bend of [(a: any) => ({ ...a, nonce: 'n2' }), (a: any) => ({ ...a, company: `co_${'ab'.repeat(32)}` })]) {
+      const bent = walletAnswering((m) => bend(JSON.parse(JSON.stringify(signs(m)))));
+      await expect(askWalletToSignTheRequest(bent.view, WALLET, ask)).rejects.toBeInstanceOf(WalletDidNotSign);
     }
   });
 });

@@ -14,22 +14,13 @@
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
-import type { Hex } from '../../../../src/core/crypto.js';
-import type { SealedProposal } from '../../../../src/core/types.js';
-import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
-import { invitationThresholdRefusal } from '../../../../src/core/invitation.js';
-import { addSignerByAddressIn } from '../../../../src/core/proposal-filing.js';
 import type { RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import {
-  ApprovalNotOwed, approveSeatInvitationOnDevice, governedCallServiceFor, InvitationNotBound, InvitationOutrun, nothingWasSentBy, NothingToApprove,
-  WithdrawnWhileSent, withCompanyKeys,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { ApprovalNotOwed, nothingWasSentBy, WithdrawnWhileSent } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { addSignerKind, type AddSignerReach } from './add-signer-kind.js';
 import { thresholdKind } from './change-threshold.js';
 import { removalKind, type RemoveSignerReach } from './remove-signer.js';
-import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { chainTimeOf } from './chain-time.js';
-import { governanceDoorsFor, type CompanyChain, type CompanyReach, type Handed } from './company-reach.js';
+import type { CompanyChain, CompanyReach, Handed } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { oneOffKind, type OneOffPaymentReach } from './one-off-payment.js';
 import { payrollKind } from './raise-run.js';
@@ -39,10 +30,11 @@ import { recoveryKind, type RecoveryReach } from './recovery.js';
 import { policyBarKind, spendingPolicyKind } from './policy-kinds.js';
 import { adoptVaultKind, vaultSecretKind, type StartKindsReach } from './start-kinds.js';
 import { payKeyKind } from './pay-key-kind.js';
+import { retireVaultKind, type RetireVaultReach } from './retire-vault.js';
 
 /**
- * A proposal as this wallet opened it from the company's records: its id and its identity on the chain, and, for a kind
- * whose approval is about what only the seat's keys open (`readsFirst`), what it read and the lines the window shows of it.
+ * A proposal as this wallet opened it from the company's records: its id and its identity on the chain, and, for an
+ * intent its kind reads first (`readsFirst`), what it read and the lines the window shows of it.
  */
 export interface OpenedRound {
   readonly id: string;
@@ -88,10 +80,11 @@ export interface ProposalKind {
   readonly changesTheCompany: boolean;
   /**
    * Set when what the approval is about opens only with the seat's keys (a spending policy's terms, whose seat a removal
-   * takes): the proposal is opened in the first step, before anything is sent, and the person confirms what was read in
-   * the window before the action goes on (`confirmFirst`).
+   * takes), or must be compared by the person with what somebody tells them (the fingerprint of a seat named by its
+   * leaf), for every intent or for the intents it answers true for: the proposal is opened in the first step, before
+   * anything is sent, and the person confirms what was read in the window before the action goes on (`confirmFirst`).
    */
-  readonly readsFirst?: true;
+  readonly readsFirst?: true | ((intent: ActIntent) => boolean);
   /** The lines the window shows for it, before the upkeep's. */
   shown(intent: ActIntent): Promise<readonly ShownLine[]>;
   /** A check of the intent's own fields, before anything is read: the words of the refusal, or null. */
@@ -121,7 +114,8 @@ export interface ProposalKind {
   why(stop: ApprovalStop, values?: Readonly<Record<string, string | number>>): Words;
 }
 
-const said = (e: unknown): string => String((e as Error)?.message ?? e);
+/** What an error says, as the words of a refusal carry it. */
+export const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
 /** Where the proposal stands, read from the chain through this wallet's own indexer. */
 export const onTheChain = async (r: CompanyReach, chainId: string): Promise<RoundOnChain | undefined> =>
@@ -131,6 +125,10 @@ export const onTheChain = async (r: CompanyReach, chainId: string): Promise<Roun
 export const atTheBar = (round: RoundOnChain | null, needed: number | null): boolean =>
   round !== null && (round.held === 'open' || round.held === 'cleared') && needed !== null && round.approvals >= needed;
 
+/** Whether `kind` reads `intent`'s proposal first, for the person to confirm (`readsFirst`). */
+export const readsFirstFor = (kind: ProposalKind, intent: ActIntent): boolean =>
+  kind.readsFirst === true || (typeof kind.readsFirst === 'function' && kind.readsFirst(intent));
+
 /**
  * **WHAT THE PERSON CONFIRMS BEFORE ANYTHING IS SENT**, for a kind that reads first: opens the proposal with the seat's
  * keys, keeps what was read in `here` for the approval and the carrying out, and waits on the person's Confirm of the
@@ -138,7 +136,7 @@ export const atTheBar = (round: RoundOnChain | null, needed: number | null): boo
  * Does nothing for a kind that does not read first. Stops the action when the kind gives nothing to show.
  */
 export async function confirmFirst(kind: ProposalKind, intent: ActIntent, r: CompanyReach, here: Approving, ctx: StepContext): Promise<void> {
-  if (kind.readsFirst !== true) return;
+  if (!readsFirstFor(kind, intent)) return;
   const named = await kind.opened(ctx, r, intent);
   if (named.confirm === undefined || named.confirm.length === 0) throw new ActionStopped('step-failed');
   here.opened = named;
@@ -195,105 +193,6 @@ export function approveStep(kind: ProposalKind, intent: ActIntent, read: ReadCom
       const state = kind.stateAt(atTheBar(after, here.needed), approvedNow, after.outrun === true);
       ctx.tell({ ...(state === null ? {} : { state }), approvals: after.approvals, ...(here.needed === null ? {} : { needed: here.needed }) });
     },
-  };
-}
-
-/** What the add-signer kind reads beside the company. */
-export interface AddSignerReach {
-  readonly pause: (ms: number, signal: AbortSignal) => Promise<void>;
-  /** The account's own functions: the address an invitation's coin key and salt make, and the rights of every vault. */
-  readonly commitments: () => Promise<{ inviteAddressOf(coinPublicKey: Hex, salt: Hex): Hex; allVaults(): Hex }>;
-  readonly waitMs?: number;
-  readonly everyMs?: number;
-}
-
-/** The signer role an add-signer proposal names, or null: a seat it adds holds a leaf, so it is never a reader's. */
-export const roleOf = (x: string | undefined): SignerRole | null => (isSignerRole(x) ? x : null);
-const ADD_SIGNER_FIELDS = ['personName', 'role', 'address', 'scope', 'coinKey'] as const;
-/** The threshold an invitation sets once its seat is taken, as the page showed it: none, '' and '0' all keep the one in force. */
-const shownThresholdOf = (x: string | undefined): string | null => (x === undefined || x === '' || x === '0' ? null : x);
-const addSignerWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => {
-  const key = ({ closed: 'carried-out', counted: 'already-counted', 'not-raised': 'not-approved' } as Record<string, string>)[stop] ?? stop;
-  return {
-    key: `act.approve-proposal.why.${key}`,
-    ...(values === undefined ? (key === 'not-approved' ? { values: { says: 'The company holds no proposal raised on the chain for this change. Nothing was sent.' } } : {}) : { values }),
-  };
-};
-
-/**
- * **ADDING A SIGNER INVITED BY ADDRESS.** Opened and checked exactly as `approveSeatInvitationOnDevice` does before
- * anything is signed (the person, role, address, rights, threshold once seated and coin key shown, the coin key making that address, the
- * address not already seated or invited, no second believed record under the same identity on the chain, and then the
- * change's own checks, a new threshold among them, counted with the seat on the vaults its rights reach); the account
- * needs the higher of the hold's approvals, the threshold and the seat bar, and no signer removed since the raise. The
- * invitee carries it out by taking the seat, and the account sets the new threshold then.
- */
-export function addSignerKind(reach: AddSignerReach): ProposalKind {
-  return {
-    fields: ADD_SIGNER_FIELDS,
-    changesTheCompany: true,
-    shown: async (intent): Promise<readonly ShownLine[]> => {
-      const f = intent.fields;
-      const all = await reach.commitments().then((c) => c.allVaults().toLowerCase(), () => null);
-      return [
-        { key: 'act.approve-proposal.shown.name', values: { name: f['personName'] ?? '' }, from: 'page' },
-        ...(roleOf(f['role']) === null ? [] : [{ key: `act.approve-proposal.shown.role.${roleOf(f['role'])!}`, from: 'page' as const }]),
-        { key: 'act.approve-proposal.shown.address', values: { address: f['address'] ?? '' }, from: 'page' },
-        { key: 'act.approve-proposal.shown.coin-key', values: { coinKey: f['coinKey'] ?? '' }, from: 'page' },
-        all !== null && (f['scope'] ?? '').toLowerCase() === all
-          ? { key: 'act.approve-proposal.shown.every-vault', from: 'action' }
-          : { key: 'act.approve-proposal.shown.scope', values: { scope: f['scope'] ?? '' }, from: 'page' },
-        ...(shownThresholdOf(f['threshold']) === null ? [] : [{
-          key: 'act.approve-proposal.shown.new-threshold', values: { threshold: shownThresholdOf(f['threshold'])! }, from: 'page' as const,
-        }]),
-        { key: 'act.approve-proposal.shown.checks', from: 'action' },
-        { key: 'act.approve-proposal.shown.approve', from: 'action' },
-      ];
-    },
-    check: (intent) => {
-      if (roleOf(intent.fields['role']) === null) return addSignerWhy('not-a-proposal');
-      const t = shownThresholdOf(intent.fields['threshold']);
-      return t !== null && invitationThresholdRefusal(t) !== null ? addSignerWhy('not-a-threshold') : null;
-    },
-    opened: async (_ctx, r, intent) => {
-      const id = intent.fields['proposal']!;
-      const rec = ((await governedCallServiceFor(r.api).sealedProposals!(r.accountId)) as readonly SealedProposal[]).find((p) => p.id === id);
-      /* The identity is the one the signed filing and the signed invitation both name, checked here (`addSignerByAddressIn`). */
-      const body = rec === undefined ? null : addSignerByAddressIn(rec, r.accountId, r.companyKeys);
-      if (body === null) {
-        throw new StepRefused(addSignerWhy('not-approved', {
-          says: 'The company holds no proposal to add a seat by address under that name that this device can open, so nothing was approved. Nothing was sent. Reload the page.',
-        }), 'invitation-not-bound');
-      }
-      return { id, chainId: body.chainId };
-    },
-    /* The hold's approvals where the chain shows one (every raise writes it), and never fewer than the threshold and the seat bar now. */
-    needed: (round, held) => Math.max(round.needed ?? 0, held.approvals, held.seatBar),
-    approve: async (ctx, r, intent, _round, handed) => {
-      const f = intent.fields;
-      const commitments = await reach.commitments();
-      const doors = governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
-        ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
-      });
-      try {
-        const threshold = shownThresholdOf(f['threshold']);
-        await approveSeatInvitationOnDevice(doors, withCompanyKeys({
-          shown: {
-            proposal: f['proposal']!, name: f['personName']!, role: roleOf(f['role'])!, address: f['address']!, scope: f['scope']!, coinPublicKey: f['coinKey']!,
-            ...(threshold === null ? {} : { threshold }),
-          },
-          chainTime: chainTimeOf(r),
-        }, r.companyKeys), (c, salt) => commitments.inviteAddressOf(c, salt));
-      } catch (e) {
-        if (e instanceof InvitationOutrun) throw new StepRefused(addSignerWhy('outrun'), codeOfError(e));
-        if (e instanceof NothingToApprove || e instanceof InvitationNotBound || e instanceof NotOpenedOnThisDevice) {
-          throw new StepRefused(addSignerWhy(handed.over ? 'may-be-sent' : 'not-approved', { says: said(e) }), codeOfError(e));
-        }
-        throw e;
-      }
-    },
-    stateAt: (atItsBar, _approvedNow, outrun) => (outrun ? 'outrun' : atItsBar ? 'waiting-for-the-invitee' : 'waiting-for-approvals'),
-    why: addSignerWhy,
   };
 }
 
@@ -356,7 +255,7 @@ export type ProposalKindsReach = AddSignerReach & OneOffPaymentReach & Pick<Remo
   readonly builder: () => VaultBuilderClient;
   /** The chain, the heads this device kept and the person's own wallet, for a recovery; absent, a recovery is refused. */
   readonly recovery?: RecoveryReach;
-} & Pick<StartKindsReach, 'indexerHttp'>;
+} & Pick<StartKindsReach, 'indexerHttp'> & Pick<RetireVaultReach, 'inFlight'>;
 
 /**
  * **A KIND APPROVED ON THE CHAIN AND THE PERSON'S OWN WALLET ALONE**: its own
@@ -390,4 +289,5 @@ export const proposalKinds = (reach: ProposalKindsReach): Readonly<Record<string
   'adopt-vault': adoptVaultKind(reach),
   'vault-secret': vaultSecretKind(reach),
   'pay-key': payKeyKind(reach),
+  'retire-vault': retireVaultKind(reach),
 });

@@ -61,8 +61,9 @@ const NO_NEWEST_KEY = 'this seat holds no copy of the company\'s newest key, so 
  * a change still gathering signatures asks exactly the same, this seat's signature joins its signatures; otherwise this
  * seat's alone starts it. Once its signatures reach the bar, every purpose key each entry reads is wrapped to it for
  * every key epoch up to the newest; below the bar, only entries already in force are, so a recipient the quorum has not
- * agreed to holds no key. The version is sealed to every seat this device believes and every recipient it wraps keys
- * to. Refused while this seat holds no copy of the newest key (what clears that is a signer who holds it), while the
+ * agreed to holds no key. The version is sealed to every seat this device believes, every recipient it wraps keys
+ * to, and, once the change is in force, every recipient it takes away, with no key, so that reader's own wallet can
+ * tell it is taken away. Refused while this seat holds no copy of the newest key (what clears that is a signer who holds it), while the
  * chain's bar is not read, or when a signature gathered on the change does not verify (a reload clears both: the read
  * drops a version whose signatures do not verify).
  */
@@ -92,7 +93,9 @@ export async function grantsChangeFiledHere(doors: GrantsFilingDoors, asked: Gra
   const by = counted;
   /* Below the bar, keys go only to the entries already in force: the signer whose signature reaches it wraps a new recipient's. */
   const grants = { sequence, entries, signatures, wraps: wrapsOf(doors, by >= needed ? entries : carriedFrom(base, entries)) };
-  await doors.file(sealGrants({ company: doors.accountId, version: g.highest + 1, keyEpoch: doors.keys.newest, grants, seats: await doors.seats() }));
+  /* A reader taken away is sealed the change only once it is in force, so a change still waiting tells it nothing. */
+  const told = by >= needed ? base.filter((b) => !entries.some((e) => e.recipient === b.recipient)) : [];
+  await doors.file(sealGrants({ company: doors.accountId, version: g.highest + 1, keyEpoch: doors.keys.newest, grants, seats: await doors.seats(), told }));
   return {
     state: by >= needed ? 'in-force' : 'waiting-for-signers', by, needed, takesAway: takesAway(base, entries),
     readers: readersHandedInFor(grants, grants.signatures),
