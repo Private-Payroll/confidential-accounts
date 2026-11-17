@@ -24,19 +24,17 @@ const RUN: SecretRunOnTheWire = {
 };
 
 const standIns = () => {
-  const asked: Array<{ circuitId: string; args: unknown[] }> = [];
+  const asked: Array<{ circuitId: string; args: readonly unknown[]; read: unknown; account: unknown }> = [];
   const deps: VaultBuilderDeps = {
     ledger: {
       ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk' }) },
-      ZswapChainState: { deserialize: () => ({}) },
-      LedgerParameters: { deserialize: () => ({}) },
     },
     runtimeState: { deserialize: () => ({ state: true }) },
     contracts: {
-      createUnprovenDeployTxFromVerifierKeys: async () => { throw new Error('no deploy here'); },
-      createUnprovenCallTxFromInitialStates: async (_zk: unknown, options: { circuitId: string; args: unknown[] }) => {
-        asked.push({ circuitId: options.circuitId, args: options.args });
-        return { private: { unprovenTx: 'unproven' } };
+      buildDeploy: async () => { throw new Error('no deploy here'); },
+      buildCall: async (_zk, call) => {
+        asked.push({ circuitId: call.circuitId, args: call.args ?? [], read: call.read, account: call.account });
+        return { private: { unprovenTx: 'unproven' as never, transaction: null, nextZswapLocalState: null } };
       },
     },
     compiled: {},
@@ -60,6 +58,9 @@ describe('setting a vault\'s secret from the device, its first or a replacement'
       vault: VAULT, account: ACCOUNT, run: RUN, secret: SECRET, proposal: 'aa'.repeat(32), opensAt: '1', closesAt: '2', chain: CHAIN,
     });
     expect(asked.map((a) => a.circuitId)).toEqual(['setNonceSecret']);
+    /* RED WHEN the vault's call is built on other states, or reads any account but the company's at the vault's own block. */
+    expect(asked[0]!.read).toEqual({ contract: CHAIN.vaultState, zswap: CHAIN.zswapState, parameters: CHAIN.parameters });
+    expect(asked[0]!.account).toEqual({ address: ACCOUNT, state: CHAIN.accountState, blockHash: CHAIN.blockHash });
     const args = asked[0]!.args;
     /* RED WHEN the arguments move: the run, the replaced commitment, the commitment, the root and the count come first. */
     expect(hex(args[2])).toBe(RUN.commitment);

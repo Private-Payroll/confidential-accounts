@@ -1,3 +1,4 @@
+import { buildSetting } from 'midnight-identity/profile/origin';
 import document from './networks.json' with { type: 'json' };
 
 /**
@@ -17,12 +18,14 @@ import document from './networks.json' with { type: 'json' };
  * a real one, and a refusal can only be as reliable as the answer it is asking
  * about. Two answers is one answer too many.
  *
- * **THIS MODULE IS PURE AND MUST STAY PURE.** It reads no environment, no
- * argument vector, no hostname and no file at run time - the record is
- * imported, so it is part of the build. The module that reads the environment
- * is a different module, one layer out, and it is the only one. Keeping the
- * two apart is what lets the asset registry reach a network's `kind` without
- * reaching a configuration value in the same step.
+ * **WHICH NETWORK, AND WHETHER REAL MONEY SETTLES ON IT, IS NEVER CONFIGURED
+ * HERE.** The record is imported, so it is part of the build; this module
+ * reads no argument vector, no hostname and no file. The one thing it reads
+ * from outside the build is a network's project token, in `endpointsOf` and
+ * nowhere else, because some networks are reached only with one and a token
+ * may never be written in a record. That read decides no network, no kind and
+ * no asset: the asset registry reaches a network's `kind` and test token
+ * without reaching any setting.
  */
 
 /** Whether a network settles real money. A test asset may only exist where this is `test`. */
@@ -36,7 +39,7 @@ export type NetworkKind = 'test' | 'real';
  * than one it silently reaches at a host nobody here has ever read off
  * anything.
  */
-export interface NetworkEndpointRecord {
+export interface ReachableEndpoints {
   readonly node: string;
   /**
    * A separate websocket node endpoint, where the network publishes one.
@@ -52,19 +55,48 @@ export interface NetworkEndpointRecord {
   readonly faucet: string | null;
 }
 
+/**
+ * **HOW A NETWORK THAT ASKS FOR A PROJECT TOKEN IS GIVEN ONE, AND NEVER THE
+ * TOKEN ITSELF.** Some networks answer their node and indexer only for a
+ * caller that names a project. The record says which setting holds the token
+ * and which query parameter carries it; the token stays in the environment of
+ * whatever reaches the network (for the wallet, the environment it was built
+ * in). A query parameter rather than a header because a browser cannot set a
+ * header on a websocket, and the same rule then serves every endpoint.
+ */
+export interface ProjectTokenRecord {
+  readonly setting: string;
+  readonly parameter: string;
+}
+
+/** Where to reach a network as recorded: its endpoints and, where it asks for one, how its project token is carried. */
+export interface NetworkEndpointRecord extends ReachableEndpoints {
+  /** `null` on a network that answers without one. */
+  readonly projectToken: ProjectTokenRecord | null;
+}
+
 export interface NetworkRecord {
   /**
    * **THE PLATFORM'S OWN VOCABULARY, AND NOT A NAME WE INVENTED.**
    *
-   * This is the string handed to the platform's `setNetworkId`, and it is the
-   * join key every other per-network file uses - which is what lets a separate
-   * application agree with this one about what `stagenet` means without either
-   * side being told.
+   * This is the network id the platform's providers and wallets are handed,
+   * and it is the join key every other per-network file uses - which is what
+   * lets a separate application agree with this one about what `stagenet`
+   * means without either side being told.
    */
   readonly id: string;
   readonly kind: NetworkKind;
   /** What to call the network on a screen. Never parsed, never compared. */
   readonly label: string;
+  /**
+   * **THE TEST SETTLEMENT TOKEN MINTED ON THIS NETWORK: ITS COLOUR, OR `null`.**
+   *
+   * A colour is produced by one mint on one chain and read off that mint's own
+   * answer, so it is written here only once a mint has reported it. `null`
+   * means no test token exists on this network, and a network whose record
+   * says real money settles there may never carry one.
+   */
+  readonly testToken: string | null;
   readonly endpoints: NetworkEndpointRecord | null;
 }
 
@@ -89,11 +121,25 @@ function refuse(what: string): never {
     + 'which is an answer, and a key that is absent is an error. Nothing defaults.');
 }
 
+const A_COLOUR = /^[0-9a-f]{64}$/;
+
+function checkedProjectToken(id: string, raw: unknown): ProjectTokenRecord | null {
+  if (raw === null) return null;
+  if (typeof raw !== 'object') refuse(`"${id}" has a projectToken that is neither an object nor null`);
+  const t = raw as Record<string, unknown>;
+  for (const key of ['setting', 'parameter'] as const) {
+    if (typeof t[key] !== 'string' || (t[key] as string).length === 0) {
+      refuse(`"${id}" has a projectToken whose "${key}" is not a name`);
+    }
+  }
+  return Object.freeze({ setting: t.setting as string, parameter: t.parameter as string });
+}
+
 function checkedEndpoints(id: string, raw: unknown): NetworkEndpointRecord | null {
   if (raw === null) return null;
   if (typeof raw !== 'object') refuse(`"${id}" has an endpoints value that is neither an object nor null`);
   const e = raw as Record<string, unknown>;
-  for (const key of ['node', 'nodeWs', 'indexer', 'indexerWs', 'faucet']) {
+  for (const key of ['node', 'nodeWs', 'indexer', 'indexerWs', 'faucet', 'projectToken']) {
     if (!Object.prototype.hasOwnProperty.call(e, key)) refuse(`"${id}" has endpoints with no "${key}" key`);
   }
   for (const key of ['node', 'indexer', 'indexerWs'] as const) {
@@ -112,13 +158,25 @@ function checkedEndpoints(id: string, raw: unknown): NetworkEndpointRecord | nul
     indexer: e.indexer as string,
     indexerWs: e.indexerWs as string,
     faucet: e.faucet as string | null,
+    projectToken: checkedProjectToken(id, e.projectToken),
   });
+}
+
+function checkedTestToken(key: string, kind: NetworkKind, raw: unknown): string | null {
+  if (raw === null) return null;
+  if (typeof raw !== 'string' || !A_COLOUR.test(raw)) {
+    refuse(`"${key}" has a testToken that is neither 64 lower-case hex characters nor null`);
+  }
+  if (kind === 'real') {
+    refuse(`"${key}" settles real money and names a test token, and a test token may exist only on a test network`);
+  }
+  return raw;
 }
 
 function checkedRecord(key: string, raw: unknown): NetworkRecord {
   if (raw === null || typeof raw !== 'object') refuse(`"${key}" is not a record`);
   const r = raw as Record<string, unknown>;
-  for (const field of ['id', 'kind', 'label', 'endpoints']) {
+  for (const field of ['id', 'kind', 'label', 'testToken', 'endpoints']) {
     if (!Object.prototype.hasOwnProperty.call(r, field)) refuse(`"${key}" has no "${field}" key`);
   }
   /*
@@ -137,6 +195,7 @@ function checkedRecord(key: string, raw: unknown): NetworkRecord {
     id: key,
     kind: r.kind as NetworkKind,
     label: r.label,
+    testToken: checkedTestToken(key, r.kind as NetworkKind, r.testToken),
     endpoints: checkedEndpoints(key, r.endpoints),
   });
 }
@@ -200,20 +259,32 @@ export const networkIsReal = (id: string): boolean => networkRecord(id).kind ===
  * One derivation in one place. Every caller that wrote `?? node.replace(...)`
  * for itself was a caller that could get it subtly wrong on its own.
  */
-export function websocketNodeOf(endpoints: NetworkEndpointRecord): string {
+export function websocketNodeOf(endpoints: ReachableEndpoints): string {
   return endpoints.nodeWs ?? endpoints.node.replace(/^http/, 'ws');
 }
 
 /**
- * The endpoints of a network this application can actually reach, or a refusal
+ * The endpoints of a network this application can actually reach, each
+ * carrying the network's project token where it asks for one, or a refusal
  * naming the network.
  *
  * Separate from `networkRecord` because "we know this network and settle real
  * money on it" and "we have somewhere to send a request" are two different
  * facts, and a door that needs the second should say so when it is missing
  * rather than read `undefined` off a table.
+ *
+ * **THE ONE PLACE A PROJECT TOKEN JOINS AN ENDPOINT.** It is read from the
+ * setting the record names, when this is called rather than when this module
+ * loads, so a service that reads its environment file at start-up has the
+ * token by the time it asks. A network that asks for a token and has none is
+ * refused here, naming the setting, rather than answered by the network with a
+ * refusal that names nothing of ours. The faucet is not the network's own
+ * host and is left as recorded.
  */
-export function endpointsOf(id: string): NetworkEndpointRecord {
+export function endpointsOf(
+  id: string,
+  setting: (name: string) => unknown = buildSetting,
+): ReachableEndpoints {
   const record = networkRecord(id);
   if (record.endpoints === null) {
     throw new Error(
@@ -221,5 +292,49 @@ export function endpointsOf(id: string): NetworkEndpointRecord {
       + 'it. The record exists and names the network; what it does not carry is a node, an indexer '
       + 'or a faucet, and nothing here will invent one.');
   }
-  return record.endpoints;
+  const { projectToken, ...recorded } = record.endpoints;
+  if (projectToken === null) return Object.freeze(recorded);
+  const carry = withToken(projectToken.parameter, tokenFrom(record, projectToken, setting));
+  return Object.freeze({
+    node: carry(recorded.node),
+    nodeWs: recorded.nodeWs === null ? null : carry(recorded.nodeWs),
+    indexer: carry(recorded.indexer),
+    indexerWs: carry(recorded.indexerWs),
+    faucet: recorded.faucet,
+  });
 }
+
+function tokenFrom(
+  record: NetworkRecord, token: ProjectTokenRecord, setting: (name: string) => unknown,
+): string {
+  const value = setting(token.setting);
+  if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  throw new Error(
+    `${record.label} ("${record.id}") answers its node and indexer only for a caller that names a `
+    + `project, and ${token.setting} is not set here, so nothing was asked of it. Set `
+    + `${token.setting} to the network's project token in the environment of this process, or, `
+    + 'for the wallet, in the environment it is built in. The token is never written in the record.');
+}
+
+/**
+ * **AN ENDPOINT AS IT MAY BE SHOWN TO A PERSON OR WRITTEN DOWN**: its address
+ * without its query, which is where a network's project token travels. Every
+ * sentence, log line or record that names an endpoint goes through this, so a
+ * token joined by `endpointsOf` is sent only to the network it is for. Text
+ * that is not an address keeps only what comes before its first `?`.
+ */
+export function shownAddress(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return String(url).split('?')[0]!; // not an address: nothing parses, so everything after a query mark goes
+  }
+  return `${u.origin}${u.pathname}`;
+}
+
+const withToken = (parameter: string, token: string) => (url: string): string => {
+  const u = new URL(url);
+  u.searchParams.set(parameter, token);
+  return u.toString();
+};

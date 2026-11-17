@@ -7,8 +7,7 @@
  * the unproven call, encoded as a signer's device hands one to the service.
  */
 import * as L from '@midnightntwrk/ledger-v9';
-import * as runtime from '@midnight-ntwrk/compact-runtime';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds } from './the-calls-the-product-builds.js';
 import type { AccountPrivateState, InvitedAddress } from '../src/witnesses.js';
 import { invitedAddressFor } from './simulator.js';
 
@@ -21,6 +20,8 @@ export interface InviteeSeat {
   readonly company: string;
   /** The account's state on the chain now, serialized. */
   readonly accountState: Uint8Array;
+  /** The network the call is built for. */
+  readonly network: string;
   /** The invitee's own device. */
   readonly who: AccountPrivateState;
   /** The invitation's identity and the salt it was made with, hex. */
@@ -37,14 +38,17 @@ export interface InviteeSeat {
 /** The invitee's `seatInvited` call, unproven, base64 - or a refusal from the account's own circuit. */
 export async function inviteeSeatCall(i: InviteeSeat): Promise<string> {
   const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(32).fill(3));
-  const built: any = await (contracts as any).createUnprovenCallTxFromInitialStates(i.accountZk, {
+  const built = await callsTheProductBuilds().buildCall(i.accountZk, {
     compiledContract: i.accountCompiled,
     circuitId: 'seatInvited',
     contractAddress: i.company,
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: (runtime as any).ContractState.deserialize(i.accountState),
-    initialZswapChainState: new L.ZswapChainState(),
-    ledgerParameters: L.LedgerParameters.initialParameters(),
+    network: i.network,
+    read: {
+      contract: i.accountState,
+      zswap: new L.ZswapChainState().serialize(),
+      parameters: L.LedgerParameters.initialParameters().serialize(),
+    },
     initialPrivateState: {
       ...i.who, invite: i.invite ?? invitedAddressFor(i.who), proposalSalt: Buffer.from(i.salt, 'hex'), pinnedPath: null,
     },

@@ -67,44 +67,45 @@
  * decision and `vaultDeployCustody` is what states its cost.**
  *
  * ------------------------------------------------------------------------
- * ONE PRIVATE-STATE STORE, TWO CONTRACTS, ANSWERED TWICE OVER
+ * THE VAULT'S PRIVATE STATE IS OPENED FOR THE VAULT'S OWN ADDRESS
  *
- * Private state is filed under `${contractAddress}:${privateStateId}` and the
- * address half is a mutable closure variable
- * (`midnight-js-level-private-state-provider/dist/index.mjs:767-778`), so a
- * store addressed that way is safe only while one contract is ever addressed.
- * **This module addresses the second.**
+ * The wallet opens private state one contract at a time, under that contract's
+ * own address (`forContract` in the web-shared private-state scheme, reached
+ * through the providers' private-state provider), so a vault never reads a
+ * company account's entries and an account never reads a vault's. This module
+ * adds two answers on top.
  *
  *   1. **THE VAULT HAS NO SDK PRIVATE STATE, DELIBERATELY.** Nothing here
- *      passes a `privateStateId`, so the SDK writes none and reads none —
+ *      passes a `privateStateId`, so the SDK writes none and reads none:
  *      `submitDeployTx` only writes one when `'privateStateId' in options`
  *      (`index.mjs:1181-1183`), and `createCallTxOptions` only carries one when
  *      it is given (`:1862`). The vault's single witness, `noteToSpend`, reads
- *      the note POOL — sealed, wrapped per signer, keyed by vault address in
- *      `src/midnight/vault-pool.ts` — and hands the runtime's private state
- *      straight back untouched (`src/midnight/vault-notes.ts`,
- *      `witnessesOver`). There is therefore no vault view for a second vault to
- *      read, which is a stronger answer than addressing one carefully.
- *   2. **AND THE ADDRESS IS SET FROM THE VAULT THE CALL IS FOR, BEFORE EVERY
- *      ACCESS ANYWAY.** `addressVaultPrivateState` below is called at the top
- *      of the find and immediately after the deploy, so no vault operation ever
- *      inherits whichever address an account entry point happened to leave
- *      behind, and no account operation inherits a vault's. It costs one call
- *      and it is the rule a store addressed this way needs; property (1) is
- *      what makes the rule cheap to keep, not a reason to skip it.
+ *      the note POOL (sealed, wrapped per signer, keyed by vault address in
+ *      `src/midnight/vault-pool.ts`) and hands the runtime's private state
+ *      straight back untouched (`witnessesOver` in `src/midnight/vault-notes.ts`).
+ *      There is therefore no vault view for a second vault to read.
+ *   2. **AND THE VAULT'S ADDRESS IS CHECKED BEFORE EVERY ACCESS ANYWAY.**
+ *      `addressVaultPrivateState` below is called at the top of the find and
+ *      immediately after the deploy, and refuses an empty address, so no vault
+ *      operation can reach private state under an address nobody named. It costs
+ *      one call; property (1) is what makes the rule cheap to keep, not a reason
+ *      to skip it.
  *
- * `src/midnight/vault-contract.test.ts` proves both against a fake provider
- * that MIRRORS the level store's addressing semantics — the closure variable,
- * the composed key, the throw when no address was ever set — because a stub
- * without the semantics could not fail the way the product
+ * `src/midnight/vault-contract.test.ts` proves both against a fake provider that
+ * keys private state by the address it is given and throws when none is given,
+ * because a stub without those semantics could not fail the way the product
  * would.
  */
 import {
-  requireMaintenanceAuthority, describeMaintenanceAuthority,
+  requireMaintenanceAuthority, describeMaintenanceAuthority, notDeployed,
   type MaintenanceAuthorityChoice, type MaintenanceAuthorityDescription,
   type TaggedKey,
 } from './partial-contract.js';
 import { assertVaultLedgerIsThisBuilds } from './vault-ledger-shape.js';
+import { ContractState } from '@midnight-ntwrk/compact-runtime';
+import { asContractAddress } from '@midnight-ntwrk/midnight-js-types';
+import { servedContractStateAt } from './contract-state-at.js';
+import { networkIdOf } from './providers.js';
 
 export type {
   MaintenanceAuthorityChoice, MaintenanceAuthorityDescription,
@@ -376,16 +377,12 @@ export { describeMaintenanceAuthority };
  * ------------------------------------------------------------------ */
 
 /**
- * Points the private-state store at the vault this operation is for, and at no other contract.
- *
- * A function rather than a bare call at four sites, so the rule has a name a
- * later round can grep for and a test can drive. It refuses an empty address
- * rather than passing one on: `setContractAddress('')` would make every
- * subsequent key `:<id>`, which is a real prefix that a second empty-address
- * caller would share — the failure this exists to prevent, wearing a different
- * hat.
+ * Refuses to work on a vault's private state under an empty address. The store files each contract's private
+ * state under that contract's own address, and the SDK opens it per call, so an empty address would be a real
+ * prefix that a second caller with no address would share. Called before every vault operation that reads or
+ * writes the vault's private state.
  */
-export function addressVaultPrivateState(providers: any, vaultAddress: string): void {
+export function addressVaultPrivateState(_providers: unknown, vaultAddress: string): void {
   if (typeof vaultAddress !== 'string' || vaultAddress.trim().length === 0) {
     throw new Error(
       'refusing to address a vault\'s private state by an empty address. The store files ' +
@@ -394,7 +391,6 @@ export function addressVaultPrivateState(providers: any, vaultAddress: string): 
         'read and write this vault\'s entries.',
     );
   }
-  providers?.privateStateProvider?.setContractAddress?.(vaultAddress);
 }
 
 /* ------------------------------------------------------------------ *
@@ -405,7 +401,7 @@ export interface VaultDeployOptions {
   /** The VAULT's CompiledContract. Not the account's. */
   compiledContract: unknown;
   /**
-   * The account this vault is married to, as the constructor takes it. `V-37`.
+   * The account this vault is married to, as the constructor takes it.
    *
    * A 32-byte contract address, hex, no prefix. It is pinned in the vault's
    * ledger at creation and can never be redirected — which is what stops
@@ -462,41 +458,12 @@ export async function deployVaultContract(
    * refusal to explain, never a transient. */
   const authority = requireVaultMaintenanceAuthority(options.maintenanceAuthority);
 
-  const account = options.accountAddress?.trim();
-  if (!account || !/^[0-9a-fA-F]{64}$/.test(account)) {
-    throw new Error(
-      'a vault is deployed married to ONE account and the address given is not 32 bytes of ' +
-        'hex. The account is pinned in the vault\'s ledger at creation and can never be ' +
-        'redirected, which is exactly why it is checked here rather than discovered when a ' +
-        'payout asks the wrong contract whether it was approved.',
-    );
-  }
+  const account = accountToMarryOrRefuse(options.accountAddress);
 
   const { deployContract } = await import('@midnight-ntwrk/midnight-js-contracts');
 
-  /*
-   * EVERY CIRCUIT HAS A KEY ON DISK, ASKED BEFORE A FEE IS SPENT.
-   *
-   * `contracts/managed-vault/` has held no `keys/` since the vault was written,
-   * and `COMPILE-VAULT.command` is the only thing that builds them. The SDK
-   * would refuse too — `ContractExecutable.initialize` raises
-   * `ContractConfigurationError` for a missing verifier key
-   * (`compact-js/dist/esm/effect/ContractExecutable.js:100-118`) — but it would
-   * do it after the wallet, the DUST wait and the proof server, and it would
-   * name one circuit rather than the file that builds all four.
-   */
-  try {
-    await providers.zkConfigProvider.getVerifierKeys([...VAULT_CIRCUITS]);
-  } catch (cause) {
-    throw new Error(
-      'the vault\'s verifier keys are not on disk, so nothing can be deployed: ' +
-        `${(cause as Error)?.message ?? String(cause)}\n` +
-        'COMPILE-VAULT.command is the only file that builds them, it takes minutes, and it ' +
-        'must run before this. MUTATE.command\'s quick recompiles wipe them and ' +
-        'BUILD-KEYS.command covers the account only.',
-      { cause },
-    );
-  }
+  /* Every circuit's key on disk, asked before a fee is spent. */
+  await vaultVerifierKeysOrRefuse(providers);
 
   const deployed: any = await deployContract(providers as any, {
     compiledContract: options.compiledContract,
@@ -566,8 +533,9 @@ export async function findDeployedVaultContract(
   const { verifyContractState, createCircuitCallTxInterface } =
     await import('@midnight-ntwrk/midnight-js-contracts');
 
-  const state: any = await providers.publicDataProvider.queryContractState(contractAddress);
-  if (!state) {
+  const served = await servedContractStateAt(providers.publicDataProvider, contractAddress);
+  const state = served === null ? null : served.deserialize({ v9: ContractState });
+  if (!served || !state) {
     /*
      * NOT "an empty vault": a state the node has finalised can read as absent
      * to the indexer a moment later, and the two readings need opposite
@@ -585,7 +553,7 @@ export async function findDeployedVaultContract(
   assertVaultCircuitSet(opNames(state), 'the contract at the address given');
 
   const verifierKeys = await providers.zkConfigProvider.getVerifierKeys([...VAULT_CIRCUITS]);
-  verifyContractState(verifierKeys as any, state);
+  await verifyContractState(verifierKeys, served, asContractAddress(contractAddress));
 
   /*
    * **THE LEDGER'S SHAPE, AND IT IS THE CHECK NEITHER OF THE TWO ABOVE MAKES.**
@@ -697,7 +665,7 @@ export async function findDeployedVaultContract(
  *      reading the vault's own ledger off the state this deploy is about to
  *      submit and comparing `account` against the address the caller gave,
  *      before submission. A vault married to the wrong account is a vault whose
- *      payouts ask the wrong contract whether they were approved (`V-37`).
+ *      payouts ask the wrong contract whether they were approved.
  *   4. `privateStateProvider.set(...)` IS UNCONDITIONAL on the account's path
  *      (`partial-contract.ts:357`), where the SDK writes one only when
  *      `'privateStateId' in options` (`index.mjs:1181-1183`). **The vault
@@ -792,9 +760,10 @@ export interface VaultDeployPrimitives {
    * stops compiling. */
   Intent: { new: (ttl: unknown) => { addDeploy(deploy: unknown): unknown } };
   Transaction: { fromParts(...parts: unknown[]): unknown };
+  /** Seals the built transaction as the handle `submitTx` takes. */
+  sealUnproven: (tx: unknown) => unknown;
   ttlOneHour: () => unknown;
-  deserializeContractState: (bytes: Uint8Array, context: unknown) => unknown;
-  getNetworkId: () => unknown;
+  deserializeContractState: (bytes: Uint8Array, context: { caller: string }) => unknown;
   /**
    * The VAULT's own ledger reader, `ledger` from
    * `contracts/managed-vault/contract/index.js`. Dependency 3: it is the only
@@ -850,7 +819,7 @@ export function requireHandBuiltVaultAuthority(
         '      The company\'s own signers at their own threshold. NO SIGNING KEY IS STORED ' +
         'ANYWHERE by this deploy, which is the whole reason this path exists. The keys in the ' +
         'list are VERIFYING keys, not signing keys.\n' +
-        '  { kind: "single-key", signingKey: {tag,value}, temporary: { fixedBy: "<round>" } }\n' +
+        '  { kind: "single-key", signingKey: {tag,value}, temporary: { fixedBy: "<what replaces it>" } }\n' +
         '      One key, deliberately, as a recorded temporary state. The deploying machine ' +
         'ends up holding a key that can change which proofs the contract accepts, ' +
         'knowingly.\n\n' +
@@ -1090,6 +1059,20 @@ export function buildVaultDeployState(
   const circuits = opNames(state).sort();
   assertVaultCircuitSet(circuits, 'the vault state this deploy would submit');
 
+  refuseAVaultMarriedElsewhere(prims, state, accountAddress);
+
+  return { state, circuits };
+}
+
+/**
+ * Reads the account pin back out of the vault state a deploy would submit, and refuses when it cannot be read
+ * or names another account than the one given. Called by `buildVaultDeployState` before anything is spent.
+ */
+function refuseAVaultMarriedElsewhere(
+  prims: VaultDeployPrimitives,
+  state: VaultContractStateLike,
+  accountAddress: string,
+): void {
   /*
    * DEPENDENCY 3, THE QUIET HALF. The loud failure of a wrong `data` is
    * IncorrectChargedState (midnight-ledger ledger-9.1.0.0-rc.3, ledger/src/verify.rs:1773-1777) and the chain catches it. The
@@ -1098,7 +1081,7 @@ export function buildVaultDeployState(
    * operations map and the verifier keys and never opens the ledger.
    *
    * A vault married to the wrong account asks the wrong contract whether a
-   * payout was approved (V-37), and the pin can never be redirected afterwards,
+   * payout was approved, and the pin can never be redirected afterwards,
    * so the only moment this is fixable is before submission. It refuses on an
    * unreadable state as well as on a mismatch, because at this point nothing
    * has been spent and proceeding on a state we cannot read is the third
@@ -1140,8 +1123,6 @@ export function buildVaultDeployState(
         'ledger. Nothing has been spent. The addresses are deliberately not printed.',
     );
   }
-
-  return { state, circuits };
 }
 
 /**
@@ -1167,16 +1148,12 @@ export async function resolveVaultDeployPrimitives(
     : await import('@midnight-ntwrk/compact-runtime');
   const protocol = injected?.Intent && injected?.ContractDeploy
     ? { Intent: injected.Intent, ContractDeploy: injected.ContractDeploy }
-    : await import('@midnight-ntwrk/midnight-js-protocol/ledger');
-  const types = injected?.Transaction && injected?.SucceedEntirely !== undefined
-    ? { Transaction: injected.Transaction, SucceedEntirely: injected.SucceedEntirely }
-    : await import('@midnight-ntwrk/midnight-js-types');
-  const utils = injected?.ttlOneHour && injected?.deserializeContractState
-    ? { ttlOneHour: injected.ttlOneHour, deserializeContractState: injected.deserializeContractState }
-    : await import('@midnight-ntwrk/midnight-js-utils');
-  const networkId = injected?.getNetworkId
-    ? { getNetworkId: injected.getNetworkId }
-    : await import('@midnight-ntwrk/midnight-js-network-id');
+    : await import('@midnight-ntwrk/midnight-js-protocol/v9');
+  const ledger = injected?.Transaction
+    ? { Transaction: injected.Transaction }
+    : await import('@midnight-ntwrk/midnight-js-protocol/v9');
+  const types = await import('@midnight-ntwrk/midnight-js-types');
+  const utils = await import('@midnight-ntwrk/midnight-js-utils');
   const vault = injected?.readVaultLedger
     ? { ledger: injected.readVaultLedger }
     : await import('../../contracts/managed-vault/contract/index.js');
@@ -1186,11 +1163,12 @@ export async function resolveVaultDeployPrimitives(
     ContractMaintenanceAuthority: (runtime as any).ContractMaintenanceAuthority,
     ContractDeploy: (protocol as any).ContractDeploy,
     Intent: (protocol as any).Intent,
-    Transaction: (types as any).Transaction,
-    SucceedEntirely: (types as any).SucceedEntirely,
-    ttlOneHour: (utils as any).ttlOneHour,
-    deserializeContractState: (utils as any).deserializeContractState,
-    getNetworkId: (networkId as any).getNetworkId,
+    Transaction: (ledger as any).Transaction,
+    sealUnproven: injected?.sealUnproven
+      ?? ((tx: unknown) => types.LedgerTransaction.seal('v9', 'Unproven', tx as { serialize(): Uint8Array })),
+    SucceedEntirely: injected?.SucceedEntirely ?? types.SucceedEntirely,
+    ttlOneHour: injected?.ttlOneHour ?? utils.ttlOneHour,
+    deserializeContractState: injected?.deserializeContractState ?? utils.deserializeLedger9ContractState,
     readVaultLedger: (vault as any).ledger,
   };
 }
@@ -1225,40 +1203,15 @@ export async function submitHandBuiltVaultDeployTx(
   /* Before anything else: the authority. Dependency 8. */
   const authority = requireHandBuiltVaultAuthority(options.maintenanceAuthority);
 
-  const account = options.accountAddress?.trim();
-  if (!account || !/^[0-9a-fA-F]{64}$/.test(account)) {
-    throw new Error(
-      'a vault is deployed married to ONE account and the address given is not 32 bytes of ' +
-        'hex. The account is pinned in the vault\'s ledger at creation and can never be ' +
-        'redirected, which is exactly why it is checked here rather than discovered when a ' +
-        'payout asks the wrong contract whether it was approved.',
-    );
-  }
+  const account = accountToMarryOrRefuse(options.accountAddress);
 
-  const {
-    createUnprovenDeployTx, submitTx, DeployTxFailedError,
-  } = await import('@midnight-ntwrk/midnight-js-contracts');
+  const { createUnprovenDeployTx, submitTx } = await import('@midnight-ntwrk/midnight-js-contracts');
+  const networkId = networkIdOf(providers);
 
   const prims = await resolveVaultDeployPrimitives(injected);
 
-  /*
-   * EVERY CIRCUIT HAS A KEY ON DISK, ASKED BEFORE A FEE IS SPENT. The
-   * same check deployVaultContract makes and for the same reason: the SDK would
-   * refuse too, after the wallet, the DUST wait and the proof server, naming one
-   * circuit rather than the file that builds them all.
-   */
-  try {
-    await providers.zkConfigProvider.getVerifierKeys([...VAULT_CIRCUITS]);
-  } catch (cause) {
-    throw new Error(
-      'the vault\'s verifier keys are not on disk, so nothing can be deployed: ' +
-        `${(cause as Error)?.message ?? String(cause)}\n` +
-        'Only the vault\'s own compile step builds them, it takes minutes, and it must ' +
-        'run before this. A quick recompile wipes them, and the account\'s key build ' +
-        'does not cover the vault.',
-      { cause },
-    );
-  }
+  /* Every circuit's key on disk, asked before a fee is spent, as deployVaultContract asks. */
+  await vaultVerifierKeysOrRefuse(providers);
 
   /*
    * The constructor, the witnesses and every compiled key, run by the SDK
@@ -1310,23 +1263,18 @@ export async function submitHandBuiltVaultDeployTx(
     authority,
   });
 
-  const ledgerState = prims.deserializeContractState(
-    state.serialize(),
-    { caller: 'src/midnight/vault-contract.ts:submitHandBuiltVaultDeployTx' } as any,
-  );
+  const ledgerState = prims.deserializeContractState(state.serialize(), { caller: 'submitHandBuiltVaultDeployTx' });
   const contractDeploy = new prims.ContractDeploy(ledgerState);
   const contractAddress = String(contractDeploy.address);
-  const unprovenTx = prims.Transaction.fromParts(
-    prims.getNetworkId(),
+  const unprovenTx = prims.sealUnproven(prims.Transaction.fromParts(
+    networkId,
     undefined,
     undefined,
     prims.Intent.new(prims.ttlOneHour()).addDeploy(contractDeploy),
-  );
+  ));
 
   const finalizedTxData: any = await submitTx(providers, { unprovenTx } as any);
-  if (finalizedTxData.status !== prims.SucceedEntirely) {
-    throw new (DeployTxFailedError as any)(finalizedTxData);
-  }
+  if (finalizedTxData.status !== prims.SucceedEntirely) throw notDeployed(finalizedTxData, contractAddress);
 
   /*
    * THE POST-SUBMIT WRITES, AND WHICH OF `submitDeployTx`'s THREE THIS PATH
@@ -1339,27 +1287,21 @@ export async function submitHandBuiltVaultDeployTx(
    *   THE PRIVATE STATE: NO. Dependency 4. The vault has none, so there is
    *   nothing to write and no `<address>:undefined` key to share.
    *
-   *   AND THE ORDER OF THOSE TWO IS NOT A PROPERTY, WHICH IS WORTH SAYING SO
-   *   THE NEXT ROUND DOES NOT CHASE IT. Swapping them leaves every test in this
-   *   file green, deliberately: the level store keys a signing key by the
-   *   ADDRESS IT IS GIVEN and not by the closure variable
-   *   (`midnight-js-level-private-state-provider/dist/index.mjs:823`), which the
-   *   fake in `vault-contract.test.ts:196-201` mirrors and which
+   *   THE ORDER OF THOSE TWO WRITES IS NOT A PROPERTY. Swapping them leaves every
+   *   test in this file green, deliberately: the signing key is stored under the
+   *   address it is given (`midnight-js-level-private-state-provider/dist/index.mjs:823`),
+   *   which the fake in `vault-contract.test.ts` mirrors and which
    *   `the signing key is filed under the VAULT's address, never the account's`
-   *   already pins. The keying is the property; the ordering is not, and a test
-   *   pinning it would go red on a correct refactor. Recorded after a review
-   *   tried the swap and found it green.
-   *   **It is NOT the same as the ADDRESS write's placement, which IS a
-   *   property and is pinned: private state must never be touched before the
-   *   store points at this vault.**
+   *   pins. The keying is the property; a test pinning the order would go red on a
+   *   correct refactor. What IS pinned is that the vault's address is checked
+   *   before any private state is touched.
    *
    *   THE SIGNING KEY: ONLY WHEN THERE IS ONE. Dependency 9, and the reason
    *   this whole function exists. A committee has no single key to store, and
    *   the SDK's maintenance interface could not drive it anyway
    *   (index.mjs:398-399, :470-471, :547-548, all three verified). This is the
-   *   line src/midnight/partial-contract.ts:358-360 already has on the
-   *   account's path, and the second custody surface is the absence of this
-   *   call.
+   *   rule the account's path in `partial-contract.ts` already follows, and the
+   *   second custody surface is the absence of this call.
    */
   addressVaultPrivateState(providers, contractAddress);
   if (authority.kind === 'single-key') {
@@ -1375,4 +1317,42 @@ export async function submitHandBuiltVaultDeployTx(
     authority: describeMaintenanceAuthority(authority),
     custody: vaultDeployCustody(authority),
   };
+}
+
+/**
+ * The account a vault is deployed married to, as 64 hex characters, or a refusal. The account is pinned in the
+ * vault's ledger at creation and can never be redirected, so it is checked before anything is built rather than
+ * discovered when a payment asks the wrong contract whether it was approved.
+ */
+function accountToMarryOrRefuse(given: string | undefined): string {
+  const account = given?.trim();
+  if (!account || !/^[0-9a-fA-F]{64}$/.test(account)) {
+    throw new Error(
+      'a vault is deployed married to ONE account and the address given is not 32 bytes of ' +
+        'hex. The account is pinned in the vault\'s ledger at creation and can never be ' +
+        'redirected, which is exactly why it is checked here rather than discovered when a ' +
+        'payout asks the wrong contract whether it was approved.',
+    );
+  }
+  return account;
+}
+
+/**
+ * Resolves when every vault circuit's verifier key is on disk; refuses, naming the step that builds them, when one
+ * is not. Asked before a fee is spent: the SDK would refuse too, but only after the wallet, the DUST wait and the
+ * proof server, and naming one circuit rather than the step that builds them all.
+ */
+async function vaultVerifierKeysOrRefuse(providers: { zkConfigProvider: { getVerifierKeys(ids: string[]): Promise<unknown> } }): Promise<void> {
+  try {
+    await providers.zkConfigProvider.getVerifierKeys([...VAULT_CIRCUITS]);
+  } catch (cause) {
+    throw new Error(
+      'the vault\'s verifier keys are not on disk, so nothing can be deployed: ' +
+        `${(cause as Error)?.message ?? String(cause)}\n` +
+        'Only the vault\'s own compile step builds them, it takes minutes, and it must ' +
+        'run before this. A quick recompile wipes them, and the account\'s key build ' +
+        'does not cover the vault.',
+      { cause },
+    );
+  }
 }

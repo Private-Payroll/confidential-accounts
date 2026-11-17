@@ -38,9 +38,8 @@ import { readFileSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { privateStateFor, leafOfDevice, COMPANY_LABEL, invitedAddressFor, invitedAddressCommitmentOf } from './simulator.js';
@@ -133,7 +132,7 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
   const client = vaultBuilderOver((() => {
     const listeners: Array<(e: { data: unknown }) => void> = [];
     const deps = async () => ({
-      ledger: L, runtimeState: (runtime as any).ContractState, contracts,
+      ledger: L, runtimeState: (runtime as any).ContractState, contracts: callsTheProductBuilds(),
       accountCompiled, accountZkConfig: accountZk, accountPure: circuits, accountLedger: (accountModule as any).ledger,
       accountTree: { StateBoundedMerkleTree: runtime.StateBoundedMerkleTree, CompactTypeBytes: runtime.CompactTypeBytes, CompactTypeMerkleTreeDigest: runtime.CompactTypeMerkleTreeDigest },
       prove: async (unproven: any) => unproven,
@@ -200,7 +199,6 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
   const standing = async (chainId: string) => (await client.roundsOnChain({ account: company, indexer: INDEXER, chainIds: [chainId] }))[chainId]!;
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     results = [];
     founder = privateStateFor(1);
@@ -294,7 +292,7 @@ describe.skipIf(!KEYS.ok)('A RECOVERY CARRIED OUT ON THE CHAIN FROM A SIGNER\'S 
     const { file: invited } = await raiseFromTheChain(doors, { change: invitation, summary: 'an invitation' });
     const invitedAs = await client.proposalIdentity(invitation, invited.salt);
     sent(await inviteeSeatCall({
-      accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who: blake,
+      accountCompiled, accountZk, company, network: NET, accountState: chain.contract(company).serialize(), who: blake,
       proposal: invitedAs.chainId, salt: invited.salt,
     }));
     expect(results.at(-1)).toMatchObject({ type: 'success' });

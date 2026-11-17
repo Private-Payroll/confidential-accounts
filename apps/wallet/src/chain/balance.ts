@@ -2,7 +2,9 @@ import { ShieldedWallet } from '@midnightntwrk/wallet-sdk/shielded';
 import type {
   ShieldedWallet as RunningShieldedWallet, ShieldedWalletClass,
 } from '@midnightntwrk/wallet-sdk/shielded';
-import { NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
+import { DefaultForkSchedule, NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
+import type { ShieldedKeysByEpoch } from '@midnightntwrk/wallet-sdk';
+import { ZswapSecretKeys as V8ZswapSecretKeys } from '@midnightntwrk/wallet-sdk/ledger/v8';
 import { ZswapSecretKeys, shieldedToken } from '@midnightntwrk/ledger-v9';
 import type { Identity } from 'midnight-identity';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
@@ -99,6 +101,16 @@ export type BalanceEngine = (
 export const secretKeysFor = (identity: Identity, account: number): ZswapSecretKeys =>
   ZswapSecretKeys.fromSeed(identity.moneyAt(account).zswap);
 
+/**
+ * The same account's shielded keys for each ledger version the chain may be on:
+ * both derived from the one seed, so the wallet reads the account's coins on
+ * either side of a ledger change.
+ */
+export const shieldedKeysFor = (identity: Identity, account: number): ShieldedKeysByEpoch => {
+  const seed = identity.moneyAt(account).zswap;
+  return { v8: V8ZswapSecretKeys.fromSeed(seed), v9: ZswapSecretKeys.fromSeed(seed) };
+};
+
 /** The public name a checkpoint is filed under: the account's own coin
  * public key, so another wallet's cache can never dress this one. */
 export const coinPublicKeyOf = (identity: Identity, account: number): string =>
@@ -136,6 +148,7 @@ const configuredWallet = (): ShieldedWalletClass => ShieldedWallet({
    * exists. A no-op keeps every fact about payments out of every store
    * until history is actually built and audited. */
   txHistoryStorage: new NoOpTransactionHistoryStorage(),
+  forks: DefaultForkSchedule,
 });
 
 /**
@@ -143,9 +156,9 @@ const configuredWallet = (): ShieldedWalletClass => ShieldedWallet({
  * right door, cold. Exported so the address-agreement test and the probe
  * exercise exactly what the app runs, not a copy of it.
  */
-export function walletFor(identity: Identity, account: number): RunningShieldedWallet {
+export async function walletFor(identity: Identity, account: number): Promise<RunningShieldedWallet> {
   guardAccount(account);
-  return configuredWallet().startWithSecretKeys(secretKeysFor(identity, account));
+  return configuredWallet().startWithKeys(shieldedKeysFor(identity, account));
 }
 
 /** The same wallet, warmed from a sealed checkpoint — `restore` is the
@@ -239,11 +252,15 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
       try {
         wallet = checkpoint
           ? walletRestoredFrom(checkpoint.serialized)
-          : walletFor(identity, account);
+          : await walletFor(identity, account);
       } catch {
         /* A checkpoint the SDK refuses (a version drift, a bad blob) is a
          * cache miss, never a dead end: fall back to the cold door. */
-        wallet = walletFor(identity, account);
+        wallet = await walletFor(identity, account);
+      }
+      if (stopped) {
+        void wallet.stop().catch(() => { /* already stopping is fine */ });
+        return;
       }
       subscription = wallet.state.subscribe({
         next: (state) => {
@@ -274,7 +291,7 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
           if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
         },
       });
-      wallet.start(secretKeysFor(identity, account)).catch((e: unknown) => {
+      wallet.start(shieldedKeysFor(identity, account)).catch((e: unknown) => {
         if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
       });
     } catch (e) {

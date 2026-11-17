@@ -8,6 +8,7 @@ import { MidnightLedger, type FeeSponsor } from './ledger.js';
 import { VaultLedger } from './vault-ledger.js';
 import { chainLedger } from '../wiring/chain.js';
 import { ContractBook } from '../wiring/account-contract.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const payer = (over: Partial<FeeSponsor> = {}): FeeSponsor => ({
   addFeeAndFinalise: async (tx) => tx,
@@ -39,6 +40,14 @@ describe('who is in the fee payer seat', () => {
     expect(over(standIn())).not.toMatch(/sponsored/);
   });
 
+  /* RED WHEN: `MidnightLedger.describe` names the node with the query its address carries, so a project token reaches whoever reads it. */
+  it('the chain ledger names its node without the project token in its address', () => {
+    const said = new MidnightLedger({ ...cfg, nodeUrl: 'https://rpc.example/node?project_id=never-shown' }, payer(),
+      {} as never, async () => null, async () => ({}), undefined).describe();
+    expect(said).toContain('https://rpc.example/node');
+    expect(said).not.toMatch(/never-shown|project_id/);
+  });
+
   /* RED WHEN: `VaultLedger.describe` reads the seat's truthiness again. */
   it('and so does the vault client', () => {
     const over = (s: FeeSponsor) =>
@@ -55,7 +64,7 @@ describe('who is in the fee payer seat', () => {
    */
   it('the ledger under a deployment that cannot pay says it has no fee payer', () => {
     const d: any = {
-      network: 'stagenet', contractAddress: 'bcb61fef', indexerUrl: 'https://indexer.example',
+      network: NETWORK, contractAddress: 'bcb61fef', indexerUrl: 'https://indexer.example',
       indexerWsUrl: 'wss://indexer.example', nodeUrl: 'https://rpc.example', proverUrl: 'http://prover.invalid:1',
       sealedStateRoot: '/nowhere/sealed', privateStateId: 'p', zkConfigPath: '/nowhere/managed',
       vaultZkConfigPath: '/nowhere/managed-vault',

@@ -19,11 +19,16 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { amountFromText, parseTestTokenRecord, theMintedCoin, testTokenFile } from './mint-test-token.js';
-import {
-  TEST_SETTLEMENT_ASSET, TEST_SETTLEMENT_MINTED_ON, testAssetsFor,
-} from '../src/core/assets.js';
+import { NETWORKS_WITH_A_TEST_TOKEN, testAssetsFor } from '../src/core/assets.js';
+import { NETWORK_IDS, networkRecord } from '../src/core/networks.js';
+import { storeDir } from '../src/wiring/deployment.js';
+import type { NetworkName } from '../src/midnight/network.js';
+import { NETWORK } from 'midnight-identity/network';
 
 describe('the amount, and the unit it is in', () => {
   it('takes a whole number of the smallest unit', () => {
@@ -51,19 +56,25 @@ describe('the amount, and the unit it is in', () => {
      * RED WHEN the refusal says the token has no scale, or names a number of
      * decimal places or a whole-unit figure the registry does not declare.
      */
-    const [row] = testAssetsFor(TEST_SETTLEMENT_MINTED_ON[0]!);
-    expect(row?.code).toBe(TEST_SETTLEMENT_ASSET);
+    const minted = NETWORKS_WITH_A_TEST_TOKEN[0]!;
+    const [row] = testAssetsFor(minted);
+    expect(row?.code).toBe(networkRecord(minted).testToken);
     const decimals = row!.decimals;
     expect(() => amountFromText('5.5')).toThrow(`with ${decimals} decimal places`);
     expect(() => amountFromText('5.5')).toThrow(`is ${10n ** BigInt(decimals)} here`);
     expect(() => amountFromText('5.5')).not.toThrow(/no decimal places|nothing declares a scale/i);
     /* RED WHEN the refusal states the scale as if every mint were that asset:
      * the door is asked before it knows which colour it will mint. */
-    expect(() => amountFromText('5.5')).toThrow(/at the colour it names/);
+    expect(() => amountFromText('5.5')).toThrow(/at the colour a test network's record names/);
+    /* RED WHEN the refusal names one network as where the registry lists the test asset, which is false on
+     * every build whose compiled network is not that one and is where this door mints. */
+    expect(() => amountFromText('5.5')).not.toThrow(/stagenet/);
     expect(() => amountFromText('5.5')).toThrow(/any other colour is a\s+token with no declared scale/);
     const source = readFileSync(new URL('./mint-test-token.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/nothing anywhere declares a scale/i);
-    expect(source).toContain(`${decimals} decimal places, for the one`);
+    expect(source).toContain(`${decimals} decimal places, for the colour a`);
+    /* RED WHEN the door's comment says the registry's scale is set on one named network again. */
+    expect(source).not.toMatch(/colour it names, on stagenet/);
   });
 
   it('refuses an empty answer rather than defaulting', () => {
@@ -90,24 +101,24 @@ describe('the record of the minter, and which chain it belongs to', () => {
   const address = 'ab'.repeat(32);
 
   it('reads back a record this door wrote', () => {
-    expect(parseTestTokenRecord({ network: 'stagenet', contractAddress: address }, 'stagenet'))
+    expect(parseTestTokenRecord({ network: NETWORK, contractAddress: address }, NETWORK))
       .toEqual({ contractAddress: address, colour: undefined });
   });
 
   it('carries the colour when there is one', () => {
     const colour = 'cd'.repeat(32);
     expect(parseTestTokenRecord(
-      { network: 'stagenet', contractAddress: address, colour }, 'stagenet').colour).toBe(colour);
+      { network: NETWORK, contractAddress: address, colour }, NETWORK).colour).toBe(colour);
   });
 
   it('refuses a record from another network, because an address means nothing there', () => {
     expect(() => parseTestTokenRecord(
-      { network: 'undeployed', contractAddress: address }, 'stagenet'))
+      { network: 'undeployed', contractAddress: address }, NETWORK))
       .toThrow(/means nothing on another chain/);
   });
 
   it('refuses a record with no usable address rather than reaching for one', () => {
-    expect(() => parseTestTokenRecord({ network: 'stagenet', contractAddress: 'nope' }, 'stagenet'))
+    expect(() => parseTestTokenRecord({ network: NETWORK, contractAddress: 'nope' }, NETWORK))
       .toThrow(/no usable contract address/);
   });
 
@@ -118,12 +129,12 @@ describe('the record of the minter, and which chain it belongs to', () => {
      * reached that door would be a deposit built on it.
      */
     expect(parseTestTokenRecord(
-      { network: 'stagenet', contractAddress: address, colour: 'short' }, 'stagenet').colour)
+      { network: NETWORK, contractAddress: address, colour: 'short' }, NETWORK).colour)
       .toBeUndefined();
   });
 
   it('names the file per network', () => {
-    expect(testTokenFile('/x/.midnight', 'stagenet')).toBe('/x/.midnight/stagenet-test-token.json');
+    expect(testTokenFile('/x/.midnight', NETWORK)).toBe(`/x/.midnight/${NETWORK}-test-token.json`);
   });
 });
 
@@ -168,14 +179,13 @@ describe('which coin was minted', () => {
 describe('the wait for the coin to be scanned, which is no longer this door\'s own', () => {
   it('HAS NO SECOND COPY OF THE COIN READ, AND NO INVENTED DEADLINE', () => {
     /*
-     * **`M-104` AT THE SOURCE LEVEL, BECAUSE THAT IS WHERE THE DEFECT LIVED.**
+     * **CHECKED AT THE SOURCE, BECAUSE THAT IS WHERE THE DEFECT WOULD LIVE.**
      *
-     * This door had `heldOf` reading `availableCoins` and a `5 * 60_000`
-     * deadline it chose. The door beside it had a third reading of the same
-     * list and no wait at all, and refused twice against a wallet that held the
-     * coin. Both copies are gone; one implementation is in
-     * `shielded-wallet.ts`. Nothing else can catch this coming back — calling a
-     * shared function or not calling it is not a type error.
+     * The wait for a scanned coin has one implementation, in the shielded
+     * wallet module; a door that read the coin list itself or chose its own
+     * deadline would be a second copy that can disagree with it. Nothing else
+     * can catch that coming back: calling a shared function or not calling it
+     * is not a type error.
      */
     const src = readFileSync(new URL('./mint-test-token.ts', import.meta.url), 'utf8');
     expect(src).not.toMatch(/state\(\)\??\.?\s*\??\.?shielded\?\.availableCoins/);
@@ -191,5 +201,75 @@ describe('the wait for the coin to be scanned, which is no longer this door\'s o
     const src = readFileSync(new URL('./mint-test-token.ts', import.meta.url), 'utf8');
     expect(src).toMatch(/whyNoCoin/);
     expect(src).toMatch(/why\.holding/);
+  });
+});
+
+describe('each network record names the colour its own mint wrote down', () => {
+  /*
+   * The mint writes the colour it was answered with into this machine's record
+   * of the mint, in the network's store folder; the network record is where
+   * every build reads it. Each network is accounted for, and the account says
+   * what was checked: a mint record compared with the network record, or no
+   * mint record and a network record that names no colour. A network record
+   * that names a colour where this copy keeps no store for that network cannot
+   * be compared here, and the account says so rather than counting it as checked.
+   */
+  const ROOT_OF_THIS_COPY = fileURLToPath(new URL('..', import.meta.url));
+
+  /** What was checked for every network, and every network whose records disagree. */
+  const colourAccount = (root: string): { checked: string[]; notHere: string[]; wrong: string[] } => {
+    const checked: string[] = [];
+    const notHere: string[] = [];
+    const wrong: string[] = [];
+    for (const id of NETWORK_IDS) {
+      const stateDir = storeDir(root, id as NetworkName);
+      const file = testTokenFile(stateDir, id);
+      const named = networkRecord(id).testToken;
+      if (existsSync(file)) {
+        const minted = parseTestTokenRecord(JSON.parse(readFileSync(file, 'utf8')), id).colour ?? null;
+        if (minted === named) checked.push(`${id}: its mint recorded ${minted ?? 'no colour'}, and its network record names the same`);
+        else wrong.push(`${id}: its mint recorded ${minted ?? 'no colour'} and its network record names `
+          + `${named ?? 'none'}; write the mint's colour as its testToken`);
+      } else if (named === null) {
+        checked.push(`${id}: no mint record in its store, and its network record names no colour`);
+      } else if (existsSync(stateDir)) {
+        wrong.push(`${id}: its network record names ${named} and its store holds no record of a mint; `
+          + 'a test token reaches the record only from its own mint');
+      } else {
+        notHere.push(`${id}: its network record names ${named}, and this copy keeps no store for ${id} to compare it with`);
+      }
+    }
+    return { checked, notHere, wrong };
+  };
+
+  it('THE COLOUR A MINT RECORDED IS THE COLOUR ITS NETWORK RECORD NAMES', () => {
+    const { checked, notHere, wrong } = colourAccount(ROOT_OF_THIS_COPY);
+    /* RED WHEN a network record names a colour its own mint did not record, a mint recorded a colour its network
+     * record does not name, or a record names a colour where this copy keeps that network's store and no mint record. */
+    expect(wrong).toEqual([]);
+    /* RED WHEN a network is passed over: every one is checked, or said to be out of this copy's reach. */
+    expect(checked.length + notHere.length).toBe(NETWORK_IDS.length);
+    /* RED WHEN nothing was checked at all, so the comparison above passed over nothing. */
+    expect(checked.length).toBeGreaterThan(0);
+    expect(checked.join('\n')).toMatch(/preprod: (no mint record in its store, and its network record names no colour|its mint recorded)/u);
+  });
+
+  /* RED WHEN a mint record written into a network's store, naming a colour its network record does not, passes. */
+  it('a mint record in a store that its network record does not name is found, and so is a store with none', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mint-colour-'));
+    const preprod = storeDir(root, 'preprod');
+    mkdirSync(preprod, { recursive: true });
+    const colour = 'ab'.repeat(32);
+    writeFileSync(testTokenFile(preprod, 'preprod'),
+      JSON.stringify({ network: 'preprod', contractAddress: 'cd'.repeat(32), colour }));
+    const account = colourAccount(root);
+    expect(account.wrong.filter((w) => w.startsWith('preprod:'))).toEqual(
+      [`preprod: its mint recorded ${colour} and its network record names ${networkRecord('preprod').testToken ?? 'none'}; write the mint's colour as its testToken`]);
+    const named = NETWORK_IDS.find((id) => networkRecord(id).testToken !== null);
+    if (named !== undefined) {
+      const empty = mkdtempSync(join(tmpdir(), 'mint-colour-'));
+      mkdirSync(storeDir(empty, named as NetworkName), { recursive: true });
+      expect(colourAccount(empty).wrong.some((w) => w.startsWith(`${named}: its network record names`))).toBe(true);
+    }
   });
 });

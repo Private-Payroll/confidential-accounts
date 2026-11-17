@@ -76,14 +76,17 @@ describe('a vault splits one of its own notes', () => {
   let vaultState: any;
   let priv: VaultPrivate;
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
   const vaultBytes = () => Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
 
   const pool = (state: any = vaultState) => vaultLedger(state as never).notes;
 

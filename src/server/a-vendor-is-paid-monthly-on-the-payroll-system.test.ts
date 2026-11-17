@@ -8,11 +8,13 @@
  *
  * Over real HTTP, with the people and vendors invited, accepted and admitted on devices as the product does it.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { newWrappingKeypair, type Hex } from '../core/crypto.js';
-import { NIGHT, TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+import { NIGHT } from '../core/assets.js';
 import { openSealedRun, sealedRunOf } from '../core/run-legs.js';
 import { signRunFiling } from '../core/run-filing.js';
 import { peopleOnTheRun } from '../core/run-drawing.js';
@@ -45,7 +47,7 @@ aCompanyOfTwoSeats((app, deps) => {
 const NETWORK = theNetwork();
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const SLIP = 'cd'.repeat(32);
-const MONTHLY = { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 90000n };
+const MONTHLY = { kind: 'monthly' as const, asset: TEST_NETWORK_COLOUR, amount: 90000n };
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
@@ -68,7 +70,7 @@ const drawingOn = (s: Seat): RunDrawDoors => ({
 const anEmployee = async (n: number): Promise<string> => {
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: addressOf(n), payslipKey: newWrappingKeypair().publicKey });
   const made = await inviteHere(ACME, ADA, 'employee', {
-    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n + BigInt(n),
+    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500000n + BigInt(n),
     classification: 'full-time' as const, startDate: '2026-10-01',
   }, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
@@ -106,7 +108,7 @@ const aRoundFor = (runId: string): SealedProposal => ({
   sealed: sealPayrollProposal({
     accountId: CO, viewingKey: KEY as Hex, vault: 'c5'.repeat(32) as Hex, summary: 'Payroll', proposedBy: ADA.seat,
     payload: { runId, form: 'shielded', entries: [], window: { root: '0b'.repeat(32) as Hex, payees: '1', opensAt: '0', closesAt: '1' } },
-    change: { asset: TEST_SETTLEMENT_ASSET, amount: 0n, batchDigest: batchDigestOf([]), salt: '5d'.repeat(32) as Hex, vouched: { head: '1a'.repeat(32) as Hex, r: '5e'.repeat(32) as Hex } },
+    change: { asset: TEST_NETWORK_COLOUR, amount: 0n, batchDigest: batchDigestOf([]), salt: '5d'.repeat(32) as Hex, vouched: { head: '1a'.repeat(32) as Hex, r: '5e'.repeat(32) as Hex } },
   }),
 } as SealedProposal);
 
@@ -133,7 +135,7 @@ describe('A VENDOR PAID MONTHLY IS PAID BY A RUN OVER THE VENDOR LIST', () => {
     /* RED WHEN: a vendor is paid on the employees' payroll, or an employee on a vendor run. */
     expect(january.employees.map((e) => e.id)).toEqual([employee]);
     /* RED WHEN: a vendor is paid other than their monthly terms, in their terms' token. */
-    expect(onTheRun(vendorsInJanuary, byLink)).toMatchObject({ amount: 90000n, asset: TEST_SETTLEMENT_ASSET });
+    expect(onTheRun(vendorsInJanuary, byLink)).toMatchObject({ amount: 90000n, asset: TEST_NETWORK_COLOUR });
     /* RED WHEN: a run does not say inside its seal which list it pays, or says it where the service reads it. */
     expect(openSealedRun(store.getRun(vendorsInJanuary.id)!, KEY).list).toBe('vendors');
     expect(openSealedRun(store.getRun(january.id)!, KEY).list).toBe('employees');
@@ -164,7 +166,7 @@ describe('A VENDOR PAID MONTHLY IS PAID BY A RUN OVER THE VENDOR LIST', () => {
 
   it('RED WHEN: an employee with no payslip key is drawn on a run: only a vendor added by address is paid without one', () => {
     const drawOver = (id: string) => peopleOnTheRun({
-      runId: 'run_keyless', period: '2027-01', specs: [{ name: 'No Key', asset: TEST_SETTLEMENT_ASSET, amount: 1n }],
+      runId: 'run_keyless', period: '2027-01', specs: [{ name: 'No Key', asset: TEST_NETWORK_COLOUR, amount: 1n }],
       roster: [{ id, name: 'No Key', status: 'active', address: null, wrappingPublicKey: null }], assets, company: { account: null, label: LABEL },
     });
     expect(() => drawOver('emp_00000000000000000071')).toThrow(/No Key has no key yet/u);
@@ -266,7 +268,7 @@ describe('A VENDOR PAID MONTHLY IS PAID BY A RUN OVER THE VENDOR LIST', () => {
     await expect(drawRunHere(drawingOn(ADA), { period: '2027-06', list: 'vendors' }))
       .rejects.toThrow(/Vendor 80 and Vendor 80 again are two vendor entries paid at one address/u);
     const vendors = await payeesHere(recordsOf(ADA) as unknown as CompanyRecordsHere, 'vendors');
-    const leg = [once, twice].map((id) => ({ id, name: id, wrappingPublicKey: null, asset: TEST_SETTLEMENT_ASSET, amount: 90000n, form: 'shielded' as const, paidTo: addressOf(80) }));
+    const leg = [once, twice].map((id) => ({ id, name: id, wrappingPublicKey: null, asset: TEST_NETWORK_COLOUR, amount: 90000n, form: 'shielded' as const, paidTo: addressOf(80) }));
     expect(() => payableFactsOf(vendors, leg, 'Leave them unpaid.', 'Not raised.', undefined, '2027-06')).toThrow(/two vendor entries paid at one address/u);
   });
 });

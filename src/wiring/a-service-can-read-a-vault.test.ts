@@ -16,6 +16,7 @@
  * countable where they are written. A check that counts them is narrow and
  * true; a check that imported the server would be neither.
  */
+import { served } from '../testing/served-state.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { readFileSync } from 'node:fs';
@@ -30,6 +31,7 @@ import { assets as productAssets, ledgerTokenOf, NIGHT as NIGHT_ASSET } from '..
 import { VaultCannotPayThisProposal } from '../core/vault-holdings.js';
 import type { Deployment } from './deployment.js';
 import type { Hex } from '../core/crypto.js';
+import { NETWORK } from 'midnight-identity/network';
 
 /**
  * **THE PROVIDER BUNDLE IS THE ONE THING A TEST HAS TO SUPPLY**, because it is
@@ -45,7 +47,8 @@ const rows: { value: Array<{ tokenType: string; balance: bigint }> | null } = { 
 /** Set to make the NEXT bundle build fail, the way an unreachable indexer would. */
 const failNextBuild = { value: false };
 
-vi.mock('../midnight/providers.js', () => ({
+vi.mock('../midnight/providers.js', async () => ({
+  ...(await vi.importActual<object>('../midnight/providers.js')),
   midnightProviders: async (b: Record<string, unknown>) => {
     bundles.push(b);
     if (failNextBuild.value) {
@@ -57,7 +60,7 @@ vi.mock('../midnight/providers.js', () => ({
         /* The vault's state as the indexer serves it: its public balance, or nothing at all. */
         queryContractState: async () => (rows.value === null
           ? null
-          : { balance: new Map(rows.value.map(({ tokenType, balance }) => [{ tag: 'unshielded', raw: tokenType }, balance])) }),
+          : served({ balance: new Map(rows.value.map(({ tokenType, balance }) => [{ tag: 'unshielded', raw: tokenType }, balance])) })),
       },
     };
   },
@@ -70,14 +73,14 @@ const VAULT: Hex = 'e3'.repeat(32);
 const NIGHT = ledgerTokenOf(NIGHT_ASSET, 'unshielded');
 
 const DEPLOYMENT: Deployment = {
-  network: 'stagenet',
+  network: NETWORK,
   contractAddress: 'bcb61fef',
   indexerUrl: 'https://indexer.example/api/v4/graphql',
   indexerWsUrl: 'wss://indexer.example/api/v4/graphql/ws',
   nodeUrl: 'https://rpc.example',
   proverUrl: 'http://prover.invalid:1',
   sealedStateRoot: '/nowhere/.midnight/sealed',
-  privateStateId: 'confidential-accounts-stagenet',
+  privateStateId: `confidential-accounts-${NETWORK}`,
   zkConfigPath: '/nowhere/contracts/managed',
   vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 };

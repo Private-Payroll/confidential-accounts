@@ -34,9 +34,8 @@ import { readFileSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import {
@@ -102,7 +101,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
   const builder = () => {
     const deps = async () => ({
       ledger: L, runtimeState: (runtime as any).ContractState,
-      contracts, accountCompiled, accountZkConfig: accountZk, accountPure: circuits,
+      contracts: callsTheProductBuilds(), accountCompiled, accountZkConfig: accountZk, accountPure: circuits,
       /* No proof is made here: what the chain is handed is the unproven call. */
       prove: async (unproven: any) => unproven,
     });
@@ -186,7 +185,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
   /** The invitee takes the seat, as their own wallet builds the call, and the chain applies what it sent. */
   const inviteeTakes = async (who: AccountPrivateState, id: string, salt: string, invite: InvitedAddress = invitedAddressFor(who)) =>
     send(await inviteeSeatCall({
-      accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who, proposal: id, salt, invite,
+      accountCompiled, accountZk, company, network: NET, accountState: chain.contract(company).serialize(), who, proposal: id, salt, invite,
     }));
 
   /** An invitation raised by the first device named (which counts as its approval), approved by the rest, and taken by the invitee. */
@@ -198,7 +197,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVIC
   };
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     founder = privateStateFor(1);
     const init = await new (accountModule as any).Contract(witnesses).initialState(

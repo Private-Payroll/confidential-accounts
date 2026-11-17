@@ -6,9 +6,8 @@ import { witnesses } from '../../../../contracts/src/witnesses.js';
 import { privateStateFor, leafOfDevice, COMPANY_LABEL } from '../../../../contracts/test/simulator.js';
 import { payKeyRoundOf } from '../../../../src/midnight/pay-key-round.js';
 import { newWrappingKeypair } from '../../../../src/core/crypto.js';
-import type { GovernedCallDeps } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { ACCOUNT_CIRCUITS_THE_WALLET_PROVES } from './account-circuits.js';
-import { accountBuilderDeps, answerAccountAsk, startAccountBuilder, type AccountBuilderAsk } from './account-builder.js';
+import { accountBuilderDeps, answerAccountAsk, startAccountBuilder, type AccountBuilderAsk, type AccountBuildingDeps } from './account-builder.js';
 
 /*
  * The wallet's account builder, asked as its worker is asked. What it proves
@@ -38,7 +37,7 @@ describe('the builder in its worker', () => {
       addEventListener: (_t: 'message', l: (e: { data: unknown }) => void) => { events.push('listening'); listener = l; },
       postMessage: (m: unknown) => { events.push((m as { kind?: string }).kind ?? 'answer'); if ((m as { kind?: string }).kind === undefined) answers.push(m); },
     };
-    const deps = vi.fn(async () => ({}) as GovernedCallDeps);
+    const deps = vi.fn(async () => ({}) as AccountBuildingDeps);
     startAccountBuilder(scope, deps);
     expect(events).toEqual(['listening', 'account-builder-ready']);
     listener!({ data: { id: 1, ask: 'deploy' } });
@@ -57,7 +56,7 @@ describe('the builder in its worker', () => {
       material: { signingSecret: '01'.repeat(32), blinding: '02'.repeat(32), scope: '03'.repeat(32) },
       chain: { accountState: '', parameters: '' }, opened: {} as never,
     } as unknown as AccountBuilderAsk;
-    const answer = await answerAccountAsk(async () => ({ prove }) as unknown as GovernedCallDeps, ask);
+    const answer = await answerAccountAsk(async () => ({ prove }) as unknown as AccountBuildingDeps, ask);
     expect(answer).toMatchObject({ id: 7, ok: false, error: expect.stringMatching(/not for a company account/u) });
     expect(prove).not.toHaveBeenCalled();
   });

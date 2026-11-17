@@ -22,19 +22,27 @@
  * and submit a dust registration — a SPEND, taken by a bring-up on nobody's
  * instruction.
  */
+import type { MidnightWalletProvider } from '@midnight-ntwrk/testkit-js';
 import type { NetworkName } from '../src/midnight/network.js';
 import {
-  installDustWallet, dustCachePath, waitForDustAtTip, dustTipAt, dustIndexerWsOf, describeDustView,
-  type AtTipOptions, type AtTipOutcome,
+  buildWalletWithDust, facadeAtLedger9, registrationSidesSynced, dustCachePath, waitForDustAtTip, networkHeightAt,
+  dustIndexerHttpOf,
+  describeDustView, type AtTipOptions, type AtTipOutcome, type WalletWithDust,
 } from './dust-wallet.js';
 import { floorKnownAbsent } from './dust-fee-floor.js';
 import { waitForShieldedScan, type ShieldedWaitOutcome } from './shielded-wallet.js';
 import { rmSync } from 'node:fs';
 import { sleep } from '../src/midnight/retry.js';
+import { registerNightForDust } from '../src/midnight/dust-registration.js';
+import { withTimeout } from './deploy-report.js';
+import { loggerWithoutSecret } from './logger-without-secret.js';
 
 export interface LiveWallet {
-  /** The provider, once started. A getter: a cache retry replaces it. */
-  readonly wallet: any;
+  /**
+   * The testkit's wallet provider, once started. A getter: a cache retry replaces it. Typed, so a call into the
+   * wallet facade inside it is checked against the facade's own signatures.
+   */
+  readonly wallet: MidnightWalletProvider;
   /** The most recent state from the subscription. Null until the first arrives. */
   state(): any;
   /** DUST available now. A method, not a field: dust accrues over time. */
@@ -89,12 +97,12 @@ export interface BringUpOptions {
    *
    * The dust catch-up below is unconditional because every door that SUBMITS
    * needs it. This one is not: only a door that spends or
-   * reads a SHIELDED coin needs the shielded scan, and there is no cache for it
-   * here, so a scan runs from genesis every time it is asked for. Turning it on
-   * for every caller would put a genesis replay in front of every deploy and
-   * every measurement door, none of which touch a shielded
-   * coin — a cost paid by doors that cannot benefit from it, on instruments a
-   * session may not re-run.
+   * reads a SHIELDED coin needs the shielded scan to have caught up. The
+   * shielded state is cached beside the DUST state (`buildWalletWithDust`), but
+   * with no cache, or one too old to use, the scan runs from genesis. Waiting
+   * for it in every caller would put that replay in front of every deploy and
+   * every measurement door, none of which touch a shielded coin — a cost paid
+   * by doors that cannot benefit from it.
    *
    * So the DECISION is the caller's and the IMPLEMENTATION is not: there is one
    * wait, in `shielded-wallet.ts`, and no door may write a second.
@@ -119,9 +127,135 @@ export async function dustViewAtTip(
   note: (s: string) => void,
   options: AtTipOptions = {},
 ): Promise<AtTipOutcome> {
-  const ws = dustIndexerWsOf(live.wallet?.wallet?.dust);
-  if (ws === null) return { ok: false, why: 'the installed DUST wallet names no indexer to read the network\'s DUST from' };
-  return waitForDustAtTip(live, (from) => dustTipAt(ws, from), note, options);
+  const http = dustIndexerHttpOf(live.wallet?.wallet?.dust);
+  if (http === null) return { ok: false, why: 'the installed DUST wallet names no indexer to read the network\'s newest block from' };
+  return waitForDustAtTip(live, () => networkHeightAt(http), note, options);
+}
+
+/**
+ * Builds the wallet with our DUST wallet and its fee floor in it, and stops the run when the floor is known not to be
+ * in force.
+ */
+async function walletWithOurDust(
+  logger: unknown, cfg: unknown, seed: string, network: NetworkName, root: string, note: (s: string) => void,
+): Promise<WalletWithDust> {
+  const built = await buildWalletWithDust(loggerWithoutSecret(logger as any, seed), cfg as any, seed, network, root,
+    { note });
+  const installed = built.installed;
+  note(`dust wallet ${installed.how} — ${installed.detail}`);
+  /*
+   * WHICH OUTCOMES STOP THE RUN, AND WHY IT IS NOT ALL OF THEM.
+   *
+   * 'refused' with a floor that disagrees is the state where the wallet is
+   * KNOWN not to carry the floor, and it stops. A wallet without our DUST
+   * wallet at all is never built: the builder throws.
+   *
+   * A floor that merely could not be READ BACK is different and must not
+   * stop anything. The failure it points at is free and loud: a submission
+   * refused with no fee taken. The failure a throw creates is that every
+   * money door in this project stops working because a library renamed a
+   * field. So that case is said as loudly as a refusal and the run goes on.
+   */
+  if (installed.how === 'refused' && floorKnownAbsent(installed.reason ?? 'unreadable')) {
+    try { await built.wallet.stop?.(); } catch { /* nothing useful to do */ }
+    throw new Error(
+      `the dust wallet set-up did not complete with a fee floor in force: ${installed.detail}\n` +
+        '  A fee that can come out at nothing selects no dust coin, and a transaction carrying\n' +
+        '  no dust spend is refused by the node as malformed.\n' +
+        '  Nothing has been submitted and nothing is at risk. This is a defect in the wallet\n' +
+        '  set-up rather than a chain or funding problem, and re-running will not clear it.',
+    );
+  }
+  if (installed.how === 'refused') {
+    note('\x1b[33mthe fee floor could not be read back off the wallet, so nothing here can say');
+    note('whether it is in force. Going on: if this fails at submission, that is why.\x1b[0m');
+  }
+  return built;
+}
+
+/**
+ * **A WALLET WITH NO DUST REGISTERS ITS OWN NIGHT FOR DUST GENERATION, HERE.**
+ * Once the wallet has synced (within `bound` ms), a wallet holding no DUST has
+ * each of its own NIGHT coins not yet registered registered through the one
+ * registration (`registerNightForDust`), which estimates the fee, waits for the
+ * coins to have generated it, and names this wallet's own DUST address as the
+ * receiver. The NIGHT stays this wallet's: a registration moves no money. A
+ * wallet that holds DUST, or has no NIGHT left to register, registers nothing.
+ */
+async function registerOwnNightWhenNoDust(
+  provider: MidnightWalletProvider, forkV9: bigint, bound: number, note: (s: string) => void,
+): Promise<void> {
+  const sides = () => registrationSidesSynced(provider.wallet, forkV9, note);
+  const synced = await withTimeout('the wallet syncing before its NIGHT is registered for DUST', bound, sides());
+  if (synced.dust.balance(new Date()) > 0n) return;
+  const done = await registerNightForDust(provider.wallet, {
+    verifyingKey: provider.unshieldedKeystore.getPublicKey(),
+    sign: (payload) => provider.unshieldedKeystore.signDataAsync(payload),
+  }, {
+    send: async (recipe) => String(await provider.wallet.submitTransaction(await provider.wallet.finalizeRecipe(recipe))),
+    synced: async () => synced,
+  });
+  if ('transaction' in done) {
+    note(`no DUST, so ${done.registered} of this wallet's own NIGHT coin(s) were registered for DUST generation `
+      + `(fee ${done.fee}, transaction ${done.transaction.slice(0, 24)}…)`);
+  }
+}
+
+/**
+ * Why a wallet that must pay still has no DUST at the deadline, naming the cause that fits what it holds: no NIGHT
+ * means nothing could be registered to generate DUST; NIGHT means it is registered (here, if it was not already) and
+ * the DUST view did not catch up.
+ */
+export function noDustAfterTheDeadline(night: bigint): string {
+  if (night === 0n) {
+    return 'the wallet still reports no DUST after the full deadline, and it holds no NIGHT.\n'
+      + '  DUST is generated by registered NIGHT, so with none there is nothing to register and nothing to pay with.\n'
+      + '  What resolves it: send NIGHT to this wallet\'s address, then start again; it registers that NIGHT itself.';
+  }
+  return 'the dust wallet still reports no DUST after the full deadline.\n'
+    + `  It holds ${night} NIGHT, registered for DUST generation (here, if it was not already), so a balance should exist.\n`
+    + '  This is most likely the dust wallet failing to sync rather than missing DUST.';
+}
+
+/** Waits up to `bound` ms for the wallet to report a DUST balance, saying how it goes every ten seconds. */
+async function waitForTheDust(
+  live: LiveWallet, bound: number, note: (s: string) => void,
+): Promise<{ timedOut: boolean; waited: number }> {
+  const startedAt = Date.now();
+  let printed = 0;
+  let timedOut = false;
+  while (live.dust() === 0n) {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > bound) { timedOut = true; break; }
+    if (elapsed - printed >= 10_000) {
+      printed = elapsed;
+      note(`  ${String(Math.round(elapsed / 1000)).padStart(3)}s  NIGHT ${live.night()}  DUST ${live.dust()}`);
+    }
+    await sleep(1_000);
+  }
+  const waited = Math.round((Date.now() - startedAt) / 1000);
+  return { timedOut, waited };
+}
+
+/** Waits for the DUST view to reach the network's tip, and refuses a wallet that will pay when it does not. */
+async function dustViewCaughtUp(
+  live: LiveWallet, wallet: any, options: BringUpOptions, note: (s: string) => void,
+): Promise<void> {
+  const at = await dustViewAtTip(live, note, options.atTip);
+  if (!('why' in at)) {
+    note(`dust wallet caught up: ${describeDustView(at.applied, at.tip)}`);
+  } else if (options.requireDust) {
+    live.stop();
+    try { await wallet.stop?.(); } catch { /* the refusal below is what matters */ }
+    throw new Error(
+      `${at.why}.\n` +
+        '  A fee paid from a view behind the network can be refused by the node, so this wallet is not\n' +
+        '  handed on. Nothing has been submitted and nothing is at risk. Start again; if it stops at the\n' +
+        '  same place, the indexer or this machine\'s connection to it is where to look.',
+    );
+  } else {
+    note(`\x1b[33m${at.why}; anything this wallet pays may be refused (error 170)\x1b[0m`);
+  }
 }
 
 /**
@@ -142,14 +276,14 @@ export async function bringUpWallet(
   options: BringUpOptions = {},
 ): Promise<LiveWallet> {
   const note = options.onNote ?? (() => {});
-  const { MidnightWalletProvider } = await import('@midnight-ntwrk/testkit-js');
-  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const NIGHT = (unshieldedToken() as any).raw;
 
   let wallet: any = null;
   let latest: any = null;
   let sub: any = null;
   let usedCache = false;
+  let forkV9 = 0n;
   let waited = 0;
   let shieldedOutcome: ShieldedWaitOutcome | null = null;
 
@@ -184,9 +318,8 @@ export async function bringUpWallet(
    * thing that changed, so the cache is the suspect.
    */
   for (let attempt = 1; ; attempt++) {
-    wallet = await MidnightWalletProvider.build(logger as any, cfg as any, seed);
-
     usedCache = false;
+    forkV9 = 0n;
     /*
      * EVERY ATTEMPT, NOT ONLY THE FIRST.
      *
@@ -198,47 +331,26 @@ export async function bringUpWallet(
      * untrustworthy. The cache is skipped on a retry; the floor is not.
      */
     if (options.withDust !== false) {
-      const installed = await installDustWallet(wallet, cfg as any, seed, network, root);
-      usedCache = installed.how === 'restored';
-      note(`dust wallet ${installed.how} — ${installed.detail}`);
-      /*
-       * WHICH OUTCOMES STOP THE RUN, AND WHY IT IS NOT ALL OF THEM.
-       *
-       * 'refused' with a floor that disagrees, and 'unchanged', are the two
-       * states where the wallet in place is KNOWN not to carry the floor. Both
-       * stop. 'unchanged' is the more certain of the two and used to pass
-       * silently, which was backwards.
-       *
-       * A floor that merely could not be READ BACK is different and must not
-       * stop anything. The failure it points at is free and loud: a submission
-       * refused with no fee taken. The failure a throw creates is that every
-       * money door in this project stops working because a library renamed a
-       * field. So that case is said as loudly as a refusal and the run goes on.
-       */
-      const floorDefinitelyAbsent =
-        installed.how === 'unchanged'
-        || (installed.how === 'refused' && floorKnownAbsent(installed.reason ?? 'unreadable'));
-      if (floorDefinitelyAbsent) {
-        live.stop();
-        try { await wallet.stop?.(); } catch { /* nothing useful to do */ }
-        throw new Error(
-          `the dust wallet set-up did not complete with a fee floor in force: ${installed.detail}\n` +
-            '  A fee that can come out at nothing selects no dust coin, and a transaction carrying\n' +
-            '  no dust spend is refused by the node as malformed.\n' +
-            '  Nothing has been submitted and nothing is at risk. This is a defect in the wallet\n' +
-            '  set-up rather than a chain or funding problem, and re-running will not clear it.',
-        );
-      }
-      if (installed.how === 'refused') {
-        note('\x1b[33mthe fee floor could not be read back off the wallet, so nothing here can say');
-        note('whether it is in force. Going on: if this fails at submission, that is why.\x1b[0m');
-      }
+      const built = await walletWithOurDust(logger, cfg, seed, network, root, note);
+      wallet = built.wallet;
+      usedCache = built.installed.how === 'restored';
+      forkV9 = built.forkV9;
+    } else {
+      // A wallet that will not pay still gets our DUST wallet: the facade reads its version from the wallets it is
+      // built with, and the testkit's unstarted DUST wallet would hold it at ledger 8.
+      const built = await buildWalletWithDust(loggerWithoutSecret(logger as any, seed), cfg as any, seed, network, root,
+        { note });
+      wallet = built.wallet;
+      forkV9 = built.forkV9;
     }
 
     // THE LINE THAT WAS MISSING for four runs. Without it nothing syncs, ever.
     // `false` and never `true`: `start(true)` reaches `waitForFunds`, which can
     // hit the faucet and SUBMIT. See the header.
     await wallet.start(false);
+    // Nothing is written before the facade writes for ledger 9: a restored shielded wallet is there at once, a
+    // fresh one only once its replay crosses the fork.
+    await facadeAtLedger9(wallet.wallet, forkV9, note);
 
     latest = null;
     sub = wallet.wallet.state().subscribe({ next: (st: any) => (latest = st) });
@@ -248,26 +360,19 @@ export async function bringUpWallet(
       return live;
     }
 
+    /* A restored wallet catches up only what happened since it was saved, but through a provider's indexer that has
+     * taken longer than two minutes (15 Nov, preprod, a state 97 minutes old); waiting sends nothing, so it waits longer. */
     const bound = usedCache
-      ? (options.cachedTimeoutMs ?? 2 * 60_000)
+      ? (options.cachedTimeoutMs ?? 8 * 60_000)
       : (options.coldTimeoutMs ?? 12 * 60_000);
     note(usedCache
       ? 'catching the restored dust wallet up to the tip'
       : 'waiting for the dust wallet to sync from genesis (this is the ~5 minutes)');
 
-    const startedAt = Date.now();
-    let printed = 0;
-    let timedOut = false;
-    while (live.dust() === 0n) {
-      const elapsed = Date.now() - startedAt;
-      if (elapsed > bound) { timedOut = true; break; }
-      if (elapsed - printed >= 10_000) {
-        printed = elapsed;
-        note(`  ${String(Math.round(elapsed / 1000)).padStart(3)}s  NIGHT ${live.night()}  DUST ${live.dust()}`);
-      }
-      await sleep(1_000);
-    }
-    waited = Math.round((Date.now() - startedAt) / 1000);
+    await registerOwnNightWhenNoDust(wallet, forkV9, bound, note);
+    const dust = await waitForTheDust(live, bound, note);
+    const timedOut = dust.timedOut;
+    waited = dust.waited;
 
     if (!timedOut) break;
 
@@ -280,14 +385,8 @@ export async function bringUpWallet(
     }
 
     live.stop();
-    if (options.requireDust) {
-      throw new Error(
-        'the dust wallet still reports no DUST after the full deadline.\n' +
-          '  The NIGHT was registered during the deploy, so the balance should exist.\n' +
-          '  This is most likely the dust wallet failing to sync rather than missing DUST.',
-      );
-    }
-    note(`no DUST after ${waited}s — anything submitted will be rejected as 170`);
+    if (options.requireDust) throw new Error(noDustAfterTheDeadline(live.night()));
+    note(`no DUST after ${waited}s — a transaction it pays for carries no DUST spend and is refused (BalanceCheckOverspend, 138)`);
     break;
   }
 
@@ -305,23 +404,7 @@ export async function bringUpWallet(
    * not handed back: the run stops here rather than say it is ready with a
    * view behind the network. Any other wallet is handed back with a warning.
    */
-  if (options.withDust) {
-    const at = await dustViewAtTip(live, note, options.atTip);
-    if (!('why' in at)) {
-      note(`dust wallet caught up: ${describeDustView(at.applied, at.tip)}`);
-    } else if (options.requireDust) {
-      live.stop();
-      try { await wallet.stop?.(); } catch { /* the refusal below is what matters */ }
-      throw new Error(
-        `${at.why}.\n` +
-          '  A fee paid from a view behind the network can be refused by the node, so this wallet is not\n' +
-          '  handed on. Nothing has been submitted and nothing is at risk. Start again; if it stops at the\n' +
-          '  same place, the indexer or this machine\'s connection to it is where to look.',
-      );
-    } else {
-      note(`\x1b[33m${at.why}; anything this wallet pays may be refused (error 170)\x1b[0m`);
-    }
-  }
+  if (options.withDust) await dustViewCaughtUp(live, wallet, options, note);
 
   /*
    * **AND THE SHIELDED SCAN, WHICH THE DUST CACHE MADE WORSE RATHER THAN

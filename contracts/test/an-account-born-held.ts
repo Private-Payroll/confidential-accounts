@@ -13,10 +13,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds } from './the-calls-the-product-builds.js';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import type { Identity } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { REQUEST_SCHEMA, parseAsk, type CreationRequest } from 'midnight-identity/profile/request';
@@ -50,11 +49,10 @@ export const thisBuilds = (): ThisBuildsAccountKeys => ({
 
 /** The device's builder's deps for an account, as the vault worker loads them. Nothing is proved: a deploy and an update call no circuit. */
 export const accountBuilderDeps = (network: string) => {
-  setNetworkId(network as never);
   return {
     ledger: L,
     runtimeState: (runtime as any).ContractState,
-    contracts: contracts as any,
+    contracts: callsTheProductBuilds(),
     network,
     accountCompiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
       CompiledContract.withWitnesses(witnesses as never)),

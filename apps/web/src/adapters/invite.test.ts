@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { assets } from '../../../../src/core/assets.js';
 import { invitationIdOf, invitationLink } from '../../../../src/core/invitation.js';
+import { privateAddressHere, publicAddressHere } from '../addresses-here.test-support.js';
 import { READ } from './reads.js';
 import { ACT_REFUSAL } from './refusals.js';
 
@@ -40,7 +41,8 @@ async function load() {
 }
 const NAMED = { record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32) };
 const ASSET = assets.enabled()[0]!;
-const PRIVATE = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
+const PRIVATE = privateAddressHere(0x11);
+const PUBLIC = publicAddressHere(0x22);
 
 describe('the ask made from the form', () => {
   /* RED WHEN: an employee's pay is not the whole number of smallest units, or a field the person left empty is sent. */
@@ -209,7 +211,7 @@ describe('which address is private', () => {
   it('says a private address is private, and a public one, a bad one and an empty one are not', async () => {
     const m = await load();
     expect(m.addressIsPrivate(` ${PRIVATE} `)).toBe(true);
-    expect(m.addressIsPrivate('mn_addr_stagenet1egv3hww6lmsahjy3gldaqn778hcpwvhhw8udud6k859906yynmmq8wsdsd')).toBe(false);
+    expect(m.addressIsPrivate(PUBLIC)).toBe(false);
     expect(m.addressIsPrivate(PRIVATE.slice(0, -3))).toBe(false);
     expect(m.addressIsPrivate('')).toBe(false);
   });

@@ -1,24 +1,16 @@
-import { check, prove } from '@midnight-ntwrk/zkir-v2';
+import { zkirEngineFor } from '../../../../src/midnight/wasm-proving.js';
 import { describeFailure } from '../lib/failure-text.js';
 
 /**
- * THE PROVING WORKER — ours, and the reason it exists is a measured defect
- * in the SDK's own (`proving.ts` tells the whole story): the SDK's worker
- * registers its message listener at the END of a module graph that loads
- * WASM under a TOP-LEVEL AWAIT, while the page posts the one-and-only work
- * order the moment the worker is constructed — and a message posted to a
- * module worker during its top-level await is DROPPED, so every real proof
- * hangs for the SDK's ten-minute timeout and dies. Measured in a real
- * browser: an immediate post is never answered; the same post five seconds
- * later is.
- *
- * So this worker's contract is a HANDSHAKE: it says `ready` only after its
- * listener stands, and whoever started it posts nothing before it hears that. The
- * proving itself is the SDK's own dependency doing the SDK's own work —
- * `check` and `prove` from `@midnight-ntwrk/zkir-v2`, exactly the two calls
- * the SDK's worker makes (wallet-sdk-prover-client/dist/proof-worker.js) —
- * with key material asked of the thread that started it over the same kind of
- * message bridge.
+ * THE PROVING WORKER: one proof at a time, for the page or the wallet's account
+ * builder that started it. It says `ready` only after its listener stands, and
+ * whoever started it posts nothing before it hears that, because a message
+ * posted to a module worker while its WebAssembly is still loading is dropped.
+ * Each proof names its key's location, and is proved by the engine that
+ * location calls for (`zkirEngineFor`: zkir-v3 for a contract's circuit, zkir-v2
+ * for one of the network's own keys); a location that names neither is refused
+ * before anything is proved. Key material is asked of the thread that started
+ * it over a message bridge.
  */
 
 type Ask =
@@ -26,8 +18,8 @@ type Ask =
   | { readonly op: 'getParams'; readonly askId: number; readonly k: number };
 
 type FromPage =
-  | { readonly op: 'prove'; readonly preimage: Uint8Array; readonly overwriteBindingInput?: bigint }
-  | { readonly op: 'check'; readonly preimage: Uint8Array }
+  | { readonly op: 'prove'; readonly keyLocation: string; readonly preimage: Uint8Array; readonly overwriteBindingInput?: bigint }
+  | { readonly op: 'check'; readonly keyLocation: string; readonly preimage: Uint8Array }
   | { readonly op: 'answer'; readonly askId: number; readonly ok: boolean; readonly value?: unknown; readonly error?: string };
 
 const pending = new Map<number, { resolve: (value: never) => void; reject: (e: Error) => void }>();
@@ -58,21 +50,17 @@ addEventListener('message', ({ data }: MessageEvent<FromPage>) => {
     else waiting.reject(new Error(data.error ?? 'no key material was supplied for this proof'));
     return;
   }
-  if (data.op === 'prove') {
-    prove(data.preimage, keyMaterial, data.overwriteBindingInput)
-      .then((value) => postMessage({ op: 'result', value }))
-      .catch((e: unknown) => postMessage({
-        op: 'failure', error: describeFailure(e),
-      }));
-    return;
-  }
-  if (data.op === 'check') {
-    check(data.preimage, keyMaterial)
-      .then((value) => postMessage({ op: 'result', value }))
-      .catch((e: unknown) => postMessage({
-        op: 'failure', error: describeFailure(e),
-      }));
-  }
+  const work = zkirEngineFor(data.keyLocation).then((engine): Promise<Uint8Array | (bigint | undefined)[]> => {
+    const prover = engine.provingProvider(keyMaterial);
+    return data.op === 'prove'
+      ? prover.prove(data.preimage, data.keyLocation, data.overwriteBindingInput)
+      : prover.check(data.preimage, data.keyLocation);
+  });
+  work
+    .then((value) => postMessage({ op: 'result', value }))
+    .catch((e: unknown) => postMessage({
+      op: 'failure', error: describeFailure(e),
+    }));
 });
 
 /* THE HANDSHAKE — after the listener, and not a line before. */

@@ -30,6 +30,10 @@ import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import * as midnightTypes from '@midnight-ntwrk/midnight-js-types';
+import { contractCallsOf } from './contract-call-built.js';
+import { transactionSettingsFor } from '../../../src/midnight/providers.js';
+import { accountModuleFor } from '../../../src/midnight/contract-modules.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
 import { answerVaultAsk, type WorkerDeps } from './vault-worker-entry.js';
@@ -67,7 +71,7 @@ const deps = (): WorkerDeps => ({
   ledger: L,
   vault: vaultModule,
   runtimeState: (runtime as any).ContractState,
-  contracts: contracts as any,
+  contracts: contractCallsOf({ contracts, types: midnightTypes, ledger: L, ContractState: runtime.ContractState, settingsFor: transactionSettingsFor, accountModuleFor }),
   compiled: CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
     CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); }, nonceSecret: () => { throw new Error('a deposit spends no note'); } } as never)),
   zkConfig: new NodeZkConfigProvider(new URL('../../../contracts/managed-vault', import.meta.url).pathname),

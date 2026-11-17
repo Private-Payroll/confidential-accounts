@@ -54,12 +54,16 @@ describe('naming the coins a vault made, with the secret each was made under', (
   const SECOND = { nonce: toHex(bytes(0x88)), token: toHex(TOKEN), value: 400n };
   const asNotes = (coins: readonly { nonce: Hex; token: Hex; value: bigint }[]): Note[] => coins.map((c) => ({ ...c, index: 0n }));
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit as never, vaultAddr as never, BLOCK, vaultState, priv, provider() as never, undefined, undefined, NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit as never,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: NOW,
+      parentBlockHash: BLOCK,
+    });
   const call = async (circuit: string, ...a: unknown[]): Promise<any> => {
     const r: any = await (vault.impureCircuits as any)[circuit](ctx(circuit), ...a);
     vaultState = r.context.callContext.currentQueryContext.state;

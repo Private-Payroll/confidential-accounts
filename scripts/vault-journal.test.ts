@@ -21,6 +21,7 @@ import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
 import { sealPool, openPool, type PoolSigner } from '../src/midnight/vault-pool.js';
 import { newWrappingKeypair, newSymmetricKey, seal, wrapKey, canonical } from '../src/core/crypto.js';
 import { depositNonceAt, depositNonceKeyFor } from '../src/midnight/deposit-nonce.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const KEY = depositNonceKeyFor(new Uint8Array(32).fill(0x42), 'd0'.repeat(32));
 
@@ -41,19 +42,19 @@ const attempt = (nonce: string, value: bigint, amount: bigint) => ({
 
 const journalIn = (d: string, s: ReturnType<typeof signers>, vault = VAULT) =>
   new SealedPaymentJournal(
-    paymentJournalFile(d, 'stagenet', 'payroll-test-1'), vault,
+    paymentJournalFile(d, NETWORK, 'payroll-test-1'), vault,
     { id: 'ada', wrappingSecret: s.secret as never }, async () => s.signers);
 
 describe('the payment journal is named after the vault, never addressed by it', () => {
   it('puts the NAME in the path and the address nowhere in it, for both journals', () => {
     for (const path of [
-      paymentJournalFile('/state', 'stagenet', 'payroll-test-1'),
-      depositJournalFileOf('/state', 'stagenet', 'payroll-test-1'),
+      paymentJournalFile('/state', NETWORK, 'payroll-test-1'),
+      depositJournalFileOf('/state', NETWORK, 'payroll-test-1'),
     ]) {
       expect(path).toContain('payroll-test-1');
       expect(path).not.toMatch(/[0-9a-f]{16}/);
     }
-    expect(() => paymentJournalFile('/state', 'stagenet', '../x')).toThrow();
+    expect(() => paymentJournalFile('/state', NETWORK, '../x')).toThrow();
   });
 
   it('the reader opens the deposit journal files already on disk, under the name they were written with', () => {
@@ -63,16 +64,16 @@ describe('the payment journal is named after the vault, never addressed by it', 
      * is absent-equals-empty doing exactly what it should about the wrong file.
      */
     expect(
-      depositJournalFileOf('/x/.midnight', 'stagenet', 'payroll-test-2'),
+      depositJournalFileOf('/x/.midnight', NETWORK, 'payroll-test-2'),
       'RED WHEN: the deposit journal\'s file name is spelled any other way, so a journal already on disk is never read',
-    ).toBe('/x/.midnight/stagenet-vault-deposit-journal-payroll-test-2.json');
+    ).toBe(`/x/.midnight/${NETWORK}-vault-deposit-journal-payroll-test-2.json`);
   });
 
   it('the two journals and the pool are three different files', () => {
     const names = new Set([
-      paymentJournalFile('/s', 'stagenet', 'payroll-uk'),
-      depositJournalFileOf('/s', 'stagenet', 'payroll-uk'),
-      vaultPoolFile('/s', 'stagenet', 'payroll-uk'),
+      paymentJournalFile('/s', NETWORK, 'payroll-uk'),
+      depositJournalFileOf('/s', NETWORK, 'payroll-uk'),
+      vaultPoolFile('/s', NETWORK, 'payroll-uk'),
     ]);
     expect(names.size, 'RED WHEN: two of the three share a name, so one record is written over another\x27s versions').toBe(3);
   });
@@ -155,8 +156,8 @@ describe('the reader takes every filed version of both journals, as the rebuild 
   it('answers empty for a machine with no journals at all', () => {
     const d = dir(); const s = signers();
     const r = journalledAttempts({
-      depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
-      paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'),
+      depositJournalFile: depositJournalFileOf(d, NETWORK, 'payroll-test-1'),
+      paymentJournalFile: paymentJournalFile(d, NETWORK, 'payroll-test-1'),
       vault: VAULT, opener: opener(s),
     });
     expect(r).toEqual({ deposits: [], payments: [], versionsRead: { deposits: 0, payments: 0 }, passedOver: { deposits: 0, payments: 0 }, unread: [] });
@@ -165,7 +166,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
   it('reads the deposit journal the deposit door writes -- coins under `notes` -- and the payment journal', async () => {
     const d = dir(); const s = signers();
     /* The deposit door's own shape: note-shaped lines plus when, cumulative per version. */
-    const depositFile = depositJournalFileOf(d, 'stagenet', 'payroll-test-1');
+    const depositFile = depositJournalFileOf(d, NETWORK, 'payroll-test-1');
     const depositStore = new FileSealedPoolStore(depositFile, VAULT);
     const line1 = { nonce: '11'.repeat(32), token: TOKEN, value: 700n, attemptedAt: 't1' };
     const line2 = { nonce: '12'.repeat(32), token: TOKEN, value: 800n, attemptedAt: 't2' };
@@ -176,7 +177,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
 
     const r = journalledAttempts({
       depositJournalFile: depositFile,
-      paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'),
+      paymentJournalFile: paymentJournalFile(d, NETWORK, 'payroll-test-1'),
       vault: VAULT, opener: opener(s),
     });
     expect(r.versionsRead).toEqual({ deposits: 2, payments: 1 });
@@ -192,7 +193,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
 
   it('takes the UNION across versions, so a line only an older version holds still counts', async () => {
     const d = dir(); const s = signers();
-    const file = paymentJournalFile(d, 'stagenet', 'payroll-test-1');
+    const file = paymentJournalFile(d, NETWORK, 'payroll-test-1');
     const store = new FileSealedPoolStore(file, VAULT);
     const a1 = attempt('01'.repeat(32), 1_000n, 200n);
     const a2 = attempt('02'.repeat(32), 500n, 100n);
@@ -200,7 +201,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
     await store.put(VAULT, sealPool(VAULT, { attempts: [a1] } as never, s.signers, 1, 'payment-journal'));
     await store.put(VAULT, sealPool(VAULT, { attempts: [a2] } as never, s.signers, 2, 'payment-journal'));
     const r = journalledAttempts({
-      depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
+      depositJournalFile: depositJournalFileOf(d, NETWORK, 'payroll-test-1'),
       paymentJournalFile: file, vault: VAULT, opener: opener(s),
     });
     expect(
@@ -211,11 +212,11 @@ describe('the reader takes every filed version of both journals, as the rebuild 
 
   it('SKIPS AND SAYS a journal line that is not the shape it claims, rather than proposing from a guess', async () => {
     const d = dir(); const s = signers();
-    const file = paymentJournalFile(d, 'stagenet', 'payroll-test-1');
+    const file = paymentJournalFile(d, NETWORK, 'payroll-test-1');
     const store = new FileSealedPoolStore(file, VAULT);
     await store.put(VAULT, sealPool(VAULT, { attempts: [{ spent: { nonce: '01'.repeat(32), token: TOKEN, value: 1n }, amount: 'ten' }] } as never, s.signers, 1, 'payment-journal'));
     const r = journalledAttempts({
-      depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
+      depositJournalFile: depositJournalFileOf(d, NETWORK, 'payroll-test-1'),
       paymentJournalFile: file, vault: VAULT, opener: opener(s),
     });
     /* RED WHEN: a line that is not an attempt is proposed from, or skipped without saying so. */
@@ -226,7 +227,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
   it('what the reader hands back is what the writer sealed: opening a version directly agrees', async () => {
     const d = dir(); const s = signers();
     await journalIn(d, s).record(VAULT, attempt('01'.repeat(32), 1_000n, 200n));
-    const file = paymentJournalFile(d, 'stagenet', 'payroll-test-1');
+    const file = paymentJournalFile(d, NETWORK, 'payroll-test-1');
     const rec = await new FileSealedPoolStore(file, VAULT).get(VAULT);
     const page: any = openPool(rec!, 'ada', s.secret as never, { record: 'payment-journal' });
     expect(page.attempts[0].spent.value).toBe(1_000n);
@@ -242,7 +243,7 @@ describe('the deposit journal the ledger is handed writes what the door always w
   const opener = (s: ReturnType<typeof signers>) => ({ id: 'ada', wrappingSecret: s.secret as never });
   const depositIn = (d: string, s: ReturnType<typeof signers>, written = () => {}, vault = VAULT) =>
     new SealedDepositJournal(
-      depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), vault, opener(s), async () => s.signers, KEY, written);
+      depositJournalFileOf(d, NETWORK, 'payroll-test-1'), vault, opener(s), async () => s.signers, KEY, written);
   const money = (value: bigint) => ({ token: TOKEN, value });
 
   it('files the coin, sealed, in the page the rebuild has always read, and says so only once it is on disk', async () => {
@@ -260,8 +261,8 @@ describe('the deposit journal the ledger is handed writes what the door always w
     let r!: ReturnType<typeof journalledAttempts>;
     expect(
       () => { r = journalledAttempts({
-        depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
-        paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'),
+        depositJournalFile: depositJournalFileOf(d, NETWORK, 'payroll-test-1'),
+        paymentJournalFile: paymentJournalFile(d, NETWORK, 'payroll-test-1'),
         vault: VAULT, opener: opener(s),
       }); },
       'RED WHEN: the ledger\'s deposit line is filed under a page name the rebuild does not read, so every rebuild of this vault stops',
@@ -270,7 +271,7 @@ describe('the deposit journal the ledger is handed writes what the door always w
       r.deposits,
       'RED WHEN: the ledger\'s deposit line is filed in a shape or file the rebuild does not read -- the door keeps writing and the rebuild reads nothing',
     ).toEqual([first.coin, second.coin]);
-    const rec = await new FileSealedPoolStore(depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), VAULT).get(VAULT);
+    const rec = await new FileSealedPoolStore(depositJournalFileOf(d, NETWORK, 'payroll-test-1'), VAULT).get(VAULT);
     const page: any = openPool(rec!, 'ada', s.secret as never, { record: 'deposit-journal' });
     expect(page.notes[1], 'RED WHEN: the page stops carrying each line whole, with when it was attempted, as the door wrote it').toEqual({
       nonce: second.coin.nonce, token: TOKEN, value: 800n, attemptedAt: 't9',
@@ -282,7 +283,7 @@ describe('the deposit journal the ledger is handed writes what the door always w
 
   it('A LINE WRITTEN BEFORE NONCES WERE DERIVED STILL READS, UNCHANGED, and the next claim is filed after it', async () => {
     const d = dir(); const s = signers();
-    const file = depositJournalFileOf(d, 'stagenet', 'payroll-test-1');
+    const file = depositJournalFileOf(d, NETWORK, 'payroll-test-1');
     const random = { nonce: '5c'.repeat(32), token: TOKEN, value: 600n, attemptedAt: 'before' };
     /* Written as the door wrote it then: sealed, with nothing inside saying what it is. */
     const key = newSymmetricKey();
@@ -295,7 +296,7 @@ describe('the deposit journal the ledger is handed writes what the door always w
     expect((await new FileSealedPoolStore(file, VAULT).versions(VAULT)).map((v) => v.version),
       'RED WHEN: a claim after an unlabelled line is not filed after it').toEqual([1, 2]);
     const r = journalledAttempts({
-      depositJournalFile: file, paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'), vault: VAULT, opener: opener(s),
+      depositJournalFile: file, paymentJournalFile: paymentJournalFile(d, NETWORK, 'payroll-test-1'), vault: VAULT, opener: opener(s),
     });
     expect(r.deposits, 'RED WHEN: a note made with a random nonce stops being named by the line that recorded it')
       .toEqual([{ nonce: '5c'.repeat(32), token: TOKEN, value: 600n }, next.coin]);
@@ -327,8 +328,8 @@ describe('a journal write never takes a reader away', () => {
       let listed: PoolSigner[] = k.both;
       const me = { id: 'ada', wrappingSecret: k.adaSecret as never };
       const journal = kind === 'payment'
-        ? new SealedPaymentJournal(paymentJournalFile(d, 'stagenet', 'payroll-test-1'), VAULT, me, async () => listed)
-        : new SealedDepositJournal(depositJournalFileOf(d, 'stagenet', 'payroll-test-1'), VAULT, me, async () => listed, KEY);
+        ? new SealedPaymentJournal(paymentJournalFile(d, NETWORK, 'payroll-test-1'), VAULT, me, async () => listed)
+        : new SealedDepositJournal(depositJournalFileOf(d, NETWORK, 'payroll-test-1'), VAULT, me, async () => listed, KEY);
       /* Each deposit line at a slot of its own: a slot claimed a moment ago is not claimed again. */
       let slot = 0;
       const write = async (): Promise<void> => {

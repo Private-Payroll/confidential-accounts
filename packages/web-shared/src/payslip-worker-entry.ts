@@ -12,7 +12,9 @@
  * (`payslip-movement.ts`) and tested here, and only the contract's address
  * goes to the indexer - which does see that this device asked about it.
  */
+import { asContractAddress } from '@midnight-ntwrk/midnight-js-types';
 import { publicDataProviderFor, type IndexerEndpoints } from './public-data.js';
+import { decodedState } from '../../../src/midnight/decoded-state.js';
 import { recordedAt, type ContractStateSource, type ReadLedger } from './recorded-payments.js';
 import type { PayslipAsk, PayslipAnswer, PayslipPayment } from './payslip-worker-client.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -34,7 +36,15 @@ export const realDeps: PayslipReaderDeps = {
     const which = `${indexer.indexerUri} ${indexer.indexerWsUri}`;
     let reader = readers.get(which);
     if (reader === undefined) {
-      reader = publicDataProviderFor(indexer) as unknown as Promise<ContractStateSource>;
+      /* The provider answers a state as bytes with the era that wrote them; the contract's decoder reads it decoded. */
+      reader = publicDataProviderFor(indexer).then((p): ContractStateSource => ({
+        queryContractState: async (address) => {
+          const read = await p.queryContractState(asContractAddress(address));
+          if (read === null) return null;
+          const { ContractState } = await import('@midnight-ntwrk/compact-runtime');
+          return decodedState(read.contractState, ContractState);
+        },
+      }));
       reader.catch(() => readers.delete(which));
       readers.set(which, reader);
     }

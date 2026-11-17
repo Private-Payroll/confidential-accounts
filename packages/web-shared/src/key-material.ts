@@ -16,8 +16,8 @@
  * A proof is one opaque call into WebAssembly. **The prover emits nothing while
  * it runs and there is nowhere to put a callback**: the package's whole surface
  * is `prove`, `check`, `provingProvider`, `jsonIrToBinary` and a class that
- * reads `k` - no callback parameter, no emitter, no abort signal - and the layer
- * above it accepts only a timeout. So the 140 seconds of proving has no
+ * reads `k` - no callback parameter, no emitter, no abort signal - and the
+ * proof provider wrapped around it refuses even a timeout. So the 140 seconds of proving has no
  * fraction and must never be drawn as one.
  *
  * **The download does.** Every artefact arrives with a `Content-Length`, so
@@ -38,10 +38,11 @@
  * holds is refused after minutes of proving, so a source given `pins` checks every
  * file against this build's digests first; a source without them trusts it all.
  */
-import { parseContractKeyLocation } from '@midnight-ntwrk/compact-js/effect/ContractKeyLocation';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { circuitOf, type KeyMaterialSource, type ProvingKeyMaterial } from '../../../src/midnight/wasm-proving.js';
+import {
+  circuitOf, keyLocationOf, type KeyMaterialSource, type ProvingKeyMaterial,
+} from '../../../src/midnight/wasm-proving.js';
 
 export { circuitOf };
 
@@ -250,9 +251,8 @@ export const contractPins = (
   whose,
   carriesKeys: Object.keys(expectedVk).length > 0 && typeof manifest.keys === 'object' && manifest.keys !== null,
   circuitIn: (keyLocation) => {
-    const located = parseContractKeyLocation(keyLocation);
-    if (located !== undefined) return located.circuitId;
-    return /^[A-Za-z0-9_]+$/u.test(keyLocation) ? keyLocation : null;
+    const located = keyLocationOf(keyLocation);
+    return located?.kind === 'contract' ? located.circuit : null;
   },
   digestOf: (kind, circuit) => {
     if (kind === 'verifier') {
@@ -468,8 +468,8 @@ export const httpKeyMaterialSource = (
       throw new ProvingMaterialRefused('no-pin', keyLocation,
         `This app has no ${KIND_WORD[kind]} it can check for the ${circuit} circuit of ${pins.whose}, so no proof was made and nothing was asked of the service.`);
     }
-    const located = parseContractKeyLocation(keyLocation);
-    if (located !== undefined && located.verifierKeyHash !== vk) {
+    const located = keyLocationOf(keyLocation);
+    if (located?.kind === 'contract' && located.verifierKeyHash !== null && located.verifierKeyHash !== vk) {
       throw new ProvingMaterialRefused('not-this-builds-circuit', keyLocation,
         `The ${circuit} circuit this proof was asked for, for ${pins.whose}, is not the one this app proves, so no proof was made. `
           + 'The contract it was read from carries a circuit from another version of the app.');

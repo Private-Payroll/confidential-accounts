@@ -87,10 +87,16 @@ const theService = (pool: ReturnType<typeof coin>[], chain: ReturnType<typeof co
   const onChain = chain === 'unreadable' ? [] : chain.map(heldOf);
   const providers = async () => ({
     publicDataProvider: {
+      /* The indexer's read as Midnight.js serves it: the state's bytes, decoded by the reader with its own runtime. */
       queryContractState: async () => (chain === 'unreadable' ? null : {
-        data: {
-          ...shapedLike(SLOTS),
-          notes: { member: (c: Uint8Array) => onChain.includes(toHex(c)), size: () => BigInt(onChain.length) },
+        protocolVersion: 1,
+        contractState: {
+          deserialize: () => ({
+            data: {
+              ...shapedLike(SLOTS),
+              notes: { member: (c: Uint8Array) => onChain.includes(toHex(c)), size: () => BigInt(onChain.length) },
+            },
+          }),
         },
       }),
     },

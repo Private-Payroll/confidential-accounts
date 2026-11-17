@@ -27,6 +27,8 @@ import { pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { ServiceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
 import { rightsOfRole, scopeOfRole } from '../../../../src/core/seat-rights.js';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 /* A signer invited by address takes the seat from their own wallet: it opens the offer with the link's token, checks
  * the address is its own, proves the seat with its own seat and the address's coin key, and asks to be admitted. The
@@ -118,9 +120,11 @@ const ownWalletLosingItsAnswer = () => ({
   ledger: async () => ({ Transaction: { deserialize: () => ({
     guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, anIntent([{ address: ACCOUNT, entryPoint: 'seatInvited' }])]]), imbalances: () => new Map(),
   }) } }),
-  keys: () => ({}), signSegment: () => ({}),
+  signSegment: () => ({}),
   facade: async () => ({
     dust: { state: { subscribe: (w: { next: (s: unknown) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
+    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+    adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
     balanceUnboundTransaction: async (call: unknown) => ({
       baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, anIntent([], { spends: [1], registrations: [] })]]) },
     }),

@@ -28,6 +28,7 @@
  * filed. The spend uses index 0, because the simulator keeps no commitment
  * tree. Nothing here reaches a real chain, a real indexer or a browser.
  */
+import { served } from '../../src/testing/served-state.js';
 import { enteredHere } from '../../src/testing/records-entered.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
@@ -137,13 +138,16 @@ describe('a deposit whose record is made on the device', () => {
   /** The vault's nonce secret the device hands the vault, once the company's own record holds it. */
   let vaultSecret: Uint8Array | undefined;
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, vaultSecret === undefined ? priv : { ...priv, secret: vaultSecret },
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: vaultSecret === undefined ? priv : { ...priv, secret: vaultSecret },
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
   const charged = () => (vaultState?.constructor?.name === 'ContractState' ? vaultState.data : vaultState);
   const chainNotes = (): Hex[] => [...vaultLedger(charged() as never).notes].map((c: Uint8Array) => toHex(c));
   const held = (coin: { nonce: Hex; token: Hex; value: bigint }) => commitmentForNote(vaultCircuits, vaultAddr, coin);
@@ -282,7 +286,7 @@ describe('a deposit whose record is made on the device', () => {
       signedIn,
       records: { of: (r) => serverStores.get(r)! },
       accountOf: vaultAccountFromTheIndexer({
-        queryContractState: async (a) => (a === vaultAddr ? { data: charged() } : null),
+        queryContractState: async (a) => (a === vaultAddr ? served({ data: charged() }) : null) as never,
       }),
       companies,
       /* Each person files only under their own filing key, as the product's seat directory binds it. */

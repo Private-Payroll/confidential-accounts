@@ -8,6 +8,8 @@ import { DepositLineNotEnded } from '../../../../packages/web-shared/src/deposit
 import { createTranslator } from '../../../../packages/ui/src/i18n/provider.js';
 import { ActionStopped } from './run.js';
 import { readFileSync } from 'node:fs';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 /*
  * **A PRIVATE DEPOSIT IS MADE WHOLE IN THE WALLET, AND NOTHING THE PAGE ANSWERS CAN MAKE IT LOSE TRACK OF ONE IT
@@ -45,18 +47,21 @@ const builtTx = (value: bigint, token = TOKEN, to = VAULT) => ({
   intents: new Map([[1, { actions: [{ address: to, entryPoint: 'deposit' }] }]]),
   guaranteedOffer: { inputs: [], outputs: [{ contractAddress: to }], transients: [] },
   imbalances: (segment: number) => (segment === 0 ? new Map([[{ tag: 'shielded', raw: token }, -value]]) : new Map()),
+  serialize: () => new Uint8Array([9]),
 });
 
 const balance = (tx: unknown, paid: string[]) => (): never => ({
   ledger: async () => ({ Transaction: { deserialize: () => tx } }),
   facade: async () => ({
     shielded: { state: { subscribe: (o: { next: (s: unknown) => void }) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
+    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+    adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
     balanceUnboundTransaction: async () => { paid.push('balanced'); return { recipe: true }; },
     signRecipe: async (r: unknown) => r,
     finalizeRecipe: async () => ({ serialize: () => new Uint8Array([1, 2, 3]) }),
     revert: async () => { paid.push('reverted'); },
   }),
-  keys: () => ({ shieldedSecretKeys: {}, dustSecretKey: {} }),
+  dustKeys: () => ({}),
   signSegment: () => (() => {}) as never,
   stop: async () => { paid.push('stopped'); },
 }) as never;

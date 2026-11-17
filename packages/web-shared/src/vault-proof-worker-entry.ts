@@ -4,8 +4,9 @@
  * after another on the vault worker's single thread.
  *
  * It does exactly what the vault worker's in-thread prover does for one proof -
- * `check` or `prove` from `@midnight-ntwrk/zkir-v2` - and nothing else but
- * keep what it is handed for the next time it is asked. The
+ * `check` or `prove` with the prover its key location names (`zkirEngineFor`,
+ * the same choice the in-thread prover makes) - and nothing else but keep what
+ * it is handed for the next time it is asked. The
  * proving material is asked of the vault worker over messages, so the vault
  * worker's own source, its cache and its checks stay the only way material
  * reaches a proof.
@@ -15,11 +16,11 @@
  * prover's WebAssembly first; the vault worker posts nothing before it hears
  * `ready`.
  */
-import { check, prove } from '@midnight-ntwrk/zkir-v2';
+import { zkirEngineFor, type KeyMaterialSource } from '../../../src/midnight/wasm-proving.js';
 
 type FromTheVaultWorker =
-  | { readonly op: 'prove'; readonly preimage: Uint8Array; readonly overwriteBindingInput?: bigint }
-  | { readonly op: 'check'; readonly preimage: Uint8Array }
+  | { readonly op: 'prove'; readonly keyLocation: string; readonly preimage: Uint8Array; readonly overwriteBindingInput?: bigint }
+  | { readonly op: 'check'; readonly keyLocation: string; readonly preimage: Uint8Array }
   | { readonly op: 'answer'; readonly askId: number; readonly ok: boolean; readonly value?: unknown; readonly error?: string };
 
 declare const self: {
@@ -62,7 +63,7 @@ const once = (key: string, payload: { op: 'lookupKey'; keyLocation: string } | {
 };
 
 /* The material comes from the vault worker, which owns the source, its checks and its cache; this thread owns nothing but the compute. */
-const material = {
+const material: KeyMaterialSource = {
   lookupKey: (keyLocation: string) => once(`key ${keyLocation}`, { op: 'lookupKey', keyLocation }),
   getParams: (k: number) => once(`params ${k}`, { op: 'getParams', k }),
 };
@@ -83,9 +84,12 @@ self.addEventListener('message', ({ data }) => {
     return;
   }
   refusedBecause = null;
-  const work = data.op === 'prove'
-    ? prove(data.preimage, material as never, data.overwriteBindingInput)
-    : check(data.preimage, material as never);
+  const work = zkirEngineFor(data.keyLocation).then((engine): Promise<Uint8Array | (bigint | undefined)[]> => {
+    const prover = engine.provingProvider(material);
+    return data.op === 'prove'
+      ? prover.prove(data.preimage, data.keyLocation, data.overwriteBindingInput)
+      : prover.check(data.preimage, data.keyLocation);
+  });
   work.then(
     (value) => self.postMessage({ op: 'result', value }),
     (e: unknown) => self.postMessage({ op: 'failure', error: refusedBecause ?? failure(e) }),

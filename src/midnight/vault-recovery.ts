@@ -1,6 +1,5 @@
 /**
- * REBUILDING A VAULT'S NOTE POOL FROM ITS HISTORY AND THE CHAIN. `C200`, and
- * rows 1, `B1` and `C199` of `docs/how-money-can-be-lost.md`.
+ * REBUILDING A VAULT'S NOTE POOL FROM ITS HISTORY AND THE CHAIN.
  *
  * A shielded vault publishes only commitments. The notes themselves — the
  * things that can actually be spent — live on the owner's device, and every
@@ -10,27 +9,16 @@
  * not contain, and it is refused forever. **No rescan finds it**, because
  * Midnight creates no coin ciphertext to tell a recipient about a coin.
  *
- * That is `B1`, and `C199` is the ordering that depends on this file existing.
+ * The vault holds a POOL: `notes` is a `Set<Bytes<32>>` of commitments in
+ * `Vault.compact`, `deposit` inserts one, `payout` removes the spent one and
+ * inserts the change, `splitNote` removes one and inserts two. **A vault holding
+ * two notes of a token is the normal case, not a mess to tidy.** So the history
+ * is not one coin chained forward: a chain is a description of a different
+ * vault than a pool, and replaying it against a real pool answers with a coin
+ * that never existed, and the answer looks entirely reasonable.
  *
- * ------------------------------------------------------------------------
- * WHAT CHANGED, AND WHY THE OLD SHAPE WAS THE DEFECT.
- *
- * This file used to model **one coin chained forward**: a deposit, then a list
- * of amounts, each payment's change following from the one before. **The
- * contract has held a POOL since `V-58`** — `notes` is a `Set<Bytes<32>>` of
- * commitments (`Vault.compact:73-103`), `deposit` inserts one, `payout` removes
- * the spent one and inserts the change, `splitNote` removes one and inserts
- * two. **A vault holding two notes of a token is the normal case, not a mess to
- * tidy**, in the contract's own words.
- *
- * A chain is not a wrong description of a pool. It is a description of a
- * different vault. Replaying it against a real pool answers with a coin that
- * never existed, and the answer looks entirely reasonable.
- *
- * **AND ONE PROPERTY IS GAINED RATHER THAN RESTORED.** The old input insisted
- * payments be given IN ORDER, globally, because each coin followed from the one
- * before. A pool has no global order: **two payments spending DIFFERENT notes
- * have nothing to say to each other.** Only the events touching one note are
+ * A pool has no global order: **two payments spending DIFFERENT notes have
+ * nothing to say to each other.** Only the events touching one note are
  * ordered with respect to each other, and this file requires exactly that much.
  *
  * ------------------------------------------------------------------------
@@ -43,7 +31,7 @@
  * commitment with the vault contract's own circuits, and ask the chain's set
  * whether it is a member.
  *
- * **That is what makes `V-47`'s trap harmless here.** A derivation below that is
+ * **That is what makes a wrong derivation harmless here.** A derivation below that is
  * subtly wrong cannot produce a false note, because a wrong note has a wrong
  * commitment and the chain refuses it — it shows up as an UNEXPLAINED
  * commitment, which is a loud, recoverable, investigable state. There is no
@@ -269,8 +257,8 @@ interface RawCoin { nonce: Uint8Array; color: Uint8Array; value: bigint }
 /**
  * The vault contract's own two pure circuits, passed in rather than imported.
  *
- * **ONE IMPLEMENTATION OF THE RULE, NEVER A SECOND.** `M-104`, and `C124` is
- * what a second copy costs here: a device that derives a blinding a shade
+ * **ONE IMPLEMENTATION OF THE RULE, NEVER A SECOND.** A second copy costs a
+ * note: a device that derives a blinding a shade
  * differently from the one a note was committed under cannot spend that note,
  * ever, and nothing says so until a payment is refused. So this file computes
  * no commitment of its own — it composes the contract's, and the caller hands
@@ -377,8 +365,8 @@ export interface PoolRecovery {
    */
   held: PoolNote[];
   /**
-   * The subset of `held` the pool did not know about. **This is `C199`'s
-   * window, answered**: a call landed and the pool write never happened.
+   * The subset of `held` the pool did not know about: a call landed and the
+   * pool write never happened.
    */
   recovered: PoolNote[];
   /**
@@ -1021,6 +1009,57 @@ export const reconcileVaultPool = (input: {
       ...(earlier ? { heldWhenFiled: earlier } : {}),
     });
   }
+  fileTheSplitPieces(input, everFiled, attempted, onChain);
+
+  /*
+   * One event per distinct attempt. The same payment journalled twice -- a door
+   * run again after a stop -- is one proposal, not a contradiction; two attempts
+   * of different amounts against one note are two proposals, and `replayVault`
+   * accepts both by design (see `payout-attempt`). Each carries its own note
+   * whole, exactly as the line recorded it.
+   */
+  const attempts = new Map<string, AttemptedStep>();
+  for (const a of attempted.payments) attempts.set(attemptKey(a), a);
+
+  const rebuilt = replayVault({
+    vault: input.vault,
+    chain: input.chain,
+    pool: newest.notes,
+    /*
+     * **EVERY NOTE EVER FILED, OFFERED AS A DEPOSIT, AND THE KIND IS NOT A LIE
+     * ABOUT WHERE IT CAME FROM.** `replayVault` reads a deposit event as *"this
+     * coin existed"* and nothing more -- it is the only event shape that carries
+     * a whole coin, and what this function knows about each note is the whole
+     * coin. Whether it arrived by deposit, as change, or as a split's remainder
+     * is not a question the chain is being asked: the question is whether the
+     * chain still holds it.
+     *
+     * **THE ATTEMPTS COME LAST.** They look nothing up, so the order is not
+     * load-bearing for them; it is for the deposits, which refuse a nonce that
+     * is already live, and an attempt makes nothing live.
+     */
+    history: [
+      ...[...everFiled.values()].map((coin) => ({ kind: 'deposit' as const, coin })),
+      ...[...attempts.values()].map((a) => ({ kind: 'payout-attempt' as const, ...a })),
+    ],
+    circuits: input.circuits,
+    ...(input.indexOf === undefined ? {} : { indexOf: input.indexOf }),
+    ...(input.nonceSecrets === undefined ? {} : { nonceSecrets: input.nonceSecrets }),
+  });
+  return { ...rebuilt, settled };
+};
+
+/**
+ * Files, beside every note a record names, the pieces of each split the vault's split journal names, so
+ * `reconcileVaultPool` proposes them to the chain like any filed note. Refuses when the journal holds a split
+ * and no nonce secret was given, since only the secret names a piece.
+ */
+const fileTheSplitPieces = (
+  input: Parameters<typeof reconcileVaultPool>[0],
+  everFiled: Map<Hex, VaultCoin>,
+  attempted: AttemptedVaultCalls,
+  onChain: ReadonlySet<Hex>,
+): void => {
   /*
    * **THE PIECES OF EVERY SPLIT, FROM THE VAULT'S OWN SPLIT JOURNAL.** A split
    * that landed with its pool write lost leaves two notes no record names, but
@@ -1073,50 +1112,13 @@ export const reconcileVaultPool = (input: {
       }
     }
   }
-
-  /*
-   * One event per distinct attempt. The same payment journalled twice -- a door
-   * run again after a stop -- is one proposal, not a contradiction; two attempts
-   * of different amounts against one note are two proposals, and `replayVault`
-   * accepts both by design (see `payout-attempt`). Each carries its own note
-   * whole, exactly as the line recorded it.
-   */
-  const attempts = new Map<string, AttemptedStep>();
-  for (const a of attempted.payments) attempts.set(attemptKey(a), a);
-
-  const rebuilt = replayVault({
-    vault: input.vault,
-    chain: input.chain,
-    pool: newest.notes,
-    /*
-     * **EVERY NOTE EVER FILED, OFFERED AS A DEPOSIT, AND THE KIND IS NOT A LIE
-     * ABOUT WHERE IT CAME FROM.** `replayVault` reads a deposit event as *"this
-     * coin existed"* and nothing more -- it is the only event shape that carries
-     * a whole coin, and what this function knows about each note is the whole
-     * coin. Whether it arrived by deposit, as change, or as a split's remainder
-     * is not a question the chain is being asked: the question is whether the
-     * chain still holds it.
-     *
-     * **THE ATTEMPTS COME LAST.** They look nothing up, so the order is not
-     * load-bearing for them; it is for the deposits, which refuse a nonce that
-     * is already live, and an attempt makes nothing live.
-     */
-    history: [
-      ...[...everFiled.values()].map((coin) => ({ kind: 'deposit' as const, coin })),
-      ...[...attempts.values()].map((a) => ({ kind: 'payout-attempt' as const, ...a })),
-    ],
-    circuits: input.circuits,
-    ...(input.indexOf === undefined ? {} : { indexOf: input.indexOf }),
-    ...(input.nonceSecrets === undefined ? {} : { nonceSecrets: input.nonceSecrets }),
-  });
-  return { ...rebuilt, settled };
 };
 
 /**
  * The one-line answer for an operator: is this pool the chain's pool?
  *
  * A convenience over `replayVault`, and deliberately not a boolean — a caller
- * that can read a `false` and carry on is the failure `C198` replaced.
+ * that can read a `false` and carry on would never see which notes differ.
  */
 export const describeRecovery = (r: PoolRecovery): string =>
   `${r.held.length} note(s) held, ${r.recovered.length} recovered that the pool did not know ` +

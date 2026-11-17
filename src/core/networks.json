@@ -5,66 +5,80 @@
       "id": "undeployed",
       "kind": "test",
       "label": "A node on this machine",
+      "testToken": null,
       "endpoints": {
         "node": "http://localhost:9944",
         "nodeWs": null,
         "indexer": "http://localhost:8088/api/v4/graphql",
         "indexerWs": "ws://localhost:8088/api/v4/graphql/ws",
-        "faucet": null
+        "faucet": null,
+        "projectToken": null
       }
     },
     "preview": {
       "id": "preview",
       "kind": "test",
       "label": "Midnight Preview",
+      "testToken": null,
       "endpoints": {
         "node": "https://rpc.preview.midnight.network",
         "nodeWs": null,
         "indexer": "https://indexer.preview.midnight.network/api/v4/graphql",
         "indexerWs": "wss://indexer.preview.midnight.network/api/v4/graphql/ws",
-        "faucet": "https://faucet.preview.midnight.network/api/drips"
+        "faucet": "https://faucet.preview.midnight.network/api/drips",
+        "projectToken": null
       }
     },
     "preprod": {
       "id": "preprod",
       "kind": "test",
       "label": "Midnight Preprod",
+      "testToken": "e16212a8837792e6469c657984e3583d932d578c82b60e732636e5abd73791d2",
       "endpoints": {
-        "node": "https://rpc.preprod.midnight.network",
+        "node": "https://rpc.midnight-preprod.blockfrost.io",
         "nodeWs": null,
-        "indexer": "https://indexer.preprod.midnight.network/api/v4/graphql",
-        "indexerWs": "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",
-        "faucet": "https://faucet.preprod.midnight.network/api/drips"
+        "indexer": "https://midnight-preprod.blockfrost.io/api/v0",
+        "indexerWs": "wss://midnight-preprod.blockfrost.io/api/v0/ws",
+        "faucet": "https://faucet.preprod.midnight.network/api/drips",
+        "projectToken": {
+          "setting": "BLOCKFROST_PREPROD_PROJECT_ID",
+          "parameter": "project_id"
+        }
       }
     },
     "qanet": {
       "id": "qanet",
       "kind": "test",
       "label": "Midnight QAnet",
+      "testToken": null,
       "endpoints": {
         "node": "https://rpc.qanet.midnight.network",
         "nodeWs": null,
         "indexer": "https://indexer.qanet.midnight.network/api/v4/graphql",
         "indexerWs": "wss://indexer.qanet.midnight.network/api/v4/graphql/ws",
-        "faucet": "https://faucet.qanet.midnight.network/api/drips"
+        "faucet": "https://faucet.qanet.midnight.network/api/drips",
+        "projectToken": null
       }
     },
     "stagenet": {
       "id": "stagenet",
       "kind": "test",
       "label": "Midnight Stagenet",
+      "testToken": "abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679",
       "endpoints": {
         "node": "https://rpc.stagenet.shielded.tools",
         "nodeWs": "wss://rpc.stagenet.shielded.tools",
         "indexer": "https://indexer.stagenet.shielded.tools/api/v4/graphql",
         "indexerWs": "wss://indexer.stagenet.shielded.tools/api/v4/graphql/ws",
-        "faucet": "https://faucet.stagenet.shielded.tools"
+        "faucet": "https://faucet.stagenet.shielded.tools",
+        "projectToken": null
       }
     },
     "mainnet": {
       "id": "mainnet",
       "kind": "real",
       "label": "Midnight",
+      "testToken": null,
       "endpoints": null
     }
   }

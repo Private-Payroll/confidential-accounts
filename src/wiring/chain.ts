@@ -47,7 +47,8 @@ import {
 } from '../midnight/ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { FileSealedStateStore } from '../midnight/sealed-store.js';
-import { midnightProviders, sponsoredProviders, type CustomerWallet } from '../midnight/providers.js';
+import { midnightProviders, sponsoredProviders, type CustomerWallet, type Serializable } from '../midnight/providers.js';
+import { LedgerTransaction, type FinalizedTx } from '@midnight-ntwrk/midnight-js-types';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import { FeeNotPaid, feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { FeeRefused } from '../midnight/fee-ceiling.js';
@@ -60,6 +61,7 @@ import type {
 } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
 import type { Deployment } from './deployment.js';
+import { shownAddress } from '../core/networks.js';
 
 import { type ContractBook } from './account-contract.js';
 import { refusalForCapability, type WriteCapability } from './write-capability.js';
@@ -398,10 +400,12 @@ export class ChainLedger implements Ledger {
    * describes itself as sponsoring fees, which on a deployment with nobody to
    * pay is a claim about a component it has not got. This sentence is the one
    * an operator reads on the health route and at boot, so it says the narrower
-   * true thing in both directions.
+   * true thing in both directions. The health route answers anybody, so the
+   * indexer is named without its query, which is where a network's project
+   * token travels.
    */
   describe(): string {
-    return `Midnight ${this.deployment.network} via ${this.deployment.indexerUrl}, `
+    return `Midnight ${this.deployment.network} via ${shownAddress(this.deployment.indexerUrl)}, `
       + (this.cannotWrite === null
         ? 'reading and writing (a wallet is wired, so this deployment can open companies '
           + 'and raise rounds)'
@@ -744,28 +748,52 @@ export class ChainLedger implements Ledger {
         ?? (only === null ? null : refusalUnlessOnlyACallTo(tx, only));
       if (refusal) throw new NothingWasSent(refusal);
       /*
-       * **WHAT EITHER SIDE BOOKS IS LET GO BY THESE PROVIDERS THEMSELVES**: a
-       * failed balance releases both sides' bookings inside the balance, and a
-       * submission takes both over from the moment it starts.
+       * **WHAT EITHER SIDE BOOKS IS LET GO.** A failed balance releases both sides' bookings inside the balance, and
+       * a submission takes both over from the moment it starts; anything refused between the two is released below,
+       * so a step stopped after the fee payer booked its DUST leaves nothing booked.
        */
       const providers = sponsoredProviders(this.company!, this.payer!);
-      let finalised: unknown;
       try {
-        finalised = await providers.walletProvider.balanceTx(tx as never);
-      } catch (e) {
-        /* As for a vault's step: nothing was sent; a fee over the ceiling keeps its own words, anything else says the fee was not paid. */
-        throw feeAnswerCodeOf(e) !== null || e instanceof FeeRefused
-          ? e : new FeeNotPaid(String((e as { message?: unknown })?.message ?? e));
+        const unbound = LedgerTransaction.seal('v9', 'Unbound', transactionOrRefuse(tx));
+        let finalised: FinalizedTx;
+        try {
+          finalised = await providers.walletProvider.balanceTx(unbound);
+        } catch (e) {
+          /* As for a vault's step: nothing was sent; a fee over the ceiling keeps its own words, anything else says the fee was not paid. */
+          throw feeAnswerCodeOf(e) !== null || e instanceof FeeRefused
+            ? e : new FeeNotPaid(String((e as { message?: unknown })?.message ?? e));
+        }
+        submitting = true;
+        const ref = await providers.midnightProvider.submitTx(finalised);
+        return { ref: String(ref), at: new Date().toISOString() };
+      } finally {
+        if (!submitting) {
+          await providers.releaseUnspent().catch(() => {
+            /* The release's own failure is not reported in place of the refusal that brought it here. */
+            return 0;
+          });
+        }
       }
-      submitting = true;
-      const ref = await providers.midnightProvider.submitTx(finalised as never);
-      return { ref: String(ref), at: new Date().toISOString() };
     }).catch((e: unknown) => {
       if (submitting || saysNothingWasSent(e)) throw e;
       throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
     });
   }
 }
+
+/**
+ * The transaction a device sent, as something the providers can seal: refused, with nothing sent, when what was
+ * read from the device's bytes cannot write itself out again.
+ */
+const transactionOrRefuse = (tx: unknown): Serializable => {
+  if (!isSerializable(tx)) {
+    throw new NothingWasSent('the transaction this device sent could not be read as one, so nothing was sent.');
+  }
+  return tx;
+};
+
+const isSerializable = (v: unknown): v is Serializable =>
+  typeof v === 'object' && v !== null && typeof (v as { serialize?: unknown }).serialize === 'function';
 
 /**
  * **HOW A VAULT TRANSACTION A DEVICE SENT IS READ**: bound and signed when the

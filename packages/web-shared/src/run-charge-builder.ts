@@ -22,10 +22,12 @@
  * against the chain's commitment here, and again by the chain itself.
  */
 import type { AccountPrivateState, PolicyOpening } from '../../../contracts/src/witnesses.js';
+import { SPENDS_NO_COIN } from './contract-call-built.js';
 import { fromHex } from '../../../src/core/crypto.js';
 import { sumTreeOfLeaves } from '../../../src/midnight/payout-tree.js';
 import { NO_LEG, periodOf, policyOpeningFromWire, retryArgsOf, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { AccountCallChain, GovernedCallDeps } from './governed-call-builder.js';
+import { throwawayKeys } from './vault-builder.js';
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const DIGITS = /^[0-9]+$/u;
@@ -349,6 +351,29 @@ interface ChargeBuilt {
 }
 
 /**
+ * **THE RUN IS CHARGED AS WHAT IT WAS RAISED AS.** Its salt is made again
+ * from the fresh half its record holds and the leg it pays again, or none;
+ * a salt that is not that is a run this device cannot charge. Answers the
+ * fresh half and the leg's tree, or null for a run of its own.
+ */
+const raisedAs = (P: ChargePure, r: RunToChargeOnTheWire, asset: string) => {
+  const fresh = bytesOf('run\'s fresh salt', String(r.fresh ?? '').toLowerCase());
+  const leg = r.retry === undefined ? null : treeOf(r.retry.leg, asset);
+  if (r.retry !== undefined && leg === null) {
+    throw new ChargeNotBuilt('the leg this retry pays again does not make the root its record names, so this device cannot say what '
+      + 'the retry may take without a charge. Reload the page and try again; if it happens again, do not pay it');
+  }
+  if (!same(P.retrySaltOf(leg === null ? NO_LEG() : fromHex(leg.root), fresh), bytesOf('proposal\'s salt', String(r.salt).toLowerCase()))) {
+    throw new ChargeNotBuilt(leg === null
+      ? 'this run\'s proposal was not raised as a run of its own with the salt its record holds, so the chain will not charge it. If it '
+        + 'was raised before this version, withdraw it and raise it again'
+      : 'this retry\'s proposal was not raised over the leg its record names, so the chain will not charge it. If it was raised '
+        + 'before this version, withdraw it and raise it again');
+  }
+  return { fresh, leg };
+};
+
+/**
  * **ONE APPROVED RUN CHARGED TO ITS PERIOD, BUILT AND PROVED HERE.** Refused
  * before anything is built when the run is not the proposal its identity
  * names, its window lies in no single period, or the period's total cannot be
@@ -399,47 +424,23 @@ export async function buildClearRun(
   const { spent, keys: periodKeys } = periodTotalIn(deps, view, {
     vault, asset, assetBlinding: r.assetBlinding, policy: r.policy, period: period.toString(), runs: input.runs,
   });
-  /*
-   * **THE RUN IS CHARGED AS WHAT IT WAS RAISED AS.** Its salt is made again
-   * from the fresh half its record holds and the leg it pays again, or none;
-   * a salt that is not that is a run this device cannot charge.
-   */
-  const fresh = bytesOf('run\'s fresh salt', String(r.fresh ?? '').toLowerCase());
-  const leg = r.retry === undefined ? null : treeOf(r.retry.leg, asset);
-  if (r.retry !== undefined && leg === null) {
-    throw new ChargeNotBuilt('the leg this retry pays again does not make the root its record names, so this device cannot say what '
-      + 'the retry may take without a charge. Reload the page and try again; if it happens again, do not pay it');
-  }
-  if (!same(P.retrySaltOf(leg === null ? NO_LEG() : fromHex(leg.root), fresh), bytesOf('proposal\'s salt', String(r.salt).toLowerCase()))) {
-    throw new ChargeNotBuilt(leg === null
-      ? 'this run\'s proposal was not raised as a run of its own with the salt its record holds, so the chain will not charge it. If it '
-        + 'was raised before this version, withdraw it and raise it again'
-      : 'this retry\'s proposal was not raised over the leg its record names, so the chain will not charge it. If it was raised '
-        + 'before this version, withdraw it and raise it again');
-  }
+  const { fresh, leg } = raisedAs(P, r, asset);
   const taken = leg === null ? 0n : legTakenHere(P, view, { keys: periodKeys, policy: opening, period, leg, run: tree, others: r.retry!.others, asset });
   const record = recordForACharge({
     assetId: bytesOf('currency', asset), assetBlinding: bytesOf('account\'s asset blinding', String(r.assetBlinding).toLowerCase()),
     policy: opening, periodSpent: spent, legTaken: taken,
   });
-  const L = deps.ledger;
-  const seed = (deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))))(32);
-  const keys = L.ZswapSecretKeys.fromSeed(seed);
-  const coinPublicKey = keys.coinPublicKey;
-  const encryptionPublicKey = keys.encryptionPublicKey;
-  seed.fill(0);
-  try { keys.clear?.(); } catch { /* nothing to clear */ }
-  let built: any;
+  const { coinPublicKey, encryptionPublicKey } = throwawayKeys(deps);
+  let built: Awaited<ReturnType<GovernedCallDeps['contracts']['buildCall']>>;
   try {
-    built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.accountZkConfig, {
+    built = await deps.contracts.buildCall(deps.accountZkConfig, {
       compiledContract: deps.accountCompiled,
       circuitId: 'clearRun',
       contractAddress: account,
       coinPublicKey,
-      initialContractState: deps.runtimeState.deserialize(input.chain.accountState),
       /* A charge moves no coin, so the builder is given no commitment tree to read. */
-      initialZswapChainState: new L.ZswapChainState(),
-      ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+      network: deps.network,
+      read: { contract: input.chain.accountState, zswap: SPENDS_NO_COIN, parameters: input.chain.parameters },
       initialPrivateState: record,
       args: [id, fromHex(vault), fromHex(tree.root), payees, window.opensAt, window.closesAt, required,
         fromHex(String(r.salt).toLowerCase()), tree.top, tree.total, period,
@@ -449,7 +450,7 @@ export async function buildClearRun(
     if (e instanceof ChargeNotBuilt) throw e;
     throw new ChargeNotBuilt(`this run could not be charged to its period: ${whatTheContractSaid(e)}`, { cause: e });
   }
-  if (built?.private?.nextPrivateState !== record) {
+  if (built.private.nextPrivateState !== record) {
     throw new ChargeNotBuilt('the charge changed this device\'s record for the company, and nothing here keeps a record between calls');
   }
   const proven = await deps.prove(built.private.unprovenTx, 'clearRun');

@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { nativeToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { describe, expect, it, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
+import { nativeToken } from '@midnight-ntwrk/midnight-js-protocol/v9';
 
-import { assetIdBytes, assets, ledgerTokenOf, NIGHT, TEST_SETTLEMENT_ASSET } from './assets.js';
+import { assetIdBytes, assets, ledgerTokenOf, NIGHT } from './assets.js';
 import { toHex } from './crypto.js';
 import { transferFacts, transferOf } from './movement.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
@@ -141,14 +143,14 @@ describe('the token a payment out of a vault moves', () => {
      * real token: NIGHT publicly, and the test settlement asset privately.
      */
     expect(assets.all().map(a => a.symbol)).toEqual(['NIGHT', 'tUSD']);
-    expect(assets.require(TEST_SETTLEMENT_ASSET).ledger.unshielded).toBeNull();
+    expect(assets.require(TEST_NETWORK_COLOUR).ledger.unshielded).toBeNull();
   });
 
   it('a public transfer in an asset no vault can hold publicly is refused when its payment is built', () => {
     const tusd = transferOf({
       accountId: 'acct_1',
       payee: unshieldedPayeeFor('c3'.repeat(32), NETWORK),
-      asset: TEST_SETTLEMENT_ASSET,
+      asset: TEST_NETWORK_COLOUR,
       amount: 100n,
       privacy: 'public',
       reference: 'a supplier',

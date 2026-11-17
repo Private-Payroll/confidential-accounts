@@ -1,7 +1,9 @@
+import { ContractState } from '@midnightntwrk/ledger-v9';
 import { operationsFromContractState } from 'midnight-identity/profile/contract-keys';
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
 import { publicDataProviderFor } from '../../../../packages/web-shared/src/public-data.js';
-import { accountPresenceAt } from '../../../../packages/web-shared/src/vault-on-chain-here.js';
+import { accountAtOneBlockOver, accountPresenceAt } from '../../../../packages/web-shared/src/vault-on-chain-here.js';
+import { decodedState } from '../../../../src/midnight/decoded-state.js';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 
 /**
@@ -36,13 +38,13 @@ export function liveCreationChain(indexer = { indexerUri: INDEXER_HTTP_URL, inde
     },
     account: async (account) => {
       reader ??= publicDataProviderFor(indexer);
-      const r = await reader;
-      const block = await r.queryBlock();
-      if (block === null) return null;
-      const read = await r.queryZSwapAndContractState(account, { type: 'blockHash', blockHash: block.hash } as never);
-      if (read === null || read === undefined) return null;
-      const [, state, parameters] = read as unknown as [unknown, { serialize(): Uint8Array }, { serialize(): Uint8Array }];
-      return { state: state.serialize(), parameters: parameters.serialize(), finished: secondStepIsOn(state, account) };
+      const at = await accountAtOneBlockOver(await reader, account);
+      if (at === null) return null;
+      /* The read is the states as bytes with the era that wrote them; the circuits on the account are read decoded. */
+      return {
+        state: at.account.serialize(), parameters: at.parameters.serialize(),
+        finished: secondStepIsOn(decodedState(at.account, ContractState), account),
+      };
     },
   };
 }

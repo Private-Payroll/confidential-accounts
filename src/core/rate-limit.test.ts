@@ -24,7 +24,7 @@ const policyOf = (scope: string) => {
  * The Postgres half needs a real database and is SKIPPED without one, loudly,
  * rather than quietly passing. A skipped test that reads as green is the
  * failure mode this project has a list of — so the count in the run output is
- * the thing to read, and `DB-TEST.command` is what makes it non-zero.
+ * the thing to read, and a run with TEST_DATABASE_URL set is what makes it non-zero.
  *
  *   TEST_DATABASE_URL=postgres://… npx vitest run src/core/rate-limit
  *
@@ -245,7 +245,8 @@ withDb('THE ONE THAT MATTERS: concurrent attempts each get their own number', ()
  * re-read that paragraph.
  */
 describe('the unauthenticated surface, counted rather than described', () => {
-  const server = readFileSync('src/server/index.ts', 'utf8');
+  /* The server's own routes, and the payslip routes it mounts on itself with the same `authed`. */
+  const server = ['src/server/index.ts', 'src/server/payslip-routes.ts'].map((f) => readFileSync(f, 'utf8')).join('\n');
   /* The invitation routes are their own router, mounted by the server: `deps.signedIn` there is `authed` here. */
   const invitations = readFileSync('src/server/invitations-route.ts', 'utf8');
   const routes = [
@@ -286,7 +287,7 @@ describe('the unauthenticated surface, counted rather than described', () => {
     expect(signInRequired("app.get('/api/authed-thing', wrap(async () => {}));")).toBe(false);
   });
 
-  it('and exactly TWO meters are read in the route file, which is the word the sentence turns on', () => {
+  it('and exactly TWO meters are read in the route files, which is the word the sentence turns on', () => {
     /*
      * `limiter.record` inside a route handler. `WalletIdentityService` meters
      * `/auth/wallet/challenge` and `/auth/wallet` from inside the service by

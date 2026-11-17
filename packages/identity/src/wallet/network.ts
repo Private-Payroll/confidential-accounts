@@ -63,4 +63,4 @@ export function networkName(value: string): NetworkName {
  * behind its own subpath export is what lets the other side read one value
  * without buying a bundle** — `midnight-identity/network`.
  */
-export const NETWORK: NetworkName = 'stagenet';
+export const NETWORK: NetworkName = 'preprod';

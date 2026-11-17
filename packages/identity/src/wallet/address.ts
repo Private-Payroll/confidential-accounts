@@ -125,6 +125,21 @@ export function payeeAddress(bech32: string, network: NetworkName): PayeeAddress
       + 'so a single mistyped character fails here.');
   }
 
+  /*
+   * **THE LENGTH, SAID IN THIS PRODUCT'S WORDS.** An address is two keys of
+   * thirty-two bytes and nothing else. The platform's decode refuses another
+   * length too, but in words that do not say how many bytes the string carries
+   * or why that is wrong, so a string of the payee kind is measured here first,
+   * before it is decoded and before anything is built to it.
+   */
+  if (parsed.type === ShieldedAddress.codec.type && parsed.data.length !== KEY_BYTES * 2) {
+    throw new AddressError(
+      'wrong-kind',
+      `"${raw}" carries ${parsed.data.length} bytes and a payee address carries `
+      + `${KEY_BYTES * 2} — ${KEY_BYTES} for the key that may spend and ${KEY_BYTES} for `
+      + 'the key that may read.');
+  }
+
   let address: ShieldedAddress;
   try {
     address = parsed.decode(ShieldedAddress, network);
@@ -147,23 +162,6 @@ export function payeeAddress(bech32: string, network: NetworkName): PayeeAddress
         : `"${raw}" is not a payee address: ${message}. It must be a shield-addr — `
           + 'a coin public key on its own is not enough to pay somebody, because it does '
           + 'not say who may READ the payment.');
-  }
-
-  /*
-   * **THE LENGTH, WHICH THE PLATFORM'S DECODE DOES NOT CHECK.** Its codec takes
-   * the first thirty-two bytes as the coin key and everything after them as the
-   * encryption key, and the encryption key's constructor checks no length, so
-   * a string of the right kind and network carrying thirty-two bytes and any
-   * tail at all, including none, decodes, and the ledger then refuses what is
-   * built to it. So it is refused here, before anything is built: an address is
-   * two keys of thirty-two bytes, and nothing else.
-   */
-  if (parsed.data.length !== KEY_BYTES * 2) {
-    throw new AddressError(
-      'wrong-kind',
-      `"${raw}" carries ${parsed.data.length} bytes and a payee address carries `
-      + `${KEY_BYTES * 2} — ${KEY_BYTES} for the key that may spend and ${KEY_BYTES} for `
-      + 'the key that may read.');
   }
 
   return build(address, parsed.asString(), network);

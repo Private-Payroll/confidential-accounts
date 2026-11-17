@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import type { PayrollRun } from '../core/types.js';
 import { newProposalId } from '../core/proposal-filing.js';
-import { assetIdHex, TEST_SETTLEMENT_ASSET, type AssetId } from '../core/assets.js';
+import { assetIdHex, type AssetId } from '../core/assets.js';
 import { canonical, newWrappingKeypair, randomBytes, seal, signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
 import { purposeKey } from '../core/sealed-records.js';
 import { newOneOffSeed, ONE_OFF_KIND, ONE_OFF_PURPOSE, ONE_OFF_SEALED_BYTES } from '../midnight/one-off-record.js';
@@ -87,7 +89,7 @@ const aPayee = async (n: number): Promise<void> => {
   const address = payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address, payslipKey: newWrappingKeypair().publicKey });
   const made = await inviteHere(ACME, ADA, 'employee', {
-    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01',
+    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01',
   }, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
@@ -211,10 +213,10 @@ describe('A SIGNER SEATED AFTER A ONE-OFF WAS PAID STILL RAISES, APPROVES AND CH
 
   it('CY APPROVES ON ITS OWN DEVICE A PAYROLL RUN ADA RAISED FROM THAT VAULT, AND BUILDS ITS CHARGE AGAINST A PERIOD THAT HOLDS THE ONE-OFF AND RELAYS IT; THE TEST\'S CHAIN ONLY RECORDS THE CHARGE, AND NEITHER PROVES IT NOR SUMS THE PERIOD', async () => {
     /* The vault's policy, sealed to the seats before Cy's; the one-off is raised and paid under it. */
-    await aPolicyFiledBy(ADA, [ADA, BO], { terms: ONE_PERIOD, asset: TEST_SETTLEMENT_ASSET });
-    const raised = await aOneOffPaidBeforeCyWasSeated(TEST_SETTLEMENT_ASSET, 'Invoice 2026-121');
+    await aPolicyFiledBy(ADA, [ADA, BO], { terms: ONE_PERIOD, asset: TEST_NETWORK_COLOUR });
+    const raised = await aOneOffPaidBeforeCyWasSeated(TEST_NETWORK_COLOUR, 'Invoice 2026-121');
     /* Cy is seated: the policy is filed again, sealed to Cy's seat too, so Cy's device reads it. */
-    await aPolicyFiledBy(ADA, [ADA, BO, CY], { terms: ONE_PERIOD, asset: TEST_SETTLEMENT_ASSET });
+    await aPolicyFiledBy(ADA, [ADA, BO, CY], { terms: ONE_PERIOD, asset: TEST_NETWORK_COLOUR });
     await aPayee(61);
     await aPayee(62);
     const runId = (await drawRunHere({
@@ -235,17 +237,17 @@ describe('A SIGNER SEATED AFTER A ONE-OFF WAS PAID STILL RAISES, APPROVES AND CH
     const asked = clearRunsAsked.find((a) => a.run.proposal === toPay.order.proposal)!;
     /* RED WHEN: the period Cy's device charges the run against leaves the paid one-off out, so the chain would sum less than the vault paid. */
     expect(asked.runs.map((r) => r.root)).toContain(raised.tree.tree.root);
-    expect(asked.run.asset).toBe(assetIdHex(TEST_SETTLEMENT_ASSET).toLowerCase());
+    expect(asked.run.asset).toBe(assetIdHex(TEST_NETWORK_COLOUR).toLowerCase());
     /* RED WHEN: the charge Cy's device built is not relayed to the chain through the service's charge route. */
     expect(chargedOnChain.has(String(toPay.order.proposal).toLowerCase())).toBe(true);
     expect(charged.state).toBe('charged');
   }, 170_000);
 
   it('A ONE-OFF IS FILED ONCE: A VERSION 2 ANOTHER SEAT PUTS OVER A PAID ONE-OFF IS NOT BELIEVED, AND PAYROLL FROM THAT VAULT STILL RAISES, APPROVES AND CHARGES', async () => {
-    await aPolicyFiledBy(ADA, [ADA, BO, CY], { terms: ONE_PERIOD, asset: TEST_SETTLEMENT_ASSET });
+    await aPolicyFiledBy(ADA, [ADA, BO, CY], { terms: ONE_PERIOD, asset: TEST_NETWORK_COLOUR });
     /* Cy's device raises and files the one-off, enters it and anchors it; it is paid. */
     const round = await raiseOneOffHere(oneOffRaiseDoorsOf(CY), {
-      vault: VAULT, asset: TEST_SETTLEMENT_ASSET, amount: 88n, form: 'private',
+      vault: VAULT, asset: TEST_NETWORK_COLOUR, amount: 88n, form: 'private',
       payee: { ref: null, name: null, address: payeeFor('ca'.repeat(32), 'undeployed').bech32, network: 'undeployed' },
       reason: 'Invoice 2026-122', opensAt: NOW - 60n, closesAt: NOW + 86_400n, viewingKey: KEY,
     });

@@ -13,10 +13,12 @@
  * account run by its own circuits. What is the test's: the chain an anchor
  * lands on, which moves only as the account's circuit would.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import type { Hex } from '../core/crypto.js';
 import { fromHex, toHex } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { theNetwork } from '../midnight/network.js';
 import { toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
@@ -90,7 +92,7 @@ const serving = (id: string, version: SealedCompanyRecord) => (body: unknown) =>
 const leavingOut = (id: string) => (body: unknown) => ({
   ...(body as object), people: (body as { people: Array<{ filed: { id: string } }> }).people.filter((row) => row.filed.id !== id),
 });
-const pay = { name: 'Pat', email: 'pat-e2e@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_202n, classification: 'full-time' as const, startDate: '2026-10-01' };
+const pay = { name: 'Pat', email: 'pat-e2e@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_202n, classification: 'full-time' as const, startDate: '2026-10-01' };
 
 describe('WHAT A SECOND DEVICE BELIEVES OF THE COMPANY\'S RECORDS IS WHAT THE ANCHOR HOLDS', () => {
   it('STALE, WITHHELD AND REORDERED ARE REFUSED ON BO\'S DEVICE, NEWER IS HELD AS NOT YET ANCHORED, AND A DROPPED ANCHOR FINISHES', async () => {

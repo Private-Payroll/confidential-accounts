@@ -18,6 +18,7 @@
  * turns it red, and each of those changes was made to a copy of this tree
  * outside it and watched.
  */
+import { served, testAddress } from '../testing/served-state.js';
 import { describe, it, expect, vi } from 'vitest';
 import {
   CIRCUITS_THAT_READ_NO_WITNESS,
@@ -279,7 +280,7 @@ describe('the find requires the answer and hands back an interface that refuses'
     vi.resetModules();
     const built: unknown[] = [];
     vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
-      verifyContractState: () => {},
+      verifyContractState: async () => {},
       createCircuitCallTxInterface: (
         _p: unknown, _c: unknown, _a: unknown, key: unknown,
       ) => {
@@ -289,23 +290,21 @@ describe('the find requires the answer and hands back an interface that refuses'
     }));
     const { findDeployedPartialContract } = await import('./partial-contract.js');
     const providers = {
-      publicDataProvider: { queryContractState: async () => ({ operation: () => undefined }) },
+      publicDataProvider: { queryContractState: async () => served({ operation: () => undefined }) },
       zkConfigProvider: { getVerifierKeys: async (names: string[]) => names.map((n) => [n, new Uint8Array()]) },
     };
     const found = await findDeployedPartialContract(providers as any, {
-      compiledContract: {}, contractAddress: 'addr_under_test', privateStateId,
+      compiledContract: {}, contractAddress: testAddress(1), privateStateId,
     });
     return { found, built };
   };
 
   /*
-   * **THE GAP THIS ROUND CLOSED, STATED AS A CASE.** Before the change this
-   * find took an optional key, and an interface built without one called every
-   * circuit against nothing.
+   * An interface found with no key would call every circuit against nothing, so it must refuse the circuits
+   * that read one.
    *
-   * RED WHEN: the find returns `createCircuitCallTxInterface`'s result
-   * unwrapped. Watched: with the wrapper removed from `partial-contract.ts`
-   * this resolves to `'TX'` instead of rejecting.
+   * RED WHEN: the find returns `createCircuitCallTxInterface`'s result unwrapped: with the wrapper removed from
+   * `partial-contract.ts` this resolves to `'TX'` instead of rejecting.
    */
   it('an interface found with no key refuses the circuits that read one', async () => {
     const { found } = await findWith(null);
@@ -314,13 +313,13 @@ describe('the find requires the answer and hands back an interface that refuses'
   });
 
   /*
-   * RED WHEN: the find starts inventing an answer - a default, a `?? null`, or
-   * a cast that turns `null` into an absent field on the way past. The key the
-   * caller gave has to be the key the scheme is configured with, or the two
-   * halves of this guard are judging different calls.
+   * The key the caller gave has to be the key the scheme is configured with, or the two halves of this guard are
+   * judging different calls; and an answer of no key reaches the scheme as no id at all, which is how the SDK is
+   * told a call stores no private state (it refuses a `null` id). RED WHEN: the find invents a key or changes the
+   * one given; or hands the SDK `null`, so every call that reads no witness is refused.
    */
-  it('hands the scheme the answer it was given, unchanged, either way', async () => {
-    expect((await findWith(null)).built).toEqual([null]);
+  it('hands the scheme the key it was given unchanged, and no key as no id', async () => {
+    expect((await findWith(null)).built).toEqual([undefined]);
     expect((await findWith('a-key:acct')).built).toEqual(['a-key:acct']);
   });
 

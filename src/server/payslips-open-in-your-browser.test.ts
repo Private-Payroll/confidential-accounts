@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,7 +10,7 @@ import { newWords } from 'midnight-identity';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { User } from '../core/types.js';
 
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 /**
  * **A COMPANY'S PAYSLIPS FOR A MONTH OVER THE WIRE: EVERY SLIP, AS CIPHERTEXT,
  * TO ANYBODY SIGNED IN, AND NO ROUTE TAKES OR NAMES A PAYSLIP KEY.** The payee's
@@ -60,7 +62,7 @@ const seeded = await (async () => {
   const hire = (who: string, byte: string) => {
     const email = `${who.toLowerCase()}@acme.example`;
     const { sentTo, employee } = payroll.invite(account.id, {
-      name: who, email, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 5_000_000_000n,
+      name: who, email, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 5_000_000_000n,
     }, viewingKey, 'usr_ada');
     const keys = payslipKeypairForWallet(newWords(), label, ORIGIN);
     const userId = 'usr_' + who.toLowerCase();
@@ -156,7 +158,7 @@ describe('a company\'s payslips for a month, over the wire', () => {
     expect(tried(payslipKeypairForWallet(newWords(), seeded.label, ORIGIN).secret)).toEqual([]);
     expect(dana.payslip.name).toBe('Dana');
     expect(dana.payslip.amount).toBe(5_000_000_000n);
-    expect(dana.payslip.asset).toBe(TEST_SETTLEMENT_ASSET);
+    expect(dana.payslip.asset).toBe(TEST_NETWORK_COLOUR);
     expect(dana.runId).toBe(seeded.runId);
     /* RED WHEN the label a slip names is taken from anywhere but inside its seal. */
     expect(dana.issuedBy).toBe(seeded.label);

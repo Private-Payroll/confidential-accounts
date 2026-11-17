@@ -6,6 +6,7 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { addressFor, identityFromWords, newSecret, secretFromWords } from 'midnight-identity';
 import type { Identity, Secret } from 'midnight-identity';
 import { NETWORK } from '../config.js';
+import { NETWORK_IDS, networkRecord } from '../../../../src/core/networks.js';
 import { unshieldedKeystoreFor } from '../chain/unshielded.js';
 import { dustAddressFor } from '../chain/dust.js';
 import { saveLastUsedWallet } from '../accounts/storage.js';
@@ -60,7 +61,6 @@ function fakeWiring(options: {
   let onState: ((s: SendState) => void) | null = null;
   const doorsFor = (): SendDoors & { stop: () => Promise<void> } => ({
     facade: () => Promise.reject(new Error('the fake engine never opens doors')),
-    keys: () => { throw new Error('the fake engine never derives keys'); },
     signSegment: () => { throw new Error('the fake engine never signs'); },
     ownUnshieldedHex: 'unused',
     stop: async () => { stops.push(stops.length + 1); },
@@ -265,7 +265,7 @@ describe('the confirmation shows what WILL happen, read back — §4', () => {
     expect(screen.getByText(/the privacy working/u)).toBeTruthy();
   });
 
-  it('"Send it" confirms and "Don\'t send" cancels — through the send controller', () => {
+  it('"Send it" confirms and "Don\'t send" cancels — through the send it started', () => {
     const fake = toConfirm();
     fireEvent.click(screen.getByText('Send it'));
     expect(fake.confirms).toHaveLength(1);
@@ -411,9 +411,22 @@ describe('the live surface — real by default, rehearsal one quiet click away',
     expect(screen.getByText(/own origin/u)).toBeTruthy();
     expect(screen.getByText(/pinned fingerprints/u)).toBeTruthy();
     expect(screen.queryByText(/midnight-s3-fileshare/u)).toBeNull();
-    expect(screen.getByText(/stagenet node/u)).toBeTruthy();
+    expect(screen.getByText(new RegExp(`${networkRecord(NETWORK).label} node`, 'u'))).toBeTruthy();
     expect(screen.queryByText(/A rehearsal, not a real send/u)).toBeNull();
     expect(document.querySelector('fieldset[data-scenarios]')).toBeNull();
+  });
+
+  it('names its network only as the network record does, never by a name written in the screen', () => {
+    /* RED WHEN the live notice writes a network's name itself - a literal `stagenet`
+     * in its sentences - instead of the record's label, which is the one wording that
+     * is true on whichever network this wallet is built for. */
+    renderSend(fakeWiring({ live: true }).wiring);
+    const notice = document.querySelector('section[aria-label^="This is real."]');
+    const label = networkRecord(NETWORK).label;
+    expect(notice?.textContent).toContain(`on ${label}, pays a real fee`);
+    expect(notice?.textContent).toContain(`through the ${label} node`);
+    const leftOver = (notice?.textContent ?? '').split(label).join('');
+    for (const id of NETWORK_IDS) expect(leftOver.toLowerCase()).not.toContain(id);
   });
 
   it('the toggle goes to the pretend chain and back, and hides while a send runs', () => {
@@ -451,13 +464,13 @@ describe('the network\'s terms — shown once, recorded, blocking nothing', () =
     expect(screen.getByText('https://terms.example/t')).toBeTruthy();
     expect(screen.getByText(/not a gate of this wallet/u)).toBeTruthy();
     /* Recorded: the card is a network fact, keyed by the network. */
-    const raw = localStorage.getItem('midnight-identity:terms:stagenet');
+    const raw = localStorage.getItem(`midnight-identity:terms:${NETWORK}`);
     expect(raw).toBeTruthy();
     expect(JSON.parse(raw as string).hash).toBe('ab12'.repeat(16));
   });
 
   it('a second visit shows no terms card at all', async () => {
-    localStorage.setItem('midnight-identity:terms:stagenet',
+    localStorage.setItem(`midnight-identity:terms:${NETWORK}`,
       JSON.stringify({ hash: 'seen', url: 'https://terms.example/t', seenAt: 1 }));
     const fake = fakeWiring({ live: true });
     renderSend(fake.wiring);

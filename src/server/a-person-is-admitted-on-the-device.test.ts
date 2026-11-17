@@ -6,12 +6,14 @@
  * admitting device on what it opened, before anything is filed. The service
  * files what a seat signed, for what the route is for, and opens nothing.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { addressFingerprint, payeeCodeFingerprint } from 'midnight-identity/profile/fingerprint';
 import { canonical } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { openPerson, sealPerson } from '../core/person-record.js';
 import { theNetwork } from '../midnight/network.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
@@ -37,7 +39,7 @@ const adasDevice = (over: Partial<PeopleDevice> = {}): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda,
   directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal, entered: ADA.entered, ...over,
 });
-const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n, classification: 'full-time' as const, startDate: '2026-10-01' });
+const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500000n, classification: 'full-time' as const, startDate: '2026-10-01' });
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 /** A payee's own wallet, numbered, signing their code for Acme. */
 const codeOf = (wallet: number, address: string, label = LABEL): JoinCode =>
@@ -322,7 +324,7 @@ describe('A SIGNER MAKES THEMSELVES PAYABLE FROM THEIR OWN DEVICE', () => {
   it('WITH THE CODE THEIR OWN SEAT\'S WALLET SIGNED, AND NOT WITH ANYBODY ELSE\'S', async () => {
     const address = addressOf(61);
     const mine = signJoinCode(identityFromSecret(new Uint8Array(32).fill(ADA.n)), LABEL, 'ada', { kind: 'payee', address, payslipKey: 'ef'.repeat(32) });
-    const self = { name: 'Ada', title: 'Founder', asset: TEST_SETTLEMENT_ASSET, baseAmount: 900000n, startDate: '2026-10-01' };
+    const self = { name: 'Ada', title: 'Founder', asset: TEST_NETWORK_COLOUR, baseAmount: 900000n, startDate: '2026-10-01' };
     /* RED WHEN: a signer is made payable at an address another wallet signed. */
     await expect(makeMyselfPayableHere(adasDevice(), codeOf(62, addressOf(62)), self)).rejects.toThrow(/not signed by the wallet your seat/);
     const payable = await makeMyselfPayableHere(adasDevice(), mine, self);

@@ -205,12 +205,14 @@ export {};   // a MODULE rather than a global script.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { createScreen } from './deploy-report.js';
 import { theNetwork } from '../src/midnight/network.js';
 import {
-  parseVaultRegistry, theVault, type VaultEntry,
+  parseVaultRegistry, theVault, vaultRegistryFile, type VaultEntry,
 } from '../src/midnight/vault-record.js';
+import { storeDir } from '../src/wiring/deployment.js';
+import { publicDataProviderAt } from '../src/midnight/providers.js';
 import { endpointsOf } from '../src/core/networks.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -568,7 +570,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
     return undefined;
   }
 
-  const vaultsFile = join(ROOT, '.midnight', `${NETWORK}-vaults.json`);
+  const vaultsFile = vaultRegistryFile(storeDir(ROOT, NETWORK), NETWORK);
   if (!existsSync(vaultsFile)) {
     refuse('the vault',
       `there is no ${NETWORK}-vaults.json on this machine, so there is no deployed vault `
@@ -649,9 +651,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
    */
   let state: any;
   try {
-    const { indexerPublicDataProvider } =
-      await import('@midnight-ntwrk/midnight-js-indexer-public-data-provider');
-    state = await indexerPublicDataProvider(INDEXER, INDEXER_WS)
+    state = await (await publicDataProviderAt({ indexerUrl: INDEXER, indexerWsUrl: INDEXER_WS }))
       .queryContractState(record.contractAddress);
   } catch (e: any) {
     /*
@@ -1041,7 +1041,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
          * run that established stage 2's failure**, so the fix to stage 2 is
          * not owed here.
          */
-        const { ZswapChainState } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+        const { ZswapChainState } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
         const st: any = (ZswapChainState as any).deserialize(hexBytes(raw));
         filtered.push({ from: 'A, ContractAction.zswapState', state: st });
         say(`     ${G}✓${O} deserialised ${hexBytes(raw).length} bytes; firstFree = ${st.firstFree}`);
@@ -1229,7 +1229,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
         say(`     ${G}✓${O} [${u.startIndex}, ${u.endIndex}], ${bytes.length} bytes, protocol ${u.protocolVersion}`);
         /* Same-module, same reasoning as A: deserialised and then only asked
          * for its own Debug string. Measured 29 Aug alongside A and E. */
-        const { MerkleTreeCollapsedUpdate } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+        const { MerkleTreeCollapsedUpdate } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
         const parsed: any = (MerkleTreeCollapsedUpdate as any).deserialize(bytes);
         const dump = String(parsed.toString(false));
         say(`     ${G}✓${O} deserialised; its Debug string is ${dump.length} characters`);
@@ -1347,7 +1347,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
           + 'read as our ignorance rather than as a statement about the tree.');
       } else {
         const bytes = hexBytes(String(raw));
-        const { ZswapChainState } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+        const { ZswapChainState } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
         const st: any = (ZswapChainState as any).deserialize(bytes);
         filtered.push({ from: 'E, Block.contractZswapState', state: st });
         say(`     ${G}✓${O} deserialised ${bytes.length} bytes; firstFree = ${st.firstFree}`);
@@ -1441,7 +1441,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
         say(`     ${D}written down here. C238.${O}`);
 
         const { MerkleTreeCollapsedUpdate, ZswapLocalState } =
-          await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+          await import('@midnight-ntwrk/midnight-js-protocol/v9');
         const parsed: any = (MerkleTreeCollapsedUpdate as any).deserialize(bytes);
         /*
          * **APPLIED TO A BLANK LOCAL STATE, WHICH IS THE DOCUMENTED FLOW.** The
@@ -1599,7 +1599,7 @@ async function stageThree(v: VaultSubject): Promise<Attempt> {
         + 'to ask about. Surface B says the same thing one surface earlier.');
     } else {
       const { MerkleTreeCollapsedUpdate } =
-        await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+        await import('@midnight-ntwrk/midnight-js-protocol/v9');
 
       /*
        * **THE CONTROLS, AND THEY ARE ASKED FOR THE SAME REASON A THERMOMETER IS

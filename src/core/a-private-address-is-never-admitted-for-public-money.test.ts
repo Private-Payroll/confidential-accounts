@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +14,7 @@ import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { sealHandover } from './invite-handover.js';
 import { FileStore } from './store-file.js';
-import { NIGHT, TEST_SETTLEMENT_ASSET, type AssetRegistry } from './assets.js';
+import { NIGHT, type AssetRegistry } from './assets.js';
 import { newWrappingKeypair } from './crypto.js';
 import type { User } from './types.js';
 
@@ -46,7 +48,7 @@ const aCompany = async () => {
   return { store, payroll, invites, viewingKey: created.viewingKey, account: created.account.id };
 };
 
-/** Robin is invited in `asset` and hands over `address`; the founder then admits. */
+/** Robin is invited in `asset` and hands over `address`; the company owner then admits. */
 const inviteAndHandOver = (c: Awaited<ReturnType<typeof aCompany>>, asset: string) => {
   const { sentTo } = c.payroll.invite(c.account, {
     name: 'Robin', email: 'robin@acme.example', title: 'Contractor', asset, baseAmount: 500_000n,
@@ -83,7 +85,7 @@ describe('an address of a kind the money has no form for is never admitted', () 
 
   it('MONEY WITH NO PUBLIC FORM, A PUBLIC ADDRESS: REFUSED THE SAME WAY', async () => {
     const c = await aCompany();
-    const { handOver, robin } = inviteAndHandOver(c, TEST_SETTLEMENT_ASSET);
+    const { handOver, robin } = inviteAndHandOver(c, TEST_NETWORK_COLOUR);
     /* RED WHEN admit takes a public address for money that can only be paid privately, or names it by its token. */
     expect(handOver(PUBLIC.bech32)).toThrow(/^not admitted\. tUSD can only be paid to a private address, and the address that arrived is a public one\./u);
     expect(robin().status).toBe('pending');

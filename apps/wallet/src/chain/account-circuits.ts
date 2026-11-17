@@ -29,12 +29,16 @@ export const ACCOUNT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.free
  * secret and writing each signer's sealed copy of it, the two calls that carry
  * the secret the wallet made, a private deposit, which the wallet builds,
  * pays and records whole, a payment out of the vault, private or public, for a
- * one-off or a payroll run, and a merge of the vault's notes into one, which a
- * run's plan makes when no single note pays a person. Every other vault call a
- * company makes is built elsewhere, so the wallet holds no proving key for it.
+ * one-off or a payroll run, a merge of the vault's notes into one, which a
+ * run's plan makes when no single note pays a person, and the two calls that
+ * retire an empty vault: dropping a public token it no longer holds from its
+ * set, and the retirement itself, which the vault refuses while it holds notes
+ * or public money. Every other vault call a company makes is built elsewhere,
+ * so the wallet holds no proving key for it.
  */
 export const VAULT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze([
   'setNonceSecret', 'writeSecretCopy', 'deposit', 'payout', 'payoutUnshielded', 'mergeNotes',
+  'forgetUnshielded', 'retire',
 ]);
 
 /**
@@ -44,8 +48,10 @@ export const VAULT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze
  * vault-contract.ts) for the vault circuits above, never retyped. Setting a
  * vault's secret asks the account to approve the change, and that call is a
  * proof of its own, made with the account's key for it; a payment out, private
- * or public, asks the account to record it against the approved run; writing a
- * sealed copy, a private deposit and a merge call nothing. A call missing here
+ * or public, asks the account to record it against the approved run; retiring
+ * asks the account to retire the vault under the approved retirement; writing a
+ * sealed copy, a private deposit, a merge and dropping a public token call
+ * nothing. A call missing here
  * is a proof the wallet cannot make, so the whole transaction stops at it.
  */
 export const ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS: Readonly<Record<string, readonly string[]>> = Object.freeze(Object.fromEntries(

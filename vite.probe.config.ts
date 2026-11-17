@@ -15,16 +15,16 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
  */
 export default defineConfig({
   /*
-   * `@midnight-ntwrk/zkir-v2`'s `browser` entry is the wasm-bindgen BUNDLER
+   * Each prover's (`@midnightntwrk/zkir-v3`, `@midnightntwrk/zkir-v2`) `browser` entry is the wasm-bindgen BUNDLER
    * target: it does `import * as wasm from './midnight_zkir_wasm_bg.wasm'` and
    * then calls `wasm.__wbindgen_start()` at the top level. Webpack understands
    * both; Vite understands neither without these two plugins, and fails at
    * runtime rather than at build time — `__wbindgen_export_1 of undefined`,
    * which names nothing useful.
    */
-  // The dep optimiser rewrites the glue and breaks the wasm URL, so this
-  // package has to be served as source.
-  optimizeDeps: { exclude: ['@midnight-ntwrk/zkir-v2'] },
+  // The dep optimiser rewrites the glue and breaks the wasm URL, so these
+  // packages have to be served as source.
+  optimizeDeps: { exclude: ['@midnightntwrk/zkir-v3', '@midnightntwrk/zkir-v2'] },
   root: resolve(__dirname, 'browser-proving'),
   // Two pages: the prover load probe, and the Worker/IndexedDB probe.
   build: { rollupOptions: { input: ['index.html', 'worker.html', 'wallet.html'] } },
@@ -89,7 +89,7 @@ export default defineConfig({
    * Artefacts are SERVED FROM WHERE THEY ALREADY ARE rather than copied into a
    * public/ folder. A copy would be 16 MB of duplicated proving keys and SRS in
    * the repo, and — worse — a second copy that could silently go stale after a
-   * recompile, which is exactly the class of failure M-85 was.
+   * recompile and prove with keys that no longer match the circuits.
    */
   publicDir: false,
   resolve: { conditions: ['browser'] },

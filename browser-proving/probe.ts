@@ -1,7 +1,7 @@
 /**
  * Does the zkir prover actually load in a BROWSER?
  *
- * M-77 answered "can we prove client-side" by proving in a Node process. That
+ * Proving in a Node process says whether a proof can be made off a server. That
  * is not the same question. A browser tab has a different module loader, a
  * 4 GB address-space ceiling on wasm32, no filesystem, and cross-origin
  * isolation rules that decide whether threads are even possible. The product is
@@ -15,6 +15,8 @@
  * threading, artefact parsing, and whether ~11 MB of structured reference
  * string plus the proving key can be held at once without the tab dying.
  */
+import { ZKIR_ENGINES } from '../src/midnight/wasm-proving.js';
+
 const out = document.getElementById('out')!;
 const lines: string[] = [];
 const say = (s: string) => { lines.push(s); out.textContent = lines.join('\n'); };
@@ -49,7 +51,8 @@ async function main() {
   say(`SharedArrayBuffer:   ${result.sharedArrayBuffer}`);
 
   const t0 = performance.now();
-  const zkir: any = await import('@midnight-ntwrk/zkir-v2');
+  /* A contract's circuit, so the prover the wallet sends a contract's circuits to: zkir-v3, the format the compiler writes. */
+  const zkir: any = await ZKIR_ENGINES.contract();
   result.moduleLoadMs = Math.round(performance.now() - t0);
   say(`zkir module loaded in ${result.moduleLoadMs}ms`);
   result.exports = Object.keys(zkir).filter((k) => typeof (zkir as any)[k] !== 'undefined');

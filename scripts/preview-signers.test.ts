@@ -24,6 +24,7 @@ import {
   readOrCreatePreviewSigners, signerBytes, PREVIEW_SIGNER_IDS,
 } from './preview-signers.js';
 import { toHex } from '../src/core/crypto.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'preview-signers-'));
 
@@ -36,9 +37,9 @@ describe('C334 — the preview signers file', () => {
      * it. Delete `assertPreviewAccountId(...)` from `previewSignersFile` and
      * the direct test below stays green while a `..` escapes `.midnight/`.
      */
-    expect(() => previewSignersFile('/x/.midnight', 'stagenet', '../../etc/passwd'))
+    expect(() => previewSignersFile('/x/.midnight', NETWORK, '../../etc/passwd'))
       .toThrow(/not a usable account id/);
-    expect(() => previewSignersFile('/x/.midnight', 'stagenet', 'a/b'))
+    expect(() => previewSignersFile('/x/.midnight', NETWORK, 'a/b'))
       .toThrow(/not a usable account id/);
   });
 
@@ -46,12 +47,12 @@ describe('C334 — the preview signers file', () => {
     /* `C275` is one shared file, each run overwriting the last. The account id
      * is IN the name, so two accounts cannot collide however often either
      * runs. */
-    expect(previewSignersFile('/x/.midnight', 'stagenet', 'default'))
-      .toBe('/x/.midnight/stagenet-preview-signers-default.json');
-    expect(previewSignersFile('/x/.midnight', 'stagenet', 'payroll-test-1'))
-      .not.toBe(previewSignersFile('/x/.midnight', 'stagenet', 'default'));
+    expect(previewSignersFile('/x/.midnight', NETWORK, 'default'))
+      .toBe(`/x/.midnight/${NETWORK}-preview-signers-default.json`);
+    expect(previewSignersFile('/x/.midnight', NETWORK, 'payroll-test-1'))
+      .not.toBe(previewSignersFile('/x/.midnight', NETWORK, 'default'));
     expect(previewSignersFile('/x/.midnight', 'undeployed', 'default'))
-      .not.toBe(previewSignersFile('/x/.midnight', 'stagenet', 'default'));
+      .not.toBe(previewSignersFile('/x/.midnight', NETWORK, 'default'));
   });
 
   it('refuses an account id that could escape the directory or shadow another', () => {
@@ -72,8 +73,8 @@ describe('C334 — the preview signers file', () => {
      * directories, so this compares two first-generations rather than a
      * generation against a reuse.
      */
-    const a = readOrCreatePreviewSigners(tmp(), 'stagenet', 'default');
-    const b = readOrCreatePreviewSigners(tmp(), 'stagenet', 'default');
+    const a = readOrCreatePreviewSigners(tmp(), NETWORK, 'default');
+    const b = readOrCreatePreviewSigners(tmp(), NETWORK, 'default');
     expect(a.created).toBe(true);
     expect(b.created).toBe(true);
     for (const id of PREVIEW_SIGNER_IDS) {
@@ -102,9 +103,9 @@ describe('C334 — the preview signers file', () => {
      * direction reversed, and it would do it silently.
      */
     const dir = tmp();
-    const first = readOrCreatePreviewSigners(dir, 'stagenet', 'default');
+    const first = readOrCreatePreviewSigners(dir, NETWORK, 'default');
     const onDisk = readFileSync(first.file, 'utf8');
-    const second = readOrCreatePreviewSigners(dir, 'stagenet', 'default');
+    const second = readOrCreatePreviewSigners(dir, NETWORK, 'default');
     expect(second.created).toBe(false);
     expect(second.signers).toEqual(first.signers);
     expect(readFileSync(first.file, 'utf8')).toBe(onDisk);
@@ -118,7 +119,7 @@ describe('C334 — the preview signers file', () => {
      * looking at the contract.
      */
     const dir = tmp();
-    const { file } = readOrCreatePreviewSigners(dir, 'stagenet', 'default');
+    const { file } = readOrCreatePreviewSigners(dir, NETWORK, 'default');
 
     expect(() => parsePreviewSigners({}, file)).toThrow(/does not carry usable material/);
     expect(() => parsePreviewSigners({ signers: {} }, file)).toThrow(/signer A/);
@@ -146,7 +147,7 @@ describe('C334 — the preview signers file', () => {
     const good = JSON.parse(readFileSync(file, 'utf8'));
     delete good.signers.E;
     writeFileSync(file, JSON.stringify(good));
-    expect(() => readOrCreatePreviewSigners(dir, 'stagenet', 'default'))
+    expect(() => readOrCreatePreviewSigners(dir, NETWORK, 'default'))
       .toThrow(/signer E/);
   });
 
@@ -160,7 +161,7 @@ describe('C334 — the preview signers file', () => {
      * this account" against a contract that deployed perfectly. So the VALUES
      * are read back, not the types.
      */
-    const { signers } = readOrCreatePreviewSigners(tmp(), 'stagenet', 'default');
+    const { signers } = readOrCreatePreviewSigners(tmp(), NETWORK, 'default');
     const { secretKey, blinding } = signerBytes(signers.A);
     expect(secretKey.length).toBe(32);
     expect(blinding.length).toBe(32);
@@ -172,7 +173,7 @@ describe('C334 — the preview signers file', () => {
   it('writes the file 0600, because it is key material on a shared disk', () => {
     /* A truth claim the file makes about itself (rule 14), pinned rather than
      * asserted in a comment. `S35`'s test-coverage pass. */
-    const { file } = readOrCreatePreviewSigners(tmp(), 'stagenet', 'default');
+    const { file } = readOrCreatePreviewSigners(tmp(), NETWORK, 'default');
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 });

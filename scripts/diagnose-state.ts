@@ -29,22 +29,24 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
+import { publicDataProviderAt } from '../src/midnight/providers.js';
 import { ledger as readLedger, pureCircuits } from '../contracts/managed/contract/index.js';
-import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
+import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
+import { contractStateAt } from '../src/midnight/contract-state-at.js';
 import {
   previewSignersFile, readOrCreatePreviewSigners, signerBytes,
 } from './preview-signers.js';
+import { deploymentRecordPath, storeDir } from '../src/wiring/deployment.js';
 
 const ROOT = process.cwd();
 const NETWORK = theNetwork();
 
-const CONTRACT_FILE = join(ROOT, '.midnight', `${NETWORK}-contract.json`);
-const STATE_DIR = join(ROOT, '.midnight');
+const CONTRACT_FILE = deploymentRecordPath(ROOT, NETWORK);
+const STATE_DIR = storeDir(ROOT, NETWORK);
 const ACCOUNT_ID = 'default';
 
 /**
- * **SIGNER A IS READ FROM `.midnight/`, NOT COMPUTED.**
+ * **SIGNER A IS READ FROM THE NETWORK'S STORE FOLDER, NOT COMPUTED.**
  *
  * This script recomputes A's leaf to find it in the tree and rebuilds A's
  * private state to read the store — both of which used to work because A's
@@ -106,15 +108,14 @@ async function main() {
   if (!existsSync(CONTRACT_FILE)) throw new Error('no deployed contract; run DEPLOY-PREVIEW.command first');
   const { contractAddress } = JSON.parse(readFileSync(CONTRACT_FILE, 'utf8'));
   note(`contract ${String(contractAddress).slice(0, 32)}…`);
-  await applyNetworkId(NETWORK);
 
   const e = ENDPOINTS[NETWORK]!;
-  const provider: any = indexerPublicDataProvider(e.indexerUrl, e.indexerWsUrl);
+  const provider = await publicDataProviderAt(e);
 
   console.log();
   console.log('\x1b[1m  Fetching\x1b[0m');
   const t0 = Date.now();
-  const state = await provider.queryContractState(contractAddress);
+  const state = await contractStateAt(provider, contractAddress);
   console.log(`  ${'queryContractState (network)'.padEnd(46)}${Date.now() - t0} ms`);
   if (!state) throw new Error('the indexer returned no state for this contract');
 
@@ -226,12 +227,10 @@ async function main() {
   console.log('\x1b[1m  Saving the real state for offline reproduction\x1b[0m');
   try {
     const { writeFileSync, mkdirSync } = await import('node:fs');
-    mkdirSync(join(ROOT, '.midnight'), { recursive: true });
-    const out = join(ROOT, '.midnight', `${NETWORK}-state.dump`);
+    mkdirSync(STATE_DIR, { recursive: true });
+    const out = join(STATE_DIR, `${NETWORK}-state.dump`);
     // Serialise via the SDK so it round-trips exactly as the SDK reads it.
-    const serialised = (state as any).serialize
-      ? (state as any).serialize(NETWORK)
-      : (state as any).data?.serialize?.(NETWORK);
+    const serialised = state.serialize();
 
     /*
      * The Zswap chain state, which is the last unreproduced input.
@@ -251,7 +250,7 @@ async function main() {
       const zswap = tuple?.[0];
       if (zswap) {
         const zBytes = Buffer.from(zswap.serialize(NETWORK));
-        writeFileSync(join(ROOT, '.midnight', 'preview-zswap.dump'), zBytes);
+        writeFileSync(join(STATE_DIR, 'preview-zswap.dump'), zBytes);
         good(`zswap chain state written (${zBytes.length} bytes)`);
         // Time the exact call the SDK makes. This may be the whole six minutes.
         console.log('  \x1b[2m  timing postBlockUpdate — the SDK calls this during assembly\x1b[0m');
@@ -266,15 +265,8 @@ async function main() {
     } catch (zerr: any) {
       note(`\x1b[33mcould not capture the zswap state: ${String(zerr?.message ?? zerr).slice(0, 80)}\x1b[0m`);
     }
-    if (serialised) {
-      writeFileSync(out, Buffer.from(serialised));
-      good(`state written to ${out.replace(ROOT + '/', '')} (${Buffer.from(serialised).length} bytes)`);
-    } else {
-      // Fall back to whatever shape it is, as JSON, so something is captured.
-      writeFileSync(out + '.json', JSON.stringify(state, (_k, v) =>
-        typeof v === 'bigint' ? v.toString() + 'n' : v instanceof Uint8Array ? Buffer.from(v).toString('hex') : v, 2));
-      note(`no serialize() on the state object; wrote a JSON view instead`);
-    }
+    writeFileSync(out, Buffer.from(serialised));
+    good(`state written to ${out.replace(ROOT + '/', '')} (${serialised.length} bytes)`);
   } catch (err: any) {
     note(`\x1b[33mcould not save the state: ${String(err?.message ?? err).slice(0, 80)}\x1b[0m`);
   }
@@ -291,12 +283,11 @@ async function main() {
   try {
     const { levelPrivateStateProvider } = await import('@midnight-ntwrk/midnight-js-level-private-state-provider');
     const password = process.env.MIDNIGHT_PRIVATE_STATE_PASSWORD || 'ConfidentialAccounts-Dev-2026';
-    const psp: any = levelPrivateStateProvider({
+    const psp = levelPrivateStateProvider({
       accountId: 'diagnose-probe',
       privateStateStoreName: 'diagnose-probe',
       privateStoragePasswordProvider: async () => password,
-    } as any);
-    psp.setContractAddress?.(contractAddress);
+    }).forContract(contractAddress);
     const sample = {
       ...signerBytes(PREVIEW_SIGNERS.A),
       scope: pureCircuits.allVaults(),
@@ -313,7 +304,7 @@ async function main() {
     const t3 = Date.now();
     for (let i = 0; i < 5; i++) await psp.set('diagnose-probe', sample);
     console.log(`  ${'5x set'.padEnd(46)}${colourMs(Date.now() - t3)}`);
-    await psp.clear?.();
+    await psp.clear();
   } catch (err: any) {
     console.log(`  \x1b[33mcould not probe the store: ${String(err?.message ?? err).slice(0, 70)}\x1b[0m`);
   }

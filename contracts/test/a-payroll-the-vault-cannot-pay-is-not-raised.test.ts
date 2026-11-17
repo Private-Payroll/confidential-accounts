@@ -121,7 +121,12 @@ describe('the product\'s own registry', () => {
      * the refusal is walked with a token that does not.
      */
     const PUBLIC_ONLY = testTokenRow('public only', { symbol: 'tPUB', decimals: 2, forms: ['unshielded'] });
-    const registry = new StaticAssetRegistry([...SEED_ASSETS, PUBLIC_ONLY]);
+    /*
+     * One token with a private form beside it, whatever network this build is on, so the refusal has a way through
+     * to name: the network's own test token is minted, and so carried in its record, only once someone mints it.
+     */
+    const PRIVATE_TOO = testTokenRow('private and public', { symbol: 'tPRV', decimals: 2, forms: ['shielded', 'unshielded'] });
+    const registry = new StaticAssetRegistry([...SEED_ASSETS.filter((a) => a.code === NIGHT), PRIVATE_TOO, PUBLIC_ONLY]);
     const s = services({ registry });
     const created = await s.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     /*
@@ -135,12 +140,11 @@ describe('the product\'s own registry', () => {
     /* RED WHEN a payroll payment's token is anything but the asset's own private form. */
     expect(() => ledgerTokenOf(PUBLIC_ONLY.code, 'shielded', registry)).toThrow(/tPUB has no private form on Midnight,/);
     /*
-     * RED WHEN the refusal stops naming a way through. Until a test settlement
-     * asset existed there was none to name and this read "No asset has a
-     * private form yet"; a refusal still saying that would be sending somebody
-     * away from a payment they can in fact make.
+     * RED WHEN the refusal stops naming a way through: one saying no asset has
+     * a private form, while tPRV has one, sends somebody away from a payment
+     * they can in fact make.
      */
-    expect(() => ledgerTokenOf(PUBLIC_ONLY.code, 'shielded', registry)).toThrow(/Assets that have a private form: tUSD\./);
+    expect(() => ledgerTokenOf(PUBLIC_ONLY.code, 'shielded', registry)).toThrow(/Assets that have a private form: tPRV\./);
     /*
      * RED WHEN NIGHT is given a private form. `nativeToken()` is unshielded by
      * definition, so there is no private NIGHT on this platform and no test

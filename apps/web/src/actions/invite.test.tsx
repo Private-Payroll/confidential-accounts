@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { privateAddressHere, publicAddressHere } from '../addresses-here.test-support.js';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { invitationLink } from '../../../../src/core/invitation.js';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
@@ -56,8 +57,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const EN = ENGLISH;
 const WALLET_EN = JSON.parse(readFileSync(resolve(HERE, '../../../wallet/src/locales/en.json'), 'utf8')) as Record<string, string>;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
-const PUBLIC = 'mn_addr_stagenet1egv3hww6lmsahjy3gldaqn778hcpwvhhw8udud6k859906yynmmq8wsdsd';
-const PRIVATE = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
+const PUBLIC = publicAddressHere(0x22);
+const PRIVATE = privateAddressHere(0x11);
 const SIGNERS_APPROVALS = (over: Record<string, unknown> = {}) => ({ of: 'read', value: { count: 2, raisedAboveTheAccount: false, vaultsAtThatNumber: [], ...over } });
 const company = (approvalsForSigners: unknown = SIGNERS_APPROVALS()) => ({ of: 'open', id: 'c-1', name: 'Northwind', approvalsNeeded: { of: 'read', value: 2 }, approvalsForSigners });
 

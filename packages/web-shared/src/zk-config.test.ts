@@ -25,9 +25,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { MemoryArtefactCache, httpKeyMaterialSource } from './key-material.js';
-import { byCircuitName, zkConfigOver } from './zk-config.js';
+import { byCircuitName, runtimeVersionOf, zkConfigOver } from './zk-config.js';
 
 const BASE = 'https://artefacts.example';
+/** The contract runtime version the compiler recorded for the contracts these keys belong to. */
+const RUNTIME = '0.21.0';
 
 /**
  * A fetch that records what it was asked for and answers with bytes that say
@@ -68,7 +70,7 @@ describe('the provider a call is assembled with', () => {
    */
   it('asks for the verifying key and NOTHING else when that is what was asked for', async () => {
     const { asked, source } = sourceWithCache();
-    const zk = zkConfigOver(source, byCircuitName);
+    const zk = zkConfigOver(source, byCircuitName, RUNTIME);
 
     const key = await zk.getVerifierKey('approve');
 
@@ -81,7 +83,7 @@ describe('the provider a call is assembled with', () => {
 
   it('asks for the proving key only when the proving key is asked for', async () => {
     const { asked, source } = sourceWithCache();
-    const zk = zkConfigOver(source, byCircuitName);
+    const zk = zkConfigOver(source, byCircuitName, RUNTIME);
 
     await zk.getProverKey('approve');
     expect(asked).toEqual(['/keys/approve.prover']);
@@ -100,7 +102,7 @@ describe('the provider a call is assembled with', () => {
       '/keys/approve.prover', '/keys/approve.verifier', '/zkir/approve.bzkir',
     ]);
 
-    const zk = zkConfigOver(source, byCircuitName);
+    const zk = zkConfigOver(source, byCircuitName, RUNTIME);
     await zk.get('approve');
     await zk.getVerifierKey('approve');
     await zk.getProverKey('approve');
@@ -115,7 +117,7 @@ describe('the provider a call is assembled with', () => {
   /** And the other direction: the prover asks after the adapter has. */
   it('leaves nothing for the prover to fetch that it has already fetched itself', async () => {
     const { asked, source } = sourceWithCache();
-    const zk = zkConfigOver(source, byCircuitName);
+    const zk = zkConfigOver(source, byCircuitName, RUNTIME);
 
     await zk.get('propose');
     expect(asked).toHaveLength(3);
@@ -132,7 +134,7 @@ describe('the provider a call is assembled with', () => {
    */
   it('does not put the same artefact in the air twice', async () => {
     const { asked, source } = sourceWithCache();
-    const zk = zkConfigOver(source, byCircuitName);
+    const zk = zkConfigOver(source, byCircuitName, RUNTIME);
 
     await Promise.all([
       zk.getVerifierKey('approve'), zk.getVerifierKey('approve'), zk.getVerifierKey('approve'),
@@ -143,7 +145,7 @@ describe('the provider a call is assembled with', () => {
 
   it('asks once per circuit when a set of verifying keys is wanted', async () => {
     const { asked, source } = sourceWithCache();
-    const zk = zkConfigOver(source, byCircuitName);
+    const zk = zkConfigOver(source, byCircuitName, RUNTIME);
 
     const pairs = await zk.getVerifierKeys(['approve', 'cancel', 'propose']);
 
@@ -162,7 +164,7 @@ describe('the provider a call is assembled with', () => {
    */
   it('a different location is a different cache entry, so it really does fetch', async () => {
     const { asked, source } = sourceWithCache();
-    const zk = zkConfigOver(source, byCircuitName);
+    const zk = zkConfigOver(source, byCircuitName, RUNTIME);
 
     await zk.getVerifierKey('approve');
     await zk.getVerifierKey('cancel');
@@ -181,7 +183,7 @@ describe('the provider a call is assembled with', () => {
     const { asked, source } = sourceWithCache();
     const location = 'contract:90a19bf2/approve?vk=5ac4195f';
 
-    await zkConfigOver(source, byCircuitName).getVerifierKey('approve');
+    await zkConfigOver(source, byCircuitName, RUNTIME).getVerifierKey('approve');
     await source.artefact('verifier', location);
 
     expect(asked,
@@ -196,7 +198,7 @@ describe('the provider a call is assembled with', () => {
     const location = 'contract:90a19bf2/approve?vk=5ac4195f';
 
     await source.artefact('verifier', location);
-    await zkConfigOver(source, () => location).getVerifierKey('approve');
+    await zkConfigOver(source, () => location, RUNTIME).getVerifierKey('approve');
 
     expect(asked).toEqual(['/keys/approve.verifier']);
   });
@@ -215,7 +217,7 @@ describe('the provider a call is assembled with', () => {
   it('resolves a key location as given, without applying the mapping to it twice', async () => {
     const { asked, source } = sourceWithCache();
     const location = 'contract:90a19bf2/approve?vk=5ac4195f';
-    const zk = zkConfigOver(source, (circuitId) => `deployment-9/${circuitId}`);
+    const zk = zkConfigOver(source, (circuitId) => `deployment-9/${circuitId}`, RUNTIME);
 
     /*
      * **THE ENTRY IS WARMED FIRST, AND THAT IS WHAT MAKES THIS ABLE TO FAIL.**
@@ -240,7 +242,7 @@ describe('the provider a call is assembled with', () => {
 
   it('and the circuit-named methods DO apply the mapping, which is the control for that', async () => {
     const { asked, source } = sourceWithCache();
-    const zk = zkConfigOver(source, (circuitId) => `deployment-9/${circuitId}`);
+    const zk = zkConfigOver(source, (circuitId) => `deployment-9/${circuitId}`, RUNTIME);
 
     await zk.getVerifierKey('approve');
 
@@ -248,6 +250,23 @@ describe('the provider a call is assembled with', () => {
     /* Same URL, different cache entry - the mapping is what decides the entry. */
     await source.artefact('verifier', 'approve');
     expect(asked).toEqual(['/keys/approve.verifier', '/keys/approve.verifier']);
+  });
+
+  it('declares the contract runtime version it was given, which names the ledger its keys are for', async () => {
+    const { asked, source } = sourceWithCache();
+    /* RED WHEN: the provider cannot say which runtime its keys were compiled for, and every call is refused before it is built. */
+    expect(await zkConfigOver(source, byCircuitName, RUNTIME).getArtifactRuntimeVersion()).toBe('0.21.0');
+    /* RED WHEN: declaring the version fetches anything. */
+    expect(asked).toEqual([]);
+  });
+
+  it('reads the contract runtime version a compiled manifest records, and refuses a manifest that records none', () => {
+    /* RED WHEN: the version is read from anywhere but the manifest's own runtime-version, and the keys are placed on the wrong ledger. */
+    expect(runtimeVersionOf({ 'runtime-version': '0.21.0', 'compiler-version': '0.36.1' }, 'the vault')).toBe('0.21.0');
+    /* RED WHEN: a manifest without a version is answered with a guess, and calls are built for a ledger nobody named. */
+    for (const manifest of [{}, null, 'manifest', { 'runtime-version': '' }, { 'runtime-version': 21 }]) {
+      expect(() => runtimeVersionOf(manifest, 'the vault'), JSON.stringify(manifest)).toThrow(/names no contract runtime for the vault/);
+    }
   });
 
   it('reports a failed fetch with the URL and the status, and caches nothing', async () => {
@@ -259,6 +278,7 @@ describe('the provider a call is assembled with', () => {
     const zk = zkConfigOver(
       httpKeyMaterialSource(BASE, { cache: new MemoryArtefactCache(), fetchImpl: impl }),
       byCircuitName,
+      RUNTIME,
     );
 
     await expect(zk.getVerifierKey('approve')).rejects.toThrow(/404 for .*approve\.verifier/);

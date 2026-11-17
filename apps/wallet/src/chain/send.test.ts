@@ -4,8 +4,11 @@ import { Buffer as PolyfillBuffer } from 'buffer/';
 import { Effect } from 'effect';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { nativeToken, shieldedToken } from '@midnightntwrk/ledger-v9';
-import type { FinalizedTransaction } from '@midnightntwrk/ledger-v9';
+import type { Bindingish, Proofish, SignatureEnabled, Transaction } from '@midnightntwrk/ledger-v9';
+import type { FinalizedTx, WalletFacade } from '@midnightntwrk/wallet-sdk';
 import type { SubmissionService } from '@midnightntwrk/wallet-sdk/capabilities';
+import { carriedBy } from './carried.js';
+import { identifiersOf } from './send-recipe.js';
 import { addressFor, identityFromWords, newSecret } from 'midnight-identity';
 import type { Identity } from 'midnight-identity';
 import {
@@ -85,17 +88,17 @@ describe('the recipient is a KIND, not a string — §4', () => {
 
   it('a wrong-network address is refused as a WHERE mistake, not a WHAT mistake', () => {
     const testnetAddress = addressFor(ours.moneyAt(2).zswap, 'testnet').bech32;
-    expect(() => parseRecipient(testnetAddress, NETWORK)).toThrow(/network|stagenet/iu);
+    expect(() => parseRecipient(testnetAddress, NETWORK)).toThrow(new RegExp(`network|${NETWORK}`, 'iu'));
   });
 
   it('a shielded address of the wrong length is refused before anything is built', async () => {
     /*
      * Right checksum, right kind, right network, and thirty-two bytes with a
-     * tail of the wrong length. The platform's decode alone takes it, and the
-     * ledger refuses what is built to it. `parseRecipient` is where a typed
+     * tail of the wrong length. Were the platform's decode to take it, the
+     * ledger would refuse what is built to it. `parseRecipient` is where a typed
      * recipient becomes one a send can carry, so a throw here is a send that
-     * never starts. RED WHEN `payeeAddress` stops checking the length: this
-     * then parses as a shielded recipient.
+     * never starts. RED WHEN neither the address codec nor `payeeAddress`
+     * checks the length: this then parses as a shielded recipient.
      */
     const { bech32m } = await import('@scure/base');
     const { AddressError } = await import('midnight-identity');
@@ -107,7 +110,8 @@ describe('the recipient is a KIND, not a string — §4', () => {
       let caught: unknown = null;
       try { parseRecipient(odd, NETWORK); } catch (e) { caught = e; }
       expect(caught, `${n} bytes`).toBeInstanceOf(AddressError);
-      expect((caught as Error).message, `${n} bytes`).toContain(`carries ${n} bytes`);
+      /* Refused by the address codec's own length check, or by `payeeAddress`'s where the codec takes it. */
+      expect((caught as Error).message, `${n} bytes`).toMatch(new RegExp(`carries ${n} bytes|needs to be 64 bytes long`, 'u'));
     }
   });
 
@@ -162,9 +166,9 @@ const runSend = (
   const timer = setTimeout(() => {
     reject(new Error(`send did not finish; states: ${states.map((s) => s.name).join(',')}`));
   }, 30_000);
-  const controller = startSend(doors, plan, (state) => {
+  const sending = startSend(doors, plan, (state) => {
     states.push(state);
-    if (state.name === 'confirm') controller[choose]();
+    if (state.name === 'confirm') sending[choose]();
     /* 'unknown' resolves the COLLECTION, not the payment — the record made it a
      * watched state that only ever ends as sent or failed; tests that care
      * about the ending drive the watcher explicitly below. */
@@ -172,7 +176,7 @@ const runSend = (
       || state.name === 'cancelled' || state.name === 'failed'
       || state.name === 'unknown') {
       clearTimeout(timer);
-      controller.detach();
+      sending.detach();
       resolve(states);
     }
   });
@@ -356,10 +360,10 @@ describe('refusals happen while "nothing moved" is still true', () => {
 });
 
 describe('THE DANGEROUS MIDDLE — the proof succeeds, the submission fails', () => {
-  const failingSubmission: SubmissionService<FinalizedTransaction> = {
+  const failingSubmission: SubmissionService<FinalizedTx> = {
     submitTransaction: (() => Promise.reject(new Error(
       'the connection to the node closed before any answer arrived'))) as
-        SubmissionService<FinalizedTransaction>['submitTransaction'],
+        SubmissionService<FinalizedTx>['submitTransaction'],
     close: () => Promise.resolve(),
   };
 
@@ -393,9 +397,9 @@ describe('THE DANGEROUS MIDDLE — the proof succeeds, the submission fails', ()
   }, 60_000);
 
   it('a submission that never answers gets named out loud on the engine\'s own clock', async () => {
-    const neverAnswers: SubmissionService<FinalizedTransaction> = {
+    const neverAnswers: SubmissionService<FinalizedTx> = {
       submitTransaction: (() => new Promise(() => { /* the network says nothing */ })) as
-        SubmissionService<FinalizedTransaction>['submitTransaction'],
+        SubmissionService<FinalizedTx>['submitTransaction'],
       close: () => Promise.resolve(),
     };
     const rehearsal: Rehearsal = await startRehearsal(ours, 0, {
@@ -411,9 +415,9 @@ describe('THE DANGEROUS MIDDLE — the proof succeeds, the submission fails', ()
         unshieldedKeystoreFor(ours, 2).getBech32Address().asString(), NETWORK);
       const state = await new Promise<SendState>((resolve, reject) => {
         const timer = setTimeout(() => { reject(new Error('no quiet report')); }, 30_000);
-        const controller = startSend(doors, { recipient, stars: 1_000_000n }, (s) => {
-          if (s.name === 'confirm') controller.confirm();
-          if (s.name === 'unknown') { clearTimeout(timer); controller.detach(); resolve(s); }
+        const sending = startSend(doors, { recipient, stars: 1_000_000n }, (s) => {
+          if (s.name === 'confirm') sending.confirm();
+          if (s.name === 'unknown') { clearTimeout(timer); sending.detach(); resolve(s); }
         });
       });
       if (state.name !== 'unknown') throw new Error('not unknown');
@@ -430,10 +434,10 @@ describe('THE DANGEROUS MIDDLE — the proof succeeds, the submission fails', ()
 });
 
 describe('THE MIDDLE ENDS — written down first, watched to an answer', () => {
-  const failingSubmission: SubmissionService<FinalizedTransaction> = {
+  const failingSubmission: SubmissionService<FinalizedTx> = {
     submitTransaction: (() => Promise.reject(new Error(
       'the connection to the node closed before any answer arrived'))) as
-        SubmissionService<FinalizedTransaction>['submitTransaction'],
+        SubmissionService<FinalizedTx>['submitTransaction'],
     close: () => Promise.resolve(),
   };
 
@@ -459,10 +463,10 @@ describe('THE MIDDLE ENDS — written down first, watched to an answer', () => {
     const spy = spyGuard();
     const rehearsal: Rehearsal = await startRehearsal(ours, 0, {
       submissionService: {
-        submitTransaction: ((tx: FinalizedTransaction) => {
+        submitTransaction: ((tx: FinalizedTx) => {
           spy.events.push('submit');
-          return Promise.resolve(tx.identifiers()[0] ?? 'tx');
-        }) as unknown as SubmissionService<FinalizedTransaction>['submitTransaction'],
+          return Promise.resolve(identifiersOf(tx)[0] ?? 'tx');
+        }) as unknown as SubmissionService<FinalizedTx>['submitTransaction'],
         close: () => Promise.resolve(),
       },
     });
@@ -488,10 +492,10 @@ describe('THE MIDDLE ENDS — written down first, watched to an answer', () => {
     let submitted = 0;
     const rehearsal: Rehearsal = await startRehearsal(ours, 0, {
       submissionService: {
-        submitTransaction: ((tx: FinalizedTransaction) => {
+        submitTransaction: ((tx: FinalizedTx) => {
           submitted += 1;
-          return Promise.resolve(tx.identifiers()[0] ?? 'tx');
-        }) as unknown as SubmissionService<FinalizedTransaction>['submitTransaction'],
+          return Promise.resolve(identifiersOf(tx)[0] ?? 'tx');
+        }) as unknown as SubmissionService<FinalizedTx>['submitTransaction'],
         close: () => Promise.resolve(),
       },
     });
@@ -559,12 +563,12 @@ describe('THE MIDDLE ENDS — written down first, watched to an answer', () => {
         const timer = setTimeout(() => {
           reject(new Error(`no ending; states: ${seen.map((x) => x.name).join(',')}`));
         }, 30_000);
-        const controller = startSend(doors, { recipient, stars: 1_000_000n }, (state) => {
+        const sending = startSend(doors, { recipient, stars: 1_000_000n }, (state) => {
           seen.push(state);
-          if (state.name === 'confirm') controller.confirm();
+          if (state.name === 'confirm') sending.confirm();
           if (state.name === 'sent' || state.name === 'failed' || state.name === 'refused') {
             clearTimeout(timer);
-            controller.detach();
+            sending.detach();
             resolve(seen);
           }
         });
@@ -601,11 +605,11 @@ describe('THE MIDDLE ENDS — written down first, watched to an answer', () => {
         unshieldedKeystoreFor(ours, 2).getBech32Address().asString(), NETWORK);
       const last = await new Promise<SendState>((resolve, reject) => {
         const timer = setTimeout(() => { reject(new Error('never ended')); }, 30_000);
-        const controller = startSend(doors, { recipient, stars: 1_000_000n }, (state) => {
-          if (state.name === 'confirm') controller.confirm();
+        const sending = startSend(doors, { recipient, stars: 1_000_000n }, (state) => {
+          if (state.name === 'confirm') sending.confirm();
           if (state.name === 'failed' || state.name === 'sent') {
             clearTimeout(timer);
-            controller.detach();
+            sending.detach();
             resolve(state);
           }
         });
@@ -633,9 +637,9 @@ describe('THE MIDDLE ENDS — written down first, watched to an answer', () => {
      * every start — must still hold the payment and settle it on its own. */
     localStorage.removeItem('midnight-identity:pending-sends');
     const secret = newSecret();
-    const neverAnswers: SubmissionService<FinalizedTransaction> = {
+    const neverAnswers: SubmissionService<FinalizedTx> = {
       submitTransaction: (() => new Promise(() => { /* nothing, for ever */ })) as
-        SubmissionService<FinalizedTransaction>['submitTransaction'],
+        SubmissionService<FinalizedTx>['submitTransaction'],
       close: () => Promise.resolve(),
     };
     const rehearsal: Rehearsal = await startRehearsal(ours, 0, {
@@ -652,12 +656,12 @@ describe('THE MIDDLE ENDS — written down first, watched to an answer', () => {
         unshieldedKeystoreFor(ours, 2).getBech32Address().asString(), NETWORK);
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => { reject(new Error('never reached the middle')); }, 30_000);
-        const controller = startSend(doors, { recipient, stars: 1_000_000n }, (state) => {
-          if (state.name === 'confirm') controller.confirm();
+        const sending = startSend(doors, { recipient, stars: 1_000_000n }, (state) => {
+          if (state.name === 'confirm') sending.confirm();
           if (state.name === 'unknown') {
             clearTimeout(timer);
             /* THE TAB DIES. Nothing else from this engine ever runs. */
-            controller.detach();
+            sending.detach();
             resolve();
           }
         });
@@ -736,7 +740,7 @@ describe('the recipe readers read what the spike measured', () => {
           receiverAddress: parsed.decode(UnshieldedAddress, NETWORK),
           amount: 123_456n,
         }],
-      }], rehearsalDoors(ours, 0).keys(), {
+      }], {
         ttl: new Date(rehearsal.now().getTime() + 3_600_000),
       });
       expect(unshieldedStarsTo(recipe, recipientHex)).toBe(123_456n);
@@ -761,7 +765,6 @@ describe('a PLATFORM FACT, pinned: the ledger has no shield door', () => {
      * hear about it — through this test going red. */
     const rehearsal: Rehearsal = await startRehearsal(ours, 0, { shieldedStars: 0n });
     try {
-      const keys = rehearsalDoors(ours, 0).keys();
       const own = addressFor(ours.moneyAt(0).zswap, NETWORK);
       const { MidnightBech32m, ShieldedAddress } = await import('@midnightntwrk/wallet-sdk-address-format');
       const recipient = MidnightBech32m.parse(own.bech32).decode(ShieldedAddress, NETWORK);
@@ -772,12 +775,11 @@ describe('a PLATFORM FACT, pinned: the ledger has no shield door', () => {
           type: 'shielded',
           outputs: [{ type: shieldedToken().raw, receiverAddress: recipient, amount: 100_000_000n }],
         }],
-        { shieldedSecretKeys: keys.shieldedSecretKeys, dustSecretKey: keys.dustSecretKey },
         { ttl, payFees: true },
       );
       const finalized = await rehearsal.facade.finalizeRecipe(recipe);
       /* The imbalances say why before the ledger says no. */
-      const imbalances = [...finalized.imbalances(0).entries()]
+      const imbalances = [...(carriedBy(finalized) as Transaction<SignatureEnabled, Proofish, Bindingish>).imbalances(0).entries()]
         .map(([tt, v]) => [(tt as { tag: string }).tag, v] as const);
       expect(imbalances.find(([tag]) => tag === 'unshielded')?.[1]).toBe(100_000_000n);
       expect(imbalances.find(([tag]) => tag === 'shielded')?.[1]).toBe(-100_000_000n);
@@ -844,7 +846,7 @@ describe('the unshielded inputs a send spends are signed', () => {
           receiverAddress: parsed.decode(UnshieldedAddress, NETWORK),
           amount: 250_000_000n,
         }],
-      }], doors.keys(), { ttl: new Date(rehearsal.now().getTime() + 3_600_000) });
+      }], { ttl: new Date(rehearsal.now().getTime() + 3_600_000) });
 
       /* THE DEFECT, reproduced: what this wallet built for two whole rounds
        * and handed to a real chain. The count is the chain's own complaint. */
@@ -868,7 +870,6 @@ describe('the unshielded inputs a send spends are signed', () => {
      * the comment above these tests should be corrected. */
     const rehearsal: Rehearsal = await startRehearsal(ours, 0);
     try {
-      const doors = rehearsalDoors(ours, 0);
       const keystore = unshieldedKeystoreFor(ours, 2);
       const { MidnightBech32m, UnshieldedAddress } = await import('@midnightntwrk/wallet-sdk-address-format');
       const parsed = MidnightBech32m.parse(keystore.getBech32Address().asString());
@@ -879,7 +880,7 @@ describe('the unshielded inputs a send spends are signed', () => {
           receiverAddress: parsed.decode(UnshieldedAddress, NETWORK),
           amount: 10_000_000n,
         }],
-      }], doors.keys(), { ttl: new Date(rehearsal.now().getTime() + 3_600_000) });
+      }], { ttl: new Date(rehearsal.now().getTime() + 3_600_000) });
       expect(unsignedUnshieldedInputs(recipe)).toBeGreaterThan(0);
 
       const finalized = await rehearsal.facade.finalizeRecipe(recipe);
@@ -912,3 +913,70 @@ describe('the unshielded inputs a send spends are signed', () => {
     expect(unsignedUnshieldedInputs(recipeWith({}))).toBe(0);
   });
 });
+
+describe('A TRANSACTION THE WALLET CANNOT READ AFTER BOOKING ITS COINS RELEASES THEM', () => {
+  /** The rehearsal's facade, with the named methods answered by the test and every other its own. */
+  const facadeWith = (facade: WalletFacade, own: Partial<WalletFacade>): WalletFacade =>
+    new Proxy(facade, {
+      get: (f, k) => {
+        if (k in own) return own[k as keyof WalletFacade];
+        const v: unknown = Reflect.get(f, k, f);
+        return typeof v === 'function' ? v.bind(f) : v;
+      },
+    }) as WalletFacade;
+
+  it('a recipe whose transaction cannot be read is released before the send is refused', async () => {
+    // RED WHEN: the fee read throws after the coins were booked and nothing releases them
+    const rehearsal: Rehearsal = await startRehearsal(ours, 0);
+    const released: unknown[] = [];
+    let booked: unknown = null;
+    const facade = facadeWith(rehearsal.facade, {
+      transferTransaction: async (...a: Parameters<WalletFacade['transferTransaction']>) => {
+        booked = await rehearsal.facade.transferTransaction(...a);
+        return { ...(booked as object), transaction: null, baseTransaction: null, originalTransaction: null } as never;
+      },
+      revert: async (tx: Parameters<WalletFacade['revert']>[0]) => { released.push(tx); return rehearsal.facade.revert(booked as never); },
+    });
+    try {
+      const recipient = parseRecipient(unshieldedKeystoreFor(ours, 2).getBech32Address().asString(), NETWORK);
+      const states = await runSend({ ...rehearsalDoors(ours, 0), facade: async () => facade }, { recipient, stars: 1_000_000n });
+      expect(states.at(-1)).toMatchObject({ name: 'refused', message: expect.stringMatching(/could not read the transaction it built.*Nothing was sent/su) });
+      expect(released).toHaveLength(1);
+    } finally {
+      await rehearsal.stop();
+    }
+  }, 60_000);
+
+  it('a finished transaction whose identifiers cannot be read is released, not written down or sent', async () => {
+    // RED WHEN: the identifiers read throws after proving and nothing releases the coins
+    const rehearsal: Rehearsal = await startRehearsal(ours, 0);
+    const released: unknown[] = [];
+    let finished: unknown = null;
+    const written: unknown[] = [];
+    const facade = facadeWith(rehearsal.facade, {
+      finalizeRecipe: async (r: Parameters<WalletFacade['finalizeRecipe']>[0]) => {
+        finished = await rehearsal.facade.finalizeRecipe(r);
+        return null as never;
+      },
+      validateTransaction: async () => undefined as never,
+      revert: async (tx: Parameters<WalletFacade['revert']>[0]) => {
+        released.push(tx);
+        return rehearsal.facade.revert((tx === null ? finished : tx) as never);
+      },
+    });
+    try {
+      const recipient = parseRecipient(unshieldedKeystoreFor(ours, 2).getBech32Address().asString(), NETWORK);
+      const doors: SendDoors = {
+        ...rehearsalDoors(ours, 0), facade: async () => facade,
+        pending: { duplicateUnresolved: () => false, write: (r) => { written.push(r); }, settle: () => {} },
+      };
+      const states = await runSend(doors, { recipient, stars: 1_000_000n });
+      expect(states.at(-1)).toMatchObject({ name: 'refused', message: expect.stringMatching(/could not read the transaction it finished.*Nothing was sent/su) });
+      expect(released).toEqual([null]);
+      expect(written).toEqual([]);
+    } finally {
+      await rehearsal.stop();
+    }
+  }, 60_000);
+});
+

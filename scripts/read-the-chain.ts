@@ -67,9 +67,10 @@ import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { createScreen, phaseClock } from './deploy-report.js';
 import { loadEnvFile } from '../src/db/connect.js';
-import { theNetwork } from '../src/midnight/network.js';
-import { parseVaultRegistry, theVault } from '../src/midnight/vault-record.js';
-import { deployment, deploymentRecordPath, type Deployment } from '../src/wiring/deployment.js';
+import { theNetwork, type NetworkName } from '../src/midnight/network.js';
+import { publicDataProviderAt } from '../src/midnight/providers.js';
+import { parseVaultRegistry, theVault, vaultRegistryFile } from '../src/midnight/vault-record.js';
+import { deployment, deploymentRecordPath, serviceStorePath, storeDir, type Deployment } from '../src/wiring/deployment.js';
 import { startProduct, type Startup } from '../src/wiring/product.js';
 import { ContractBook, type RecordedContract } from '../src/wiring/account-contract.js';
 import type { LedgerStatus } from '../src/core/ledger.js';
@@ -198,7 +199,7 @@ async function main(): Promise<number> {
 
   clock.begin(1, 6, 'The deployment');
 
-  let network: string;
+  let network: NetworkName;
   try {
     network = theNetwork();
   } catch (e) {
@@ -208,11 +209,15 @@ async function main(): Promise<number> {
     return 3;
   }
   say(`  ${G}✓${O} network ${B}${network}${O}`);
-  say(`    ${D}deployment record  ${deploymentRecordPath('.', network as any)}${O}`);
+  say(`    ${D}deployment record  ${deploymentRecordPath('.', network)}${O}`);
 
   let d: Deployment | undefined;
   try {
     d = deployment(ROOT, process.env);
+    if (d.contractAddress === null) {
+      throw new Error(`no account was deployed from this machine on ${network}, so there is no address to read; `
+        + 'every company here was founded from its signer\'s browser. Read one of those companies instead.');
+    }
     secret.push({ what: "the account's contract address", value: d.contractAddress });
     say(`  ${G}✓${O} the product resolved a deployment from what is on disk`);
     say(`    ${D}indexer            ${d.indexerUrl}${O}`);
@@ -236,7 +241,7 @@ async function main(): Promise<number> {
    * failure would be this instrument reporting an empty store while the service
    * reads a full one.
    */
-  const storePath = process.env.DATA_PATH ?? join(process.cwd(), '.data', 'beta.json');
+  const storePath = process.env.DATA_PATH ?? serviceStorePath(process.cwd(), network);
   const storeExists = existsSync(storePath);
   say(`  ${D}store  ${process.env.DATA_PATH ?? storePath}${O}`);
 
@@ -307,7 +312,7 @@ async function main(): Promise<number> {
    * assign - so this phase measures the read and not the rule.
    */
   const supplied = await runOne(
-    () => ({ address: d!.contractAddress, source: 'chain', wiring: 'chain' }),
+    () => ({ address: d!.contractAddress!, source: 'chain', wiring: 'chain' }),
     ['supplied'], () => true);
   say();
 
@@ -317,7 +322,7 @@ async function main(): Promise<number> {
   say(`  ${D}An address one character different from the deployed one. Well formed, and${O}`);
   say(`  ${D}nothing was deployed at it. Neither it nor the difference is printed.${O}`);
 
-  const absent = neighbourOf(d.contractAddress);
+  const absent = neighbourOf(d.contractAddress!);
   secret.push({ what: 'the undeployed address', value: absent });
   const absentRead = await runOne(
     () => ({ address: absent, source: 'chain', wiring: 'chain' }), ['absent'], () => true);
@@ -466,10 +471,10 @@ function neighbourOf(address: string): string {
  * deployment record, which is the only thing on disk that carries any of them,
  * and absent fields stay absent rather than becoming zero.
  */
-function recordedNumbers(root: string, network: string): Partial<AccountNumbers> {
+function recordedNumbers(root: string, network: NetworkName): Partial<AccountNumbers> {
   try {
     const rec: any = JSON.parse(
-      readFileSync(join(root, '.midnight', `${network}-contract.json`), 'utf8'));
+      readFileSync(deploymentRecordPath(root, network), 'utf8'));
     return typeof rec?.threshold === 'number' ? { threshold: rec.threshold } : {};
   } catch {
     return {};
@@ -485,8 +490,8 @@ function recordedNumbers(root: string, network: string): Partial<AccountNumbers>
  * back a well formed value for an earlier field. Forcing both first means a
  * half decode produces a refusal instead of one real looking number.
  */
-async function readVault(d: Deployment, network: string): Promise<void> {
-  const vaultsFile = join(ROOT, '.midnight', `${network}-vaults.json`);
+async function readVault(d: Deployment, network: NetworkName): Promise<void> {
+  const vaultsFile = vaultRegistryFile(storeDir(ROOT, network), network);
   if (!existsSync(vaultsFile)) {
     refuse('a vault reading', 'no vault has been deployed and recorded on this network');
     return;
@@ -549,9 +554,7 @@ async function readVault(d: Deployment, network: string): Promise<void> {
   const started = Date.now();
   let state: any;
   try {
-    const { indexerPublicDataProvider } =
-      await import('@midnight-ntwrk/midnight-js-indexer-public-data-provider');
-    state = await indexerPublicDataProvider(d.indexerUrl, d.indexerWsUrl)
+    state = await (await publicDataProviderAt(d))
       .queryContractState(address as any);
   } catch (e) {
     refuse("the vault's counters",

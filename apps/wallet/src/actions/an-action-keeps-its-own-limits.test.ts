@@ -157,6 +157,29 @@ describe('an action that ends cuts its steps off from the wallet\'s keys', () =>
     expect(end.abandoned).toBe(true);
   });
 
+  it('a step finishing what it handed over when Stop is pressed keeps the keys until it settles, and ends done', async () => {
+    const { channel, ended, answers } = handedOver();
+    const stop = new AbortController();
+    let keysReadAfterStop = false;
+    const done = runAction({
+      definition: actionOf([{ title: { key: 'x' }, run: async (c) => {
+        await c.relay('tx');
+        keysReadAfterStop = c.held.secret instanceof Uint8Array;
+      } }]),
+      request: request(), channel, held, stop: stop.signal,
+    });
+    await turn();
+    stop.abort();
+    await turn();
+    answers[0]!('relayed');
+    const end = await done;
+    /* RED WHEN: the keys are let go as Stop is pressed, before the step that is finishing what it handed over has settled. */
+    expect(keysReadAfterStop).toBe(true);
+    /* RED WHEN: the end is written before that step settles, so a transaction that went is said to have stopped. */
+    expect(end.ended.ended).toBe('done');
+    expect(ended).toHaveLength(1);
+  });
+
   it('a definition that cannot list its steps still gets one answer, and nothing is thrown', async () => {
     const { channel, ended } = channelThat(async () => 'relayed');
     const broken = { ...actionOf([]), steps: () => { throw new Error('no steps'); } };

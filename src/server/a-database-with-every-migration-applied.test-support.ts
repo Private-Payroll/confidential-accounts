@@ -7,13 +7,16 @@
  * to give it a database that can be asked, but not a real one: this listens on
  * a port of its own, speaks as much of the database's wire protocol as the
  * driver needs to connect and ask, and says that every migration the folder
- * holds is applied. Any other question gets no rows.
+ * holds is applied. Asked which network its store holds, it names the network
+ * the service is built for, as a database the service has already stamped would.
+ * Any other question gets no rows.
  *
  * It is not a database: it keeps nothing, runs nothing and answers nothing but
- * that one question and the driver's own look at the database's types.
+ * those two questions and the driver's own look at the database's types.
  */
 import { createServer, type Server, type Socket } from 'node:net';
 import { readMigrations } from '../db/migrate.js';
+import { PAIR_NETWORK } from '../midnight/network.js';
 
 const TEXT = 25;
 const INT4 = 23;
@@ -46,6 +49,9 @@ function answerTo(query: string, dir: string | undefined): Answer {
       rows: readMigrations(dir).map(m => [m.version, m.name, m.checksum]),
       tag: 'SELECT',
     };
+  }
+  if (/\bstore_network\b/i.test(query) && /^\s*select\b/i.test(query)) {
+    return { columns: [{ name: 'network', oid: TEXT }], rows: [[PAIR_NETWORK]], tag: 'SELECT' };
   }
   if (/\bpg_type\b/i.test(query)) return { columns: [{ name: 'oid', oid: INT4 }, { name: 'typarray', oid: INT4 }], rows: [], tag: 'SELECT 0' };
   return { columns: [], rows: [], tag: 'OK' };

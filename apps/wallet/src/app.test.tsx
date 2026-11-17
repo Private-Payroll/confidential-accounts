@@ -40,6 +40,7 @@ import { App } from './app.js';
 import { SessionProvider } from './session.js';
 import { savePasskey, saveSecret, saveSecuredSetup } from './accounts/storage.js';
 import { ORIGINAL_SLOT } from './accounts/wallets-held.js';
+import { INDEXER_HOST } from './config.js';
 
 const passkeyFixture = (credentialId: string): Passkey => ({
   credentialId,
@@ -208,7 +209,7 @@ describe('recovery is resumable across navigation — §7.11', () => {
     fireEvent.click(screen.getByText('Add this piece'));
     expect(screen.getByText('1 of 2 pieces.')).toBeTruthy();
 
-    /* Leave for home, come back: the session lives in the provider. */
+    /* Leave for home, come back: the pieces gathered so far live in the provider. */
     window.location.hash = '#/';
     expect(await screen.findByText('Your wallet on Midnight.')).toBeTruthy();
     window.location.hash = '#/recover';
@@ -216,11 +217,12 @@ describe('recovery is resumable across navigation — §7.11', () => {
   });
 });
 
-describe('the footer stopped lying — §7.16, with balances the wallet talks to an indexer', () => {
+describe('the footer names the indexer the wallet reads balances from', () => {
   it('names the indexer and no longer claims there is no chain connection', () => {
     mount();
     const foot = document.querySelector('footer');
-    expect(foot?.textContent).toContain('indexer.stagenet.shielded.tools');
+    /* RED WHEN the footer stops naming the indexer the wallet actually asks. */
+    expect(foot?.textContent).toContain(INDEXER_HOST);
     expect(foot?.textContent).toContain('only when you ask');
     expect(foot?.textContent).not.toContain('No server, no chain connection');
   });

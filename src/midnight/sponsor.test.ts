@@ -6,9 +6,8 @@
  * balance the right token kinds", and getting that wrong is a double spend the
  * node rejects after a block time and a fee.
  *
- * The real proof is `SPONSOR-TEST.command`, which runs two wallets against
- * Stagenet with the customer holding no DUST at all. This is the part that can
- * be checked in thirty milliseconds instead of four minutes.
+ * The real proof is two wallets run against Stagenet with the customer holding no DUST at all. This is the
+ * part that can be checked in thirty milliseconds instead of four minutes.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -18,6 +17,7 @@ import {
 import { FeeRefused } from './fee-ceiling.js';
 import { CUSTOMER_TOKEN_KINDS, SPONSOR_TOKEN_KINDS } from './wallet.js';
 import { saysNothingWasSent } from '../core/jobs.js';
+import { dustViewHeight, dustViewCovers } from './sponsor.js';
 
 /** A ceiling well above what the double below spends, so the cases that are not about it pass. */
 const CEILING = { perTransaction: 1_000n };
@@ -28,37 +28,38 @@ const spending = (...fees: bigint[]) =>
 
 interface Call { method: string; args: unknown[] }
 
-function fakeWallet(overrides: Partial<SponsorWallet> = {}) {
+function fakeWallet(overrides: Record<string, unknown> = {}) {
   const calls: Call[] = [];
-  const wallet: SponsorWallet = {
-    shieldedSecretKeys: 'sponsor-shielded',
-    dustSecretKey: 'sponsor-dust',
-    async balanceFinalizedTransaction(tx, keys, options) {
-      calls.push({ method: 'balanceFinalizedTransaction', args: [tx, keys, options] });
+  const wallet = {
+    /* The stand-in's transactions are their own handles and their own ledger transactions. */
+    handleOf: (tx: unknown) => tx,
+    ledgerTransactionOf: (tx: unknown) => tx,
+    async balanceFinalizedTransaction(tx: unknown, options: unknown) {
+      calls.push({ method: 'balanceFinalizedTransaction', args: [tx, options] });
       return { type: 'FINALIZED_TRANSACTION', originalTransaction: tx, balancingTransaction: 'unproven' };
     },
-    async finalizeRecipe(recipe) {
+    async finalizeRecipe(recipe: any) {
       calls.push({ method: 'finalizeRecipe', args: [recipe] });
       return { submittable: true, from: recipe, intents: spending(5n) };
     },
-    async submitTransaction(tx) {
+    async submitTransaction(tx: any) {
       calls.push({ method: 'submitTransaction', args: [tx] });
       return 'tx_sponsored';
     },
-    async revert(booking) {
+    async revert(booking: any) {
       calls.push({ method: 'revert', args: [booking] });
     },
-    async estimateFee(tx, ttl) {
+    async estimateFee(tx: any, ttl: any) {
       calls.push({ method: 'estimateFee', args: [tx, ttl] });
       return 7n;
     },
-    async paidFee(ref) {
+    async paidFee(ref: any) {
       calls.push({ method: 'paidFee', args: [ref] });
       return 9n;
     },
     async balances() { return { dust: 5_000n, night: 100n }; },
     ...overrides,
-  };
+  } as unknown as SponsorWallet;
   return { wallet, calls };
 }
 
@@ -73,7 +74,7 @@ describe('WalletFeeSponsor', () => {
     await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date());
 
     const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
-    const options = balance.args[2] as { tokenKindsToBalance: string[] };
+    const options = balance.args[1] as { tokenKindsToBalance: string[] };
     expect(options.tokenKindsToBalance).toEqual(['dust']);
     expect(options.tokenKindsToBalance).not.toContain('shielded');
     expect(options.tokenKindsToBalance).not.toContain('unshielded');
@@ -242,16 +243,6 @@ describe('WalletFeeSponsor', () => {
     expect(recorded[0]?.actual, 'a reading nobody took was written down as a number').toBeNull();
   });
 
-  it('uses the SPONSOR\'s keys, not the customer\'s', async () => {
-    // The dust being spent is ours. Passing the customer's keys here would ask
-    // them to pay, which is the entire thing this component exists to avoid.
-    const { wallet, calls } = fakeWallet();
-    await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date());
-    const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
-    const keys = balance.args[1] as { dustSecretKey: string };
-    expect(keys.dustSecretKey).toBe('sponsor-dust');
-  });
-
   it('passes the caller\'s deadline through untouched', async () => {
     // A sponsor quietly extending a TTL would keep a transaction submittable
     // after the customer intended it to expire.
@@ -259,7 +250,7 @@ describe('WalletFeeSponsor', () => {
     const { wallet, calls } = fakeWallet();
     await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, ttl);
     const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
-    expect((balance.args[2] as { ttl: Date }).ttl).toBe(ttl);
+    expect((balance.args[1] as { ttl: Date }).ttl).toBe(ttl);
     /* And the estimate is measured against the same deadline, because a fee
      * quoted for one expiry is not a fee for another. */
     const estimate = calls.find(c => c.method === 'estimateFee')!;
@@ -431,7 +422,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
       .rejects.toThrow();
 
     const balance = calls.find(c => c.method === 'balanceFinalizedTransaction')!;
-    const options = balance.args[2] as { tokenKindsToBalance?: string[] };
+    const options = balance.args[1] as { tokenKindsToBalance?: string[] };
     expect(options.tokenKindsToBalance, 'the argument was omitted').toBeDefined();
     expect(options.tokenKindsToBalance).toEqual(['dust']);
   });
@@ -480,7 +471,7 @@ describe('a sponsor refuses to pay more than its ceiling', () => {
   it('refuses on what the balanced transaction would spend, with no estimate at all', async () => {
     const { wallet, calls } = fakeWallet({
       estimateFee: async () => { throw new Error('the estimate did not come back'); },
-      async finalizeRecipe(recipe) {
+      async finalizeRecipe(recipe: any) {
         calls.push({ method: 'finalizeRecipe', args: [recipe] });
         return { dear: true, intents: spending(600n, 401n) };
       },
@@ -584,7 +575,7 @@ const withHash = (hash: string, extra: Record<string, unknown> = {}) => ({ submi
 async function refusedAtTheDoor(code: number, data?: string): Promise<unknown> {
   const { Effect } = await import('effect');
   const { SubmissionError } = await import('@midnightntwrk/wallet-sdk-capabilities');
-  const { NodeClientError } = await import('@midnightntwrk/wallet-sdk-node-client/effect');
+  const { NodeClientError } = await import('@midnightntwrk/wallet-sdk/node-client/effect');
   const { default: RpcError } = await import('@polkadot/rpc-provider/coder/error');
   const rpc = new RpcError(`${code}: refused${data ? `: ${data}` : ''}`, code, data);
   const inner = new NodeClientError.SubmissionError({ message: 'Transaction submission failed', txData: new Uint8Array(1) as never, cause: rpc });
@@ -600,7 +591,7 @@ describe('the fee payer pays one fee at a time, from a view that is current', ()
     const view = fakeView({ applied: 10n, tip: 13n });
     let appliedWhenBalanced: bigint | null = null;
     const { wallet } = fakeWallet({
-      view, async balanceFinalizedTransaction(tx) { appliedWhenBalanced = view.state.applied; return { from: tx }; },
+      view, async balanceFinalizedTransaction(tx: any) { appliedWhenBalanced = view.state.applied; return { from: tx }; },
     });
     const timing = fakeTiming((t) => { if (t >= 3_000) view.state.applied = 13n; });
     await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, timing).addFeeAndFinalise({ tx: 1 }, new Date());
@@ -666,7 +657,7 @@ describe('the fee payer pays one fee at a time, from a view that is current', ()
 
     let shownWhenBalanced: boolean | null = null;
     const { wallet: same } = fakeWallet({
-      view, async balanceFinalizedTransaction(tx) { shownWhenBalanced = view.shown.has('h-paid'); return { from: tx }; },
+      view, async balanceFinalizedTransaction(tx: any) { shownWhenBalanced = view.shown.has('h-paid'); return { from: tx }; },
     });
     const timing = fakeTiming((t) => { if (t >= 2_000) view.shown.add('h-paid'); });
     await new WalletFeeSponsor(same, CEILING, undefined, undefined, timing).addFeeAndFinalise({ tx: 2 }, new Date());
@@ -798,7 +789,7 @@ describe('after a refused spend proof, paying again never reads as possibly land
     let balanced = 0;
     let made = 0;
     return fakeWallet({
-      async balanceFinalizedTransaction(tx) { balanced += 1; return balanced === 1 ? { from: tx } : secondBalance(); },
+      async balanceFinalizedTransaction(tx: any) { balanced += 1; return balanced === 1 ? { from: tx } : secondBalance(); },
       async finalizeRecipe() { made += 1; return withHash(`h${made}`); },
       async submitTransaction() { throw refusal; },
     });
@@ -910,5 +901,33 @@ describe('a step that may already be on the chain, and a history that never show
     await sponsor.addFeeAndFinalise({ tx: 2 }, new Date());
     expect(calls.map(c => c.method)).toContain('balanceFinalizedTransaction');
     expect(timing.now(), 'the next fee waited for the forgotten payment').toBe(before);
+  });
+});
+
+const viewReading = (applied: bigint, highest: bigint, height: bigint, connected = true) => ({
+  appliedIndex: applied, highestRelevantWalletIndex: highest, highestIndex: height, isConnected: connected,
+  isStrictlyComplete: () => connected && applied === highest,
+});
+
+describe('the block a DUST view covers', () => {
+  /*
+   * RED WHEN: a view part-way through a pass, disconnected, or that has never finished a pass is said to cover a
+   * block, so a fee is paid from a view behind the network.
+   */
+  it('is the height of its last finished pass, and only while it reports itself complete', () => {
+    expect(dustViewHeight(viewReading(9n, 9n, 120n))).toBe(120n);
+    expect(dustViewHeight(viewReading(8n, 9n, 120n))).toBeNull();
+    expect(dustViewHeight(viewReading(9n, 9n, 120n, false))).toBeNull();
+    expect(dustViewHeight(viewReading(9n, 9n, 0n))).toBeNull();
+    expect(dustViewHeight(undefined)).toBeNull();
+    expect(dustViewHeight({ highestIndex: 5n })).toBeNull();
+  });
+
+  /* RED WHEN: a view one block short of the network's newest block counts as covering it. */
+  it('covers a block only at or past it', () => {
+    expect(dustViewCovers(120n, 120n)).toBe(true);
+    expect(dustViewCovers(121n, 120n)).toBe(true);
+    expect(dustViewCovers(119n, 120n)).toBe(false);
+    expect(dustViewCovers(null, 0n)).toBe(false);
   });
 });

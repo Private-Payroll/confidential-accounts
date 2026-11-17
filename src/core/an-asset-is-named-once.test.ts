@@ -1,13 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  NIGHT, SEED_ASSETS, StaticAssetRegistry, assets as productAssets, ledgerFormOf, ledgerTokenOf,
+  NIGHT, SEED_ASSETS, StaticAssetRegistry, assets as productAssets, ledgerFormOf, ledgerTokenOf, testTokenOn,
   type Asset, type LedgerForm,
 } from './assets.js';
+import { NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network';
+import { TEST_NETWORK, afterABuildForANetwork, assetsBuiltFor } from '../testing/a-test-network.js';
+
+afterEach(afterABuildForANetwork);
 
 /**
  * **AN ASSET'S LEDGER IDENTITY IS NAMED IN ONE PLACE, THE ASSET'S OWN ROW, AND
@@ -82,14 +86,17 @@ describe('§1 every shape an asset can have is answered from its row', () => {
       .toThrow(`Assets that have a private form: ${payablePrivately.join(', ')}.`);
   });
 
-  it('the product registry says only what it knows: NIGHT publicly, one test asset privately', () => {
-    const withAForm = productAssets.all().flatMap(a => FORMS
+  it('the product registry says only what it knows: NIGHT publicly, and a test asset privately where the network minted one', async () => {
+    const formsOf = (registry: typeof productAssets) => registry.all().flatMap(a => FORMS
       .filter(f => ledgerFormOf(a, f).of === 'token').map(f => `${a.symbol} ${f}`));
     /*
      * RED WHEN a row gains a form it has not got, or loses one it has, or a row
-     * that is no token returns. Two rows are in this registry, each with one form.
+     * that is no token returns. A build for a network whose record names a test
+     * colour holds two rows, each with one form; one whose record names none holds NIGHT alone.
      */
-    expect(withAForm).toEqual(['NIGHT unshielded', 'tUSD shielded']);
+    expect(formsOf((await assetsBuiltFor(TEST_NETWORK)).assets)).toEqual(['NIGHT unshielded', 'tUSD shielded']);
+    expect(formsOf(productAssets)).toEqual(
+      testTokenOn(THE_NETWORK_THIS_BUILD_IS_ON) === null ? ['NIGHT unshielded'] : ['NIGHT unshielded', 'tUSD shielded']);
   });
 
   it('NIGHT STILL HAS NO PRIVATE FORM, and nothing about a test asset changes that', () => {
@@ -106,7 +113,7 @@ describe('§1 every shape an asset can have is answered from its row', () => {
   });
 
   it('THE ONLY ASSET WITH A PRIVATE FORM IS A TEST ONE, and it is refused off its network', async () => {
-    const { TEST_SETTLEMENT_MINTED_ON, testAssetsFor, isATestAsset } =
+    const { NETWORKS_WITH_A_TEST_TOKEN, testAssetsFor, isATestAsset } =
       await import('./assets.js');
     const { NETWORK_IDS, networkRecord } = await import('./networks.js');
     const privately = productAssets.all().filter(a => a.ledger.shielded !== null).map(a => a.code);
@@ -119,7 +126,7 @@ describe('§1 every shape an asset can have is answered from its row', () => {
     expect(real.length).toBeGreaterThan(0);
     for (const id of real) {
       expect(testAssetsFor(id), id).toEqual([]);
-      expect(TEST_SETTLEMENT_MINTED_ON, id).not.toContain(id);
+      expect(NETWORKS_WITH_A_TEST_TOKEN, id).not.toContain(id);
     }
   });
 });
@@ -384,6 +391,8 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'packages/web-shared/src/vault-builder.ts p.token as Hex': { count: 1, why: 'a payment\'s token as it arrived over the wire, checked as 64 hex characters and carried into the notes walk' },
   'packages/web-shared/src/invitation-on-device.ts token': { count: 5, why: 'an invitation link\'s secret, handed back to whoever made or opened the invitation, or kept by the device that raised a seat offered by address' },
   'packages/web-shared/src/vault-retire-round.ts token': { count: 1, why: 'a public token the chain still lists on a vault that holds none of it, carried into the call that takes it off the list' },
+  'src/midnight/a-vault-ledger-on-a-fake-chain.test-support.ts GBP': { count: 8, why: 'the notes and coins a fake vault chain answers a test with, in the one test token the test chose' },
+  'src/midnight/a-vault-ledger-on-a-fake-chain.test-support.ts toHex(made.color)': { count: 1, why: 'a fake chain carrying the token of the coin it was asked to make' },
   'src/server/a-company-of-two-seats.test-support.ts _t': { count: 1, why: 'an invitation\'s token dropped from the listing a test server answers with, which gives nothing a token' },
 };
 
@@ -435,7 +444,7 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
       'a payment names its token from ledgerTokenOf in src/core/assets.ts, and from nowhere else').toEqual([]);
     /*
      * **A LISTED SITE IS CHECKED WHERE THE WALK STILL REACHES ITS FILE.** These
-     * sixteen pairs are <file, exact site count>, derived from a directory
+     * pairs are <file, exact site count>, derived from a directory
      * walk - so in any copy that does not carry one of those files this went red
      * saying a site "moved or multiplied" when it had done neither.
      * Where the file is still walked the count is exact, which is the guard;
@@ -455,7 +464,7 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
       expect(counted.get(key) ?? 0, `${key}: a listed site that moved or multiplied`).toBe(count);
     }
     // AND EVERY LISTED SITE WHOSE FILE IS HERE WAS CHECKED - an exact count, not
-    // a floor of one. Fifteen of sixteen could stop being checked under `> 0`.
+    // a floor of one. All but one could stop being checked under `> 0`.
     expect(listed.filter(([k]) => inThisCopy(k.slice(0, k.indexOf(' ')))).length,
       'a listed site whose file is in this copy was not checked')
       .toBe(listed.filter(([k]) => inThisCopy(k.slice(0, k.indexOf(' ')))).length);

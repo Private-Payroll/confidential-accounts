@@ -6,6 +6,20 @@
 export declare const WALLET_DIR: string;
 export declare const REPO_ROOT: string;
 export declare const KEYS_DIR: string;
+/** The ledger's own circuits the wallet proves with, as the wallet serves them. */
+export declare const LEDGER_CIRCUITS: readonly string[];
+/** The hash the ledger release declares for each file of a circuit it publishes one for, by served path. */
+export declare const LEDGER_DECLARED: Readonly<Record<string, string>>;
+/** The bucket and the trusted-setup host the ledger's keys are fetched from. */
+export declare const BUCKET: string;
+export declare const TRUSTED_SETUP: string;
+/** The host a ledger circuit file is fetched from. */
+export declare function ledgerSourceOf(relPath: string): string;
+/** The lines refusing a ledger circuit file whose bytes are not the declared ones, or null. */
+export declare function declaredRefusal(relPath: string, hash: string, from: string): string[] | null;
+export declare function droppedRefusal(relPath: string, url: string, cause: unknown): string[];
+/** Every folder of ledger circuit files the keys folder or the pins hold, one generation deep. */
+export declare function ledgerFoldersOf(input: { keysDir: string; artefacts: Record<string, { bytes: number; sha256: string }>; circuits: readonly string[] }): string[];
 
 export interface AccountFile {
   /** Where the wallet serves it, under its keys folder. */
@@ -59,6 +73,8 @@ export declare function pruneOrRefuse(input: {
   graveyard: string;
   stamp: string;
   log?: (line: string) => void;
+  /** The command the refusal tells the reader to run with --prune. */
+  command?: string;
 }): number;
 
 /** Refuses (returns 1) when the keys folder is missing, naming it and what restores it; never creates it. Returns 0 when it is there. */

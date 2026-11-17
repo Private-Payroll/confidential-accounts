@@ -69,6 +69,8 @@ export const UPKEEP_CALLS: readonly CallRoute[] = Object.freeze([
   { method: 'POST', path: '/api/accounts/:record/fee/done' },
   { method: 'GET', path: '/api/accounts/:record/proposals' },
   { method: 'GET', path: '/api/accounts/:record/people' },
+  /* The vault keys the company's signers have offered, read to file each vault's records again across a key change. */
+  { method: 'GET', path: '/api/accounts/:record/vault-keys/offers' },
   { method: 'GET', path: '/api/employees/:employee/handover' },
   { method: 'PUT', path: '/api/accounts/:record/directory/:version' },
   { method: 'POST', path: '/api/accounts/:record/roster' },

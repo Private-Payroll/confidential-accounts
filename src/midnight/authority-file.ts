@@ -35,9 +35,9 @@ import {
   requireMaintenanceAuthority, type MaintenanceAuthorityChoice,
 } from './partial-contract.js';
 
-/** Where a deployment's own state is kept, relative to the repository root. */
-export const authorityFileIn = (root: string): string =>
-  join(root, '.midnight', 'maintenance-authority.json');
+/** Where the recorded maintenance authority is kept in a network's store folder (`storeDir`). */
+export const authorityFileIn = (store: string): string =>
+  join(store, 'maintenance-authority.json');
 
 /**
  * What to say when no authority has been recorded.
@@ -70,8 +70,8 @@ export function noAuthorityRecorded(where: string): string {
  * Those send a reader to different places, so they are not collapsed into one
  * sentence.
  */
-export function loadMaintenanceAuthority(root: string): MaintenanceAuthorityChoice {
-  const path = authorityFileIn(root);
+export function loadMaintenanceAuthority(store: string): MaintenanceAuthorityChoice {
+  const path = authorityFileIn(store);
   if (!existsSync(path)) throw new Error(noAuthorityRecorded(path));
   let parsed: unknown;
   try {

@@ -22,7 +22,6 @@ import { NETWORK as WALLET_NETWORK } from 'midnight-identity/network';
 
 /**
  * **SIGNING IN WITH THE WALLET, AND THE FOUR BINDINGS THAT MAKE IT ONE.**
- * `docs/scope-payroll-identity.md` §4 and §10 step 1, `docs/NEXT.md` PI1.
  *
  * ── EVERY SIGN-IN IN THIS FILE IS REAL ────────────────────────────────────
  *
@@ -36,7 +35,7 @@ import { NETWORK as WALLET_NETWORK } from 'midnight-identity/network';
  *
  * ── AND THE ORIGINS ARE REAL ORIGINS ──────────────────────────────────────
  *
- * `docs/NEXT.md` §2 asks for the replay to be proved *the way the wallet proved
+ * The replay is to be proved *the way the wallet proved
  * them: with real origins, and by checking the bytes on the receiving side.*
  * `THEM` below is a second, complete origin; a sign-in minted for it is offered
  * to a deployment that calls itself `US`, and refused.
@@ -327,7 +326,7 @@ describe('BINDING 3 — THE ADDRESS IS RECOMPUTED FROM THE KEY THAT SIGNED', () 
 
 /**
  * **TWO CONSTANTS IN TWO REPOSITORIES THAT MUST BE EQUAL, AND UNTIL THIS FILE
- * NOTHING COMPARED THEM.** `docs/how-money-can-be-lost.md` `C151`.
+ * NOTHING COMPARED THEM.**
  *
  * The wallet signed, the person approved, the wallet said so — and payroll
  * refused, telling them the key was wrong. **The key was fine.** Both sides
@@ -358,8 +357,9 @@ describe('ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', () => {
      * that changing it in either repository is a decision somebody has to come
      * here and make on purpose.
      */
-    expect(WALLET_NETWORK).toBe('stagenet');
-    expect(PAIR_NETWORK).toBe('stagenet');
+    /* RED WHEN the compiled network changes: the network the pair runs on today is preprod. */
+    expect(WALLET_NETWORK).toBe('preprod');
+    expect(PAIR_NETWORK).toBe('preprod');
   });
 
   it('A SIGN-IN MINTED ON THE WALLET’S NETWORK IS ACCEPTED ON PAYROLL’S', async () => {
@@ -383,7 +383,7 @@ describe('ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', () => {
     /*
      * The network mismatch reproduced, with no browser and nobody pressing
      * anything: the same key, the same signature, one deployment configured for
-     * `preview` and a wallet compiled for `stagenet`.
+     * `preview` and a wallet compiled for `WALLET_NETWORK`.
      */
     const wallet = new WalletIdentityService(
       new MemoryStore(), new MemorySessionStore(), new MemoryRateLimiter(),
@@ -393,7 +393,7 @@ describe('ONE NETWORK, AND SOMETHING FAILS IF THE TWO EVER DISAGREE', () => {
     expect(await refusalOf(() => wallet.signIn({
       handle,
       nonce,
-      response: signedBy(SLOT, { nonce, address: onNetwork(SLOT, 'stagenet') }),
+      response: signedBy(SLOT, { nonce, address: onNetwork(SLOT, WALLET_NETWORK) }),
     }, HERE))).toBe('address-not-the-signers');
   });
 
@@ -461,10 +461,10 @@ describe('THE REFUSAL SAYS WHETHER THE TWO DIFFER ONLY BY NETWORK', () => {
 
   it('WATCHED FAILING: ONE KEY, TWO NETWORKS — the refusal names both networks and '
     + 'clears the wallet', async () => {
-    const e = await refusedBy('preview', onNetwork(SLOT, 'stagenet'));
+    const e = await refusedBy('preview', onNetwork(SLOT, WALLET_NETWORK));
 
     expect(e.code).toBe('address-not-the-signers');
-    expect(e.message).toContain('stagenet');
+    expect(e.message).toContain(WALLET_NETWORK);
     expect(e.message).toContain('preview');
     /* The thing the old sentence got wrong, and the reason the row exists. */
     expect(e.message).toContain('Nothing is wrong with the wallet or the key');
@@ -555,7 +555,7 @@ describe('A SIGN-IN CARRIES NOTHING ABOUT A PERSON', () => {
 
 /**
  * **THIS BLOCK USED TO PROVE THE OPPOSITE, AND THE DECISION WENT THE OTHER
- * WAY.** `docs/scope-v1-data-model.md` D4.
+ * WAY.**
  *
  * It held `refuseReusedSubwallet` up against two companies and required a
  * throw. The rule it was written for — *one subwallet, one employer* — was

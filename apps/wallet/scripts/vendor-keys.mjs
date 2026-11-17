@@ -21,13 +21,16 @@
  * after a person has read why.
  *
  * TWO SOURCES CROSS-CHECK THE PARAMETERS. The shared SRS parameters exist
- * on the S3 bucket AND at https://srs.midnight.network (the trusted-setup
+ * on the bucket AND at https://srs.midnight.network (the trusted-setup
  * publication host); both are downloaded and must hash identically, and
  * k=16 is additionally checked against a pin recorded 20 Aug 2026, when both
  * hosts were fetched in one run and served byte-identical files (see
- * KNOWN_PINS below). No published checksum exists for the circuit keys
- * themselves (still open on that half) — for those, the pin this run
- * takes IS the integrity anchor, which is why later runs defend it.
+ * KNOWN_PINS below). The ledger release declares the hash of every file of
+ * its own circuits in its source, and each file is refused unless it hashes
+ * to the declared value (see LEDGER_DECLARED below); the Dust spend key comes
+ * from the trusted-setup host, because the bucket serves other bytes for it.
+ * A key that has moved to a new generation leaves the old one stale, and the
+ * run refuses until `--prune` moves it out.
  *
  * THE COMPANY ACCOUNT'S CIRCUITS COME FROM THIS BUILD, NOT FROM A HOST.
  * `--account` copies the account circuits the wallet proves itself, and the
@@ -83,25 +86,88 @@ export const REPO_ROOT = path.resolve(WALLET_DIR, '..', '..');
 export const KEYS_DIR = path.join(WALLET_DIR, 'public', 'keys');
 const MANIFEST = path.join(KEYS_DIR, 'manifest.json');
 
-/* The SDK's own source host, read from the shipped source
- * (wallet-sdk-prover-client/dist/effect/WasmProver.js:148). Dialled by THIS
- * NODE SCRIPT only — the app itself never touches it. */
-const S3 = 'https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com';
+/* The bucket the SDK's prover fetches its ledger keys and parameters from.
+ * Dialled by THIS NODE SCRIPT only — the app itself never touches it. */
+const BUCKET = 'https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com';
 /* The trusted-setup publication host — midnightntwrk/midnight-trusted-setup
  * serves the SRS parameters here with published SHA-256s per size. */
 const SRS = 'https://srs.midnight.network';
 
-/* The four circuits the SDK maps (WasmProver.js:166–171), version-9 paths,
- * three files each. zswap/sign is included: it is mapped and real (2.68 MB,
- * measured 20 Aug) even though a plain transfer has not asked for it yet. */
-const CIRCUITS = ['zswap/9/spend', 'zswap/9/output', 'zswap/9/sign', 'dust/9/spend'];
+/* The ledger's own circuits the wallet proves with, read from the file the
+ * wallet serves them by (src/chain/ledger-keys.json), three files each. */
+export const LEDGER_CIRCUITS = Object.values(JSON.parse(readFileSync(path.join(WALLET_DIR, 'src', 'chain', 'ledger-keys.json'), 'utf8')));
+/* The hash the ledger release preprod runs declares for every file of its own
+ * circuits, in its source (ledger/static/dust/spend.*.sha256 and
+ * zswap/static/*.sha256). A file that hashes to anything else is refused. */
+export const LEDGER_DECLARED = Object.freeze({
+  'zswap/9/spend.prover': '19d234b5c68b7212ad6b0ec9334a95594748154128f3704eb576bcc843cc5c45',
+  'zswap/9/spend.verifier': '544554effd7ae9fb9063be52a9ec2a986756301071fcd97bb4598fb45a335658',
+  'zswap/9/spend.bzkir': '7cb5bbcf67cb212a3336fb439a77e8f32f0aa8a56185c8e1247d6cbfc7300205',
+  'zswap/9/output.prover': 'd992b04f13c3fd432f55fb8bfe6466d87bc181f1a2acf233ec228030bbdd4ed8',
+  'zswap/9/output.verifier': '72e8074856f2f5c504ade25a86a2b8902c64aeb9497c4c8e6b26dea842a0ab08',
+  'zswap/9/output.bzkir': '91dc8b401dd8385e8d29eaac018c70b578505f48c7952452ef319bc397fa1f1b',
+  'zswap/9/sign.prover': 'fe7268dd2bdd107f862f881ac3c5bc71a6df77ce80bfed51cf71514648e660e0',
+  'zswap/9/sign.verifier': 'e39a727caa0de167e6dd6122a9e3b758fecf48f9093ab77c0309648de8ce07e1',
+  'zswap/9/sign.bzkir': '37ea2094516e145a738126307cf92bd293f7cb524b1ccd49fa6f3225a9ec3a50',
+  'dust/10/spend.prover': '3dff9f54add761350ad02621a425d67fe3d656c8145fef8ef147870489ffdc81',
+  'dust/10/spend.verifier': 'd15a1295780549f534287a39c938005e1faa3232be21861573bd0cdb148949cb',
+  'dust/10/spend.bzkir': 'd211cacb22391b9db60f945787d98c16d344cbb4790246132117084c080399c1',
+});
+/* The ledger circuits the bucket serves other bytes for than the release
+ * declares: these are fetched from the trusted-setup host, every other ledger
+ * file from the bucket. */
+const FROM_THE_TRUSTED_SETUP = Object.freeze(['dust/10/spend']);
+
+/** The two hosts the ledger's keys are fetched from: the bucket and the trusted-setup host. */
+export { BUCKET, SRS as TRUSTED_SETUP };
+
+/** The host a ledger circuit file is fetched from. */
+export const ledgerSourceOf = (relPath) =>
+  (FROM_THE_TRUSTED_SETUP.some((c) => relPath.startsWith(`${c}.`)) ? SRS : BUCKET);
+
+/** The lines refusing a ledger circuit file whose bytes are not the ones its release declares, or null when they are (or nothing is declared for it). */
+export const declaredRefusal = (relPath, hash, from) => {
+  const declared = LEDGER_DECLARED[relPath];
+  if (declared === undefined || declared === hash) return null;
+  return [
+    `  !! REFUSED ${relPath}: ${from} serves ${hash}, but the ledger release declares`,
+    `     ${declared}. A ledger key that is not the release's is refused by the node. Nothing`,
+    '     was written for this file.',
+  ];
+};
+
+/**
+ * The lines refusing a file whose download dropped before its bytes arrived. Nothing is written or pinned for it, every
+ * file the run accepts stays written and pinned, and running the door again fetches it afresh.
+ */
+export const droppedRefusal = (relPath, url, cause) => [
+  `  !! REFUSED ${relPath}: the download from ${url} dropped (${cause?.cause?.code ?? cause?.message ?? cause}).`,
+  '     Nothing was written for this file; every file this run accepted is written and pinned.',
+  '     Run this door again (with the same options) to fetch it afresh.',
+];
+
+/** Every folder of ledger circuit files the keys folder or the pins hold, one generation deep (zswap/9, dust/10, ...). */
+export const ledgerFoldersOf = ({ keysDir, artefacts, circuits }) => {
+  const tops = new Set(circuits.map((c) => c.split('/')[0]));
+  const folders = new Set(circuits.map((c) => c.split('/').slice(0, 2).join('/')));
+  for (const served of Object.keys(artefacts)) {
+    const parts = served.split('/');
+    if (parts.length > 2 && tops.has(parts[0])) folders.add(parts.slice(0, 2).join('/'));
+  }
+  for (const top of tops) {
+    const dir = path.join(keysDir, top);
+    if (existsSync(dir)) for (const gen of readdirSync(dir)) folders.add(`${top}/${gen}`);
+  }
+  return [...folders].sort();
+};
+
 const SUFFIXES = ['.prover', '.verifier', '.bzkir'];
 
 /* Every parameter size that exists on the bucket, weighed 20 Aug. */
 const ALL_K = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 
 /* Independently measured pins — cross-checks this run must agree with.
- * k=16: fetched 20 Aug 2026 from BOTH hosts in one run — the S3 bucket and
+ * k=16: fetched 20 Aug 2026 from BOTH hosts in one run — the bucket and
  * the trusted-setup host — and each served byte-identical content, which is
  * what makes this a cross-check rather than a second copy of whatever one
  * bucket served that day. The trusted-setup catalog publishes a SHA-256 for
@@ -210,14 +276,14 @@ export function pruneStale({ keysDir, artefacts, stale, graveyard, stamp }) {
 }
 
 /* A stale key is refused unless the run was told to prune; returns how many refusals to add. */
-export function pruneOrRefuse({ keysDir, artefacts, folders, expected, prune, graveyard, stamp, log = console.log }) {
+export function pruneOrRefuse({ keysDir, artefacts, folders, expected, prune, graveyard, stamp, log = console.log, command = 'npm run vendor-keys:account -- --prune' }) {
   const stale = staleKeysOf({ keysDir, artefacts, folders, expected });
   if (stale.length === 0) return 0;
   if (!prune) {
-    log(`  !! REFUSED ${stale.length} key file(s) or pin(s) of circuits the compile no longer builds:`);
+    log(`  !! REFUSED ${stale.length} key file(s) or pin(s) of circuits the wallet no longer serves:`);
     for (const served of stale) log(`     ${served}`);
     log('     The wallet would keep serving them. `--prune` moves the files into _to_delete/ and drops');
-    log('     their pins; run `npm run vendor-keys:account -- --prune` once you have read the names above.');
+    log(`     their pins; run \`${command}\` once you have read the names above.`);
     return 1;
   }
   const moved = pruneStale({ keysDir, artefacts, stale, graveyard, stamp });
@@ -276,15 +342,35 @@ if (isMain) {
   let refused = 0;
   let downloadedBytes = 0;
 
-  async function vendor(relPath, extraSources = []) {
-    const { bytes, ms } = await download(`${S3}/${relPath}`);
+  /** The download, or null once its refusal is printed and counted. */
+  async function downloadOrRefuse(relPath, url) {
+    try {
+      return await download(url);
+    } catch (e) {
+      for (const line of droppedRefusal(relPath, url, e)) console.log(line);
+      refused += 1;
+      return null;
+    }
+  }
+
+  async function vendor(relPath, extraSources = [], from = BUCKET) {
+    const got = await downloadOrRefuse(relPath, `${from}/${relPath}`);
+    if (got === null) return;
+    const { bytes, ms } = got;
     const hash = sha256(bytes);
+    const refusal = declaredRefusal(relPath, hash, from);
+    if (refusal !== null) {
+      for (const line of refusal) console.log(line);
+      refused += 1;
+      return;
+    }
 
     /* Cross-checks: every extra source must serve the identical file. */
     for (const source of extraSources) {
-      const other = await download(source);
+      const other = await downloadOrRefuse(relPath, source);
+      if (other === null) return;
       if (sha256(other.bytes) !== hash) {
-        console.log(`  !! REFUSED ${relPath}: ${S3} and ${source} serve DIFFERENT bytes`);
+        console.log(`  !! REFUSED ${relPath}: ${from} and ${source} serve DIFFERENT bytes`);
         console.log(`     (${hash} vs ${sha256(other.bytes)}). Neither can be trusted until`);
         console.log('     somebody explains the difference. Nothing was written for this file.');
         refused += 1;
@@ -373,14 +459,16 @@ if (isMain) {
     }
     refused += pruneOrRefuse({ keysDir: KEYS_DIR, artefacts, folders: walked, expected, prune, graveyard: path.join(REPO_ROOT, '_to_delete'), stamp: new Date().toISOString().slice(0, 10) });
   } else {
-    if (prune) {
-      console.log('  --prune applies to the company account\'s keys: run `npm run vendor-keys:account -- --prune`.');
-      process.exit(1);
-    }
     console.log('  Circuit key material (prover, verifier, IR per circuit):');
-    for (const circuit of CIRCUITS) {
-      for (const suffix of SUFFIXES) await vendor(`${circuit}${suffix}`);
+    for (const circuit of LEDGER_CIRCUITS) {
+      for (const suffix of SUFFIXES) {
+        const relPath = `${circuit}${suffix}`;
+        await vendor(relPath, [], ledgerSourceOf(relPath));
+      }
     }
+    const expected = LEDGER_CIRCUITS.flatMap((c) => SUFFIXES.map((suffix) => `${c}${suffix}`));
+    const folders = ledgerFoldersOf({ keysDir: KEYS_DIR, artefacts, circuits: LEDGER_CIRCUITS });
+    refused += pruneOrRefuse({ keysDir: KEYS_DIR, artefacts, folders, expected, prune, graveyard: path.join(REPO_ROOT, '_to_delete'), stamp: new Date().toISOString().slice(0, 10), command: 'npm run vendor-keys -- --prune' });
 
     console.log('');
     console.log(`  Shared SRS parameters (sizes: ${sizes.map((k) => `2p${k}`).join(', ')}) —`);
@@ -400,7 +488,7 @@ if (isMain) {
     version: 9,
     generatedAt: existing?.generatedAt && !repin ? existing.generatedAt : new Date().toISOString(),
     lastVendoredAt: new Date().toISOString(),
-    sources: { ...existing?.sources, ...(accountOnly ? { account: 'contracts/managed', vault: 'contracts/managed-vault' } : { circuits: S3, parameters: [S3, SRS] }) },
+    sources: { ...existing?.sources, ...(accountOnly ? { account: 'contracts/managed', vault: 'contracts/managed-vault' } : { circuits: [BUCKET, SRS], parameters: [BUCKET, SRS] }) },
     artefacts,
   };
   writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);

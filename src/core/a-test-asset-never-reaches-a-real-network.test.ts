@@ -1,17 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { NETWORKS, NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network';
 
 import {
   NIGHT, SEED_ASSETS, StaticAssetRegistry, assets as productAssets,
-  TEST_SETTLEMENT_ASSET, TEST_SETTLEMENT_MINTED_ON,
+  NETWORKS_WITH_A_TEST_TOKEN, testTokenOn,
   aTestAssetMayExistOn, aTestAssetMayExistOnAKindOf, testAssetsFor, isATestAsset,
   refuseATestAssetOffItsNetwork,
-  ledgerFormOf, ledgerTokenOf, privateForm,
+  ledgerFormOf,
   type Asset,
 } from './assets.js';
 import { NETWORK_IDS, networkRecord } from './networks.js';
+import {
+  TEST_NETWORK, TEST_NETWORK_COLOUR, afterABuildForANetwork, assetsBuiltFor,
+} from '../testing/a-test-network.js';
+
+afterEach(afterABuildForANetwork);
 
 /**
  * **A TEST ASSET IS BACKED BY NOTHING, AND THE ONLY THING STANDING BETWEEN IT
@@ -77,36 +82,36 @@ describe('§1 which networks a test asset may exist on, asked for every one of t
        * BOTH are needed. */
       expect(aTestAssetMayExistOn(real), real).toBe(false);
       expect(testAssetsFor(real), real).toEqual([]);
-      expect(TEST_SETTLEMENT_MINTED_ON).not.toContain(real);
+      expect(NETWORKS_WITH_A_TEST_TOKEN).not.toContain(real);
     }
   });
 
   it('AND THE KIND ALONE REFUSES IT, with the name list saying yes', () => {
     /*
      * **THE CONTROL FOR THE CONDITION THAT MATTERS.** The two conditions could
-     * hide each other: with the colour's own list refusing every real network,
-     * a broken `kind` check would never show. So this drives `kind` on its own,
-     * against a network the colour list DOES admit.
+     * hide each other: with no real network's record naming a test token, a
+     * broken `kind` check would never show. So this drives `kind` on its own,
+     * against a network whose record DOES name one.
      *
      * RED WHEN the kind stops being consulted - at which point a real network
-     * that somebody had also listed as a home for the colour would be admitted,
-     * and a name would be the only thing standing between a worthless token and
+     * whose record named a test token would be admitted, and a record's field
+     * would be the only thing standing between a worthless token and
      * somebody's pay.
      */
-    const listed = TEST_SETTLEMENT_MINTED_ON[0]!;
+    const listed = NETWORKS_WITH_A_TEST_TOKEN[0]!;
     expect(networkRecord(listed).kind).toBe('test');
     expect(aTestAssetMayExistOn(listed)).toBe(true);
     /*
-     * RED WHEN the kind stops being consulted. The colour's own list says yes
-     * to this network; the only thing refusing here is the record's `kind`, so
+     * RED WHEN the kind stops being consulted. The record names a test token
+     * on this network; the only thing refusing here is the `kind` handed in, so
      * this is the assertion that dies the day a name is all that stands between
      * a worthless token and somebody's pay.
      */
     expect(aTestAssetMayExistOnAKindOf('real', listed)).toBe(false);
     expect(aTestAssetMayExistOnAKindOf('test', listed)).toBe(true);
-    /* RED WHEN the colour's own home stops being consulted: a test network the
-     * colour was never minted on would get a row naming money nobody minted. */
-    for (const id of NETWORK_IDS.filter(n => !TEST_SETTLEMENT_MINTED_ON.includes(n))) {
+    /* RED WHEN the record's test token stops being consulted: a test network
+     * nobody minted on would get a row naming money nobody minted. */
+    for (const id of NETWORK_IDS.filter(n => !NETWORKS_WITH_A_TEST_TOKEN.includes(n))) {
       expect(aTestAssetMayExistOnAKindOf('test', id), id).toBe(false);
     }
     /*
@@ -115,11 +120,11 @@ describe('§1 which networks a test asset may exist on, asked for every one of t
      * restated the filter that built the list.
      */
     for (const real of REAL_NETWORKS) {
-      expect(TEST_SETTLEMENT_MINTED_ON.includes(real), real).toBe(false);
+      expect(NETWORKS_WITH_A_TEST_TOKEN.includes(real), real).toBe(false);
     }
   });
 
-  it('every network this toolchain knows gets an answer, and only stagenet gets the row', () => {
+  it('every network this toolchain knows gets an answer, and only a network that minted a test token gets the row', () => {
     const allowed: string[] = [];
     for (const network of NETWORKS) {
       const rows = testAssetsFor(network);
@@ -127,8 +132,11 @@ describe('§1 which networks a test asset may exist on, asked for every one of t
       expect(rows.length, network).toBe(aTestAssetMayExistOn(network) ? 1 : 0);
       if (rows.length > 0) allowed.push(network);
     }
-    /* RED WHEN the permitted set widens. It is one network and this is the list. */
-    expect(allowed).toEqual(['stagenet']);
+    /* RED WHEN the permitted set widens past the test networks whose own
+     * record names the token minted there. */
+    const minted = NETWORK_IDS.filter(id => networkRecord(id).kind === 'test' && networkRecord(id).testToken !== null);
+    expect([...allowed].sort()).toEqual([...minted].sort());
+    expect(allowed.length).toBeGreaterThan(0);
   });
 
   it('a network nobody has thought of is refused by DEFAULT, not admitted by default', () => {
@@ -147,8 +155,8 @@ describe('§1 which networks a test asset may exist on, asked for every one of t
 
 describe('§2 a registry carrying the row off its network does not build at all', () => {
   const theRow: Asset = {
-    code: TEST_SETTLEMENT_ASSET, symbol: 'tUSD', name: 'Test Dollar', decimals: 6,
-    ledger: { shielded: TEST_SETTLEMENT_ASSET, unshielded: null },
+    code: TEST_NETWORK_COLOUR, symbol: 'tUSD', name: 'Test Dollar', decimals: 6,
+    ledger: { shielded: TEST_NETWORK_COLOUR, unshielded: null },
     enabled: true, sortOrder: 90,
   };
 
@@ -169,6 +177,20 @@ describe('§2 a registry carrying the row off its network does not build at all'
       /* RED WHEN the refusal offers a way to permit it, which is the thing that must not exist. */
       expect(() => refuseATestAssetOffItsNetwork([theRow], network), network)
         .toThrow(/no setting that permits it and none may be added/);
+    }
+  });
+
+  it('A TEST COLOUR IS REFUSED ON EVERY REAL NETWORK, WHICHEVER TEST NETWORK MINTED IT', () => {
+    const colours = NETWORK_IDS.map(id => networkRecord(id).testToken).filter((t): t is string => t !== null);
+    expect(colours.length).toBeGreaterThan(0);
+    for (const colour of colours) {
+      /* RED WHEN a colour some test network minted is not known as a test asset. */
+      expect(isATestAsset(colour), colour).toBe(true);
+      const row: Asset = { ...theRow, code: colour, ledger: { shielded: colour, unshielded: null } };
+      for (const real of REAL_NETWORKS) {
+        /* RED WHEN a test colour reaches a network where real money settles. */
+        expect(() => refuseATestAssetOffItsNetwork([row], real), `${colour} on ${real}`).toThrow(/is a test asset/);
+      }
     }
   });
 
@@ -195,10 +217,11 @@ describe('§2 a registry carrying the row off its network does not build at all'
    * **THE HALF THIS BUILD CANNOT EXERCISE, SAID OUT LOUD RATHER THAN SKIPPED.**
    *
    * The refusal above is pure and is driven for every network. Whether the
-   * REGISTRY runs it cannot be driven here, because this build is compiled for
-   * a network where the row is allowed and the constant that says so is not
-   * something a test may vary - if it were, it would be the override this whole
-   * file exists to prove does not exist.
+   * REGISTRY runs it cannot be driven here, because the constant that names the
+   * network the registry is built for is not something a test may vary in the
+   * product - if it were, it would be the override this whole file exists to
+   * prove does not exist. (§4 builds the registry for the test network by
+   * replacing the module's one import of it, and the refusal is not asked there.)
    *
    * So the call is pinned where it is made. It is a weaker instrument than
    * running it and it is the strongest one available without adding the door.
@@ -221,7 +244,7 @@ describe('§3 there is no way to answer the question differently without editing
   it('reads the source it is meant to read', () => {
     /* RED WHEN this stops reading the registry, which would make §3 assert nothing. */
     expect(registrySource).toContain('export const SEED_ASSETS');
-    expect(codeOnly).toContain('TEST_SETTLEMENT_MINTED_ON');
+    expect(codeOnly).toContain('NETWORKS_WITH_A_TEST_TOKEN');
   });
 
   it('THE REGISTRY READS NO ENVIRONMENT, NO BUILD FLAG AND NO HOSTNAME', () => {
@@ -247,14 +270,17 @@ describe('§3 there is no way to answer the question differently without editing
     const imports = [...codeOnly.matchAll(/from '([^']+)'/g)].map(m => m[1]);
     /*
      * **TWO IMPORTS AND THE SECOND ONE IS THE POINT.** The registry asks the
-     * network's own record what KIND of network it is, and `./networks.js`
-     * reads no environment, no argument vector and no file at run time - the
-     * record is imported, so it is part of the build exactly as the constant
-     * is. A third entry here is a third thing this gate's answer can depend on.
+     * network's own record what KIND of network it is and which test token it
+     * names, and the record is imported, so it is part of the build exactly as
+     * the constant is. The one setting `./networks.js` reads is a network's
+     * project token, in `endpointsOf`, which the registry never calls. A third
+     * entry here is a third thing this gate's answer can depend on.
      */
     expect(imports).toEqual(['midnight-identity/network', './networks.js']);
     expect(codeOnly).toContain("import { NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network'");
-    expect(codeOnly).toContain("import { isNetworkId, networkRecord, type NetworkKind } from './networks.js'");
+    expect(codeOnly).toContain("import { NETWORK_IDS, isNetworkId, networkRecord, type NetworkKind } from './networks.js'");
+    /* RED WHEN the registry reaches the one reader that consults a setting. */
+    expect(codeOnly).not.toContain('endpointsOf');
     /* RED WHEN the permitted-network answer takes an argument with a default, which is an override. */
     expect(codeOnly).toContain('export const aTestAssetMayExistOn = (network: string): boolean =>');
     /*
@@ -278,56 +304,63 @@ describe('§3 there is no way to answer the question differently without editing
     /* RED WHEN the constructor is told an answer rather than asking. */
     expect(codeOnly).not.toMatch(/refuseATestAssetOffItsNetwork\(assets, ['"`]/);
     /*
-     * **THE ONLY NETWORK NAME THIS FILE MAY WRITE DOWN IS THE COLOUR'S OWN
-     * HOME.** RED WHEN a second one appears - in a comparison, in a default, in
-     * a list beside the first. The record says what kind of network each is;
+     * **THIS FILE WRITES DOWN NO NETWORK NAME.** RED WHEN one appears - in a
+     * comparison, in a default, in a list of where a colour was minted. The
+     * record says what kind of network each is and which test token it names;
      * this file has no business knowing their names.
      */
     const names = [...codeOnly.matchAll(/['"`](undeployed|preview|preprod|qanet|stagenet|mainnet|devnet|testnet)['"`]/g)]
       .map(m => m[0]);
-    expect(names).toEqual(["'stagenet'"]);
+    expect(names).toEqual([]);
   });
 
-  it('and this build is on a network the row is allowed on, which is why the row is here', () => {
+  it('the product registry carries the compiled network\'s own test row when its record names one, and no other', () => {
     /*
-     * RED WHEN the pair's network moves. The row's presence follows one
-     * constant, so this is the assertion that notices the day it changes -
-     * rather than a payroll screen noticing it.
+     * RED WHEN the registry seeds a test row its network's record does not
+     * name, or leaves out the one it does: the row's presence follows the
+     * record of the network this build is compiled for, and nothing else.
      */
-    expect(aTestAssetMayExistOn(THE_NETWORK_THIS_BUILD_IS_ON)).toBe(true);
-    expect(productAssets.find(TEST_SETTLEMENT_ASSET)).not.toBeNull();
+    const named = testTokenOn(THE_NETWORK_THIS_BUILD_IS_ON);
+    expect(productAssets.all().filter(a => isATestAsset(a.code)).map(a => a.code))
+      .toEqual(named === null ? [] : [named]);
+    expect(aTestAssetMayExistOn(THE_NETWORK_THIS_BUILD_IS_ON)).toBe(named !== null);
+  });
+
+  it('a build compiled for the test network seeds the row its record names', async () => {
+    /* RED WHEN a build for a network whose record names a colour does not seed it. */
+    const built = await assetsBuiltFor(TEST_NETWORK);
+    expect(built.assets.find(TEST_NETWORK_COLOUR)).not.toBeNull();
   });
 });
 
 describe('§4 what the row says about itself, and what it must not say', () => {
-  const row = productAssets.require(TEST_SETTLEMENT_ASSET);
+  const [row] = testAssetsFor(TEST_NETWORK) as [Asset];
 
   /**
-   * **THE COLOUR, AGAINST A VALUE MEASURED OFF THE CHAIN AND WRITTEN DOWN HERE.**
+   * **STAGENET'S COLOUR, AGAINST A VALUE MEASURED OFF THE CHAIN AND WRITTEN
+   * DOWN HERE.**
    *
-   * Read from stagenet: the shielded deposit that settled on 30 Aug moves this
-   * colour, and the note it created is held by a vault on chain. **It is a
-   * second copy on purpose.** The two assertions this replaced could not fail:
-   * one asked whether the token was 64 hex characters, which the registry's own
-   * constructor already refuses anything else for, and the other compared
-   * `ledgerTokenOf`'s answer against the row it reads that answer out of - two
-   * live computations of one value, which is the exact shape this project has
-   * been burnt by twice.
+   * Read from stagenet: a settled shielded deposit moves this colour, and the
+   * note it created is held by a vault on chain. **It is a second copy on
+   * purpose**, so the record's colour cannot be changed to a value no chain
+   * minted without this failing.
    */
   const MEASURED_ON_STAGENET = 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679';  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone; this is the asset's own identity and there is no other way to name it
 
-  it('has a private form and NO public one, because nothing ever minted a public one', () => {
+  it('has a private form and NO public one, because nothing ever minted a public one', async () => {
     /* RED WHEN the row claims a public form, which is a payment no circuit can send. */
     expect(row.ledger.unshielded).toBeNull();
     expect(ledgerFormOf(row, 'unshielded').of).toBe('no-such-form');
     /*
-     * RED WHEN the colour in the registry is changed to anything but a value
-     * measured off the chain and written down here beside it. A colour nothing
-     * ever minted is money no wallet can fund a deposit with, and a payment
-     * naming it fails after the approvals and the fees.
+     * RED WHEN stagenet's recorded colour is changed to anything but a value
+     * measured off the chain and written down here beside it, or the registry's
+     * row names any colour but its network record's. A colour nothing ever
+     * minted is money no wallet can fund a deposit with, and a payment naming
+     * it fails after the approvals and the fees.
      */
-    expect(row.ledger.shielded).toBe(MEASURED_ON_STAGENET);
-    expect(ledgerTokenOf(TEST_SETTLEMENT_ASSET, 'shielded')).toBe(MEASURED_ON_STAGENET);
+    expect(networkRecord('stagenet').testToken).toBe(MEASURED_ON_STAGENET);
+    expect(row.ledger.shielded).toBe(networkRecord(TEST_NETWORK).testToken);
+    expect((await assetsBuiltFor(TEST_NETWORK)).ledgerTokenOf(TEST_NETWORK_COLOUR, 'shielded')).toBe(row.ledger.shielded);
   });
 
   it('THE VALUE THE GATE ACTUALLY GOT EQUALS WHAT THE SOURCE SAYS', async () => {
@@ -386,11 +419,12 @@ describe('§4 what the row says about itself, and what it must not say', () => {
     expect(row.symbol).toBe('tUSD');
   });
 
-  it('is the only asset a private payment can be made in, and NIGHT is still not one', () => {
+  it('is the only asset a private payment can be made in, and NIGHT is still not one', async () => {
+    const built = await assetsBuiltFor(TEST_NETWORK);
     /* RED WHEN a second asset gains a private form without an argument for it. */
-    expect(productAssets.all().filter(a => privateForm(a).of === 'available').map(a => a.code))
-      .toEqual([TEST_SETTLEMENT_ASSET]);
+    expect(built.assets.all().filter(a => built.privateForm(a).of === 'available').map(a => a.code))
+      .toEqual([TEST_NETWORK_COLOUR]);
     /* RED WHEN NIGHT is given a private form. There is no private NIGHT on this platform. */
-    expect(productAssets.require(NIGHT).ledger.shielded).toBeNull();
+    expect(built.assets.require(NIGHT).ledger.shielded).toBeNull();
   });
 });

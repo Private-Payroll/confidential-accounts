@@ -30,6 +30,7 @@ import {
 import { PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions } from '../midnight/vault-journal.js';
 import { newWrappingKeypair } from '../core/crypto.js';
 import { depositNonceKeyFor } from '../midnight/deposit-nonce.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const DB = process.env.TEST_DATABASE_URL;
 const withDb = DB ? describe : describe.skip;
@@ -81,13 +82,13 @@ describe('a vault is filed under a hash of its address, never the address', () =
 });
 
 describe('a vault the operator tools keep in files is not given a second record here', () => {
-  const stateWith = (registry: unknown, name = 'stagenet-vaults.json'): string => {
+  const stateWith = (registry: unknown, name = `${NETWORK}-vaults.json`): string => {
     const d = mkdtempSync(join(tmpdir(), 'vault-records-state-'));
     writeFileSync(join(d, name), typeof registry === 'string' ? registry : JSON.stringify(registry));
     return d;
   };
   const registryNaming = (address: string) => ({
-    network: 'stagenet', savedAt: '2026-09-16T00:00:00.000Z',
+    network: NETWORK, savedAt: '2026-09-16T00:00:00.000Z',
     vaults: {
       'payroll-test-9': {
         name: 'payroll-test-9', contractAddress: address, accountAddress: '00'.repeat(32),

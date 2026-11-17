@@ -30,6 +30,8 @@
  *
  * Nothing here opens a record or holds anything that could.
  */
+import type { PublicDataProvider } from '@midnight-ntwrk/midnight-js-types';
+import { contractStateAt } from '../midnight/contract-state-at.js';
 import express from 'express';
 import type { Hex } from '../core/crypto.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
@@ -109,11 +111,12 @@ export class NotAVaultsState extends Error {}
  * indexer, read through the vault's own compiled ledger. A state the indexer
  * does not have is `null`; one it has and cannot be read is thrown.
  */
-export const vaultAccountFromTheIndexer = (query: {
-  queryContractState(address: string): Promise<{ data: unknown } | null | undefined>;
-}, readLedger?: (data: unknown) => { account: { bytes: Uint8Array } }): VaultAccountReader => async (vault) => {
-  const state = await query.queryContractState(vault);
-  if (state === null || state === undefined) return null;
+export const vaultAccountFromTheIndexer = (
+  query: Pick<PublicDataProvider, 'queryContractState'>,
+  readLedger?: (data: unknown) => { account: { bytes: Uint8Array } },
+): VaultAccountReader => async (vault) => {
+  const state = await contractStateAt(query, vault);
+  if (state === null) return null;
   const read = readLedger ?? (await import('../../contracts/managed-vault/contract/index.js')).ledger as never as
     (data: unknown) => { account: { bytes: Uint8Array } };
   let bytes: Uint8Array;

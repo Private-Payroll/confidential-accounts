@@ -29,28 +29,30 @@
 import { describe, it, expect } from 'vitest';
 import { SponsoredCustomerWallet, CUSTOMER_TOKEN_KINDS, type BalancingWallet } from './wallet.js';
 
-const wallet = (over: Partial<BalancingWallet> = {}) => {
+/** A transaction as the providers hand it over: something that writes itself out as bytes. */
+const tx = (n: number) => ({ serialize: () => Uint8Array.of(n) });
+
+/** A stand-in for the wallet SDK's facade that records what it was asked, in the SDK's own call shapes. */
+const wallet = (over: Record<string, unknown> = {}) => {
   const reverted: unknown[] = [];
   const calls: string[] = [];
-  const it: BalancingWallet = {
-    async balanceUnboundTransaction(tx, _keys, options) {
+  const it = {
+    adoptTransaction(bytes: Uint8Array, stage: string) { calls.push('adoptTransaction'); return { adopted: [...bytes], stage }; },
+    async balanceUnboundTransaction(handle: unknown, options: unknown) {
       calls.push('balanceUnboundTransaction');
-      return { booking: tx, options };
+      return { booking: handle, options };
     },
-    async balanceFinalizedTransaction(tx) { calls.push('balanceFinalizedTransaction'); return tx; },
-    async signRecipe(recipe) { calls.push('signRecipe'); return { signed: recipe }; },
-    async finalizeRecipe(recipe) { calls.push('finalizeRecipe'); return { finalised: recipe }; },
-    async submitTransaction() { calls.push('submitTransaction'); return 'tx_1'; },
-    async revert(booking) { calls.push('revert'); reverted.push(booking); },
+    async signRecipe(recipe: unknown) { calls.push('signRecipe'); return { signed: recipe }; },
+    async finalizeRecipe(recipe: unknown) { calls.push('finalizeRecipe'); return { finalised: recipe }; },
+    async revert(booking: unknown) { calls.push('revert'); reverted.push(booking); },
     ...over,
-  };
+  } as unknown as BalancingWallet;
   return { it, reverted, calls };
 };
 
 const company = (w: BalancingWallet) => new SponsoredCustomerWallet(
   w,
-  { shieldedSecretKeys: 'company-shielded', dustSecretKey: 'company-dust' },
-  () => 'a signature',
+  async () => 'a signature' as never,
   { coinPublicKey: 'not-a-secret: a test literal', encryptionPublicKey: 'not-a-secret: a test literal' },
 );
 
@@ -67,7 +69,7 @@ describe('the company balances only what it owns', () => {
      * include `'dust'`, or replaced by the string `'all'`.
      */
     const w = wallet();
-    const out: any = await company(w.it).balanceOwnLegs({ tx: 1 }, new Date());
+    const out: any = await company(w.it).balanceOwnLegs(tx(1), new Date());
     const kinds = out.finalised.signed.booking === undefined
       ? out.finalised.signed.options.tokenKindsToBalance
       : out.finalised.signed.options.tokenKindsToBalance;
@@ -87,7 +89,7 @@ describe('the company balances only what it owns', () => {
     // RED WHEN: `ttl` is replaced by a deadline computed here.
     const ttl = new Date('2026-01-01T00:00:00Z');
     const w = wallet();
-    const out: any = await company(w.it).balanceOwnLegs({ tx: 1 }, ttl);
+    const out: any = await company(w.it).balanceOwnLegs(tx(1), ttl);
     expect(out.finalised.signed.options.ttl).toBe(ttl);
   });
 });
@@ -100,7 +102,7 @@ describe('a booking the company made and did not spend is let go', () => {
      * that refuses leaves the company's coins in flight for ever.
      */
     const w = wallet({ signRecipe: async () => { throw new Error('the keystore refused'); } });
-    await expect(company(w.it).balanceOwnLegs({ tx: 1 }, new Date()))
+    await expect(company(w.it).balanceOwnLegs(tx(1), new Date()))
       .rejects.toThrow(/keystore refused/);
     expect(w.reverted, 'signing threw and the booking was left standing').toHaveLength(1);
   });
@@ -108,7 +110,7 @@ describe('a booking the company made and did not spend is let go', () => {
   it('releases when FINALISING throws', async () => {
     // RED WHEN: the `try` starts after `signRecipe` rather than before it.
     const w = wallet({ finalizeRecipe: async () => { throw new Error('the proof would not build'); } });
-    await expect(company(w.it).balanceOwnLegs({ tx: 1 }, new Date()))
+    await expect(company(w.it).balanceOwnLegs(tx(1), new Date()))
       .rejects.toThrow(/would not build/);
     expect(w.reverted).toHaveLength(1);
   });
@@ -120,12 +122,12 @@ describe('a booking the company made and did not spend is let go', () => {
      * against the input transaction is the whole failure wearing a fix, and no
      * count anywhere can tell it from one that worked.
      *
-     * RED WHEN: `this.release(recipe)` becomes `this.release(tx)`.
+     * RED WHEN: the release names the transaction it was handed rather than the recipe the balance produced.
      */
     const w = wallet({ signRecipe: async () => { throw new Error('no'); } });
-    await expect(company(w.it).balanceOwnLegs({ the: 'transaction' }, new Date()))
+    await expect(company(w.it).balanceOwnLegs(tx(9), new Date()))
       .rejects.toThrow();
-    expect(w.reverted[0]).toEqual(expect.objectContaining({ booking: { the: 'transaction' } }));
+    expect(w.reverted[0]).toEqual(expect.objectContaining({ booking: { adopted: [9], stage: 'Unbound' } }));
   });
 
   it('releases NOTHING when the balance succeeded', async () => {
@@ -137,14 +139,14 @@ describe('a booking the company made and did not spend is let go', () => {
      * RED WHEN: the release is moved out of the `catch` and into a `finally`.
      */
     const w = wallet();
-    await company(w.it).balanceOwnLegs({ tx: 1 }, new Date());
+    await company(w.it).balanceOwnLegs(tx(1), new Date());
     expect(w.reverted).toEqual([]);
     expect(w.calls).not.toContain('revert');
   });
 
   it('a release that fails does not replace the failure that caused it', async () => {
     /*
-     * RED WHEN: the `try` inside `release` is removed. The caller is then
+     * RED WHEN: the guarded release lets its own failure through. The caller is then
      * handed a complaint about tidying up in place of the error naming what
      * actually went wrong, which sends whoever reads it to the wrong layer.
      */
@@ -152,7 +154,7 @@ describe('a booking the company made and did not spend is let go', () => {
       signRecipe: async () => { throw new Error('the real problem'); },
       revert: async () => { throw new Error('the cleanup also failed'); },
     });
-    await expect(company(w.it).balanceOwnLegs({ tx: 1 }, new Date()))
+    await expect(company(w.it).balanceOwnLegs(tx(1), new Date()))
       .rejects.toThrow(/the real problem/);
   });
 
@@ -168,8 +170,8 @@ describe('a booking the company made and did not spend is let go', () => {
      */
     const w = wallet();
     const c = company(w.it);
-    const booked = await c.balanceOwnLegs({ tx: 1 }, new Date());
-    await c.release(booked);
+    const booked = await c.balanceOwnLegs(tx(1), new Date());
+    await c.release(booked as never);
     expect(w.reverted).toEqual([booked]);
   });
 });

@@ -28,8 +28,8 @@ import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsBuiltBy } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { privateStateFor, leafOfDevice, change, COMPANY_LABEL } from './simulator.js';
@@ -147,7 +147,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
   const builder = () => {
     const deps = async () => ({
       ledger: L, runtimeState: (runtime as any).ContractState,
-      contracts: onlyTheValueBuilder(),
+      contracts: callsBuiltBy(onlyTheValueBuilder()),
       accountCompiled, accountZkConfig: accountZk, accountPure: circuits,
       /* What an approval of a run is checked against: the account's ledger as the chain holds it, and the vault's circuits. */
       accountLedger: (accountModule as any).ledger, vaultDetails,
@@ -276,7 +276,6 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
   };
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     asked = [];
     handed = [];

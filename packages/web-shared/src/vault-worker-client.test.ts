@@ -489,7 +489,6 @@ describe('A READ IS TIMED FROM WHEN THE WORKER STARTS IT, NOT FROM WHEN THE WORK
   beforeEach(async () => {
     vi.useRealTimers();
     await import('./vault-on-chain-here.js');
-    await import('@midnight-ntwrk/midnight-js-network-id');
     vi.useFakeTimers();
   });
 

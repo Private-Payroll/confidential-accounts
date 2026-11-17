@@ -78,12 +78,16 @@ const started = async (sim: AccountSimulator, vault: any, vaultAddr: string, sta
   await startTheVault({
     sim, vault: Uint8Array.from(Buffer.from(vaultAddr, 'hex')), approvers: [A, B], now: NOW,
     call: async (circuit, ...a) => {
-      const r: any = await vault.impureCircuits[circuit](createCircuitContext(
-        circuit as never, vaultAddr as never, BLOCK, vaultState as never, {} as never,
-        {
-          getContractState: async (_b: string, address: unknown) =>
-            String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-        } as never, undefined, undefined, NOW, BLOCK), ...a);
+      const r: any = await vault.impureCircuits[circuit](createCircuitContext({
+          circuitId: circuit as never,
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState as never,
+          privateState: {} as never,
+          crossContract: sim.crossContract(),
+          time: NOW,
+          parentBlockHash: BLOCK,
+        }), ...a);
       vaultState = r.context.callContext.currentQueryContext.state;
       carryTheAccount(sim, r.context);
     },
@@ -189,10 +193,6 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
   let vaultState: any;
   let priv: VaultPrivate;
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -206,8 +206,13 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
     const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 5_000n };
     priv = { coin: { ...coin, mt_index: 0n } };
     const dep = await vault.impureCircuits.deposit(
-      createCircuitContext<VaultPrivate>(
-        'deposit' as never, vaultAddr as never, BLOCK, vaultState, priv),
+      createCircuitContext<VaultPrivate>({
+          circuitId: 'deposit' as never,
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState,
+          privateState: priv,
+        }),
       coin);
     vaultState = dep.context.callContext.currentQueryContext.state;
   });
@@ -241,9 +246,16 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
   const payAlice = async (c: Change) => {
     const run = await approvedRun(c);
     const r = await vault.impureCircuits.payout(
-      createCircuitContext<VaultPrivate>(
-        'payout' as never, vaultAddr as never, BLOCK, vaultState, priv,
-        provider() as never, undefined, undefined, NOW, BLOCK),
+      createCircuitContext<VaultPrivate>({
+          circuitId: 'payout' as never,
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState,
+          privateState: priv,
+          crossContract: sim.crossContract(),
+          time: NOW,
+          parentBlockHash: BLOCK,
+        }),
       vaultRunOf({
         proposal: run.id, vault: run.vaultBytes, tree: run.tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),
@@ -752,8 +764,13 @@ describe('§7 — the tape keeps the whole call tree, not the entry circuit', ()
     const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 5_000n };
     const priv: VaultPrivate = { coin: { ...coin, mt_index: 0n } };
     const dep = await vault.impureCircuits.deposit(
-      createCircuitContext<VaultPrivate>(
-        'deposit' as never, vaultAddr as never, BLOCK, vaultState, priv),
+      createCircuitContext<VaultPrivate>({
+          circuitId: 'deposit' as never,
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState,
+          privateState: priv,
+        }),
       coin);
     vaultState = dep.context.callContext.currentQueryContext.state;
 
@@ -776,12 +793,16 @@ describe('§7 — the tape keeps the whole call tree, not the entry circuit', ()
     /* THE POINT: watch the VAULT, make one call, and require two back. */
     const tape = Transcript.watch(vault).clear();
     await vault.impureCircuits.payout(
-      createCircuitContext<VaultPrivate>(
-        'payout' as never, vaultAddr as never, BLOCK, vaultState, priv,
-        {
-          getContractState: async (_b: string, address: unknown) =>
-            String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-        } as never, undefined, undefined, NOW, BLOCK),
+      createCircuitContext<VaultPrivate>({
+          circuitId: 'payout' as never,
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState,
+          privateState: priv,
+          crossContract: sim.crossContract(),
+          time: NOW,
+          parentBlockHash: BLOCK,
+        }),
       vaultRunOf({
         proposal: id, vault: vaultBytes, tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),

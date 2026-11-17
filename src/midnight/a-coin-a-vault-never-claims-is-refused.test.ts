@@ -24,7 +24,7 @@ const COIN = { type: 'cd'.repeat(32), nonce: 'ef'.repeat(32), value: 5n };
 
 describe('a coin made for a vault that no call claims', () => {
   it('IS REFUSED BY THE LEDGER\'S WELL-FORMEDNESS CHECK, WHILE THE SAME COIN MADE FOR A PERSON IS NOT', async () => {
-    const L = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const L = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     /* Only the ownership rule is under test: proofs, signatures and balance are not asked of either transaction. */
     const strictness = new L.WellFormedStrictness();
     strictness.enforceBalancing = false;

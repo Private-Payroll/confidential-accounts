@@ -18,8 +18,8 @@ const aRefusedSpendProofThatCannotBePaidAgain = (): CompanyVaultDeps['ledger']['
     cause: { code: 1010, message: '1010: Invalid Transaction: Custom error: 170', data: 'Custom error: 170' },
   });
   let balanced = 0;
-  const payer = new WalletFeeSponsor({
-    shieldedSecretKeys: 's', dustSecretKey: 'd',
+  const payer = new WalletFeeSponsor(<never>{
+    handleOf: (tx: unknown) => tx as never, ledgerTransactionOf: (tx: unknown) => tx,
     balanceFinalizedTransaction: async (tx: unknown) => { balanced += 1; if (balanced > 1) throw new Error('could not balance dust'); return { tx }; },
     finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1' }),
     submitTransaction: async () => { throw refusal; },
@@ -30,7 +30,7 @@ const aRefusedSpendProofThatCannotBePaidAgain = (): CompanyVaultDeps['ledger']['
   }, { perTransaction: 1_000n });
   const ledger = new ChainLedger({} as never, { network: 'stagenet', indexerUrl: 'x', indexerWsUrl: 'x' } as never, {
     maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
-    customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+    customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null as never },
     sponsor: payer as never, storagePassword: async () => 'x',
   });
   return (accountId, what, _arrival, bytes, check, read) =>
@@ -44,8 +44,8 @@ const aRefusedSpendProofThatCannotBePaidAgain = (): CompanyVaultDeps['ledger']['
  */
 const aFeePayerThatCountsWhatItIsAskedFor = (): { sendVault: CompanyVaultDeps['ledger']['sendVault']; asked: string[] } => {
   const asked: string[] = [];
-  const payer = new WalletFeeSponsor({
-    shieldedSecretKeys: 's', dustSecretKey: 'd',
+  const payer = new WalletFeeSponsor(<never>{
+    handleOf: (tx: unknown) => tx as never, ledgerTransactionOf: (tx: unknown) => tx,
     balanceFinalizedTransaction: async (tx: unknown) => ({ tx }),
     finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1' }),
     submitTransaction: async () => 'h1',
@@ -60,7 +60,7 @@ const aFeePayerThatCountsWhatItIsAskedFor = (): { sendVault: CompanyVaultDeps['l
   payer.submit = async (tx) => { asked.push('submit'); return submit(tx); };
   const ledger = new ChainLedger({} as never, { network: 'stagenet', indexerUrl: 'x', indexerWsUrl: 'x' } as never, {
     maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
-    customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+    customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null as never },
     sponsor: payer as never, storagePassword: async () => 'x',
   });
   return { sendVault: (accountId, what, arrival, bytes, check, read) => ledger.sendVault(accountId, what, arrival, bytes, check, read), asked };
@@ -1828,8 +1828,8 @@ describe('THE FEE PAYER ADDS THE FEE AND HANDS THE CALL BACK UNSENT', () => {
   /* RED WHEN: the ledger submits a call it was asked only to pay for, or releases the booking as it hands it back. */
   it('only the fee is added, nothing is submitted, and the booking stands', async () => {
     const asked: string[] = [];
-    const payer = new WalletFeeSponsor({
-      shieldedSecretKeys: 's', dustSecretKey: 'd',
+    const payer = new WalletFeeSponsor(<never>{
+      handleOf: (tx: unknown) => tx as never, ledgerTransactionOf: (tx: unknown) => tx,
       balanceFinalizedTransaction: async (tx: unknown) => ({ tx }),
       finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1', serialize: () => new Uint8Array([1, 2, 3]) }),
       submitTransaction: async () => { asked.push('submit'); return 'h1'; },
@@ -1840,7 +1840,7 @@ describe('THE FEE PAYER ADDS THE FEE AND HANDS THE CALL BACK UNSENT', () => {
     }, { perTransaction: 1_000n });
     const ledger = new ChainLedger({} as never, { network: 'stagenet', indexerUrl: 'x', indexerWsUrl: 'x' } as never, {
       maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
-      customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+      customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null as never },
       sponsor: payer as never, storagePassword: async () => 'x',
     });
     const added = await ledger.feeAddedTo('acc_1', 'a call', 'finished-by-the-depositor', new Uint8Array([1]), () => null, async () => ({ n: 1 }));

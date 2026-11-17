@@ -11,6 +11,7 @@
  * applies them to an empty ledger in memory, reads the account back, and measures
  * each with the ledger's own cost function. Nothing is proved or submitted.
  */
+import { served, testAddress, TEST_SETTINGS } from '../testing/served-state.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -114,9 +115,10 @@ describe('who can create a company', () => {
 describe('the second step, before anything is built', () => {
   const signingKey = { tag: 'schnorr', value: 'ab'.repeat(32) };
   const choice = { kind: 'single-key' as const, signingKey, temporary: { fixedBy: 'a later deployment' } };
-  const ADDRESS = 'an-account-address-that-is-not-a-real-one';
+  const ADDRESS = testAddress(7);
   const heldBy = (authority: Record<string, unknown>) => ({
-    publicDataProvider: { queryContractState: async () => ({ maintenanceAuthority: authority }) },
+    config: TEST_SETTINGS,
+    publicDataProvider: { queryContractState: async () => served({ maintenanceAuthority: authority }) },
   });
   const key = { tag: 'schnorr', value: 'cd'.repeat(32) };
 

@@ -1,5 +1,5 @@
 /**
- * **WHO RAISED THIS ROUND COMES FROM THE SIGNED-IN CALLER, NEVER FROM THE
+ * **WHO RAISED THIS PROPOSAL COMES FROM THE SIGNED-IN CALLER, NEVER FROM THE
  * REQUEST.** The same rule the payroll skip register already holds, on the
  * routes that were left with the older shape.
  *
@@ -126,7 +126,7 @@ const signedIn = async (slot: number): Promise<string> => {
  *
  * **THE ROLES ARE CHOSEN AND NOT INCIDENTAL.** The seat the attempts below name
  * is the one whose ceiling differs most from the caller's, so a route that
- * believed the request would be judging the round against the wrong bar as well
+ * believed the request would be judging the proposal against the wrong bar as well
  * as recording the wrong name.
  */
 const aCompany = async (token: string) => {
@@ -202,7 +202,8 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
 describe('no door on the server has anywhere to put somebody else\'s seat', () => {
   /* The server's routes, and the files of routes it mounts that relay or file what a seat's device made, each with code it must still hold. */
   const MARKS: Record<string, string> = {
-    'src/server/index.ts': 'proposalRelayRoutes(', 'src/server/proposal-relays.ts': 'actingSeat', 'src/server/signer-routes.ts': 'fileRoster',
+    'src/server/index.ts': 'mountRecordsAndChainRoutes(', 'src/server/records-and-chain-routes.ts': 'proposalRelayRoutes(',
+    'src/server/proposal-relays.ts': 'actingSeat', 'src/server/signer-routes.ts': 'fileRoster',
   };
   const SURFACES = Object.keys(MARKS);
   /* Who is acting. Every one of these selects a ceiling, not just a name. */

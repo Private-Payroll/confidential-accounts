@@ -1,30 +1,18 @@
-import type { KeyMaterialProvider } from '@midnight-ntwrk/zkir-v2';
+import type { KeyMaterialProvider } from '@midnightntwrk/zkir-v2';
 import { parseContractKeyLocation } from '@midnight-ntwrk/compact-js/effect/ContractKeyLocation';
 import { describeFailure } from '../lib/failure-text.js';
 import { ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS } from './account-circuits.js';
+import LEDGER_KEYS from './ledger-keys.json' with { type: 'json' };
 
 /**
- * KEY MATERIAL FROM OUR OWN ORIGIN, HASH-PINNED — closing the CORS defect and the
- * open half of it.
+ * KEY MATERIAL FROM OUR OWN ORIGIN, HASH-PINNED.
  *
- * WHY THIS FILE EXISTS. Proving needs circuit key material, and the SDK's
- * default provider downloads it from a hardcoded Amazon bucket with "dev" in
- * its name (`makeDefaultKeyMaterialProvider` — wallet-sdk-prover-client/
- * dist/effect/WasmProver.js:146–201). Measured on a real machine, 20 Aug:
- * that bucket has CORS disabled — Amazon's own words, *"CORSResponse: CORS
- * is not enabled for this bucket"* — so no web page anywhere can fetch those
- * keys, and every in-browser send died at proving (measured,
- * a measurement). And nothing ever checked what came back
- * from it: no pin, no checksum, TLS and trust.
- *
- * THE SEAM IS THE SDK'S OWN. `WasmProvingConfiguration` declares
- * `keyMaterialProvider?: KeyMaterialProvider` — optional, injectable
- * (wallet-sdk-capabilities/dist/proving/provingService.d.ts:25). The bucket
- * is only what you get for passing nothing; a row records the day this
- * project mistook that default for a mechanism. This file is the injection:
- * the same two-method shape the SDK's own provider has (`KeyMaterialProvider`
- * — @midnight-ntwrk/zkir-v2/zkir-v2.d.ts:20–23), differing in three
- * deliberate ways:
+ * Proving needs circuit key material. The SDK's default provider downloads it
+ * from a bucket that no web page can fetch from (CORS is not enabled for it),
+ * and nothing checks what comes back. The SDK lets a key-material provider be
+ * injected, and this file is that provider: the same two-method shape as the
+ * SDK's own (`KeyMaterialProvider`: `lookupKey` and `getParams`), differing in
+ * three deliberate ways:
  *
  *  1. **The artefacts come from THIS wallet's own origin** — `/keys/…`,
  *     vendored onto disk by `npm run vendor-keys`. Same origin, so there is
@@ -56,17 +44,12 @@ import { ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS } from './account-circuits.js
  * served from `account/` too, checked the same way; no call to it is built here.
  */
 
-/* The SDK's own keyLocation → path map, verbatim (WasmProver.js:166–171),
- * including its version-9 path segment. When the SDK bumps the circuit
- * version, these paths change, the vendored files will not exist under the
- * new names, and every proof refuses with the exact missing path — loud,
- * and pointing at the re-vendoring that a new circuit version requires. */
-const CIRCUIT_PATHS: Readonly<Record<string, string>> = {
-  'midnight/zswap/spend': 'zswap/9/spend',
-  'midnight/zswap/output': 'zswap/9/output',
-  'midnight/zswap/sign': 'zswap/9/sign',
-  'midnight/dust/spend': 'dust/9/spend',
-};
+/* Where each of the ledger's own circuits is served, by the key location the
+ * SDK's prover asks for: the same file the vendoring script writes them under,
+ * so the two can never name different paths. When the ledger moves a circuit
+ * to a new generation, the path changes there, the vendored files must be
+ * fetched again, and every proof refuses with the exact missing path. */
+const CIRCUIT_PATHS: Readonly<Record<string, string>> = LEDGER_KEYS;
 
 export interface KeyManifest {
   /** The circuit version the artefacts were vendored for. */

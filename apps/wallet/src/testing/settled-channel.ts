@@ -103,7 +103,7 @@ export const THE_ANSWER = 2;
  * Two things, and both are needed. The first is the answer itself, resolved by
  * the `postMessage` that carries it. The second is `act`, because the screen
  * answers BEFORE it sets its own state — `channel.answer(response)` comes
- * first in `approve.tsx` and `setSentAt` after it — so a test that read the
+ * first in `answerDisclosure` (`approve-answer-disclosure.ts`) and `setSentAt` after it — so a test that read the
  * DOM on the next line would be reading it one render early. **That is not a
  * poll: `act` flushes work that is already queued and returns.**
  */
@@ -118,7 +118,7 @@ export async function afterTheAnswer(
 /**
  * **A FIXED NUMBER OF TURNS OF THE LOOP, WHICH IS NOT A WAIT.**
  *
- * `approve.tsx` reads the profile in an effect: `load(port, identity)` against
+ * `useApproveState` (`approve-state.ts`) reads the profile in an effect: `load(port, identity)` against
  * an in-memory store, so what a test is waiting for is not work that might take
  * a while — **it is a promise that has already resolved, needing the loop to
  * come round and React to render.** A `waitFor` there is a poll with a

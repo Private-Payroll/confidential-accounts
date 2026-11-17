@@ -1,13 +1,10 @@
 /**
- * THE VAULT'S DEPLOY AND ITS OWN FIND, and `C228` is what most of this
- * file is about.
+ * THE VAULT'S DEPLOY AND ITS OWN FIND, AND WHICH PRIVATE STATE EACH TOUCHES.
  *
- * `C228`'s row says private state is filed under
- * `${contractAddress}:${privateStateId}`, that the address half is a mutable
- * closure variable, and that **it worked only because exactly one contract had
- * ever been addressed.** This module addresses a second, and a third: a company
- * has many vaults, and a vault reading another vault's pool is a wrong balance
- * in a real payment.
+ * A company has many vaults, and a vault reading another vault's pool, or the
+ * account's view, is a wrong balance in a real payment. The wallet opens
+ * private state per contract, under that contract's own address, and the vault
+ * path must not depend on any shared address at all.
  *
  * Two properties are proved here and they are not the same property:
  *
@@ -15,26 +12,25 @@
  *      No `privateStateId` is passed, so `submitDeployTx` writes none
  *      (`index.mjs:1181-1183`) and `createCallTxOptions` carries none
  *      (`:1862`). There is no vault view for a second vault to read.
- *   2. **AND THE ADDRESS IS SET FROM THE VAULT THE CALL IS FOR, BEFORE EVERY
- *      ACCESS ANYWAY**, so no vault operation inherits an account's address and
- *      no account operation inherits a vault's — the exact `C228` arrangement,
- *      driven from both directions.
+ *   2. **AND THE VAULT'S ADDRESS IS CHECKED BEFORE EVERY ACCESS ANYWAY**, so no
+ *      vault operation inherits an account's address and no account operation
+ *      inherits a vault's, driven from both directions.
  *
- * **THE FAKE PROVIDER MIRRORS THE REAL ONE'S ADDRESSING SEMANTICS** — the
- * closure variable, the composed key, the throw when no address was ever set
- * (`midnight-js-level-private-state-provider/dist/index.mjs:767-778`) — and the
- * fake SDK mirrors `deployContract`'s: the `signingKey ?? sampleSigningKey()`
- * fallthrough, the post-submit writes, and the conditional private-state write.
- * `T-34`: a stub without the semantics could not fail the way the product
- * would, and this is now the third standing instance of that obligation.
+ * **THE FAKE PROVIDER STANDS IN FOR A STORE THAT FILES PRIVATE STATE UNDER THE
+ * LAST ADDRESS IT WAS GIVEN**: it composes the key from that address and throws
+ * when none was ever set, so a vault path that leaned on a shared address would
+ * fail here as it would in the product. The fake SDK mirrors
+ * `deployContract`'s: the `signingKey ?? sampleSigningKey()` fallthrough, the
+ * post-submit writes, and the conditional private-state write. A stub without
+ * the semantics could not fail the way the product would.
  *
- * **THE MOCK IS REGISTERED ONCE, AT MODULE SCOPE, AND IS STATELESS.** `C222`
- * cost five suite runs and a wrong diagnosis: a `vi.doMock` factory closing
- * over per-test state is a module-scoped binding wearing a closure. Everything
- * per-test rides on `providers.__harness`, which is the handle the code under
- * test already carries, and the fakes REFUSE providers that have none rather
- * than defaulting to some harness.
+ * **THE MOCK IS REGISTERED ONCE, AT MODULE SCOPE, AND IS STATELESS.** A
+ * `vi.doMock` factory closing over per-test state is a module-scoped binding
+ * wearing a closure. Everything per-test rides on `providers.__harness`, which
+ * is the handle the code under test already carries, and the fakes REFUSE
+ * providers that have none rather than defaulting to some harness.
  */
+import { served } from '../testing/served-state.js';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { StateValue, ChargedState } from '@midnight-ntwrk/compact-runtime';
@@ -89,8 +85,8 @@ const harnessOf = (providers: any) => {
   const h = providers?.__harness;
   if (!h) {
     throw new Error(
-      'these fakes were handed providers carrying no harness. Defaulting to one is the ' +
-      'defect C222 is about, so this refuses instead.');
+      'these fakes were handed providers carrying no harness. Defaulting to one would let ' +
+      'one test\'s state leak into another, so this refuses instead.');
   }
   return h;
 };
@@ -100,7 +96,7 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
    * `deployContract`, with the semantics that matter here rather than a stub.
    *
    * Mirrored from `midnight-js-contracts/dist/index.mjs`: the signing-key
-   * fallthrough at `:1907` (which is C225 itself), the address set post-submit
+   * fallthrough at `:1907`, the address set post-submit
    * at `:1180`, the private-state write **only when `privateStateId` is in the
    * options** at `:1181-1183`, and the signing-key write at `:1184`.
    */
@@ -110,7 +106,7 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
     let signingKey = options.signingKey;
     if (!signingKey) {
       // `options.signingKey ?? sampleSigningKey()` — index.mjs:1907. If this
-      // branch is ever taken the vault has an unrecorded authority: C225.
+      // branch is ever taken the vault has an unrecorded authority.
       signingKey = { tag: 'schnorr', value: `sampled-${SAMPLED.length}` };
       SAMPLED.push(signingKey);
     }
@@ -139,7 +135,8 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
    * throw (`index.mjs:2016-2023`). A stub answering "fine" could not fail the
    * way the product would.
    */
-  verifyContractState: (verifierKeys: Array<[string, Uint8Array]>, state: any) => {
+  verifyContractState: async (verifierKeys: Array<[string, Uint8Array]>, served: any) => {
+    const state = served.deserialize();
     const bad = verifierKeys
       .filter(([id, local]) => {
         const op = state.operation(id);
@@ -158,7 +155,6 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
   ) => {
     const h = harnessOf(providers);
     h.interfaces.push({ contractAddress, privateStateId });
-    providers.privateStateProvider.setContractAddress(contractAddress);
     return { payout: async () => ({ public: { txId: 'tx_pay' } }) };
   },
 
@@ -221,11 +217,7 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
     return h.submitStatus ?? { status: 'SucceedEntirely', txId: 'tx_vault_handbuilt' };
   },
 
-  DeployTxFailedError: class DeployTxFailedError extends Error {
-    constructor(public finalizedTxData: unknown) {
-      super('deploy tx failed');
-    }
-  },
+
 
   /*
    * MIRRORED SO A CALL TO IT IS OBSERVABLE, NOT SO IT CAN BE USED. The
@@ -267,11 +259,11 @@ const ACCOUNT_STATE_ID = 'confidential-accounts-stagenet:default';
 /**
  * The account's deployed operations map, taken from the account's OWN list.
  *
- * `T-34`: a fake's circuit names are checked where the fake is CONSTRUCTED, or
+ * A fake's circuit names are checked where the fake is CONSTRUCTED, or
  * a stale mirror becomes a refusal by arithmetic instead of by name. Hard-coded
- * here, this fixture would keep describing the eleven-circuit account of 29 Aug
- * long after the account's split moved, and the test asserting "this is an account"
- * would be asserting it of a contract this project no longer deploys.
+ * here, this fixture would keep describing an old account circuit list long
+ * after the account's circuits changed, and the test asserting "this is an
+ * account" would be asserting it of a contract that is no longer deployed.
  */
 const ACCOUNT_OPS = [...DEPLOYED_CIRCUITS];
 
@@ -285,7 +277,7 @@ const CHOSEN = {
 };
 
 /**
- * The real provider's addressing semantics, mirrored. `T-34`.
+ * The addressing semantics of a store that files private state under the last address set, mirrored.
  *
  * `trace` records the ORDER of address-sets, reads and writes, because the
  * property under test is not only where state landed but that the address was
@@ -335,7 +327,7 @@ const world = (opts: {
   chain?: Record<string, string[] | null>;
   /** Which verifier keys the zk config has. Defaults to all four vault circuits. */
   keys?: string[];
-  /** A key the chain holds that differs from ours, to drive M-9's comparison. */
+  /** A key the chain holds that differs from ours, to drive the verifier-key comparison. */
   corrupt?: string;
   /**
    * Which of this build's ledger slots the deployed vault actually carries.
@@ -383,6 +375,7 @@ const world = (opts: {
           'one; defaulting to a plausible object is the defect this refuses.');
       },
     },
+    config: { networkId: 'the-network', ttlSeconds: 1800 },
     privateStateProvider: provider,
     zkConfigProvider: {
       getVerifierKeys: async (ids: string[]) => ids.map((id) => {
@@ -393,7 +386,7 @@ const world = (opts: {
       }),
     },
     publicDataProvider: {
-      queryContractState: async (address: string) => {
+      queryContractState: async (address: string) => served(await (async () => {
         /*
          * TRACED, AND IN THE SAME TRACE AS THE ADDRESS-SETS. The property under
          * test is that the vault's address is set BEFORE the chain is read —
@@ -416,7 +409,7 @@ const world = (opts: {
            */
           data: stateOfSlots(opts.ledgerSlots ?? ALL_SLOTS),
         };
-      },
+      })()),
     },
   };
   return { providers, provider };
@@ -426,10 +419,10 @@ const world = (opts: {
 const physical = (address: string, id: string) => `${address}:${id}`;
 
 /* ------------------------------------------------------------------ *
- * C225 — the vault refuses to sample, and says what it cannot express
+ * the vault refuses to sample, and says what it cannot express
  * ------------------------------------------------------------------ */
 
-describe('C225: the vault chooses its maintenance authority, deliberately, or not at all', () => {
+describe('the vault chooses its maintenance authority, deliberately, or not at all', () => {
   it('refuses an absent choice before anything is deployed', async () => {
     const { providers } = world();
     await expect(deployVaultContract(providers, {
@@ -474,7 +467,7 @@ describe('C225: the vault chooses its maintenance authority, deliberately, or no
   it('still requires a single key to be RECORDED as temporary', () => {
     expect(() => requireVaultMaintenanceAuthority(
       { kind: 'single-key', signingKey: { tag: 'schnorr', value: 'k' } } as never,
-    )).toThrow(/temporary\.fixedBy must name the round/);
+    )).toThrow(/temporary\.fixedBy must name/);
   });
 
   it('reports the authority as a shape and never as key material', async () => {
@@ -505,11 +498,11 @@ describe('the vault deploy refuses what it can refuse before anything is spent',
     expect(providers.__harness.deployCalls).toEqual([]);
   });
 
-  it('refuses when the vault has no verifier keys on disk, and names the file that builds them', async () => {
+  it('refuses when the vault has no verifier keys on disk, and names the step that builds them', async () => {
     const { providers } = world({ keys: ['deposit', 'payout'] });
     await expect(deployVaultContract(providers, {
       compiledContract: {}, accountAddress: ACCOUNT, maintenanceAuthority: CHOSEN,
-    })).rejects.toThrow(/COMPILE-VAULT\.command/);
+    })).rejects.toThrow(/vault's own compile step/);
     expect(providers.__harness.deployCalls).toEqual([]);
   });
 
@@ -537,13 +530,13 @@ describe('the vault deploy refuses what it can refuse before anything is spent',
 });
 
 /* ------------------------------------------------------------------ *
- * C228 — a vault reads neither the account's view nor another vault's
+ * a vault reads neither the account's view nor another vault's
  * ------------------------------------------------------------------ */
 
-describe('C228: vault private state is addressed per vault, before every access', () => {
+describe('vault private state is addressed per vault, before every access', () => {
   it('the deploy writes NO private state at all, so there is none to read wrongly', async () => {
     const { providers, provider } = world();
-    // The C228 arrangement: an SDK entry point for the ACCOUNT ran last and
+    // The arrangement: an SDK entry point for the ACCOUNT ran last and
     // left the provider pointing there, with the account's own view seated.
     provider.setContractAddress(ACCOUNT);
     await provider.set(ACCOUNT_STATE_ID, { marker: 'the account' });
@@ -559,19 +552,6 @@ describe('C228: vault private state is addressed per vault, before every access'
     expect(provider.store.get(physical(ACCOUNT, ACCOUNT_STATE_ID))).toEqual({ marker: 'the account' });
   });
 
-  it('the deploy leaves the store pointing at the vault it deployed, not at whatever ran last', async () => {
-    const { providers, provider } = world();
-    provider.setContractAddress(ACCOUNT);
-    await deployVaultContract(providers, {
-      compiledContract: {}, accountAddress: ACCOUNT, maintenanceAuthority: CHOSEN,
-    });
-    // The last address set is the vault's, and it was set explicitly by this
-    // module as well as by the SDK — the rule does not depend on the SDK
-    // having done it.
-    expect(provider.trace[provider.trace.length - 1]).toBe(`address ${VAULT_B}`);
-    expect(provider.trace.filter((l) => l === `address ${VAULT_B}`).length).toBeGreaterThanOrEqual(2);
-  });
-
   it('the signing key is filed under the VAULT\'s address, never the account\'s', async () => {
     const { providers, provider } = world();
     provider.setContractAddress(ACCOUNT);
@@ -582,25 +562,11 @@ describe('C228: vault private state is addressed per vault, before every access'
     expect(provider.signingKeys.get(ACCOUNT)).toBeUndefined();
   });
 
-  it('the find sets the vault\'s own address BEFORE the first read, even when the provider points elsewhere', async () => {
+  it('the find reads only the vault it was asked for, and opens no private state', async () => {
     const { providers, provider } = world();
-    // Pointing at vault A. Without the addressing rule, a find for B would read and
-    // written under A's prefix — the exact C228 arrangement, one vault along.
-    provider.setContractAddress(VAULT_A);
-    provider.trace.length = 0;
-
     await findDeployedVaultContract(providers, { compiledContract: {}, contractAddress: VAULT_B });
-
-    // THE ORDER IS THE PROPERTY: B is addressed, and only then is anything
-    // read. A find that read first would read whatever address was left
-    // behind, which is C228 exactly.
-    expect(provider.trace).toEqual([
-      `address ${VAULT_B}`,
-      `query ${VAULT_B}`,
-      `address ${VAULT_B}`,   // createCircuitCallTxInterface sets it too — index.mjs:1876
-    ]);
-    // And A was never addressed again during the find.
-    expect(provider.trace.filter((l) => l === `address ${VAULT_A}`)).toEqual([]);
+    // RED WHEN the find reads another contract, or touches the private state store at all.
+    expect(provider.trace).toEqual([`query ${VAULT_B}`]);
   });
 
   it('a vault find reads and writes NOTHING in the private state store', async () => {
@@ -618,7 +584,7 @@ describe('C228: vault private state is addressed per vault, before every access'
      * have: `setOrGetInitialSigningKey` invents one and stores it under the
      * address when the store holds none (`index.mjs:1951-1963`) — a key that
      * maintains nothing, recorded where a later replaceAuthority reads the
-     * real one. M-155.
+     * real one.
      */
     expect(provider.trace.filter((l) => l.startsWith('setSigningKey'))).toEqual([]);
     expect(provider.signingKeys.size).toBe(0);
@@ -640,12 +606,8 @@ describe('C228: vault private state is addressed per vault, before every access'
     await findDeployedVaultContract(providers, { compiledContract: {}, contractAddress: VAULT_B });
     await findDeployedVaultContract(providers, { compiledContract: {}, contractAddress: VAULT_A });
 
-    // Every find addressed its own vault first; none inherited the previous one.
-    expect(provider.trace).toEqual([
-      `address ${VAULT_A}`, `query ${VAULT_A}`, `address ${VAULT_A}`,
-      `address ${VAULT_B}`, `query ${VAULT_B}`, `address ${VAULT_B}`,
-      `address ${VAULT_A}`, `query ${VAULT_A}`, `address ${VAULT_A}`,
-    ]);
+    // Every find read its own vault; none inherited the previous one.
+    expect(provider.trace).toEqual([`query ${VAULT_A}`, `query ${VAULT_B}`, `query ${VAULT_A}`]);
     expect(providers.__harness.interfaces.map((i: any) => i.contractAddress))
       .toEqual([VAULT_A, VAULT_B, VAULT_A]);
   });
@@ -681,7 +643,7 @@ describe('the vault\'s find', () => {
     expect(failure!.message).toMatch(/THIS IS AN ACCOUNT, NOT A VAULT/);
     // It points at the account's own find rather than leaving a reader to guess.
     expect(failure!.message).toMatch(/findDeployedPartialContract/);
-    // And it does not print the address. C236.
+    // And it does not print the address.
     expect(failure!.message).not.toContain(ACCOUNT);
   });
 
@@ -701,7 +663,7 @@ describe('the vault\'s find', () => {
     )).rejects.toThrow(/has been maintained since/);
   });
 
-  it('keeps M-9: a deployed verifier key that differs is refused, by name', async () => {
+  it('refuses a deployed verifier key that differs, by name', async () => {
     const { providers } = world({ corrupt: 'payout' });
     await expect(findDeployedVaultContract(
       providers, { compiledContract: {}, contractAddress: VAULT_A },
@@ -764,7 +726,7 @@ describe('the vault\'s circuit list is the vault\'s', () => {
   it('is exactly what the COMPILER declares, sorted — read off the artefact, not typed in', () => {
     /*
      * `contract-info.json` is compactc's own answer and the only thing that
-     * knows the real circuit set — `M-38`'s reason for reading this file rather
+     * knows the real circuit set, which is why this reads this file rather
      * than the generated wrappers, which all take rest parameters. If the vault
      * ever gains or loses a circuit, this fails in the same turn the contract
      * is recompiled rather than on a chain.
@@ -978,7 +940,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
         seen.serialized.push(text);
         return text;
       },
-      getNetworkId: () => 'the-network',
+      sealUnproven: (tx: unknown) => tx,
       SucceedEntirely: 'SucceedEntirely',
       readVaultLedger: (data: any) => {
         seen.ledgerReads += 1;
@@ -1126,7 +1088,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
     );
     expect('signingKey' in providers.__harness.unprovenCalls[0]).toBe(false);
     /* And under a single key it IS passed, or createDeployTxOptions' own
-     * `?? sampleSigningKey()` (index.mjs:1907) would invent one. C225. */
+     * `?? sampleSigningKey()` (index.mjs:1907) would invent one. */
     const single = handBuiltWorld();
     await submitHandBuiltVaultDeployTx(
       single.providers,
@@ -1270,7 +1232,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
       );
       /* The account's path writes one unconditionally (partial-contract.ts:357).
        * A vault driven through it would write under <address>:undefined, a real
-       * shared key: C228's failure created by moving paths. */
+       * shared key, the failure moving paths would create. */
       expect(provider.trace.filter((l: string) => l.startsWith('set '))).toEqual([]);
       expect(provider.trace.filter((l: string) => l.startsWith('get '))).toEqual([]);
       expect(provider.store.size).toBe(0);
@@ -1279,10 +1241,9 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
     }
   });
 
-  it('DEPENDENCY 5: the address is set through the vault\'s named rule, after submission', async () => {
+  it('the hand-built deploy opens no private state for the vault it deployed', async () => {
+    // RED WHEN the deploy addresses, reads or writes the private state store for the vault.
     const { providers, provider } = handBuiltWorld();
-    provider.setContractAddress(VAULT_A);
-    provider.trace.length = 0;
 
     const out = await submitHandBuiltVaultDeployTx(
       providers,
@@ -1290,13 +1251,13 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
       primitives().prims,
     );
 
-    expect(provider.trace).toEqual([`address ${out.contractAddress}`]);
-    expect(provider.trace.filter((l: string) => l === `address ${VAULT_A}`)).toEqual([]);
+    expect(out.contractAddress).toBeTruthy();
+    expect(provider.trace).toEqual([]);
   });
 
   it('DEPENDENCY 5: an empty address refuses rather than sharing a prefix', () => {
     /* addressVaultPrivateState is the rule, and this is why the hand-built path
-     * calls it rather than setContractAddress raw. C228. */
+     * calls it rather than setContractAddress raw. */
     expect(() => addressVaultPrivateState({ privateStateProvider: {} }, ''))
       .toThrow(/refusing to address a vault's private state by an empty address/);
   });
@@ -1376,11 +1337,11 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
       .toThrow(/a vault cannot be deployed with a "committee" maintenance authority/);
   });
 
-  it('DEPENDENCY 8: the SDK path\'s refusal no longer says the way out does not exist', () => {
+  it('DEPENDENCY 8: the SDK path\'s refusal names the hand-built path as the way out', () => {
     /*
-     * That message ended `it is not taken here` until the hand-built path
-     * existed. A sentence claiming what the system does
-     * is checked when it is written, and this is the check.
+     * The refusal must not claim there is no way out: a committee deploys through
+     * the hand-built path, and a sentence claiming what the system does has to
+     * be true.
      */
     const failure = (() => {
       try { requireVaultMaintenanceAuthority(COMMITTEE); return null; }
@@ -1427,7 +1388,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
    * WHAT THE FAKES CANNOT SEE: THE VERSION BUMP, MEASURED
    * ---------------------------------------------------------------- */
 
-  it('the SDK mentions setSigningKey at exactly four sites, all of them off this path', () => {
+  it('the SDK writes the signing key at exactly seven sites, none of them on the hand-built path', () => {
     /*
      * SOMEBODY ELSE'S CODE, MOVING. Every other test in this block drives a
      * FAKE of the SDK. This one reads the real file, so a version bump that
@@ -1462,10 +1423,10 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
         .dependencies['@midnight-ntwrk/midnight-js-contracts'];
     /* Pinned so a bump names itself in the failure rather than leaving a bare
      * set diff. `package.json` fixes it exactly, with no range. */
-    expect(version).toBe('5.0.0-beta.4');
+    expect(version).toBe('5.0.0');
 
     const sdk = readFileSync(
-      new URL('../../node_modules/@midnight-ntwrk/midnight-js-contracts/dist/index.mjs',
+      new URL('../../node_modules/@midnight-ntwrk/midnight-js-contracts/dist/index.js',
         import.meta.url), 'utf8');
 
     const mentions = (source: string): string[] =>
@@ -1480,11 +1441,15 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
      * `createUnprovenDeployTxFromVerifierKeys` at `:1058-1112`) and `submitTx`
      * (`:70-85`, over `submitTxCore` at `:27-69`).
      */
-    expect(mentions(sdk)).toEqual([
-      'await providers.privateStateProvider.setSigningKey(contractAddress, newAuthority);',
-      'await providers.privateStateProvider.setSigningKey(unprovenDeployTxData.public.contractAddress, unprovenDeployTxData.private.signingKey);',
+    /* Statements that write the slot; the SDK's error messages also name the method, and are not writes. */
+    expect(mentions(sdk).filter((l) => l.startsWith('await '))).toEqual([
       'await privateStateProvider.setSigningKey(options.contractAddress, options.signingKey);',
       'await privateStateProvider.setSigningKey(options.contractAddress, freshSigningKey);',
+      'await privateStateProvider.setSigningKey(contractAddress, entry);',
+      'await providers.privateStateProvider.setSigningKey(deploy.contractAddress, signingKey);',
+      'await providers.privateStateProvider.setSigningKey(contractAddress, newSigningKey);',
+      'await providers.privateStateProvider.setSigningKey(contractAddress, newAuthority);',
+      'await providers.privateStateProvider.setSigningKey(unprovenDeployTxData.public.contractAddress, unprovenDeployTxData.private.signingKey);',
     ]);
   });
 
@@ -1728,7 +1693,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
     ).then(() => null, (e: Error) => e);
 
     expect(failure).not.toBeNull();
-    expect((failure as any).finalizedTxData).toEqual({ status: 'FailFallible', txId: 'tx_partial' });
+    expect((failure as Error).message).toMatch(/did not apply this deploy whole \(it answered FailFallible\)/);
     /* And nothing was addressed or stored on the strength of a deploy that did
      * not land. */
     expect(provider.trace.filter((l: string) => l.startsWith('address '))).toEqual([]);
@@ -1850,8 +1815,8 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
 
   it('the key-on-disk check and the address-shape check guard THIS path too, not only the SDK\'s', async () => {
     /*
-     * Both were pinned for `deployVaultContract` and neither for this one, so
-     * both could be deleted and the suite stayed green. The V-37 regex is
+     * Both are pinned for `deployVaultContract` and for this one, so
+     * neither can be deleted unnoticed. The hex-address regex is
      * load-bearing rather than tidy: `Buffer.from(account, 'hex')` truncates
      * silently on anything it does not like, so without the regex the
      * constructor is handed a short or empty argument instead of being refused.

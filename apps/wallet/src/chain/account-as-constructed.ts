@@ -3,9 +3,11 @@ import { companyLabelBytes, type CompanyLabel } from 'midnight-identity/profile/
 import { readAccountDeploy } from '../../../../src/midnight/account-deploy.js';
 import { heldStateFromTheStart, type HeldStateDeps } from '../../../../src/midnight/held-from-the-start.js';
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
-import { zkConfigOver } from '../../../../packages/web-shared/src/zk-config.js';
+import { zkConfigOver, runtimeVersionOf } from '../../../../packages/web-shared/src/zk-config.js';
+import { contractPieces } from './contract-pieces.js';
+import ACCOUNT_MANIFEST from '../../../../contracts/managed/compiler/contract-manifest.json' with { type: 'json' };
+import { NETWORK } from '../config.js';
 import { seatsInAccountState } from './company-label-on-chain.js';
-import { walletNetworkIsSet } from './network-id.js';
 import { operationsFromContractState } from 'midnight-identity/profile/contract-keys';
 import type { ThisBuildsAccountKeys } from 'midnight-identity/profile/creation-sign';
 
@@ -87,7 +89,7 @@ export async function startingStateRefusal(
       if (kind !== 'verifier' || key === undefined) throw new Error(`this wallet holds no checked ${kind} for "${circuit}".`);
       return key;
     },
-  } as never, (circuit) => circuit);
+  } as never, (circuit) => circuit, runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account'));
   let expected: Uint8Array;
   try {
     const made = await heldStateFromTheStart(deps, {
@@ -107,22 +109,15 @@ export async function startingStateRefusal(
   return 'refusal' in verdict ? 'The account the deploy creates does not start as its own constructor makes it for you and this label.' : null;
 }
 
-/** What the constructor is run with in this wallet, loaded when the creation screen first needs it, after this wallet's network is given to the contract libraries (they build nothing until it is). */
+/** What the constructor is run with in this wallet, loaded when the creation screen first needs it, built for this wallet's own network. */
 export const liveConstruction = async (): Promise<ConstructionDeps> => {
-  await walletNetworkIsSet();
-  const [L, runtime, contracts, compactJs, account, accountWitnesses] = await Promise.all([
-    import('@midnightntwrk/ledger-v9'),
-    import('@midnight-ntwrk/compact-runtime'),
-    import('@midnight-ntwrk/midnight-js-contracts'),
-    import('@midnight-ntwrk/compact-js'),
-    import('../../../../contracts/managed/contract/index.js'),
-    import('../../../../contracts/src/witnesses.js'),
-  ]);
+  const { ledger: L, runtime, compactJs, account, accountWitnesses, contracts } = await contractPieces();
   const CompiledContract = (compactJs as { CompiledContract: any }).CompiledContract;
   return {
     ledger: L,
-    runtimeState: (runtime as { ContractState: unknown }).ContractState,
-    contracts: contracts as unknown as HeldStateDeps['contracts'],
+    runtimeState: runtime.ContractState,
+    contracts,
+    network: NETWORK,
     compiled: CompiledContract.make('ConfidentialAccount', (account as { Contract: unknown }).Contract).pipe(
       CompiledContract.withWitnesses((accountWitnesses as { witnesses: unknown }).witnesses)),
   };

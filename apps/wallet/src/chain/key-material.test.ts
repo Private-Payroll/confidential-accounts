@@ -52,9 +52,9 @@ const mapCache = (): ArtefactCache & { readonly store: Map<string, Uint8Array>; 
 };
 
 const dustFiles = (): Record<string, Uint8Array> => ({
-  'dust/9/spend.prover': bytesOf('the prover key'),
-  'dust/9/spend.verifier': bytesOf('the verifier key'),
-  'dust/9/spend.bzkir': bytesOf('the circuit ir'),
+  'dust/10/spend.prover': bytesOf('the prover key'),
+  'dust/10/spend.verifier': bytesOf('the verifier key'),
+  'dust/10/spend.bzkir': bytesOf('the circuit ir'),
   bls_midnight_2p14: bytesOf('the shared parameters, size 14'),
 });
 
@@ -116,7 +116,7 @@ describe('nothing unpinned reaches the prover', () => {
     const files = dustFiles();
     const origin = await fakeOrigin(files);
     /* The origin starts serving different bytes than were pinned. */
-    files['dust/9/spend.prover'] = bytesOf('NOT the prover key');
+    files['dust/10/spend.prover'] = bytesOf('NOT the prover key');
     const provider = makePinnedKeyMaterialProvider({
       fetchFn: origin.fetchFn, cache: mapCache(),
     });
@@ -150,14 +150,14 @@ describe('the cache is a convenience, never a source of truth', () => {
   it('a damaged cache entry is discarded and the origin copy re-verified', async () => {
     const origin = await fakeOrigin(dustFiles());
     const cache = mapCache();
-    cache.store.set('dust/9/spend.prover', bytesOf('rotted bytes'));
+    cache.store.set('dust/10/spend.prover', bytesOf('rotted bytes'));
     const provider = makePinnedKeyMaterialProvider({
       fetchFn: origin.fetchFn, cache,
     });
     const material = await provider.lookupKey('midnight/dust/spend');
     expect(new TextDecoder().decode(material?.proverKey)).toBe('the prover key');
     /* The rot was evicted and replaced by the verified copy. */
-    expect(new TextDecoder().decode(cache.store.get('dust/9/spend.prover') ?? new Uint8Array()))
+    expect(new TextDecoder().decode(cache.store.get('dust/10/spend.prover') ?? new Uint8Array()))
       .toBe('the prover key');
   });
 
@@ -301,7 +301,7 @@ describe('a proving key leaves memory with the proof, and a key not kept is said
     const provider = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache });
     const first = await provider.lookupKey('midnight/dust/spend');
     const second = await provider.lookupKey('midnight/dust/spend');
-    expect(cache.read.filter((p) => p === 'dust/9/spend.prover')).toHaveLength(2);
+    expect(cache.read.filter((p) => p === 'dust/10/spend.prover')).toHaveLength(2);
     expect(second?.proverKey).not.toBe(first?.proverKey);
     await provider.getParams(14);
     await provider.getParams(14);

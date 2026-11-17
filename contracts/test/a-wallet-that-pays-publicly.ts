@@ -6,20 +6,20 @@
  * public kind only, and the facade hands that to the public wallet's own
  * balancing capability, which adds this wallet's coins and its change in place
  * and in the section the transaction owes them. This stand-in runs that same
- * capability, from the same package, over a wallet holding coins the watch
- * chooses, and signs with the SDK's own signing steps. It proves nothing and
+ * capability, from the same package, over a wallet holding the coins the
+ * test's chain says it holds (`holdWhatTheChainSays`), and signs with the SDK's own signing steps. It proves nothing and
  * keeps no sync: its coins are whatever it is told it holds.
  *
- * The package publishes only its root, so the capability is loaded from its
- * built files by path.
+ * The package publishes only its root, so the capability, and the keystore
+ * that names its keys the way this ledger does, are loaded from the built files
+ * of the variant for this ledger, by path.
  */
 import * as L from '@midnightntwrk/ledger-v9';
-import { createKeystore, PublicKey } from '@midnightntwrk/wallet-sdk';
 import { chooseCoin } from '@midnightntwrk/wallet-sdk-capabilities';
 import { Either } from 'effect';
 
-const V1 = new URL('../../node_modules/@midnightntwrk/wallet-sdk-unshielded-wallet/dist/v1/', import.meta.url);
-const load = (file: string) => import(new URL(file, V1).href);
+const V2 = new URL('../../node_modules/@midnightntwrk/wallet-sdk-unshielded-wallet/dist/v2/', import.meta.url);
+const load = (file: string) => import(new URL(file, V2).href);
 
 export interface AWalletThatPaysPublicly {
   /** This wallet's public address, as the ledger writes it. */
@@ -33,11 +33,12 @@ export interface AWalletThatPaysPublicly {
 }
 
 export async function aWalletThatPaysPublicly(network: string, seed = new Uint8Array(32).fill(0x62)): Promise<AWalletThatPaysPublicly> {
-  const [T, CW, US, CB, TO] = await Promise.all([
+  const [T, CW, US, CB, TO, K] = await Promise.all([
     load('Transacting.js'), load('CoreWallet.js'), load('UnshieldedState.js'), load('CoinsAndBalances.js'), load('TransactionOps.js'),
+    load('KeyStore.js'),
   ]);
-  const keystore = createKeystore({ kind: 'schnorr', secret: seed } as never, network as never);
-  const publicKey = (PublicKey as any).fromKeyStore(keystore);
+  const keystore = K.createKeystore({ kind: 'schnorr', secret: seed }, network);
+  const publicKey = K.PublicKey.fromKeyStore(keystore);
   const address = String(publicKey.addressHex);
   let held: Array<{ value: bigint; owner: string; type: string; intentHash: string; outputNo: number }> = [];
   const capability = new T.TransactingCapabilityImplementation(

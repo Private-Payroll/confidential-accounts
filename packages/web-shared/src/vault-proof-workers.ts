@@ -13,9 +13,10 @@
  * each thread holds about 330 MB.
  *
  * **WHAT IS PROVED DOES NOT CHANGE.** The ledger decides every proof and every
- * input to it, exactly as on one thread; each one reaches the same two calls of
- * `@midnight-ntwrk/zkir-v2` with the same bytes, and each answer goes back to
- * the call that asked for it and to no other. Only the thread it runs on moves.
+ * input to it, exactly as on one thread; each one reaches the prover its key
+ * location names (`zkirEngineFor`) with the same bytes, and each answer goes back
+ * to the call that asked for it and to no other. Only the thread it runs on moves.
+ * A key location that names no prover is refused here, before a thread starts.
  *
  * **AND A THREAD IS KEPT FOR THE NEXT PROOF OF THE SAME CIRCUIT.** A contract
  * call is checked and then proved; the thread that checked it is already
@@ -23,8 +24,10 @@
  * per key location (a circuit of one contract), for `KEPT_IDLE_MS`; one is let go as soon as
  * a proof needs its place.
  */
-import type { KeyMaterialSource } from '../../../src/midnight/wasm-proving.js';
+import { proverKindOf, type KeyMaterialSource } from '../../../src/midnight/wasm-proving.js';
 import { PROOF_CEILING_MS } from './proof-ceiling.js';
+import type { UnprovenTransaction } from '@midnightntwrk/ledger-v9';
+import type { UnprovenTx } from '@midnight-ntwrk/midnight-js-types';
 
 type FromAProofWorker =
   | { readonly op: 'ready' }
@@ -96,6 +99,7 @@ export function provingOnWorkers(
 ): LedgerProvingProvider & { stop(): void; readonly idle: number; readonly didNotLoad: boolean } {
   interface Job {
     readonly op: 'prove' | 'check';
+    readonly keyLocation: string;
     readonly preimage: Uint8Array;
     readonly overwriteBindingInput?: bigint;
     readonly resolve: (value: unknown) => void;
@@ -121,7 +125,9 @@ export function provingOnWorkers(
 
   const post = (t: Thread): void => {
     if (t.job === null || !t.ready) return;
-    t.worker.postMessage({ op: t.job.op, preimage: t.job.preimage, overwriteBindingInput: t.job.overwriteBindingInput });
+    t.worker.postMessage({
+      op: t.job.op, keyLocation: t.job.keyLocation, preimage: t.job.preimage, overwriteBindingInput: t.job.overwriteBindingInput,
+    });
   };
   const answer = (t: Thread, job: Job, askId: number, work: Promise<unknown>): void => {
     work.then(
@@ -189,6 +195,7 @@ export function provingOnWorkers(
   };
   const run = (op: 'prove' | 'check', keyLocation: string, preimage: Uint8Array, overwriteBindingInput?: bigint) =>
     new Promise<unknown>((resolve, reject) => {
+      proverKindOf(keyLocation);
       const start = (): void => {
         let t: Thread;
         try {
@@ -231,7 +238,7 @@ export function provingOnWorkers(
         };
         again();
         t.job = {
-          op, preimage, overwriteBindingInput, again,
+          op, keyLocation, preimage, overwriteBindingInput, again,
           resolve: (value) => {
             if (settled) return;
             end();
@@ -271,7 +278,7 @@ export function provingOnWorkers(
   };
 }
 
-
+/** What proves a whole transaction: Midnight.js's proof provider, or one that stands in for it. */
 interface TransactionProver {
   proveTx(tx: unknown, config?: unknown): Promise<unknown>;
 }
@@ -304,6 +311,30 @@ export function oneThreadWhenAThreadDoesNotLoad(
   };
 }
 
+/**
+ * What a builder hands to be proved: Midnight.js's handle of an unproven transaction, or an unproven ledger
+ * transaction the builder made itself.
+ */
+export type Provable = UnprovenTx | UnprovenTransaction;
+
+/**
+ * Proves a transaction a builder made, and answers the proven transaction as Midnight.js hands it back. A builder
+ * hands either Midnight.js's own handle, or a ledger transaction it made itself, which is sealed into a handle first.
+ */
+export const provedTransaction = async (prover: TransactionProver, unproven: unknown): Promise<{ serialize(): Uint8Array }> => {
+  const { LedgerTransaction } = await import('@midnight-ntwrk/midnight-js-types');
+  const serializable = (x: unknown): x is { serialize(): Uint8Array } =>
+    typeof x === 'object' && x !== null && typeof (x as { serialize?: unknown }).serialize === 'function';
+  let handle: unknown = unproven;
+  if (!LedgerTransaction.isLedgerTransaction(unproven)) {
+    if (!serializable(unproven)) throw new Error('what was handed to be proved is not a transaction, so nothing was proved or sent.');
+    handle = LedgerTransaction.seal('v9', 'Unproven', unproven);
+  }
+  const proven = await prover.proveTx(handle);
+  if (!LedgerTransaction.isLedgerTransaction(proven)) throw new Error('the proof came back as something other than a transaction, so nothing was sent.');
+  return proven;
+};
+
 /** The most proof threads a device starts at once, however many cores it reports: each holds about 330 MB. */
 const MOST_PROOF_THREADS = 4;
 
@@ -320,13 +351,13 @@ export async function proofProviderOnWorkers(
   inThread: () => Promise<TransactionProver>,
 ): Promise<TransactionProver> {
   if (typeof scope.Worker !== 'function') return inThread();
-  const { createProofProvider } = await import('@midnight-ntwrk/midnight-js-types');
+  const { createLedger9ProofProvider } = await import('@midnight-ntwrk/midnight-js-types');
   const cores = scope.navigator?.hardwareConcurrency;
   const cap = typeof cores === 'number' && Number.isInteger(cores) && cores >= 1 ? Math.min(cores, MOST_PROOF_THREADS) : 2;
   const provider = provingOnWorkers(source, () => new Worker(new URL('./vault-proof-worker-entry.js', import.meta.url), {
     type: 'module', name: 'vault-proof',
   }) as unknown as ProofWorkerLike, undefined, cap);
-  const onWorkers = createProofProvider(provider as never) as unknown as TransactionProver;
+  const onWorkers: TransactionProver = createLedger9ProofProvider(provider);
   return oneThreadWhenAThreadDoesNotLoad({
     proveTx: (tx, config) => onWorkers.proveTx(tx, config),
     get didNotLoad() { return provider.didNotLoad; },

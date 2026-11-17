@@ -12,7 +12,7 @@
  * same thing.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IDBFactory } from 'fake-indexeddb';
 import { answerVaultAsk, type WorkerDeps } from './vault-worker-entry.js';
@@ -119,7 +119,11 @@ const BARE: Record<string, Record<string, unknown>> = {
 describe('the vault worker', () => {
   it('HAS A TEST HERE FOR EVERY ASK IT ANSWERS', () => {
     /* RED WHEN: the worker answers an ask this file does not run - that ask would be the one left without a Buffer. */
-    const source = readFileSync(join(import.meta.dirname, 'vault-worker-entry.ts'), 'utf8');
+    /* The worker's entry answers some asks itself and hands the rest to the answerers beside it, each of which gives undefined for an ask it does not answer. */
+    const answering = readdirSync(import.meta.dirname).filter((f) => f === 'vault-worker-entry.ts'
+      || (f.endsWith('.ts') && !f.includes('.test') && readFileSync(join(import.meta.dirname, f), 'utf8').includes('Promise<VaultAnswer | undefined>')));
+    expect(answering.length).toBeGreaterThan(1);
+    const source = answering.map((f) => readFileSync(join(import.meta.dirname, f), 'utf8')).join('\n');
     const answered = [...source.matchAll(/^\s+case '([a-z-]+)':/gm)].map((m) => m[1]).sort();
     expect(answered.length).toBeGreaterThan(10);
     expect(Object.keys(BARE).sort()).toEqual(answered);

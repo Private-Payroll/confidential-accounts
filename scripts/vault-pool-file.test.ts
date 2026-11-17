@@ -28,13 +28,14 @@ import {
 } from '../src/midnight/vault-pool.js';
 import type { VaultNotes } from '../src/midnight/vault-notes.js';
 import { newWrappingKeypair } from '../src/core/crypto.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const VAULT = 'd0'.repeat(32);
 const OTHER = 'e1'.repeat(32);
 
 const dir = () => mkdtempSync(join(tmpdir(), 'vault-pool-'));
 const storeIn = (d: string, vault = VAULT) =>
-  new FileSealedPoolStore(vaultPoolFile(d, 'stagenet', 'payroll-test-1'), vault);
+  new FileSealedPoolStore(vaultPoolFile(d, NETWORK, 'payroll-test-1'), vault);
 
 const signers = (): { signers: PoolSigner[]; secret: string } => {
   const k = newWrappingKeypair();
@@ -43,7 +44,7 @@ const signers = (): { signers: PoolSigner[]; secret: string } => {
 
 describe('C236: the file is named after the vault, never addressed by it', () => {
   it('puts the NAME in the path and the address nowhere in it', () => {
-    const path = vaultPoolFile('/state', 'stagenet', 'payroll-test-1');
+    const path = vaultPoolFile('/state', NETWORK, 'payroll-test-1');
     expect(path).toContain('payroll-test-1');
     expect(path).not.toContain(VAULT);
     /*
@@ -55,8 +56,8 @@ describe('C236: the file is named after the vault, never addressed by it', () =>
   });
 
   it('REFUSES a name that could escape the directory, through the one validator', () => {
-    expect(() => vaultPoolFile('/state', 'stagenet', '../../etc/passwd')).toThrow();
-    expect(() => vaultPoolFile('/state', 'stagenet', 'a/b')).toThrow();
+    expect(() => vaultPoolFile('/state', NETWORK, '../../etc/passwd')).toThrow();
+    expect(() => vaultPoolFile('/state', NETWORK, 'a/b')).toThrow();
   });
 });
 
@@ -74,7 +75,7 @@ describe('C242: absent is null, and everything else present is a refusal', () =>
 
   it('REFUSES a truncated write rather than reading it as a vault with no notes', async () => {
     const d = dir();
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     writeFileSync(f, '{"vault":"d0d0d0","version":1,"sea');
     await expect(storeIn(d).get(VAULT)).rejects.toThrow(VaultPoolFileUnreadable);
     await expect(storeIn(d).get(VAULT)).rejects.toThrow(/truncated write looks exactly like this/);
@@ -85,7 +86,7 @@ describe('C242: absent is null, and everything else present is a refusal', () =>
     const d = dir();
     const { signers: s } = signers();
     writeFileSync(
-      vaultPoolFile(d, 'stagenet', 'payroll-test-1'),
+      vaultPoolFile(d, NETWORK, 'payroll-test-1'),
       JSON.stringify(sealPool(OTHER, { notes: [] }, s, 1)));
     await expect(storeIn(d).get(VAULT)).rejects.toThrow(/DIFFERENT vault/);
   });
@@ -99,7 +100,7 @@ describe('C242: absent is null, and everything else present is a refusal', () =>
     const d = dir();
     const { signers: s } = signers();
     const rec = { ...sealPool(VAULT, { notes: [] }, s, 1), wrapped: [] };
-    writeFileSync(vaultPoolFile(d, 'stagenet', 'payroll-test-1'), JSON.stringify(rec));
+    writeFileSync(vaultPoolFile(d, NETWORK, 'payroll-test-1'), JSON.stringify(rec));
     await expect(storeIn(d).get(VAULT)).rejects.toThrow(/no device anywhere that could open it/);
     await expect(storeIn(d).get(VAULT)).rejects.toThrow(/not a pool with no notes in it/);
   });
@@ -151,7 +152,7 @@ describe('the pool is written whole or not at all', () => {
     const { signers: s } = signers();
     const store = storeIn(d);
     await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1));
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     /*
      * **ANY NAME, NOT ONE NAME.** This used to assert that `${f}.writing` was
      * gone, and that assertion went vacuous the moment the staging name became
@@ -169,8 +170,8 @@ describe('the pool is written whole or not at all', () => {
       readdirSync(d).sort(),
       'RED WHEN: anything at all is left in the state folder besides the record and its unnumbered copy -- a staged, sealed copy of the money in a file nobody reads and nothing lists',
     ).toEqual([
-      'stagenet-vault-pool-payroll-test-1.json',
-      'stagenet-vault-pool-payroll-test-1.v1.json',
+      `${NETWORK}-vault-pool-payroll-test-1.json`,
+      `${NETWORK}-vault-pool-payroll-test-1.v1.json`,
     ]);
     expect(JSON.parse(readFileSync(f, 'utf8')).version).toBe(1);
   });
@@ -268,7 +269,7 @@ describe('the pool is written whole or not at all', () => {
    * this back and nothing objecting.
    */
   it('stages under a name no other writer and no other attempt could be using', () => {
-    const f = vaultPoolFile('/s', 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile('/s', NETWORK, 'payroll-test-1');
     /*
      * **ASSERTED BY CALLING IT TWICE, NOT BY READING ITS SHAPE.** The first version
      * of this test matched the source for `${process.pid}` and `randomBytes` --
@@ -315,9 +316,9 @@ describe('the pool is written whole or not at all', () => {
       readdirSync(d).sort(),
       'RED WHEN: the writer that lost the race leaves its staged, sealed copy of the pool in the state folder for ever -- one per lost race, each one the money in a file nobody reads',
     ).toEqual([
-      'stagenet-vault-pool-payroll-test-1.json',
-      'stagenet-vault-pool-payroll-test-1.v1.json',
-      'stagenet-vault-pool-payroll-test-1.v2.json',
+      `${NETWORK}-vault-pool-payroll-test-1.json`,
+      `${NETWORK}-vault-pool-payroll-test-1.v1.json`,
+      `${NETWORK}-vault-pool-payroll-test-1.v2.json`,
     ]);
   });
 
@@ -365,7 +366,7 @@ describe('the pool is written whole or not at all', () => {
     const { signers: s } = signers();
     const store = storeIn(d);
     await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1));
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     writeFileSync(vaultPoolVersionFile(f, 9), JSON.stringify(sealPool(VAULT, { notes: [] }, s, 3)));
     await expect(store.get(VAULT),
       'RED WHEN: the record inside a filed file is trusted over the number it is filed under, so one file can occupy a version it never claimed')
@@ -384,7 +385,7 @@ describe('the pool is written whole or not at all', () => {
   it('reads a pool that exists only under the unnumbered name, and files the next version beside it', async () => {
     const d = dir();
     const { signers: s } = signers();
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     mkdirSync(d, { recursive: true });
     writeFileSync(f, JSON.stringify(sealPool(VAULT, { notes: [] }, s, 2)));
     const store = storeIn(d);
@@ -403,9 +404,9 @@ describe('the pool is written whole or not at all', () => {
 
   /** The name a version is filed under, and what is NOT one. */
   it('reads a version out of a filename strictly, or not at all', () => {
-    const f = vaultPoolFile('/s', 'stagenet', 'payroll-test-1');
-    expect(vaultPoolVersionFile(f, 7)).toBe('/s/stagenet-vault-pool-payroll-test-1.v7.json');
-    expect(versionFiledAs(f, 'stagenet-vault-pool-payroll-test-1.v7.json')).toBe(7);
+    const f = vaultPoolFile('/s', NETWORK, 'payroll-test-1');
+    expect(vaultPoolVersionFile(f, 7)).toBe(`/s/${NETWORK}-vault-pool-payroll-test-1.v7.json`);
+    expect(versionFiledAs(f, `${NETWORK}-vault-pool-payroll-test-1.v7.json`)).toBe(7);
     /*
      * RED WHEN: the digits are read with `Number`, which takes every one of
      * these. A version read loosely is a record filed under a number nothing
@@ -414,21 +415,21 @@ describe('the pool is written whole or not at all', () => {
      */
     for (const junk of ['.v.json', '.v 7.json', '.v7e2.json', '.v0x7.json', '.v07.json', '.v-7.json', '.v7.5.json', '.v0.json']) {
       expect(
-        versionFiledAs(f, `stagenet-vault-pool-payroll-test-1${junk}`),
+        versionFiledAs(f, `${NETWORK}-vault-pool-payroll-test-1${junk}`),
         `RED WHEN: "${junk}" is read as a version, which gives one claim two spellings and lets both writers file it`,
       ).toBeNull();
     }
     /* Another vault's record, in the same folder. */
-    expect(versionFiledAs(f, 'stagenet-vault-pool-payroll-test-2.v7.json')).toBeNull();
+    expect(versionFiledAs(f, `${NETWORK}-vault-pool-payroll-test-2.v7.json`)).toBeNull();
     /* The unnumbered record itself is not a numbered one. */
-    expect(versionFiledAs(f, 'stagenet-vault-pool-payroll-test-1.json')).toBeNull();
+    expect(versionFiledAs(f, `${NETWORK}-vault-pool-payroll-test-1.json`)).toBeNull();
   });
 
   it('takes the HIGHEST version filed, not the newest file or the first one listed', async () => {
     const d = dir();
     const { signers: s } = signers();
     const store = storeIn(d);
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1));
     for (const v of [2, 3, 4]) await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, v));
     expect(highestVersionFiled(f)).toBe(4);
@@ -517,7 +518,7 @@ describe('A WRITE THAT RETURNS IS ON THE DISK', () => {
     const d = dir();
     const { signers: s } = signers();
     const { calls, disk } = recording();
-    const store = new FileSealedPoolStore(vaultPoolFile(d, 'stagenet', 'payroll-test-1'), VAULT, disk);
+    const store = new FileSealedPoolStore(vaultPoolFile(d, NETWORK, 'payroll-test-1'), VAULT, disk);
     await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1));
     const at = (c: string) => calls.indexOf(c);
     expect(at('fsync file'), 'RED WHEN: the staged bytes are never flushed, so a power loss can leave a named, truncated version').toBeGreaterThan(-1);
@@ -533,7 +534,7 @@ describe('A WRITE THAT RETURNS IS ON THE DISK', () => {
     const d = dir();
     const { signers: s } = signers();
     const { disk } = recording({ fsyncOf: 'file' });
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     const store = new FileSealedPoolStore(f, VAULT, disk);
     await expect(store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1))).rejects.toThrow(/Nothing has been written/);
     expect(existsSync(vaultPoolVersionFile(f, 1)), 'RED WHEN: a version whose bytes were not flushed is named anyway').toBe(false);
@@ -544,7 +545,7 @@ describe('A WRITE THAT RETURNS IS ON THE DISK', () => {
     const d = dir();
     const { signers: s } = signers();
     const { disk } = recording({ fsyncOf: 'dir' });
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     const store = new FileSealedPoolStore(f, VAULT, disk);
     const refused = await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1)).then(() => null, (e: Error) => e);
     expect(refused?.message).toMatch(/was filed/);
@@ -555,7 +556,7 @@ describe('A WRITE THAT RETURNS IS ON THE DISK', () => {
   it('REFUSES a version past the next one, in the words every store uses, and names nothing on disk', async () => {
     const d = dir();
     const { signers: s } = signers();
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     const store = storeIn(d);
     await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1));
     await expect(store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 3)),
@@ -568,7 +569,7 @@ describe('A WRITE THAT RETURNS IS ON THE DISK', () => {
     const d = dir();
     const { signers: s } = signers();
     const { disk } = recording();
-    const f = vaultPoolFile(d, 'stagenet', 'payroll-test-1');
+    const f = vaultPoolFile(d, NETWORK, 'payroll-test-1');
     const store = new FileSealedPoolStore(f, VAULT, { ...disk, renameSync: () => { throw new Error('the disk refused the rename'); } });
     const refused = await store.put(VAULT, sealPool(VAULT, { notes: [] }, s, 1)).then(() => null, (e: Error) => e);
     expect(refused?.message, 'RED WHEN: a filed version whose plain-name copy failed is reported in words that do not say it was filed').toMatch(/was filed and is durable/);

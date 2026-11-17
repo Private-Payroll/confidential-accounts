@@ -3,7 +3,7 @@ import { TEST_MNEMONIC, WalletSeeds } from '@midnight-ntwrk/testkit-js';
 import { ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
 import { identityFromSecret, identityFromWords, newSecret } from '../keys/derivation.js';
 import { AddressError, addressFor, payeeAddress, samePayee, shortPayee } from './address.js';
-import { NETWORKS, isNetworkName, networkName } from './network.js';
+import { NETWORK, NETWORKS, isNetworkName, networkName } from './network.js';
 import { bech32m } from '@scure/base';
 
 /**
@@ -70,8 +70,8 @@ describe('the address a person is given at sign-up', () => {
   });
 
   it('round-trips through the parser it hands its own output to', () => {
-    const made = addressFor(ours.money.zswap, 'stagenet');
-    const parsed = payeeAddress(made.bech32, 'stagenet');
+    const made = addressFor(ours.money.zswap, NETWORK);
+    const parsed = payeeAddress(made.bech32, NETWORK);
     expect(samePayee(made, parsed)).toBe(true);
     expect(parsed.coinPublicKey).toBe(made.coinPublicKey);
   });
@@ -117,10 +117,10 @@ describe('an address somebody nominates — their own wallet', () => {
   });
 
   it('refuses an address for another network, and says which', () => {
-    const stagenet = addressFor(ours.money.zswap, 'stagenet');
-    expect(() => payeeAddress(stagenet.bech32, 'testnet')).toThrow(AddressError);
+    const compiled = addressFor(ours.money.zswap, NETWORK);
+    expect(() => payeeAddress(compiled.bech32, 'testnet')).toThrow(AddressError);
     try {
-      payeeAddress(stagenet.bech32, 'testnet');
+      payeeAddress(compiled.bech32, 'testnet');
     } catch (e) {
       expect((e as AddressError).code).toBe('wrong-network');
       expect((e as Error).message).toContain('testnet');
@@ -201,7 +201,7 @@ describe('what a person is shown before money moves', () => {
   it('compares two addresses by their one canonical value', () => {
     const a = addressFor(ours.money.zswap, 'testnet');
     const b = payeeAddress(TESTNET_ADDRESS, 'testnet');
-    const elsewhere = addressFor(ours.money.zswap, 'stagenet');
+    const elsewhere = addressFor(ours.money.zswap, NETWORK);
     expect(samePayee(a, b)).toBe(true);
     expect(samePayee(a, elsewhere)).toBe(false);
   });

@@ -1,23 +1,22 @@
 /**
- * V-82: HOW THE VAULT CLIENT MUST TALK TO MIDNIGHT-JS, PINNED AGAINST THE REAL
+ * HOW THE VAULT CLIENT MUST TALK TO MIDNIGHT-JS, PINNED AGAINST THE REAL
  * SDK AND THE REAL COMPILED VAULT — not against a fake of either.
  *
- * The defect this file exists to make impossible again: the payee's encryption
- * mapping was passed as a TRAILING argument. midnight-js reads it from one
- * place only — a `TransactionContext` in FIRST position, identified by a
- * module-private `unique symbol` and read through the method
- * `getAdditionalMappings()`. So the mapping was silently dropped, and the
- * options object became a thirteenth argument to a circuit that declares twelve.
+ * The payee's encryption mapping must NOT be passed as a TRAILING argument.
+ * midnight-js reads it from one place only — a `TransactionContext` in FIRST
+ * position, identified by a module-private `unique symbol` and read through the
+ * method `getAdditionalMappings()`. A trailing mapping is silently dropped, and
+ * the options object becomes an extra argument to a circuit that declares fewer.
  *
- * **Nothing caught it because the fake accepted any convention, and the comment
- * beside the fake wrote the wrong one down as fact.** So the two assertions
+ * **A fake that accepts any convention catches nothing.** So the two assertions
  * that matter here touch no fake at all:
  *
  *   1. the real `withContractScopedTransaction` builds a context that hands our
  *      mapping back, under the option name we use
  *   2. the real `contracts/managed-vault/compiler/contract-info.json` says
- *      `payout` takes twelve, and a thirteenth is refused
+ *      `payout` takes six, and a seventh is refused
  */
+import { onLedger9 } from '../testing/served-state.js';
 import { describe, it, expect } from 'vitest';
 import { arityFrom, assertArity, forgetArities } from './circuit-arity.js';
 import { planCall } from './vault-ledger.js';
@@ -44,7 +43,7 @@ describe('the mapping travels on the transaction context — against the real SD
      * context we inspected is the one a real call would receive.
      */
     await expect(withContractScopedTransaction(
-      {} as never,
+      onLedger9() as never,
       (async (txCtx: any) => {
         isMethod = typeof txCtx.getAdditionalMappings === 'function';
         fromContext = txCtx.getAdditionalMappings();
@@ -62,7 +61,7 @@ describe('the mapping travels on the transaction context — against the real SD
       await import('@midnight-ntwrk/midnight-js-contracts');
     let fromContext: unknown = 'unset';
     await expect(withContractScopedTransaction(
-      {} as never,
+      onLedger9() as never,
       (async (txCtx: any) => { fromContext = txCtx.getAdditionalMappings(); }) as never,
     )).rejects.toThrow(/No calls were submitted/);
     /*
@@ -80,11 +79,10 @@ describe('arity, against the vault\'s own compiled ABI', () => {
     forgetArities();
     expect(arityFrom(VAULT_ARTEFACTS)('payout')).toBe(6);
     /*
-     * ONE SINCE S6a, and this line is the guard that would catch a client still
-     * passing a blinding. `deposit` took the blinding as a second argument and
-     * the vault wrote down whatever it was handed; the circuit derives
-     * it now, so a second argument is a call the ABI refuses rather than a
-     * value nobody can reproduce.
+     * ONE ARGUMENT, and this line is the guard that would catch a client still
+     * passing a blinding. The vault would write down whatever blinding it was
+     * handed, so the circuit derives it, and a second argument is a call the ABI
+     * refuses rather than a value nobody can reproduce.
      */
     expect(arityFrom(VAULT_ARTEFACTS)('deposit')).toBe(1);
     /* And the split, which now carries its approved run, read from the same ABI. */
@@ -93,7 +91,7 @@ describe('arity, against the vault\'s own compiled ABI', () => {
   });
 
   /* THE DEFECT ITSELF. An options object appended to the arguments is one more. */
-  it('REFUSES A SEVENTH ARGUMENT, and the twelve the old payout took: this is V-82 in one line', () => {
+  it('REFUSES A SEVENTH ARGUMENT, and twelve, because the vault\'s payout takes six', () => {
     expect(() => assertArity(arityFrom(VAULT_ARTEFACTS), 'payout', 7))
       .toThrow(/circuit "payout" takes 6 argument\(s\), got 7/);
     expect(() => assertArity(arityFrom(VAULT_ARTEFACTS), 'payout', 12))
@@ -127,10 +125,10 @@ describe('arity, against the vault\'s own compiled ABI', () => {
 
 describe('THE CLIENT ITSELF, driven through the real scope with no seam overridden', () => {
   /*
-   * The seam `vault-ledger.test.ts` overrides — `scopedCall` — is what lets the
-   * client be driven without a node. **This test does not override it.** It runs
-   * the real `withContractScopedTransaction` and watches what the CIRCUIT
-   * receives, which is the only place the V-82 defect was ever visible.
+   * The seam the vault client's other tests override — `scopedCall` — is what
+   * lets the client be driven without a node. **This test does not override it.**
+   * It runs the real `withContractScopedTransaction` and watches what the CIRCUIT
+   * receives, which is the only place a wrong convention is visible.
    *
    * The scope throws at the end because no real call was submitted. That is
    * expected and asserted: by then the circuit has already been called, and
@@ -151,7 +149,7 @@ describe('THE CLIENT ITSELF, driven through the real scope with no seam overridd
      * ledger without one is refused before this convention is ever reached.
      */
     const ledger = new VaultLedger(
-      { networkId: 'preview' } as never, {} as never, async () => ({}) as never, {} as never,
+      { networkId: 'preview' } as never, {} as never, async () => onLedger9() as never, {} as never,
       { load: async () => ({ notes: [] }), save: async () => {} } as never,
       VAULT_ARTEFACTS, undefined,
       {
@@ -172,8 +170,8 @@ describe('THE CLIENT ITSELF, driven through the real scope with no seam overridd
 
     /* First: a real context, carrying the one method midnight-js reads off it. */
     expect(typeof (received[0] as any)?.getAdditionalMappings).toBe('function');
-    /* Then the circuit's own arguments — ONE for deposit since S6a, and nothing
-     * after. It used to be two; the blinding is derived in-circuit now. */
+    /* Then the circuit's own arguments: ONE for deposit, and nothing after,
+     * because the blinding is derived in-circuit. */
     expect(received).toHaveLength(2);
   });
 });
@@ -182,13 +180,12 @@ describe('THE TWO SEAMS THE FIX ITSELF LIVES ON, driven for real', () => {
   /*
    * WHY THESE EXIST, and it is uncomfortable enough to write down.
    *
-   * The first version of this fix could be REVERTED WITH THE WHOLE SUITE GREEN.
-   * Both test files override `connect` and one overrides `scopedCall`, so the
-   * two lines that actually carry V-82 — the witnesses going onto the
-   * `CompiledContract`, and the mapping going onto the scope — were executed by
-   * nothing. **That is the shape of V-82 reproduced one layer down**: the pure
-   * part pinned purely, the SDK part pinned in isolation, and the seam between
-   * them pinned by a stand-in. Found by an audit, not by the suite.
+   * The other vault client tests override `connect` and one overrides
+   * `scopedCall`, so the two lines that actually carry the convention — the
+   * witnesses going onto the `CompiledContract`, and the mapping going onto the
+   * scope — would be executed by nothing, and could be reverted with the whole
+   * suite green. That is the shape of a seam pinned only by a stand-in: the pure
+   * part pinned purely, the SDK part pinned in isolation, and nothing between.
    */
 
   /*
@@ -202,7 +199,7 @@ describe('THE TWO SEAMS THE FIX ITSELF LIVES ON, driven for real', () => {
 
     let seenByCircuit: unknown;
     const ledger: any = new VaultLedger(
-      { networkId: 'preview' } as never, {} as never, async () => ({}) as never, {} as never,
+      { networkId: 'preview' } as never, {} as never, async () => onLedger9() as never, {} as never,
       { load: async () => ({}), save: async () => {} } as never, VAULT_ARTEFACTS);
 
     const plan = planCall('payout', ['arg'], { [COIN]: ENC });

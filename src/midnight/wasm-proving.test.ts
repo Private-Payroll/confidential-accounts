@@ -63,6 +63,16 @@ describe('fileKeyMaterialSource', () => {
     expect(await src.lookupKey('credit')).toBeTruthy();
   });
 
+  it('refuses a circuit held only as text, which the prover cannot read', async () => {
+    const root = artefacts();
+    writeFileSync(join(root, 'keys', 'debit.prover'), 'PROVER');
+    writeFileSync(join(root, 'keys', 'debit.verifier'), 'VERIFIER');
+    writeFileSync(join(root, 'zkir', 'debit.zkir'), '{}');
+    const src = await fileKeyMaterialSource(root, params());
+    /* RED WHEN: a circuit with no binary form is read from its text form and handed to a prover that refuses it. */
+    await expect(src.lookupKey(`contract:${ADDR}/debit?vk=${VK}`)).rejects.toThrow(/debit\.bzkir/);
+  });
+
   it('reads the SRS under the name the container actually uses', async () => {
     // bls_midnight_*, not the bls_filecoin_* the proof server's own download
     // script fetches. Renamed upstream; both are tried.

@@ -29,7 +29,7 @@ import { Worker } from 'node:worker_threads';
 import * as CC from '@midnight-ntwrk/compact-js/effect/CompiledContract';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
-import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
+import { publicDataProviderAt } from '../src/midnight/providers.js';
 import { createUnprovenCallTxFromInitialStates } from '@midnight-ntwrk/midnight-js-contracts';
 import { ContractState } from '@midnight-ntwrk/compact-runtime';
 
@@ -41,22 +41,23 @@ import { ContractState } from '@midnight-ntwrk/compact-runtime';
  */
 const deserializeContractState =
   ContractState.deserialize as unknown as (bytes: Uint8Array, networkId: string) => any;
-import { ZswapChainState, LedgerParameters } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { ZswapChainState, LedgerParameters } from '@midnight-ntwrk/midnight-js-protocol/v9';
 
 import { Contract, pureCircuits } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
-import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
+import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { assetIdBytes, NIGHT } from '../src/core/assets.js';
 import { isDeployedCircuit } from '../src/midnight/deferral.js';
 import {
   previewSignersFile, readOrCreatePreviewSigners, signerBytes,
 } from './preview-signers.js';
+import { deploymentRecordPath, storeDir } from '../src/wiring/deployment.js';
 
 const ROOT = process.cwd();
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
 const NETWORK = theNetwork();
 
-const CONTRACT_FILE = join(ROOT, '.midnight', `${NETWORK}-contract.json`);
+const CONTRACT_FILE = deploymentRecordPath(ROOT, NETWORK);
 const PROVER = `http://localhost:${process.env.MIDNIGHT_PROVER_PORT || 6301}`;
 /** Per circuit. Two circuits, so the whole test is bounded at twice this. */
 const PER_CIRCUIT_MS = Number(process.env.MIDNIGHT_PROVE_TIMEOUT_MS || 4 * 60_000);
@@ -77,13 +78,13 @@ const seededBytes = (seed: number): Uint8Array => {
  * It fills the asset blinding, the proposal salt and the batch digest below —
  * values a measurement needs to be the same on two runs and that no seat
  * depends on. The two it USED to fill, `secretKey` and `blinding`, are read
- * from `.midnight/` instead.
+ * from the network's store folder instead.
  */
-const STATE_DIR = join(ROOT, '.midnight');
+const STATE_DIR = storeDir(ROOT, NETWORK);
 const ACCOUNT_ID = 'default';
 
 /**
- * **SIGNER A AND B ARE READ FROM `.midnight/`, NOT COMPUTED.**
+ * **SIGNER A AND B ARE READ FROM THE NETWORK'S STORE FOLDER, NOT COMPUTED.**
  *
  * Their identities used to be `seededBytes(1)`/`seededBytes(401)` and
  * `seededBytes(2)`/`seededBytes(402)` — a published formula, on signers seated
@@ -168,7 +169,6 @@ async function main() {
 
   if (!existsSync(CONTRACT_FILE)) throw new Error('no deployed contract; run DEPLOY-PREVIEW.command first');
   const { contractAddress } = JSON.parse(readFileSync(CONTRACT_FILE, 'utf8'));
-  await applyNetworkId(NETWORK);
 
   // The proof server has to be up, but nothing else does.
   const health = await fetch(`${PROVER}/health`).then((r) => r.ok).catch(() => false);
@@ -176,7 +176,7 @@ async function main() {
   good(`proof server responding at ${PROVER}`);
 
   const e = ENDPOINTS[NETWORK]!;
-  const publicData: any = indexerPublicDataProvider(e.indexerUrl, e.indexerWsUrl);
+  const publicData: any = await publicDataProviderAt(e);
   const tuple: any = await publicData.queryZSwapAndContractState(contractAddress);
   if (!tuple) throw new Error('the indexer has no state for this contract');
   const [zswapChainState, contractStateFromIndexer] = tuple;
@@ -184,7 +184,7 @@ async function main() {
 
   const contractState =
     contractStateFromIndexer ??
-    deserializeContractState(new Uint8Array(readFileSync(join(ROOT, '.midnight', `${NETWORK}-state.dump`))), NETWORK);
+    deserializeContractState(new Uint8Array(readFileSync(join(STATE_DIR, `${NETWORK}-state.dump`))), NETWORK);
 
   const compiled = CC.make('ConfidentialAccount', Contract as any).pipe(
     CC.withWitnesses(witnesses as any),

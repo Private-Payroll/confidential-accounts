@@ -3,7 +3,7 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromSecret, identityFromWords, newSecret } from '../keys/derivation.js';
 import { AddressError, addressFor, payeeAddress } from './address.js';
 import { AddressShapeError, checkShieldedAddress, checkUnshieldedAddress } from './address-shape.js';
-import { NETWORKS, type NetworkName } from './network.js';
+import { NETWORK, NETWORKS, type NetworkName } from './network.js';
 import { bech32m } from '@scure/base';
 
 /**
@@ -67,8 +67,8 @@ describe('the address check that carries no WebAssembly', () => {
      */
     let checked = 0;
     for (let i = 0; i < 60; i += 1) {
-      const made = addressFor(identityFromSecret(newSecret()).money.zswap, 'stagenet');
-      const a = checkShieldedAddress(made.bech32, 'stagenet');
+      const made = addressFor(identityFromSecret(newSecret()).money.zswap, NETWORK);
+      const a = checkShieldedAddress(made.bech32, NETWORK);
       expect(a.coinPublicKey).toBe(made.coinPublicKey);
       expect(a.encryptionPublicKey).toBe(made.encryptionPublicKey);
       expect(a.coinPublicKey).not.toBe(a.encryptionPublicKey);
@@ -78,13 +78,13 @@ describe('the address check that carries no WebAssembly', () => {
   });
 
   it('REFUSES A SINGLE MISTYPED CHARACTER, BECAUSE IT IS THE PLATFORM\'S OWN CHECKSUM', () => {
-    const made = addressFor(ours.money.zswap, 'stagenet').bech32;
+    const made = addressFor(ours.money.zswap, NETWORK).bech32;
     let refused = 0;
     for (let i = made.length - 40; i < made.length; i += 1) {
       const c = made[i] as string;
       const typo = made.slice(0, i) + (c === 'q' ? 'p' : 'q') + made.slice(i + 1);
-      expect(mirror(typo, 'stagenet')).toEqual(real(typo, 'stagenet'));
-      expect(mirror(typo, 'stagenet')).toMatchObject({ ok: false });
+      expect(mirror(typo, NETWORK)).toEqual(real(typo, NETWORK));
+      expect(mirror(typo, NETWORK)).toMatchObject({ ok: false });
       refused += 1;
     }
     expect(refused).toBe(40);
@@ -95,14 +95,14 @@ describe('the address check that carries no WebAssembly', () => {
      * paste of the wrong kind of thing — it is a real address of the right
      * shape for the wrong chain, and money sent to it is gone. */
     const preview = addressFor(ours.money.zswap, 'preview').bech32;
-    expect(() => checkShieldedAddress(preview, 'stagenet')).toThrow(AddressShapeError);
+    expect(() => checkShieldedAddress(preview, NETWORK)).toThrow(AddressShapeError);
     try {
-      checkShieldedAddress(preview, 'stagenet');
+      checkShieldedAddress(preview, NETWORK);
     } catch (e) {
       expect((e as AddressShapeError).code).toBe('wrong-network');
-      expect((e as Error).message).toContain('stagenet');
+      expect((e as Error).message).toContain(NETWORK);
     }
-    expect(mirror(preview, 'stagenet')).toEqual(real(preview, 'stagenet'));
+    expect(mirror(preview, NETWORK)).toEqual(real(preview, NETWORK));
   });
 
   it('REFUSES AN UNSHIELDED ADDRESS OF THE SAME WALLET AS THE WRONG KIND', () => {
@@ -110,20 +110,20 @@ describe('the address check that carries no WebAssembly', () => {
      * The substitution that matters and the one a wired-up-wrong producer
      * makes: both are addresses of one subwallet and both look right.
      */
-    const unshielded = 'mn_addr_stagenet1'
-      + addressFor(ours.money.zswap, 'stagenet').bech32.split('1').slice(1).join('1');
-    expect(mirror(unshielded, 'stagenet')).toMatchObject({ ok: false });
-    expect(mirror(unshielded, 'stagenet')).toEqual(real(unshielded, 'stagenet'));
+    const unshielded = `mn_addr_${NETWORK}1`
+      + addressFor(ours.money.zswap, NETWORK).bech32.split('1').slice(1).join('1');
+    expect(mirror(unshielded, NETWORK)).toMatchObject({ ok: false });
+    expect(mirror(unshielded, NETWORK)).toEqual(real(unshielded, NETWORK));
   });
 
   it('AGREES ON EVERY KIND OF RUBBISH, INCLUDING THE EMPTY ONE', () => {
     const junk = [
-      '', '   ', '\n', 'hello', 'mn_shield-addr_stagenet1', '0x' + '0'.repeat(64),
-      TEST_MNEMONIC, 'mn_shield-addr_stagenet1qqqqqqqq',
-      addressFor(ours.money.zswap, 'stagenet').bech32.toUpperCase(),
+      '', '   ', '\n', 'hello', `mn_shield-addr_${NETWORK}1`, '0x' + '0'.repeat(64),
+      TEST_MNEMONIC, `mn_shield-addr_${NETWORK}1qqqqqqqq`,
+      addressFor(ours.money.zswap, NETWORK).bech32.toUpperCase(),
     ];
     for (const value of junk) {
-      expect(mirror(value, 'stagenet')).toEqual(real(value, 'stagenet'));
+      expect(mirror(value, NETWORK)).toEqual(real(value, NETWORK));
     }
   });
 
@@ -133,25 +133,25 @@ describe('the address check that carries no WebAssembly', () => {
      * alone takes 32 bytes and any tail, so `real` then answers ok where
      * `mirror` refuses.
      */
-    const made = bech32m.decodeToBytes(addressFor(ours.money.zswap, 'stagenet').bech32).bytes;
+    const made = bech32m.decodeToBytes(addressFor(ours.money.zswap, NETWORK).bech32).bytes;
     for (const n of [32, 33, 63, 65, 96]) {
       const out = new Uint8Array(n);
       out.set(made.subarray(0, Math.min(n, 64)));
-      const odd = bech32m.encode('mn_shield-addr_stagenet', bech32m.toWords(out), false);
-      expect(mirror(odd, 'stagenet'), `${n} bytes`).toEqual({ ok: false, code: 'wrong-kind' });
-      expect(real(odd, 'stagenet'), `${n} bytes`).toEqual(mirror(odd, 'stagenet'));
+      const odd = bech32m.encode(`mn_shield-addr_${NETWORK}`, bech32m.toWords(out), false);
+      expect(mirror(odd, NETWORK), `${n} bytes`).toEqual({ ok: false, code: 'wrong-kind' });
+      expect(real(odd, NETWORK), `${n} bytes`).toEqual(mirror(odd, NETWORK));
     }
   });
 
   it('TRIMS WHAT SOMEBODY PASTED, BECAUSE PEOPLE PASTE WITH WHITESPACE', () => {
-    const made = addressFor(ours.money.zswap, 'stagenet').bech32;
-    expect(checkShieldedAddress(`  ${made}\n`, 'stagenet').bech32).toBe(made);
+    const made = addressFor(ours.money.zswap, NETWORK).bech32;
+    expect(checkShieldedAddress(`  ${made}\n`, NETWORK).bech32).toBe(made);
   });
 
   it('REFUSES A NETWORK THIS WALLET DOES NOT KNOW AS THE CALLER\'S MISTAKE', () => {
     /* Not an `AddressShapeError`: the address is not what is wrong, and a
      * refusal that named it would send somebody looking at the wrong value. */
-    const made = addressFor(ours.money.zswap, 'stagenet').bech32;
+    const made = addressFor(ours.money.zswap, NETWORK).bech32;
     expect(() => checkShieldedAddress(made, 'TESTNET' as NetworkName)).toThrow(/not a Midnight network/u);
   });
 });
@@ -178,8 +178,8 @@ describe('the public address check that carries no WebAssembly', () => {
       return { ok: false, code: (e as AddressShapeError).code };
     }
   };
-  const bytes = bech32m.decodeToBytes(addressFor(ours.money.zswap, 'stagenet').bech32).bytes.subarray(0, 32);
-  const made = (n: number, network: string | null = 'stagenet', type = 'addr'): string =>
+  const bytes = bech32m.decodeToBytes(addressFor(ours.money.zswap, NETWORK).bech32).bytes.subarray(0, 32);
+  const made = (n: number, network: string | null = NETWORK, type = 'addr'): string =>
     bech32m.encode(`mn_${type}${network === null ? '' : `_${network}`}`,
       bech32m.toWords(Uint8Array.from({ length: n }, (_, i) => bytes[i % 32]!)), false);
 
@@ -196,12 +196,12 @@ describe('the public address check that carries no WebAssembly', () => {
 
   it('REFUSES WHAT THE PLATFORM REFUSES: THE WRONG LENGTH, THE WRONG NETWORK, AND A SHIELDED ADDRESS', async () => {
     const cases: Array<[string, NetworkName, string]> = [
-      [made(31), 'stagenet', 'wrong-kind'], [made(33), 'stagenet', 'wrong-kind'], [made(64), 'stagenet', 'wrong-kind'],
-      [made(32, 'preview'), 'stagenet', 'wrong-network'],
-      [addressFor(ours.money.zswap, 'stagenet').bech32, 'stagenet', 'wrong-kind'],
+      [made(31), NETWORK, 'wrong-kind'], [made(33), NETWORK, 'wrong-kind'], [made(64), NETWORK, 'wrong-kind'],
+      [made(32, 'preview'), NETWORK, 'wrong-network'],
+      [addressFor(ours.money.zswap, NETWORK).bech32, NETWORK, 'wrong-kind'],
       /* Thirty-two bytes under the shielded type: only the KIND check refuses this one. */
-      [made(32, 'stagenet', 'shield-addr'), 'stagenet', 'wrong-kind'],
-      ['', 'stagenet', 'empty'], ['hello', 'stagenet', 'not-an-address'],
+      [made(32, NETWORK, 'shield-addr'), NETWORK, 'wrong-kind'],
+      ['', NETWORK, 'empty'], ['hello', NETWORK, 'not-an-address'],
     ];
     for (const [value, net, code] of cases) {
       /* RED WHEN the public check takes any length, any network, or the other kind. */

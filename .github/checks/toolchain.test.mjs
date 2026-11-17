@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import {
   COMPACTC_REPORTS,
   COMPACTC_VERSION,
+  PROOF_SERVER_IMAGE,
   installDir,
   releaseAsset,
   releaseUrl,
@@ -90,4 +91,15 @@ test('a compiler that says nothing at all is refused rather than accepted', () =
   for (const silence of ['', '   ', undefined, null]) {
     assert.equal(typeof versionProblem(silence), 'string', `silence of ${JSON.stringify(silence)} was accepted`);
   }
+});
+
+test('the proof server image is one exact release of Midnight\'s image, never a moving or candidate tag', () => {
+  // RED WHEN: a door starts "latest" or a release candidate, and two machines run different provers under one pin.
+  assert.match(PROOF_SERVER_IMAGE, /^midnightntwrk\/proof-server:\d+\.\d+\.\d+$/);
+});
+
+test('the compiler is pinned to an exact release number, and the binary reports the same one', () => {
+  // RED WHEN: a range or a candidate is pinned, so the fetched compiler and the one checked after it can differ.
+  assert.match(COMPACTC_VERSION, /^\d+\.\d+\.\d+$/);
+  assert.equal(COMPACTC_REPORTS, COMPACTC_VERSION);
 });

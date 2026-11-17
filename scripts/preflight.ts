@@ -8,18 +8,9 @@
  *
  * Run it with PREFLIGHT.command, or: npx tsx scripts/preflight.ts
  *
- * WAS `preflight-preview.mjs`, AND THAT COST A RUN.
- *
- * It carried its own copy of the endpoint table and its own idea of which
- * networks exist — including the old, wrong line telling anyone who was told
- * "stagenet" that it meant preview. Fixing `src/midnight/network.ts` therefore
- * did nothing here, and this was the one script plain enough that the
- * typecheck gate never covered it either.
- *
- * Now TypeScript, importing the one endpoint table, and inside the gate. The
- * same duplication has now bitten three times: deploy versus run on the sync
- * fix, the dust wallet in two places, and this. One source, or
- * it drifts.
+ * The endpoints come from the one endpoint table in `src/midnight/network.ts`, and the
+ * network is the one this build is compiled for, so nothing here keeps a table or a
+ * network name of its own.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -27,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 
 import { ENDPOINTS as ENDPOINTS_BY_NAME, theNetwork } from '../src/midnight/network.js';
+import { PROOF_SERVER_IMAGE } from '../.github/checks/toolchain.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -35,17 +27,10 @@ const E = ENDPOINTS_BY_NAME[NET];
 const ENDPOINTS = E && { indexer: E.indexerUrl, node: E.nodeUrl, faucet: E.faucetUrl };
 
 /**
- * The proof server this stack expects. Kept next to the network it belongs to.
- *
- * 9.0.0-rc.3 since 28 Aug 2026, was 9.0.0-rc.5_experimental. The pin is derived
- * from the running node — midnight-node@d9729c13/Cargo.toml:445 pins ledger tag
- * crate-ledger-9.1.0.0-rc.3, whose proof-server/Cargo.toml reads 9.0.0-rc.3 —
- * not from the Q2 delivery document, which is a draft edited forward of the
- * network it describes. rc.5 was published between ledger releases and is built
- * from none this node uses. `_experimental` is the zkir-v3 feature and is not
- * used here. docs/stagenet.md carries the derivation.
+ * The proof server image this stack expects: the one pin in
+ * `.github/checks/toolchain.mjs`. `MIDNIGHT_PROOF_IMAGE` overrides it for one run.
  */
-const PROOF_IMAGE = process.env.MIDNIGHT_PROOF_IMAGE || 'midnightntwrk/proof-server:9.0.0-rc.3';
+const PROOF_IMAGE = process.env.MIDNIGHT_PROOF_IMAGE || PROOF_SERVER_IMAGE;
 
 let passed = 0;
 let failed = 0;
@@ -84,7 +69,7 @@ const fetchJson = async (url, init, timeoutMs = 20000) => {
 
 line();
 line('\x1b[1m╭──────────────────────────────────────────────────────────────╮\x1b[0m');
-line('\x1b[1m│  Confidential Accounts — M-5 preflight                        │\x1b[0m');
+line('\x1b[1m│  Confidential Accounts — preflight                            │\x1b[0m');
 line(`\x1b[1m│  network: ${NET.padEnd(51)}│\x1b[0m`);
 line('\x1b[1m╰──────────────────────────────────────────────────────────────╯\x1b[0m');
 
@@ -98,9 +83,11 @@ if (!ENDPOINTS) {
 /* ---------------------------------------------------------------- */
 head('1. Toolchain');
 
-await check('node is 20 or newer', () => {
-  const major = Number(process.versions.node.split('.')[0]);
-  if (major < 20) throw new Error(`node ${process.versions.node} is too old`);
+await check('node is the major version .nvmrc names', () => {
+  const want = readFileSync(join(ROOT, '.nvmrc'), 'utf8').trim();
+  if (process.versions.node.split('.')[0] !== want.split('.')[0]) {
+    throw new Error(`node ${process.versions.node} runs here and .nvmrc names ${want}; install Node ${want}`);
+  }
   return `v${process.versions.node}`;
 });
 
@@ -144,17 +131,14 @@ await check(
 /* ---------------------------------------------------------------- */
 head('2. Network id — the thing that broke every transaction');
 
-await check('setNetworkId takes the lowercase name, not the ledger enum', async () => {
-  const { setNetworkId, getNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
+await check('the address codec takes the network\'s lowercase name, not the ledger enum', async () => {
   const { parseCoinPublicKeyToHex } = await import('@midnight-ntwrk/midnight-js-utils');
   const { ShieldedCoinPublicKey } = await import('@midnightntwrk/wallet-sdk-address-format');
 
   const addr = String(
     ShieldedCoinPublicKey.codec.encode(NET, new ShieldedCoinPublicKey(Buffer.alloc(32, 7))),
   );
-  setNetworkId(NET);
-  if (getNetworkId() !== NET) throw new Error(`getNetworkId() returned ${getNetworkId()}`);
-  parseCoinPublicKeyToHex(addr, getNetworkId()); // throws if the id shape is wrong
+  parseCoinPublicKeyToHex(addr, NET); // throws if the id shape is wrong
   return addr.slice(0, 30) + '…';
 });
 
@@ -241,7 +225,7 @@ head('Result');
 line(`  ${passed} passed, ${failed} failed`);
 line();
 if (blockers.length === 0) {
-  line('  \x1b[32mEverything M-5 needs is present on this machine.\x1b[0m');
+  line('  \x1b[32mEverything the deploy needs is present on this machine.\x1b[0m');
   line('  Next: the deploy script can run against ' + NET + '.');
 } else {
   line('  \x1b[31mBlocked on:\x1b[0m');

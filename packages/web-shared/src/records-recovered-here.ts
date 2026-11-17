@@ -364,9 +364,11 @@ type CarriedOutOnTheChain = 'landed' | 'another' | { readonly beaten: boolean; r
  * person's own wallet names, or null while it shows nothing of it:
  *   - `landed` once the head the recovery moves to is on the chain with its
  *     proposal closed;
- *   - beaten while the proposal stays open and the head has moved on from the
- *     one the call was built on - its own call moves the head only as it closes
- *     the proposal, so another anchor got there first;
+ *   - `beaten` while the proposal stays open and the head has moved on from
+ *     the one the call was built on - its own call moves the head only as it
+ *     closes the proposal, so another anchor got there first. The proposal is
+ *     read again once the head is seen moved, and whether this call's fee was
+ *     paid is read from that second reading;
  *   - refused while the proposal stays open, the head has not moved, and a
  *     call to `recoverAnchor` landed refused since this one was sent - read off
  *     its transaction's result (`failedCalls`): its time passed, who holds
@@ -379,14 +381,20 @@ type CarriedOutOnTheChain = 'landed' | 'another' | { readonly beaten: boolean; r
 const carriedOutOnTheChain = (
   doors: RecoveryDoors, chainId: string, previous: Hex, head: Hex, failedBefore: number,
 ) => async (): Promise<CarriedOutOnTheChain | null> => {
+  const paidIn = (s: { readonly failedCalls?: readonly string[] }): boolean =>
+    (s.failedCalls ?? []).filter((c) => c === 'recoverAnchor').length > failedBefore;
   const standing = await standingNow(doors, chainId);
   const { landed } = await doors.onChain();
   if (standing.held === 'open') {
-    const feePaid = (standing.failedCalls ?? []).filter((c) => c === 'recoverAnchor').length > failedBefore;
     const now = (landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head).toLowerCase();
-    if (now === previous) return feePaid ? { beaten: false, feePaid } : null;
-    /* The head moved: read the proposal again, so this device's own call landing between the two reads is not read as beaten. */
-    if ((await standingNow(doors, chainId)).held === 'open') return { beaten: true, feePaid };
+    if (now === previous) return paidIn(standing) ? { beaten: false, feePaid: true } : null;
+    /*
+     * The head moved: read the proposal again, so this device's own call landing between the two reads is not read
+     * as beaten, and whether its fee was paid is read from that second reading, which can hold the refused call the
+     * first was taken too early to see.
+     */
+    const again = await standingNow(doors, chainId);
+    if (again.held === 'open') return { beaten: true, feePaid: paidIn(again) };
   }
   if ((await doors.onChain()).landed.some((l) => l.head.toLowerCase() === head)) return 'landed';
   return standing.held === 'never' ? null : 'another';

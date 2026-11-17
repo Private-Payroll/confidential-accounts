@@ -128,6 +128,7 @@ else
   note "installation notes in compact/prerelease/README.md."
 fi
 
+PROOF_IMAGE="$(node "$(dirname "${BASH_SOURCE[0]}")/../.maintainer/pin.mjs" PROOF_SERVER_IMAGE)" || { echo "  the proof server image could not be read from the pin"; exit 1; }
 cat <<'EOF'
 
 Next
@@ -136,8 +137,10 @@ Next
   npm run compact          full compile with proving keys (minutes, needs egress
                            to Midnight's SRS bucket on first run)
 
-  docker run -d --name midnight-proof-server-9.0.0-rc.3 -p 6301:6300 \
-      midnightntwrk/proof-server:9.0.0-rc.3 midnight-proof-server
+EOF
+printf '  docker run -d --name midnight-proof-server-%s -p 6301:6300 \\\n' "${PROOF_IMAGE##*:}"
+printf '      %s midnight-proof-server\n' "$PROOF_IMAGE"
+cat <<'EOF'
                            (6301, not 6300: an 8.1.0 server has answered on 6300
                             on this machine and the two must not share a port)
 

@@ -1,11 +1,10 @@
 /**
- * **THE PASTED ADDRESS IS GONE FROM THE DOOR.** `docs/NEXT.md` X8 §2,
- * `docs/how-money-can-be-lost.md` `C153`.
+ * **THE PASTED ADDRESS IS GONE FROM THE DOOR.**
  *
- * `X7` built `POST /api/accounts/:id/self-payee` with `address: z.string()` on
- * it — the founder's own receiving address, typed into a box. It was safe on
+ * The door `POST /api/accounts/:id/self-payee` was built with `address: z.string()` on
+ * it — the company owner's own receiving address, typed into a box. It was safe on
  * that one door because the caller and the payee are the same person by
- * construction, **and `X7` said in as many words that it is a precedent that
+ * construction, **and it was said in as many words that it is a precedent that
  * must not spread to any door where they are not.**
  *
  * **WHAT IS BEING PROVED HERE IS AN ABSENCE**, which is why the body of the
@@ -18,7 +17,9 @@
  * right by definition. The deliberate defect for this route puts the door
  * back in and this is the test that dies.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
@@ -30,7 +31,7 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { addressFor, identityFromWords } from 'midnight-identity';
 import { newWrappingKeypair } from '../core/crypto.js';
 
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 /* The same declarations `unlock-company.test.ts` makes, and for the same
  * reasons: a simulated ledger, sessions in memory, no port served, and the
  * live connection string emptied rather than deleted. */
@@ -81,8 +82,8 @@ handInWiring({
 });
 
 const { app } = await importTheServer();
-/* The one the SERVER is running, worked out the same way it works it out —
- * `C151` is what a network name disagreeing across two applications costs. */
+/* The one the SERVER is running, worked out the same way it works it out;
+ * a network name disagreeing across two applications is what that costs. */
 const { theNetwork } = await import('../midnight/network.js');
 const NETWORK = theNetwork();
 
@@ -124,13 +125,12 @@ const call = async (
 
 let n = 20;
 /**
- * **SIGNED IN WITH A WALLET, WHICH IS WHAT `C153` WAS ALWAYS ABOUT.**
+ * **SIGNED IN WITH A WALLET, WHICH IS WHAT THIS WAS ALWAYS ABOUT.**
  *
- * This used to register with a password, and `X7`'s note says why that was
- * awkward from the start: *the walk had to use an email session, and the one
- * thing the product is being rebuilt around cannot complete the money path.*
- * The caller now has no email, which is the case `X8` §3 moved the cap onto —
- * so these tests are exercising the state the product actually produces rather
+ * This used to register with a password, which was awkward from the start: the
+ * walk had to use an email sign-in, and the one thing the product is built
+ * around could not complete the money path. The caller now has no email, which
+ * is the case the cap was moved onto, so these tests are exercising the state the product actually produces rather
  * than one only a deleted door could reach.
  */
 const withACompany = async () => {
@@ -150,7 +150,7 @@ const withACompany = async () => {
 
 /** The body this door took before a payee was a signed record: a name, a salary, the company's key, an address. */
 const theOldBody = (viewingKey: string) => ({
-  name: 'The Founder', title: 'Founder', asset: TEST_SETTLEMENT_ASSET, salary: '5500.00',
+  name: 'The Owner', title: 'Owner', asset: TEST_NETWORK_COLOUR, salary: '5500.00',
   viewingKey, wrappingPublicKey: newWrappingKeypair().publicKey, address: shielded,
 });
 

@@ -1,5 +1,5 @@
 import {
-  NoOpTransactionHistoryStorage, PublicKey, UnshieldedWallet, createKeystore,
+  DefaultForkSchedule, NoOpTransactionHistoryStorage, PublicKey, UnshieldedWallet, createKeystore,
 } from '@midnightntwrk/wallet-sdk';
 import type { UnshieldedWallet as RunningUnshieldedWallet } from '@midnightntwrk/wallet-sdk-unshielded-wallet';
 import type { UnshieldedKeystore } from '@midnightntwrk/wallet-sdk-unshielded-wallet';
@@ -74,9 +74,9 @@ export const shortUnshielded = (bech32: string): string => {
 
 /** The unshielded wallet for ONE account, through the right door. Exported
  * so the agreement test and the probe exercise what the app runs. */
-export function unshieldedWalletFor(
+export async function unshieldedWalletFor(
   identity: Identity, account: number,
-): RunningUnshieldedWallet {
+): Promise<RunningUnshieldedWallet> {
   return UnshieldedWallet({
     networkId: NETWORK,
     indexerClientConnection: {
@@ -84,6 +84,7 @@ export function unshieldedWalletFor(
       indexerWsUrl: INDEXER_WS_URL,
     },
     txHistoryStorage: new NoOpTransactionHistoryStorage(),
+    forks: DefaultForkSchedule,
   }).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystoreFor(identity, account)));
 }
 
@@ -124,8 +125,12 @@ const startUnshieldedRaw: BalanceEngine = (identity, account, onState) => {
   let wallet: RunningUnshieldedWallet | null = null;
   let subscription: { unsubscribe(): void } | null = null;
   let numberShown = false;
-  try {
-    wallet = unshieldedWalletFor(identity, account);
+  void (async (): Promise<void> => {
+    wallet = await unshieldedWalletFor(identity, account);
+    if (stopped) {
+      void wallet.stop().catch(() => { /* already stopping is fine */ });
+      return;
+    }
     subscription = wallet.state.subscribe({
       next: (state) => {
         const progress = state.progress;
@@ -150,9 +155,7 @@ const startUnshieldedRaw: BalanceEngine = (identity, account, onState) => {
     wallet.start().catch((e: unknown) => {
       if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
     });
-  } catch (e) {
-    tell({ name: 'failed', message: describeFailure(e) });
-  }
+  })().catch((e: unknown) => tell({ name: 'failed', message: describeFailure(e) }));
 
   return () => {
     stopped = true;

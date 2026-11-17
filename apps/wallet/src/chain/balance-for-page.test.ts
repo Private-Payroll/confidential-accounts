@@ -10,6 +10,8 @@ import {
 import type {
   BalanceDoors, FacadeForBalancing, LedgerForBalancing, UnboundTransactionLike, WalletPartForBalancing,
 } from './balance-for-page.js';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 /** A part of the wallet that has already read the chain to the end, and answers so the moment it is asked, as the SDK's replayed state does. */
 const aPartThatHasRead = (): WalletPartForBalancing & { readonly unsubscribed: number } => {
@@ -61,6 +63,11 @@ const handTimers = () => {
   };
 };
 
+/** What the facade is asked to balance with: when, and which kinds of token; none named means every kind, as the SDK reads it. */
+type BalanceOptions = { readonly ttl: Date; readonly tokenKindsToBalance?: 'all' | readonly string[] };
+const kindsOf = (o: BalanceOptions): string =>
+  (o.tokenKindsToBalance === undefined || o.tokenKindsToBalance === 'all' ? 'dust,shielded,unshielded' : o.tokenKindsToBalance.join(','));
+
 const settle = async (): Promise<void> => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
 
 const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
@@ -80,6 +87,7 @@ const txOf = (
   intents: new Map(segments.map((s) => [s, { actions }])),
   imbalances: (segment: number) => new Map(segment === 0 ? imbalances : []),
   guaranteedOffer: intoTheVault,
+  serialize: () => new Uint8Array([7]),
   ...shape,
 });
 const ledgerReturning = (tx: unknown): LedgerForBalancing & { asked: unknown[][] } => {
@@ -177,18 +185,20 @@ describe('WHAT THE WALLET READS BEFORE A PERSON IS SHOWN ANYTHING', () => {
 
 describe('THE PRESS', () => {
   const tx = txOf([deposit], [[{ tag: 'shielded', raw: GBP }, -1000n]]);
-  const doorsWith = (facade: Partial<FacadeForBalancing>, log: string[]): BalanceDoors => ({
+  const doorsWith = (facade: Record<string, unknown>, log: string[]): BalanceDoors => ({
     ledger: async () => ledgerReturning(tx),
     facade: async () => ({
-      balanceUnboundTransaction: async (_t, _k, options) => { log.push(`balance ${options.tokenKindsToBalance.join(',')} ttl=${options.ttl.getTime()}`); return 'recipe'; },
-      signRecipe: async (r) => { log.push(`sign ${String(r)}`); return 'signed'; },
-      finalizeRecipe: async (r) => { log.push(`finish ${String(r)}`); return { serialize: () => new Uint8Array([9, 9]) }; },
-      revert: async (r) => { log.push(`revert ${String(r)}`); },
+      state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+      adoptTransaction: (_bytes: Uint8Array, stage: string) => `${stage} handle`,
+      balanceUnboundTransaction: async (_t: unknown, options: BalanceOptions) => { log.push(`balance ${kindsOf(options)} ttl=${options.ttl.getTime()}`); return 'recipe'; },
+      signRecipe: async (r: unknown) => { log.push(`sign ${String(r)}`); return 'signed'; },
+      finalizeRecipe: async (r: unknown) => { log.push(`finish ${String(r)}`); return { serialize: () => new Uint8Array([9, 9]) }; },
+      revert: async (r: unknown) => { log.push(`revert ${String(r)}`); },
       shielded: aPartThatHasRead(),
       unshielded: aPartThatHasRead(),
       ...facade,
-    }) as FacadeForBalancing,
-    keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
+    }) as unknown as FacadeForBalancing,
+    dustKeys: () => ({}) as never,
     signSegment: () => async () => ({}) as never,
     now: () => 1_000,
   });
@@ -198,6 +208,21 @@ describe('THE PRESS', () => {
     expect(await payForThePage(doorsWith({}, log), tx)).toBe(base64FromBytes(new Uint8Array([9, 9])));
     expect(log).toEqual(['balance shielded ttl=1201000', 'sign recipe', 'finish signed']);
     expect([...PAGE_TOKEN_KINDS]).toEqual(['shielded']);
+  });
+
+  it('A PRIVATE DEPOSIT NEVER SPENDS THE PERSON\'S PUBLIC NIGHT OR DUST: it is balanced from private coins alone', async () => {
+    /* The facade balances every kind of token a balance does not name. This one holds the person's coins of each kind
+     * and spends from every kind the balance is asked for. */
+    const held: Record<string, bigint> = { shielded: 5_000n, unshielded: 5_000n, dust: 5_000n };
+    const facade = {
+      balanceUnboundTransaction: async (_t: unknown, o: BalanceOptions) => {
+        for (const kind of kindsOf(o).split(',')) held[kind] = held[kind]! - 1_000n;
+        return 'recipe';
+      },
+    };
+    await payForThePage(doorsWith(facade, []), tx);
+    /* RED WHEN: the private deposit's balance names no token kinds, or names the public one or DUST. */
+    expect(held).toEqual({ shielded: 4_000n, unshielded: 5_000n, dust: 5_000n });
   });
 
   it('a signature or a finish that fails lets the booking go, and the failure is the one reported', async () => {
@@ -236,6 +261,19 @@ describe('THE PRESS', () => {
     expect(broke.at(-1)).toBe('revert recipe');
   });
 
+  it('A FACADE HELD BEFORE THIS WALLET\'S LEDGER READS NOTHING AND PAYS NOTHING, AND SAYS WHAT CLEARS IT', async () => {
+    // RED WHEN: the page's transaction is handed to a facade still acting before the production v9 fork, which reads it with the earlier ledger
+    const log: string[] = [];
+    const adopted: unknown[] = [];
+    const behind = doorsWith({
+      state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 - 1n }),
+      adoptTransaction: (bytes: Uint8Array) => { adopted.push(bytes); return 'handle'; },
+    }, log);
+    await expect(payForThePage(behind, tx)).rejects.toThrow(/could not learn from the network which ledger version.*asks the network again.*Nothing has been paid/su);
+    expect(adopted).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
   it('a balance that fails books nothing, so nothing is let go', async () => {
     const log: string[] = [];
     await expect(payForThePage(doorsWith({
@@ -247,16 +285,18 @@ describe('THE PRESS', () => {
 
 describe('THE WALLET READS THE CHAIN BEFORE IT PAYS', () => {
   const tx = txOf([deposit], [[{ tag: 'shielded', raw: GBP }, -1000n]]);
-  const doorsOver = (parts: Partial<FacadeForBalancing>, log: string[]): BalanceDoors => ({
+  const doorsOver = (parts: Record<string, unknown>, log: string[]): BalanceDoors => ({
     ledger: async () => ledgerReturning(tx),
     facade: async () => ({
-      balanceUnboundTransaction: async (_t, _k, o) => { log.push(`balance ${o.tokenKindsToBalance.join(',')}`); return 'recipe'; },
+      state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+      adoptTransaction: (_bytes: Uint8Array, stage: string) => `${stage} handle`,
+      balanceUnboundTransaction: async (_t: unknown, o: BalanceOptions) => { log.push(`balance ${kindsOf(o)}`); return 'recipe'; },
       signRecipe: async () => { log.push('sign'); return 'signed'; },
       finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([9]) }; },
       revert: async () => { log.push('revert'); },
       ...parts,
-    }) as FacadeForBalancing,
-    keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
+    }) as unknown as FacadeForBalancing,
+    dustKeys: () => ({}) as never,
     signSegment: () => async () => ({}) as never,
     now: () => 1_000,
   });

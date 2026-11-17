@@ -42,7 +42,12 @@
  * being paid for. So every piece is resolved before the object exists, and a
  * piece that cannot be resolved is a refusal rather than a hole.
  */
+import {
+  MIN_CHARACTER_CLASSES, MIN_PASSWORD_LENGTH, PasswordValidationError, validatePassword,
+} from '@midnight-ntwrk/midnight-js-utils';
 import { loadMaintenanceAuthority } from '../midnight/authority-file.js';
+import { theNetwork } from '../midnight/network.js';
+import { storeDir } from './deployment.js';
 import { compiledAccountContract } from '../midnight/compiled-account.js';
 import type { CustomerWallet } from '../midnight/providers.js';
 import type { FeeSponsor } from '../midnight/ledger.js';
@@ -83,13 +88,15 @@ export interface HandedParties {
  * line that changes and every caller keeps working, because none of them ever
  * held the value.
  *
- * **IT REFUSES RATHER THAN DEFAULTING, AND IT REFUSES WHEN IT IS CALLED.** A
- * key with a default is a store every deployment can open. Refusing at the
- * moment of use rather than at startup is deliberate: a deployment that will
- * never write should not be stopped from reading because a key it does not need
- * is absent.
+ * **IT REFUSES RATHER THAN DEFAULTING.** A key with a default is a store every
+ * deployment can open. An absent key is refused when the store is first needed,
+ * so a deployment that never writes is not stopped by a key it does not need. A
+ * key that is set but too weak for the store is refused here, when the
+ * deployment starts, because the store would refuse it only at its first write.
  */
 export function storagePasswordFrom(env: NodeJS.ProcessEnv): () => Promise<string> {
+  const set = env.MIDNIGHT_PRIVATE_STATE_PASSWORD;
+  if (set) refuseAKeyTheStoreWouldRefuse(set);
   return async () => {
     const key = env.MIDNIGHT_PRIVATE_STATE_PASSWORD;
     if (!key) {
@@ -102,6 +109,20 @@ export function storagePasswordFrom(env: NodeJS.ProcessEnv): () => Promise<strin
     return key;
   };
 }
+
+/** Refuses a private-state key the store would refuse, by the store's own rule, saying what a usable one is. */
+const refuseAKeyTheStoreWouldRefuse = (key: string): void => {
+  try {
+    validatePassword(key);
+  } catch (e) {
+    if (!(e instanceof PasswordValidationError)) throw e;
+    throw new Error(
+      `MIDNIGHT_PRIVATE_STATE_PASSWORD is set, and the private state store would refuse it (${e.reason}), so this `
+      + 'deployment did not start. Set it to at least ' + `${MIN_PASSWORD_LENGTH} characters drawn from at least `
+      + `${MIN_CHARACTER_CLASSES} kinds (lowercase, uppercase, digits, symbols), with no long run of one character `
+      + 'and no run of sequential ones.');
+  }
+};
 
 /** Where the compiled artefacts live, relative to a deployment's root. */
 export const artifactsIn = (root: string): string => `${root}/contracts/managed`;
@@ -158,7 +179,7 @@ export async function deploymentWriteCapability(
      * picked one for itself would be the exact failure the record exists to
      * prevent.
      */
-    maintenanceAuthority: loadMaintenanceAuthority(root),
+    maintenanceAuthority: loadMaintenanceAuthority(storeDir(root, theNetwork(env))),
     compiled: await compiledAccountContract(artifactsIn(root)),
     customer,
     sponsor,

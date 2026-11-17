@@ -18,6 +18,8 @@ import { ApproveBalance } from './approve-balance.js';
 import { Approve } from './approve.js';
 import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '../chain/balance-for-page.js';
 import { A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT, readWhatThePageAsks } from '../chain/balance-for-page.js';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 /*
  * The screen a person sees when a company's page asks this wallet to pay for a
@@ -74,17 +76,20 @@ const heldBalance = () => {
   return { balanceUnboundTransaction: async () => { await held; return 'recipe'; }, release: () => release('recipe') };
 };
 
-const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}, actions: unknown[] = [{ address: VAULT, entryPoint: 'deposit' }]) => (): BalanceDoors => ({
+const doorsWith = (log: string[], facade: Record<string, unknown> = {}, actions: unknown[] = [{ address: VAULT, entryPoint: 'deposit' }]) => (): BalanceDoors => ({
   ledger: async () => ({
     Transaction: {
       deserialize: () => ({
         intents: new Map([[1, { actions }]]),
         guaranteedOffer: { inputs: [], transients: [], outputs: [{ contractAddress: VAULT }] },
         imbalances: (s: number) => new Map(s === 0 ? [[{ tag: 'shielded', raw: TOKEN }, -2500n]] : []),
+        serialize: () => new Uint8Array([1]),
       }),
     },
   }),
   facade: async () => ({
+    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+    adoptTransaction: () => 'handle',
     balanceUnboundTransaction: async () => { log.push('balance'); return 'recipe'; },
     signRecipe: async () => { log.push('sign'); return 'signed'; },
     finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([4, 2]) }; },
@@ -92,8 +97,8 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}, acti
     shielded: read(),
     unshielded: read(),
     ...facade,
-  }) as FacadeForBalancing,
-  keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
+  }) as unknown as FacadeForBalancing,
+  dustKeys: () => ({}) as never,
   signSegment: () => async () => ({}) as never,
   now: () => NOW,
 });
@@ -331,7 +336,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
 });
 
 /** Doors the test can tell apart, stop, and watch proofs through. */
-const trackedDoors = (log: string[], facade: Partial<FacadeForBalancing> = {}, extra: Partial<BalanceDoors> = {}) => {
+const trackedDoors = (log: string[], facade: Record<string, unknown> = {}, extra: Partial<BalanceDoors> = {}) => {
   const stopped: number[] = [];
   const proofs = new Set<(e: { op: 'prove' | 'check'; at: 'start' | 'end' }) => void>();
   const make = doorsWith(log, facade);

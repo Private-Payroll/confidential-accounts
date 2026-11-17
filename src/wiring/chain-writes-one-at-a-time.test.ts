@@ -12,16 +12,17 @@ import { WalletFeeSponsor, type SponsorWallet } from '../midnight/sponsor.js';
 import type { SponsoredFee } from '../midnight/sponsored-fees.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const DEPLOYMENT: Deployment = {
-  network: 'stagenet',
+  network: NETWORK,
   contractAddress: 'bcb61fef',
   indexerUrl: 'https://indexer.example/api/v4/graphql',
   indexerWsUrl: 'wss://indexer.example/api/v4/graphql/ws',
   nodeUrl: 'https://rpc.example',
   proverUrl: 'http://prover.invalid:1',
   sealedStateRoot: '/nowhere/.midnight/sealed',
-  privateStateId: 'confidential-accounts-stagenet',
+  privateStateId: `confidential-accounts-${NETWORK}`,
   zkConfigPath: '/nowhere/contracts/managed',
   vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 };
@@ -141,7 +142,7 @@ describe('writes over one fee payer wait their turn', () => {
     const records: SponsoredFee[] = [];
     let n = 0;
     const wallet: SponsorWallet = {
-      shieldedSecretKeys: 'k', dustSecretKey: 'd',
+      handleOf: (tx: unknown) => tx as never, ledgerTransactionOf: (tx: unknown) => tx,
       estimateFee: async () => 100n,
       balanceFinalizedTransaction: async (tx: unknown) => ({ recipe: tx }),
       /* Declares no DUST spent, and still reads as the id it was balanced for. */

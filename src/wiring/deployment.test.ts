@@ -10,10 +10,11 @@
  * under that change before it was written down.
  */
 import { describe, it, expect } from 'vitest';
+import { NETWORK } from 'midnight-identity/network';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveDeployment, deployment } from './deployment.js';
+import { resolveDeployment, deployment, deploymentRecordPath, serviceStorePath, storeDir } from './deployment.js';
 
 const ENDPOINTS = {
   indexerUrl: 'https://indexer.example/api/v4/graphql',
@@ -22,9 +23,9 @@ const ENDPOINTS = {
 };
 
 const good = {
-  network: 'stagenet' as const,
-  record: { network: 'stagenet', contractAddress: 'bcb61fef' },
-  recordPath: '/somewhere/.midnight/stagenet-contract.json',
+  network: NETWORK,
+  record: { network: NETWORK, contractAddress: 'bcb61fef' },
+  recordPath: `/somewhere/.midnight/${NETWORK}-contract.json`,
   endpoints: ENDPOINTS,
   proverUrl: 'http://prover.invalid:1',
   stateRoot: '/somewhere',
@@ -36,10 +37,10 @@ describe('a deployment resolves from one place or it refuses', () => {
   it('resolves when every fact has its one home', () => {
     const d = resolveDeployment(good);
     expect(d.contractAddress).toBe('bcb61fef');
-    expect(d.network).toBe('stagenet');
+    expect(d.network).toBe(NETWORK);
     expect(d.indexerUrl).toBe(ENDPOINTS.indexerUrl);
     expect(d.proverUrl).toBe('http://prover.invalid:1');
-    expect(d.privateStateId).toBe('confidential-accounts-stagenet');
+    expect(d.privateStateId).toBe(`confidential-accounts-${NETWORK}`);
   });
 
   /*
@@ -70,26 +71,45 @@ describe('a deployment resolves from one place or it refuses', () => {
     expect(d.vaultZkConfigPath).toBe('/somewhere/contracts/managed-vault');
   });
 
+  /*
+   * RED WHEN a path of a network's store is built outside that network's store folder, or two networks share one
+   * folder: a run on one network would then read or write another network's records and seeds.
+   */
+  it('every file of a network\'s store is in that network\'s own folder, and no two networks share one', () => {
+    expect(storeDir('/r', 'preprod')).toBe(join('/r', '.midnight', 'preprod'));
+    expect(storeDir('/r', 'preview')).not.toBe(storeDir('/r', NETWORK));
+    expect(deploymentRecordPath('/r', 'preprod')).toBe(join(storeDir('/r', 'preprod'), 'preprod-contract.json'));
+    expect(serviceStorePath('/r', 'preprod')).toBe(join(storeDir('/r', 'preprod'), 'beta.json'));
+    expect(resolveDeployment(good).sealedStateRoot).toBe(join(storeDir('/somewhere', NETWORK), 'sealed'));
+  });
+
   it('the sealed root and the private state id both name the network', () => {
-    const stagenet = resolveDeployment(good);
+    const compiled = resolveDeployment(good);
     const preview = resolveDeployment({
       ...good, network: 'preview',
       record: { network: 'preview', contractAddress: 'bcb61fef' },
     });
-    expect(stagenet.sealedStateRoot).not.toBe(preview.sealedStateRoot);
-    expect(stagenet.sealedStateRoot).toContain('stagenet');
+    expect(compiled.sealedStateRoot).not.toBe(preview.sealedStateRoot);
+    expect(compiled.sealedStateRoot).toContain(NETWORK);
     expect(preview.sealedStateRoot).toContain('preview');
-    expect(stagenet.privateStateId).not.toBe(preview.privateStateId);
+    expect(compiled.privateStateId).not.toBe(preview.privateStateId);
   });
 
   /*
-   * RED WHEN: the `!record` branch is removed from `resolveDeployment`. Watched:
-   * without it the function reads `record.network` off `null` and the test sees
-   * a TypeError about reading a property instead of a sentence naming the file.
+   * RED WHEN: a missing record is refused again, or read as if present.
+   * Companies on a chain are founded from their signers' browsers and this
+   * service deploys none, so a fresh network has no record; the deployment
+   * still resolves, with no address of its own.
    */
-  it('refuses when no deployment has been recorded, and names the file', () => {
-    expect(() => resolveDeployment({ ...good, record: null }))
-      .toThrow(/record of what was deployed there is not at .*stagenet-contract\.json/);
+  it('resolves with no address when no deployment has been recorded', () => {
+    const d = resolveDeployment({ ...good, record: null });
+    expect(d.contractAddress).toBeNull();
+    expect(d.network).toBe(NETWORK);
+  });
+
+  it('still refuses a missing proof server when no record is there either', () => {
+    expect(() => resolveDeployment({ ...good, record: null, proverUrl: undefined }))
+      .toThrow(/no proof server is configured/);
   });
 
   /*
@@ -101,7 +121,7 @@ describe('a deployment resolves from one place or it refuses', () => {
   it('refuses a record written for another network, and names both', () => {
     expect(() => resolveDeployment({
       ...good, record: { network: 'preview', contractAddress: 'bcb61fef' },
-    })).toThrow(/written for "preview".*signs people in on "stagenet"/s);
+    })).toThrow(new RegExp(`written for "preview".*signs people in on "${NETWORK}"`, 's'));
   });
 
   /*
@@ -109,13 +129,13 @@ describe('a deployment resolves from one place or it refuses', () => {
    * a blank string, or the field is defaulted anywhere.
    */
   it('refuses a record with no contract address', () => {
-    expect(() => resolveDeployment({ ...good, record: { network: 'stagenet' } }))
+    expect(() => resolveDeployment({ ...good, record: { network: NETWORK } }))
       .toThrow(/carries no contract address/);
   });
 
   it('refuses a record whose address is blank rather than absent', () => {
     expect(() => resolveDeployment({
-      ...good, record: { network: 'stagenet', contractAddress: '   ' },
+      ...good, record: { network: NETWORK, contractAddress: '   ' },
     })).toThrow(/carries no contract address/);
   });
 
@@ -125,7 +145,7 @@ describe('a deployment resolves from one place or it refuses', () => {
    */
   it('refuses a network with no endpoints rather than guessing one', () => {
     expect(() => resolveDeployment({ ...good, endpoints: undefined }))
-      .toThrow(/no indexer and node are known for "stagenet"/);
+      .toThrow(`no indexer and node are known for "${NETWORK}"`);
   });
 
   /*
@@ -149,7 +169,7 @@ describe('a deployment resolves from one place or it refuses', () => {
   it('carries the values it was given rather than values of its own', () => {
     const d = resolveDeployment({
       ...good,
-      record: { network: 'stagenet', contractAddress: 'aaaa0000' },
+      record: { network: NETWORK, contractAddress: 'aaaa0000' },
       proverUrl: 'http://prover.elsewhere:7777',
     });
     expect(d.contractAddress).toBe('aaaa0000');
@@ -173,13 +193,13 @@ describe('a deployment resolves from one place or it refuses', () => {
    */
   it('the reader points at contracts/managed and contracts/managed-vault', () => {
     const root = mkdtempSync(join(tmpdir(), 'mn-s116-deploy-'));
-    mkdirSync(join(root, '.midnight'), { recursive: true });
+    mkdirSync(storeDir(root, NETWORK), { recursive: true });
     writeFileSync(
-      join(root, '.midnight', 'stagenet-contract.json'),
-      JSON.stringify({ network: 'stagenet', contractAddress: 'bcb61fef' }));
+      deploymentRecordPath(root, NETWORK),
+      JSON.stringify({ network: NETWORK, contractAddress: 'bcb61fef' }));
 
     const d = deployment(root, {
-      MIDNIGHT_NETWORK_ID: 'stagenet',
+      MIDNIGHT_NETWORK_ID: NETWORK,
       MIDNIGHT_PROVER_URL: 'http://prover.invalid:1',
     } as NodeJS.ProcessEnv);
 

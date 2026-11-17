@@ -73,12 +73,16 @@ class World {
   }
 
   async call(circuit: string, ...args: unknown[]): Promise<void> {
-    const provider = {
-      getContractState: async (_b: string, address: unknown) =>
-        String(address) === String(this.sim.address) ? (this.sim.contractStateForCall as never) : undefined,
-    };
-    const ctx = createCircuitContext<VaultPrivate>(circuit as never, this.addr as never, BLOCK, this.state as never, this.priv,
-      provider as never, undefined, undefined, NOW, BLOCK);
+    const ctx = createCircuitContext<VaultPrivate>({
+        circuitId: circuit as never,
+        contractAddress: this.addr as never,
+        coinPublicKeyOrZswapState: BLOCK,
+        contractState: this.state as never,
+        privateState: this.priv,
+        crossContract: this.sim.crossContract(),
+        time: NOW,
+        parentBlockHash: BLOCK,
+      });
     const out = await (this.vault.impureCircuits as Record<string, (...a: unknown[]) => Promise<{ context: { callContext: { currentQueryContext: { state: ChargedState } } } }>>)[circuit]!(ctx, ...args);
     this.state = out.context.callContext.currentQueryContext.state;
     try { this.sim.adoptFromCall(out.context as never); } catch { /* a sealed copy's call does not reach the account: nothing to carry forward */ }

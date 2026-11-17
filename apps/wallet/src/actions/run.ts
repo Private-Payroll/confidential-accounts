@@ -438,6 +438,45 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     keep: (change: (current: Keyring) => Keyring) => keepInTurn(at, change),
   }));
 
+  /* After a cut, what the step already handed over decides how the action ends. */
+  const afterTheCut = async (raced: { readonly of: 'cut'; readonly why: ActStop }, ran: Promise<Raced>): Promise<RunEnded> => {
+    /* A transaction already with the page is waited for, so the counts say what the page did with it. */
+    closed = true;
+    cut.abort();
+    await queue;
+    if (latched !== null) return finish(latched, current);
+    if (raced.why !== 'stopped') return finish(raced.why, current);
+    /* After Stop, a step that is only finishing what it already handed over may still finish, and counts as done. */
+    const bound = Math.max(0, Math.min(RELAY_PATIENCE_MS, deadline - now()));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const after = await Promise.race([
+      ran, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), bound); }),
+    ]).finally(() => clearTimeout(timer));
+    if (latched !== null) return finish(latched, current);
+    if (after?.of !== 'ran') return finish(raced.why, current);
+    return current === total ? finish(null, total) : finish(raced.why, current + 1);
+  };
+  /* After a step settles, a latched stop or a failed step ends the action; null lets the next step run. */
+  const afterTheStep = async (raced: Exclude<Raced, { readonly of: 'cut' }>): Promise<RunEnded | null> => {
+    await queue;
+    if (latched !== null) {
+      /* A step that says why its refused transaction was refused keeps its words; the end still says it was refused. */
+      if (raced.of === 'failed' && raced.error instanceof StepRefused) says = raced.error.words;
+      return finish(latched, current);
+    }
+    if (raced.of === 'failed') {
+      if (raced.error instanceof StepRefused) {
+        says = raced.error.words;
+        refusedCode = raced.error.code;
+        return finish('check-failed', current);
+      }
+      /* A step that could not go around a service giving no answer stops as that, so the page says it may have been sent. */
+      const why = raced.error instanceof ActionStopped ? raced.error.why : serviceNotReached(raced.error) ? 'no-call-answer' : 'step-failed';
+      return finish(why, current);
+    }
+    return null;
+  };
+
   let beat: ReturnType<typeof setInterval> | undefined;
   try {
     const steps = definition.steps(request.intent);
@@ -491,39 +530,9 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
         })
         .finally(() => { stepSettled = true; });
       const raced = await Promise.race([ran, outside.then((why) => ({ of: 'cut' as const, why }))]);
-      if (raced.of === 'cut') {
-        /* A transaction already with the page is waited for, so the counts say what the page did with it. */
-        closed = true;
-        cut.abort();
-        await queue;
-        if (latched !== null) return finish(latched, current);
-        if (raced.why !== 'stopped') return finish(raced.why, current);
-        /* After Stop, a step that is only finishing what it already handed over may still finish, and counts as done. */
-        const bound = Math.max(0, Math.min(RELAY_PATIENCE_MS, deadline - now()));
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const after = await Promise.race([
-          ran, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), bound); }),
-        ]).finally(() => clearTimeout(timer));
-        if (latched !== null) return finish(latched, current);
-        if (after?.of !== 'ran') return finish(raced.why, current);
-        return current === steps.length ? finish(null, total) : finish(raced.why, current + 1);
-      }
-      await queue;
-      if (latched !== null) {
-        /* A step that says why its refused transaction was refused keeps its words; the end still says it was refused. */
-        if (raced.of === 'failed' && raced.error instanceof StepRefused) says = raced.error.words;
-        return finish(latched, current);
-      }
-      if (raced.of === 'failed') {
-        if (raced.error instanceof StepRefused) {
-          says = raced.error.words;
-          refusedCode = raced.error.code;
-          return finish('check-failed', current);
-        }
-        /* A step that could not go around a service giving no answer stops as that, so the page says it may have been sent. */
-        const why = raced.error instanceof ActionStopped ? raced.error.why : serviceNotReached(raced.error) ? 'no-call-answer' : 'step-failed';
-        return finish(why, current);
-      }
+      if (raced.of === 'cut') return await afterTheCut(raced, ran);
+      const over = await afterTheStep(raced);
+      if (over !== null) return over;
     }
     return finish(null, total);
   } catch (e) {

@@ -1,8 +1,8 @@
 /**
  * WHAT EVERY WAIT IN THIS SUITE IS ALLOWED TO TAKE.
  *
- * **COPIED FROM `packages/identity/src/test-setup.ts`, WITH ITS REASONING, WHEN `X10`
- * GAVE THIS REPOSITORY A SCREEN ENVIRONMENT AT ALL.** The lesson below cost the
+ * **COPIED FROM `packages/identity/src/test-setup.ts`, WITH ITS REASONING, WHEN
+ * THIS REPOSITORY GOT A SCREEN ENVIRONMENT AT ALL.** The lesson below cost the
  * wallet two false alarms and a probe to close; payroll starts with it rather
  * than learning it again in six weeks.
  *
@@ -26,9 +26,8 @@
  *
  * ── AND THE DISCIPLINE THAT COMES WITH IT, WHICH IS THE HALF THAT MATTERS ──
  *
- * **THIS NUMBER IS A FLOOR UNDER A MISTAKE, NOT A LICENCE TO POLL.** `X9`, and
- * `C134`'s own closing note: *a race is proved by reproducing it, never by
- * waiting for it.* The wallet still carries **fifty-six `waitFor` and `findBy*`
+ * **THIS NUMBER IS A FLOOR UNDER A MISTAKE, NOT A LICENCE TO POLL.** A race is proved by reproducing it, never by
+ * waiting for it. The wallet still carries **fifty-six `waitFor` and `findBy*`
  * calls in two files**, every one able to lose a race, and every one of them
  * now has to be unpicked. **Payroll starts without them.** Await the thing —
  * the promise, the event, the settled call — and if there is nothing to await,
@@ -44,5 +43,19 @@
  * first line and nothing else pays for jsdom.
  */
 import { configure } from '@testing-library/dom';
+import { NETWORK_IDS, networkRecord } from './core/networks.js';
 
 configure({ asyncUtilTimeout: 5000 });
+
+/**
+ * **A PROJECT ID ONLY A TEST KNOWS, FOR EVERY NETWORK WHOSE RECORD NAMES A PROJECT SETTING.**
+ * A network that answers only a caller naming a project refuses to give its endpoints
+ * while that setting is empty, and the wallet reads them when it is imported, so a build
+ * compiled for such a network cannot be loaded by a test that has no value for it. The
+ * name comes off the record, the value reaches no network, and a setting the shell
+ * already holds is left alone.
+ */
+for (const id of NETWORK_IDS) {
+  const token = networkRecord(id).endpoints?.projectToken ?? null;
+  if (token !== null && (process.env[token.setting] ?? '') === '') process.env[token.setting] = `a project id only a test knows: ${id}`;
+}

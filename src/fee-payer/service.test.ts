@@ -42,13 +42,13 @@ const handles = (): TransactionCodec => {
 
 type Call = { method: string; args: unknown[] };
 
-const wallet = (calls: Call[], over: Partial<SponsorWallet> = {}): SponsorWallet => ({
-  shieldedSecretKeys: 'k', dustSecretKey: 'd',
+const wallet = (calls: Call[], over: Record<string, unknown> = {}): SponsorWallet => <SponsorWallet><unknown>({
+  handleOf: (tx: unknown) => tx as never, ledgerTransactionOf: (tx: unknown) => tx,
   estimateFee: async () => 10n,
-  balanceFinalizedTransaction: async (tx) => { calls.push({ method: 'balance', args: [tx] }); return { recipe: tx }; },
+  balanceFinalizedTransaction: async (tx: unknown) => { calls.push({ method: 'balance', args: [tx] }); return { recipe: tx }; },
   finalizeRecipe: async (r: any) => ({ paid: r.recipe, intents: new Map([[1, { dustActions: { spends: [{ vFee: 10n }] } }]]) }),
-  submitTransaction: async (tx) => { calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
-  revert: async (b) => { calls.push({ method: 'revert', args: [b] }); },
+  submitTransaction: async (tx: unknown) => { calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
+  revert: async (b: unknown) => { calls.push({ method: 'revert', args: [b] }); },
   paidFee: async () => 9n,
   balances: async () => ({ dust: 123n, night: 45n }),
   ...over,
@@ -72,7 +72,7 @@ interface Rig {
   lastBooking: () => string;
 }
 
-const rig = async (over: Partial<SponsorWallet> = {}, ceiling = 100n, clock: { at: number | null } = { at: null }): Promise<Rig> => {
+const rig = async (over: Record<string, unknown> = {}, ceiling = 100n, clock: { at: number | null } = { at: null }): Promise<Rig> => {
   const calls: Call[] = [];
   const records: SponsoredFee[] = [];
   const payers: FeeSponsor[] = [];
@@ -204,7 +204,7 @@ describe('the fee payer service', () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
     const r = await rig({
-      balanceFinalizedTransaction: async (tx) => { await gate; return { recipe: tx }; },
+      balanceFinalizedTransaction: async (tx: unknown) => { await gate; return { recipe: tx }; },
     });
     r.client.payingFor('acc_one');
     const first = r.client.addFeeAndFinalise({ n: 1 }, soon());
@@ -250,7 +250,7 @@ describe('the fee payer service', () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
     const r = await rig({
-      submitTransaction: async (tx) => { await gate; r.calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
+      submitTransaction: async (tx: any) => { await gate; r.calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
     });
     r.client.payingFor('acc_one');
     const first = r.client.submit(await r.client.addFeeAndFinalise({ n: 1 }, soon()));
@@ -272,7 +272,7 @@ describe('the fee payer service', () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
     const r = await rig({
-      submitTransaction: async (tx) => { await gate; r.calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
+      submitTransaction: async (tx: any) => { await gate; r.calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
     });
     r.client.payingFor('acc_one');
     await r.client.addFeeAndFinalise({ n: 1 }, soon());
@@ -295,7 +295,7 @@ describe('the fee payer service', () => {
   it('and a booking being released is not submitted', async () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
-    const r = await rig({ revert: async (b) => { await gate; r.calls.push({ method: 'revert', args: [b] }); } });
+    const r = await rig({ revert: async (b: any) => { await gate; r.calls.push({ method: 'revert', args: [b] }); } });
     r.client.payingFor('acc_one');
     const paid = await r.client.addFeeAndFinalise({ n: 1 }, soon());
     const releasing = r.client.release(paid);
@@ -349,7 +349,7 @@ describe('the fee payer service', () => {
     let refuse = true;
     const clock = { at: null as number | null };
     const r = await rig({
-      revert: async (b) => { r.calls.push({ method: 'revert', args: [b] }); if (refuse) throw new Error('the vendor refused'); },
+      revert: async (b: any) => { r.calls.push({ method: 'revert', args: [b] }); if (refuse) throw new Error('the vendor refused'); },
     }, 100n, clock);
     r.client.payingFor('acc_one');
     const deadline = soon();
@@ -380,7 +380,7 @@ describe('the fee payer service', () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
     const r = await rig({
-      submitTransaction: async (tx) => { await gate; r.calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
+      submitTransaction: async (tx: any) => { await gate; r.calls.push({ method: 'submit', args: [tx] }); return 'ref-1'; },
     });
     r.client.payingFor('acc_one');
     const submitting = r.client.submit(await r.client.addFeeAndFinalise({ n: 1 }, soon()));

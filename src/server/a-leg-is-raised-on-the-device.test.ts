@@ -68,12 +68,14 @@ vi.mock('vaults-web-shared/vault-page-doors.js', async (importOriginal) => {
 });
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { describe, it as runnerIt, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { canonical, commit, fromHex, newWrappingKeypair, randomBytes, toHex, type Hex, type Sealed } from '../core/crypto.js';
-import { NIGHT, TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+import { NIGHT } from '../core/assets.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import { signedFoundingState } from '../core/founding-state.js';
 import { newProposalId, paysCommitmentOf, signProposalFiling, type SignedProposalFiling } from '../core/proposal-filing.js';
@@ -207,12 +209,12 @@ const installClock = (): void => {
 };
 const WINDOW = { opensAt: String(NOW + 3600), closesAt: String(NOW + 7200) };
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
-const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
+const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
-const aPayee = async (n: number, paidAt = n, paid: { address: string; asset: string } = { address: addressOf(paidAt), asset: TEST_SETTLEMENT_ASSET }) => {
+const aPayee = async (n: number, paidAt = n, paid: { address: string; asset: string } = { address: addressOf(paidAt), asset: TEST_NETWORK_COLOUR }) => {
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: paid.address, payslipKey: newWrappingKeypair().publicKey });
   const made = await inviteHere(ACME, ADA, 'employee', { ...pay(n), asset: paid.asset as never }, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
@@ -497,7 +499,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     /* RED WHEN: any request of the raise carries a payment's amount in any written form, its token or its currency's name in the clear. */
     expect(leaves.filter((l) => [...amounts].some((a) => writtenIn(l, a)))).toEqual([]);
     expect(leaves.filter((l) => tokens.has(l))).toEqual([]);
-    expect(leaves.filter((l) => l === String(TEST_SETTLEMENT_ASSET).toLowerCase())).toEqual([]);
+    expect(leaves.filter((l) => l === String(TEST_NETWORK_COLOUR).toLowerCase())).toEqual([]);
     /* RED WHEN: any request of the raise carries a payee's name or address in the clear. */
     for (const n of [...names, ...addresses]) expect(sent.filter((w) => w.toLowerCase().includes(n.toLowerCase()))).toEqual([]);
     /*
@@ -507,12 +509,12 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const stored = store.getProposal(round.id)!.pays!;
     const payments = leg.facts!.map((f) => paymentChecked(f));
     const fromTheSalt = commit(canonical({
-      domain: 'confidential-accounts/proposal-filing/v1/pays', vault: VAULT.toLowerCase(), asset: String(TEST_SETTLEMENT_ASSET).toLowerCase(),
+      domain: 'confidential-accounts/proposal-filing/v1/pays', vault: VAULT.toLowerCase(), asset: String(TEST_NETWORK_COLOUR).toLowerCase(),
       payments: paymentsCheckedDigest(payments),
     }), String(body.salt).toLowerCase() as Hex);
     expect(stored).not.toBe(fromTheSalt);
     /* RED WHEN: the commitment is not keyed with the company's asset blinding, which every signer's device holds. */
-    expect(stored).toBe(paysCommitmentOf({ vault: VAULT, asset: TEST_SETTLEMENT_ASSET, payments }, String(body.salt), STATE_BLINDING.assetBlinding));
+    expect(stored).toBe(paysCommitmentOf({ vault: VAULT, asset: TEST_NETWORK_COLOUR, payments }, String(body.salt), STATE_BLINDING.assetBlinding));
   });
 
   it('THE RUN AS RAISED AND ITS PROPOSAL ARE ENTERED IN THE COMPANY\'S RECORDS BY ADA\'S SEAT, AND HER DEVICE ANCHORS ONCE FOR THE RUN', async () => {
@@ -580,7 +582,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
       await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...asked })).rejects.toBeInstanceOf(LegNotRaisedHere);
       expect(filedNow()).toEqual(before);
     }
-    policy = { threshold: 1, limitsByRole: { admin: { [TEST_SETTLEMENT_ASSET]: { perTransaction: 1000n } } } };
+    policy = { threshold: 1, limitsByRole: { admin: { [TEST_NETWORK_COLOUR]: { perTransaction: 1000n } } } };
     /* RED WHEN: the device does not apply the company's own ceilings the service applied when it raised runs. */
     await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE })).rejects.toThrow(/per-transaction/);
     policy = { threshold: 1, limitsByRole: {} };
@@ -692,7 +694,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const [body] = await twoRaisesHeld();
     const post = (b: unknown) => sendAs('ada')(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify(b) });
     const before = filedNow();
-    const named = { vault: VAULT, asset: TEST_SETTLEMENT_ASSET, payments: [{ kind: 'shielded', token: '11'.repeat(32), amount: '700061' }] };
+    const named = { vault: VAULT, asset: TEST_NETWORK_COLOUR, payments: [{ kind: 'shielded', token: '11'.repeat(32), amount: '700061' }] };
     /* RED WHEN: the service takes a raise beside a list of its payments, as it once did to check the vault's public money. */
     const declaring = await post({ ...body, pays: named });
     expect(declaring.status).toBe(400);
@@ -912,7 +914,7 @@ const legOf = (id: string) => {
 const aPolicyOnTheVault = (terms: {
   bands: Array<{ ceiling: string; approvals: string }>; periodLimit: string; periodStart: string; periodLength: string;
 }): void => {
-  const asset = assetIdHex(TEST_SETTLEMENT_ASSET);
+  const asset = assetIdHex(TEST_NETWORK_COLOUR);
   const opening = { terms, blinding: 'b5'.repeat(32) };
   const keys = spendingPolicyKeysOf({ accountPure: P }, { vault: VAULT, asset, assetBlinding: STATE_BLINDING.assetBlinding, policy: opening });
   const signers = [ADA, BO].map((x) => ({ id: x.seat, wrappingPublicKey: recordsKeypairFrom(new Uint8Array(32).fill(x.n + 100)).publicKey }));
@@ -1228,7 +1230,7 @@ describe('THE RAISE CHECKS ARE ONE LIST, RUN WHERE A ROUND IS RAISED AND AGAIN W
   it('AN APPROVER REFUSES A LEG OVER THE COMPANY\'S CEILING, AND THE REFUSAL DOES NOT SAY THE SERVICE APPLIES IT', async () => {
     const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
     /* The company's own ceiling, as the approving device reads it now, is lower than the leg pays. */
-    policy = { threshold: 1, limitsByRole: { admin: { [TEST_SETTLEMENT_ASSET]: { perTransaction: 1000n } } } };
+    policy = { threshold: 1, limitsByRole: { admin: { [TEST_NETWORK_COLOUR]: { perTransaction: 1000n } } } };
     const refused = await approvingOn(recordsOn(BO), round.id).catch((e: Error) => e);
     /* RED WHEN: an approver does not run the ceiling the raiser ran, judged for the seat that filed the proposal. */
     expect(String((refused as Error).message)).toMatch(/this company's own policy, which the chain does not apply: .* per-transaction .* for role "admin"/u);
@@ -1415,7 +1417,7 @@ const AFTER_THE_CHANGE = Object.freeze({
 describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAID ON EVERY STAYING DEVICE, AND THE SIGNER WHO LEFT OPENS NOTHING FILED AFTER', () => {
   /* First, while every record of the company is still sealed under the founding key. */
   it('EVERY OLDER RECORD STILL OPENS UNDER ITS OWN EPOCH\'S KEY ON A STAYING DEVICE', async () => {
-    const before = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET });
+    const before = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_NETWORK_COLOUR });
     /* RED WHEN: a proposal sealed before the change no longer opens on a device holding the new key. */
     await expect(openTheRoundHere(storedFor(BO), CO, before.id, AFTER_THE_CHANGE, false, recordsOn(BO))).resolves.toMatchObject({ vault: VAULT });
     /* RED WHEN: the people, the state or a run sealed before the change are opened with the key in force. */
@@ -1435,7 +1437,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
     /* RED WHEN: a run is drawn under the key in force without asking whether sealing is paused. */
     await expect(drawRunHere({ ...drawingOn(ADA), viewingKey: paused }, { period: nextPeriod() })).rejects.toThrow(CompanyKeyBeingChanged);
     /* RED WHEN: a run and its proposal are sealed while sealing is paused, readable by the signer who left. */
-    await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET, viewingKey: paused })).rejects.toThrow(CompanyKeyBeingChanged);
+    await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_NETWORK_COLOUR, viewingKey: paused })).rejects.toThrow(CompanyKeyBeingChanged);
     expect(filedNow()).toEqual(before);
     /* RED WHEN: a person invited while sealing is paused is sealed under the key the signer who left holds. */
     await expect(inviteHere({ ...ACME, viewingKey: paused } as InvitingCompany, ADA, 'employee', pay(78), ORIGIN, fromAda)).rejects.toThrow(CompanyKeyBeingChanged);
@@ -1447,7 +1449,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
   });
 
   it('EVERY READER HANDS THE ONE CHECK THE EPOCH ITS RECORD WAS SEALED AT, SO ONE SEALED UNDER AN OLDER KEY THAN THE ONE IN FORCE IS REFUSED', async () => {
-    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET });
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_NETWORK_COLOUR });
     oneCheck.inForce = 1;
     try {
       /* RED WHEN: the people's reader hands the check no epoch, so a person sealed under the key the signer who left holds is believed. */
@@ -1468,7 +1470,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
   });
 
   it('A LEG RAISED BEFORE THE KEY CHANGED IS BUILT AGAIN AND RETRIED AFTER IT UNDER THE SEED IT WAS RAISED UNDER, AND THE PAY RECORD KEY STAYS THE SAME', async () => {
-    const before = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET });
+    const before = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_NETWORK_COLOUR });
     const leg = legOf(runId);
     expect(leg.epoch).toBe(0);
     /* RED WHEN: another staying device builds a leg raised before the change again under the seed in force now, so every leaf differs and no payment of the approved leg is accepted. */
@@ -1494,7 +1496,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
      * RED WHEN: a retry raised after the change derives its leaves from the seed in force now rather than from the leg's
      * own, or a device building it again takes the seed epoch from the epoch the record is sealed at.
      */
-    const round = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, asset: TEST_SETTLEMENT_ASSET, viewingKey: AFTER_THE_CHANGE, indices: [1] });
+    const round = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, asset: TEST_NETWORK_COLOUR, viewingKey: AFTER_THE_CHANGE, indices: [1] });
     expect(store.getRun(runId)!.keyEpoch).toBe(2);
     const { made: again } = await runRebuiltHere(recordsOn(BO), CO, round.id, AFTER_THE_CHANGE);
     expect(again.identity.epoch).toBe(0);
@@ -1504,7 +1506,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
   it('A RUN DRAWN UNDER THE OLD KEY IS RAISED UNDER THE NEW ONE, ANOTHER STAYING DEVICE BUILDS IT AGAIN AND PAYS IT, THE OLD KEY OPENS NONE OF IT, AND A PERSON INVITED AFTER IS SEALED UNDER THE NEW KEY', async () => {
     /* The run drawn before the change, under the founding key, as every older record is. */
     expect(store.getRun(runId)!.keyEpoch).toBe(0);
-    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET, viewingKey: AFTER_THE_CHANGE });
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_NETWORK_COLOUR, viewingKey: AFTER_THE_CHANGE });
     const kept = store.getRun(runId)!;
     const proposal = store.getProposal(round.id)!;
     /* RED WHEN: a run or its proposal is sealed at the epoch of a key the signer who left still holds. */
@@ -1517,7 +1519,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
     expect(made.identity.epoch).toBe(2);
     await expect(openTheRoundHere(storedFor(BO), CO, round.id, AFTER_THE_CHANGE, false, recordsOn(BO))).resolves.toMatchObject({ vault: VAULT });
     /* RED WHEN: the paying device cannot make the run again from the records after the change. */
-    await expect(privatePaymentsHere(recordsOn(BO), CO, runId, AFTER_THE_CHANGE, PAYING, { asset: TEST_SETTLEMENT_ASSET })).resolves.toMatchObject({ proposal: proposal.chainId });
+    await expect(privatePaymentsHere(recordsOn(BO), CO, runId, AFTER_THE_CHANGE, PAYING, { asset: TEST_NETWORK_COLOUR })).resolves.toMatchObject({ proposal: proposal.chainId });
     /* RED WHEN: the signer who left, holding only the founding key, opens the proposal raised after the change. */
     await expect(openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO))).rejects.toThrow(/cannot read the company's record of this proposal/u);
     /* RED WHEN: the company's keys cross to the service on any request of the raise. */

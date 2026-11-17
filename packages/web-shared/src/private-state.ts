@@ -16,7 +16,7 @@
  *
  *   THE SIGNER'S OWN MATERIAL   their secret key, their blinding, their scope,
  *                    and the rights record a scope other than every vault's is.
- *                    Held in memory for the length of a session, put there by
+ *                    Held in memory for as long as the person is signed in, put there by
  *                    the person unlocking their own keyring, and composed into
  *                    a record at the moment a circuit asks for one. **It is
  *                    never written to anything, on any machine, including this
@@ -31,7 +31,7 @@
  *                    this module's.
  *
  * `get` puts the two together. `set` takes them apart again and writes only the
- * second. The first half makes the round trip and lands nowhere.
+ * second. The first half goes in and comes back out and lands nowhere.
  *
  * -- THE WRITE NOBODY MAKES ON PURPOSE, WHICH IS WHY `set` IS NOT A PASS-THROUGH
  *
@@ -78,28 +78,28 @@
  * WHICH IS SAID HERE RATHER THAN ASSUMED AWAY.** One field of the account's
  * half - the account's asset blinding - is written when a company is OPENED and
  * by nothing else, so a signer seated afterwards has a half without it. Answering
- * with a composed record is what lets that signer approve; it is also what stops
- * the refusal that used to fire when a device held no record at all. A proposal
+ * with a composed record is what lets that signer approve; it is also why no
+ * refusal fires when a device holds no record at all. A proposal
  * raised from such a device reaches the circuit and fails inside it on a field
  * that is not there, before any proof and before any fee, in words that name
  * none of this. **Rebuilding that half on the device that needs it is the work
  * this does not do**, and until it is done a second signer can approve and
  * cannot raise.
  *
- * -- THE CONTRACT ADDRESS IS AN ARGUMENT AND NOT A REMEMBERED FIELD ---------
+ * -- EVERY READ AND WRITE NAMES ITS COMPANY ---------------------------------
  *
- * The scheme's own interface carries the address as a setter, and every store
- * behind it keeps it in a mutable field that whichever entry point ran last has
- * written. A read that inherits the wrong one answers with another contract's
- * record. This file honours the setter because the scheme calls it, and then
- * passes the address DOWN as an argument on every call, so the store underneath
- * cannot answer under an address nobody asked it for.
+ * The scheme reaches private state one contract at a time (`forContract`), and
+ * the address it names is passed DOWN to the store on every call, so the store
+ * underneath cannot answer under an address nobody asked it for. Nothing here
+ * reaches across companies: clearing every company's material at once is
+ * refused, as is everything that would move a record on or off this device.
  */
-import type { PrivateStateProvider } from '@midnight-ntwrk/midnight-js-types';
+import type { ContractPrivateStates, PrivateStateProvider } from '@midnight-ntwrk/midnight-js-types';
 
 import type { AccountPrivateState, SignerRights } from '../../../contracts/src/witnesses.js';
 import { rightsScopeOf, type RightsRecord } from '../../../src/core/seat-rights.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
+import { contractAddressOrRefuse } from '../../../src/core/contract-address.js';
 import {
   persistableAccountHalf,
   refuseToPersistWhatMustNotBeStored,
@@ -279,7 +279,7 @@ const rightsAsTheCircuitReadsThem = (material: SignerMaterial): SignerRights | n
 };
 
 /**
- * The signer's material, for as long as a session lasts and no longer.
+ * The signer's material, for as long as the person stays signed in and no longer.
  *
  * **A MAP ON ONE THREAD. IT REACHES NO STORAGE INTERFACE OF ANY KIND**, which
  * is a property of this class rather than of how it happens to be used: there
@@ -294,7 +294,7 @@ const rightsAsTheCircuitReadsThem = (material: SignerMaterial): SignerRights | n
 export class SignerMaterialHeldInMemory {
   private readonly held = new Map<string, SignerMaterial>();
 
-  /** Puts one account's material within reach of the calls this session makes. */
+  /** Puts one account's material within reach of the calls made while the person is signed in. */
   hold(privateStateId: string, material: SignerMaterial): void {
     this.held.set(privateStateId, material);
   }
@@ -304,7 +304,7 @@ export class SignerMaterialHeldInMemory {
     this.held.delete(privateStateId);
   }
 
-  /** Signing out, or a session ending. */
+  /** Signing out. */
   releaseAll(): void {
     this.held.clear();
   }
@@ -316,17 +316,6 @@ export class SignerMaterialHeldInMemory {
 
 /** Where the signer's material is looked up, so a caller can supply any holder. */
 export type SignerMaterialSource = (privateStateId: string) => SignerMaterial | null;
-
-/**
- * The message a caller meets when the address has not been set.
- *
- * The scheme sets it before every read and write it makes, so meeting this
- * means a caller reached the store directly and skipped that step - which would
- * otherwise answer with whichever contract happened to be addressed last.
- */
-export const NO_CONTRACT_ADDRESSED =
-  'a company\'s call material was asked for before it was said which contract the call is ' +
-  'against. Nothing has been read: answering would risk answering from another company.';
 
 /**
  * **AND NO VALUE MAY BE WRITTEN THAT IS A COPY OF THE SIGNER'S OWN MATERIAL,
@@ -372,7 +361,7 @@ export const refuseToWriteTheSignersOwnMaterial = (
 };
 
 export interface DerivedPrivateStateOptions {
-  /** Where this session's signer material is held. Memory, and nothing else. */
+  /** Where the signed-in person's signer material is held. Memory, and nothing else. */
   signerMaterial: SignerMaterialSource;
   /** Where the account's half is kept. The caller's decision, not this file's. */
   accountHalf: AccountHalfStore;
@@ -388,13 +377,6 @@ export interface DerivedPrivateStateOptions {
 export const derivedPrivateState = (
   options: DerivedPrivateStateOptions,
 ): PrivateStateProvider<string, ComposedRecord> => {
-  let contractAddress: string | null = null;
-
-  const addressed = (): string => {
-    if (contractAddress === null) throw new Error(NO_CONTRACT_ADDRESSED);
-    return contractAddress;
-  };
-
   /**
    * What no store's answer may contribute, whatever it contains.
    *
@@ -424,69 +406,95 @@ export const derivedPrivateState = (
     );
   };
 
+  /*
+   * **AN EXPORT OF A COMPOSED RECORD IS AN EXPORT OF A SIGNING KEY**, because
+   * composing is what a read here does - so the one operation this whole file
+   * exists to make impossible would be available, in a single call, to anything
+   * holding this object. And an IMPORT is the other direction of the same
+   * hazard: a record arriving from elsewhere is a record somebody else chose
+   * the contents of, including the two fields that forge a membership path.
+   * Both are refused, so whatever reaches one is told why instead of receiving
+   * a record.
+   */
+  const exportPrivateStates = refuse(
+    'copying a company\'s call material off this device',
+    'It contains this signer\'s own key, which exists in one place on purpose and is ' +
+      'not copied out. Nothing has been written or sent.',
+  );
+  const importPrivateStates = refuse(
+    'loading a company\'s call material from somewhere else',
+    'The signer\'s own key is read from this device\'s keyring at the moment it is ' +
+      'needed, and the rest is staged by the call that needs it. Nothing has been saved.',
+  );
+
+  /** One company's call material, reached under the address the scheme named, in lower case. */
+  const forContract = (contractAddress: string): ContractPrivateStates<string, ComposedRecord> => {
+    const address = contractAddressOrRefuse(contractAddress, 'the contract whose private state was asked for');
+    return {
+      contractAddress: address,
+
+      /**
+       * The record for one call, composed at the moment it is asked for.
+       *
+       * **`null` MEANS THIS DEVICE HOLDS NO SEAT ON THAT ACCOUNT**, and it is the
+       * honest answer rather than a composed record with nothing in it: the
+       * scheme turns it into a refusal naming the record it looked for, which is
+       * a sentence a reader can act on. A record composed from no material would
+       * instead run the circuit against values that prove nothing and fail inside
+       * it, naming none of this.
+       */
+      async get(privateStateId) {
+        const material = options.signerMaterial(privateStateId);
+        if (material === null) return null;
+        return compose(await options.accountHalf.get(address, privateStateId), material);
+      },
+
+      /**
+       * Keeps the account's half and drops everything else.
+       *
+       * **THE REFUSAL HERE IS A CONTROL AND NOT A GUARD.** What removes the five
+       * is the line above it; this one can only fire if that line has stopped
+       * removing them, which is exactly the change that would otherwise ship
+       * silently and be discovered as a signing key in a database.
+       */
+      async set(privateStateId, state) {
+        const half = persistableAccountHalf(state);
+        refuseToPersistWhatMustNotBeStored(
+          half,
+          'saving what this company\'s last call staged, on this device',
+        );
+        refuseToWriteTheSignersOwnMaterial(half, options.signerMaterial(privateStateId));
+        await options.accountHalf.set(address, privateStateId, half);
+      },
+
+      async remove(privateStateId) {
+        await options.accountHalf.remove(address, privateStateId);
+      },
+
+      /** This company's half, and no other company's. */
+      async clear() {
+        await options.accountHalf.clear(address);
+      },
+
+      exportPrivateStates,
+      importPrivateStates,
+    };
+  };
+
   return {
-    setContractAddress(address) {
-      contractAddress = address;
-    },
-
-    /**
-     * The record for one call, composed at the moment it is asked for.
-     *
-     * **`null` MEANS THIS DEVICE HOLDS NO SEAT ON THAT ACCOUNT**, and it is the
-     * honest answer rather than a composed record with nothing in it: the
-     * scheme turns it into a refusal naming the record it looked for, which is
-     * a sentence a reader can act on. A record composed from no material would
-     * instead run the circuit against values that prove nothing and fail inside
-     * it, naming none of this.
-     */
-    async get(privateStateId) {
-      const address = addressed();
-      const material = options.signerMaterial(privateStateId);
-      if (material === null) return null;
-      return compose(await options.accountHalf.get(address, privateStateId), material);
-    },
-
-    /**
-     * Keeps the account's half and drops everything else.
-     *
-     * **THE REFUSAL HERE IS A CONTROL AND NOT A GUARD.** What removes the five
-     * is the line above it; this one can only fire if that line has stopped
-     * removing them, which is exactly the change that would otherwise ship
-     * silently and be discovered as a signing key in a database.
-     */
-    async set(privateStateId, state) {
-      const address = addressed();
-      const half = persistableAccountHalf(state);
-      refuseToPersistWhatMustNotBeStored(
-        half,
-        'saving what this company\'s last call staged, on this device',
-      );
-      refuseToWriteTheSignersOwnMaterial(half, options.signerMaterial(privateStateId));
-      await options.accountHalf.set(address, privateStateId, half);
-    },
-
-    async remove(privateStateId) {
-      await options.accountHalf.remove(addressed(), privateStateId);
-    },
-
-    /**
-     * **THE ADDRESSED COMPANY'S HALF, AND NOT EVERY COMPANY'S, WHICH IS A
-     * NARROWER ANSWER THAN THE INTERFACE'S NAME SUGGESTS.**
-     *
-     * The scheme describes this as removing every private state it holds. What
-     * a device keeps here is per company and is reached per company, and a
-     * caller that has named one company is a caller talking about that one. So
-     * this clears the company that was named and refuses when none was, rather
-     * than reaching across companies the caller did not mention. **Nothing in
-     * the scheme calls it**, so what this is is a statement of what a caller
-     * here would get rather than a behaviour anything depends on.
-     */
-    async clear() {
-      await options.accountHalf.clear(addressed());
-    },
+    forContract,
 
     /*
-     * ---- THE FOUR BELOW ARE REFUSALS, AND EACH ONE SAYS WHY ----------------
+     * What a device keeps here is per company and is reached per company, so a
+     * call that names no company does not reach across all of them.
+     */
+    clearAll: refuse(
+      'clearing every company\'s call material at once',
+      'What this device keeps is cleared one company at a time, by naming it. Nothing has been removed.',
+    ),
+
+    /*
+     * ---- THE SIX BELOW ARE REFUSALS, AND EACH ONE SAYS WHY -----------------
      *
      * **THE SIGNING KEY THIS INTERFACE MEANS IS NOT A SIGNER'S.** It is the key
      * that authorises MAINTENANCE of a deployed contract, and it is read and
@@ -512,31 +520,6 @@ export const derivedPrivateState = (
     clearSigningKeys: refuse(
       'clearing contract maintenance authorities from this device',
       'This device never holds any, so there is nothing to clear.',
-    ),
-
-    /*
-     * ---- AND THE FOUR THAT MOVE RECORDS BETWEEN MACHINES -------------------
-     *
-     * **AN EXPORT OF A COMPOSED RECORD IS AN EXPORT OF A SIGNING KEY**, because
-     * composing is what a read here does - so the one operation this whole file
-     * exists to make impossible is available, in a single call, to anything
-     * holding this object. And an IMPORT is the other direction of the same
-     * hazard: a record arriving from elsewhere is a record somebody else chose
-     * the contents of, including the two fields that forge a membership path.
-     *
-     * Nothing in this product calls any of the four. They are refused rather
-     * than left unimplemented so that the day something does, it is told why
-     * instead of receiving a record.
-     */
-    exportPrivateStates: refuse(
-      'copying a company\'s call material off this device',
-      'It contains this signer\'s own key, which exists in one place on purpose and is ' +
-        'not copied out. Nothing has been written or sent.',
-    ),
-    importPrivateStates: refuse(
-      'loading a company\'s call material from somewhere else',
-      'The signer\'s own key is read from this device\'s keyring at the moment it is ' +
-        'needed, and the rest is staged by the call that needs it. Nothing has been saved.',
     ),
     exportSigningKeys: refuse(
       'copying contract maintenance authorities off this device',

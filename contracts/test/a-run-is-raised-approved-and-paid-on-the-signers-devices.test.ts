@@ -18,6 +18,7 @@
  * service is handed leaves out the committee, its threshold and the key that
  * held the account at its deploy, and any reach for them is recorded.
  */
+import { served } from '../../src/testing/served-state.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { NoteIndexUnreadable } from '../../src/midnight/note-index.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -27,8 +28,8 @@ import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds, readFrom } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { identityFromWords, newWords } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { intentShapeOf, parseAsk, routeOf } from 'midnight-identity/profile/request';
@@ -99,7 +100,6 @@ import {
 import { buildRetryRun, buildRun, rootOfPayments } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
-import { unshieldedPayeeFor } from '../../src/testing/payees.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
@@ -112,7 +112,7 @@ import { SimulatedLedger } from '../../src/core/ledger.js';
 import { sealHandover } from '../../src/core/invite-handover.js';
 import { currentPayoutSeed } from '../../src/midnight/run-keys.js';
 import { openNonceSecrets, recordsKeypairFrom } from '../../src/midnight/company-nonce-secret.js';
-import type { PayrollRun, RosterEmployee, User } from '../../src/core/types.js';
+import type { PayrollRun, RosterEmployee } from '../../src/core/types.js';
 import { signedFoundingState } from '../../src/core/founding-state.js';
 import { newProposalId } from '../../src/core/proposal-filing.js';
 import { NothingWasSent } from '../../src/core/jobs.js';
@@ -338,7 +338,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
    */
   const builder = (over?: { createUnprovenCallTxFromInitialStates: (...args: any[]) => Promise<any> }) => {
     const deps = async () => ({
-      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: { ...(contracts as any), ...over },
+      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: callsTheProductBuilds(over),
       /*
        * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, every applied
        * transaction and its own events, and one moment of both contracts with the commitment tree. The worker reads
@@ -409,19 +409,15 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   /** A call into the company account, built from one signer's own private state and applied by the chain. */
   const callAccount = async (circuitId: string, args: unknown[], privateState: AccountPrivateState) => {
     const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
-    const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+    const built = await callsTheProductBuilds().buildCall(accountZk, {
       compiledContract: accountCompiled, circuitId, contractAddress: company, coinPublicKey: keys.coinPublicKey,
-      initialContractState: asRuntime(chain.contract(company)),
-      initialZswapChainState: new L.ZswapChainState(),
-      ledgerParameters: L.LedgerParameters.initialParameters(),
-      initialPrivateState: privateState, args,
+      network: NET, read: readFrom(asRuntime(chain.contract(company))), initialPrivateState: privateState, args,
     }, keys.encryptionPublicKey);
-    const r = chain.apply(built.private.unprovenTx);
+    const r = chain.apply(built.private.transaction);
     if (!r.ok) throw new Error(`the chain refused ${circuitId}: ${r.error}`);
   };
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     policyRecords = [];
     companyRecords = new MemoryCompanyRecordStore();
@@ -620,7 +616,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       signedIn,
       records: { of: (r) => serverStores.get(r)! },
       accountOf: vaultAccountFromTheIndexer({
-        queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
+        queryContractState: async (a) => { const c = chain.contract(a); return (c === null ? null : served({ data: asRuntime(c).data })) as never; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
       mayFileUnder: mayFileUnderOver(store, directoryChain),
@@ -959,10 +955,9 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
           ...founder, assetId: fromHex(order.half.assetId!), assetBlinding: fromHex(order.half.assetBlinding!),
           changeAmount: BigInt(order.half.changeAmount!), changeBatchDigest: fromHex(order.half.changeBatchDigest!), proposalSalt: fromHex(order.half.proposalSalt!),
         };
-        const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+        const built = await callsTheProductBuilds().buildCall(accountZk, {
           compiledContract: accountCompiled, circuitId: 'propose', contractAddress: company, coinPublicKey: keys.coinPublicKey,
-          initialContractState: asRuntime(chain.contract(company)), initialZswapChainState: new L.ZswapChainState(),
-          ledgerParameters: L.LedgerParameters.initialParameters(), initialPrivateState: staged,
+          network: NET, read: readFrom(asRuntime(chain.contract(company))), initialPrivateState: staged,
           args: [ZERO_32, fromHex(order.run.root), BigInt(order.run.payees), BigInt(order.run.opensAt), BigInt(order.run.closesAt), BigInt(order.run.required ?? '0'), true, fromHex(order.run.vault), BigInt(opened.raiseBy)],
         }, keys.encryptionPublicKey);
         return { tx: base64FromBytes(built.private.unprovenTx.serialize()) };
@@ -1066,11 +1061,9 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       governedCall: async ({ order, opened }: { order: { circuit: string; proposal: string }; opened: { digest: string; vault?: string; salt: string; chainId: string } }) => {
         if (order.circuit !== 'approve') throw new Error(`this device was asked to build ${order.circuit}, and it only approves here`);
         const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
-        const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+        const built = await callsTheProductBuilds().buildCall(accountZk, {
           compiledContract: accountCompiled, circuitId: 'approve', contractAddress: company, coinPublicKey: keys.coinPublicKey,
-          initialContractState: asRuntime(chain.contract(company)), initialZswapChainState: new L.ZswapChainState(),
-          ledgerParameters: L.LedgerParameters.initialParameters(),
-          initialPrivateState: { ...founder, runOpenings: { [opened.chainId]: { payload: fromHex(opened.digest), vault: fromHex(opened.vault!), salt: fromHex(opened.salt) } } },
+          network: NET, read: readFrom(asRuntime(chain.contract(company))), initialPrivateState: { ...founder, runOpenings: { [opened.chainId]: { payload: fromHex(opened.digest), vault: fromHex(opened.vault!), salt: fromHex(opened.salt) } } },
           args: [fromHex(order.proposal)],
         }, keys.encryptionPublicKey);
         return { tx: base64FromBytes(built.private.unprovenTx.serialize()) };
@@ -1331,7 +1324,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     });
     send(raised.tx);
     send(await inviteeSeatCall({
-      accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who: guest, proposal: id, salt: hex(c.salt), invite,
+      accountCompiled, accountZk, company, network: NET, accountState: chain.contract(company).serialize(), who: guest, proposal: id, salt: hex(c.salt), invite,
     }));
     const seatsOnChain = () => Number(accountLedgerOf(chain.contract(company)).signerLeaves.size());
     const thresholdOnChain = () => Number(accountLedgerOf(chain.contract(company)).threshold);

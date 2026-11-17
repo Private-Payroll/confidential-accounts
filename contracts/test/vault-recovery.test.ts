@@ -132,14 +132,17 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
   const FIRST = { nonce: toHex(bytes(0x77)), token: toHex(TOKEN_BYTES), value: 1_000n };
   const SECOND = { nonce: toHex(bytes(0x88)), token: toHex(TOKEN_BYTES), value: 400n };
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
 
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
 
   /** The vault's note set exactly as the chain publishes it: commitments. */
   const chainNotes = (): Hex[] =>
@@ -215,9 +218,16 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     await startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },

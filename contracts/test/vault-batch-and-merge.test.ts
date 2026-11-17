@@ -93,13 +93,16 @@ class World {
   }
 
   async call(circuit: string, ...args: unknown[]): Promise<unknown> {
-    const provider = {
-      getContractState: async (_b: string, address: unknown) =>
-        String(address) === String(this.sim.address) ? (this.sim.contractStateForCall as never) : undefined,
-    };
-    const ctx = createCircuitContext<VaultPrivate>(
-      circuit as never, this.addr as never, BLOCK, this.state, this.priv,
-      provider as never, undefined, undefined, NOW, BLOCK);
+    const ctx = createCircuitContext<VaultPrivate>({
+        circuitId: circuit as never,
+        contractAddress: this.addr as never,
+        coinPublicKeyOrZswapState: BLOCK,
+        contractState: this.state,
+        privateState: this.priv,
+        crossContract: this.sim.crossContract(),
+        time: NOW,
+        parentBlockHash: BLOCK,
+      });
     const out: any = await (this.vault.impureCircuits as any)[circuit](ctx, ...args);
     this.state = out.context.callContext.currentQueryContext.state;
     this.lastFx = out.context.callContext.currentQueryContext.effects;

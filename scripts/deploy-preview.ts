@@ -18,6 +18,8 @@
  * WHY tsx AND NOT node. This imports contracts/src/witnesses.ts through a .js
  * specifier, which is the TypeScript convention. Plain node cannot resolve it.
  */
+import { shownAddress } from '../src/core/networks.js';
+import { registerNightForDust } from '../src/midnight/dust-registration.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -25,31 +27,27 @@ import * as CompiledContract from '@midnight-ntwrk/compact-js/effect/CompiledCon
 import {
   StaticProofServerContainer,
   WalletSeeds,
-  MidnightWalletProvider,
   createDefaultTestLogger,
 } from '@midnight-ntwrk/testkit-js';
 import { withRetry } from '../src/midnight/retry.js';
 import { MidnightLedger, privateStateKey } from '../src/midnight/ledger.js';
-import {
-  requireMaintenanceAuthority, describeMaintenanceAuthority,
-  type MaintenanceAuthorityChoice,
-} from '../src/midnight/partial-contract.js';
+import { describeMaintenanceAuthority } from '../src/midnight/partial-contract.js';
 import { DEPLOYED_CIRCUITS, DEFERRED_CIRCUITS } from '../src/midnight/deferral.js';
 import { FileSealedStateStore } from '../src/midnight/sealed-store.js';
 import { GENESIS_KEY_EPOCH } from '../src/core/account.js';
-import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
-import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
+import { doorProviders } from './door-providers.js';
+import { contractStateAt } from '../src/midnight/contract-state-at.js';
 
 import { Contract, ledger as readLedger } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
-import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
+import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import type { AccountOpening } from '../src/core/ledger.js';
 import { toHex as toHexBytes, randomBytes } from '../src/core/crypto.js';
 import { assets, NIGHT, type AssetId } from '../src/core/assets.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
-import { installDustWallet, saveDustState, waitForDustCatchUp } from './dust-wallet.js';
+import {
+  buildWalletWithDust, facadeAtLedger9, registrationSidesSynced, saveWalletState, waitForDustCatchUp,
+} from './dust-wallet.js';
 import { floorKnownAbsent } from './dust-fee-floor.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { readOrCreatePreviewSigners } from './preview-signers.js';
@@ -61,32 +59,22 @@ import {
   compareAgainstLimits, compareCost, limitsFromLedger, measuringProviders,
   type BlockLimits, type TxMeasurement,
 } from './tx-size.js';
+import { deploymentRecordPath, storeDir } from '../src/wiring/deployment.js';
+import { loadMaintenanceAuthority } from '../src/midnight/authority-file.js';
+import { loggerWithoutSecret } from './logger-without-secret.js';
 
 /* ------------------------------------------------------------------ */
 
 const ROOT = process.cwd();
-const STATE_DIR = join(ROOT, '.midnight');
+const NETWORK = theNetwork();
+const STATE_DIR = storeDir(ROOT, NETWORK);
 /*
- * Per network, not per project.
- *
- * These were hardcoded to `preview-*` while there was only ever one network. A
- * contract address is meaningless on a different chain, and Stagenet is wiped
- * on a schedule, so reading a stale address is a guaranteed confusing failure.
- * The wallet seed is chain-agnostic — the same key, funded separately on each
- * network — so it deliberately keeps one name.
+ * Per network, not per project: every file here is in the network's own store
+ * folder. A contract address is meaningless on a different chain, and a wallet
+ * funded on one network holds nothing on another, so each network has its own.
  */
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-/*
- * The maintenance authority the deploy will set, chosen OUTSIDE this script.
- * There is no default and no sampling: an absent file is a refusal
- * at stage 1, with the options printed. Single-key mode holds key material,
- * which is why this lives beside wallet.seed in the gitignored state
- * directory rather than anywhere the repo carries.
- */
-const AUTHORITY_FILE = join(STATE_DIR, 'maintenance-authority.json');
-const NETWORK = theNetwork();
-
-const OUT_FILE = join(STATE_DIR, `${NETWORK}-contract.json`);
+const OUT_FILE = deploymentRecordPath(ROOT, NETWORK);
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
 
 /**
@@ -120,7 +108,7 @@ const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
  * FORMULA.** `scripts/preview-signers.ts` is where the reasoning
  * is; what matters here is that the file is per network AND per account, is
  * generated once with real entropy, is reused for ever after, and lives under
- * `.midnight/`, which is gitignored.
+ * the network's store folder under `.midnight/`, which is gitignored.
  */
 /*
  * 6301, NOT 6300.
@@ -472,43 +460,6 @@ const retryOptions = {
 
 /* ------------------------------------------------------------------ */
 
-/**
- * The deliberately chosen maintenance authority, or a refusal that says how
- * to choose one. Never a sample: `deployContract`'s own `sampleSigningKey()`
- * default is exactly how C225 happened, and this script exists downstream of
- * that lesson.
- */
-function loadMaintenanceAuthority(): MaintenanceAuthorityChoice {
-  if (!existsSync(AUTHORITY_FILE)) {
-    throw new Error(
-      `no maintenance authority has been chosen: ${AUTHORITY_FILE.replace(ROOT + '/', '')} does not exist.\n\n` +
-      'The deploy refuses to sample one. Whoever holds this authority can change which\n' +
-      'proofs the deployed contract accepts — alone, outside the company threshold — and\n' +
-      'if the key is lost the contract can never be maintained (C225). Write the file as\n' +
-      'ONE of, then run this again:\n\n' +
-      '  { "kind": "committee", "committee": [{"tag":"schnorr","value":"…"}, …], "threshold": N }\n' +
-      '      M-of-N verifying keys, assembled by hand (the SDK helper takes one key).\n' +
-      '      Verifying keys come from signatureVerifyingKey(signingKey); each member\n' +
-      '      keeps their own signing key.\n' +
-      '  { "kind": "single-key", "signingKey": {"tag":"schnorr","value":"…"},\n' +
-      '    "temporary": { "fixedBy": "<the round that replaces it>" } }\n' +
-      '      One key, deliberately, as a RECORDED temporary state. Mint one with:\n' +
-      '        npx tsx -e "import(\'@midnight-ntwrk/compact-runtime\').then(m => ' +
-      'console.log(JSON.stringify(m.sampleSigningKey())))"\n' +
-      '      and keep this file: it then holds the only key that can maintain the contract.\n' +
-      '  { "kind": "unmaintainable" }\n' +
-      '      An empty committee: no maintenance update can ever verify, for anyone, ever.\n\n' +
-      'What each costs is laid out by the deploy layer\'s own refusal text\n' +
-      '(src/midnight/partial-contract.ts) and in the S8c build-log entry. The choice is a\n' +
-      'governance decision; this script only records it.',
-    );
-  }
-  const parsed = JSON.parse(readFileSync(AUTHORITY_FILE, 'utf8'));
-  // The same validation the deploy layer applies — surfaced here, at stage 1,
-  // rather than after the DUST wait. Anything knowable up front belongs up front.
-  return requireMaintenanceAuthority(parsed);
-}
-
 async function main() {
   annotateNodeErrorsOnConsole();
   console.log('────────────────────────────────────────────────────────────');
@@ -585,7 +536,14 @@ async function main() {
    * file stops the run here, before any wallet or DUST wait, with the options
    * printed.
    */
-  const maintenanceAuthority = loadMaintenanceAuthority();
+  /*
+   * The maintenance authority the deploy will set, chosen OUTSIDE this script and
+   * read by the one reader: there is no default and no sampling, so an absent
+   * record is a refusal here at stage 1, before the DUST wait. Single-key mode
+   * holds key material, which is why the record lives beside wallet.seed in the
+   * gitignored store folder rather than anywhere the repo carries.
+   */
+  const maintenanceAuthority = loadMaintenanceAuthority(STATE_DIR);
   const authorityShape = describeMaintenanceAuthority(maintenanceAuthority);
   good(
     `maintenance authority chosen deliberately: ${authorityShape.kind} — ` +
@@ -606,7 +564,6 @@ async function main() {
   // A number here silently produces addresses the network rejects. See
   // src/midnight/network.ts. This is the bug that would have failed every
   // transaction on every network.
-  await applyNetworkId(NETWORK);
   good(`network id is the string "${NETWORK}"`);
 
   /* -------------------------------------------------- 3 */
@@ -621,8 +578,8 @@ async function main() {
   // that applies identically here: the testkit's health check has a hardcoded
   // one-second timeout against public endpoints. M-116/M-137.
   const cfg = await startEnvironment(env, new StaticProofServerContainer(PROVER_PORT), note);
-  good(`node      ${cfg.node}`);
-  good(`indexer   ${cfg.indexer}`);
+  good(`node      ${shownAddress(cfg.node)}`);
+  good(`indexer   ${shownAddress(cfg.indexer)}`);
   good(`prover    ${cfg.proofServer}`);
 
   /*
@@ -675,7 +632,7 @@ async function main() {
    * exactly the kind of guess `CLAUDE.md` opens with.
    */
   try {
-    const { LedgerParameters } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const { LedgerParameters } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     ledgerParameters = LedgerParameters;
     blockLimits = limitsFromLedger(LedgerParameters);
     good(`block usage limit ${blockLimits.blockUsage === null ? '(could not derive)' : `${blockLimits.blockUsage.toLocaleString()} bytes`}`);
@@ -712,16 +669,15 @@ async function main() {
   
   // We do not need that gate. We need two specific things, and we can wait for
   // each of them by name, with a timeout and something to look at.
-  const wallet: any = await MidnightWalletProvider.build(logger, cfg, masterSeed);
-
-  // The dust sub-wallet, cached across runs and given a non-zero fee floor.
-  // Both problems and the reasoning are in scripts/dust-wallet.ts.
+  // Built as the testkit builds it, with our DUST wallet in the facade from the start: cached across runs, given a
+  // non-zero fee floor, and syncing by projections. The reasoning is in scripts/dust-wallet.ts.
+  const built = await buildWalletWithDust(loggerWithoutSecret(logger, masterSeed), cfg, masterSeed, NETWORK, ROOT, { note });
+  const wallet = built.wallet;
   {
-    const installed = await installDustWallet(wallet, cfg, masterSeed, NETWORK, ROOT);
+    const installed = built.installed;
     if (installed.how === 'restored') good(`dust wallet restored from the last run — ${installed.detail}`);
-    else if (installed.how === 'fresh') note(`dust wallet rebuilt — ${installed.detail}`);
-    else if (installed.how === 'unchanged'
-             || (installed.how === 'refused' && floorKnownAbsent(installed.reason ?? 'unreadable'))) {
+    else if (installed.how === 'fresh') note(`dust wallet built — ${installed.detail}`);
+    else if (floorKnownAbsent(installed.reason ?? 'unreadable')) {
       /*
        * NOT A NOTE. This branch used to print "using the SDK's own dust wallet"
        * and carry on, which described the state correctly and understated it:
@@ -747,11 +703,14 @@ async function main() {
   }
 
   await wallet.start(false); // start the wallet, skip the testkit's sync gate
+  // Nothing is written before the facade writes for ledger 9: a restored shielded wallet is there at once, a fresh
+  // one only once its replay crosses the fork.
+  await facadeAtLedger9(wallet.wallet, built.forkV9, note);
 
   const unshieldedAddress = wallet.unshieldedKeystore?.getBech32Address?.()?.asString?.();
   if (unshieldedAddress) good(`address  ${unshieldedAddress}`);
 
-  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const NIGHT = (unshieldedToken() as any).raw;
 
   // A live view of wallet state, without pulling in rxjs.
@@ -783,22 +742,9 @@ async function main() {
     return `${name} ${applied}/${highest}${caughtUp(p) ? '✓' : ''}${conn}`;
   };
 
-  /**
-   * Caught up, not identical to the tip.
-   *
-   * `isStrictlyComplete()` wants appliedIndex === highestIndex, which on a chain
-   * that keeps producing blocks asks the wallet to outrun it. The SDK ships
-   * `isCompleteWithin(gap)` for exactly this.
-   */
-  const caughtUp = (p: any): boolean => {
-    if (!p) return false;
-    try { if (typeof p.isCompleteWithin === 'function') return !!p.isCompleteWithin(10n); } catch { /* fall through */ }
-    try { if (typeof p.isStrictlyComplete === 'function') return !!p.isStrictlyComplete(); } catch { /* fall through */ }
-    const a = p.appliedIndex ?? p.appliedId;
-    const h = p.highestRelevantIndex ?? p.highestIndex ?? p.highestTransactionId;
-    if (a == null || h == null) return false;
-    return BigInt(a) + 10n >= BigInt(h);
-  };
+  // A tick for an operator only: whether each wallet says it is complete. What the deploy waits on is
+  // `waitForDustCatchUp`.
+  const caughtUp = (p: any): boolean => { try { return !!p?.isStrictlyComplete?.(); } catch { return false; } };
 
   const dustProgress = (s: any) => s?.dust?.state?.progress ?? s?.dust?.progress;
 
@@ -872,38 +818,24 @@ async function main() {
     // customer wallet must never do it; here one wallet is playing both parts.
     if (dustOf(latest) === 0n) {
       note('no DUST yet; registering the NIGHT for DUST generation');
-      const unregistered = (latest.unshielded.availableCoins ?? []).filter(
-        (c: any) => c.utxo.type === NIGHT && c.meta.registeredForDustGeneration === false,
-      );
-      if (unregistered.length === 0) {
-        note('nothing left to register; the NIGHT may already be registered');
-      } else {
-        note(`${unregistered.length} NIGHT UTXO(s) to register`);
-        // Give the node websocket a moment to settle. Submitting immediately
-        // after the wallet starts is what landed in the disconnect window.
-        await sleep(5000);
-        const txId = await withRetry('registration', async () => {
-          const recipe = await wallet.wallet.registerNightUtxosForDustGeneration(
-            unregistered,
-            wallet.unshieldedKeystore.getPublicKey(),
-        // signDataAsync, not signData.
-        
-        // wallet-sdk 2.0 made the signing callback async — `SignSegment` is now
-        // `(data: Uint8Array) => Promise<ledger.Signature>` where it used to
-        // return a Signature directly — and added a separate method for it. The
-        // synchronous `signData` still exists, which is why this type-checks and
-        // then fails at runtime with "Wallet.Sign: Signer callback failed", a
-        // message that names neither the method nor the reason.
-        
-        // Taken from testkit 5.0's own signRecipe call, not guessed.
-            (payload: Uint8Array) => wallet.unshieldedKeystore.signDataAsync(payload),
-          );
-          const finalised = await withTimeout(
-            'finalising the dust recipe', 120_000, wallet.wallet.finalizeRecipe(recipe));
-          return wallet.wallet.submitTransaction(finalised);
-        });
-        good(`registration submitted, tx ${String(txId).slice(0, 24)}…`);
-      }
+      // Give the node websocket a moment to settle. Submitting immediately
+      // after the wallet starts is what landed in the disconnect window.
+      await sleep(5000);
+      const registered = await withRetry('registration', () => registerNightForDust(
+        wallet.wallet,
+        {
+          verifyingKey: wallet.unshieldedKeystore.getPublicKey(),
+          // The wallet SDK's signing callback is async: signDataAsync, never signData.
+          sign: (payload: Uint8Array) => wallet.unshieldedKeystore.signDataAsync(payload),
+        },
+        {
+          send: async (recipe) => String(await wallet.wallet.submitTransaction(await withTimeout(
+            'finalising the dust recipe', 120_000, wallet.wallet.finalizeRecipe(recipe)))),
+          synced: () => registrationSidesSynced(wallet.wallet, built.forkV9, note),
+        },
+      ));
+      if (!('transaction' in registered)) note('nothing left to register; the NIGHT may already be registered');
+      else good(`${registered.registered} NIGHT UTXO(s) registered, tx ${registered.transaction.slice(0, 24)}…`);
       note('DUST accrues over time rather than arriving at once, so this is a wait');
       await waitFor('DUST to start generating', (s) => dustOf(s) > 0n, 10 * 60_000);
     }
@@ -991,11 +923,10 @@ async function main() {
      * and hit exactly this error on its first run. A rule that exists as a
      * comment in one file protects that file and nothing else.
      */
-    await waitForDustCatchUp({ state: () => latest }, note, progressOf);
-    if (caughtUp(dustProgress(latest))) good(`dust wallet caught up — ${progressOf(latest)}`);
+    if (await waitForDustCatchUp({ state: () => latest }, note, progressOf)) good(`dust wallet caught up — ${progressOf(latest)}`);
 
-    const cached = await saveDustState(wallet, masterSeed, NETWORK, ROOT);
-    if (cached) good(`dust wallet state cached (${(cached / 1024).toFixed(0)} KB)`);
+    const cached = await saveWalletState(wallet, masterSeed, NETWORK, ROOT);
+    if (cached) good(`wallet state cached (${(cached / 1024).toFixed(0)} KB)`);
   } catch (e: any) {
     subscription?.unsubscribe?.();
     const n = latest ? nightOf(latest) : 0n;
@@ -1037,28 +968,18 @@ async function main() {
   note(`deploying   ${DEPLOYED_CIRCUITS.join(', ')}`);
   note(`deferring   ${DEFERRED_CIRCUITS.join(', ')} — they arrive only in a future deployment`);
 
-  const zkConfigProvider = new NodeZkConfigProvider<string>(ARTIFACTS);
-  const providers: any = {
-    zkConfigProvider,
-    proofProvider: httpClientProofProvider(cfg.proofServer, zkConfigProvider),
-    privateStateProvider: levelPrivateStateProvider({
-      accountId: PRIVATE_STATE_ID,
-      privateStateStoreName: PRIVATE_STATE_ID,
-      // The SDK encrypts the private state store at rest and requires a
-      // password provider. In the product this is the vault key derived from
-      // the user's password; here it is a local development value.
-      
-      // It is validated, and the rules are not obvious: at least 16 characters
-      // and at least 3 of uppercase / lowercase / digits / special. The
-      // previous value here had only lowercase and hyphens, which is 2, and it
-      // failed inside the deploy rather than at startup. Checked against the
-      // real validatePassword() before being put here.
-      privateStoragePasswordProvider: async () => PRIVATE_STATE_PASSWORD,
-    } as any),
-    publicDataProvider: indexerPublicDataProvider(cfg.indexer, cfg.indexerWS),
-    walletProvider: wallet,
-    midnightProvider: wallet,
-  };
+  /*
+   * The SDK encrypts the private state store at rest and requires a password for it. The service takes its own
+   * from the environment and has no default; this door falls back to a local development value. The SDK validates
+   * it: at least 16 characters and at least 3 of uppercase, lowercase, digits and special.
+   */
+  const providers = await doorProviders({
+    config: { networkId: NETWORK, proverUrl: cfg.proofServer, indexerUrl: cfg.indexer, indexerWsUrl: cfg.indexerWS },
+    artifactsPath: ARTIFACTS,
+    privateStateId: PRIVATE_STATE_ID,
+    storagePassword: async () => PRIVATE_STATE_PASSWORD,
+    wallet,
+  });
 
   /*
    * MEASURED ON THE WAY THROUGH. `C218`, `R1c` item 3.
@@ -1306,7 +1227,7 @@ async function main() {
   try {
     const finalized: any = await withTimeout(
       'the finalized deploy transaction', 60_000,
-      (providers as any).publicDataProvider.watchForDeployTxData(contractAddress),
+      providers.publicDataProvider.watchForDeployTxData(contractAddress),
     );
     feeRecord = {
       txId: String(finalized?.txId ?? ''),
@@ -1483,7 +1404,7 @@ async function main() {
    * announced a check this stage does not run, in a position where it would
    * have printed identically had the read that follows failed.
    */
-  const state = await providers.publicDataProvider.queryContractState(contractAddress);
+  const state = await contractStateAt(providers.publicDataProvider, contractAddress);
   if (!state) throw new Error('the indexer has no state for this address yet');
   const parsed = readLedger(state.data);
   good('read back off the chain — the indexer has this contract\'s state');

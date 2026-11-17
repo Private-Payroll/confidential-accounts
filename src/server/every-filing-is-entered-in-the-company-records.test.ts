@@ -9,11 +9,13 @@
  * any seat's device enters the entry its filer signed, which every filing
  * carries.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode } from 'midnight-identity/profile/join-code';
 import { newWrappingKeypair } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { theNetwork } from '../midnight/network.js';
 import { companyRecordEntry, runEntry, signedWithItsEntry, signManifestEntry } from '../midnight/record-manifest.js';
 import { carriedEntryRefusal } from '../midnight/carried-entry.js';
@@ -51,7 +53,7 @@ const enteredFor = (store_: string, id: string) =>
 describe('THE ONE FILING CALL', () => {
   it('a person invited, admitted and made a leaver on a device is entered at each version, as the version the service keeps', async () => {
     const made = await inviteHere(ACME, ADA, 'employee', {
-      name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_001n, classification: 'full-time' as const, startDate: '2026-10-01',
+      name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_001n, classification: 'full-time' as const, startDate: '2026-10-01',
     }, ORIGIN, fromAda);
     const id = made.person!;
     /* RED WHEN: a person invited from a device is not entered, or is entered as other bytes than the record the service kept. */
@@ -78,7 +80,7 @@ describe('THE ONE FILING CALL', () => {
   it('a run drawn on a device is entered as version one, as the digest of the run its seat signed', async () => {
     /* Somebody active to pay: invited, accepted and admitted on devices. */
     const made = await inviteHere(ACME, ADA, 'employee', {
-      name: 'Ro', email: 'ro@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_002n, classification: 'full-time' as const, startDate: '2026-10-01',
+      name: 'Ro', email: 'ro@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_002n, classification: 'full-time' as const, startDate: '2026-10-01',
     }, ORIGIN, fromAda);
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(62)), LABEL, 'usr_62', {
       kind: 'payee', address: payeeFor('3e'.repeat(32), NETWORK).bech32, payslipKey: newWrappingKeypair().publicKey,
@@ -110,13 +112,13 @@ describe('THE ONE FILING CALL', () => {
 
   it('a filing the service refuses is never entered: neither a person invited nor a change of where a person stands', async () => {
     const made = await inviteHere(ACME, ADA, 'employee', {
-      name: 'Sam', email: 'sam@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_003n, classification: 'full-time' as const, startDate: '2026-10-01',
+      name: 'Sam', email: 'sam@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_003n, classification: 'full-time' as const, startDate: '2026-10-01',
     }, ORIGIN, fromAda);
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
     const watched = enteredHere();
     const refusing = async () => ({ status: 409, body: { error: 'the service kept another version of this record' } });
     await expect(inviteHere(ACME, { ...ADA, entered: watched }, 'employee', {
-      name: 'Kim', email: 'kim@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_004n, classification: 'full-time' as const, startDate: '2026-10-01',
+      name: 'Kim', email: 'kim@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_004n, classification: 'full-time' as const, startDate: '2026-10-01',
     }, ORIGIN, refusing as never)).rejects.toThrow(/the service kept another version of this record/u);
     await expect(setStatusHere({ ...peopleOn(ADA), send: refusing as never, entered: watched }, here, 'leaver', LEFT)).rejects.toThrow();
     /* RED WHEN: a person's filing is entered before the service keeps it, so a record the service refused is anchored as the newest. */
@@ -139,7 +141,7 @@ describe('EVERY FILING CARRIES THE ENTRY ITS FILER SIGNED', () => {
 
   it('a person admitted whose entry was lost is entered from another seat\'s device and then believed there', async () => {
     const made = await inviteHere(ACME, ADA, 'employee', {
-      name: 'Lee', email: 'lee@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_005n, classification: 'full-time' as const, startDate: '2026-10-01',
+      name: 'Lee', email: 'lee@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_005n, classification: 'full-time' as const, startDate: '2026-10-01',
     }, ORIGIN, fromAda);
     const id = made.person!;
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(65)), LABEL, 'usr_65', {

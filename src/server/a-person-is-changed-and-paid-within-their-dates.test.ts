@@ -9,12 +9,14 @@
  *
  * Over real HTTP, with the people invited, accepted and admitted on devices as the product does it.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { isUtcMoment } from '../core/invitation.js';
 import { newWrappingKeypair, type Hex } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { openPerson, payLinesOf, sealPerson } from '../core/person-record.js';
 import { amountOnTheRun } from '../core/run-drawing.js';
 import { openSealedRun } from '../core/run-legs.js';
@@ -47,7 +49,7 @@ aCompanyOfTwoSeats((app, deps) => {
 const NETWORK = theNetwork();
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const hired = (n: number, startDate = '2026-10-01') => ({
-  name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n + BigInt(n),
+  name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500000n + BigInt(n),
   classification: 'full-time' as const, startDate,
 });
 const peopleOn = (s: Seat): PeopleDevice => ({
@@ -88,7 +90,7 @@ const aRoundFor = (runId: string): SealedProposal => ({
   sealed: sealPayrollProposal({
     accountId: CO, viewingKey: KEY as Hex, vault: 'c5'.repeat(32) as Hex, summary: 'Payroll', proposedBy: ADA.seat,
     payload: { runId, form: 'shielded', entries: [], window: { root: '0b'.repeat(32) as Hex, payees: '1', opensAt: '0', closesAt: '1' } },
-    change: { asset: TEST_SETTLEMENT_ASSET, amount: 0n, batchDigest: batchDigestOf([]), salt: '5d'.repeat(32) as Hex, vouched: { head: '1a'.repeat(32) as Hex, r: '5e'.repeat(32) as Hex } },
+    change: { asset: TEST_NETWORK_COLOUR, amount: 0n, batchDigest: batchDigestOf([]), salt: '5d'.repeat(32) as Hex, vouched: { head: '1a'.repeat(32) as Hex, r: '5e'.repeat(32) as Hex } },
   }),
 } as SealedProposal);
 /** A run raised, as a raise leaves it: filed again as proposed by Ada's seat and entered in the company's records. */
@@ -198,7 +200,7 @@ describe('A RUN PAYS ONLY PEOPLE WITHIN THEIR DATES', () => {
   });
 
   it('RED WHEN: somebody makes themselves payable from a start date that is not a calendar date', async () => {
-    await expect(makeMyselfPayableHere(peopleOn(ADA), {} as never, { name: 'Ada', title: 'Founder', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n, startDate: '2026-13-01' }))
+    await expect(makeMyselfPayableHere(peopleOn(ADA), {} as never, { name: 'Ada', title: 'Founder', asset: TEST_NETWORK_COLOUR, baseAmount: 1n, startDate: '2026-13-01' }))
       .rejects.toThrow(/a start date is a calendar date/u);
   });
 
@@ -316,7 +318,7 @@ describe('A LEAVER IS PAID FOR THE DAYS THEY WORKED, AND LEAVES ON A DAY', () =>
     const rec = signCompanyFiling(sealPerson({ ...(await hereOf(stays)).person, status: 'leaver', madeAt: '2027-07-01T00:00:00Z' }, (await hereOf(stays)).version + 1, 0, KEY), ADA.signingSecret);
     expect((await personFiledBy(ADA, `/api/people/${stays}/status`, rec)).status).toBe(201);
     const people = await readPeopleHere(peopleOn(ADA));
-    const theirs = { id: stays, name: 'Payee 67', wrappingPublicKey: null, asset: TEST_SETTLEMENT_ASSET, amount: 500067n, form: 'shielded' as const };
+    const theirs = { id: stays, name: 'Payee 67', wrappingPublicKey: null, asset: TEST_NETWORK_COLOUR, amount: 500067n, form: 'shielded' as const };
     expect(() => payableFactsOf(people, [theirs], 'Leave them unpaid.', 'Not raised.', undefined, '2027-11')).toThrow(/made a leaver with no leaving date or end date/u);
   });
 });

@@ -32,7 +32,7 @@ const ours: Identity = identityFromWords(TEST_MNEMONIC);
 describe('the right DUST door — the address-agreement test', () => {
   it('the wallet that would sync IS the address the app derives, per account', async () => {
     for (const account of [0, 2, 11]) {
-      const wallet = dustWalletFor(ours, account);
+      const wallet = await dustWalletFor(ours, account);
       const fromWallet = MidnightBech32m.encode(NETWORK, await wallet.getAddress()).asString();
       await wallet.stop().catch(() => {});
       expect(fromWallet).toBe(dustAddressFor(ours, account));
@@ -43,7 +43,7 @@ describe('the right DUST door — the address-agreement test', () => {
     const seen = new Set<string>();
     for (const account of WALLET_ACCOUNTS) {
       const address = dustAddressFor(ours, account);
-      expect(address).toMatch(/^mn_dust_stagenet1/);
+      expect(address).toMatch(new RegExp(`^mn_dust_${NETWORK}1`));
       seen.add(address);
     }
     expect(seen.size).toBe(WALLET_ACCOUNTS.length);
@@ -55,14 +55,14 @@ describe('the right DUST door — the address-agreement test', () => {
     for (const role of ['zswap', 'night'] as const) {
       const wrong = DustAddress.encodePublicKey(
         NETWORK, DustSecretKey.fromSeed(ours.moneyAt(0)[role]).publicKey);
-      expect(wrong).toMatch(/^mn_dust_stagenet1/); /* plausible-looking… */
+      expect(wrong).toMatch(new RegExp(`^mn_dust_${NETWORK}1`)); /* plausible-looking… */
       expect(wrong).not.toBe(dustAddressFor(ours, 0)); /* …and wrong. */
     }
   });
 
-  it('refuses the reserved account and slots the picker does not offer', () => {
+  it('refuses the reserved account and slots the picker does not offer', async () => {
     expect(() => dustSecretKeyFor(ours, 1)).toThrow(/authority/);
     expect(() => dustSecretKeyFor(ours, 12)).toThrow(/not a wallet/);
-    expect(() => dustWalletFor(ours, 1)).toThrow(/authority/);
+    await expect(dustWalletFor(ours, 1)).rejects.toThrow(/authority/);
   });
 });

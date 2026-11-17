@@ -1,17 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import {
   ShieldedCoinPublicKey, MidnightBech32m, DustAddress,
-  ShieldedAddress, ShieldedEncryptionPublicKey,
 } from '@midnightntwrk/wallet-sdk-address-format';
 import {
   payeeAddress, payeeAddressFromKeys, samePayee, shortPayee, payeeOf, recipientOf,
   unshieldedPayeeAddress, unshieldedPayeeAddressFromKeys,
   type PayeeAddress,
 } from './payee-address.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const COIN = 'aa'.repeat(32);
 const ENC = 'bb'.repeat(32);
 const OTHER_ENC = 'cc'.repeat(32);
+
+/** A shield-addr string carrying the coin key and `encHex` as its raw payload, whatever its width. */
+const rawShieldAddress = (encHex: string): string =>
+  new MidnightBech32m('shield-addr', 'preview', Buffer.from(COIN + encHex, 'hex')).asString();
 
 const alice = () => payeeAddressFromKeys({ coinPublicKey: COIN, encryptionPublicKey: ENC }, 'preview');
 
@@ -32,7 +36,7 @@ describe('a payee is one value', () => {
   });
 
   /*
-   * THE INVARIANT THIS TYPE EXISTS FOR — C7, V-80.
+   * THE INVARIANT THIS TYPE EXISTS FOR.
    *
    * Not "the halves happen to agree", but "there is no way to make them
    * disagree". A different encryption key is a different ADDRESS, so it is a
@@ -81,8 +85,8 @@ describe('what it refuses', () => {
 
   it('an address for a different network, and it names both', () => {
     const a = alice();
-    expect(() => payeeAddress(a.bech32, 'stagenet'))
-      .toThrow(/stagenet[\s\S]*preview|preview[\s\S]*stagenet/);
+    expect(() => payeeAddress(a.bech32, NETWORK))
+      .toThrow(new RegExp(`${NETWORK}[\\s\\S]*preview|preview[\\s\\S]*${NETWORK}`));
   });
 
   it('nothing at all', () => {
@@ -90,49 +94,20 @@ describe('what it refuses', () => {
     expect(() => payeeAddress('   ', 'preview')).toThrow(/required/);
   });
 
-  it('AN ADDRESS WHOSE ENCRYPTION HALF IS THE WRONG WIDTH — `T-194`, `S58`', () => {
+  it('refuses an address whose encryption half is wider than 32 bytes, at the parse, before any run is raised', () => {
     /*
-     * **THE SDK BUILDS THIS, ENCODES IT, AND DECODES IT BACK WITHOUT A WORD.**
-     * `ShieldedCoinPublicKey`'s constructor throws if the coin half is not 32
-     * bytes, so that half is safe by accident. The encryption half is
-     * `bytes.subarray(32)` — everything remaining, any length — handed to a
-     * constructor that only assigns. Measured here rather than argued: the
-     * 33-byte address below round-trips through `MidnightBech32m` and comes
-     * back as 66 hex characters.
-     *
-     * **UNTIL `S58` THIS PRODUCED A `PayeeAddress`**, frozen and returned, and
-     * that value travelled to `additionalCoinEncPublicKeyMappings`
-     * (`vault-ledger.ts`) unexamined. **What refused it was the ledger**, at
-     * transaction-build time: `REPORT-PAYEE-KEY.txt` records `ZswapOutput.new`
-     * throwing on every wrong width — *Not all bytes read, 1 bytes remaining*
-     * at 33 bytes — so no money could reach a key nobody holds by this route.
-     * **But that is after the run is raised, approved and open.** This refusal
-     * is at the parse, where a person can still fix the address.
+     * A key nobody holds must never become a payee: the run would be raised, approved and
+     * opened before the ledger refused to build the payment. The address is built here from
+     * raw bytes, because the address library will not build a key of the wrong width.
      */
-    const wide = new ShieldedAddress(
-      ShieldedCoinPublicKey.fromHexString(COIN),
-      ShieldedEncryptionPublicKey.fromHexString('bb'.repeat(33)),
-    );
-    const bech32 = MidnightBech32m.encode('preview', wide).asString();
+    const bech32 = rawShieldAddress('bb'.repeat(33));
 
-    /* The platform is happy with it, which is the whole reason this check is ours. */
-    expect(MidnightBech32m.parse(bech32).decode(ShieldedAddress, 'preview')
-      .encryptionPublicKey.toHexString()).toHaveLength(66);
-
-    expect(() => payeeAddress(bech32, 'preview'))
-      .toThrow(/encryption public key must be 32 bytes of lowercase hex/);
+    expect(() => payeeAddress(bech32, 'preview')).toThrow(/is not a payee address for preview/);
   });
 
-  it('and a 31-byte encryption half, which the ledger refuses from the other side', () => {
-    /* `REPORT-PAYEE-KEY.txt`: 31 bytes throws *failed to fill whole buffer*.
-     * Both directions, because a guard written against one bound is half a
-     * guard — `C286`'s shape. */
-    const narrow = new ShieldedAddress(
-      ShieldedCoinPublicKey.fromHexString(COIN),
-      ShieldedEncryptionPublicKey.fromHexString('bb'.repeat(31)),
-    );
-    expect(() => payeeAddress(MidnightBech32m.encode('preview', narrow).asString(), 'preview'))
-      .toThrow(/encryption public key must be 32 bytes of lowercase hex/);
+  it('and one narrower than 32 bytes, because a check against one bound is half a check', () => {
+    expect(() => payeeAddress(rawShieldAddress('bb'.repeat(31)), 'preview'))
+      .toThrow(/is not a payee address for preview/);
   });
 
   /*
@@ -189,8 +164,9 @@ describe('showing one to a person', () => {
     const a = alice();
     const short = shortPayee(a);
     expect(short).toContain('…');
-    expect(a.bech32.startsWith(short.split('…')[0])).toBe(true);
-    expect(a.bech32.endsWith(short.split('…')[1])).toBe(true);
+    const [head = '', tail = ''] = short.split('…');
+    expect(a.bech32.startsWith(head)).toBe(true);
+    expect(a.bech32.endsWith(tail)).toBe(true);
     /* Every address on one network shares this much; the tail is what differs. */
     expect(short.split('…')[0]).toContain('shield-addr');
   });
@@ -243,8 +219,8 @@ describe('a payee paid in public money', () => {
 });
 
 /**
- * **`C246` AT THE CLIENT, AND THIS IS THE FILE WHERE IT IS UNREPRESENTABLE
- * RATHER THAN DISCOURAGED.**
+ * **A COIN KEY AND A PUBLIC ADDRESS ARE TOLD APART HERE, WHERE MIXING THEM IS
+ * UNREPRESENTABLE RATHER THAN DISCOURAGED.**
  *
  * A `ZswapCoinPublicKey` and a `UserAddress` are both `{ bytes: Bytes<32> }`
  * and belong to different key spaces. Nothing downstream of raw bytes can tell
@@ -257,7 +233,7 @@ describe('a payee paid in public money', () => {
  * both from the SAME 32 bytes, deliberately: a fixture that made them differ
  * would let these pass because the bytes did not match, which proves nothing.
  */
-describe('C246: the two key spaces cannot be read as each other', () => {
+describe('the two key spaces cannot be read as each other', () => {
   const SAME = '7e'.repeat(32);
 
   it('THE ONE THAT LOSES THE MONEY: a shielded address is not a public one', () => {
@@ -337,6 +313,6 @@ describe('one pasted string, the right kind out', () => {
   });
 
   it('and an address for another network, on either kind', () => {
-    expect(() => payeeOf(bob().bech32, 'stagenet')).toThrow(/preview|stagenet/);
+    expect(() => payeeOf(bob().bech32, NETWORK)).toThrow(new RegExp(`preview|${NETWORK}`));
   });
 });

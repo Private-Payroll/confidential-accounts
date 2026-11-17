@@ -8,14 +8,16 @@
  *
  * Over real HTTP, with the vendor's wallet played by the test.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import * as L from '@midnightntwrk/ledger-v9';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { addressOfVerifyingKey } from 'midnight-identity/profile/disclosure';
 import { CLAIMED_HANDOVER_SCHEMA, type AddressClaimFor } from 'midnight-identity/profile/address-claim';
 import { signUnshieldedClaim } from 'midnight-identity/profile/address-claim-signed';
-import { NIGHT, TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+import { NIGHT } from '../core/assets.js';
 import { newSigningKeypair, type Hex } from '../core/crypto.js';
 import { acceptanceProofOf, invitationIdOf, tokenOfLink } from '../core/invitation.js';
 import { sealToInbox } from '../core/sealed-records.js';
@@ -47,7 +49,7 @@ const shieldedOf = (n: number): string => payeeFor(n.toString(16).padStart(2, '0
 const unshieldedOf = (n: number): string => addressOfVerifyingKey(
   L.signatureVerifyingKey({ tag: 'schnorr', value: Buffer.from(walletOf(n).moneyAt(0).night).toString('hex') }).value, NETWORK as never);
 const SLIP = 'cd'.repeat(32);
-const MONTHLY = { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 90000n };
+const MONTHLY = { kind: 'monthly' as const, asset: TEST_NETWORK_COLOUR, amount: 90000n };
 const vendorSpec = (n: number, address?: string, terms: VendorRecord['terms'] = MONTHLY) => ({
   name: `Vendor ${n}`, email: `vendor${n}@vendors.co`, startDate: '2026-10-01', terms, network: NETWORK, ...(address === undefined ? {} : { address }),
 });

@@ -27,7 +27,9 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NETWORK } from 'midnight-identity/network';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { networkRecord } from '../src/core/networks.js';
 import { BROWSER_BUILDS, pagesIn, scriptsOf, walkBuild, type BrowserBuild, type BuildGraph } from './browser-graph.js';
 
 /*
@@ -204,14 +206,14 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
      * The wallet reaches them the same way and no other: it starts the shared vault worker entry only under the
      * wallet builder's name, which hands the builder the wallet's own pinned key provider, so the disk-backed key
      * source never runs in the wallet.
-     * RED WHEN: the wallet reaches any dynamic import of a Node built-in besides these two. */
-    for (const name of ['web', 'wallet']) {
+     * The proving probe reaches the same two through the module that holds the engines it measures, and calls neither.
+     * RED WHEN: the wallet or the probe reaches any dynamic import of a Node built-in besides these two. */
+    for (const name of ['web', 'wallet', 'proving-probe']) {
       expect(byName(name).dynamicNode.map((n) => `${n.file} ${n.specifier}`)).toEqual([
         'src/midnight/wasm-proving.ts node:fs/promises',
         'src/midnight/wasm-proving.ts node:path',
       ]);
     }
-    for (const name of ['proving-probe']) expect(byName(name).dynamicNode).toEqual([]);
   });
 
   it('THE LIST OF BUILDS IS EVERY VITE CONFIG, AND EACH LISTS EVERY PAGE IN ITS ROOT', () => {
@@ -269,7 +271,13 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
      * A build that starts no worker may leave the pre-scan unset, which is every page; if it sets one, it is
      * held to naming exactly its pages - so the new application's configuration is read and checked too. */
     const build = BROWSER_BUILDS.find((b) => b.name === name) as BrowserBuild;
-    const { default: config } = await import(/* @vite-ignore */ join(REPO, build.config));
+    const { default: made } = await import(/* @vite-ignore */ join(REPO, build.config));
+    /* A configuration given as a function is asked for its development settings. A network reached through a project
+     * token has that setting read while it is made, so the process is given a stand-in value for the test. */
+    const token = networkRecord(NETWORK).endpoints?.projectToken;
+    if (token !== null && token !== undefined) vi.stubEnv(token.setting, 'a value only a test knows');
+    const config = typeof made === 'function' ? await made({ command: 'serve', mode: 'development' }) : made;
+    vi.unstubAllEnvs();
     expect(relative(REPO, resolve(REPO, config.root ?? '.')).split('\\').join('/')).toBe(build.root);
     const entries = config.optimizeDeps?.entries as string[] | undefined;
     const scanned = [...(entries ?? [])].sort();

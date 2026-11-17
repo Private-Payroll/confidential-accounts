@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { served } from '../testing/served-state.js';
 import { NotAVaultsState, signersOfTheVaultsCompany, vaultAccountFromTheIndexer } from './vault-records-authority.js';
 
 /*
@@ -64,23 +65,25 @@ describe('A SERVER THAT REACHES A CHAIN KEEPS VAULT RECORDS IN A DATABASE', () =
     const stopped = index.indexOf('process.exit(1)', asked);
     const listened = index.indexOf('app.listen(', asked);
     const serving = index.indexOf("if (process.env.SERVE !== '0') {");
-    const mounted = index.indexOf('mountVaultRecords(app, {');
+    const mounted = index.indexOf('await mountRecordsAndChainRoutes(app, {');
     expect(asked).toBeGreaterThan(serving);
     expect(serving).toBeGreaterThan(-1);
     expect(stopped).toBeGreaterThan(asked);
     expect(listened).toBeGreaterThan(stopped);
     expect(mounted).toBeGreaterThan(-1);
-    /* And both vault mounts come before the general one-megabyte parser. */
+    /* And both vault mounts come before the general one-megabyte parser: the routes that mount them are mounted first. */
     const general = index.indexOf("app.use(express.json({ limit: '1mb' }));");
     expect(mounted).toBeLessThan(general);
-    expect(index.indexOf('app.use(companyVaultRoutes({')).toBeLessThan(general);
-    expect(index.indexOf('app.use(companyVaultRoutes({')).toBeGreaterThan(-1);
+    const routes = readFileSync(new URL('./records-and-chain-routes.ts', import.meta.url), 'utf8');
+    expect(routes).toContain('mountVaultRecords(app, {');
+    expect(routes).toContain('app.use(companyVaultRoutes({');
+    expect(routes).not.toMatch(/express\.json\(/u);
   });
 });
 
 describe('A CONTRACT THAT IS NOT A VAULT IS REFUSED, NOT LEFT UNDECIDED', () => {
   it('a state the vault ledger cannot read grants nobody anything, and says so as a refusal', async () => {
-    const notAVault = vaultAccountFromTheIndexer({ queryContractState: async () => ({ data: {} }) },
+    const notAVault = vaultAccountFromTheIndexer({ queryContractState: async () => served({ data: {} }) as never },
       () => { throw new Error('not this layout'); });
     await expect(notAVault(VAULT)).rejects.toBeInstanceOf(NotAVaultsState);
     const may = signersOfTheVaultsCompany({ accountOf: notAVault, companies, mayFileUnder: () => true });

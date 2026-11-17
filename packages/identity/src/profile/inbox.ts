@@ -156,7 +156,7 @@ export class InboxError extends Error {
  * SEAL ONE ACCEPTANCE TO ONE INBOX KEY.
  *
  * **IT THROWS RATHER THAN RETURNING SOMETHING UNSEALED**, and the caller is
- * written for that: `screens/approve.tsx` seals BEFORE it answers, before it
+ * written for that: `answerDisclosure` (`apps/wallet/src/screens/approve-answer-disclosure.ts`) seals BEFORE it answers, before it
  * writes a grant and before it writes a history entry, so a refusal here means
  * nothing crossed and nothing was written down. There is no arm of this
  * function that returns a value the person's address is readable in.
@@ -220,10 +220,10 @@ export function sealToInbox(plaintext: string, inboxPublicKey: string): SealedAc
  * hands `parseAsk` `MessageEvent.origin`, which the browser fills in and no page
  * can write. **It is the only field in this protocol that is a FACT rather than
  * a CLAIM**, and everything downstream is built on it being unforgeable:
- * `screens/approve.tsx:383` chooses which wallet slot the person is offered from
- * it (`slot-choice.ts`), `:390` decides which remembered grant pre-ticks, `:488`
- * signs it into the payload `mint` produces, `:607` writes it into the history,
- * and thirty-odd sites print it as the largest true words on the screen.
+ * the approval screen's `useWhatIsAsked` chooses which wallet slot the person is
+ * offered from it (`chooseSlot`) and which remembered grant pre-ticks,
+ * `answerDisclosure` signs it into the payload `mint` produces and writes it into
+ * the history, and thirty-odd sites print it as the largest true words on the screen.
  *
  * **A NOTICE HAS NO SUCH FIELD AND MUST NOT BE ALLOWED TO SUPPLY ONE.** Handing
  * `parseAsk` an origin a sender wrote into a sealed blob would launder a claim
@@ -354,7 +354,7 @@ export function sealToInbox(plaintext: string, inboxPublicKey: string): SealedAc
  *   `where`   the origin the person goes to in order to act. **CLAIMED, checked
  *             for SHAPE and for nothing else**, and this wallet does not link to
  *             it: it is rendered whole, monospace, beside a copy control, which
- *             is what `screens/approve.tsx` already does with an origin and for
+ *             is what `askingParts` (`apps/wallet/src/screens/approve-asking.tsx`) already does with an origin and for
  *             a stronger reason here — a wallet that offers a button to a
  *             stranger's address is a wallet that helps somebody land on the
  *             wrong one.
@@ -599,7 +599,7 @@ export function openFromInbox(item: SealedItem, keys: InboxKeypair): Notice {
 /**
  * AN ORIGIN AND NOTHING ELSE. `https:`, a host, an optional port, and no path,
  * query or fragment — `new URL('https://a.example/x').origin` silently answers
- * `https://a.example`, so comparing the round trip is what refuses the path
+ * `https://a.example`, so comparing the parse back with the text is what refuses the path
  * rather than accepting it and quietly dropping it. A dropped path is a
  * different place from the one the sender wrote.
  */

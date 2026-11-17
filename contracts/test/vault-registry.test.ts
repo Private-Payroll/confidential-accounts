@@ -81,14 +81,17 @@ describe('an account keeps a register of its own vaults', () => {
   let vaultState: any;
   let priv: VaultPrivate;
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
   const vaultBytes = () => Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -299,9 +302,16 @@ describe('an account keeps a register of its own vaults', () => {
   const startHere = () => startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },

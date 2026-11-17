@@ -28,7 +28,10 @@
  *                       is deliberately no environment variable and no literal:
  *                       an address is written by a deploy and read by everything
  *                       afterwards, and a second way to say it is a second
- *                       deployment nobody declared.
+ *                       deployment nobody declared. A chain whose companies are
+ *                       all founded from their signers' browsers has no such
+ *                       record, and then the address is null: each company's
+ *                       own address is in its own signed record instead.
  *     indexer, node     the endpoint table, keyed by the network name above, so
  *                       the two cannot name different chains.
  *     proof server      required, with no default. See `proverUrl` below.
@@ -52,7 +55,12 @@ import { ENDPOINTS, theNetwork, type NetworkName } from '../midnight/network.js'
  */
 export interface Deployment {
   readonly network: NetworkName;
-  readonly contractAddress: string;
+  /**
+   * The account this machine deployed, or null when it deployed none. On a
+   * chain every company is founded from its signer's browser and this service
+   * deploys nothing, so a fresh network has no record and starts without one.
+   */
+  readonly contractAddress: string | null;
   readonly indexerUrl: string;
   readonly indexerWsUrl: string;
   readonly nodeUrl: string;
@@ -94,8 +102,28 @@ interface DeploymentRecord {
   contractAddress?: unknown;
 }
 
+/**
+ * **THE FOLDER ONE NETWORK'S STORE IS KEPT IN.** Everything this product and its
+ * operator tools keep on disk for a network lives here: the deployment record,
+ * the sealed state, the wallets' seed files, the companies the run created and
+ * the fees it paid. One folder per network, so a run on one network never reads
+ * or writes another network's files, and this function is the only place the
+ * folder is named.
+ */
+export const storeDir = (root: string, network: NetworkName): string =>
+  join(root, '.midnight', network);
+
+/** The service's own store file on `network` when `DATA_PATH` names none. */
+export const serviceStorePath = (root: string, network: NetworkName): string =>
+  join(storeDir(root, network), 'beta.json');
+
+/** The companies the run on `network` created, in that network's store folder. */
+export const createdCompaniesFile = (root: string, network: NetworkName): string =>
+  join(storeDir(root, network), 'created-companies.json');
+
+/** Where the deploy writes the record of the account contract on `network`. */
 export const deploymentRecordPath = (root: string, network: NetworkName): string =>
-  join(root, '.midnight', `${network}-contract.json`);
+  join(storeDir(root, network), `${network}-contract.json`);
 
 /**
  * **THE RULES, SEPARATED FROM THE READING, SO THEY CAN BE TESTED WITHOUT A
@@ -115,15 +143,7 @@ export function resolveDeployment(input: {
 }): Deployment {
   const { network, record, recordPath, endpoints, proverUrl } = input;
 
-  if (!record) {
-    throw new Error(
-      `this deployment is set to run against ${network}, and the record of what was `
-      + `deployed there is not at ${recordPath}. That file is written by the deploy `
-      + 'and read by everything afterwards; until a contract has been deployed to '
-      + `${network} and its address recorded, there is nothing for the product to talk to.`);
-  }
-
-  if (typeof record.network !== 'string' || record.network !== network) {
+  if (record && (typeof record.network !== 'string' || record.network !== network)) {
     throw new Error(
       `the deployment record at ${recordPath} was written for `
       + `"${String(record.network)}", and this deployment signs people in on "${network}". `
@@ -132,8 +152,8 @@ export function resolveDeployment(input: {
       + `"${network}" and record it, or run this deployment on "${String(record.network)}".`);
   }
 
-  const address = record.contractAddress;
-  if (typeof address !== 'string' || address.trim() === '') {
+  const address = record ? record.contractAddress : null;
+  if (record && (typeof address !== 'string' || address.trim() === '')) {
     throw new Error(
       `the deployment record at ${recordPath} carries no contract address. A record `
       + 'without one is a deploy that did not finish; there is deliberately no other '
@@ -165,12 +185,12 @@ export function resolveDeployment(input: {
 
   return {
     network,
-    contractAddress: address,
+    contractAddress: typeof address === 'string' ? address : null,
     indexerUrl: endpoints.indexerUrl,
     indexerWsUrl: endpoints.indexerWsUrl,
     nodeUrl: endpoints.nodeUrl,
     proverUrl,
-    sealedStateRoot: join(input.stateRoot, '.midnight', 'sealed', network),
+    sealedStateRoot: join(storeDir(input.stateRoot, network), 'sealed'),
     privateStateId: `confidential-accounts-${network}`,
     zkConfigPath: input.zkConfigPath,
     vaultZkConfigPath: input.vaultZkConfigPath,

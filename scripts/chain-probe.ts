@@ -19,11 +19,11 @@
  * WHAT IT IS NOT. It is not the product, it deploys a throwaway contract that
  * mints its own tokens, and nothing real is at risk beyond the fees. The
  * account contract, its scripts and its deployment file are untouched: this
- * writes `.midnight/${NETWORK}-chainprobe.json` and nothing else in there.
+ * writes `${NETWORK}-chainprobe.json` in the network's store folder and nothing else in there.
  *
  * CONVENTIONS COPIED, NOT REINVENTED. Wallet bring-up is `bringUpWallet`, the
  * environment is `testEnvironmentFor` + `startEnvironment` (the M-116 retry),
- * the dust cache is `saveDustState`, and every circuit goes through the same
+ * the wallet cache is `saveWalletState`, and every circuit goes through the same
  * `callCircuit` with a landed-check and the same worker-thread watchdog as
  * `run-preview.ts`. Every one of those exists because a hand-written copy of it
  * cost a run — M-50, M-55, M-58, M-61, M-65, M-75, M-116, M-137.
@@ -36,6 +36,7 @@
  * scripts do it; the places where an SDK detail could not be verified offline
  * are marked UNCERTAIN and say what the fallback is.
  */
+import { shownAddress } from '../src/core/networks.js';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from '@noble/hashes/utils.js';
@@ -50,10 +51,9 @@ import {
   findDeployedContract,
   withContractScopedTransaction,
 } from '@midnight-ntwrk/midnight-js-contracts';
-import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
-import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
+import type { MidnightProviders, PrivateStateProvider } from '@midnight-ntwrk/midnight-js-types';
+import { doorProviders } from './door-providers.js';
+import { contractStateAt } from '../src/midnight/contract-state-at.js';
 
 /*
  * The throwaway contract, from its own managed directory.
@@ -97,18 +97,20 @@ async function loadProbeContract(): Promise<void> {
   }
   ({ Contract, ledger: readLedger, pureCircuits } = mod);
 }
-import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
+import { theNetwork } from '../src/midnight/network.js';
 import { explainNodeError } from './node-errors.js';
 import {
-  saveDustState, waitForDustCatchUp, dustCaughtUp, dustProgressOf, dustProgressKnown,
+  saveWalletState, waitForDustCatchUp, dustProgressOf, dustProgressKnown,
 } from './dust-wallet.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
+import { storeDir } from '../src/wiring/deployment.js';
 
 /* ------------------------------------------------------------------ */
 
 const ROOT = process.cwd();
-const STATE_DIR = join(ROOT, '.midnight');
+const NETWORK = theNetwork();
+const STATE_DIR = storeDir(ROOT, NETWORK);
 const LOG_DIR = join(ROOT, 'logs');
 
 /**
@@ -120,12 +122,11 @@ const LOG_DIR = join(ROOT, 'logs');
  * a second five-minute dust sync for no gain.
  */
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = theNetwork();
 
 /**
  * Where this probe's deployment is recorded — per network, like every other
- * address file in this project. On the default network that is exactly
- * `.midnight/stagenet-chainprobe.json`.
+ * address file in this project: `<network>-chainprobe.json` in the network's
+ * store folder (`.midnight/<network>/`).
  *
  * A contract address is meaningless on another chain and Stagenet is wiped on a
  * schedule, so a stale address is a guaranteed confusing failure. Deliberately
@@ -537,13 +538,12 @@ async function main() {
   const { Worker } = await import('node:worker_threads');
   const sharedBuffer = new SharedArrayBuffer(9 * 8);
   const shared = new BigInt64Array(sharedBuffer);
-  const PULSE = 0, IN_FLIGHT = 1, STEP = 2, STEP_START = 3, PHASE = 4, WITNESS_CALLS = 5, LAST_WITNESS = 6;
+  const PULSE = 0, IN_FLIGHT = 1, STEP = 2, STEP_START = 3, PHASE = 4;
   const FEE_CALLS = 7, LAST_FEE = 8;
 
   const PH = {
     idle: 0, build: 1, readKey: 2, prove: 3, submit: 4, confirm: 5,
     queryState: 6, privateState: 7, balance: 8,
-    balanceUnbound: 9, signRecipe: 10, finalizeRecipe: 11,
   };
   const setPhase = (p: number) => Atomics.store(shared, PHASE, BigInt(p));
   let ambientPhase = PH.idle;
@@ -709,7 +709,6 @@ async function main() {
     );
   }
 
-  await applyNetworkId(NETWORK);
   good(`network id is the string "${NETWORK}"`);
 
   /* -------------------------------------------------- 2 */
@@ -724,8 +723,8 @@ async function main() {
    * marginal by design and a slow moment kills the run before it starts.
    */
   const cfg = await startEnvironment(env, new StaticProofServerContainer(PROVER_PORT), note);
-  good(`node      ${cfg.node}`);
-  good(`indexer   ${cfg.indexer}`);
+  good(`node      ${shownAddress(cfg.node)}`);
+  good(`indexer   ${shownAddress(cfg.indexer)}`);
   good(`prover    ${cfg.proofServer}`);
 
   const live = await bringUpWallet(logger, cfg, masterSeed, NETWORK, ROOT, {
@@ -733,13 +732,13 @@ async function main() {
     requireDust: true,
     onNote: note,
   });
-  const wallet: any = live.wallet;
+  const wallet = live.wallet;
   good(`wallet ready — NIGHT ${live.night()}, DUST ${live.dust()}`);
 
   const unshieldedAddressBech32 = wallet.unshieldedKeystore?.getBech32Address?.()?.asString?.();
   if (unshieldedAddressBech32) good(`address  ${unshieldedAddressBech32}`);
 
-  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const NIGHT = (unshieldedToken() as any).raw;
   const dustOf = (s: any) => { try { return BigInt(s?.dust?.balance(new Date()) ?? 0n); } catch { return 0n; } };
 
@@ -799,96 +798,74 @@ async function main() {
    *
    * The wait now lives in `dust-wallet.ts` and both scripts call it.
    */
-  await waitForDustCatchUp(live, note, progressOf);
+  const caughtUpNow = await waitForDustCatchUp(live, note, progressOf);
   if (!dustProgressKnown(dustProgressOf(live.state()))) {
     // Not a tick. The wallet will not say how far behind it is, so claiming it
     // has caught up would be printing a fact nobody established.
     note(`the wallet does not report how far behind its dust view is — ${progressOf(live.state())}`);
     note('so nothing here can promise the fee proof will verify; the cache age limit is the guard');
-  } else if (dustCaughtUp(dustProgressOf(live.state()))) {
+  } else if (caughtUpNow) {
     good(`dust wallet caught up — ${progressOf(live.state())}`);
   }
 
   // Cached immediately rather than at the end: a run that dies in stage 7 must
   // still leave a usable cache, or the next attempt pays the five-minute sync.
   {
-    const cached = await saveDustState(wallet, masterSeed, NETWORK, ROOT);
-    if (cached) good(`dust wallet state cached (${(cached / 1024).toFixed(0)} KB) — the next run skips the long sync`);
+    const cached = await saveWalletState(wallet, masterSeed, NETWORK, ROOT);
+    if (cached) good(`wallet state cached (${(cached / 1024).toFixed(0)} KB) — the next run skips the long sync`);
   }
   note(`sync: ${progressOf(live.state())}`);
 
   /* ---------- providers ---------- */
 
-  const rawZkConfigProvider = new NodeZkConfigProvider<string>(ARTIFACTS);
-  const zkConfigProvider = timed(rawZkConfigProvider, {
-    getProverKey: PH.readKey, getVerifierKey: PH.readKey, getZKIR: PH.readKey,
-    get: PH.readKey, getVerifierKeys: PH.readKey,
-  } as any);
+  /*
+   * The provider set every door whose own wallet pays is built from, with each member wrapped so the watchdog
+   * can name the phase a stalled call is in. The wrappers delegate and change nothing they are handed.
+   */
+  const ownSet = await doorProviders({
+    config: { networkId: NETWORK, proverUrl: cfg.proofServer, indexerUrl: cfg.indexer, indexerWsUrl: cfg.indexerWS },
+    artifactsPath: ARTIFACTS,
+    privateStateId: PRIVATE_STATE_ID,
+    storagePassword: async () => PRIVATE_STATE_PASSWORD,
+    wallet,
+  });
 
-  const rawProofProvider = httpClientProofProvider(cfg.proofServer, rawZkConfigProvider);
-
-  const providers: any = {
-    zkConfigProvider,
-    proofProvider: timed(rawProofProvider as any, { proveTx: PH.prove, check: PH.prove, prove: PH.prove } as any),
-    privateStateProvider: timed(levelPrivateStateProvider({
-      accountId: PRIVATE_STATE_ID,
-      privateStateStoreName: PRIVATE_STATE_ID,
-      privateStoragePasswordProvider: async () => PRIVATE_STATE_PASSWORD,
-    } as any) as any, {
-      get: PH.privateState, set: PH.privateState, remove: PH.privateState,
-      clear: PH.privateState, getSigningKey: PH.privateState, setSigningKey: PH.privateState,
-      setContractAddress: PH.privateState,
-    } as any),
-    publicDataProvider: timed(indexerPublicDataProvider(cfg.indexer, cfg.indexerWS) as any, {
+  const providers: MidnightProviders = {
+    ...ownSet,
+    zkConfigProvider: timed(ownSet.zkConfigProvider, {
+      getProverKey: PH.readKey, getVerifierKey: PH.readKey, getZKIR: PH.readKey,
+      get: PH.readKey, getVerifierKeys: PH.readKey,
+    }),
+    proofProvider: timed(ownSet.proofProvider, { proveTx: PH.prove }),
+    privateStateProvider: Object.assign(
+      timed(ownSet.privateStateProvider, {
+        getSigningKey: PH.privateState, setSigningKey: PH.privateState, clearAll: PH.privateState,
+      }),
+      {
+        forContract: (address: Parameters<PrivateStateProvider['forContract']>[0]) =>
+          timed(ownSet.privateStateProvider.forContract(address), {
+            get: PH.privateState, set: PH.privateState, remove: PH.privateState, clear: PH.privateState,
+          }),
+      },
+    ),
+    publicDataProvider: timed(ownSet.publicDataProvider, {
       queryContractState: PH.queryState, watchForTxData: PH.confirm, watchForContractState: PH.confirm,
       queryZSwapAndContractState: PH.queryState, queryDeployContractState: PH.queryState,
-      queryContractEvents: PH.queryState, queryUnshieldedBalances: PH.queryState,
-    } as any),
+      queryUnshieldedBalances: PH.queryState,
+    }),
     /*
-     * The wallet's own balanceTx, decomposed so each of its three steps gets a
-     * phase code. Copied from run-preview.ts, including the fallback: if any
-     * field it needs is missing on this build, use the SDK's method rather than
-     * failing.
+     * The wallet's own balanceTx, which balances every token kind of this machine's own transaction, as the
+     * testkit does, with a note of how far the wallet has synced when it starts.
      */
     walletProvider: timed({
-      balanceTx: async (tx: any, ttl?: Date) => {
+      ...ownSet.walletProvider,
+      balanceTx: (tx, ttl) => {
         try { note(`  balancing — wallet sync at this moment: ${live.state() ? progressOf(live.state()) : 'unknown'}`); }
         catch { /* reporting is not worth failing the call over */ }
-        const inner = wallet.wallet;
-        const zk = wallet.zswapSecretKeys;
-        const dk = wallet.dustSecretKey;
-        const ks = wallet.unshieldedKeystore;
-        if (!inner?.balanceUnboundTransaction || !zk || !dk || !ks?.signDataAsync) {
-          note('  (using the SDK balanceTx: the decomposed path is not available on this build)');
-          return wallet.balanceTx(tx, ttl);
-        }
-        const deadline = ttl ?? new Date(Date.now() + 60 * 60_000);
-        const at = Date.now();
-        const lap = (what: string) => note(`    ${what} in ${((Date.now() - at) / 1000).toFixed(1)}s`);
-
-        setAmbient(PH.balanceUnbound);
-        const recipe = await inner.balanceUnboundTransaction(
-          tx, { shieldedSecretKeys: zk, dustSecretKey: dk }, { ttl: deadline });
-        lap('balanceUnboundTransaction');
-
-        setAmbient(PH.signRecipe);
-        // signDataAsync, not signData: the callback became async in wallet-sdk
-        // 2.0, and the synchronous one still exists, which is why the wrong one
-        // type-checks and then fails at runtime.
-        const signed = await inner.signRecipe(recipe, (payload: any) => ks.signDataAsync(payload));
-        lap('signRecipe');
-
-        setAmbient(PH.finalizeRecipe);
-        const done = await inner.finalizeRecipe(signed);
-        lap('finalizeRecipe');
-
-        setAmbient(PH.balance);
-        return done;
+        return ownSet.walletProvider.balanceTx(tx, ttl);
       },
-      getCoinPublicKey: () => wallet.getCoinPublicKey(),
-      getEncryptionPublicKey: () => wallet.getEncryptionPublicKey(),
-    } as any, { balanceTx: PH.balance } as any),
-    midnightProvider: timed({ submitTx: (tx: any) => wallet.submitTx(tx) } as any, { submitTx: PH.submit } as any),
+    }, { balanceTx: PH.balance }),
+    midnightProvider: timed(ownSet.midnightProvider, { submitTx: PH.submit }),
   };
 
   /* ---------- the call harness ---------- */
@@ -1021,15 +998,13 @@ async function main() {
     good(`address written to ${OUT_FILE.replace(ROOT + '/', '')}`);
   }
 
-  providers.privateStateProvider.setContractAddress?.(contractAddress);
-
   const readState = async () => {
-    const st = await providers.publicDataProvider.queryContractState(contractAddress);
+    const st = await contractStateAt(providers.publicDataProvider, contractAddress);
     if (!st) throw new Error('the indexer has no state for this contract');
     return readLedger(st.data);
   };
-  /** The raw thing the indexer holds, kept alongside the decoded form. */
-  const readRawState = async () => providers.publicDataProvider.queryContractState(contractAddress);
+  /** The contract state the indexer serves, decoded but not read as this contract's ledger, kept alongside the read form. */
+  const readRawState = async () => contractStateAt(providers.publicDataProvider, contractAddress);
 
   /**
    * Everything the contract's PUBLIC state says, printed.

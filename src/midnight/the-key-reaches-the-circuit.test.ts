@@ -74,6 +74,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
+import { perContract, servedBytes, V9_HEAD } from '../testing/served-state.js';
 /** The compiled artefacts: the generated contract, the keys and the ABI. */
 const MANAGED = join(process.cwd(), 'contracts', 'managed');
 
@@ -95,7 +96,7 @@ const PRIVATE_STATE_BASE = 'the-key-reaches-the-circuit';
  *
  * A distinct class rather than a string match, so that "the call got as far as
  * asking for a proof" is a fact this file can assert on rather than infer from
- * the shape of a message the SDK wraps twice.
+ * the shape of a message the SDK wraps.
  */
 class TheProofServerWasReached extends Error {
   constructor() { super('the proof server was reached, and this test has none'); }
@@ -130,15 +131,13 @@ const bytes32 = (seed: number): Uint8Array => {
 async function aSignersDevice(opts: { fileTheDeviceRecord?: boolean } = {}) {
   const fileTheDeviceRecord = opts.fileTheDeviceRecord ?? true;
 
-  const { applyNetworkId } = await import('./network.js');
   /*
    * `undeployed`, and it is the honest name for a test with no chain. The
    * network id is interpolated into every address the SDK encodes, so it has
    * to be set before a coin public key is sampled or parsed.
    */
-  await applyNetworkId('undeployed');
 
-  const ledgerApi: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const ledgerApi: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const witnessModule = await import('../../contracts/src/witnesses.js');
   const CompiledContract: any = await import('@midnight-ntwrk/compact-js/effect/CompiledContract');
   const generated: any = await import('../../contracts/managed/contract/index.js');
@@ -270,10 +269,13 @@ async function aSignersDevice(opts: { fileTheDeviceRecord?: boolean } = {}) {
   };
 
   const walletProvider = {
+    supportedEras: ['v9'] as const,
     getCoinPublicKey: () => ledgerApi.sampleCoinPublicKey(),
     getEncryptionPublicKey: () => ledgerApi.sampleEncryptionPublicKey(),
   };
   const zkConfigProvider = new NodeZkConfigProvider(MANAGED);
+  const { transactionSettingsFor } = await import('./providers.js');
+  const config = transactionSettingsFor('undeployed');
 
   /*
    * ── A REAL DEPLOYED STATE, BUILT IN PROCESS ───────────────────────────────
@@ -284,7 +286,7 @@ async function aSignersDevice(opts: { fileTheDeviceRecord?: boolean } = {}) {
    * submitted and nothing is proved: only the state is kept.
    */
   const unprovenDeploy: any = await createUnprovenDeployTx(
-    { zkConfigProvider, privateStateProvider: signerStore, walletProvider } as any,
+    { zkConfigProvider, privateStateProvider: perContract(signerStore), walletProvider, config } as any,
     {
       compiledContract: compiled,
       args: [fromHex(foundingLeaf), new Uint8Array(32).fill(0x4c)],
@@ -292,25 +294,23 @@ async function aSignersDevice(opts: { fileTheDeviceRecord?: boolean } = {}) {
       initialPrivateState: deviceRecord,
     } as any,
   );
-  const deployedState = unprovenDeploy.public.initialContractState;
+  const deployedBytes: Uint8Array = unprovenDeploy.public.initialContractState.serialize();
   const address = String(ledgerApi.sampleContractAddress());
   /* The constructor's own pass is not what this file watches. */
   seen.length = 0;
   askedFor.length = 0;
 
   const providers = {
+    config,
     zkConfigProvider,
-    privateStateProvider: signerStore,
+    privateStateProvider: perContract(signerStore),
     walletProvider,
-    proofProvider: { proveTx: async () => { throw new TheProofServerWasReached(); } },
-    midnightProvider: { submitTx: async () => { throw new TheChainWasReached(); } },
+    proofProvider: { supportedEras: ['v9'] as const, proveTx: async () => { throw new TheProofServerWasReached(); } },
+    midnightProvider: { supportedEras: ['v9'] as const, submitTx: async () => { throw new TheChainWasReached(); } },
     publicDataProvider: {
-      queryContractState: async () => deployedState,
-      queryZSwapAndContractState: async () => [
-        new ledgerApi.ZswapChainState(),
-        deployedState,
-        ledgerApi.LedgerParameters.initialParameters(),
-      ],
+      queryLatestProtocolVersion: async () => V9_HEAD,
+      queryContractState: async () => servedBytes(deployedBytes),
+      queryZSwapAndContractState: async () => servedBytes(deployedBytes),
       queryBlock: async () => ({ hash: '00'.repeat(32) }),
     },
   };
@@ -463,7 +463,9 @@ describe.skipIf(!KEYS_ON_DISK)('a governed call carries the private state key th
    * commit to; nine witnesses answer before the transaction is built. Reaching
    * the PROOF SERVER means all of that happened. **The proof server and the
    * chain throw different errors on purpose**, so a change that submitted
-   * without proving fails here rather than passing.
+   * without proving fails here rather than passing. Midnight.js wraps a
+   * provider's refusal in its own error, naming the provider method that
+   * refused and carrying the refusal, redacted, on `cause`: both are read.
    *
    * ONE ASSERTION. The three field checks that stood here were removed rather
    * than kept: the contract couples them - a wrong blinding or scope produces
@@ -477,7 +479,10 @@ describe.skipIf(!KEYS_ON_DISK)('a governed call carries the private state key th
    */
   it('runs the whole circuit and stops at the proof server', async () => {
     const d = await aSignersDevice();
-    await expect(d.raiseARound()).rejects.toThrow(/the proof server was reached/);
+    await expect(d.raiseARound()).rejects.toMatchObject({
+      method: 'proveTx',
+      cause: { message: expect.stringMatching(/the proof server was reached/) },
+    });
   }, 300_000);
 
   /**

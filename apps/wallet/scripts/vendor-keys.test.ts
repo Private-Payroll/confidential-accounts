@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { KEYS_DIR, REPO_ROOT, WALLET_DIR, accountFilesOf, keysFolderOrRefuse, pruneOrRefuse, pruneStale, staleKeysOf, vendorAccountKeys, wroteLine } from './vendor-keys.mjs';
+import { KEYS_DIR, LEDGER_CIRCUITS, LEDGER_DECLARED, REPO_ROOT, BUCKET, TRUSTED_SETUP, declaredRefusal, droppedRefusal, ledgerFoldersOf, ledgerSourceOf, WALLET_DIR, accountFilesOf, keysFolderOrRefuse, pruneOrRefuse, pruneStale, staleKeysOf, vendorAccountKeys, wroteLine } from './vendor-keys.mjs';
 import { ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, VAULT_CIRCUITS_THE_WALLET_DEPLOYS } from '../src/chain/account-circuits.js';
 import { ACCOUNT_KEYS_FOLDER, VAULT_KEYS_FOLDER } from '../src/chain/key-material.js';
 
@@ -204,6 +204,13 @@ describe('a circuit the compile no longer builds leaves nothing behind in the ke
   });
 });
 
+/** The wallet's map of the ledger's own keys, which the script reads as it loads, copied into a bare checkout. */
+const withTheLedgerKeyMap = (root: string): void => {
+  const chain = join(root, 'apps', 'wallet', 'src', 'chain');
+  mkdirSync(chain, { recursive: true });
+  copyFileSync(join(WALLET_DIR, 'src', 'chain', 'ledger-keys.json'), join(chain, 'ledger-keys.json'));
+};
+
 describe('the script reports where it wrote, and refuses a keys folder that is not there', () => {
   it('the success line names the manifest the run wrote, read from where it was written', () => {
     // RED WHEN: the success line names apps/wallet/public/keys whatever folder the run wrote to, so it reports success at a path it never touched
@@ -237,6 +244,7 @@ describe('the script reports where it wrote, and refuses a keys folder that is n
     const scripts = join(root, 'apps', 'wallet', 'scripts');
     mkdirSync(scripts, { recursive: true });
     copyFileSync(join(HERE, 'vendor-keys.mjs'), join(scripts, 'vendor-keys.mjs'));
+    withTheLedgerKeyMap(root);
     const ran = spawnSync(process.execPath, [join(scripts, 'vendor-keys.mjs')], { encoding: 'utf8', timeout: 20_000 });
     expect(ran.status).toBe(1);
     expect(ran.stdout).toContain('REFUSED');
@@ -250,11 +258,76 @@ describe('the script reports where it wrote, and refuses a keys folder that is n
     const scripts = join(real, 'apps', 'wallet', 'scripts');
     mkdirSync(scripts, { recursive: true });
     copyFileSync(join(HERE, 'vendor-keys.mjs'), join(scripts, 'vendor-keys.mjs'));
+    withTheLedgerKeyMap(real);
     const link = `${real}-link`;
     symlinkSync(real, link);
     const ran = spawnSync(process.execPath, [join(link, 'apps', 'wallet', 'scripts', 'vendor-keys.mjs')], { encoding: 'utf8', timeout: 20_000 });
     expect(ran.status).toBe(1);
     expect(ran.stdout).toContain('REFUSED');
     expect(existsSync(join(real, 'apps', 'wallet', 'public'))).toBe(false);
+  });
+});
+
+const LEDGER_RELEASE = join(REPO_ROOT, 'midnight-src', 'preprod', 'midnight-ledger');
+
+describe('the ledger\'s own keys are the ones its release declares', () => {
+  it('every ledger key file the wallet serves has the hash its release declares, and nothing else is declared', () => {
+    /* RED WHEN: a ledger key the wallet asks for is fetched with no declared hash to refuse it against. */
+    const served = LEDGER_CIRCUITS.flatMap((c) => ['prover', 'verifier', 'bzkir'].map((k) => `${c}.${k}`)).sort();
+    expect(Object.keys(LEDGER_DECLARED).sort()).toEqual(served);
+  });
+
+  it.skipIf(!existsSync(LEDGER_RELEASE))('each declared hash is the one the ledger release preprod runs writes in its own source', () => {
+    /* RED WHEN: a ledger key hash is written from anywhere but the ledger release, so a key the node refuses is pinned as good. */
+    const where: Record<string, string> = { 'dust/10/spend': 'ledger/static/dust/spend', 'zswap/9/spend': 'zswap/static/spend', 'zswap/9/output': 'zswap/static/output', 'zswap/9/sign': 'zswap/static/sign' };
+    for (const [circuit, file] of Object.entries(where)) {
+      for (const kind of ['prover', 'verifier', 'bzkir']) {
+        const declared = readFileSync(join(LEDGER_RELEASE, `${file}.${kind}.sha256`), 'utf8').trim().split(/\s+/)[0];
+        expect(LEDGER_DECLARED[`${circuit}.${kind}`], `${circuit}.${kind}`).toBe(declared);
+      }
+    }
+  });
+
+  it.skipIf(!existsSync(LEDGER_RELEASE))('the ledger package the product installs is the release the declared hashes were read from', () => {
+    /* RED WHEN: the product pins a ledger whose own keys are not the ones the wallet fetches, so every fee is proved with a key that node refuses. */
+    const released = JSON.parse(readFileSync(join(LEDGER_RELEASE, 'ledger-wasm', 'package.json'), 'utf8')).version;
+    const pinned = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).dependencies['@midnightntwrk/ledger-v9'];
+    expect(pinned).toBe(released);
+  });
+
+  it('the Dust spend key comes from the trusted-setup host and every other ledger key from the bucket', () => {
+    /* RED WHEN: the Dust spend key is fetched from the bucket, which serves bytes the release does not declare. */
+    for (const kind of ['prover', 'verifier', 'bzkir']) expect(ledgerSourceOf(`dust/10/spend.${kind}`)).toBe(TRUSTED_SETUP);
+    for (const c of ['spend', 'output', 'sign']) expect(ledgerSourceOf(`zswap/9/${c}.prover`)).toBe(BUCKET);
+  });
+
+  it('a ledger key file that does not hash to the declared value is refused by name; the declared bytes pass', () => {
+    /* RED WHEN: a Dust spend key the release does not declare is written and pinned. */
+    expect(declaredRefusal('dust/10/spend.prover', 'ff'.repeat(32), TRUSTED_SETUP)?.join('\n')).toMatch(/REFUSED dust\/10\/spend\.prover[\s\S]*3dff9f54/u);
+    expect(declaredRefusal('dust/10/spend.prover', LEDGER_DECLARED['dust/10/spend.prover']!, TRUSTED_SETUP)).toBeNull();
+    expect(declaredRefusal('bls_midnight_2p16', 'ff'.repeat(32), BUCKET)).toBeNull();
+  });
+
+  it('an earlier generation of a ledger key left in the keys folder or the pins is found, and the current ones are not', () => {
+    /* RED WHEN: the wallet keeps serving the Dust spend key of a generation the node no longer accepts. */
+    const keysDir = mkdtempSync(join(tmpdir(), 'ledger-keys-'));
+    mkdirSync(join(keysDir, 'dust', '8'), { recursive: true });
+    writeFileSync(join(keysDir, 'dust', '8', 'spend.prover'), 'old');
+    const artefacts = { 'dust/9/spend.verifier': { bytes: 1, sha256: 'a' }, 'dust/10/spend.prover': { bytes: 1, sha256: 'b' }, 'zswap/9/spend.prover': { bytes: 1, sha256: 'c' } };
+    const folders = ledgerFoldersOf({ keysDir, artefacts, circuits: LEDGER_CIRCUITS });
+    const expected = LEDGER_CIRCUITS.flatMap((c) => ['.prover', '.verifier', '.bzkir'].map((k) => `${c}${k}`));
+    expect(staleKeysOf({ keysDir, artefacts, folders, expected })).toEqual(['dust/8/spend.prover', 'dust/9/spend.verifier']);
+  });
+});
+
+describe('a download that drops is refused by name, not thrown', () => {
+  /* RED WHEN: a dropped download is refused without naming the file, the address, or that running it again fetches it. */
+  it('names the file, the address and the cause, and says running the command again fetches it', () => {
+    const cause = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+    const lines = droppedRefusal('bls_midnight_2p17', 'https://srs.example/bls_midnight_2p17', cause).join('\n');
+    expect(lines).toContain('REFUSED bls_midnight_2p17');
+    expect(lines).toContain('https://srs.example/bls_midnight_2p17');
+    expect(lines).toContain('ECONNRESET');
+    expect(lines).toMatch(/Run this door again/u);
   });
 });

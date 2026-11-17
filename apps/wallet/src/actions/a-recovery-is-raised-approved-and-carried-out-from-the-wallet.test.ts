@@ -22,6 +22,8 @@ import { approveProposalAction } from './approve-proposal.js';
 import { StepRefused, type ActionDefinition, type StepContext } from './definition.js';
 import { moreThanTheFeeRefusal, notOneCallRefusal, recoveryAction, type OwnWalletDoors, type RecoveryReach } from './recovery.js';
 import * as ledger from '@midnightntwrk/ledger-v9';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 /*
  * **A RECOVERY OF THE COMPANY'S RECORDS IS RAISED, APPROVED AND CARRIED OUT FROM EACH SIGNER'S OWN WALLET.** The
@@ -94,8 +96,9 @@ const builderOver = (c: ReturnType<typeof aTreeCompany>, chain: ReturnType<typeo
         ZswapChainState: class { }, LedgerParameters: { deserialize: (b: Uint8Array) => b },
       },
       runtimeState: { deserialize: (b: Uint8Array) => ({ data: b }) },
+      network: 'undeployed',
       contracts: {
-        createUnprovenCallTxFromInitialStates: async (_zk: unknown, o: { circuitId: string; initialPrivateState: unknown }) => {
+        buildCall: async (_zk: unknown, o: { circuitId: string; initialPrivateState: unknown }) => {
           circuit = o.circuitId;
           return { private: { nextPrivateState: o.initialPrivateState, unprovenTx: 'UNPROVEN' } };
         },
@@ -141,13 +144,16 @@ const callRead = (raw: string, over: Record<string, unknown> = {}) => {
 interface Over { call?: Record<string, unknown>; adds?: Record<string, unknown>; noDust?: boolean; approvals?: number; carryFails?: boolean }
 const ownWalletOver = (chain: ReturnType<typeof aChain>, log: string[], o: Over = {}): OwnWalletDoors => ({
   ledger: async () => ({ Transaction: { deserialize: (_s: 'signature', _p: 'proof', _b: 'pre-binding', raw: Uint8Array) => callRead(Buffer.from(raw).toString('base64'), o.call) } }),
-  keys: () => ({ shieldedSecretKeys: 'shielded', dustSecretKey: 'dust' }),
   signSegment: () => (async () => 'signed') as never,
   facade: async () => ({
     dust: { state: { subscribe: (w: { next: (s: { progress: { isConnected: boolean; isStrictlyComplete(): boolean } }) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
-    balanceUnboundTransaction: async (call: never, _k: unknown, options: { tokenKindsToBalance: string[] }) => {
+    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+    /* A handle the facade adopts carries the call its bytes are, read as the ledger reads them. */
+    adoptTransaction: (raw: Uint8Array) => callRead(Buffer.from(raw).toString('base64'), o.call),
+    balanceUnboundTransaction: async (call: never, options: { tokenKindsToBalance?: 'all' | string[] }) => {
       if (o.noDust === true) throw Object.assign(new Error('Insufficient funds'), { name: 'InsufficientFundsError' });
-      log.push(`fee in ${options.tokenKindsToBalance.join(',')}`);
+      const kinds = options.tokenKindsToBalance;
+      log.push(`fee in ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
       return {
         baseTransaction: call,
         balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, intentOf([], { dustActions: { spends: [1], registrations: [] } })]]), ...o.adds },
@@ -157,7 +163,7 @@ const ownWalletOver = (chain: ReturnType<typeof aChain>, log: string[], o: Over 
     finalizeRecipe: async (r: never) => r,
     submitTransaction: async (r: never) => { const raw = (r as { baseTransaction: { raw: string } }).baseTransaction.raw; log.push('own wallet sent'); chain.takes(raw); },
     revert: async () => { log.push('fee undone'); },
-  }),
+  }) as never,
 });
 
 const aCompany = async () => {

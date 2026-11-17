@@ -7,7 +7,7 @@ import { identityFromWords, secretFromWords } from 'midnight-identity/keys/deriv
 import { EMAIL, GIVEN_NAME, REGISTRY } from 'midnight-identity/profile/attributes';
 import { emptyProfile, grantTo, selfAssert } from 'midnight-identity/profile/model';
 import { load, save } from 'midnight-identity/profile/store';
-/* Second cause — `approve.tsx` writes its history entry with
+/* Second cause — `answerDisclosure` (`approve-answer-disclosure.ts`) writes its history entry with
  * `void save(...)`, which is correct and is not awaited, so a test that reads
  * the store after a press needs a way to wait for the write itself. */
 import { afterWrites, watchedStore } from '../testing/settled-store.js';
@@ -20,6 +20,7 @@ import { verify } from 'midnight-identity/profile/disclosure';
 import type { DisclosureResponse } from 'midnight-identity/profile/disclosure';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
 import { Approve } from './approve.js';
+import { NETWORK } from '../config.js';
 
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
 
@@ -223,7 +224,7 @@ describe('approving, per value', () => {
       atOrigin: ORIGIN,
       expectingNonce: 'n1',
       payingAddress: response.payload.address,
-      networkId: 'stagenet',
+      networkId: NETWORK,
       now: NOW,
     })).toEqual({ ok: true });
   });
@@ -355,7 +356,7 @@ describe('the subwallet the disclosure is about', () => {
       atOrigin: ORIGIN,
       expectingNonce: 'n1',
       payingAddress: shown,
-      networkId: 'stagenet',
+      networkId: NETWORK,
       now: NOW,
     })).toEqual({ ok: true });
   });
@@ -372,7 +373,7 @@ describe('the subwallet the disclosure is about', () => {
       atOrigin: 'https://payroll-b.example',
       expectingNonce: 'n1',
       payingAddress: response.payload.address,
-      networkId: 'stagenet',
+      networkId: NETWORK,
       now: NOW,
     })).toMatchObject({ ok: false, code: 'origin-mismatch' });
   });

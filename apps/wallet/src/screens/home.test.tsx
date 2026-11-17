@@ -9,7 +9,10 @@ import { saveArrival, saveCreation, saveSecuredSetup } from '../accounts/storage
 import { forgetOpenWallet } from '../accounts/wallets-held.js';
 import { loadPendingSends, writePendingSend } from '../chain/pending.js';
 import type { PendingDraft } from '../chain/pending.js';
-import { Home, PendingSendsCard } from './home.js';
+import { networkRecord } from '../../../../src/core/networks.js';
+import { NETWORK } from '../config.js';
+import { Home } from './home.js';
+import { PendingSendsCard } from './home-wallet-cards.js';
 import { BalanceEnginesContext } from '../chain/balance-context.js';
 import type { BalanceEngine } from '../chain/balance.js';
 
@@ -108,10 +111,10 @@ describe('the home screen and the standing notice — §7.7', () => {
     render(<Home identity={identityFromSecret(secret)} secret={secret} />);
     fireEvent.click(screen.getByText('Receive'));
     const shielded = document.querySelector('[data-addr="shielded"] .address-short');
-    expect(shielded?.querySelector('.net')?.textContent).toMatch(/^mn_shield-addr_stagenet1$/);
+    expect(shielded?.querySelector('.net')?.textContent).toMatch(new RegExp(`^mn_shield-addr_${NETWORK}1$`));
     expect(shielded?.querySelectorAll('.end')).toHaveLength(2);
     const unshielded = document.querySelector('[data-addr="unshielded"] .address-short');
-    expect(unshielded?.querySelector('.net')?.textContent).toMatch(/^mn_addr_stagenet1$/);
+    expect(unshielded?.querySelector('.net')?.textContent).toMatch(new RegExp(`^mn_addr_${NETWORK}1$`));
     expect(unshielded?.querySelectorAll('.end')).toHaveLength(2);
   });
 });
@@ -562,5 +565,43 @@ describe('the private balance line is honest about the mechanism', () => {
      * here, which is false once a contract-minted token can be. */
     expect(line.textContent).not.toMatch(/nothing can send it/i);
     expect(line.textContent).toMatch(/any other\s+token on its own line/);
+  });
+});
+
+describe('the home screen names its network only through the network record', () => {
+  const recorded = networkRecord(NETWORK);
+  const engineThatSyncs: BalanceEngine = (_identity, _account, tell) => {
+    tell({ name: 'synced', night: 5_000_000_000n, asOf: Date.now() });
+    return () => {};
+  };
+  const inert: BalanceEngine = () => () => {};
+  const renderChecked = (): void => {
+    const secret = newSecret();
+    render(
+      <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: engineThatSyncs, dust: inert }}>
+        <Home identity={identityFromSecret(secret)} secret={secret} />
+      </BalanceEnginesContext.Provider>,
+    );
+    fireEvent.click(screen.getByText('Check the balance'));
+  };
+
+  it('the Receive popup names the faucet by the record label, where the record has one', () => {
+    expect(recorded.endpoints?.faucet).toBeTruthy();
+    const secret = newSecret();
+    render(<Home identity={identityFromSecret(secret)} secret={secret} />);
+    fireEvent.click(screen.getByText('Receive'));
+    const popup = document.querySelector('[role="dialog"]')!;
+    /* RED WHEN the sentence writes a network by a literal ("the stagenet
+     * faucet") instead of the record's label. */
+    expect(popup.textContent).toContain(`and the ${recorded.label} faucet pays only here`);
+  });
+
+  it('the conversion note quotes no measurement dated on one network', () => {
+    renderChecked();
+    const note = screen.getByText(/1 NIGHT = 1,000,000 STARs/);
+    /* RED WHEN the note says again that the split was measured on one named
+     * network on one date, which is not true of any other network. */
+    expect(note.textContent).not.toMatch(/measured|19 Aug|stagenet/i);
+    expect(note.textContent).toMatch(/Foundation/);
   });
 });

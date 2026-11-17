@@ -102,8 +102,10 @@ const main = async () => {
   const PAYLOAD = bytes(8);
   const rootAcct = acct;
   {
-    const ctx = createCircuitContext<{}>(
-      'propose', acctAddr as never, BLOCK, acctCS, {} as never);
+    const ctx = createCircuitContext<{}>({
+      circuitId: 'propose', contractAddress: acctAddr as never, coinPublicKeyOrZswapState: BLOCK,
+      contractState: acctCS, privateState: {} as never,
+    });
     const r = await rootAcct.impureCircuits.propose(ctx, PAYLOAD);
     acctCS.data = r.context.callContext.currentQueryContext.state;
   }
@@ -123,16 +125,22 @@ const main = async () => {
   console.log(`  the real account:       ${String(acctAddr).slice(0, 16)}…\n`);
 
   /* The only thing a cross-contract call needs that a simulator has not got. */
-  const stateProvider = {
-    getContractState: async (_block: string, address: any) =>
-      String(address) === String(acctAddr) ? acctCS : undefined,
+  const crossContract = {
+    stateProvider: {
+      getContractState: async (_block: string, address: any) =>
+        String(address) === String(acctAddr) ? acctCS : undefined,
+    },
+    moduleProvider: {
+      resolve: (address: any) => (String(address) === String(acctAddr) ? () => import(ACCT_CONTRACT) : undefined),
+    },
   };
 
   /* ---------------------------------------------------------------- the call */
   try {
-    const ctx = createCircuitContext<{}>(
-      'payout', vaultAddr as never, BLOCK, vaultCS, {} as never,
-      stateProvider as never, undefined, undefined, undefined, BLOCK);
+    const ctx = createCircuitContext<{}>({
+      circuitId: 'payout', contractAddress: vaultAddr as never, coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultCS, privateState: {} as never, crossContract, parentBlockHash: BLOCK,
+    });
     const r = await vault.impureCircuits.payout(ctx, proposalId, PAYLOAD, SALT);
     ok('the call executed, offline, with no node and no proof server');
 
@@ -172,9 +180,10 @@ const main = async () => {
   const { crossContractCall } = await import('@midnight-ntwrk/compact-runtime');
   const acctModule: any = await import(ACCT_CONTRACT);
   try {
-    const ctx = createCircuitContext<{}>(
-      'payout', sampleContractAddress() as never, BLOCK, vaultCS, {} as never,
-      stateProvider as never, undefined, undefined, undefined, BLOCK);
+    const ctx = createCircuitContext<{}>({
+      circuitId: 'payout', contractAddress: sampleContractAddress() as never, coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultCS, privateState: {} as never, crossContract, parentBlockHash: BLOCK,
+    });
     await (crossContractCall as any)(
       ctx, acctModule, 'propose', acctAddr, false,
       { input: [], output: [], publicTranscript: [], privateTranscriptOutputs: [] },

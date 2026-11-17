@@ -142,14 +142,14 @@ const depsWith = (log: string[], raising = false): GovernedCallDeps => ({
   },
   runtimeState: { deserialize: (b: Uint8Array) => ({ state: [...b] }) },
   contracts: {
-    createUnprovenCallTxFromInitialStates: async (_zk: unknown, options: any) => {
+    buildCall: async (_zk: unknown, options: any) => {
       log.push(`built ${options.circuitId}`);
       const r = options.initialPrivateState;
       if (options.circuitId === 'propose') log.push(`with blinding ${Buffer.from(r.assetBlinding).toString('hex').slice(0, 4)} salt ${Buffer.from(r.proposalSalt).toString('hex').slice(0, 4)}`);
-      return { private: { nextPrivateState: options.initialPrivateState, unprovenTx: 'U' } };
+      return { private: { nextPrivateState: options.initialPrivateState, unprovenTx: 'U' as never, transaction: null, nextZswapLocalState: null } };
     },
   },
-  accountCompiled: 'COMPILED', accountZkConfig: 'ZK', accountPure,
+  accountCompiled: 'COMPILED', accountZkConfig: 'ZK', accountPure, network: 'undeployed',
   /* The chain holds every proposal asked about open. */
   /* The chain holds every proposal open for an approval, and none yet for a raise. */
   accountLedger: () => aLedgerHolding(raising ? 'none' : 'every proposal'),

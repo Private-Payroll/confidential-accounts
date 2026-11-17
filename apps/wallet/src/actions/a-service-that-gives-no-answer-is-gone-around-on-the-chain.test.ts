@@ -15,6 +15,8 @@ import WORDS from '../locales/en.json';
 import { apiOver, handOverFor } from './company-reach.js';
 import { FELL_ORDER, fellBackLine, type FellBack } from './fall-back-line.js';
 import type { StepContext } from './definition.js';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 const ACCOUNT = 'ac'.repeat(32);
 const OWN: CompanyService = { service: 'own', at: 'https://relay.example.com' };
@@ -66,7 +68,7 @@ const aChain = (log: unknown[], w: World = {}) => {
   let reads = 0;
   return {
     ownWallet: () => ({
-      ledger: ledgerReading(w.read ?? []), keys: () => ({}) as never, signSegment: () => ({}) as never,
+      ledger: ledgerReading(w.read ?? []), signSegment: () => ({}) as never,
       landed: async (ids: readonly string[]) => {
         log.push(`read the chain for ${ids.join(',')}`);
         const answers = w.onChain ?? [false];
@@ -77,6 +79,8 @@ const aChain = (log: unknown[], w: World = {}) => {
       },
       facade: async () => ({
         dust: { state: { subscribe: (s: { next: (x: unknown) => void }) => { s.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
+        state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+        adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
         balanceUnboundTransaction: async (call: unknown) => {
           if (w.ownDust !== true) throw new Error('no fee is paid from this wallet');
           log.push('own DUST');

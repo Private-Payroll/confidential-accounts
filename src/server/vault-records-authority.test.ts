@@ -3,6 +3,7 @@
  * The chain reader is run against the vault's real compiled contract: a state
  * made by its own constructor, read back through its own ledger.
  */
+import { served } from '../testing/served-state.js';
 import { describe, it, expect } from 'vitest';
 import { createConstructorContext, sampleContractAddress } from '@midnight-ntwrk/compact-runtime';
 import {
@@ -64,17 +65,17 @@ describe('the vault\'s pinned account, read from the chain', () => {
     const init = await (vault as any).initialState(createConstructorContext({}, '0'.repeat(64)), { bytes: fromHex(COMPANY) });
     const address = sampleContractAddress();
     const read = vaultAccountFromTheIndexer({
-      queryContractState: async (a) => (a === address ? { data: init.currentContractState.data } : null),
+      queryContractState: async (a) => (a === address ? served({ data: init.currentContractState.data }) : null) as never,
     });
     expect(await read(address as never), 'RED WHEN: the account is read from anywhere but the vault\'s own ledger').toBe(COMPANY);
     expect(await read('cd'.repeat(32)), 'RED WHEN: a contract the indexer does not have is answered as some account').toBeNull();
   });
 
   it('THROWS for a state that is not a vault\'s, and for an account that is not thirty-two bytes', async () => {
-    const broken = vaultAccountFromTheIndexer({ queryContractState: async () => ({ data: {} }) },
+    const broken = vaultAccountFromTheIndexer({ queryContractState: async () => served({ data: {} }) as never },
       () => { throw new Error('not a vault'); });
     await expect(broken(VAULT), 'RED WHEN: an unreadable state is answered as no vault').rejects.toThrow(/could not be read as a vault/);
-    const short = vaultAccountFromTheIndexer({ queryContractState: async () => ({ data: {} }) },
+    const short = vaultAccountFromTheIndexer({ queryContractState: async () => served({ data: {} }) as never },
       () => ({ account: { bytes: new Uint8Array(31) } }));
     await expect(short(VAULT)).rejects.toThrow(/not thirty-two bytes/);
   });

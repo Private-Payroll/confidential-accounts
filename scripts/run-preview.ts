@@ -59,6 +59,7 @@
  * design: it is one process standing in for two devices, and the contract
  * cannot tell the difference because the proof is over the witnesses either way.
  */
+import { shownAddress } from '../src/core/networks.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from '@noble/hashes/utils.js';
 import { join } from 'node:path';
@@ -66,25 +67,23 @@ import { join } from 'node:path';
 import * as CompiledContract from '@midnight-ntwrk/compact-js/effect/CompiledContract';
 import {
   StaticProofServerContainer,
-  MidnightWalletProvider,
   createDefaultTestLogger,
 } from '@midnight-ntwrk/testkit-js';
-import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
-import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
+import type { MidnightProviders, PrivateStateProvider, ProofProvider } from '@midnight-ntwrk/midnight-js-types';
+import { doorProviders } from './door-providers.js';
+import { contractStateAt } from '../src/midnight/contract-state-at.js';
 
 import { Contract, ledger as readLedger, pureCircuits } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
 import { privateStateKey } from '../src/midnight/ledger.js';
-import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
+import { theNetwork } from '../src/midnight/network.js';
 import {
   assets as assetRegistry, assetIdBytes, formatAmount, NO_ASSET,
   type Asset, type AssetId,
 } from '../src/core/assets.js';
 import { viewDigestOf } from '../src/core/ledger.js';
 import { isDeployedCircuit } from '../src/midnight/deferral.js';
-import { saveDustState } from './dust-wallet.js';
+import { saveWalletState } from './dust-wallet.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { seededBytes } from './seeded.js';
@@ -95,20 +94,16 @@ import {
 /* ------------------------------------------------------------------ */
 
 const ROOT = process.cwd();
-const STATE_DIR = join(ROOT, '.midnight');
+const NETWORK = theNetwork();
+const STATE_DIR = storeDir(ROOT, NETWORK);
 /*
- * Per network, not per project.
- *
- * These were hardcoded to `preview-*` while there was only ever one network. A
- * contract address is meaningless on a different chain, and Stagenet is wiped
- * on a schedule, so reading a stale address is a guaranteed confusing failure.
- * The wallet seed is chain-agnostic — the same key, funded separately on each
- * network — so it deliberately keeps one name.
+ * Per network, not per project: every file here is in the network's own store
+ * folder. A contract address is meaningless on a different chain, and a wallet
+ * funded on one network holds nothing on another, so each network has its own.
  */
 const SEED_FILE = join(STATE_DIR, 'wallet.seed');
-const NETWORK = theNetwork();
 
-const CONTRACT_FILE = join(STATE_DIR, `${NETWORK}-contract.json`);
+const CONTRACT_FILE = deploymentRecordPath(ROOT, NETWORK);
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
 /**
  * The private state store, per network.
@@ -178,6 +173,8 @@ import {
 } from '../src/midnight/governed-call.js';
 import type { Job } from '../src/core/jobs.js';
 import { RAISE_WINDOW_SECONDS } from '../src/core/proposal-filing.js';
+import { deploymentRecordPath, storeDir } from '../src/wiring/deployment.js';
+import { vaultArtefactPlaces } from '../src/server/vault-artefacts.js';
 
 /** A raise's deadline: a day after this machine's clock, the window a device gives a raise it writes down. */
 const aDayFromNow = (): bigint => BigInt(Math.floor(Date.now() / 1000) + RAISE_WINDOW_SECONDS);
@@ -290,7 +287,7 @@ const ADD_C_SALT = freshSalt();
  * processes agree — and made every one of these five identities computable by
  * anyone who reads this repository, on an account these scripts seat them on.
  * `scripts/preview-signers.ts` keeps the agreement and removes the
- * computability: real entropy, generated once, written under `.midnight/`,
+ * computability: real entropy, generated once, written in the network's store folder,
  * per network AND per account.
  *
  * **A REFUSAL HERE IS THE HONEST ONE.** If the file is absent this script does
@@ -593,12 +590,6 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   const PH = {
     idle: 0, build: 1, readKey: 2, prove: 3, submit: 4, confirm: 5,
     queryState: 6, privateState: 7, balance: 8,
-    // `balance` is three SDK calls, not one. Reading testkit-js:
-    //   balanceTx = balanceUnboundTransaction -> signRecipe -> finalizeRecipe
-    // The 40s stack sample landed inside unsymbolised WASM under `balance`,
-    // which is as far as one phase code can take us. Splitting it costs
-    // nothing and names which of the three actually blocks.
-    balanceUnbound: 9, signRecipe: 10, finalizeRecipe: 11,
   };
   const setPhase = (p: number) => Atomics.store(shared, PHASE, BigInt(p));
 
@@ -664,6 +655,19 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     }
     return out;
   };
+
+  /**
+   * The private state store, wrapped the same way. Private states are reached per contract, so the store each
+   * contract's states are read and written through is wrapped as it is handed out.
+   */
+  const timedPrivateStates = (store: PrivateStateProvider): PrivateStateProvider => Object.assign(
+    timed(store, { getSigningKey: PH.privateState, setSigningKey: PH.privateState, clearAll: PH.privateState }),
+    {
+      forContract: (address: Parameters<PrivateStateProvider['forContract']>[0]) => timed(store.forContract(address), {
+        get: PH.privateState, set: PH.privateState, remove: PH.privateState, clear: PH.privateState,
+      }),
+    },
+  );
 
   /**
    * Counts every witness invocation, and pulses while doing it.
@@ -1008,7 +1012,6 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   good(`signer A leaf  ${hex(leafOf(signerA)).slice(0, 24)}…`);
   good(`signer B leaf  ${hex(leafOf(signerB)).slice(0, 24)}…`);
 
-  await applyNetworkId(NETWORK);
 
   /* -------------------------------------------------- 2 */
   begin(2, 7, 'Connecting and starting the wallet');
@@ -1037,9 +1040,9 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * down, three attempts say so just as clearly.
    */
   const cfg = await startEnvironment(env, new StaticProofServerContainer(PROVER_PORT), note);
-  good(`node ${cfg.node}`);
+  good(`node ${shownAddress(cfg.node)}`);
 
-  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const NIGHT = (unshieldedToken() as any).raw;
   let sub: any = null;
   const dustOf = (s: any) => { try { return BigInt(s?.dust?.balance(new Date()) ?? 0n); } catch { return 0n; } };
@@ -1082,7 +1085,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     requireDust: true,
     onNote: note,
   });
-  const wallet: any = live.wallet;
+  const wallet = live.wallet;
   /*
    * `live.state()` stays LIVE, and that is not incidental.
    *
@@ -1179,8 +1182,8 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   // Cached immediately, not at the end: a run that later stalls on M-46 must
   // still leave a usable cache behind, or the next experiment pays the sync again.
   {
-    const cached = await saveDustState(wallet, masterSeed, NETWORK, ROOT);
-    if (cached) good(`dust wallet state cached (${(cached / 1024).toFixed(0)} KB) — the next run skips the long sync`);
+    const cached = await saveWalletState(wallet, masterSeed, NETWORK, ROOT);
+    if (cached) good(`wallet state cached (${(cached / 1024).toFixed(0)} KB) — the next run skips the long sync`);
   }
 
   /* ------------------------------------------------- is the wallet actually synced?
@@ -1259,19 +1262,29 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   /* -------------------------------------------------- 3 */
   begin(3, 7, 'Finding the contract and reading its state');
 
-  const rawZkConfigProvider = new NodeZkConfigProvider<string>(ARTIFACTS);
-  const zkConfigProvider = timed(rawZkConfigProvider, {
+  /*
+   * The provider set every door whose own wallet pays is built from, with each member wrapped so the watchdog
+   * can name the phase a stalled call is in. The wrappers delegate and change nothing they are handed.
+   */
+  const ownSet = await doorProviders({
+    config: { networkId: NETWORK, proverUrl: cfg.proofServer, indexerUrl: cfg.indexer, indexerWsUrl: cfg.indexerWS },
+    artifactsPath: ARTIFACTS,
+    privateStateId: PRIVATE_STATE_ID,
+    storagePassword: async () => PRIVATE_STATE_PASSWORD,
+    wallet,
+  });
+  const zkConfigProvider = timed(ownSet.zkConfigProvider, {
     getProverKey: PH.readKey, getVerifierKey: PH.readKey, getZKIR: PH.readKey,
     get: PH.readKey, getVerifierKeys: PH.readKey,
-  } as any);
+  });
   /*
    * Proving in this process, behind a flag.
    *
    * Decision 0007 rules out a hosted proof server: the preimage IS the private
    * input. So the customer's device has to prove, and for a web product that
-   * device is a browser tab. `@midnight-ntwrk/zkir-v2` ships the prover as WASM
-   * with a browser entry point, and `provingProvider` returns the same shape
-   * `createProofProvider` already consumes here.
+   * device is a browser tab. The zkir packages ship the provers as WASM with a
+   * browser entry point (zkir-v3 for the contract's circuits, zkir-v2 for the
+   * ledger's own keys), and `wasmProofProvider` answers as a proof provider.
    *
    * Behind a flag, and defaulting OFF, because the containerised path is proven
    * eleven circuits deep and this one has never settled a transaction. The
@@ -1281,95 +1294,42 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * `MIDNIGHT_WASM_PROVING=1`, and stop the proof server first — if it settles
    * with no container running, browser proving is real.
    */
-  const rawProofProvider = process.env.MIDNIGHT_WASM_PROVING === '1'
+  const rawProofProvider: ProofProvider = process.env.MIDNIGHT_WASM_PROVING === '1'
     ? await (async () => {
         const { wasmProofProvider, fileKeyMaterialSource } = await import('../src/midnight/wasm-proving.js');
         note('proving IN PROCESS via zkir WASM — no proof server (M-77)');
-        return wasmProofProvider(await fileKeyMaterialSource(ARTIFACTS, join(STATE_DIR, 'params')));
+        return wasmProofProvider(await fileKeyMaterialSource(ARTIFACTS, vaultArtefactPlaces(ROOT, process.env).params));
       })()
-    : httpClientProofProvider(cfg.proofServer, rawZkConfigProvider);
+    : ownSet.proofProvider;
 
-  const providers: any = {
+  const providers: MidnightProviders = {
+    ...ownSet,
     zkConfigProvider,
-    proofProvider: timed(rawProofProvider as any,
-      { proveTx: PH.prove, check: PH.prove, prove: PH.prove } as any),
+    proofProvider: timed(rawProofProvider, { proveTx: PH.prove }),
     // Wrapped like the rest. Leaving this one bare is why five runs reported
     // the stall as the ambient "building the transaction" phase: a hang in
     // here was indistinguishable from a hang in the SDK's own code.
-    privateStateProvider: timed(levelPrivateStateProvider({
-      accountId: PRIVATE_STATE_ID,
-      privateStateStoreName: PRIVATE_STATE_ID,
-      privateStoragePasswordProvider: async () => PRIVATE_STATE_PASSWORD,
-    } as any) as any, {
-      get: PH.privateState, set: PH.privateState, remove: PH.privateState,
-      clear: PH.privateState, getSigningKey: PH.privateState, setSigningKey: PH.privateState,
-      setContractAddress: PH.privateState,
-    } as any),
-    publicDataProvider: timed(indexerPublicDataProvider(cfg.indexer, cfg.indexerWS) as any,
-      { queryContractState: PH.queryState, watchForTxData: PH.confirm, watchForContractState: PH.confirm,
-        queryZSwapAndContractState: PH.queryState, queryDeployContractState: PH.queryState } as any),
-    // The wallet gets instrumented too. `submitTx` does three things — prove,
+    privateStateProvider: timedPrivateStates(ownSet.privateStateProvider),
+    publicDataProvider: timed(ownSet.publicDataProvider, {
+      queryContractState: PH.queryState, watchForTxData: PH.confirm, watchForContractState: PH.confirm,
+      queryZSwapAndContractState: PH.queryState, queryDeployContractState: PH.queryState,
+    }),
+    // The wallet gets instrumented too. A call does three things — prove,
     // balance, submit — and labelling the whole call `prove` hid the other two
-    // for four runs. Proving is measured at 1.4s; balancing is the suspect,
-    // and it is the job we handed to a wallet we told not to finish syncing.
+    // for four runs. Balancing is the wallet's own `balanceTx`, which balances
+    // every token kind of this machine's own transaction, as the testkit does.
     walletProvider: timed({
-      balanceTx: async (tx: any, ttl?: Date) => {
-        // Wrapped in try/catch on purpose: instrumentation must never be the
-        // reason a call fails. The previous version threw a ReferenceError
-        // here and killed three attempts before reaching the real balanceTx.
+      ...ownSet.walletProvider,
+      balanceTx: (tx, ttl) => {
+        // Reporting must never be the reason a call fails.
         try {
           note(`  balancing — wallet sync at this moment: ${live.state() ? progressOf(live.state()) : 'unknown'}`);
         } catch { /* reporting is not worth failing the call over */ }
-
-        // Do by hand exactly what testkit's balanceTx does, so each of its
-        // three steps gets its own phase code and its own number. Copied from
-        // the installed testkit-js, not from the GitHub repo, which is ahead
-        // of what npm publishes.
-        
-        // If any field it needs is missing — a version bump renames one, say —
-        // fall straight back to the SDK's own method rather than failing.
-        const inner = wallet.wallet;
-        const zk = wallet.zswapSecretKeys;
-        const dk = wallet.dustSecretKey;
-        const ks = wallet.unshieldedKeystore;
-        if (!inner?.balanceUnboundTransaction || !zk || !dk || !ks?.signDataAsync) {
-          note('  (using the SDK balanceTx: the decomposed path is not available on this build)');
-          return wallet.balanceTx(tx, ttl);
-        }
-
-        const deadline = ttl ?? new Date(Date.now() + 60 * 60_000);
-        const at = Date.now();
-        const lap = (what: string) => note(`    ${what} in ${((Date.now() - at) / 1000).toFixed(1)}s`);
-
-        setAmbient(PH.balanceUnbound);
-        const recipe = await inner.balanceUnboundTransaction(
-          tx,
-          { shieldedSecretKeys: zk, dustSecretKey: dk },
-          { ttl: deadline },
-        );
-        lap('balanceUnboundTransaction');
-
-        setAmbient(PH.signRecipe);
-        // signDataAsync: the callback is async in wallet-sdk 2.0. See deploy-preview.ts.
-        const signed = await inner.signRecipe(recipe, (payload: any) => ks.signDataAsync(payload));
-        lap('signRecipe');
-
-        setAmbient(PH.finalizeRecipe);
-        const done = await inner.finalizeRecipe(signed);
-        lap('finalizeRecipe');
-
-        setAmbient(PH.balance);
-        return done;
+        return ownSet.walletProvider.balanceTx(tx, ttl);
       },
-      getCoinPublicKey: () => wallet.getCoinPublicKey(),
-      getEncryptionPublicKey: () => wallet.getEncryptionPublicKey(),
-    } as any, { balanceTx: PH.balance } as any),
-    midnightProvider: timed({ submitTx: (tx: any) => wallet.submitTx(tx) } as any, { submitTx: PH.submit } as any),
+    }, { balanceTx: PH.balance }),
+    midnightProvider: timed(ownSet.midnightProvider, { submitTx: PH.submit }),
   };
-
-  // Required before any private state get/set, and it throws unhelpfully if
-  // skipped. Not optional just because it looks like bookkeeping.
-  providers.privateStateProvider.setContractAddress?.(contractAddress);
 
   /**
    * The change the round in flight is for.
@@ -1424,7 +1384,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     s: AccountPrivateState,
     name: string,
   ) => {
-    await providers.privateStateProvider.set(PRIVATE_STATE_KEY, {
+    await providers.privateStateProvider.forContract(contractAddress).set(PRIVATE_STATE_KEY, {
       ...s,
       /*
        * THE ASSET, STAGED PER CALL.
@@ -1537,7 +1497,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   good('found on chain, the deployed verifier keys match, the deferred circuits are absent');
 
   const readState = async () => {
-    const st = await providers.publicDataProvider.queryContractState(contractAddress);
+    const st = await contractStateAt(providers.publicDataProvider, contractAddress);
     if (!st) throw new Error('the indexer has no state for this contract');
     return readLedger(st.data);
   };
@@ -1631,9 +1591,6 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
       }
     }
   };
-
-  /** Kept for the non-circuit paths. */
-  const call = callCircuit;
 
   /* -------------------------------------------------- 3b, and only on request
    *
@@ -2319,10 +2276,17 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   const jobSalt = JOB_SALT;
   const jobProposalId = proposalIdFor(jobPayload, jobSalt);
 
+  /*
+   * The runner releases what a failed job left booked. Here this machine's own wallet balanced the job through
+   * its own `balanceTx`, which hands back no booking to release, so this releases nothing and says so: a failed
+   * job's coins stay booked in this run's wallet.
+   */
+  const runnerProviders = { ...providers, releaseUnspent: async () => 0 };
+
   const seen: string[] = [];
   const queue = new JobQueue(
     new MidnightJobRunner({
-      providers,
+      providers: runnerProviders,
       compiled,
       circuitsThatReadNoWitness: CIRCUITS_THAT_READ_NO_WITNESS,
       /*
@@ -2418,7 +2382,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * question is asked of the ACCOUNT instead.
    */
   const runner = new MidnightJobRunner({
-    providers, compiled,
+    providers: runnerProviders, compiled,
     circuitsThatReadNoWitness: CIRCUITS_THAT_READ_NO_WITNESS,
     /*
      * NEVER REACHED — `recover` plans nothing, it reads the account. It names

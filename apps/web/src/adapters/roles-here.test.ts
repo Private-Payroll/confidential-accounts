@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
+import { privateAddressHere, publicAddressHere } from '../addresses-here.test-support.js';
 import { mayInvite, READER_PURPOSES, RIGHTS_PRESET, ROLES, type SignerRole } from '../../../../src/core/roles.js';
 import { ACT_REFUSAL } from './refusals.js';
 
@@ -11,7 +12,7 @@ import { ACT_REFUSAL } from './refusals.js';
  */
 const COMPANY = 'c-1';
 const ACCOUNT = 'c0'.repeat(32);
-const PRIVATE = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
+const PRIVATE = privateAddressHere(0x11);
 const leaf = (n: number): string => n.toString(16).padStart(64, '0');
 const kr = vi.hoisted(() => ({
   user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
@@ -178,7 +179,7 @@ describe('what the page asks of the wallet', () => {
     const problem = (over: Record<string, unknown>) => changeRole('u1', COMPANY, { ...ask, ...over });
     expect(await problem({ leaf: ' ' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'no-seat' });
     expect(await problem({ name: ' ' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'no-name' });
-    expect(await problem({ address: 'mn_addr_stagenet1egv3hww6lmsahjy3gldaqn778hcpwvhhw8udud6k859906yynmmq8wsdsd' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'bad-address' });
+    expect(await problem({ address: publicAddressHere(0x22) })).toEqual({ of: CHANGE_ACTED.problem, problem: 'bad-address' });
     expect(await problem({ address: '' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'bad-address' });
     expect(await problem({ role: 'accountant' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'no-role' });
     expect(await problem({ role: '' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'no-role' });

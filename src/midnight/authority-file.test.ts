@@ -17,6 +17,8 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { authorityFileIn, loadMaintenanceAuthority, noAuthorityRecorded } from './authority-file.js';
+import { storeDir } from '../wiring/deployment.js';
+import { NETWORK } from 'midnight-identity/network';
 
 /**
  * A deployment root OUTSIDE this repository.
@@ -25,10 +27,11 @@ import { authorityFileIn, loadMaintenanceAuthority, noAuthorityRecorded } from '
  * puts every other file asserting the tree is clean inside its window, and this
  * project has already dismissed two real defects as flakiness.
  */
+/** A network's store folder in a fresh directory: what `loadMaintenanceAuthority` is given. */
 const deploymentRoot = (): string => {
-  const root = mkdtempSync(join(tmpdir(), 'authority-'));
-  mkdirSync(join(root, '.midnight'), { recursive: true });
-  return root;
+  const store = storeDir(mkdtempSync(join(tmpdir(), 'authority-')), NETWORK);
+  mkdirSync(store, { recursive: true });
+  return store;
 };
 
 const write = (root: string, body: string) => {
@@ -36,12 +39,14 @@ const write = (root: string, body: string) => {
 };
 
 describe('where the recorded choice lives', () => {
-  it('is under the deployment\'s own state directory and not a fixed path', () => {
+  it('is in the network\'s own store folder and not a fixed path', () => {
     /*
      * RED WHEN: the path is written as an absolute constant, which would make
-     * every deployment on a machine read one deployment's governance record.
+     * every deployment on a machine read one deployment's governance record,
+     * or is not in the store folder of the network it governs.
      */
-    expect(authorityFileIn('/one')).toBe(`${sep}one${sep}.midnight${sep}maintenance-authority.json`);
+    expect(authorityFileIn(storeDir('/one', NETWORK))).toBe(`${sep}one${sep}.midnight${sep}${NETWORK}${sep}maintenance-authority.json`);
+    expect(authorityFileIn(storeDir('/one', NETWORK))).not.toBe(authorityFileIn(storeDir('/one', 'preview')));
     expect(authorityFileIn('/two')).not.toBe(authorityFileIn('/one'));
   });
 });

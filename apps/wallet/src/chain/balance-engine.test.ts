@@ -53,7 +53,7 @@ vi.mock('@midnightntwrk/wallet-sdk/shielded', () => {
     ShieldedWallet: (config: unknown) => {
       configured.push(config);
       return {
-        startWithSecretKeys: () => { doors.push('cold'); return standIn(); },
+        startWithKeys: async () => { doors.push('cold'); return standIn(); },
         restore: () => { doors.push('restore'); return standIn(); },
       };
     },

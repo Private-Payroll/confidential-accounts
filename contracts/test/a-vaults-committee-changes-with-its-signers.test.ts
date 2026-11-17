@@ -23,6 +23,7 @@
  * and changing its approval threshold is the existing path and is not run
  * here.
  */
+import { served } from '../../src/testing/served-state.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { NoteIndexUnreadable } from '../../src/midnight/note-index.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -31,9 +32,8 @@ import type { AddressInfo } from 'node:net';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds, readFrom } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { identityFromWords, newWords } from 'midnight-identity';
 import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { parseAsk } from 'midnight-identity/profile/request';
@@ -260,7 +260,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
   /** The worker's own handler, reached through the page's own client, with no Worker and no prover. */
   const builder = () => {
     const deps = async () => ({
-      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
+      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: callsTheProductBuilds(),
       /*
        * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, every applied
        * transaction and its own events, and one moment of both contracts with the commitment tree. The worker reads
@@ -329,19 +329,15 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
   /** A call into the company account, built from one signer's own private state and applied by the chain. */
   const callAccount = async (circuitId: string, args: unknown[], privateState: AccountPrivateState) => {
     const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
-    const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+    const built = await callsTheProductBuilds().buildCall(accountZk, {
       compiledContract: accountCompiled, circuitId, contractAddress: company, coinPublicKey: keys.coinPublicKey,
-      initialContractState: asRuntime(chain.contract(company)),
-      initialZswapChainState: new L.ZswapChainState(),
-      ledgerParameters: L.LedgerParameters.initialParameters(),
-      initialPrivateState: privateState, args,
+      network: NET, read: readFrom(asRuntime(chain.contract(company))), initialPrivateState: privateState, args,
     }, keys.encryptionPublicKey);
-    const r = chain.apply(built.private.unprovenTx);
+    const r = chain.apply(built.private.transaction);
     if (!r.ok) throw new Error(`the chain refused ${circuitId}: ${r.error}`);
   };
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     /* The depositor's wallet holds its own private coins before anything else is on the chain. */
     depositor = aWalletThatPaysPrivately(NET);
@@ -516,7 +512,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
       signedIn,
       records: { of: (r) => serverStores.get(r)! },
       accountOf: vaultAccountFromTheIndexer({
-        queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
+        queryContractState: async (a) => { const c = chain.contract(a); return (c === null ? null : served({ data: asRuntime(c).data })) as never; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
       mayFileUnder: mayFileUnderOver(store, directoryChainOver(() => chain.contract(company))),

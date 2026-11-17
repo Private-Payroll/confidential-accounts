@@ -17,7 +17,7 @@ import { walletVaultBuilder } from '../chain/vault-builder-client.js';
 import { vaultSecretsKeptFor } from './vault-secret-kept.js';
 import { privateDepositAction } from './private-deposit.js';
 import { oneOffPaymentAction } from './one-off-payment.js';
-import { liveBalanceDoors } from '../screens/approve-balance.js';
+import { liveBalanceDoors } from '../chain/balance-doors.js';
 import { claimByAddressAction } from './claim-by-address.js';
 import { joinByCodeAction } from './join-by-code.js';
 import { seatInvitedAction } from './seat-invited.js';

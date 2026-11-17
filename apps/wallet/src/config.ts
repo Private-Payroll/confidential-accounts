@@ -10,36 +10,41 @@
 import { buildSetting, embedderFrom, relyingPartyIdFor } from 'midnight-identity/profile/origin';
 
 /**
- * THE NETWORK IS STAGENET — §7.16, decided 19 Aug. **The constant
- * itself now lives in `../wallet/network.ts` and is re-exported here**, so
- * every screen goes on reading it from `config` and nothing else moved.
+ * **THE NETWORK THIS WALLET IS BUILT FOR.** The constant lives in
+ * `midnight-identity/network` and is re-exported here, so every screen reads it
+ * from `config` and nothing else.
  *
- * It moved because it is not this application's setting. **Payroll writes the
- * same person's address from the same key and must write it on the same
- * network**, or it re-derives a different string and refuses a sign-in that is
- * perfectly good — found the first time the two were walked together.
+ * It is not this application's setting. **Payroll writes the same person's
+ * address from the same key and must write it on the same network**, or it
+ * re-derives a different string and refuses a sign-in that is perfectly good.
  * A value two products must agree about cannot live in a file only one of them
  * can import: this one reads `window.location`, so a server cannot load it.
  */
-export { NETWORK } from 'midnight-identity/network';
+import { NETWORK } from 'midnight-identity/network';
+import { endpointsOf } from '../../../src/core/networks.js';
+
+export { NETWORK };
 
 import type { InboxHost } from 'midnight-identity/profile/inbox';
 
 /**
- * The indexer this wallet reads balances from — asked ONLY when the person
- * presses "Check the balance", and named in the footer, because asking it
- * tells its operator this wallet's address (§7.16). The endpoints
- * live beside `NETWORK` on purpose: an indexer answers for exactly one
- * network, and separating them is how a stagenet wallet ends up reading a
- * testnet chain and calling the result a balance.
+ * **WHERE THIS WALLET REACHES ITS NETWORK, READ FROM THE NETWORK'S ONE
+ * RECORD.** An indexer answers for exactly one network, so the endpoints come
+ * from the same record as the network's name and are never written here; a
+ * wallet reading one network's indexer while it names another would call the
+ * result a balance. Where the network asks for a project token, the record's
+ * reader joins it to each endpoint from the setting this wallet was built
+ * with, so the token is in the built wallet and in no file.
+ *
+ * The indexer is asked ONLY when the person presses "Check the balance", and
+ * it is named in the footer, because asking it tells its operator this
+ * wallet's address.
  */
-export const INDEXER_HTTP_URL = 'https://indexer.stagenet.shielded.tools/api/v4/graphql';
-/* FACT, not convention: this exact websocket URL carried the run that settled
- * a full approval round on stagenet, and a live probe synced
- * through it — verified against things
- * that worked, not read off a README. */
-export const INDEXER_WS_URL = 'wss://indexer.stagenet.shielded.tools/api/v4/graphql/ws';
-/** The indexer, as a person reads it — for the footer and the balance card. */
+export const NETWORK_ENDPOINTS = endpointsOf(NETWORK);
+
+export const INDEXER_HTTP_URL = NETWORK_ENDPOINTS.indexer;
+export const INDEXER_WS_URL = NETWORK_ENDPOINTS.indexerWs;
+/** The indexer, as a person reads it: the host alone, for the footer and the balance card. */
 export const INDEXER_HOST = new URL(INDEXER_HTTP_URL).host;
 
 /**

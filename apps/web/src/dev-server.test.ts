@@ -31,12 +31,13 @@ const ENTRIES = Object.keys(WORKERS).map((e) => fileURLToPath(new URL(e, new URL
 
 describe('the development server: what it may serve', () => {
   /* RED WHEN: the server may not serve the font package, a worker's folder or the folder of a package that carries WebAssembly, may serve the repository, its packages or its modules folder, or the list it serves from is not the one the config uses. */
-  it('may serve this application, each worker\'s folder, the font package and the folders of the three WebAssembly packages, and nothing else', () => {
+  it('may serve this application, each worker\'s folder, the font package and the folders of the four WebAssembly packages, and nothing else', () => {
     const allow = (config as { server?: { fs?: { allow?: string[] } } }).server?.fs?.allow;
     expect(allow).toBe(SERVED_FROM);
     const served = SERVED_FROM.map((p) => p.replace(/\/$/, ''));
     expect(served).toEqual([APP, ...new Set(ENTRIES.map((e) => dirname(e))), FONT, ...WASM_PACKAGES.map(folderOf)]);
-    expect(WASM_PACKAGES.length).toBe(3);
+    /* RED WHEN: either prover, the contracts' or the network's, is left out, and a worker that proves with it stops in development. */
+    expect([...WASM_PACKAGES].sort()).toEqual(['@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4', '@midnightntwrk/zkir-v2', '@midnightntwrk/zkir-v3']);
     expect(ENTRIES.length).toBe(2);
     for (const wider of [REPO, `${REPO}/node_modules`, `${REPO}/node_modules/@fontsource-variable`, `${REPO}/packages`, `${REPO}/src`, `${REPO}/contracts`]) expect(served).not.toContain(wider);
   });
@@ -102,7 +103,8 @@ describe('the development server, running', () => {
       seen.set(url, got.status);
       if (got.status !== 200) { refused.push(`${got.status} ${url}`); continue; }
       if (!/javascript/.test(got.type)) continue;
-      for (const m of got.body.matchAll(imported)) {
+      /* A browser follows what a module imports, not what its comments say: a prepared dependency carries type notes such as `import('./encoding')`. */
+      for (const m of got.body.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(imported)) {
         const spec = m[1]!;
         if (spec.startsWith('/')) queue.push(spec);
         else if (spec.startsWith('.')) queue.push(new URL(spec, `http://x${url.split('?')[0]}`).pathname);
@@ -121,7 +123,7 @@ describe('the development server, running', () => {
     expect(answers).toEqual(secret.map((f) => `403 ${f}`));
   });
 
-  /* RED WHEN: the server refuses the WebAssembly file of one of the three packages that carry it, at the address the worker asks for it, or serves anything but WebAssembly there; or it serves a file of a package beside them. */
+  /* RED WHEN: the server refuses the WebAssembly file of one of the four packages that carry it, at the address the worker asks for it, or serves anything but WebAssembly there; or it serves a file of a package beside them. */
   it('serves each WebAssembly package\'s .wasm file as WebAssembly, and a package beside them not at all', async () => {
     const answers: string[] = [];
     for (const name of WASM_PACKAGES) {
@@ -218,8 +220,10 @@ describe.skipIf(!existsSync(CHROMIUM))('THE WORKERS THE PAGE STARTS, IN A BROWSE
       const w = new Worker(url, { type: 'module' });
       w.onerror = (e) => { said.push(`error ${e.message}`); done(said); };
       w.onmessage = (e) => {
-        const data = e.data as { op?: string; error?: string };
-        if (data.op === 'ready') w.postMessage({ op: 'check', preimage: new Uint8Array(8) });
+        const data = e.data as { op?: string; error?: string; askId?: number };
+        /* The request names one of the network's own circuits, which is proved with the WebAssembly prover; the worker asks for its key, and this page, standing in for the vault worker, has none to give. */
+        if (data.op === 'ready') w.postMessage({ op: 'check', keyLocation: 'midnight/zswap/spend', preimage: new Uint8Array(8) });
+        else if (data.op === 'lookupKey') w.postMessage({ op: 'answer', askId: data.askId, ok: false, error: 'this page holds no keys' });
         else if (data.op === 'failure' || data.op === 'result') { said.push(`${data.op} ${data.error ?? ''}`); done(said); }
       };
       setTimeout(() => { said.push('no answer'); done(said); }, 60_000);

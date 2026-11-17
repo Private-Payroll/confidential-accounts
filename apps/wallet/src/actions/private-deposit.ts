@@ -231,7 +231,11 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
               ctx.tell({ state: STATE.landedNotRecorded });
               throw new StepRefused(why('landed-not-recorded'));
             }
-            throw new StepRefused(why('not-made', { says: (thrown as Error)?.message ?? String(thrown) }));
+            /* A wallet that could not balance says which token it was short of and by how much, so the words name it. */
+            const short = thrown as { message?: string; tokenType?: unknown; amount?: unknown } | null;
+            const ofWhat = short !== null && typeof short === 'object' && short.tokenType !== undefined
+              ? ` (short of token ${String(short.tokenType)}${short.amount === undefined ? '' : `, ${String(short.amount)} of its smallest unit needed`})` : '';
+            throw new StepRefused(why('not-made', { says: `${short?.message ?? String(thrown)}${ofWhat}` }));
           }
         },
       };

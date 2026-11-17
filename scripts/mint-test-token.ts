@@ -58,7 +58,7 @@
  * **WHAT HAS NEVER HAPPENED, AND THIS RUN IS BOTH OF IT**
  *
  * **No proof has ever been produced for a mint by this project, and no probe
- * contract of any kind is deployed on stagenet.** `.midnight/` holds a record
+ * contract of any kind is deployed on stagenet.** Its store held a record
  * for the account and for two vaults and for nothing else; the only recorded
  * run of `scripts/chain-probe.ts` (`REPORT-CHAIN-PROBE.txt` and
  * `logs/chain-probe-console.txt`, 16 Aug) stopped at its stage 3 — *deploying*
@@ -93,7 +93,7 @@
  * ------------------------------------------------------------------------
  * **WHAT IS RECORDED LOCALLY, AND WHY IT IS NOT THE COIN**
  *
- * `.midnight/<network>-test-token.json` records the minter's address, the
+ * `<network>-test-token.json`, in the network's store folder, records the minter's address, the
  * COLOUR that arrived, and one line per mint. **It does not record the coin.**
  * The coin is the wallet's — a mint to a user key carries a ciphertext and the
  * wallet finds it by scanning, permanently, with no help from this file
@@ -144,6 +144,7 @@
  * door twice mints twice**, which is harmless — it is a test token — and is
  * still said out loud rather than left to be noticed.
  */
+import { shownAddress } from '../src/core/networks.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -153,10 +154,6 @@ import { randomBytes } from '@noble/hashes/utils.js';
 import * as CompiledContract from '@midnight-ntwrk/compact-js/effect/CompiledContract';
 import { StaticProofServerContainer, createDefaultTestLogger } from '@midnight-ntwrk/testkit-js';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
-import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
-import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 
 /*
  * THE COMPILED PROBE CONTRACT IS LOADED AT RUN TIME, NOT AT IMPORT TIME.
@@ -187,12 +184,13 @@ async function loadMinterContract(): Promise<any> {
     );
   }
 }
-import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
+import { theNetwork } from '../src/midnight/network.js';
 import { sleep } from '../src/midnight/retry.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { bringUpWallet } from './wallet-bringup.js';
-import { saveDustState } from './dust-wallet.js';
+import { doorProviders } from './door-providers.js';
+import { saveWalletState, waitForDustCatchUp } from './dust-wallet.js';
 import { shieldedHeldOf, waitForShieldedScan, whyNoCoin, SHIELDED_DEADLINE_IS_NOT_MEASURED } from './shielded-wallet.js';
 import { collapseRepeatedLines, describeDropped, serialiseWholeDetailed } from './error-report.js';
 import {
@@ -200,13 +198,14 @@ import {
   type BlockLimits, type TxMeasurement,
 } from './tx-size.js';
 import { phaseClock, withTimeout, describeError, captureNodeLines } from './deploy-report.js';
+import { storeDir } from '../src/wiring/deployment.js';
 
 /* ------------------------------------------------------------------ */
 
 const ROOT = process.cwd();
-const STATE_DIR = join(ROOT, '.midnight');
-const SEED_FILE = join(STATE_DIR, 'wallet.seed');
 const NETWORK = theNetwork();
+const STATE_DIR = storeDir(ROOT, NETWORK);
+const SEED_FILE = join(STATE_DIR, 'wallet.seed');
 const MINTER_ARTEFACTS = join(ROOT, 'contracts', 'probe-out4', 'mint-64');
 
 /* 6301, NOT 6300 — `M-144`. Port 6300 has an 8.1.0 server on it and a proof it
@@ -279,8 +278,10 @@ let provingSeconds: number | null = null;
  * **WHOLE SMALLEST UNITS, AND NEVER A DECIMAL POINT.** A point is refused
  * because how many decimal places NIGHT has has never been measured
  * against the chain. The asset registry (`src/core/assets.ts`, `testAssetsFor`)
- * does declare a scale for the test asset: 6 decimal places, for the one
- * colour it names, on stagenet. When this run mints that colour, one whole
+ * does declare a scale for the test asset: 6 decimal places, for the colour a
+ * test network's record (`src/core/networks.json`) names, which is stagenet's
+ * today and is this network's once a mint's colour is entered in its record.
+ * When this run mints that colour, one whole
  * unit is 1,000,000 of the smallest units this door takes. A mint of any other
  * colour (a minter deployed afresh, or another network) is a token the
  * registry declares no scale for, and this door is asked for the amount before
@@ -306,8 +307,8 @@ export function amountFromText(text: string): bigint {
       `"${trimmed}" is not an amount this door will take. It wants digits and nothing else: ` +
       'no point, no separators, no sign, no exponent.\n' +
       'THIS DOOR TAKES THE TOKEN\'S SMALLEST UNIT, AS A WHOLE NUMBER, AND NEVER A DECIMAL POINT. ' +
-      'The asset registry lists the stagenet test asset, at the colour it names, with 6 decimal ' +
-      'places, so one whole unit of that token is 1000000 here. A mint of any other colour is a ' +
+      'The asset registry lists the test asset, at the colour a test network\'s record names, with 6 ' +
+      'decimal places, so one whole unit of that token is 1000000 here. A mint of any other colour is a ' +
       'token with no declared scale. Write the count of smallest units.');
   }
   const amount = BigInt(trimmed);
@@ -518,7 +519,6 @@ async function main(): Promise<Verdict> {
 
   /* -------------------------------------------------- 2 */
   clock.begin(2, 6, 'Setting the network id');
-  await applyNetworkId(NETWORK);
   good(`network id is the string "${NETWORK}"`);
 
   /* -------------------------------------------------- 3 */
@@ -528,8 +528,8 @@ async function main(): Promise<Verdict> {
   const { env, how } = testEnvironmentFor(NETWORK, logger);
   note(`network ${NETWORK} — ${how}`);
   const cfg = await startEnvironment(env, new StaticProofServerContainer(PROVER_PORT), note);
-  good(`node      ${cfg.node}`);
-  good(`indexer   ${cfg.indexer}`);
+  good(`node      ${shownAddress(cfg.node)}`);
+  good(`indexer   ${shownAddress(cfg.indexer)}`);
   good(`prover    ${cfg.proofServer}`);
 
   proofServerImage = process.env.MIDNIGHT_PROOF_IMAGE
@@ -544,7 +544,7 @@ async function main(): Promise<Verdict> {
   good(`prover /version ${proofServerVersion}`);
 
   try {
-    const { LedgerParameters } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const { LedgerParameters } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     ledgerParameters = LedgerParameters;
     blockLimits = limitsFromLedger(LedgerParameters);
     good(`block usage limit ${blockLimits.blockUsage === null ? '(could not derive)' : `${blockLimits.blockUsage.toLocaleString()} bytes`}`);
@@ -571,10 +571,10 @@ async function main(): Promise<Verdict> {
   const live = await bringUpWallet(logger, cfg, masterSeed, NETWORK, ROOT, {
     withDust: true, requireDust: true, onNote: note,
   });
-  const wallet: any = live.wallet;
+  const wallet = live.wallet;
   good(`wallet ready — NIGHT ${live.night().toLocaleString()}, DUST ${live.dust().toLocaleString()}`);
-  const cached = await saveDustState(wallet, masterSeed, NETWORK, ROOT);
-  if (cached) good(`dust wallet state cached (${(cached / 1024).toFixed(0)} KB)`);
+  const cached = await saveWalletState(wallet, masterSeed, NETWORK, ROOT);
+  if (cached) good(`wallet state cached (${(cached / 1024).toFixed(0)} KB)`);
 
   /*
    * **THE RECIPIENT, READ FROM THE WALLET AND NEVER TAKEN FROM ANYWHERE ELSE.**
@@ -605,19 +605,13 @@ async function main(): Promise<Verdict> {
   /* -------------------------------------------------- 5 */
   clock.begin(5, 6, 'The minter — deployed for the first time, or reused');
 
-  const zkConfigProvider = new NodeZkConfigProvider<string>(MINTER_ARTEFACTS);
-  const providers: any = {
-    zkConfigProvider,
-    proofProvider: httpClientProofProvider(cfg.proofServer, zkConfigProvider),
-    privateStateProvider: levelPrivateStateProvider({
-      accountId: PRIVATE_STATE_ID,
-      privateStateStoreName: PRIVATE_STATE_ID,
-      privateStoragePasswordProvider: async () => PRIVATE_STATE_PASSWORD,
-    } as any),
-    publicDataProvider: indexerPublicDataProvider(cfg.indexer, cfg.indexerWS),
-    walletProvider: wallet,
-    midnightProvider: wallet,
-  };
+  const providers = await doorProviders({
+    config: { networkId: NETWORK, proverUrl: cfg.proofServer, indexerUrl: cfg.indexer, indexerWsUrl: cfg.indexerWS },
+    artifactsPath: MINTER_ARTEFACTS,
+    privateStateId: PRIVATE_STATE_ID,
+    storagePassword: async () => PRIVATE_STATE_PASSWORD,
+    wallet,
+  });
 
   const measured = measuringProviders(providers, (m) => {
     txMeasurements.push(m);
@@ -679,9 +673,15 @@ async function main(): Promise<Verdict> {
       mints: [],
     }, null, 2)}\n`);
     good(`recorded in ${recordFile.replace(ROOT + '/', '')} — a second run reuses it`);
+    /*
+     * The deploy spent this wallet's DUST coin; its change is usable only once the DUST view has caught up past the
+     * block the deploy landed in. Balancing the mint before that finds no coin and refuses ("could not balance dust").
+     */
+    if (!(await waitForDustCatchUp(live, note, (st) => `dust ${String(st?.dust?.balances ?? '')}`))) {
+      throw new Error('the DUST view did not catch up after the minter was deployed, so the mint was not sent. '
+        + 'The minter is recorded; run this again and it is reused.');
+    }
   }
-
-  providers.privateStateProvider.setContractAddress?.(minterAddress);
 
   /* -------------------------------------------------- 6 */
   clock.begin(6, 6, 'The mint — the first proof of a mint this project has produced');

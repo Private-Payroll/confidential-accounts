@@ -39,9 +39,8 @@ import { readFileSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds, readFrom } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { privateStateFor, leafOfDevice, change, COMPANY_LABEL, invitedAddressFor, invitedAddressCommitmentOf } from './simulator.js';
@@ -132,7 +131,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
   const builder = () => {
     const deps = async () => ({
       ledger: L, runtimeState: (runtime as any).ContractState,
-      contracts, accountCompiled, accountZkConfig: accountZk, accountPure: circuits, accountLedger: (accountModule as any).ledger,
+      contracts: callsTheProductBuilds(), accountCompiled, accountZkConfig: accountZk, accountPure: circuits, accountLedger: (accountModule as any).ledger,
       prove: async (unproven: any) => unproven,
     });
     const listeners: Array<(e: { data: unknown }) => void> = [];
@@ -313,7 +312,6 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     spendingPolicyHere({ records: recordsFor(who, person), accountId: company, viewingKey }, { vault: VAULT, asset: TEST_TOKEN });
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     proposals = [];
     enteredBy = [];
@@ -337,7 +335,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     const invited = await raisedAndCarried(founder, { kind: 'add-signer', address, scope: hex(blake.scope) },
       circuits.signerInvitePayload(Buffer.from(address, 'hex'), blake.scope, 0n), 11, null);
     send(await inviteeSeatCall({
-      accountCompiled, accountZk, company, accountState: chain.contract(company).serialize(), who: blake,
+      accountCompiled, accountZk, company, network: NET, accountState: chain.contract(company).serialize(), who: blake,
       proposal: invited.id, salt: invited.salt,
     }));
     await raisedAndCarried(founder, { kind: 'adopt-vault', vault: VAULT }, circuits.adoptVaultPayload(Buffer.from(VAULT, 'hex')), 12,
@@ -502,11 +500,9 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
   const ASSET = assetIdHex(TEST_TOKEN).toLowerCase();
   const callDirectly = async (who: AccountPrivateState, circuitId: string, args: unknown[], extra: Partial<AccountPrivateState> = {}) => {
     const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(32).fill(7));
-    const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+    const built = await callsTheProductBuilds().buildCall(accountZk, {
       compiledContract: accountCompiled, circuitId, contractAddress: company, coinPublicKey: keys.coinPublicKey,
-      initialContractState: (runtime as any).ContractState.deserialize(chain.contract(company).serialize()),
-      initialZswapChainState: new L.ZswapChainState(), ledgerParameters: L.LedgerParameters.initialParameters(),
-      initialPrivateState: { ...who, ...extra }, args,
+      network: NET, read: readFrom((runtime as any).ContractState.deserialize(chain.contract(company).serialize())), initialPrivateState: { ...who, ...extra }, args,
     }, keys.encryptionPublicKey);
     send(b64(built.private.unprovenTx.serialize()));
   };

@@ -1,4 +1,6 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +21,7 @@ import type { AssetRegistry } from './assets.js';
 import type { User } from './types.js';
 
 import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../testing/assets.js';
-import { TEST_SETTLEMENT_ASSET } from './assets.js';
+
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
@@ -338,7 +340,7 @@ describe('a payee in an asset that cannot be paid on Midnight is refused at hiri
 
     /* The test token has a private form and is taken. */
     expect(() => h.payroll.invite(c.accountId, {
-      name: 'Eli', email: 'eli@acme.example', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n,
+      name: 'Eli', email: 'eli@acme.example', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 1n,
     }, c.viewingKey, 'usr_ada')).not.toThrow();
   });
 });

@@ -40,6 +40,7 @@
  *     straight onto this chain**, which does not check balancing, so the
  *     public payments below are paid out of money no wallet sent.
  */
+import { served } from '../../src/testing/served-state.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { NoteIndexUnreadable } from '../../src/midnight/note-index.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -49,8 +50,8 @@ import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds, readFrom } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { identityFromWords, newWords } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { parseAsk } from 'midnight-identity/profile/request';
@@ -324,7 +325,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
    */
   const builder = (over?: { createUnprovenCallTxFromInitialStates: (...args: any[]) => Promise<any> }) => {
     const deps = async () => ({
-      ledger: unprovenWhereProven, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: { ...(contracts as any), ...over },
+      ledger: unprovenWhereProven, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: callsTheProductBuilds(over),
       /*
        * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, every applied
        * transaction and its own events, and one moment of both contracts with the commitment tree. The worker reads
@@ -406,19 +407,15 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   /** A call into the company account, built from one signer's own private state and applied by the chain. */
   const callAccount = async (circuitId: string, args: unknown[], privateState: AccountPrivateState) => {
     const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
-    const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+    const built = await callsTheProductBuilds().buildCall(accountZk, {
       compiledContract: accountCompiled, circuitId, contractAddress: company, coinPublicKey: keys.coinPublicKey,
-      initialContractState: asRuntime(chain.contract(company)),
-      initialZswapChainState: new L.ZswapChainState(),
-      ledgerParameters: L.LedgerParameters.initialParameters(),
-      initialPrivateState: privateState, args,
+      network: NET, read: readFrom(asRuntime(chain.contract(company))), initialPrivateState: privateState, args,
     }, keys.encryptionPublicKey);
-    const r = chain.apply(built.private.unprovenTx);
+    const r = chain.apply(built.private.transaction);
     if (!r.ok) throw new Error(`the chain refused ${circuitId}: ${r.error}`);
   };
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     policyRecords = [];
     companyRecords = new MemoryCompanyRecordStore();
@@ -610,7 +607,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       signedIn,
       records: { of: (r) => serverStores.get(r)! },
       accountOf: vaultAccountFromTheIndexer({
-        queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
+        queryContractState: async (a) => { const c = chain.contract(a); return (c === null ? null : served({ data: asRuntime(c).data })) as never; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
       mayFileUnder: mayFileUnderOver(store, directoryChainOver(() => chain.contract(company))),
@@ -1098,10 +1095,9 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
           ...founder, assetId: fromHex(order.half.assetId!), assetBlinding: fromHex(order.half.assetBlinding!),
           changeAmount: BigInt(order.half.changeAmount!), changeBatchDigest: fromHex(order.half.changeBatchDigest!), proposalSalt: fromHex(order.half.proposalSalt!),
         };
-        const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+        const built = await callsTheProductBuilds().buildCall(accountZk, {
           compiledContract: accountCompiled, circuitId: 'propose', contractAddress: company, coinPublicKey: keys.coinPublicKey,
-          initialContractState: asRuntime(chain.contract(company)), initialZswapChainState: new L.ZswapChainState(),
-          ledgerParameters: L.LedgerParameters.initialParameters(), initialPrivateState: staged,
+          network: NET, read: readFrom(asRuntime(chain.contract(company))), initialPrivateState: staged,
           args: [ZERO_32, fromHex(order.run.root), BigInt(order.run.payees), BigInt(order.run.opensAt), BigInt(order.run.closesAt), BigInt(order.run.required ?? '0'), true, fromHex(order.run.vault), BigInt(opened.raiseBy)],
         }, keys.encryptionPublicKey);
         return { tx: base64FromBytes(built.private.unprovenTx.serialize()) };
@@ -1440,15 +1436,12 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
    */
   const holdingPublicly = async (vault: Hex, amount: bigint, token: Hex = PUBLIC_TOKEN) => {
     const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
-    const built = await (contracts as any).createUnprovenCallTxFromInitialStates(vaultZk, {
+    const built = await callsTheProductBuilds().buildCall(vaultZk, {
       compiledContract: vaultCompiled({ noteToSpend: () => { throw new Error('nothing here spends'); }, nonceSecret: () => { throw new Error('nothing here spends'); } }),
       circuitId: 'depositUnshielded', contractAddress: vault, coinPublicKey: keys.coinPublicKey,
-      initialContractState: asRuntime(chain.contract(vault)),
-      initialZswapChainState: new L.ZswapChainState(),
-      ledgerParameters: L.LedgerParameters.initialParameters(),
-      args: [fromHex(token), amount],
+      network: NET, read: readFrom(asRuntime(chain.contract(vault))), args: [fromHex(token), amount],
     }, keys.encryptionPublicKey);
-    const r = chain.apply(built.private.unprovenTx);
+    const r = chain.apply(built.private.transaction);
     if (!r.ok) throw new Error(`the chain refused the public deposit: ${r.error}`);
     chain.applied.pop();
   };

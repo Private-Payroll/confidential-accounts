@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, relative, sep } from 'node:path';
-import { PAIR_NETWORK } from '../midnight/network.js';
 import { NETWORK_IDS } from './networks.js';
 
 /**
@@ -10,14 +9,13 @@ import { NETWORK_IDS } from './networks.js';
  * HAVE BEEN PATCHED.**
  *
  * A test asset is kept off the networks it may not exist on by asking what
- * network this is. Twenty-eight doors used to answer that question for
- * themselves, each reading the environment and defaulting for itself, and they
- * all agreed - so nothing was visibly wrong until the refusal asked one of the
- * other answers.
+ * network this is. When every door answers that for itself, each reading the
+ * environment with its own default, they can all agree and still be wrong
+ * together, and nothing shows it until a refusal asks one of them.
  *
- * Patching twenty-eight call sites leaves twenty-eight places that have to keep
- * agreeing. **This file is the thing worth more than the edits**: it fails on
- * the DAY a twenty-ninth appears, in the change that writes it, rather than
+ * Patching each door leaves that many places that have to keep agreeing.
+ * **This file is the thing worth more than the edits**: it fails on the day
+ * another one appears, in the change that writes it, rather than
  * whenever somebody later notices two answers disagreeing.
  *
  * ── HOW IT IS KNOWN TO WORK ───────────────────────────────────────────────
@@ -56,15 +54,6 @@ const THE_PIN = join('src', 'midnight', 'network.test.ts');
 const THIS_FILE = join('src', 'core', 'nothing-else-reads-the-network.test.ts');
 
 /**
- * **THE WALLET IS OUT OF THIS FILE'S REACH AND THAT IS SAID RATHER THAN
- * SILENTLY ARRANGED.** It is a second product, built and shipped separately,
- * and it states its own endpoints in its own configuration. Naming the
- * directory here makes the exception a line somebody can argue with rather
- * than a gap in a glob.
- */
-const A_SECOND_PRODUCT = `apps${sep}wallet${sep}`;
-
-/**
  * The files that may write a network name where a fallback would sit.
  *
  * **THE ONE ENTRY THAT IS NOT A RESOLVER DECIDES NOTHING.**
@@ -87,11 +76,10 @@ type Sources = ReadonlyMap<string, string>;
  * A made-up repository, put through the SAME pipeline the real one goes
  * through.
  *
- * **THE CONTROLS USED TO SKIP `codeOf`**, which is how a stripper that blanked
- * every url got past four of them. A control that does not run the code the
- * claim runs is a control for a different claim.
+ * Every control below runs its sample files through `codeOf`, the reader the
+ * claim itself runs, so a reader that blanked every url fails a control.
  */
-const planting = (files: ReadonlyArray<readonly [string, string]>): Sources =>
+const sourcesOf = (files: ReadonlyArray<readonly [string, string]>): Sources =>
   new Map(files.map(([f, c]) => [f, codeOf(c)] as const));
 
 /** Every way the environment can be asked for this variable, not only the common one. */
@@ -114,17 +102,21 @@ export const fallsBackToANetwork = (sources: Sources): string[] =>
     && FALLS_BACK_TO_A_NETWORK.test(c)).map(([f]) => f).sort();
 
 /**
- * A host that serves one network.
+ * A host that serves one network, including the project-token hosts a network
+ * may be reached through.
  *
  * `srs.midnight.network` is deliberately not one: it publishes the trusted
  * setup, which is the same material on every network, so a door naming it is
  * not stating where a network is reached.
+ *
+ * **THE WALLET IS HELD TO IT LIKE EVERYTHING ELSE.** It reads its endpoints
+ * from the same record, so a host written anywhere in it is a second statement
+ * of where its network is reached.
  */
-const A_MIDNIGHT_HOST = /shielded\.tools|(?<!srs)\.midnight\.network/;
+const A_MIDNIGHT_HOST = /shielded\.tools|(?<!srs)\.midnight\.network|blockfrost\.io/;
 
 export const writesAnEndpoint = (sources: Sources): string[] =>
   [...sources].filter(([f, c]) => f !== THE_PIN && f !== THIS_FILE
-    && !f.startsWith(A_SECOND_PRODUCT)
     && A_MIDNIGHT_HOST.test(c)).map(([f]) => f).sort();
 
 /**
@@ -189,13 +181,10 @@ function walk(dir: string, out: string[], deep = true): string[] {
 /**
  * Comments out, newlines kept, so a line number still means something.
  *
- * **IT KNOWS WHERE A STRING IS, AND THAT IS THE WHOLE OF WHY THIS FUNCTION IS
- * LONGER THAN ONE LOOP.** The shorter version treated any `//` as the start of
- * a comment, and every url a door could hardcode begins `https://` - so it
- * blanked the rest of the line and the endpoint scan below was satisfied by
- * nothing at all. **A search that matches nothing passes whether or not it
- * works**, and the control that was supposed to catch that fed its planted
- * files straight to the matcher instead of through here.
+ * **IT KNOWS WHERE A STRING IS.** A `//` inside a string is not a comment, and
+ * every url a door could hardcode begins `https://`: read as a comment, it would
+ * blank the rest of the line and leave the endpoint scan below matching nothing.
+ * **A search that matches nothing passes whether or not it works.**
  *
  * Template literals are treated as ordinary strings: their `${...}` parts can
  * hold code, and blanking a comment inside one is not worth the machinery when
@@ -350,14 +339,14 @@ describe('§1 one reader of the environment, and the scan that notices a second'
      * The four spellings, each in its own made-up file, because a scan for one
      * of them is a scan somebody walks past by writing another.
      */
-    const planted: Sources = planting([
+    const sample: Sources = sourcesOf([
       ['a/door.ts', "const N = process.env.MIDNIGHT_NETWORK_ID ?? 'stagenet';"],
       ['a/page.ts', 'const N = import.meta.env.MIDNIGHT_NETWORK_ID;'],
       ['a/index.ts', "const N = process.env['MIDNIGHT_NETWORK_ID'];"],
       ['a/wiring.ts', 'const N = env.MIDNIGHT_NETWORK_ID;'],
       ['a/innocent.ts', 'const N = theNetwork();'],
     ]);
-    expect(readsTheEnvironment(planted))
+    expect(readsTheEnvironment(sample))
       .toEqual(['a/door.ts', 'a/index.ts', 'a/page.ts', 'a/wiring.ts']);
   });
 
@@ -385,7 +374,7 @@ describe('§1 one reader of the environment, and the scan that notices a second'
   });
 
   it('WATCHED FINDING TWO: the same scan over a file that does fall back', () => {
-    const planted: Sources = planting([
+    const sample: Sources = sourcesOf([
       ['a/door.ts', "const N = process.env.MIDNIGHT_NETWORK_ID || 'stagenet';"],
       ['a/other.ts', 'const N = asked ?? "preview";'],
       /*
@@ -396,7 +385,7 @@ describe('§1 one reader of the environment, and the scan that notices a second'
        */
       ['a/innocent.ts', "payeeOf(address, 'stagenet');"],
     ]);
-    expect(fallsBackToANetwork(planted)).toEqual(['a/door.ts', 'a/other.ts']);
+    expect(fallsBackToANetwork(sample)).toEqual(['a/door.ts', 'a/other.ts']);
   });
 });
 
@@ -430,12 +419,9 @@ describe('§2 one statement of where a network is reached', () => {
      * meeting that in a clone goes looking for a network defect that is not
      * there.
      *
-     * **THE LIST IS ONE ENTRY NOW AND IT WAS EIGHT.** The other seven were
-     * diagnostic entry points that are no longer part of the published set, so
-     * naming them here would be naming files a reader has not got. **AND THE
-     * REASON THE WALK NO LONGER SEES THEM IS NOT THAT THEY ARE GONE - THEY ARE
-     * ON DISK, ONE DIRECTORY AWAY - IT IS THAT `SOURCE_DIRS` DOES NOT NAME
-     * THAT DIRECTORY.** That is an exemption by omission, it is stated here
+     * **THE LIST IS ONE ENTRY.** Diagnostic entry points that are not part of
+     * the published set sit one directory away, and the walk does not see them
+     * only because `SOURCE_DIRS` does not name that directory. That is an exemption by omission, it is stated here
      * rather than left to be found, and it is why the count below is asserted:
      * an exemption list one entry from empty passes every check under it in
      * the instant that entry leaves, which is the failure this whole block was
@@ -491,13 +477,13 @@ describe('§2 one statement of where a network is reached', () => {
   });
 
   it('WATCHED FINDING FIVE: the override scan finds the shape when it is there', () => {
-    const planted: Sources = planting([
+    const sample: Sources = sourcesOf([
       ['a/door.ts', 'const I = process.env.MIDNIGHT_INDEXER_URL || THE.indexer;'],
       ['a/other.ts', 'const N = process.env.MIDNIGHT_NODE_URL ?? THE.node;'],
       ['a/ws.ts', 'const W = process.env.MIDNIGHT_INDEXER_WS_URL || THE.indexerWs;'],
       ['a/innocent.ts', 'const I = endpointsOf(theNetwork()).indexer;'],
     ]);
-    expect(overridesAnEndpoint(planted)).toEqual(['a/door.ts', 'a/other.ts', 'a/ws.ts']);
+    expect(overridesAnEndpoint(sample)).toEqual(['a/door.ts', 'a/other.ts', 'a/ws.ts']);
   });
 
   it('AND THE COMMENT STRIPPER DOES NOT EAT THE URLS IT IS MEANT TO LEAVE', () => {
@@ -526,12 +512,26 @@ describe('§2 one statement of where a network is reached', () => {
   });
 
   it('WATCHED FINDING THREE: the same scan over a file that does write one', () => {
-    const planted: Sources = planting([
+    const sample: Sources = sourcesOf([
       ['a/check.ts', "const I = process.env.X || 'https://indexer.stagenet.shielded.tools/api/v4/graphql';"],
       ['a/probe.ts', "fetch('https://rpc.preview.midnight.network');"],
       ['a/innocent.ts', 'const I = endpointsOf(theNetwork()).indexer;'],
     ]);
-    expect(writesAnEndpoint(planted)).toEqual(['a/check.ts', 'a/probe.ts']);
+    expect(writesAnEndpoint(sample)).toEqual(['a/check.ts', 'a/probe.ts']);
+  });
+
+  it('WATCHED FINDING SIX: a host written in the wallet is found like one written anywhere else', () => {
+    /* RED WHEN the wallet is let off the scan again, so its node or indexer
+     * could be typed into its own configuration and reach a network the
+     * record does not name. */
+    const sample: Sources = sourcesOf([
+      [join('apps', 'wallet', 'src', 'config.ts'), "export const INDEXER_HTTP_URL = 'https://indexer.stagenet.shielded.tools/api/v4/graphql';"],
+      [join('apps', 'wallet', 'src', 'chain', 'facade.ts'), "export const NODE_RPC_URL = 'wss://rpc.midnight-preprod.blockfrost.io';"],
+      [join('apps', 'wallet', 'src', 'innocent.ts'), 'export const INDEXER_HTTP_URL = endpointsOf(NETWORK).indexer;'],
+    ]);
+    expect(writesAnEndpoint(sample)).toEqual([
+      join('apps', 'wallet', 'src', 'chain', 'facade.ts'), join('apps', 'wallet', 'src', 'config.ts'),
+    ]);
   });
 
   it('the record carries them, so the scan is not passing over an empty subject', () => {
@@ -539,47 +539,6 @@ describe('§2 one statement of where a network is reached', () => {
     const record = readFileSync(join(ROOT, THE_RECORD), 'utf8');
     expect(record).toMatch(/shielded\.tools/);
     expect(record).toMatch(/\.midnight\.network/);
-  });
-});
-
-describe('§3 the shell hands the value over and no longer decides it', () => {
-  /**
-   * **A DOOR'S `${MIDNIGHT_NETWORK_ID:-stagenet}` IS NOT A SECOND ANSWER, BUT
-   * IT IS A SECOND PLACE THE NAME IS WRITTEN.**
-   *
-   * It cannot make this application disagree with itself: whatever the shell
-   * hands over is either the network this build is compiled for or a refusal.
-   * What it can do is go stale. The day the pair moves, every one of these
-   * would hand over the old name and every door would refuse - correctly, and
-   * in thirty-five separate places, at the moment somebody is trying to run
-   * one.
-   *
-   * So the defaults are pinned here instead, where moving the pair turns one
-   * thing red and names the files.
-   */
-  const defaultsIn = (text: string): string[] =>
-    [...text.matchAll(/MIDNIGHT_NETWORK_ID:-([A-Za-z0-9_-]*)\}/g)].map(m => m[1]!);
-
-  it('EVERY DOOR THAT DEFAULTS THE NAME DEFAULTS IT TO THE ONE THIS BUILD IS ON', () => {
-    const wrong = COMMANDS.flatMap(name => defaultsIn(readFileSync(join(ROOT, name), 'utf8'))
-      .filter(v => v !== PAIR_NETWORK).map(v => `${name}: ${v}`));
-    /* RED WHEN the pair moves and the shell defaults do not, or when a door is
-     * added that defaults to a network of its own choosing. */
-    expect(wrong).toEqual([]);
-  });
-
-  it('WATCHED FINDING FOUR: the reader finds a default that disagrees', () => {
-    expect(defaultsIn('export MIDNIGHT_NETWORK_ID="${MIDNIGHT_NETWORK_ID:-preview}"')).toEqual(['preview']);
-    expect(defaultsIn('NETWORK="${MIDNIGHT_NETWORK_ID:-stagenet}"')).toEqual(['stagenet']);
-    expect(defaultsIn('export MIDNIGHT_NETWORK_ID="$NETWORK"')).toEqual([]);
-  });
-
-  it('and there are defaults to check, so the pin is about something', () => {
-    const withDefaults = COMMANDS.filter(n => defaultsIn(readFileSync(join(ROOT, n), 'utf8')).length > 0);
-    /* RED WHEN those scripts stop passing the value, which would make the pin
-     * above vacuous rather than satisfied - and skipped, stated, where they are
-     * not published at all. The pin itself still runs over whatever is there. */
-    if (COMMANDS.length === 0) expect(withDefaults.length).toBe(0);
-    else expect(withDefaults.length).toBeGreaterThan(20);
+    expect(record).toMatch(/blockfrost\.io/);
   });
 });

@@ -83,7 +83,7 @@ import { join } from 'node:path';
 import * as CC from '@midnight-ntwrk/compact-js/effect/CompiledContract';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { createUnprovenCallTxFromInitialStates } from '@midnight-ntwrk/midnight-js-contracts';
-import { ZswapChainState, LedgerParameters } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { ZswapChainState, LedgerParameters } from '@midnight-ntwrk/midnight-js-protocol/v9';
 /*
  * `ContractOperation` FROM THE RUNTIME, NOT FROM THE LEDGER, and the two are
  * different WASM classes with the same name. The simulator's `ContractState`
@@ -105,7 +105,7 @@ import {
   AccountSimulator, privateStateFor, change, TEST_TOKEN_BYTES, ZERO_32, invitePayloadFor,
 } from '../contracts/test/simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../src/midnight/payout-tree.js';
-import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
+import { theNetwork } from '../src/midnight/network.js';
 import { toHex, fromHex, type Hex } from '../src/core/crypto.js';
 import {
   classCeiling, extrinsicCeiling, extrinsicFraction, printDerivation,
@@ -192,7 +192,6 @@ async function main() {
   line();
 
   const ledgerWasm: any = await import('@midnightntwrk/ledger-v9');
-  await applyNetworkId(NETWORK);
   line(`  network id  ${NETWORK}`);
   line(`  block time  ${NOW} (seconds since the epoch, this machine's clock)`);
   line(`  contract    ${TARGET}  (${ARTEFACTS.replace(`${ROOT}/`, '')})`);

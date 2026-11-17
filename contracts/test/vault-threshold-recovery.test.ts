@@ -92,16 +92,19 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
   let vaultState: any;
   let priv: VaultPrivate;
 
-  const provider = () => ({
-    getContractState: async (_block: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
 
   const vaultAddrBytes = () => Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
 
-  const payoutContext = () => createCircuitContext<VaultPrivate>(
-    'payout', vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const payoutContext = () => createCircuitContext<VaultPrivate>({
+      circuitId: 'payout',
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
 
   beforeEach(async () => {
     /* Two signers, and a threshold of two. Two seats is the number every
@@ -122,9 +125,16 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     await startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },
@@ -133,7 +143,13 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
     priv = { coin: { ...coin, mt_index: 0n } };
     const dep = await vault.impureCircuits.deposit(
-      createCircuitContext<VaultPrivate>('deposit', vaultAddr as never, BLOCK, vaultState, priv),
+      createCircuitContext<VaultPrivate>({
+          circuitId: 'deposit',
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState,
+          privateState: priv,
+        }),
       coin);
     vaultState = dep.context.callContext.currentQueryContext.state;
   });

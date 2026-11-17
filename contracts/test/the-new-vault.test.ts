@@ -133,13 +133,16 @@ class World {
 
   /** Calls one of the vault's circuits, carrying the vault's and the account's state forward. */
   async call(circuit: string, ...args: unknown[]): Promise<unknown> {
-    const provider = {
-      getContractState: async (_b: string, address: unknown) =>
-        String(address) === String(this.sim.address) ? (this.sim.contractStateForCall as never) : undefined,
-    };
-    const ctx = createCircuitContext<VaultPrivate>(
-      circuit as never, this.addr as never, BLOCK, this.state, this.priv,
-      provider as never, undefined, undefined, NOW, BLOCK);
+    const ctx = createCircuitContext<VaultPrivate>({
+        circuitId: circuit as never,
+        contractAddress: this.addr as never,
+        coinPublicKeyOrZswapState: BLOCK,
+        contractState: this.state,
+        privateState: this.priv,
+        crossContract: this.sim.crossContract(),
+        time: NOW,
+        parentBlockHash: BLOCK,
+      });
     const out: any = await (this.vault.impureCircuits as any)[circuit](ctx, ...args);
     this.state = out.context.callContext.currentQueryContext.state;
     this.lastFx = out.context.callContext.currentQueryContext.effects;
@@ -255,7 +258,7 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     const tree = treeOf(commitment, [copyFor(1)]);
     const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, 9), [0n], 409);
     await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, SECRET, ZERO);
-    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     const changeColour = L.rawTokenType(V.changeReceiptTag(), w.addr);
     const payColour = L.rawTokenType(V.paymentReceiptTag(), w.addr);
     /* RED WHEN the run mints any other token or amount. */
@@ -530,7 +533,7 @@ describe('paying: through the account\'s receipt step, with every new coin\'s no
     /* RED WHEN the payment's receipt is not minted, or is the change receipt. */
     expect(mints(w)).toEqual([[hex(V.paymentReceiptTag()), 1n]]);
     /* RED WHEN the receipt is claimed for anybody but the company's account: the vault itself, a user, or nobody. */
-    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     expect(receiptsSent(w)).toEqual([['unshielded', L.rawTokenType(V.paymentReceiptTag(), w.addr), 'contract', String(w.sim.address), 1n]]);
   });
 

@@ -85,10 +85,6 @@ describe('a vault holds public money as well as private', () => {
   let vaultState: unknown;
   const priv: VaultPrivate = { coin: { nonce: bytes(0x77), color: NIGHT, value: 1_000n, mt_index: 0n } };
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
 
   /**
    * The vault's current state, plus what the chain says it holds in public money.
@@ -103,9 +99,16 @@ describe('a vault holds public money as well as private', () => {
   };
 
   const ctxFor = (circuitId: string, state: unknown) =>
-    createCircuitContext<VaultPrivate>(
-      circuitId, vaultAddr as never, BLOCK, state as never, priv,
-      provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+    createCircuitContext<VaultPrivate>({
+        circuitId: circuitId,
+        contractAddress: vaultAddr as never,
+        coinPublicKeyOrZswapState: BLOCK,
+        contractState: state as never,
+        privateState: priv,
+        crossContract: sim.crossContract(),
+        time: VAULT_NOW,
+        parentBlockHash: BLOCK,
+      });
 
   const adopt = (r: { context: { callContext: { currentQueryContext: { state: unknown } } } }) => {
     vaultState = r.context.callContext.currentQueryContext.state;
@@ -125,9 +128,16 @@ describe('a vault holds public money as well as private', () => {
     await startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState as never, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState as never,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },

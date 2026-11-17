@@ -87,7 +87,8 @@ export const WORKERS: Readonly<Record<string, string>> = {
 
 /**
  * THE PACKAGES THE WORKERS LOAD THAT CARRY WEBASSEMBLY: the ledger, the
- * on-chain runtime and the prover's circuit checker. Each ships a loader that
+ * on-chain runtime, and the two provers: zkir-v3 for the contracts' own
+ * circuits and zkir-v2 for the network's. Each ships a loader that
  * starts its WebAssembly as the loader's own file is read. The development
  * server's preparation of dependencies rewrites that loader, and the loader
  * then reads the WebAssembly before it exists: the worker stops with "Cannot
@@ -96,7 +97,9 @@ export const WORKERS: Readonly<Record<string, string>> = {
  * serving the WebAssembly, each starts. The build is not affected: it
  * bundles them whole.
  */
-export const WASM_PACKAGES = ['@midnight-ntwrk/zkir-v2', '@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4'] as const;
+export const WASM_PACKAGES = [
+  '@midnightntwrk/zkir-v3', '@midnightntwrk/zkir-v2', '@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4',
+] as const;
 
 /**
  * Where a package really is: the nearest modules folder above this one that holds it, with any link followed, so
@@ -114,7 +117,7 @@ function packageFolder(name: string): string {
  * THE FOLDERS THE DEVELOPMENT SERVER MAY SERVE A FILE FROM BY ITS PATH: this
  * application's own, the folder of each worker's entry, and the one font
  * package the kit's stylesheet names, which is installed at the top of the
- * repository, outside this folder, and the folder of each of the three
+ * repository, outside this folder, and the folder of each of the four
  * packages that carry WebAssembly (WASM_PACKAGES), which the worker fetches
  * from the modules folder by its address, and no other package beside them. A page's script names the files it
  * imports, and the server serves those wherever they are; a worker's entry

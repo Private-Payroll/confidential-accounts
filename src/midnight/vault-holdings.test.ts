@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { served } from '../testing/served-state.js';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -80,7 +81,7 @@ function vaultClient(opts: {
        * vault's public money and its ledger holds the notes. A public read
        * that cannot be answered is a state whose balance cannot be read.
        */
-      queryContractState: async () => {
+      queryContractState: async () => served(await (async () => {
         asked.states++;
         if (opts.chainNotes === 'unreadable') return null;
         const held = (opts.chainNotes ?? []).map(n => commitmentForNote(vaultCircuits as never, VAULT, n));
@@ -98,7 +99,7 @@ function vaultClient(opts: {
           get balance() { asked.publicBalances++; return opts.publicRows === 'unreadable' ? undefined : balance; },
           get data() { asked.notes++; return data; },
         };
-      },
+      })()),
     },
   });
   const ledger = new VaultLedger(

@@ -4,9 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { NETWORK } from 'midnight-identity/network';
 import type { CreationLedger } from 'midnight-identity/profile/creation-sign';
 import * as accountModule from '../../../../contracts/managed/contract/index.js';
@@ -575,11 +573,19 @@ describe.skipIf(!ON_DISK)('THE ACCOUNT BUILT AND SIGNED IN THE WALLET [needs con
   type Builder = { buildAccountDeploy: (d: unknown, i: unknown) => Promise<{ proven: Uint8Array; address: string }>;
     finishedCreation: (d: unknown, i: unknown) => Promise<{ proven: Uint8Array }> };
   let builder: Builder;
+  let calls: unknown;
+  let runtimeVersion: () => unknown;
   beforeAll(async () => {
-    setNetworkId(NETWORK as never);
-    /* The device's own builder, loaded by a path this app's typecheck does not follow, as approve-creation.test.tsx does. */
+    /* The device's own builder and the call builders the product hands it, loaded by paths this app's typecheck does
+     * not follow, as approve-creation.test.tsx does. */
     const at = '../../../../packages/web-shared/src/vault-builder.js';
     builder = (await import(/* @vite-ignore */ at)) as Builder;
+    const product = '../../../../contracts/test/the-calls-the-product-builds.js';
+    calls = ((await import(/* @vite-ignore */ product)) as { callsTheProductBuilds: () => unknown }).callsTheProductBuilds();
+    /* Which compiler built the keys, read from the build itself, so the deploy is built for this ledger. */
+    const { NodeZkConfigProvider } = await import('@midnight-ntwrk/midnight-js-node-zk-config-provider');
+    const built = new NodeZkConfigProvider(join(KEYS, '..'));
+    runtimeVersion = () => built.getArtifactRuntimeVersion();
   }, 120_000);
 
   const prove = async (tx: any) => tx.prove({
@@ -591,11 +597,12 @@ describe.skipIf(!ON_DISK)('THE ACCOUNT BUILT AND SIGNED IN THE WALLET [needs con
     const now = () => Number(ask['now']);
     if (ask['ask'] === 'account-deploy') {
       const b = await builder.buildAccountDeploy({
-        ledger: L, runtimeState: (runtime as any).ContractState, contracts: contracts as any, network: NETWORK, prove, now,
+        ledger: L, runtimeState: (runtime as any).ContractState, contracts: calls, network: NETWORK, prove, now,
         accountCompiled: CompiledContract.make('ConfidentialAccount', (accountModule as any).Contract).pipe(CompiledContract.withWitnesses(witnesses as never)),
         accountKeys: {
           getVerifierKey: async (c: string) => keyFile(c),
           getVerifierKeys: async (cs: readonly string[]) => cs.map((c) => [c, keyFile(c)] as [string, Uint8Array]),
+          getArtifactRuntimeVersion: runtimeVersion,
         },
       }, { foundingLeaf: ask['foundingLeaf'], label: ask['label'], foundingKey: over.foundingKey ?? ask['foundingKey'] });
       return { id: 0, ok: true, ask: 'account-deploy', account: b.address, tx: asB64(b.proven) };

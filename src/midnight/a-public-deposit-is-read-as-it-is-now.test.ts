@@ -13,9 +13,10 @@
  * §1 is the reader and the payout check over that chain. §2 is the reader's
  * rule that zero is an answer and a balance it cannot read is not.
  */
+import { served } from '../testing/served-state.js';
 import { describe, it, expect } from 'vitest';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import { deserializeCompactContractState } from '@midnight-ntwrk/midnight-js-utils';
+import { deserializeLedger9CompactContractState } from '@midnight-ntwrk/midnight-js-utils';
 
 import { VaultCannotAfford, VaultChainUnreadable, VaultLedger, type NotePool } from './vault-ledger.js';
 import { chainVaultHoldings } from './vault-holdings.js';
@@ -36,7 +37,7 @@ function servedState(held: Array<[Hex, bigint]>, extra: Array<[unknown, bigint]>
     ...held.map(([raw, v]) => [{ tag: 'unshielded', raw }, v] as [runtime.TokenType, bigint]),
     ...extra as Array<[runtime.TokenType, bigint]>,
   ]);
-  return deserializeCompactContractState(state.serialize(), { caller: 'a public deposit is read as it is now' });
+  return deserializeLedger9CompactContractState(state.serialize(), { caller: 'a public deposit is read as it is now' });
 }
 
 const refusingPool: NotePool = {
@@ -57,7 +58,7 @@ function vaultAfterAPublicDeposit(deposited: bigint) {
   const providers = async () => ({
     publicDataProvider: {
       queryUnshieldedBalances: async () => deployed,
-      queryContractState: async () => now,
+      queryContractState: async () => served(now),
     },
   });
   return new VaultLedger({ networkId: 'preview' } as never, {} as never, providers as never, {}, refusingPool, VAULT_ARTEFACTS);
@@ -135,7 +136,7 @@ describe('§2 zero is an answer and a balance that cannot be read is not', () =>
   });
 
   it('and the vault client carries that refusal as UNREADABLE, never as zero', async () => {
-    const providers = async () => ({ publicDataProvider: { queryContractState: async () => ({ balance: undefined }) } });
+    const providers = async () => ({ publicDataProvider: { queryContractState: async () => served({ balance: undefined }) } });
     const ledger = new VaultLedger({ networkId: 'preview' } as never, {} as never, providers as never, {}, refusingPool, VAULT_ARTEFACTS);
     /* RED WHEN the reader turns a state it could not read into 0n. */
     await expect(ledger.unshieldedBalance(VAULT, NIGHT)).rejects.toThrow(VaultChainUnreadable);

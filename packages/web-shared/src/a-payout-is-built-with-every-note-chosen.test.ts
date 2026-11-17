@@ -37,16 +37,14 @@ const standIn = () => {
   const deps = {
     ledger: {
       ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk' }) },
-      ZswapChainState: { deserialize: () => ({}) },
-      LedgerParameters: { deserialize: () => ({}) },
     },
     runtimeState: { deserialize: () => ({}) },
     zkConfig: {},
     compiled: {},
     compiledWith: (w: { noteToSpend: (ctx: unknown, token: Uint8Array, amount: bigint) => [unknown, never] }) => w,
     contracts: {
-      createUnprovenDeployTxFromVerifierKeys: async () => { throw new Error('no deploy here'); },
-      createUnprovenCallTxFromInitialStates: async (_zk: unknown, o: { compiledContract: any; args: unknown[] }) => {
+      buildDeploy: async () => { throw new Error('no deploy here'); },
+      buildCall: async (_zk: unknown, o: { compiledContract: any; args: unknown[] }) => {
         seen.args = o.args;
         const [, coin] = o.compiledContract.noteToSpend({}, Buffer.from(TOKEN, 'hex'), o.args[3]);
         seen.offered = coin;

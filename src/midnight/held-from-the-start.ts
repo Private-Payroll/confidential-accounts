@@ -1,5 +1,6 @@
 import { requireBuildableAuthority } from './authority-replacement.js';
 import type { TaggedKey } from './partial-contract.js';
+import type { ContractCalls } from '../../packages/web-shared/src/contract-call-built.js';
 
 /**
  * **A CONTRACT'S STATE AT DEPLOY, HELD BY THE KEYS GIVEN FROM ITS FIRST
@@ -29,8 +30,10 @@ export interface HeldStateDeps {
   readonly ledger: any;
   /** `@midnight-ntwrk/compact-runtime`'s `ContractState`. */
   readonly runtimeState: any;
-  /** `createUnprovenDeployTxFromVerifierKeys`, from the SDK. */
-  readonly contracts: { createUnprovenDeployTxFromVerifierKeys(...args: any[]): Promise<any> };
+  /** The deploy builder (`contractCallsOf`): Midnight.js's deploy, with the ledger's and the runtime's readings of it. */
+  readonly contracts: Pick<ContractCalls, 'buildDeploy'>;
+  /** The network the deploy is built for, by name. */
+  readonly network: string;
   readonly random?: (n: number) => Uint8Array;
 }
 
@@ -57,14 +60,16 @@ export async function heldStateFromTheStart(
   const seed = (deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))))(32);
   const keys = L.ZswapSecretKeys.fromSeed(seed);
   seed.fill(0);
-  const built = await deps.contracts.createUnprovenDeployTxFromVerifierKeys(
-    input.zkConfig, keys.coinPublicKey, { compiledContract: input.compiled, args: [...input.args] }, keys.encryptionPublicKey);
+  const built = await deps.contracts.buildDeploy(
+    input.zkConfig, keys.coinPublicKey, { compiledContract: input.compiled, args: [...input.args] }, keys.encryptionPublicKey, deps.network);
   try { keys.clear?.(); } catch { /* nothing to clear */ }
-  const unproven = built.private.unprovenTx;
+  const unproven = built.private.transaction as { guaranteedOffer?: unknown; fallibleOffer?: unknown };
   if ((built.private.newCoins?.length ?? 0) > 0 || unproven.guaranteedOffer || unproven.fallibleOffer) {
     throw new Error('the contract\'s constructor made coins, and a deploy built here carries none. Nothing was built.');
   }
-  const full = built.public.initialContractState;
+  const full = built.public.initialContractState as {
+    data: unknown; operation(name: string): { verifierKey?: unknown } | undefined;
+  };
   const state = new deps.runtimeState();
   state.data = full.data;
   for (const name of input.circuits) {

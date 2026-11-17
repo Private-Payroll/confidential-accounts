@@ -3,7 +3,8 @@ import type { Port } from 'midnight-identity/profile/store';
 /**
  * **A WAY FOR A TEST TO WAIT FOR A WRITE NOBODY AWAITS.** Second cause.
  *
- * `screens/approve.tsx` writes its history entry with `void save(...)` —
+ * `answerDisclosure`, `giveUnlockKey` and `giveKeyring` (`screens/approve-answer-disclosure.ts`,
+ * `screens/approve-answer-keys.ts`) write their history entry with `void save(...)` —
  * deliberately not awaited, and **correctly so: a key that has gone cannot be
  * un-given, so the write must never gate the answer**, and a failed write
  * raises a visible problem instead. That is product behaviour and it stays.

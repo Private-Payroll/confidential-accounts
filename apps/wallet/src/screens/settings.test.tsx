@@ -48,6 +48,8 @@ import {
 import { ORIGINAL_SLOT } from '../accounts/wallets-held.js';
 import { recordTermsSeen } from '../chain/terms.js';
 import { renameWallet, switchWallet } from '../shell/wallets.js';
+import { INDEXER_HOST, NETWORK } from '../config.js';
+import { NODE_RPC_URL } from '../chain/facade.js';
 
 const PLACEMENTS: readonly Placement[] = [
   { label: 'My Google account', holder: 'google:me' },
@@ -503,9 +505,9 @@ describe('§4 — network and hosts, read-only', () => {
     const secret = newSecret();
     settings(secret);
     const section = sectionNamed('Network and hosts');
-    expect(within(section).getByText('stagenet')).toBeTruthy();
-    expect(within(section).getByText('indexer.stagenet.shielded.tools')).toBeTruthy();
-    expect(within(section).getByText('rpc.stagenet.shielded.tools')).toBeTruthy();
+    expect(within(section).getByText(NETWORK)).toBeTruthy();
+    expect(within(section).getByText(INDEXER_HOST)).toBeTruthy();
+    expect(within(section).getByText(new URL(NODE_RPC_URL).host)).toBeTruthy();
     expect(within(section).getByText(window.location.origin)).toBeTruthy();
     expect(within(section).getByText(window.location.hostname)).toBeTruthy();
   });

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import { publishedByMidnight, type PublishedDigest } from '../midnight/proving-parameter-digests.js';
+import type { KeyLocation } from '../midnight/wasm-proving.js';
 
 /** Midnight's published digests, kept where a device's worker can read them too; named here for this server's readers. */
 export { MIDNIGHT_PARAMETER_SHA256, publishedByMidnight, type PublishedDigest } from '../midnight/proving-parameter-digests.js';
@@ -56,10 +57,11 @@ export function genuineParameterFiles(published: PublishedDigest): (file: string
   };
 }
 
-/** A compiled circuit this server hands to a device, and the file its size is read from. */
+/** A compiled circuit this server hands to a device, the file its size is read from, and that file's format. */
 export interface ServedCircuit {
   readonly label: string;
   readonly ir: string;
+  readonly kind: KeyLocation['kind'];
 }
 
 /**
@@ -69,14 +71,20 @@ export interface ServedCircuit {
  */
 export function servedCircuits(places: { compiled: string; account: string; params: string }): ServedCircuit[] {
   return [
-    ...VAULT_CIRCUITS.map((c) => ({ label: `${c} (vault)`, ir: join(places.compiled, 'zkir', `${c}.bzkir`) })),
-    ...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.map((c) => ({ label: `${c} (company account)`, ir: join(places.account, 'zkir', `${c}.bzkir`) })),
-    ...['output', 'spend', 'sign'].map((c) => ({ label: `shielded ${c} (network)`, ir: join(places.params, 'zswap', '9', `${c}.bzkir`) })),
+    ...VAULT_CIRCUITS.map((c) => ({ label: `${c} (vault)`, ir: join(places.compiled, 'zkir', `${c}.bzkir`), kind: 'contract' as const })),
+    ...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.map((c) => ({ label: `${c} (company account)`, ir: join(places.account, 'zkir', `${c}.bzkir`), kind: 'contract' as const })),
+    ...['output', 'spend', 'sign'].map((c) => ({ label: `shielded ${c} (network)`, ir: join(places.params, 'zswap', '9', `${c}.bzkir`), kind: 'network' as const })),
   ];
 }
 
+/** One compiled circuit to read, and which prover's format it is in: a contract's own, or one of the network's. */
+export interface CircuitFile {
+  readonly file: string;
+  readonly kind: KeyLocation['kind'];
+}
+
 /** Reads each compiled circuit's size, k, from the circuit itself: a number per file, or why it could not. */
-export type ReadSizes = (files: readonly string[]) => Promise<ReadonlyArray<{ k: number } | { why: string }>>;
+export type ReadSizes = (files: readonly CircuitFile[]) => Promise<ReadonlyArray<{ k: number } | { why: string }>>;
 
 /**
  * On a thread of its own. Laying out the largest circuits to learn their size
@@ -105,7 +113,7 @@ export async function parametersNeeded(circuits: readonly ServedCircuit[], readS
   for (const c of circuits) if (!existsSync(c.ir)) unread.push(`${c.label}: its compiled circuit is not here`);
   let sizes: ReadonlyArray<{ k: number } | { why: string }>;
   try {
-    sizes = here.length ? await readSizes(here.map((c) => c.ir)) : [];
+    sizes = here.length ? await readSizes(here.map((c) => ({ file: c.ir, kind: c.kind }))) : [];
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
     sizes = here.map(() => ({ why }));

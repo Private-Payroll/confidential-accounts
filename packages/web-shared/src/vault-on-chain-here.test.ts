@@ -8,7 +8,7 @@
  * worker is the product's own handler behind the page's own client, so what
  * crosses is what the page is handed.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
 import { identityFromSecret } from 'midnight-identity';
@@ -222,11 +222,12 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
       queryBlock: async () => { asked.push('block'); return o.block === false ? null : { hash: 'b7'.repeat(32) }; },
       queryZSwapAndContractState: async (address: string, at: AtBlock) => {
         asked.push(`tree, state and parameters of ${address.slice(0, 4)} at ${at.blockHash.slice(0, 4)}`);
-        return o.vault === false ? null : [bytesOf('zswap'), bytesOf('vault'), bytesOf('parameters')];
+        return o.vault === false ? null
+          : { protocolVersion: 1, zswapChainState: bytesOf('zswap'), contractState: bytesOf('vault'), ledgerParameters: bytesOf('parameters') };
       },
       queryContractState: async (address: string, at: AtBlock) => {
         asked.push(`state of ${address.slice(0, 4)} at ${at.blockHash.slice(0, 4)}`);
-        return o.account === false ? null : bytesOf('account');
+        return o.account === false ? null : { protocolVersion: 1, contractState: bytesOf('account'), ledgerParameters: bytesOf('other parameters') };
       },
     }) as unknown as BlockReader;
     const read = await atOneBlockOver(reader(), VAULT, ACCOUNT);
@@ -239,6 +240,38 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
     for (const o of [{ block: false }, { vault: false }, { account: false }]) expect(await atOneBlockOver(reader(o), VAULT, ACCOUNT), JSON.stringify(o)).toBeNull();
   });
 
+  it('A CONTRACT\'S STATE AND ITS DEPLOY ARE THE STATES THE INDEXER READ, DECODED HERE, AND ONE IT HOLDS NONE OF IS NOT READ YET', async () => {
+    const { SerializedContractState } = await import('@midnight-ntwrk/midnight-js-types');
+    const held = new runtime.ContractState();
+    const served = { protocolVersion: 1, contractState: SerializedContractState.fromBytes('v9', held.serialize()) };
+    const asked: string[] = [];
+    vi.resetModules();
+    vi.doMock('./public-data.js', async (original) => ({
+      ...await original<object>(),
+      publicDataProviderFor: async () => ({
+        queryContractState: async (address: string) => { asked.push(`state of ${address.slice(0, 4)}`); return address === VAULT ? served : null; },
+        queryDeployContractState: async (address: string) => { asked.push(`deploy of ${address.slice(0, 4)}`); return address === VAULT ? served : null; },
+      }),
+    }));
+    try {
+      const { vaultChainSourceAt: sourceAt } = await import('./vault-on-chain-here.js');
+      const source = sourceAt(INDEXER);
+      const state = await source.contractState(VAULT);
+      const deploy = await source.deployState(VAULT);
+      /* RED WHEN: a state is handed on as the indexer's read, which has no maintenance authority or circuits to check, rather than decoded. */
+      expect(typeof (state as { operation?: unknown }).operation).toBe('function');
+      expect(typeof (deploy as { operation?: unknown }).operation).toBe('function');
+      expect(state!.serialize()).toEqual(held.serialize());
+      /* RED WHEN: a contract the indexer holds no state or deploy for is answered as anything but not read yet. */
+      expect(await source.contractState(ACCOUNT)).toBeNull();
+      expect(await source.deployState(ACCOUNT)).toBeNull();
+      expect(asked).toEqual([`state of ${VAULT.slice(0, 4)}`, `deploy of ${VAULT.slice(0, 4)}`, `state of ${ACCOUNT.slice(0, 4)}`, `deploy of ${ACCOUNT.slice(0, 4)}`]);
+    } finally {
+      vi.doUnmock('./public-data.js');
+      vi.resetModules();
+    }
+  });
+
   it('WHAT A CALL TO THE ACCOUNT ALONE IS BUILT ON - ITS STATE AND THE LEDGER\'S PARAMETERS AT ONE BLOCK - IS READ AT THE WALLET\'S INDEXER', async () => {
     const asked: string[] = [];
     type AtBlock = { readonly blockHash: string };
@@ -246,7 +279,8 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
       queryBlock: async () => { asked.push('block'); return o.block === false ? null : { hash: 'b7'.repeat(32) }; },
       queryZSwapAndContractState: async (address: string, at: AtBlock) => {
         asked.push(`tree, state and parameters of ${address.slice(0, 4)} at ${at.blockHash.slice(0, 4)}`);
-        return o.account === false ? null : [bytesOf('zswap'), bytesOf('account'), bytesOf('parameters')];
+        return o.account === false ? null
+          : { protocolVersion: 1, zswapChainState: bytesOf('zswap'), contractState: bytesOf('account'), ledgerParameters: bytesOf('parameters') };
       },
       queryContractState: async () => { asked.push('a state alone'); return null; },
     }) as unknown as BlockReader;

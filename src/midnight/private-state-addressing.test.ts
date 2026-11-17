@@ -1,38 +1,19 @@
 /**
- * PRIVATE STATE IS STAGED AGAINST THE CONTRACT THE CALL IS FOR.
+ * Private state is staged against the contract the call is for.
  *
- * The defect this pins: the SDK's private state provider files everything
- * under `${contractAddress}:${privateStateId}`, and the address half is a
- * MUTABLE CLOSURE VARIABLE set by whichever SDK entry point ran last
- * (`midnight-js-level-private-state-provider/dist/index.mjs:767-778`). Until
- * S8c nothing in src/ ever set it, so every stage inherited it — correct while
- * exactly one contract had ever been addressed, and silently wrong the moment
- * there are two. The wrong-prefix failure is not loud: it is either a
- * missing-state error blamed on a missing secret key, or a proof built from
- * another contract's private state.
+ * Private state is opened per contract (`forContract` in the web app's `private-state.ts`, and the providers'
+ * private-state provider), and every key is composed as `${contractAddress}:${privateStateId}`. Staging reads the
+ * account's record, merges into it and writes it back, so a read or write that reached the wrong contract's
+ * prefix would overwrite another contract's state, and the failure is not loud: it is either a missing-state
+ * error blamed on a missing secret key, or a proof built from another contract's private state.
  *
- * **THE STAGE THESE TESTS DROVE USED TO BE `stageView`, AND `C292`/`S26`
- * REMOVED IT** with the account's balance ledger: it wrote the caller's balance
- * opening — `current` and `next` — for a spend circuit that no longer exists.
- * **`C228` IS A DIFFERENT RULE AND DID NOT GO WITH IT**, so every test below is
- * repointed onto `stageChange`, which is the surviving stage and obeys the
- * identical rule for the identical reason: it reads the account's record,
- * merges into it and writes it back, so an inherited address reads AND
- * overwrites another contract's state. Only the assertions about `current`,
- * `next` and the balance were dropped. Every assertion about addressing is the
- * one that stood here.
+ * The fake provider here is not a convenience stub: it mirrors the real provider's addressing (a store opened
+ * per contract, keys composed from the address), because a fake without those semantics could not fail the way
+ * the product would.
  *
- * So the fake provider here is not a convenience stub: it MIRRORS the real
- * provider's addressing semantics — the closure variable, the composed key,
- * the throw when no address was ever set — copied from the lines cited above,
- * because a fake without the semantics could not fail the way the product
- * would. The same rule as the state reader in ledger.test.ts: the fake keeps
- * the property under test real.
- *
- * No node, no proof server, no mocks of the SDK: `stageChange` and
- * `assetBlindingOf` never leave this class. They are private, and reached
- * through the same deliberate seam cast ledger.test.ts uses — the machinery matters while it waits, and a test that only drove
- * public doors could not reach the staging order at all.
+ * No node, no proof server, no mocks of the SDK: `stageChange` and `assetBlindingOf` never leave this class.
+ * They are private, and reached through the same deliberate seam cast `ledger.test.ts` uses, because a test that
+ * only drove public entry points could not reach the staging order at all.
  */
 import { describe, it, expect } from 'vitest';
 import { MidnightLedger, privateStateKey } from './ledger.js';
@@ -58,15 +39,6 @@ const ADDRESSES: Readonly<Record<string, string>> & { readonly alpha: string; re
   beta: 'addr_beta',
 };
 
-/*
- * `viewFor` AND `NEXT` STOOD HERE, AND WENT WITH `stageView`.
- *
- * They built a `StateView` and a `StateOpening` — a balance and its salt — for
- * a stage that no longer exists. `StateOpening` is gone from `core/ledger.ts`
- * outright and `StateView` now carries only `{ asset, assetBlinding }`. Nothing
- * about C228 needed either: what the stage WRITES was never the property under
- * test, only where it lands.
- */
 const CHANGE: StateChange = {
   asset: ASSET, amount: 1n, batchDigest: '11'.repeat(32), salt: '22'.repeat(32),
 };
@@ -83,39 +55,30 @@ const heldState = (marker: string, assetBlinding: Hex) => ({
 });
 
 /**
- * The real provider's addressing semantics, mirrored:
- * a closure address, a composed `${address}:${id}` key, and a refusal when no
- * address was ever set — `index.mjs:767-778` verbatim in behaviour. `trace`
- * records the order of address-sets, reads and writes, because the property
- * under test is not only WHERE state landed but that the address was set
- * BEFORE anything was read.
+ * The real provider's addressing, mirrored: the store is opened per contract and every key is composed as
+ * `${address}:${id}`, so a read can only ever reach the contract it was opened for. `trace` records each
+ * opening, read and write in order.
  */
 const levelLikeProvider = () => {
   const store = new Map<string, any>();
   const trace: string[] = [];
-  let contractAddress: string | null = null;
-  const keyFor = (id: string): string => {
-    if (contractAddress === null) {
-      throw new Error('Contract address not set. Call setContractAddress() before accessing private state.');
-    }
-    return `${contractAddress}:${id}`;
-  };
   return {
     store,
     trace,
-    setContractAddress(address: string): void {
-      contractAddress = address;
+    forContract(address: string) {
       trace.push(`address ${address}`);
-    },
-    async get(id: string): Promise<any> {
-      const k = keyFor(id);
-      trace.push(`get ${k}`);
-      return store.get(k) ?? null;
-    },
-    async set(id: string, value: any): Promise<void> {
-      const k = keyFor(id);
-      trace.push(`set ${k}`);
-      store.set(k, value);
+      return {
+        async get(id: string): Promise<any> {
+          const k = `${address}:${id}`;
+          trace.push(`get ${k}`);
+          return store.get(k) ?? null;
+        },
+        async set(id: string, value: any): Promise<void> {
+          const k = `${address}:${id}`;
+          trace.push(`set ${k}`);
+          store.set(k, value);
+        },
+      };
     },
   };
 };
@@ -140,18 +103,15 @@ const physicalKey = (accountId: string): string =>
   `${ADDRESSES[accountId]}:${privateStateKey(CFG.privateStateId, accountId)}`;
 
 /* The seams. Private methods, reached the way ledger.test.ts reaches its own:
- * one ugly cast per method, in a test, on purpose.
- *
- * A `stageView` seam stood beside these and went with the circuit it fed
- *. `stageChange` is what every test that used it now drives. */
+ * one cast per method, in a test, on purpose. */
 const stageChange = (l: MidnightLedger, accountId: string): Promise<void> =>
   (l as unknown as { stageChange(a: string, c: StateChange): Promise<void> })
     .stageChange(accountId, CHANGE);
 const assetBlindingOf = (l: MidnightLedger, accountId: string): Promise<Hex> =>
   (l as unknown as { assetBlindingOf(a: string): Promise<Hex> }).assetBlindingOf(accountId);
 
-describe('C228: private state is addressed per contract, explicitly, before every stage', () => {
-  it('sets the account\'s own contract address before the first read, for each account', async () => {
+describe('private state is opened per contract, explicitly, before every stage', () => {
+  it('opens private state for the account\'s own contract before the first read, for each account', async () => {
     const provider = levelLikeProvider();
     provider.store.set(physicalKey('alpha'), heldState('alpha', ALPHA_BLINDING));
     provider.store.set(physicalKey('beta'), heldState('beta', BETA_BLINDING));
@@ -161,9 +121,8 @@ describe('C228: private state is addressed per contract, explicitly, before ever
     await stageChange(ledger, 'beta');
 
     /*
-     * The order IS the property: with no address ever set, the real provider
-     * throws on the first `get`, so a trace that reads before addressing
-     * could only pass by inheriting somebody else's address — the defect.
+     * The order is the property: private state is opened for the account's own contract before it is read, so
+     * a read can only reach that contract.
      */
     expect(provider.trace).toEqual([
       'address addr_alpha',
@@ -175,17 +134,14 @@ describe('C228: private state is addressed per contract, explicitly, before ever
     ]);
   });
 
-  it('a second contract does not read the first\'s private state, even when the provider was left pointing at the first', async () => {
+  it('a second contract neither reads nor overwrites the first\'s private state', async () => {
     const provider = levelLikeProvider();
     provider.store.set(physicalKey('alpha'), heldState('alpha', ALPHA_BLINDING));
     provider.store.set(physicalKey('beta'), heldState('beta', BETA_BLINDING));
     const ledger = makeLedger(provider);
 
-    // The C228 shape: an SDK entry point for alpha's contract ran last, and
-    // left the provider pointing there. Before S8c, beta's stage would have
-    // read alpha's record and written the merge back under alpha's prefix —
-    // with a valid proof at the end of it.
-    provider.setContractAddress(ADDRESSES.alpha);
+    // Both records are held. Staging for beta must read beta's record and write the merge back under beta's
+    // prefix, never under alpha's.
 
     await stageChange(ledger, 'beta');
 
@@ -204,24 +160,11 @@ describe('C228: private state is addressed per contract, explicitly, before ever
     expect(alphaStored.changeAmount).toBeUndefined();
   });
 
-  /*
-   * `it('stageChange follows the same rule')` STOOD HERE AND IS FOLDED INTO THE
-   * TEST ABOVE.
-   *
-   * It existed to show that the stage NOT under test in this file obeyed the
-   * same rule as `stageView`. `stageView` is gone, `stageChange` is the stage
-   * under test, and its three assertions — beta's marker survives the merge,
-   * beta's `changeAmount` lands, alpha's does not — are all made above. Kept as
-   * a second copy it would be the same call asserted twice, which reads as two
-   * checks and is one.
-   */
-
-  it('assetBlindingOf answers with the named account\'s blinding, not the last-addressed contract\'s', async () => {
+  it('assetBlindingOf answers with the named account\'s blinding, not another contract\'s', async () => {
     const provider = levelLikeProvider();
     provider.store.set(physicalKey('alpha'), heldState('alpha', ALPHA_BLINDING));
     provider.store.set(physicalKey('beta'), heldState('beta', BETA_BLINDING));
     const ledger = makeLedger(provider);
-    provider.setContractAddress(ADDRESSES.alpha);
 
     expect(await assetBlindingOf(ledger, 'beta')).toBe(BETA_BLINDING);
   });
@@ -232,7 +175,6 @@ describe('C228: private state is addressed per contract, explicitly, before ever
     // is exactly the arrangement that used to produce a wrong answer.
     provider.store.set(physicalKey('alpha'), heldState('alpha', ALPHA_BLINDING));
     const ledger = makeLedger(provider);
-    provider.setContractAddress(ADDRESSES.alpha);
 
     const failure = await stageChange(ledger, 'beta')
       .then(() => null, (e: Error) => e);
@@ -251,7 +193,6 @@ describe('C228: private state is addressed per contract, explicitly, before ever
     const provider = levelLikeProvider();
     provider.store.set(physicalKey('alpha'), heldState('alpha', ALPHA_BLINDING));
     const ledger = makeLedger(provider);
-    provider.setContractAddress(ADDRESSES.alpha);
 
     await expect(stageChange(ledger, 'gamma'))
       .rejects.toThrow('account "gamma" is not deployed on Midnight');

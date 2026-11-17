@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { privateAddressHere, publicAddressHere } from '../addresses-here.test-support.js';
 import { KitProvider, languagesFrom, publicAmount } from 'vaults-ui';
 import type { Company, ProposalRow, VendorRow } from '../adapters/company-records.js';
 import { untilPageShown } from '../page-shown.test-support.js';
@@ -66,8 +67,8 @@ const words = (key: string, values: Record<string, string | number> = {}): strin
 
 const VAULT = 'ab'.repeat(32);
 const NIGHT = assets.enabled()[0]!;
-const PRIVATE_ADDRESS = 'mn_shield-addr_stagenet1qv9pzxqlyckngw6zf9g9whn9d3eh4qvg37tfmf9tk2uup37w6hww86h3lrlsvrg5rv3zjvph8ez5c566v95x7anasj9e9xdq57htt0qwwj5qx';
-const PUBLIC_ADDRESS = 'mn_addr_stagenet1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5z5tpwxqergd3c8g7rusqqmwelz';
+const PRIVATE_ADDRESS = privateAddressHere(0x33);
+const PUBLIC_ADDRESS = publicAddressHere(0x44);
 const NAMED = { record: 'c-1', company: 'label-1', account: 'c0'.repeat(32) };
 
 const vendor = (over: Partial<VendorRow> = {}): VendorRow => ({
