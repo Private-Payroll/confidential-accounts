@@ -28,6 +28,10 @@ import type { CreateVaultDoors } from '../../packages/web-shared/src/vault-doors
 import { theSecretToSpend } from '../../packages/web-shared/src/vault-secret-to-spend.js';
 import { readersCopyOnTheChain } from '../../src/midnight/sealed-secret-copy.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -150,7 +154,7 @@ const deviceOf = (n: number, filed: ReturnType<typeof startNonceSecret>, vault: 
   return { me: { signerId: `s${n}`, wrappingSecret: new Uint8Array(32), companyKey: companyKeyOf(n) }, records: () => store } as unknown as CreateVaultDoors;
 };
 
-describe('A VAULT\'S SECRET IS REPLACED BY A SIGNER WHO DID NOT RAISE THE RUN', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('A VAULT\'S SECRET IS REPLACED BY A SIGNER WHO DID NOT RAISE THE RUN [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('Bo opens the new secret from his own copy in Ada\'s record, carries the earlier secret, sets it, and every copy is written', async () => {
     const w = await World.make();
     const vault = toHex(w.self);

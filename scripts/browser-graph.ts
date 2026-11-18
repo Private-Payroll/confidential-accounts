@@ -366,12 +366,8 @@ export const pagesIn = (root: string, repo: string): string[] =>
 export const BROWSER_BUILDS: BrowserBuild[] = [
   { name: 'web', config: 'apps/web/vite.config.ts', root: 'apps/web', pages: ['apps/web/index.html'], alias: [] },
   {
-    name: 'proving-probe', config: 'vite.probe.config.ts', root: 'browser-proving',
-    pages: ['browser-proving/index.html', 'browser-proving/wallet.html', 'browser-proving/worker.html'], alias: [],
-  },
-  {
     name: 'wallet', config: 'apps/wallet/vite.config.ts', root: 'apps/wallet',
-    pages: ['apps/wallet/creation-screen.html', 'apps/wallet/index.html', 'apps/wallet/probe.html'],
+    pages: ['apps/wallet/creation-screen.html', 'apps/wallet/index.html'],
     alias: [
       { find: 'assert', replacement: 'packages/identity/src/browser/assert-shim.ts' },
       { find: '@', replacement: 'apps/wallet/src' },

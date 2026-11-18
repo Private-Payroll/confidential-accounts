@@ -54,6 +54,10 @@ import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 import { seatBarOf } from 'midnight-identity/profile/records-key';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /* The clock and the run's window, pinned for the reason the simulator's own
  * comment gives: nothing here measures real time. */
@@ -85,7 +89,7 @@ const govChange = (seed: number): Change => change(0n, seed);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault whose threshold nobody can meet is recovered, and pays', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault whose threshold nobody can meet is recovered, and pays [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;

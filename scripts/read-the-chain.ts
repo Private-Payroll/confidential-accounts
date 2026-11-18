@@ -66,6 +66,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { createScreen, phaseClock } from './deploy-report.js';
+import { standDownWhenMissing, thisRun, whatIsMissing } from './end-to-end-waits.js';
 import { loadEnvFile } from '../src/db/connect.js';
 import { theNetwork, type NetworkName } from '../src/midnight/network.js';
 import { publicDataProviderAt } from '../src/midnight/providers.js';
@@ -601,6 +602,8 @@ const RUN_DIRECTLY = process.argv[1] !== undefined
   && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (RUN_DIRECTLY) {
+  /* Without the network named, nothing is read. */
+  standDownWhenMissing('The chain read', whatIsMissing(thisRun(), {}, ROOT));
   main()
     .then((code) => { process.exit(code); })
     .catch((e) => {

@@ -49,6 +49,13 @@ import {
 } from './create-company-rules.js';
 import { createdCompaniesFile, storeDir } from '../src/wiring/deployment.js';
 import { publicDataProviderAt } from '../src/midnight/providers.js';
+import { standDownWhenMissing, thisRun, whatIsMissing } from './end-to-end-waits.js';
+import type { NetworkName } from '../src/midnight/network.js';
+
+/* Without the network named and the fee payer's funded seed on this machine, nothing below runs. */
+standDownWhenMissing('Creating a company on the chain', whatIsMissing(thisRun(), {
+  fundedSeedFor: (n) => join(storeDir(join(import.meta.dirname, '..'), n as NetworkName), 'wallet.seed'),
+}, join(import.meta.dirname, '..')));
 
 const ROOT = join(import.meta.dirname, '..');
 const NETWORK = theNetwork();

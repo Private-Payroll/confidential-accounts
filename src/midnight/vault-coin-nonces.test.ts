@@ -24,6 +24,10 @@ import { NonceSecretNotTheVaults } from './vault-coin-nonces.js';
 import { smallestNoteCovering, type Note } from './vault-notes.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 import { noFurtherNote } from './vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from '../../contracts/test/keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -41,7 +45,7 @@ const WRONG = toHex(bytes(0x73));
 
 interface VaultPrivate { notes: Note[] }
 
-describe('naming the coins a vault made, with the secret each was made under', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('naming the coins a vault made, with the secret each was made under [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: Hex;

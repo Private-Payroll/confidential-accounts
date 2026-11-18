@@ -5,7 +5,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { refuseAStoreOfAnotherNetwork, stampedFor, storeStamp, type StampSql } from './store-network.js';
-import { CLEARED_TABLES } from '../../scripts/reset-test-store-rules.js';
 import { NETWORK } from 'midnight-identity/network';
 
 /** A network other than the one this build is compiled for. */
@@ -78,12 +77,13 @@ describe('a database\'s store names its network, and a service of another networ
     expect(refusal).toContain(`What resolves it: point DATABASE_URL in .env at an empty database for ${NETWORK}`);
   });
 
-  /* RED WHEN the emptiness question leaves out a table the clean start empties, or asks of one it does not. */
-  it('a store is empty when every table the clean start empties is empty', async () => {
+  /* RED WHEN the emptiness question leaves out a table that holds a network's records, or asks of one that does not. */
+  it('a store is empty when every table that holds a network\'s records is empty', async () => {
     const store = aStore();
     await stampedFor(store, NETWORK);
     const question = store.asked.find((q) => /EXISTS/u.test(q))!;
-    expect([...question.matchAll(/FROM (\w+)\)/gu)].map((m) => m[1]).sort()).toEqual([...CLEARED_TABLES].sort());
+    expect([...question.matchAll(/FROM (\w+)\)/gu)].map((m) => m[1]).sort())
+      .toEqual(['company_sealed_records', 'sessions', 'vault_sealed_records']);
   });
 
   it('the stamp table is a migration of its own, holding one row', () => {

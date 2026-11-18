@@ -8,7 +8,7 @@
  * are both `Bytes<32>` and refuse anything else. That is one word to fix.
  * **What it cost was the belief that `AccountService` had ever been exercised
  * against the contract, and it cost the whole of that belief**:
- * `scripts/deploy-preview.ts` never calls `AccountService`, and every test
+ * the deploy script never calls `AccountService`, and every test
  * that reaches a real binding hand-builds its own 32-byte constant, so the
  * defect was green everywhere for as long as it existed.
  *

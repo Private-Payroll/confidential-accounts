@@ -40,6 +40,10 @@ import { toHex, fromHex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
 import { TEST_TOKEN } from '../../src/testing/assets.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW.
@@ -111,7 +115,7 @@ const govChange = (seed: number): Change => change(0n, seed);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault pays one payee of an approved run', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault pays one payee of an approved run [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;

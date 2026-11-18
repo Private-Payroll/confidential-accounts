@@ -19,8 +19,8 @@
  * right is this file's.
  *
  * **AND NOTHING IN THE PRODUCT CALLS THIS FILE YET, WHICH IS STATED HERE
- * RATHER THAN LEFT TO BE FOUND.** `T-344`, `SC13` §4 `F5`. Its only
- * importer is its own test. **`scripts/run-preview.ts` still carries
+ * RATHER THAN LEFT TO BE FOUND.** Its only
+ * importer is its own test. **The scripted preview run still carries
  * `const CIRCUITS = 13` behind four `.command` doors, and that is not a missed
  * wiring:** its thirteen counts a fixed scripted walk — two governance rounds
  * with a `seatInvited` each, a payment round, and a job section ending in a

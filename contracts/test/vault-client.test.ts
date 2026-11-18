@@ -64,6 +64,10 @@ import { payFor } from '../../src/testing/payees.js';
 import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 import { NIGHT as NIGHT_TOKEN } from '../../src/core/assets.js';
 import { noFurtherNote, notePlaces } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -88,7 +92,7 @@ const CAROL = bytes(0x0c);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault driven by the client\'s own note pool', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault driven by the client\'s own note pool [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultNotes>;
   let vaultAddr: string;

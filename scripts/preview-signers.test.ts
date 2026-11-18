@@ -1,15 +1,16 @@
 /**
- * **THE FILE THAT DECIDES WHO IS ON THE PREVIEW ACCOUNT.**
+ * **THE FILE THAT DECIDES WHO IS ON AN ACCOUNT DEPLOYED FROM THIS MACHINE.**
  *
  * Five identities live in `.midnight/` because two processes have to agree on
- * them and a formula both could compute is what `C334` is. So what this file
- * pins is the three ways that arrangement can go wrong:
+ * them, and a formula both could compute would be an identity any reader could
+ * take. So what this file pins is the three ways that arrangement can go wrong:
  *
- *   the file is SHARED between accounts  → `C275`, and `payroll-test-1`'s pool
- *                                          is unopenable today because of it
+ *   the file is SHARED between accounts  → one account's run overwrites another's
+ *                                          signers, and that account's pool can no
+ *                                          longer be opened
  *   the file is OVERWRITTEN on a rerun   → every signer already on chain is
- *                                          stranded, `C275` in reverse
- *   the material is not really random    → `C334` again, one file over
+ *                                          stranded
+ *   the material is not really random    → a reader can compute the identities
  *
  * It does NOT test that the contract accepts these values. That is
  * `contracts/test/what-a-signer-is.test.ts`, in circuit.
@@ -28,13 +29,12 @@ import { NETWORK } from 'midnight-identity/network';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'preview-signers-'));
 
-describe('C334 — the preview signers file', () => {
+describe('the signers file of an account deployed from this machine', () => {
   it('refuses a traversing account id THROUGH THE FUNCTION THAT SHIPS, not just the guard', () => {
     /*
-     * **THE GUARD IS NOT WHAT SHIPS — `previewSignersFile` IS.** `S34`'s
-     * test-coverage pass named this shape one file over: a test that enters through
-     * the helper proves the helper and proves nothing about the caller calling
-     * it. Delete `assertPreviewAccountId(...)` from `previewSignersFile` and
+     * **THE GUARD IS NOT WHAT IS CALLED — `previewSignersFile` IS.** A test that
+     * enters through the helper proves the helper and proves nothing about the
+     * caller calling it. Delete `assertPreviewAccountId(...)` from `previewSignersFile` and
      * the direct test below stays green while a `..` escapes `.midnight/`.
      */
     expect(() => previewSignersFile('/x/.midnight', NETWORK, '../../etc/passwd'))
@@ -44,7 +44,7 @@ describe('C334 — the preview signers file', () => {
   });
 
   it('names a file per network AND per account, never one shared between them', () => {
-    /* `C275` is one shared file, each run overwriting the last. The account id
+    /* One shared file would have each run overwriting the last. The account id
      * is IN the name, so two accounts cannot collide however often either
      * runs. */
     expect(previewSignersFile('/x/.midnight', NETWORK, 'default'))
@@ -68,8 +68,8 @@ describe('C334 — the preview signers file', () => {
 
   it('generates five signers with REAL entropy — no two runs agree', () => {
     /*
-     * **THE ASSERTION `C334` IS ABOUT.** `seededBytes(1)` returns the same 32
-     * bytes on every machine for ever; these must not. Two independent
+     * **THE ASSERTION THIS FILE IS FOR.** A formula returns the same 32 bytes
+     * on every machine for ever; these must not. Two independent
      * directories, so this compares two first-generations rather than a
      * generation against a reuse.
      */
@@ -84,9 +84,9 @@ describe('C334 — the preview signers file', () => {
     /*
      * **WHAT THIS MEASURES IS "DIFFERS BETWEEN RUNS", WHICH IS LESS THAN
      * "UNPREDICTABLE", AND THE TITLE IS ONE CLAUSE STRONGER THAN THE
-     * ASSERTION.** `S35`'s test-coverage pass. A counter or a `Date.now()` seed
-     * would pass this. It does catch `C334`'s actual defect — `seededBytes(1)`
-     * returns the same 32 bytes on every machine for ever — and the generator
+     * ASSERTION.** A counter or a `Date.now()` seed would pass this. It does
+     * catch the defect it is for — a formula that returns the same 32 bytes on
+     * every machine for ever — and the generator
      * it is guarding is named at `preview-signers.ts`: `randomSecretKey` and
      * `randomBytes(32)`. What no unit test can hold is the quality of a CSPRNG.
      */
@@ -99,8 +99,7 @@ describe('C334 — the preview signers file', () => {
     /*
      * The deploy runs again — after a stagenet reset, or a failed attempt.
      * Regenerating here would strand every signer already seated on chain
-     * under the previous material, which is `C275`'s failure with the
-     * direction reversed, and it would do it silently.
+     * under the previous material, and it would do it silently.
      */
     const dir = tmp();
     const first = readOrCreatePreviewSigners(dir, NETWORK, 'default');
@@ -125,8 +124,8 @@ describe('C334 — the preview signers file', () => {
     expect(() => parsePreviewSigners({ signers: {} }, file)).toThrow(/signer A/);
 
     /*
-     * **ONE BAD FIELD AT A TIME, AND THAT IS THE WHOLE POINT.** `S35`'s
-     * test-coverage pass: a case with BOTH fields malformed passes for either check
+     * **ONE BAD FIELD AT A TIME, AND THAT IS THE WHOLE POINT.** A case with BOTH
+     * fields malformed passes for either check
      * alone, so deleting one of the two conditions leaves the suite green. Each
      * of the two is covered by a case in which the OTHER field is valid.
      */
@@ -153,7 +152,7 @@ describe('C334 — the preview signers file', () => {
 
   it('hands the two values out AS THEMSELVES, not merely as two 32-byte arrays', () => {
     /*
-     * **THE SWAP IS THE FAILURE THIS ASSERTS AGAINST.** `S35`'s test-coverage pass:
+     * **THE SWAP IS THE FAILURE THIS ASSERTS AGAINST.**
      * `secretKey: fromHex(s.blinding), blinding: fromHex(s.signingSecret)` gives
      * two 32-byte `Uint8Array`s and satisfies every shape assertion — and the
      * deploy then seats A's leaf from one pair while the run derives from the
@@ -171,8 +170,7 @@ describe('C334 — the preview signers file', () => {
   });
 
   it('writes the file 0600, because it is key material on a shared disk', () => {
-    /* A truth claim the file makes about itself (rule 14), pinned rather than
-     * asserted in a comment. `S35`'s test-coverage pass. */
+    /* A claim the file makes about itself, pinned rather than asserted in a comment. */
     const { file } = readOrCreatePreviewSigners(tmp(), NETWORK, 'default');
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });

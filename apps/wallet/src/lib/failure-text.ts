@@ -159,10 +159,10 @@ function causeOf(value: unknown): unknown {
  * — which is the whole point — reads as its `_tag` followed by the
  * complaint the ledger actually made.
  *
- * Used at every failure surface in this wallet. `probe.ts` runs it BEFORE
- * `adviceFor`, because a classifier reading an empty string is not
- * the probe declining to classify a reason: it is this defect being handed
- * to the instrument built to catch it.
+ * Used at every failure surface in this wallet, and run BEFORE `adviceFor`
+ * wherever both are, because a classifier reading an empty string is not
+ * declining to classify a reason: it is this defect being handed to the
+ * check built to catch it.
  */
 export function describeFailure(e: unknown): string {
   const parts: string[] = [];

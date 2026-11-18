@@ -33,6 +33,10 @@ import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 import { coinsKeptBy } from '../../src/midnight/vault-coins.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -69,7 +73,7 @@ const heldBy = (
   coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
 ) => vaultCircuits.heldCommitmentOf(coin, vaultCircuits.noteBlindingOf(addr, coin));
 
-describe('a vault splits one of its own notes', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault splits one of its own notes [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;

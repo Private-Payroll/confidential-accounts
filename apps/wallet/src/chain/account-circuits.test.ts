@@ -13,6 +13,10 @@ import {
   ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
   ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL, VAULT_CIRCUITS_THE_WALLET_PROVES,
 } from './account-circuits.js';
+import { ACCOUNT_KEYS, keysOnDisk } from '../../../../contracts/test/keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /*
  * The account circuits a vault circuit the wallet proves calls are read here from the compiled vault itself, run on
@@ -123,7 +127,7 @@ const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]
 };
 
 describe('the account circuits the wallet holds keys for', () => {
-  it('are, for each vault circuit the wallet proves, exactly the account circuits that circuit calls when it runs', async () => {
+  it.skipIf(!ACCOUNT_KEYS_ON_DISK)('are, for each vault circuit the wallet proves, exactly the account circuits that circuit calls when it runs [needs contracts/managed/keys; `npm run compact` builds them]', async () => {
     // RED WHEN: a vault circuit the wallet proves calls an account circuit the wallet holds no key for, so that transaction can never be proved here
     const reached = await accountCircuitsEachCallReaches();
     expect(Object.keys(reached).sort()).toEqual([...VAULT_CIRCUITS_THE_WALLET_PROVES].sort());

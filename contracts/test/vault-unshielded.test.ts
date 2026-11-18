@@ -48,6 +48,10 @@ import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vau
 import { type PayoutLeafInput, type PayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -78,7 +82,7 @@ const govChange = (seed: number): Change => change(0n, seed);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault holds public money as well as private', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault holds public money as well as private [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;

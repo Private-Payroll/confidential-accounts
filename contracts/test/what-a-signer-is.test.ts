@@ -16,7 +16,7 @@
  *
  * It never bit because only `SimulatedCommitments` has ever been wired, and it
  * agreed with itself. The stagenet scripts work for the opposite reason —
- * `scripts/run-preview.ts` and `scripts/governance-steps.ts` derive live from
+ * the scripted runs on a live network derive live from
  * each device's own `AccountPrivateState`, through the circuit. **The product
  * path had never been tried.**
  *
@@ -301,7 +301,7 @@ describe('what a signer’s public identity is', () => {
  *
  * That no secret exists in the real deploying PROCESS. That is a property of
  * `src/midnight/ledger.ts` — it has no `deployer()` injection point any more —
- * and of `scripts/deploy-preview.ts`, and neither is reachable from a circuit
+ * and of the deploy script, and neither is reachable from a circuit
  * test. What this block holds is the CONTRACT's half: that the seat is the
  * argument and never a witness.
  */
@@ -379,7 +379,7 @@ describe('the deployer has no seat', () => {
      * `pureCircuits` directly — so they prove the CONTRACT seats its argument
      * and prove nothing about the value the product hands it. On the real path
      * the founding leaf is `storedSignerLeaf(material, MidnightCommitments)`
-     * (`scripts/deploy-preview.ts`), and a mismatch between that writer's scope
+     * (the deploy script), and a mismatch between that writer's scope
      * defaulting (`signer-leaf.ts`: `material.scope ?? commitments.allVaults()`)
      * and the device's own `scope` would be invisible to every test in this
      * block — while the first test in this file proves exactly that

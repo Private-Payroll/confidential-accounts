@@ -459,11 +459,11 @@ export class MidnightLedger extends AccountSteps implements Ledger {
    * Not implemented here on purpose. Deployment is `deployContract` with
    * the constructor's witnesses, a funded wallet, a DUST budget measured
    * against the live chain and a retry around a websocket that drops, all
-   * of which `scripts/deploy-preview.ts` already does. Reimplementing it
+   * of which the deploy script already does. Reimplementing it
    * behind this method would be a second copy of the one thing in this
    * project with the worst record for drifting out of sync.
    *
-   * So it throws, and says where the working one is.
+   * So it throws, and says why.
    */
   async open(accountId: string, opening: AccountOpening): Promise<TxRef> {
     if (!this.deployment) {

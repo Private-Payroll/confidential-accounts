@@ -38,6 +38,10 @@ import { sealPayKeyTo } from '../../src/midnight/run-keys.js';
 import { payKeyCommitmentOf, payKeyPayloadOf } from '../../src/midnight/pay-key-commitment.js';
 import { Transcript, encodeUint, asHex } from './transcript.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /* §7 constructs its own vault, so the fixture pieces §3 uses are shared. */
 
@@ -129,9 +133,9 @@ describe('§1 — the runtime hands a test the public transcript of a real circu
 describe('§2 — the positive control: the instrument can find what IS published', () => {
   /*
    * **WITHOUT THIS, EVERY ABSENCE ASSERTION BELOW IS WORTHLESS.**
-   * `scripts/cross-contract-spike.ts:144` hand-builds an EMPTY
-   * `publicTranscript` and every claim over it would be green — that is the
-   * failure this repository already contains an example of, and this is the
+   * A hand-built EMPTY
+   * `publicTranscript` makes every claim over it green — that is the
+   * failure an absence check invites, and this is the
    * check that makes it impossible here.
    */
   it('finds the run window, which the contract writes to runWindow in the clear', async () => {
@@ -174,7 +178,7 @@ describe('§2 — the positive control: the instrument can find what IS publishe
   });
 });
 
-describe('§3 — the three privacy priorities, over a real cross-contract payout', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('§3 — the three privacy priorities, over a real cross-contract payout [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   /*
    * THE CALL IS THE PRODUCT'S OWN MONEY PATH, NOT A FIXTURE SHAPED LIKE ONE: a
    * vault pays one payee of an approved run by calling into the account, both
@@ -738,7 +742,7 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
   });
 });
 
-describe('§7 — the tape keeps the whole call tree, not the entry circuit', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('§7 — the tape keeps the whole call tree, not the entry circuit [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   /*
    * **THE SECOND DEFECT FOUND HERE, AND IT WAS LATENT RATHER THAN LIVE.**
    * `Tape` recorded `trace[trace.length - 1]`, which by the SDK's own

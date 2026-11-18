@@ -1,8 +1,7 @@
 /**
- * M-4: does fee sponsorship actually work?
+ * Does fee sponsorship work, end to end, against a live network?
  *
- * This is the SaaS story, and until now it has never been run. Decision 0001
- * says the customer never holds a token: they balance the shielded and
+ * The product's design says the customer never holds a token: they balance the shielded and
  * unshielded legs of their own transaction and sign it, and a sponsor balances
  * only the dust leg and submits. If that is true, a finance team signs up with
  * an email address. If it is not, every customer has to acquire and hold NIGHT
@@ -47,6 +46,13 @@ import {
   previewSignersFile, readOrCreatePreviewSigners, signerBytes,
 } from './preview-signers.js';
 import { deploymentRecordPath, storeDir } from '../src/wiring/deployment.js';
+import { standDownWhenMissing, thisRun, whatIsMissing } from './end-to-end-waits.js';
+import type { NetworkName } from '../src/midnight/network.js';
+
+/* Without the network named and the sponsor's funded seed on this machine, nothing below runs. */
+standDownWhenMissing('The sponsored-fee check', whatIsMissing(thisRun(), {
+  fundedSeedFor: (n) => join(storeDir(process.cwd(), n as NetworkName), 'wallet.seed'),
+}, process.cwd()));
 
 const BOLD = '\x1b[1m', DIM = '\x1b[2m', RED = '\x1b[31m', GREEN = '\x1b[32m', YEL = '\x1b[33m', OFF = '\x1b[0m';
 const good = (m: string) => console.log(`  ${GREEN}✓${OFF} ${m}`);
@@ -65,10 +71,10 @@ const ARTIFACTS = join(ROOT, 'contracts', 'managed');
 const PRIVATE_STATE_ID = `confidential-accounts-${NETWORK}`;
 const ACCOUNT_ID = 'default';
 /**
- * The circuit the sponsored call drives. M-4 chose the contract's only
- * read-only circuit — `attestSolvency` — WHICH NO LONGER EXISTS: S23 shed it.
- * Left named here so the guard below refuses by name rather than this script
- * quietly acquiring a substitute nobody chose. M-152 is the open decision.
+ * The circuit the sponsored call drives: the contract's one read-only circuit,
+ * `attestSolvency`, WHICH THE CONTRACT NO LONGER CARRIES. It stays named here so
+ * the guard below refuses by name rather than this check quietly acquiring a
+ * substitute nobody chose; every circuit the contract still carries writes state.
  */
 const SPONSORED_CIRCUIT = 'attestSolvency';
 const PRIVATE_STATE_PASSWORD =
@@ -78,23 +84,21 @@ const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
 /**
  * **SIGNER A AND B ARE READ FROM THE NETWORK'S STORE FOLDER, NOT COMPUTED.**
  *
- * Their identities used to be `seededBytes(1)`/`seededBytes(401)` and
- * `seededBytes(2)`/`seededBytes(402)` — a published formula, on signers seated
- * on a real account. `DEPLOY-PREVIEW.command` now writes real entropy into a
- * gitignored per-account file and this reads it, so this script still
- * reconstructs exactly the devices the deploy seated and nothing in the
+ * The deploy that seated them wrote real entropy into a per-account file in the
+ * network's store folder, kept off the repository, and this reads it, so the
+ * check reconstructs exactly the devices the deploy seated and nothing in the
  * repository names either of them.
  *
  * A REFUSAL RATHER THAN A FRESH SET: `readOrCreatePreviewSigners` would make
- * one, and a fresh set is a device that is not on the account this script is
- * about to read. The door that creates the file is named (rule 19).
+ * one, and a fresh set is a device that is not on the account this check is
+ * about to read. The refusal names the file and what writes it.
  */
 const previewSignersPath = previewSignersFile(STATE_DIR, NETWORK, ACCOUNT_ID);
 if (!existsSync(previewSignersPath)) {
   throw new Error(
     `there is no demo signer material for "${ACCOUNT_ID}" on ${NETWORK}: ` +
       `${previewSignersPath.replace(ROOT + '/', '')} does not exist.\n` +
-      'Run DEPLOY-PREVIEW.command, then run this again.',
+      'Deploy an account from this machine on this network, which writes it, then run this again.',
   );
 }
 const PREVIEW_SIGNERS = readOrCreatePreviewSigners(STATE_DIR, NETWORK, ACCOUNT_ID).signers;
@@ -127,7 +131,7 @@ async function main() {
   /* Read before any wallet syncs: this rig spends a real fee, and nothing pays one uncapped. */
   const ceiling = feeCeilingFrom(process.env);
   console.log('────────────────────────────────────────────────────────────');
-  console.log(`  ${BOLD}Fee sponsorship on ${NETWORK}${OFF}  (M-4)`);
+  console.log(`  ${BOLD}Fee sponsorship on ${NETWORK}${OFF}`);
   console.log('  A wallet with nothing in it calls a circuit. Someone else pays.');
   console.log('────────────────────────────────────────────────────────────');
 
@@ -135,35 +139,31 @@ async function main() {
    * BEFORE any wallet syncs or money moves, AND THE TEST IS NOW "IS IT
    * DEPLOYED", NOT "IS IT DEFERRED".
    *
-   * `S9` DEFERRED `attestSolvency` — the circuit this rig calls, chosen
-   * because it was the contract's ONLY read-only circuit. `S23` then SHED it
-   * from the contract altogether, and `S25` emptied the deferred list. Asking
-   * `isDeferredCircuit` would now answer NO for a circuit that does not exist,
-   * and this script would go on to prove and PAY for a call the chain refuses
-   * as VerifierKeyNotPresent. The guard has to be membership of the deployment,
-   * which is true of neither a deferred circuit nor a shed one.
+   * `attestSolvency`, the circuit this check calls, was chosen because it was
+   * the contract's only read-only circuit, and the contract no longer carries
+   * it. Asking whether it is deferred would answer NO for a circuit that does
+   * not exist, and this check would go on to prove and PAY for a call the chain
+   * refuses as VerifierKeyNotPresent. The guard is membership of the
+   * deployment, which is true of neither a deferred circuit nor a removed one.
    *
-   * There is no drop-in replacement: §6 of docs/scope-what-a-contract-costs.md
-   * shows every other circuit writes state. Re-running M-4's experiment needs
-   * a deliberate choice of a state-changing circuit (and of the account it is
-   * allowed to change) — a decision, not a substitution made in passing.
+   * There is no drop-in replacement: every other circuit writes state. Running
+   * this check again needs a deliberate choice of a state-changing circuit (and
+   * of the account it may change), not a substitution made in passing.
    */
   if (!isDeployedCircuit(SPONSORED_CIRCUIT)) {
     console.log();
     console.log(`  ${RED}${BOLD}REFUSED before anything ran or was spent.${OFF}`);
     console.log(`  This script's sponsored call is ${BOLD}${SPONSORED_CIRCUIT}${OFF}, and the current`);
-    console.log('  deployment does not carry that circuit (src/midnight/deferral.ts). It was');
-    console.log('  shed from the contract by S23 and no longer compiles to anything. The call');
-    console.log('  would prove and pay, then be refused by the chain as VerifierKeyNotPresent.');
-    console.log('  M-4\'s sponsorship result already stands (it settled on 28 Aug); re-running');
-    console.log('  it needs a new choice of circuit, made deliberately — every remaining');
-    console.log('  deployed circuit writes state. M-152.');
+    console.log('  deployment does not carry that circuit (src/midnight/deferral.ts). The');
+    console.log('  contract no longer has it, so the call would prove and pay, then be refused');
+    console.log('  by the chain as VerifierKeyNotPresent. This check waits for a circuit to be');
+    console.log('  chosen for it, deliberately: every circuit the contract carries writes state.');
     process.exitCode = 1;
     return;
   }
 
   if (!existsSync(CONTRACT_FILE)) {
-    throw new Error(`no deployed contract for ${NETWORK}. Run DEPLOY-PREVIEW.command first.`);
+    throw new Error(`no deployed contract for ${NETWORK}: deploy an account from this machine on ${NETWORK} first.`);
   }
   const contractAddress = JSON.parse(readFileSync(CONTRACT_FILE, 'utf8')).contractAddress as string;
 
@@ -380,8 +380,8 @@ async function main() {
    * about the cause. So it says what is missing instead.
    *
    * `balanceSalt` STOOD IN THIS LIST, and `current`/`next` were built from it
-   * just below. Both went with the balance ledger under `C292`/`S26`: the view
-   * file `deploy-preview.ts` writes carries no balance and no salt for one, and
+   * just below. Both went with the account's balance ledger: the view file the
+   * deploy writes carries no balance and no salt for one, and
    * `AccountPrivateState` has no `current`/`next` pair to put them in.
    *
    * WHAT THE CHECK STILL ENFORCES is the half that is still load-bearing: the
@@ -394,7 +394,7 @@ async function main() {
     if (!viewRaw[field]) {
       throw new Error(
         `${VIEW_FILE.replace(ROOT + '/', '')} has no "${field}", so it predates the ` +
-          'multi-asset change (M-125) and cannot say which asset it describes. ' +
+          'multi-asset change and cannot say which asset it describes. ' +
           'Redeploy, or run the proposal script once, to write a current view.',
       );
     }
@@ -413,8 +413,8 @@ async function main() {
      * IT USED TO KEY AN ON-CHAIN MAP, and the older reason given here was that
      * two derivations would make the account hold its money twice under two
      * names, each unspendable by half the signers. That map went with the
-     * balance ledger under `C292`/`S26`; the requirement did not, because the
-     * change commitment still carries the key.
+     * account's balance ledger; the requirement did not, because the change
+     * commitment still carries the key.
      */
     assetBlinding: Uint8Array.from(Buffer.from(viewRaw.assetBlinding, 'hex')),
     assetId: assetIdBytes(viewRaw.asset),
@@ -429,19 +429,19 @@ async function main() {
   if (served === null) throw new Error(`the indexer has no state for ${contractAddress}, so there is nothing to call`);
   const before = readLedger(served.data);
   /*
-   * `round` and `proposalOpen` USED TO BE PRINTED HERE, and M-128 removed both
-   * fields. There is no round, and an account holds however many proposals are
-   * open at once.
+   * `round` and `proposalOpen` USED TO BE PRINTED HERE, and the contract no
+   * longer has either field. There is no round, and an account holds however
+   * many proposals are open at once.
    *
    * THE ASSET COUNT STOOD BESIDE THEM — `assetBalances.size()` — and went with
-   * the balance ledger under `C292`/`S26`. What is left is the two numbers the
+   * the account's balance ledger. What is left is the two numbers the
    * chain still carries about where this account stands: how many proposals are
    * collecting approvals, and how many payments have been recorded.
    */
   note(`${before.openProposals.size()} proposal(s) open, ${before.movements.size()} movement(s) recorded`);
 
   /*
-   * The PARTIAL find, since S8c: the deployment carries a subset of the
+   * The PARTIAL find: the deployment carries a subset of the
    * fifteen compiled circuits, and the SDK's `findDeployedContract` refuses
    * that shape outright (it compares all fifteen keys). This verifies the
    * deployed keys byte-for-byte and checks the deferred circuits are absent.

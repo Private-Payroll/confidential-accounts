@@ -2697,7 +2697,7 @@ enforce it: its `contract implements` check is real, and five negative
 controls were refused by it, but it accepts a witness-reading callee anyway.
 
 THE RUNTIME DOES ENFORCE IT, and this is no longer a precaution. Executed
-offline by `scripts/cross-contract-spike.ts`:
+offline, by a spike that calls a witness-reading callee across contracts:
 
 ```text
 Cross-contract callee '4549…' invoked witness 'proposalSalt'
@@ -3068,7 +3068,7 @@ NO `requireSigner()`, and it is the line a reader will look for. It is the
 same answer `recordPayment` gives at length: the caller is a CONTRACT, which
 holds no secret key and sits in no signer tree, so it could never satisfy one
 — and a cross-contract callee may not read a witness in any case, which is
-measured rather than assumed (`scripts/cross-contract-spike.ts`). Recomputing
+measured rather than assumed (by that same offline spike). Recomputing
 the id from the salt stands in its place, exactly as it does there: it proves
 possession of something only the signers were given.
 

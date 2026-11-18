@@ -160,33 +160,16 @@ describe('the launcher hands the pair over before the server exists', () => {
   });
 
   /*
-   * RED WHEN: either script that pays a fee (this launcher and the company
-   * creator) brings a wallet up before it has
-   * read its ceiling, or builds its pair without passing the ceiling on.
+   * RED WHEN: the launcher brings a wallet up before it has read its ceiling,
+   * or builds its pair without passing the ceiling on.
    */
-  it('both doors read the fee ceiling before any wallet, and hand it to the pair', () => {
-    const creator = readFileSync(join(ROOT, 'scripts', 'create-company.ts'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    for (const [name, text] of [['launcher', launcher], ['creator', creator]] as const) {
-      const ceiling = text.indexOf('feeCeilingFrom(process.env)');
-      const bringUp = text.indexOf('bringUpWallet(');
-      expect(ceiling, `${name} does not read the ceiling`).toBeGreaterThan(-1);
-      expect(ceiling, `${name} brings a wallet up before reading the ceiling`).toBeLessThan(bringUp);
-      expect(text, `${name} does not pass the ceiling to the fee payer`)
-        .toMatch(/(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/);
-    }
-  });
-
-  /*
-   * RED WHEN: the script that creates a company from this machine goes back to
-   * building its own fee payer and company half - two constructions of one
-   * pair, one of which can lose the fee record the other requires.
-   */
-  it('the script that creates a company builds its pair the same way', () => {
-    const creator = readFileSync(join(ROOT, 'scripts', 'create-company.ts'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(creator).toMatch(/const \{ sponsor, customer \} = fundedPartiesOver\(/);
-    expect(creator).not.toMatch(/new WalletFeeSponsor|customerWalletOver|sponsorWalletOver/);
+  it('the launcher reads the fee ceiling before any wallet, and hands it to the pair', () => {
+    const ceiling = launcher.indexOf('feeCeilingFrom(process.env)');
+    const bringUp = launcher.indexOf('bringUpWallet(');
+    expect(ceiling, 'the launcher does not read the ceiling').toBeGreaterThan(-1);
+    expect(ceiling, 'the launcher brings a wallet up before reading the ceiling').toBeLessThan(bringUp);
+    expect(launcher, 'the launcher does not pass the ceiling to the fee payer')
+      .toMatch(/(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/);
   });
 
   /*

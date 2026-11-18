@@ -53,6 +53,10 @@ import { walkCompanyRecords, type CompanyRecords } from '../../src/midnight/rebu
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { toHex, fromHex, newWrappingKeypair, randomBytes, type Hex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -103,7 +107,7 @@ const vaultWitnesses = {
   nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
 };
 
-describe('a vault whose every record of ours is gone', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault whose every record of ours is gone [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: Hex;

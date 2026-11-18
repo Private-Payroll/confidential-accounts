@@ -56,6 +56,10 @@ import {
 import { notesNeedingATransaction, whatTheRebuildWrites } from '../../scripts/reconcile-vault-pool-rules.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW. Payments assert they fall inside the
@@ -119,7 +123,7 @@ const NO_INDEX_YET = 0n;
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault whose pool is gone, and the chain that still knows', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault whose pool is gone, and the chain that still knows [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;

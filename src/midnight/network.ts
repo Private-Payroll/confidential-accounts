@@ -167,6 +167,14 @@ export function theNetwork(env: { MIDNIGHT_NETWORK_ID?: string | undefined } = p
 }
 
 /**
+ * Whether this run names its network in `MIDNIGHT_NETWORK_ID`, rather than taking the one the build is compiled for.
+ * A check that runs the product against a live network asks this first, and stands down when no network is named.
+ */
+export function aNetworkIsNamed(env: { MIDNIGHT_NETWORK_ID?: string | undefined } = process.env): boolean {
+  return (env.MIDNIGHT_NETWORK_ID?.trim() ?? '') !== '';
+}
+
+/**
  * The four answers above, as a function of the two values they are about.
  *
  * **THE ENVIRONMENT IS READ IN EXACTLY ONE PLACE AND THE RULES ARE DECIDED IN

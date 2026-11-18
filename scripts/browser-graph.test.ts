@@ -42,6 +42,14 @@ vi.mock('vite-plugin-top-level-await', () => ({ default: () => ({ name: 'stand-i
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 
+/** The built file the identity package exports at `subpath`, from the repository root, read off its own `exports`. */
+const builtIdentityFile = (subpath: string): string => {
+  const pkg = JSON.parse(readFileSync(join(REPO, 'packages', 'identity', 'package.json'), 'utf8')) as {
+    exports: Record<string, { default: string }>;
+  };
+  return join('packages', 'identity', pkg.exports[subpath]!.default).split('\\').join('/');
+};
+
 describe('THE WALKER SEES A NODE IMPORT WHERE A BROWSER WOULD MEET ONE, AND ONLY THERE', () => {
   let root = '';
   let graph: BuildGraph;
@@ -194,7 +202,7 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/vault-builder.ts', 'src/midnight/vault-committee.ts', 'src/midnight/authority-replacement.ts']));
     /* RED WHEN: `midnight-identity`, linked into `node_modules` from this repository, stops being followed -
      * the page is served its built `lib/` files and they would go unexamined. */
-    expect(g.files).toEqual(expect.arrayContaining(['packages/identity/lib/profile/company-label.js', 'packages/identity/lib/wallet/network.js']));
+    expect(g.files).toEqual(expect.arrayContaining([builtIdentityFile('./profile/company-label'), builtIdentityFile('./network')]));
   });
 
   it('THE ONLY DYNAMIC NODE IMPORTS ARE THE TWO BEHIND THE DISK-BACKED KEY SOURCE', () => {
@@ -206,9 +214,8 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
      * The wallet reaches them the same way and no other: it starts the shared vault worker entry only under the
      * wallet builder's name, which hands the builder the wallet's own pinned key provider, so the disk-backed key
      * source never runs in the wallet.
-     * The proving probe reaches the same two through the module that holds the engines it measures, and calls neither.
-     * RED WHEN: the wallet or the probe reaches any dynamic import of a Node built-in besides these two. */
-    for (const name of ['web', 'wallet', 'proving-probe']) {
+     * RED WHEN: the web app or the wallet reaches any dynamic import of a Node built-in besides these two. */
+    for (const name of ['web', 'wallet']) {
       expect(byName(name).dynamicNode.map((n) => `${n.file} ${n.specifier}`)).toEqual([
         'src/midnight/wasm-proving.ts node:fs/promises',
         'src/midnight/wasm-proving.ts node:path',
@@ -251,7 +258,6 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
    */
   const LEFT_UNSCANNED: Record<string, string> = {
     wallet: 'its configuration is the wallet\'s own and names no worker; the page reload this guards against is open there',
-    'proving-probe': 'a measurement page served only to measure proving, where a reload loses nothing',
   };
 
   it('EVERY BUILD WHOSE PAGES START A WORKER IS HELD TO ITS PRE-SCAN, OR LISTED WITH WHY IT IS NOT', () => {

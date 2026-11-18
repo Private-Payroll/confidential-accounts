@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, relative, sep } from 'node:path';
 import { NETWORK_IDS } from './networks.js';
@@ -147,14 +147,14 @@ export const overridesAnEndpoint = (sources: Sources): string[] =>
  * THESE SCANS CAN SEE.**
  *
  * It began as the four directories somebody thought of, which left the
- * repository root's own configuration, the browser probe, the database
- * migrations and the workflow definitions outside every claim in this file. A
+ * repository root's own configuration, the database migrations and the
+ * workflow definitions outside every claim in this file. A
  * scan's reach is part of its claim, so the reach is written down and the
  * first assertion below measures it.
  */
 const SOURCE_DIRS = [
   '.', 'src', 'scripts', 'contracts/src', 'packages/identity/src', 'packages/web-shared/src', '.midnight', 'apps',
-  'browser-proving', 'db', '.github',
+  'db', '.github',
 ];
 /**
  * `.yml` and `.yaml` are here because the reach above claims the workflow
@@ -315,10 +315,8 @@ describe('§1 one reader of the environment, and the scan that notices a second'
      * these was outside every claim in this file until it was named.
      */
     const reached = [...THE_REPOSITORY.keys()];
-    for (const outpost of ['vitest.config.ts', 'vite.probe.config.ts']) {
-      expect(reached, outpost).toContain(outpost);
-    }
-    expect(reached.some(f => f.startsWith(`browser-proving${sep}`))).toBe(true);
+    expect(reached, 'vitest.config.ts').toContain('vitest.config.ts');
+    expect(reached.some(f => f.startsWith(`db${sep}`) || f.startsWith(`apps${sep}`))).toBe(true);
     /* RED WHEN the workflow definitions fall outside again. They were named in
      * the reach and excluded by the extension list, so the assertion that
      * watched the reach was green while the files were unreachable. */
@@ -403,74 +401,14 @@ describe('§2 one statement of where a network is reached', () => {
     expect(writesAnEndpoint(THE_DOORS)).toEqual([]);
   });
 
-  it('THE FILES THAT LET THE ENVIRONMENT ANSWER AHEAD OF THE RECORD ARE WRITTEN DOWN', () => {
+  it('NOTHING HERE LETS THE ENVIRONMENT ANSWER AHEAD OF THE RECORD', () => {
     /*
-     * RED WHEN a file gains an endpoint override, or loses one, without the
-     * list moving. Every one of these is a diagnostic door where pointing at a
-     * local indexer is the point; what must not happen is a new one appearing
-     * unremarked, because neither scan above can see the shape.
+     * RED WHEN a file gains an endpoint override. The diagnostic tools where
+     * pointing at a local indexer is the point are not part of this set, so no
+     * file the walk reads may carry one, and neither scan above can see the
+     * shape. The test below shows the scan finds it when it is there.
      */
-    /*
-     * **BOTH DIRECTIONS, AND ONLY ONE OF THEM IS ABOUT THIS REPOSITORY'S
-     * CONTENTS.** This was a literal `toEqual` over what the walk found. The
-     * walk reads directories, so in any copy that does not carry one of the
-     * files named here it went red - with a message saying a file had GAINED OR
-     * LOST AN ENDPOINT OVERRIDE when nothing of the sort had happened. A reader
-     * meeting that in a clone goes looking for a network defect that is not
-     * there.
-     *
-     * **THE LIST IS ONE ENTRY.** Diagnostic entry points that are not part of
-     * the published set sit one directory away, and the walk does not see them
-     * only because `SOURCE_DIRS` does not name that directory. That is an exemption by omission, it is stated here
-     * rather than left to be found, and it is why the count below is asserted:
-     * an exemption list one entry from empty passes every check under it in
-     * the instant that entry leaves, which is the failure this whole block was
-     * rewritten once already to avoid. The first direction is what does the
-     * work and it is unchanged: anything under the walked trees that overrides
-     * an endpoint and is not named here turns this red, and the second is
-     * intersected with what the walk actually found, so a file this copy does
-     * not have is simply not asserted about.
-     */
-    const WRITTEN_DOWN = [
-      join('scripts', 'measure-note-index.ts'),
-    ];
-    const overriding = overridesAnEndpoint(THE_REPOSITORY);
-    /* RED WHEN: the last named file leaves this copy, which would otherwise
-     * turn all three assertions below green over an empty list at once. */
-    expect(
-      WRITTEN_DOWN.filter((f) => existsSync(join(ROOT, f))).length,
-      'every file this list names has left this copy, so nothing below asserts anything',
-    ).toBeGreaterThan(0);
-    expect(
-      overriding.filter((f) => !WRITTEN_DOWN.includes(f)),
-      'a file overrides an endpoint and this list does not name it',
-    ).toEqual([]);
-    /*
-     * **THE SECOND DIRECTION ASKS THE DISK, NOT THE WALK, AND THAT IS THE WHOLE
-     * POINT.** Asking `THE_REPOSITORY.keys()` made both directions depend on the
-     * same walk: drop `scripts/` from `SOURCE_DIRS` and every override this
-     * list names vanishes, the first direction passes over an empty set, the second passes
-     * over nothing, and every assertion here goes green while the tripwire reads
-     * no part of the tree it was written for. Measured when that was written:
-     * 730 files walked becomes 582, every override found becomes zero, and
-     * nothing turns red.
-     *
-     * `existsSync` is an oracle this walk cannot switch off.
-     */
-    const inThisCopy = (f: string): boolean => existsSync(join(ROOT, f));
-    expect(
-      WRITTEN_DOWN.filter((f) => inThisCopy(f) && !overriding.includes(f)),
-      'a file named here is in this copy and no longer overrides an endpoint',
-    ).toEqual([]);
-    /* AND THE WALK REACHED THEM, WHICH IS A DIFFERENT CLAIM FROM *IT FOUND
-     * NOTHING WRONG*. Every file named here that is in this copy must be in the
-     * walked set - so a walk narrowed to exclude their tree turns this red
-     * rather than quietly reporting a clean scan of less than it was asked for. */
-    const here = new Set(THE_REPOSITORY.keys());
-    expect(
-      WRITTEN_DOWN.filter((f) => inThisCopy(f) && !here.has(f)),
-      'a file named here is in this copy and the walk did not reach it',
-    ).toEqual([]);
+    expect(overridesAnEndpoint(THE_REPOSITORY), 'a file overrides an endpoint').toEqual([]);
     /* RED WHEN a door puts a variable in front of the record inside its own
      * inline TypeScript, where no `.ts` search reaches. */
     expect(overridesAnEndpoint(THE_DOORS)).toEqual([]);

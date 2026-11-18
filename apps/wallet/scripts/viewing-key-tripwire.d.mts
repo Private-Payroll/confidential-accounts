@@ -2,7 +2,7 @@
  * typecheck with the rest of this project rather than under an implicit `any`.
  * The implementation is plain JS because the network probe loads it at runtime
  * from a Node process and Node does not read TypeScript. Same arrangement, and
- * the same reason, as `scripts/probe-verdict.d.mts`. */
+ * the same reason, as the probe's verdict rules. */
 
 /* DELIBERATELY `string` AND NOT A LITERAL TYPE. A literal type would spell the
  * field out a second time, in a second file, which is exactly what the
