@@ -3,7 +3,8 @@
  * browser's own IndexedDB, each sealed under the signer's own key before it reaches the store, so the store reads none
  * of them. Each change reads and writes inside one transaction, so two tabs never keep two records in one place.
  */
-import type { DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight } from './vault-operation.js';
+import type { DepositInFlight, DepositsInFlight } from './vault-private-deposit.js';
+import type { PaymentInFlight, PaymentsInFlight } from './vault-payment-in-flight.js';
 import { sealedOnThisDevice, type InFlightOpener, type InFlightRecords, type SealedInFlight } from './in-flight-on-this-device.js';
 import type { ChargeInFlight, ChargesInFlight } from './run-charged-here.js';
 /**

@@ -2,7 +2,7 @@
  * **THE PAGE'S VAULT OPERATIONS NEVER LOAD THE NOTE INDEX, WHICH LOADS THE
  * LEDGER.**
  *
- * `vault-operation.ts` runs on the payroll page, and the page does not carry
+ * The vault operations (`VAULT_OPERATIONS` below) run on the payroll page, and the page does not carry
  * the ledger's WebAssembly. The note index (`src/midnight/note-index.ts`)
  * loads the ledger, so whatever it judges is asked of the vault worker, which
  * does carry it.
@@ -10,7 +10,7 @@
  * A build of a whole page lists the modules that arrived; it says WHAT
  * arrived, not by which import. This file names the
  * one route by which it arrived before: any import, static, re-exported or
- * dynamic, from `vault-operation.ts` or anything it imports, that reaches the
+ * dynamic, from any of the vault operations or anything they import, that reaches the
  * note index. An `import type` is erased and is not followed.
  *
  * Each file is parsed by the parser the page's own build uses, rather than
@@ -27,6 +27,10 @@ import { parseSync } from 'vite';
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 const NOTE_INDEX = 'src/midnight/note-index.ts';
 const LEDGER_PACKAGES = /^@midnight-ntwrk\/midnight-js-protocol\/ledger$|^@midnightntwrk\/ledger-v\d+/u;
+/** The files that create a vault and move money in and out of it from the page. */
+const VAULT_OPERATIONS = ['vault-step-reads', 'vault-fundable-here', 'vault-created-and-started', 'vault-private-deposit',
+  'vault-public-deposit', 'vault-payment-in-flight', 'vault-payment-settled', 'vault-notes-here', 'vault-pay-privately-and-merge',
+  'vault-public-payout', 'check-what-this-browser-sent'].map((f) => `packages/web-shared/src/${f}.ts`);
 
 /** Every specifier a file loads at run time: static imports, re-exports, side-effect imports and dynamic imports. */
 const loadedSpecifiers = (text: string, name = 'source.ts'): string[] => {
@@ -82,9 +86,9 @@ const reachedFrom = (entry: string, root = REPO, sources = onDisk): { files: Set
 };
 
 describe('the page\'s vault operations and the ledger', () => {
-  it('NOTHING vault-operation.ts LOADS, DIRECTLY OR THROUGH ANOTHER FILE, IS THE NOTE INDEX OR A LEDGER PACKAGE', () => {
-    const { files, packages } = reachedFrom('packages/web-shared/src/vault-operation.ts');
-    expect(files.has('packages/web-shared/src/vault-operation.ts')).toBe(true);
+  it.each(VAULT_OPERATIONS)('NOTHING %s LOADS, DIRECTLY OR THROUGH ANOTHER FILE, IS THE NOTE INDEX OR A LEDGER PACKAGE', (entry) => {
+    const { files, packages } = reachedFrom(entry);
+    expect(files.has(entry)).toBe(true);
     expect([...files].filter((f) => f === NOTE_INDEX),
       'the note index loads the ledger, which the page does not carry: ask the vault worker instead').toEqual([]);
     expect([...packages].filter((p) => LEDGER_PACKAGES.test(p))).toEqual([]);

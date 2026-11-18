@@ -527,13 +527,15 @@ describe('THE WALLET READS THE CHAIN BEFORE IT PAYS', () => {
       [{ _tag: 'Wallet.InsufficientFunds', message: 'Insufficient funds' }, 'not-enough'],
       [Object.assign(new Error('Insufficient funds'), { name: 'Wallet.InsufficientFunds' }), 'not-enough'],
       [new Error('wrapped', { cause: { _tag: 'Wallet.InsufficientFunds' } }), 'not-enough'],
+      [new AggregateError([Object.assign(new Error('Insufficient funds'), { name: 'Wallet.InsufficientFunds' }), new Error('the give-back failed')], 'the payment and its give-back failed'), 'not-enough'],
+      [new AggregateError([new Error('the give-back failed'), new Error('another')], 'both failed'), 'did-not-finish'],
       [new Error('Insufficient funds'), 'did-not-finish'],
       [new BalanceRefused('this wallet could not read its own public address'), 'did-not-finish'],
       [new Error('the proof would not build'), 'did-not-finish'],
       ['a string', 'did-not-finish'],
     ];
     for (const [e, why] of cases) {
-      /* RED WHEN: a failure is named as another, or the SDK's own not-enough is missed where it arrives wrapped. */
+      /* RED WHEN: a failure is named as another, or the SDK's own not-enough is missed where it arrives wrapped, in a cause or in an aggregate's list of errors. */
       expect(whyThePaymentFailed(e), String((e as Error)?.message ?? e)).toBe(why);
     }
   });

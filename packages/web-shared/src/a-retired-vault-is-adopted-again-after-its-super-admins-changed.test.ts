@@ -5,7 +5,8 @@
  * deploy. The chain is a stand-in that refuses a deploy-held reading of the vault and answers the one made today.
  */
 import { describe, expect, it } from 'vitest';
-import { VaultNotTheCompanys, createCompanyVault } from './vault-operation.js';
+import { VaultNotTheCompanys } from './vault-start-stops.js';
+import { createCompanyVault } from './vault-created-and-started.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { ACCOUNT, VAULT, builder, filedAlready, held, pacing, serviceFrom, startDoors, walletReadsTheVault } from './vault-operation.test-support.js';
 import type { Hex } from '../../../src/core/crypto.js';

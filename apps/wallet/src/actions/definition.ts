@@ -173,6 +173,13 @@ export interface StepContext {
    * never reads that value again between showing it and signing it.
    */
   confirm(lines: readonly Words[]): Promise<void>;
+  /**
+   * Asks the person, in this window, whether this wallet pays a network fee from their own DUST, showing the fee, and
+   * resolves true only when they press its button. The one question that may come after a hand-over, asked at most
+   * once in an action; a second ask, or a window that cannot ask, resolves false. Throws `ActionStopped` when the action
+   * is stopped or runs out of time while it waits. Absent where no window runs the action: nothing is paid.
+   */
+  confirmFee?(lines: readonly Words[]): Promise<boolean>;
   /** The person's saved keys, or null when the ask carried none. */
   readonly keyring: ActKeyring | null;
 }

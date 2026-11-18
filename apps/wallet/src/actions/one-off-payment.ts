@@ -22,10 +22,11 @@ import { ChargeNotYetSeen, type ChargeDoors, type ChargesInFlight } from '../../
 import { LegNotRaisedHere } from '../../../../packages/web-shared/src/run-raised-here.js';
 import type { CompanyRecordsHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
 import { deviceVaultHoldings } from '../../../../packages/web-shared/src/device-vault-holdings.js';
-import {
-  payPrivatelyFromCompanyVault, payPubliclyFromCompanyVault, PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen,
-  PaymentStillInFlight, PublicPaymentNotYetSeen, seatHereIn, vaultNotesHere, wireOf, type PaymentsInFlight, type PayoutDoors, type SecretKeptHere,
-} from '../../../../packages/web-shared/src/vault-operation.js';
+import { payPrivatelyFromCompanyVault } from '../../../../packages/web-shared/src/vault-pay-privately-and-merge.js';
+import { payPubliclyFromCompanyVault, PublicPaymentNotYetSeen } from '../../../../packages/web-shared/src/vault-public-payout.js';
+import { PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, PaymentStillInFlight, wireOf, type PaymentsInFlight, type PayoutDoors } from '../../../../packages/web-shared/src/vault-payment-in-flight.js';
+import { seatHereIn, vaultNotesHere } from '../../../../packages/web-shared/src/vault-notes-here.js';
+import { type SecretKeptHere } from '../../../../packages/web-shared/src/vault-doors.js';
 import { browserChargesInFlight, browserInFlightRecords, browserPaymentsInFlight } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import {
   deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,

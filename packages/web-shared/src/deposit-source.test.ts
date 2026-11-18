@@ -13,9 +13,10 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
-import {
-  openCompanyVaultPool, type DepositInFlight, type DepositsInFlight, type VaultChainView, type ServedVaultChain, type VaultService,
-} from './vault-operation.js';
+import { openCompanyVaultPool } from './vault-pool-opened.js';
+import { type DepositInFlight, type DepositsInFlight } from './vault-private-deposit.js';
+import { type VaultChainView } from './vault-doors.js';
+import { type ServedVaultChain, type VaultService } from './vault-service.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';
 import { creatingTransactionOfNote } from './vault-worker-entry.js';

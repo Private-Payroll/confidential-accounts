@@ -31,6 +31,8 @@
  * failure as a blank.** Not as `''`, and not as `[object Object]` either —
  * a blank wearing a disguise is still a blank.
  */
+import { shownAddressesIn } from '../../../../src/core/networks.js';
+
 
 /** How deep the `cause` chain is walked before the text is cut short. */
 const MAX_DEPTH = 8;
@@ -159,6 +161,9 @@ function causeOf(value: unknown): unknown {
  * — which is the whole point — reads as its `_tag` followed by the
  * complaint the ledger actually made.
  *
+ * An address the text names is shown without its query, which is where a
+ * network's project token travels (`shownAddressesIn`).
+ *
  * Used at every failure surface in this wallet, and run BEFORE `adviceFor`
  * wherever both are, because a classifier reading an empty string is not
  * declining to classify a reason: it is this defect being handed to the
@@ -190,6 +195,6 @@ export function describeFailure(e: unknown): string {
     current = next;
   }
 
-  const text = parts.join(' <- caused by: ').trim();
+  const text = shownAddressesIn(parts.join(' <- caused by: ').trim());
   return text === '' ? LAST_RESORT : text;
 }

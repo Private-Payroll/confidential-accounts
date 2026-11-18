@@ -25,7 +25,7 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { recordsReaderOf } from './deposit-on-device.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
-import { coinsHandedOverHere, coinsToHandOverHere, vaultNotesHere, NOT_SEALED, type NotSealed, type NotesHere, type RebuildDoors } from './vault-operation.js';
+import { coinsHandedOverHere, coinsToHandOverHere, vaultNotesHere, NOT_SEALED, type NotSealed, type NotesHere, type RebuildDoors } from './vault-notes-here.js';
 import { coinsFileText, coinsKeptOnThisDevice } from './vault-coins-kept-here.js';
 import { inFlightInMemory, openInFlight } from './in-flight-on-this-device.js';
 

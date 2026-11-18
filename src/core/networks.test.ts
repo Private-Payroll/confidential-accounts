@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  NETWORK_IDS, endpointsOf, isNetworkId, networkRecord, recordsFrom, shownAddress, websocketNodeOf,
+  NETWORK_IDS, endpointsOf, isNetworkId, networkRecord, recordsFrom, shownAddress, shownAddressesIn, websocketNodeOf,
 } from './networks.js';
 
 /**
@@ -326,6 +326,20 @@ describe('§4 a network reached only with a project token gets it in one place, 
     }
     /* RED WHEN text that is not an address is shown with whatever follows its query mark. */
     expect(shownAddress(`not an address?project_id=${TOKEN}`)).toBe('not an address');
+  });
+
+  it('shows every address inside a free text without its query, and leaves the rest of the text alone', () => {
+    /* RED WHEN an address inside a failure's text keeps its query, which is the project token. */
+    expect(shownAddressesIn(`could not reach wss://node.example.org/ws?project_id=${TOKEN} just now`)).toBe('could not reach wss://node.example.org/ws just now');
+    /* RED WHEN only the first address of a text is rewritten. */
+    expect(shownAddressesIn(`a https://a.example.org/x?project_id=${TOKEN} b http://b.example.org:8080/y?k=${TOKEN}&z=1 c ws://c.example.org/?t=${TOKEN}`))
+      .toBe('a https://a.example.org/x b http://b.example.org:8080/y c ws://c.example.org/');
+    /* RED WHEN text with no address, or an address with no query, is changed. */
+    expect(shownAddressesIn('the node did not answer?')).toBe('the node did not answer?');
+    expect(shownAddressesIn('see https://a.example.org and http://b.example.org/p')).toBe('see https://a.example.org and http://b.example.org/p');
+    /* RED WHEN an address at the end of a sentence loses its full stop, or takes it into the address. */
+    expect(shownAddressesIn(`could not reach https://a.example.org/x?project_id=${TOKEN}.`)).toBe('could not reach https://a.example.org/x.');
+    expect(shownAddressesIn(`(${'wss://a.example.org/ws'}?project_id=${TOKEN}), then`)).toBe('(wss://a.example.org/ws), then');
   });
 
   it('a network that asks for no token is reached exactly as recorded, whatever is set', () => {

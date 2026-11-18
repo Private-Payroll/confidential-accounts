@@ -15,7 +15,7 @@ vi.mock('./deposit-on-device.js', async (real) => ({
   fileThePoolTheChainHolds: async () => { t.filedAgain += 1; return { answer: 'nothing-to-file', said: [], journals: [] }; },
 }));
 
-const { vaultNotesHere } = await import('./vault-operation.js');
+const { vaultNotesHere } = await import('./vault-notes-here.js');
 
 const VAULT = 'd8'.repeat(32) as Hex;
 const view = { onChain: true, state: '', notes: [], notesFromThisBuild: true, everCreated: [], account: 'c0'.repeat(32), started: true, nonceCommitment: '5c'.repeat(32), splitJournal: [], vault: VAULT };

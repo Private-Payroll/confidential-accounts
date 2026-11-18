@@ -10,7 +10,7 @@
  * the vault's record is a real
  * sealed pool in memory, and the plan is the run planner's own. Each step
  * function's own work - read on this device, built, written down before it is
- * sent, sent and recorded - is `vault-operation.test.ts`'s, and a leg paid end to end is
+ * sent, sent and recorded - is `vault-pay-privately-and-merge.test.ts`'s, and a leg paid end to end is
  * `a-private-payment-from-the-page.test.ts`'s.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,9 +53,8 @@ vi.mock('./run-charged-here.js', () => ({
     return charging === 'charged' ? { state: 'charged', spentBefore: 700n } : { state: charging };
   },
 }));
-vi.mock('./vault-operation.js', async (real) => {
-  const actual = await real<typeof import('./vault-operation.js')>();
-  const coin = (nonce: string, value: bigint) => ({ nonce, token: TOKEN, value: value.toString() });
+vi.mock('./vault-notes-here.js', async (real) => {
+  const actual = await real<typeof import('./vault-notes-here.js')>();
   return {
     ...actual,
     vaultNotesHere: async () => {
@@ -63,6 +62,14 @@ vi.mock('./vault-operation.js', async (real) => {
       if (rebuiltTo !== null) await poolOf!(rebuiltTo);
       return { of: rebuiltTo === null ? 'as-filed' : 'filed', notes: [], unexplained: 0, said: [] };
     },
+  };
+});
+vi.mock('./vault-pay-privately-and-merge.js', async (real) => {
+  const actual = await real<typeof import('./vault-pay-privately-and-merge.js')>();
+  const { PaymentNotYetSeen } = await import('./vault-payment-in-flight.js');
+  const coin = (nonce: string, value: bigint) => ({ nonce, token: TOKEN, value: value.toString() });
+  return {
+    ...actual,
     mergeNotesInCompanyVault: async (_d: unknown, i: { notes: Array<{ nonce: string; value: string }> }) => {
       calls.push(`merge ${i.notes.map((n) => `${n.nonce.slice(0, 2)}:${n.value}`).join('+')}`);
       const value = i.notes.reduce((t, n) => t + BigInt(n.value), 0n);
@@ -76,12 +83,18 @@ vi.mock('./vault-operation.js', async (real) => {
         throw new actual.NotesMovedUnderAStep('the chain no longer holds a note this vault\'s record would spend for this payment');
       }
       calls.push(`pay ${i.payment.index} ${i.payment.amount} from ${i.notes.map((n) => `${n.nonce.slice(0, 2)}:${n.value}`).join('+')}`);
-      if (stopsAt === i.payment.index) throw new actual.PaymentNotYetSeen(VAULT as never, 'o', 'the wallet stopped waiting');
+      if (stopsAt === i.payment.index) throw new PaymentNotYetSeen(VAULT as never, 'o', 'the wallet stopped waiting');
       if (!accountLags) paidOnTheAccount.add(i.payment.index);
       const left = i.notes.reduce((t, n) => t + BigInt(n.value), 0n) - BigInt(i.payment.amount);
       const named = !unnamed.has(i.payment.index);
       return { txRef: 'o', transactionHash: named ? 'dd'.repeat(32) : '', spent: i.notes[0]!.nonce, change: left === 0n ? null : coin(`c${i.payment.index}`.padEnd(64, '0'), left), seenAs: named ? 'its-own-transaction' : 'by-what-it-left' };
     },
+  };
+});
+vi.mock('./vault-public-payout.js', async (real) => {
+  const actual = await real<typeof import('./vault-public-payout.js')>();
+  return {
+    ...actual,
     payPubliclyFromCompanyVault: async (d: { paidYet: () => Promise<boolean | null> }, i: { payment: PrivatePaymentOnTheWire }) => {
       calls.push(`pay publicly ${i.payment.index} ${i.payment.amount} asking ${String(await d.paidYet())}`);
       if (stopsAt === i.payment.index) throw new actual.PublicPaymentNotYetSeen(VAULT as never, `u${i.payment.index}`);

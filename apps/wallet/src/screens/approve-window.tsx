@@ -3,28 +3,25 @@ import type { ReactNode } from 'react';
 import { Button, Section, useText } from 'vaults-ui';
 import { intentShapeOf, type Ask } from 'midnight-identity/profile/request';
 import type { Channel, Framing } from 'midnight-identity/profile/channel';
-import { REGISTRY } from 'midnight-identity/profile/attributes';
-import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
 import type { Port } from 'midnight-identity/profile/store';
 import { useSession } from '../session.js';
-import { heldWallets } from '../accounts/wallets-held.js';
-import { allPasskeys, walletNameOnRecord } from '../accounts/storage.js';
-import { pickedHere, rememberPick, signedInWalletHere } from '../lib/signed-in-here.js';
+import { allPasskeys } from '../accounts/passkey-records.js';
+import { rememberPick } from '../lib/signed-in-here.js';
 import { approveBeforeThePasskey, forgetApprovalBeforeThePasskey, useConsent } from '../framing.js';
 import { ErrorNote, StatusNote } from '../components/ui.js';
-import { StatusAlert } from '../components/status.js';
 import { BalanceRefused, readWhatThePageAsksToBalance } from '../chain/balance-for-page.js';
-import type { LedgerForBalancing, PageAskPays } from '../chain/balance-for-page.js';
+import type { LedgerForBalancing } from '../chain/balance-for-page.js';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
-import { FirstSecretToConfirm } from './approve-records-key.js';
-import { NIGHT_TOKEN, describeLeaving } from './approve-balance.js';
 import { AskOver } from './ask-over.js';
 import type { CompanyLabel, AccountAddress } from 'midnight-identity/profile/company-label';
 import { actionFor } from '../actions/registry.js';
-import { ActWhatItDoes, useShown } from '../actions/runner-screen.js';
-import type { ShownState } from '../actions/runner-screen.js';
-import type { ActionDefinition } from '../actions/definition.js';
+import { useShown } from '../actions/runner-screen.js';
+import { Warnings, WhatItDoes, headlineFor } from './approve-window-says.js';
+import type { Payment } from './approve-window-says.js';
+import { WhichWalletOpens, useWalletThatOpens } from './approve-window-wallets.js';
+import { isPayingAsk } from './approve-slot.js';
+import { forgetPayingPick, keepPayingPick } from './paying-pick.js';
 
 /**
  * **ONE WINDOW FOR AN ASK THAT REACHES A LOCKED WALLET.** It says what the ask does, from the request this wallet
@@ -41,6 +38,11 @@ import type { ActionDefinition } from '../actions/definition.js';
  * two or more, or the one kept is no longer held here; the wallet picked there is then kept for the page
  * (`rememberPick`). A sign-in record from before wallets' places were kept preselects the wallet it names.
  *
+ * **WHICH ACCOUNT PAYS.** An ask that pays (an action that pays, or a payment to balance) lists the accounts of those
+ * same wallets, each under its wallet, in place of the list of wallets: the person picks the account once, here, and
+ * the passkey opens the wallet it is in. The pick is kept for this ask (`keepPayingPick`); the opened wallet pays from
+ * that account only, and pays nothing when it is not the wallet picked.
+ *
  * **AN ACTION (`act`)** shows its three lists from its definition: what it acts on, each line this wallet's own
  * read or marked as the page's words; its steps; and what is checked after the passkey. An action this wallet has
  * no definition for, or whose lines cannot be read, is never offered for Approve.
@@ -49,11 +51,6 @@ import type { ActionDefinition } from '../actions/definition.js';
 export type LedgerReader = () => Promise<LedgerForBalancing>;
 const liveLedger: LedgerReader = async () =>
   (await import('@midnightntwrk/ledger-v9')) as unknown as LedgerForBalancing;
-
-type Payment =
-  | { readonly of: 'reading' }
-  | { readonly of: 'read'; readonly leaves: readonly LeavesTheWallet[]; readonly pays: PageAskPays }
-  | { readonly of: 'refused'; readonly says: string };
 
 const companyOf = (request: Ask): { readonly label: CompanyLabel; readonly account: AccountAddress | null } | null => {
   if (request.kind === 'act') {
@@ -71,41 +68,10 @@ const companyOf = (request: Ask): { readonly label: CompanyLabel; readonly accou
     ? { label: request.company!, account: request.account } : null;
 };
 
-export function ApproveWindow({
-  request, channel, framing, port, readLabel = liveLabelReader, readLedger = liveLedger,
-}: {
-  readonly request: Ask;
-  readonly channel: Channel | null;
-  readonly framing: Framing;
-  readonly port: Port;
-  readonly readLabel?: LabelReader;
-  readonly readLedger?: LedgerReader;
-}): ReactNode {
+/** What the page asks this wallet to balance, read from its transaction before anything is unlocked. */
+function usePaymentRead(request: Ask, channel: Channel | null, readLedger: LedgerReader): Payment {
   const t = useText();
-  const { wallets, walletId, switchTo, unlock, busy, error, passkeyRefused } = useSession();
-  const consent = useConsent(framing, request);
-  const origin = request.requester.origin;
-  const company = companyOf(request);
-  const check = useCompanyCheck(company?.label ?? null, company?.account ?? null, readLabel);
-  /* A company named beside opening the saved keys holds nothing up: once the check has read, its key is given or not. */
-  const openedCompany = request.kind === 'keyring' && request.companyIfOnChain === true;
-  const onChain = company === null || accountCarriesTheLabel(check, company.label) || (openedCompany && check.of !== 'checking');
-  const [declined, setDeclined] = useState(false);
-  const [tried, setTried] = useState(false);
-  /* Said here when the wallet chosen cannot be asked for a passkey at all, before anything is switched or asked. */
-  const [cannotOpen, setCannotOpen] = useState<string | null>(null);
-
   const [payment, setPayment] = useState<Payment>({ of: 'reading' });
-  /* An action's definition and what it shows before the passkey; an action this wallet does not run is refused at once. */
-  const acting = request.kind === 'act' ? request : null;
-  const action = useMemo(() => (acting === null ? null : actionFor(acting.intent.name)), [acting]);
-  const shown = useShown(acting, action);
-  const notRun = acting !== null && action === null;
-  /* A page that still sends a deploy it built for this wallet to sign is refused at once: finishing a company is an action. */
-  const retired = request.kind === 'creation';
-  useEffect(() => {
-    if (notRun || retired) channel?.refuse('unreadable');
-  }, [notRun, retired, channel]);
   useEffect(() => {
     if (request.kind !== 'balance') return undefined;
     let alive = true;
@@ -127,25 +93,46 @@ export function ApproveWindow({
     /* `t` and the channel are left out: the read is of the request alone, made once for each request. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request, readLedger]);
+  return payment;
+}
 
-  /* Which wallet opens: decided from this browser's list and the page's last sign-in, before anything is unlocked. */
-  const held = useMemo(() => heldWallets(), [wallets]);
-  const remembered = useMemo(() => signedInWalletHere(port, origin, held), [port, origin, held]);
-  const pick = useMemo(() => pickedHere(port, origin, held), [port, origin, held]);
-  const kept = remembered.of === 'here' ? remembered.walletId : pick;
-  /* A passkey refused because it cannot open the named wallet is not pressed again: the list is the way on. */
-  const refused = passkeyRefused !== null || cannotOpen !== null;
-  const fixed = request.kind !== 'sign-in' && !refused ? kept : null;
-  const offerList = fixed === null && (wallets.length > 1 || remembered.of === 'gone' || refused);
-  const [picked, setPicked] = useState<string>(() => (
-    request.kind === 'sign-in' && remembered.of === 'here' ? remembered.walletId
-      : remembered.of === 'no-place' && remembered.matches !== null ? remembered.matches
-        : kept ?? walletId));
-  const opens = fixed ?? (offerList ? picked : walletId);
-  const nameOf = (id: string): string => {
-    const index = wallets.findIndex((wallet) => wallet.id === id);
-    return walletNameOnRecord(id) ?? t('ask.wallet.unnamed', { n: index + 1 });
-  };
+export function ApproveWindow({
+  request, channel, framing, port, readLabel = liveLabelReader, readLedger = liveLedger,
+}: {
+  readonly request: Ask;
+  readonly channel: Channel | null;
+  readonly framing: Framing;
+  readonly port: Port;
+  readonly readLabel?: LabelReader;
+  readonly readLedger?: LedgerReader;
+}): ReactNode {
+  const t = useText();
+  const { walletId, switchTo, unlock, busy, error } = useSession();
+  const consent = useConsent(framing, request);
+  const origin = request.requester.origin;
+  const company = companyOf(request);
+  const check = useCompanyCheck(company?.label ?? null, company?.account ?? null, readLabel);
+  /* A company named beside opening the saved keys holds nothing up: once the check has read, its key is given or not. */
+  const openedCompany = request.kind === 'keyring' && request.companyIfOnChain === true;
+  const onChain = company === null || accountCarriesTheLabel(check, company.label) || (openedCompany && check.of !== 'checking');
+  const [declined, setDeclined] = useState(false);
+  const [tried, setTried] = useState(false);
+  /* Said here when the wallet chosen cannot be asked for a passkey at all, before anything is switched or asked. */
+  const [cannotOpen, setCannotOpen] = useState<string | null>(null);
+
+  const payment = usePaymentRead(request, channel, readLedger);
+  /* An action's definition and what it shows before the passkey; an action this wallet does not run is refused at once. */
+  const acting = request.kind === 'act' ? request : null;
+  const action = useMemo(() => (acting === null ? null : actionFor(acting.intent.name)), [acting]);
+  const shown = useShown(acting, action);
+  const notRun = acting !== null && action === null;
+  /* A page that still sends a deploy it built for this wallet to sign is refused at once: finishing a company is an action. */
+  const retired = request.kind === 'creation';
+  useEffect(() => {
+    if (notRun || retired) channel?.refuse('unreadable');
+  }, [notRun, retired, channel]);
+  const which = useWalletThatOpens(request, port, cannotOpen);
+  const { held, refused, offerList, opens, nameOf } = which;
 
   if (declined) {
     return <AskOver framed={framing.of === 'framed'} />;
@@ -171,6 +158,8 @@ export function ApproveWindow({
       return;
     }
     approveBeforeThePasskey(request);
+    /* An ask that pays pays from the account picked here, and from no other: kept for this ask, checked once open. */
+    if (isPayingAsk(request)) keepPayingPick(request, which.payingPick());
     setTried(true);
     /* A wallet picked from the list for an ask that is not a sign-in is kept for this page, so the list is not
      * offered again; a sign-in keeps the wallet that answers it when it is answered. */
@@ -182,17 +171,13 @@ export function ApproveWindow({
   };
   const decline = (): void => {
     forgetApprovalBeforeThePasskey();
+    forgetPayingPick();
     channel?.refuse('declined');
     setDeclined(true);
   };
 
   const pays = payment.of === 'read' ? payment.pays : null;
-  const headline = request.kind === 'balance' && pays === 'public'
-    ? t('ask.balance.headline-public', { origin })
-    : request.kind === 'join' ? t('ask.join.headline', { origin })
-      : request.kind === 'committee' && request.press === 'request' ? t('ask.committee.request-headline', { origin })
-      : request.kind === 'act' ? t(action?.headline ?? 'ask.act.headline', { origin })
-      : t(`ask.${request.kind === 'addresses-and-balances' ? 'addresses' : request.kind}.headline`, { origin });
+  const headline = headlineFor(request, pays, action, t);
 
   return (
     <>
@@ -209,32 +194,7 @@ export function ApproveWindow({
         </Section>
       )}
 
-      {fixed !== null && <p className="m-0 text-sm text-muted-foreground" data-opens-wallet>{t('ask.wallet.opens', { wallet: nameOf(fixed) })}</p>}
-      {offerList && (
-        <Section
-          list={false} box={false} aria-label={t('ask.wallet.choose')} title={t('ask.wallet.choose')}
-          description={t('ask.wallet.choose-why', { count: wallets.length })}
-        >
-          {remembered.of === 'gone' && (
-            <StatusAlert tone="warning" role={null} title={t('ask.wallet.gone-title')}>
-              <p className="m-0" data-remembered-wallet-gone>{t('ask.wallet.gone', { origin })}</p>
-            </StatusAlert>
-          )}
-          <ul className="plain" data-wallets-to-choose>
-            {wallets.map((wallet) => (
-              <li key={wallet.id}>
-                <label className="flex items-baseline gap-2">
-                  <input
-                    type="radio" name="answering-wallet" value={wallet.id} checked={picked === wallet.id}
-                    disabled={busy !== null} onChange={() => setPicked(wallet.id)} data-wallet-choice={wallet.id}
-                  />
-                  <span>{nameOf(wallet.id)}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
+      <WhichWalletOpens request={request} which={which} busy={busy} />
 
       <details data-ask-details>
         <summary>{t('ask.details')}</summary>
@@ -262,166 +222,4 @@ export function ApproveWindow({
       </div>
     </>
   );
-}
-
-/** What the ask does, in plain words, from the request and - for a payment - the transaction this wallet read. */
-function WhatItDoes({ request, payment, action, shown }: {
-  readonly request: Ask; readonly payment: Payment; readonly action: ActionDefinition | null; readonly shown: ShownState;
-}): ReactNode {
-  const t = useText();
-  const origin = request.requester.origin;
-  const lede = (text: string) => <p className="lede" data-what-it-does>{text}</p>;
-  switch (request.kind) {
-    case 'sign-in': return lede(t('ask.sign-in.lede', { origin }));
-    case 'unlock': return lede(t('ask.unlock.lede', { origin }));
-    case 'keyring': return (
-      <>
-        {lede(t('ask.keyring.lede'))}
-        <p className="m-0 text-sm" data-keyring-person>{t('ask.keyring.person', { person: request.person })}</p>
-        {request.signedInAs !== null && <p className="m-0 text-sm" data-signed-in-as>{t('ask.keyring.signed-in-as', { address: request.signedInAs })}</p>}
-        {request.drawLabel && <p className="m-0 text-sm" data-new-company>{t('ask.keyring.new-company')}</p>}
-        {request.companyIfOnChain === true && <p className="m-0 text-sm" data-also-company>{t('ask.keyring.also-company')}</p>}
-        {request.drawLabel && request.founding !== undefined && (
-          <p className="m-0 text-sm" data-shown-from="page" data-founding>
-            {t('ask.keyring.founding', { name: request.founding.name, signer: request.founding.signer.name, role: request.founding.signer.role })}
-          </p>
-        )}
-      </>
-    );
-    case 'balance':
-      if (payment.of === 'reading') return <p className="lede" data-reading>{t('ask.balance.reading')}</p>;
-      if (payment.of === 'refused') {
-        return (
-          <StatusAlert tone="danger" title={t('ask.balance.refused-title')}>
-            <p className="m-0" data-balance-refused>{payment.says}</p>
-          </StatusAlert>
-        );
-      }
-      return (
-        <Section list={false} box={false} aria-label={t('ask.balance.leaves-title')} title={t('ask.balance.leaves-title')} description={t('ask.balance.leaves-why')}>
-          <div data-leaves>
-            {payment.leaves.map((l) => (
-              <div key={`${l.kind}:${l.token}`}>
-                <p className="m-0 text-foreground text-lg" data-leaving-amount>{describeLeaving(l)}</p>
-                <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-leaving-token>{t('ask.balance.token', { kind: l.kind, token: l.token })}</p>
-              </div>
-            ))}
-          </div>
-          <p className="m-0 text-sm text-muted-foreground" data-no-fee>{t('ask.balance.no-fee')}</p>
-          <p className="m-0 text-sm text-muted-foreground" data-which-account-pays>{t('ask.balance.which-account')}</p>
-          <p className="m-0 text-sm text-muted-foreground break-all" data-vault>{t('ask.balance.vault', { vault: request.vault })}</p>
-        </Section>
-      );
-    case 'committee': return <CommitteeAskShown request={request} />;
-    case 'records-key': return (
-      <>
-        {lede(t('ask.records-key.lede'))}
-        <p className="m-0 text-sm break-all" data-records-key-seat>{t('ask.records-key.seat', { seat: request.seat })}</p>
-        {request.signingKey !== undefined && <p className="m-0 text-sm break-all" data-directory-entry-key>{t('ask.records-key.directory', { key: request.signingKey })}</p>}
-        {request.vault !== undefined && request.firstSecret !== undefined && <FirstSecretToConfirm vault={request.vault} firstSecret={request.firstSecret} />}
-        <p className="m-0 text-sm" data-compare-fingerprint>{t('ask.records-key.compare-press')}</p>
-      </>
-    );
-    case 'creation': return (
-      <StatusAlert tone="danger" title={t('ask.creation.retired-title')}>
-        <p className="m-0" data-creation-retired>{t('ask.creation.retired')}</p>
-      </StatusAlert>
-    );
-    case 'join-code': return (
-      <>
-        {lede(request.parts.kind === 'signer' ? t('ask.join-code.lede-signer') : request.parts.kind === 'payee' ? t('ask.join-code.lede-payee', { address: request.parts.address }) : t('ask.join-code.lede-reader'))}
-        <p className="m-0 text-sm break-all" data-join-code-person>{t('ask.join-code.person', { person: request.person })}</p>
-      </>
-    );
-    case 'addresses-and-balances': return lede(t('ask.addresses.lede', { origin }));
-    case 'act':
-      if (action === null) {
-        return (
-          <StatusAlert tone="danger" title={t('ask.act.not-run-title')}>
-            <p className="m-0" data-act-not-run>{t('ask.act.not-run')}</p>
-          </StatusAlert>
-        );
-      }
-      return <ActWhatItDoes request={request} action={action} shown={shown} />;
-    case 'disclosure':
-    case 'join': return (
-      <>
-        {lede(t('ask.disclosure.lede'))}
-        <ul className="m-0 ps-6" data-asked-for>
-          {request.wants.map((want) => {
-            const label = REGISTRY.definitionOf(want.attribute)?.render.label ?? want.attribute;
-            return <li key={want.attribute} className="text-sm">{t(want.required ? 'ask.disclosure.wants' : 'ask.disclosure.wants-optional', { label })}</li>;
-          })}
-        </ul>
-        {request.kind === 'join' && <p className="m-0 text-sm break-all" data-inbox-key>{t('ask.join.sealed', { key: request.inboxPublicKey })}</p>}
-      </>
-    );
-    default: return null;
-  }
-}
-
-/** The warnings a screen gives about this ask, kept in sight above Approve. */
-/** What a committee ask does, before the passkey: a request to the company's service changes nothing; a change says what it installs. */
-function CommitteeAskShown({ request }: { request: Extract<Ask, { kind: 'committee' }> }) {
-  const t = useText();
-  if (request.press === 'request') {
-    return (
-      <>
-        <p className="lede" data-what-it-does>{t('ask.committee.request')}</p>
-        <p className="m-0 text-sm" data-checked-after-the-passkey>{t('ask.committee.request-check')}</p>
-      </>
-    );
-  }
-  return (
-    <>
-      <p className="lede" data-what-it-does>{t(`ask.committee.${request.press}`)}</p>
-      <p className="m-0 text-sm" data-new-committee>{t('ask.committee.to', { count: request.to.committee.length, threshold: request.to.threshold })}</p>
-      <p className="m-0 text-sm" data-checked-after-the-passkey>{t('ask.committee.check')}</p>
-    </>
-  );
-}
-
-function Warnings({ request, pays, payment }: {
-  readonly request: Ask; readonly pays: PageAskPays | null; readonly payment: Payment;
-}): ReactNode {
-  const t = useText();
-  const origin = request.requester.origin;
-  if (request.kind === 'sign-in') {
-    return (
-      <StatusAlert tone="warning" role={null} title={t('ask.sign-in.warn-title')}>
-        <p className="m-0" data-warning>{t('ask.sign-in.warn', { origin })}</p>
-      </StatusAlert>
-    );
-  }
-  if (request.kind === 'unlock' || request.kind === 'keyring') {
-    return (
-      <StatusAlert tone="warning" role={null} title={t('ask.warn.given-title')}>
-        <p className="m-0" data-warning>{t('ask.warn.how-long')}</p>
-        <p className="m-0" data-warning>{t('ask.warn.given')}</p>
-      </StatusAlert>
-    );
-  }
-  if (request.kind === 'act') {
-    return (
-      <StatusAlert tone="warning" role={null} title={t('ask.act.sent-title')}>
-        <p className="m-0" data-warning>{t('ask.act.sent')}</p>
-      </StatusAlert>
-    );
-  }
-  if (request.kind === 'balance' && payment.of === 'read') {
-    return (
-      <>
-        {pays === 'public' && (
-          <StatusAlert tone="warning" role={null} title={t('ask.balance.public-title')}>
-            <p className="m-0" data-public-deposit>{t('ask.balance.public')}</p>
-            {payment.leaves.some((l) => l.token === NIGHT_TOKEN) && <p className="m-0" data-night-stops-dust>{t('ask.balance.night-stops-dust')}</p>}
-          </StatusAlert>
-        )}
-        <StatusAlert tone="warning" role={null} title={t('ask.balance.paid-title')}>
-          <p className="m-0" data-warning>{t('ask.balance.paid')}</p>
-        </StatusAlert>
-      </>
-    );
-  }
-  return null;
 }

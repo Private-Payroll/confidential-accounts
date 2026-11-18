@@ -17,9 +17,10 @@ import { StaticAssetRegistry, type Asset } from '../../../src/core/assets.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import { newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
-import {
-  DEPOSIT_CLOCKS_MAY_DIFFER_MS, PublicDepositNotAsBuilt, PublicDepositNeverLanded, PublicDepositNotYetSeen, PublicDepositRefused, PublicDepositSignedNotSent, depositIntoCompanyVault, publicDepositCannotLandAfter, depositPubliclyIntoCompanyVault, type DepositInFlight, type DepositsInFlight, type VaultChainView, type ServedVaultChain, type VaultService,
-} from './vault-operation.js';
+import { DEPOSIT_CLOCKS_MAY_DIFFER_MS, depositIntoCompanyVault, type DepositInFlight, type DepositsInFlight } from './vault-private-deposit.js';
+import { PublicDepositNotAsBuilt, PublicDepositNeverLanded, PublicDepositNotYetSeen, PublicDepositRefused, PublicDepositSignedNotSent, publicDepositCannotLandAfter, depositPubliclyIntoCompanyVault } from './vault-public-deposit.js';
+import { type VaultChainView } from './vault-doors.js';
+import { type ServedVaultChain, type VaultService } from './vault-service.js';
 import { VaultAskFailed, type VaultBuilderClient } from './vault-worker-client.js';
 import { ReadRanOutOfTime } from './read-bound.js';
 import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';

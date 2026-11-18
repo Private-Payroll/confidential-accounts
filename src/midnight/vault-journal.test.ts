@@ -147,6 +147,21 @@ describe('a journal over any store', () => {
     expect((await j.open()).attempts.map((l) => l.nonce)).toEqual([kept.coin.nonce, stopped.coin.nonce]);
   });
 
+  it('A SLOT WHOSE DEPOSIT WAS NEVER HANDED OVER IS FREE AT ONCE; A SLOT WHOSE DEPOSIT MAY STILL LAND IS NOT', async () => {
+    const a = signer('ada');
+    const store = new MemorySealedPoolStore();
+    const opener = { id: 'ada', wrappingSecret: a.secret };
+    const j = new DepositJournalInStore(store, VAULT, opener, async () => [a.who], KEY);
+    const money = { token: GBP, value: 70n };
+    const stopped = await j.claim(VAULT, money, 1, 'x');
+    await j.claim(VAULT, money, 2, 'x');
+    await endDepositNeverHandedOver(store, VAULT, opener, async () => [a.who], stopped.coin.nonce);
+    /* RED WHEN: a line ended because nothing reached the chain still holds its slot, so a refused attempt blocks that amount. */
+    expect((await j.claim(VAULT, money, 1, 'x')).coin.nonce).toBe(depositNonceAt(KEY, money, 1));
+    /* RED WHEN: a line that was handed over, and so may still land, frees its slot before its window ends. */
+    await expect(j.claim(VAULT, money, 2, 'x')).rejects.toBeInstanceOf(DepositSlotTaken);
+  });
+
   it('A MARK THAT ANOTHER WRITER BEATS ON EVERY ATTEMPT IS REFUSED, NEVER READ AS A LINE WITH NOTHING TO MARK', async () => {
     const a = signer('ada');
     const store = new MemorySealedPoolStore();

@@ -115,6 +115,81 @@ describe('A VAULT TRANSACTION A DEVICE SENT', () => {
   });
 
   /*
+   * RED WHEN: an error that leaves sendVault, before or after the send began, carries the node address with its query,
+   * which is the network's project token, into the sentence the page is shown; or is wrapped so its class or code is lost.
+   */
+  it('shows no project token of a node address in any error that leaves it, and keeps its class, its mark and its code', async () => {
+    const SECRET = 'SECRET123';
+    const at = `could not reach wss://node.example.org/ws?project_id=${SECRET} in time`;
+    const shown = 'could not reach wss://node.example.org/ws in time';
+    const run = async (payer: Partial<WriteCapability['sponsor']>) => {
+      const { ledger, unbound } = setUp(payer);
+      return ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]), () => null, async () => unbound()).catch((e) => e);
+    };
+    const refused = new FeeNotPaid(at);
+    const before = await run({ addFeeAndFinalise: async () => { throw refused; } });
+    expect(before.message).toBe(shown);
+    expect(before).toBe(refused);
+    expect(before).toBeInstanceOf(FeeNotPaid);
+    expect(saysNothingWasSent(before)).toBe(true);
+    expect(feeAnswerCodeOf(before)).toBe('fee-not-paid');
+
+    const plainBefore = await run({ addFeeAndFinalise: async () => { throw new Error(at); } });
+    expect(plainBefore.message).toBe(shown);
+    expect(saysNothingWasSent(plainBefore)).toBe(true);
+
+    const door = await run({ submit: async () => { throw new NetworkRefused(at); } });
+    expect(door.message).toBe(shown);
+    expect(door).toBeInstanceOf(NetworkRefused);
+    expect(feeAnswerCodeOf(door)).toBe('network-refused');
+
+    const after = new Error(at);
+    const sending = await run({ submit: async () => { throw after; } });
+    expect(sending).toBe(after);
+    expect(sending.message).toBe(shown);
+    expect(saysNothingWasSent(sending)).toBe(false);
+  });
+
+  /*
+   * RED WHEN: an error whose message cannot be written (frozen, or a getter only) throws a TypeError out of sendVault, so a refusal
+   * that said nothing was sent, with its code, reaches the page as an error that may have landed.
+   */
+  it('an error whose message cannot be rewritten leaves as it is, with its mark and its code', async () => {
+    const frozen = Object.freeze(new FeeNotPaid('could not reach wss://node.example.org/ws?project_id=SECRET123'));
+    const getter = Object.defineProperty(new NetworkRefused('x'), 'message', { get: () => 'refused', configurable: false });
+    for (const [e, code] of [[frozen, 'fee-not-paid'], [getter, 'network-refused']] as const) {
+      const { ledger, unbound } = setUp({ addFeeAndFinalise: async () => { throw e; } });
+      const left = await ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]), () => null, async () => unbound()).catch((err) => err);
+      expect(left).toBe(e);
+      expect(left).not.toBeInstanceOf(TypeError);
+      expect(saysNothingWasSent(left)).toBe(true);
+      expect(feeAnswerCodeOf(left)).toBe(code);
+    }
+  });
+
+  /*
+   * RED WHEN: a fee added for a transaction the depositor sends itself fails with the node address and its query,
+   * which is the network's project token, in the sentence the page is shown; or the error is wrapped and its class or code lost.
+   */
+  it('a fee added for a transaction the depositor sends shows no project token, and keeps its class, mark and code', async () => {
+    const at = 'could not reach wss://node.example.org/ws?project_id=SECRET123 in time';
+    const shown = 'could not reach wss://node.example.org/ws in time';
+    const run = async (e: Error) => {
+      const { ledger, unbound } = setUp({ addFeeAndFinalise: async () => { throw e; } });
+      return ledger.feeAddedTo('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]), () => null, async () => unbound()).catch((err) => err);
+    };
+    const refused = new FeeNotPaid(at);
+    const kept = await run(refused);
+    expect(kept).toBe(refused);
+    expect(kept.message).toBe(shown);
+    expect(saysNothingWasSent(kept)).toBe(true);
+    expect(feeAnswerCodeOf(kept)).toBe('fee-not-paid');
+    const plain = await run(new Error(at));
+    expect(plain.message).toBe(shown);
+    expect(saysNothingWasSent(plain)).toBe(true);
+  });
+
+  /*
    * RED WHEN: a transaction the node refused at its door is reported as one that may have landed.
    */
   it('a submission the node refused at its door is nothing sent, with its code', async () => {

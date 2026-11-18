@@ -33,7 +33,7 @@
  */
 import type { WalletFacade } from '@midnightntwrk/wallet-sdk-facade';
 import { SponsoredCustomerWallet, type BalancingWallet } from '../src/midnight/wallet.js';
-import { WalletFeeSponsor, finalisedHandleFor, type FeePayerView, type SponsorWallet } from '../src/midnight/sponsor.js';
+import { WalletFeeSponsor, finalisedHandleFor, type FeePayerView, type SponsorWallet, type SponsorWalletHeld } from '../src/midnight/sponsor.js';
 import { finalisedTransactionOf } from '../src/midnight/finalised-transaction.js';
 import { dustIndexerHttpOf, dustNumbers, dustProgressOf, networkHeightAt } from './dust-wallet.js';
 import { dustViewHeight } from '../src/midnight/sponsor.js';
@@ -41,6 +41,7 @@ import type { SponsoredFeeSink } from '../src/midnight/sponsored-fees.js';
 import type { FeeCeiling } from '../src/midnight/fee-ceiling.js';
 import type { FundedParties } from '../src/wiring/write-capability-for-deployment.js';
 import { NETWORK_IDS, networkRecord } from '../src/core/networks.js';
+import type { FeePayerHolder } from './fee-payer-held.js';
 
 /**
  * What a bring-up hands over, in the terms this file needs.
@@ -262,13 +263,44 @@ export function feePayerOver(
   onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
   ceiling: FeeCeiling,
 ): WalletFeeSponsor {
+  return sponsorOver(sponsorWalletOver(payer, paidFee), feeRecord, onPay, ceiling);
+}
+
+/**
+ * The fee payer over a held wallet: the same sponsor, which pays with the wallet the holder hands over between two
+ * payments and asks the holder to build it again when it finds it stuck or failing.
+ */
+export function feePayerHeldOver(
+  holder: FeePayerHolder,
+  paidFee: (ref: string) => Promise<bigint | null>,
+  feeRecord: SponsoredFeeSink,
+  onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
+  ceiling: FeeCeiling,
+): WalletFeeSponsor {
+  const held: SponsorWalletHeld = {
+    next: () => {
+      const handed = holder.settle();
+      return handed === null ? null : sponsorWalletOver(handed, paidFee);
+    },
+    recover: (why) => holder.recover(why),
+  };
+  return sponsorOver(sponsorWalletOver(holder.current(), paidFee), feeRecord, onPay, ceiling, held);
+}
+
+function sponsorOver(
+  wallet: SponsorWallet,
+  feeRecord: SponsoredFeeSink,
+  onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
+  ceiling: FeeCeiling,
+  held?: SponsorWalletHeld,
+): WalletFeeSponsor {
   if (!feeRecord || typeof feeRecord.record !== 'function') {
     throw new Error(
       'a fee payer was about to be built with nowhere to record what it pays. Which company '
       + 'a sponsored transaction was for cannot be recovered from the transaction afterwards, '
       + 'so nothing was built and nothing was spent.');
   }
-  return new WalletFeeSponsor(sponsorWalletOver(payer, paidFee), ceiling, onPay, feeRecord);
+  return new WalletFeeSponsor(wallet, ceiling, onPay, feeRecord, undefined, held);
 }
 
 /**

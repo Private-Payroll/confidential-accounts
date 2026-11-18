@@ -1,6 +1,6 @@
 import type { Hex } from '../../../../src/core/crypto.js';
 import type { SealedPool } from '../../../../src/midnight/vault-pool.js';
-import type { RunKept, SecretKeptHere } from '../../../../packages/web-shared/src/vault-operation.js';
+import type { RunKept, SecretKeptHere } from '../../../../packages/web-shared/src/vault-doors.js';
 import { openHere, sealHere, type SealedHere } from '../accounts/storage.js';
 
 /** How a kept record is sealed and opened: under this wallet's own sealing key unless a test answers. */

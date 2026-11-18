@@ -51,7 +51,10 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { buildVaultDeploy, readTransaction, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
-import { openCompanyVaultPool, type VaultChainView, type ServedVaultChain, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
+import { openCompanyVaultPool } from './vault-pool-opened.js';
+import { type VaultChainView } from './vault-doors.js';
+import { type ServedVaultChain, type VaultService } from './vault-service.js';
+import { type DepositInFlight, type DepositsInFlight } from './vault-private-deposit.js';
 import { inFlightInMemory, sealedOnThisDevice, type InFlightRecords } from './in-flight-on-this-device.js';
 import { refusalForDeposit } from '../../../src/wiring/vault-submission.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';

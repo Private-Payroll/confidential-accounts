@@ -9,7 +9,8 @@ import { identityFromSecret, newSecret } from 'midnight-identity';
  * SDK'S FACADE REPLACED. The helpers they are made of are pinned on their own;
  * here it is the doors themselves: the facade they assemble is restored from
  * this wallet's own checkpoint, and the parts they start are the private part,
- * the public part and the transaction lifecycle - never DUST.
+ * the public part and the transaction lifecycle. DUST starts only when the
+ * person pays a deposit's fee from it, once, on the same facade.
  */
 
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
@@ -71,5 +72,17 @@ describe('THE DEPOSIT SCREEN\'S DOORS', () => {
     /* RED WHEN: another wallet's checkpoint, or anything but none, is handed in. */
     expect(asked).toEqual([{ account: 0, restoreShieldedFrom: undefined }]);
     expect(started.sort()).toEqual(['lifecycle', 'shielded', 'unshielded']);
+  });
+
+  it('start DUST only when a fee is paid from it, once, on the same facade', async () => {
+    const identity = identityFromSecret(newSecret());
+    const doors = liveBalanceDoors(identity, 0);
+    const facade = await doors.facade();
+    expect(started).not.toContain('dust');
+    /* RED WHEN: the fee is paid from a second wallet of the same account, or DUST is started twice. */
+    expect(await doors.ownFee()).toBe(facade);
+    expect(await doors.ownFee()).toBe(facade);
+    expect(started.filter((s) => s === 'dust')).toEqual(['dust']);
+    expect(asked).toHaveLength(1);
   });
 });

@@ -245,7 +245,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
     /* The confirmation carries the SLOT with the name — two subwallets
      * may share a name, and this is the surface where that matters. The second kind adds
      * the KIND, because one wallet now shows two copyable addresses. */
-    expect(await screen.findByText('Copied — the shielded address of Rent (subwallet 2)')).toBeTruthy();
+    expect(await screen.findByText('Copied: the shielded address of Rent (subwallet 2)')).toBeTruthy();
 
     fireEvent.click(document.querySelector('[data-addr="shielded"] details summary')!);
     expect(screen.getByText(/The full shielded address of Rent \(subwallet 2\):/)).toBeTruthy();
@@ -257,7 +257,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
 
     /* The unshielded block holds the same rule for ITS string. */
     fireEvent.click(screen.getByText('Copy the unshielded address'));
-    expect(await screen.findByText('Copied — the unshielded address of Rent (subwallet 2)'))
+    expect(await screen.findByText('Copied: the unshielded address of Rent (subwallet 2)'))
       .toBeTruthy();
     const unshielded = document.querySelector('[data-addr="unshielded"] .address-full')?.textContent;
     expect(writeText).toHaveBeenCalledWith(unshielded);
@@ -373,7 +373,7 @@ describe('two wallets, one name, on the screen', () => {
     nameCurrent('Savings');
     openReceive();
     fireEvent.click(screen.getByText('Copy the shielded address'));
-    expect(await screen.findByText('Copied — the shielded address of Savings (subwallet 1)'))
+    expect(await screen.findByText('Copied: the shielded address of Savings (subwallet 1)'))
       .toBeTruthy();
     const first = document.querySelector('[data-addr="shielded"] .address-full')?.textContent
       ?? '';
@@ -383,7 +383,7 @@ describe('two wallets, one name, on the screen', () => {
     nameCurrent('Savings');
     openReceive();
     fireEvent.click(screen.getByText('Copy the shielded address'));
-    expect(await screen.findByText('Copied — the shielded address of Savings (subwallet 2)'))
+    expect(await screen.findByText('Copied: the shielded address of Savings (subwallet 2)'))
       .toBeTruthy();
     expect(document.querySelector('[data-addr="shielded"] .address-full')?.textContent)
       .not.toBe(first);
@@ -483,10 +483,10 @@ describe('the confirmation is about the value that was copied', () => {
     renderHome(secret);
     openReceive();
     fireEvent.click(screen.getByText('Copy the shielded address'));
-    expect(await screen.findByText('Copied — the shielded address of Main wallet')).toBeTruthy();
+    expect(await screen.findByText('Copied: the shielded address of Main wallet')).toBeTruthy();
 
     act(() => { switchWallet(secret, 2); });
-    expect(screen.queryByText(/Copied — the/)).toBeNull();
+    expect(screen.queryByText(/Copied: the/)).toBeNull();
     expect(screen.getByText('Copy the shielded address')).toBeTruthy();
   });
 });

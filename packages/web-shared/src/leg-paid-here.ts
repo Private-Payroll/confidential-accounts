@@ -25,10 +25,10 @@ import type { Hex } from '../../../src/core/crypto.js';
 import { planRun, type PlanStep } from '../../../src/midnight/payment-plan.js';
 import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
-import {
-  mergeNotesInCompanyVault, NotesMovedUnderAStep, payPrivatelyFromCompanyVault, payPubliclyFromCompanyVault, vaultNotesHere, wireOf,
-  type PayoutDoors,
-} from './vault-operation.js';
+import { mergeNotesInCompanyVault, NotesMovedUnderAStep, payPrivatelyFromCompanyVault } from './vault-pay-privately-and-merge.js';
+import { payPubliclyFromCompanyVault } from './vault-public-payout.js';
+import { vaultNotesHere } from './vault-notes-here.js';
+import { wireOf, type PayoutDoors } from './vault-payment-in-flight.js';
 import type { NoteOnTheWire } from './vault-builder.js';
 import { legToPayHere, type PaymentsHereDeps } from './payments-made-here.js';
 import { chargeTheRunHere, type ChargeDoors } from './run-charged-here.js';

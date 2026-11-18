@@ -17,7 +17,7 @@
  *
  * This module makes everything those calls are built from, with the contracts'
  * own functions, and reads off the two ledgers how far a vault has got. Nothing
- * here sends anything or holds a key; the device's start (`vault-operation.ts`)
+ * here sends anything or holds a key; the device's start (`vault-created-and-started.ts`)
  * acts on what it answers, one step at a time, each only once the chain shows
  * the one before.
  *

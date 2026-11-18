@@ -87,6 +87,19 @@ describe('the shielded receiving address a wallet shows and copies', () => {
     expect(full?.textContent).toBe(shielded);
   });
 
+  it('says only what a private payment hides, and that a public mint shows its amount', () => {
+    /* RED WHEN the shielded line promises that amounts and parties are hidden
+     * without saying that a public mint to this address shows its amount, or when
+     * it drops what a private payment does hide. */
+    const secret = newSecret();
+    render(<Home identity={identityFromSecret(secret)} secret={secret} />);
+    fireEvent.click(screen.getByText('Receive'));
+    const says = document.querySelector('[data-addr="shielded"]')?.textContent ?? '';
+    expect(says).toMatch(/A private payment to this address hides its amount on the chain/u);
+    expect(says).toMatch(/A public mint to it shows its amount/u);
+    expect(says).not.toMatch(/Amounts and parties stay hidden on the chain/u);
+  });
+
   it('in a subwallet, is that subwallet\'s own address, not the main wallet\'s', async () => {
     /* RED WHEN Receive shows one slot's address whatever slot is open: coins
      * would land in a wallet the person is not looking at. "Subwallet 1" is

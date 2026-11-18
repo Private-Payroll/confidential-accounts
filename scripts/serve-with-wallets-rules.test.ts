@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
-import { PAGES_START_WITHIN_MS, pagesVerdict, somethingAlreadyServes, waitForThePages, parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, POSTURE_NOT_CARRIED, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
+import { PAGES_START_WITHIN_MS, pagesVerdict, somethingAlreadyServes, waitForThePages, parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, showNoTokenInTheConsole, POSTURE_NOT_CARRIED, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
 import { servedCircuits } from '../src/server/proving-parameters.js';
 import { PAIR_NETWORK } from '../src/midnight/network.js';
@@ -155,7 +155,7 @@ describe('the launcher hands the pair over before the server exists', () => {
    * one construction that requires a fee record and uses the dust-only payer.
    */
   it('builds the fee payer through the one construction and nothing else', () => {
-    expect(launcher).toMatch(/sponsor: feePayerOver\(/);
+    expect(launcher).toMatch(/sponsor: feePayerHeldOver\(/);
     expect(launcher).not.toMatch(/new WalletFeeSponsor|customerWalletOver|sponsorWalletOver/);
   });
 
@@ -169,7 +169,7 @@ describe('the launcher hands the pair over before the server exists', () => {
     expect(ceiling, 'the launcher does not read the ceiling').toBeGreaterThan(-1);
     expect(ceiling, 'the launcher brings a wallet up before reading the ceiling').toBeLessThan(bringUp);
     expect(launcher, 'the launcher does not pass the ceiling to the fee payer')
-      .toMatch(/(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/);
+      .toMatch(/(fundedPartiesOver|feePayerOver|feePayerHeldOver)\([\s\S]*?\bceiling,\s*\)/);
   });
 
   /*
@@ -357,5 +357,45 @@ describe('the wait itself, driven', () => {
     };
     await expect(waitForThePages({ starts: STARTS, started, now: c.now, pause, answersAt: async () => true }))
       .rejects.toThrow(/^the application stopped \(signal SIGTERM\)/);
+  });
+});
+
+describe('the launcher\'s console shows no project token', () => {
+  const TOKEN = 'SECRET123';
+  const LEVELS = ['log', 'info', 'warn', 'error', 'debug'] as const;
+  const fake = () => {
+    const seen: unknown[][] = [];
+    const target = Object.fromEntries(LEVELS.map((level) => [level, (...parts: unknown[]) => { seen.push([level, ...parts]); }])) as unknown as Pick<Console, (typeof LEVELS)[number]>;
+    return { seen, target };
+  };
+
+  it('rewrites every address in a string or an error stack at every level, and passes other values on as they are', () => {
+    const { seen, target } = fake();
+    showNoTokenInTheConsole(target);
+    const object = { says: 'an object is printed as it is' };
+    for (const level of LEVELS) target[level](`disconnected from wss://node.example.org/ws?project_id=${TOKEN}.`, 7, object);
+    const e = new Error(`could not reach https://idx.example.org/api?project_id=${TOKEN}`);
+    target.error(e);
+    /* RED WHEN: the node library's own disconnect line prints the node address with its query on the service's console. */
+    expect(JSON.stringify(seen)).not.toContain(TOKEN);
+    expect(seen[0]).toEqual(['log', 'disconnected from wss://node.example.org/ws.', 7, object]);
+    expect(seen.map((one) => one[0])).toEqual([...LEVELS, 'error']);
+    expect(String(seen[5]![1])).toContain('https://idx.example.org/api');
+  });
+
+  // RED WHEN: a caller's own rule for a token outside any address is not run on what the console prints.
+  it('runs a caller\'s own rule after the addresses are shown, for a token outside any address', () => {
+    const { seen, target } = fake();
+    showNoTokenInTheConsole(target, (text) => text.split(TOKEN).join('<project token>'));
+    target.warn(`the library said ${TOKEN} on its own`);
+    expect(seen[0]).toEqual(['warn', 'the library said <project token> on its own']);
+  });
+
+  it('is done by the launcher before it prints or starts anything', () => {
+    const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const at = launcher.indexOf('showNoTokenInTheConsole(console);');
+    /* RED WHEN: the launcher never wraps its console, or wraps it after it has started something that prints. */
+    expect(at, 'the launcher does not wrap its console').toBeGreaterThan(-1);
+    expect(at).toBeLessThan(launcher.indexOf('stopEverythingOnExit();'));
   });
 });

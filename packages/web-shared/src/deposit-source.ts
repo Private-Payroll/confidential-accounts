@@ -41,9 +41,8 @@ import type { Hex } from '../../../src/core/crypto.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { assets, ledgerFormOf, ledgerTokenOf, type AssetId, type AssetRegistry } from '../../../src/core/assets.js';
 import type { DepositMoney } from '../../../src/midnight/deposit-nonce.js';
-import {
-  depositIntoCompanyVault, depositPubliclyIntoCompanyVault, type DepositDoors, type PublicDepositMoney,
-} from './vault-operation.js';
+import { depositIntoCompanyVault, type DepositDoors } from './vault-private-deposit.js';
+import { depositPubliclyIntoCompanyVault, type PublicDepositMoney } from './vault-public-deposit.js';
 
 /** What the vault's deposit step hands a source to pay in: the proven deposit, and nothing else of it. */
 export interface DepositAsk {

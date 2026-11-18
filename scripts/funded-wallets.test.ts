@@ -7,7 +7,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Intent, Transaction } from '@midnightntwrk/ledger-v9';
-import { fundedPartiesOver, feePayerViewOf, indexerHttpOf, sponsorWalletOver, type LiveWalletParts } from './funded-wallets.js';
+import { feePayerHeldOver, fundedPartiesOver, feePayerViewOf, indexerHttpOf, sponsorWalletOver, type LiveWalletParts } from './funded-wallets.js';
+import type { FeePayerHolder } from './fee-payer-held.js';
 import { NETWORK_IDS, endpointsOf, networkRecord } from '../src/core/networks.js';
 import type { SponsoredFee } from '../src/midnight/sponsored-fees.js';
 
@@ -132,6 +133,51 @@ describe('the fee payer handed to the server', () => {
     expect(() => fundedPartiesOver(
       live([], 'payer'), live([], 'company'), async () => null, sink([]), () => {}, undefined as never))
       .toThrow(/no ceiling/);
+  });
+});
+
+describe('the fee payer over a held wallet', () => {
+  /** A holder over `first` that hands over `next` once a payment has been made, and writes down every rebuild asked for. */
+  const holderOf = (first: LiveWalletParts, next: LiveWalletParts) => {
+    let current = first;
+    let waiting: LiveWalletParts | null = null;
+    const recovered: string[] = [];
+    const holder: FeePayerHolder = {
+      current: () => current,
+      recover: (why) => { recovered.push(why); },
+      settle: () => {
+        if (waiting === null) return null;
+        current = waiting;
+        waiting = null;
+        return current;
+      },
+      save: async () => undefined,
+      watchHeight: () => () => undefined,
+    };
+    return { holder, recovered, rebuilt: () => { waiting = next; } };
+  };
+
+  /* RED WHEN: the fee payer keeps paying, after a payment has been sent, with the wallet the holder has replaced. */
+  it('pays with the wallet the holder hands over between two payments', async () => {
+    const calls: Call[] = [];
+    const { holder, rebuilt } = holderOf(live(calls, 'old'), live(calls, 'new'));
+    const sponsor = feePayerHeldOver(holder, async () => null, sink([]), () => {}, CEILING);
+    await sponsor.submit(await sponsor.addFeeAndFinalise(companyTx, new Date(Date.now() + 60_000)));
+    rebuilt();
+    await sponsor.addFeeAndFinalise(companyTx, new Date(Date.now() + 60_000));
+    expect(calls.filter(c => c.method.endsWith('.balanceFinalizedTransaction')).map(c => c.method))
+      .toEqual(['old.balanceFinalizedTransaction', 'new.balanceFinalizedTransaction']);
+  });
+
+  /* RED WHEN: a balancing the wallet cannot date leaves the holder unasked, so nothing builds the wallet again. */
+  it('asks the holder to build the wallet again when its DUST cannot date a spend', async () => {
+    const calls: Call[] = [];
+    const old = live(calls, 'old');
+    old.facade.balanceFinalizedTransaction = async () => { throw new Error('Wallet.Sync: No Dust spend can be dated yet'); };
+    const { holder, recovered } = holderOf(old, live(calls, 'new'));
+    const sponsor = feePayerHeldOver(holder, async () => null, sink([]), () => {}, CEILING);
+    await expect(sponsor.addFeeAndFinalise(companyTx, new Date(Date.now() + 60_000))).rejects.toThrow(/can be dated/);
+    expect(recovered).toEqual(['its DUST could not date a spend']);
   });
 });
 

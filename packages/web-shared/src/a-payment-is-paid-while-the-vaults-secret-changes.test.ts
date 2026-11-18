@@ -5,7 +5,11 @@
  * never filed over a newer one that carries more secrets.
  */
 import { describe, expect, it } from 'vitest';
-import { PaymentNotYetSeen, type VaultService, mergeNotesInCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault, settlePaymentInFlight } from './vault-operation.js';
+import { PaymentNotYetSeen } from './vault-payment-in-flight.js';
+import { type VaultService } from './vault-service.js';
+import { mergeNotesInCompanyVault, payPrivatelyFromCompanyVault } from './vault-pay-privately-and-merge.js';
+import { openCompanyVaultPool } from './vault-pool-opened.js';
+import { settlePaymentInFlight } from './vault-payment-settled.js';
 import {
   VAULT, aPrivatePaymentOut, anUnsetNewerSecret, eventsOfAPayment, filedAlready, indexerOf, nothingToCheck, pacing, paymentEvents, readOnTheDevice,
   serviceFrom, startDoors, view, walletReadsTheVault,

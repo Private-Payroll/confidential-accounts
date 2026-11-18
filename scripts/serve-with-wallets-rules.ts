@@ -11,6 +11,7 @@ import { refuseIncompleteSetup, PRECONDITIONS } from './create-company-rules.js'
 import { pageStartsFor } from './serve-rules.js';
 import type { ParameterOutcome } from '../src/server/proving-parameters.js';
 import { PAIR_NETWORK } from '../src/midnight/network.js';
+import { shownAddressesIn } from '../src/core/networks.js';
 
 /**
  * The one network this launcher serves, which is the one both products are
@@ -276,5 +277,24 @@ export async function waitForThePages(o: {
       readyOnce = true;
     }
     await pause(1000);
+  }
+}
+
+const CONSOLE_LEVELS = ['log', 'info', 'warn', 'error', 'debug'] as const;
+
+/**
+ * Wraps the console once so that every string, and every error's stack, passes through `shownAddressesIn` before it is
+ * printed: the node library's own disconnect lines name the node's address with the network's project token in its
+ * query. `also` runs after that, for a caller that knows the token itself and takes it out wherever else it sits.
+ * Other values are printed as they are.
+ */
+export function showNoTokenInTheConsole(
+  target: Pick<Console, (typeof CONSOLE_LEVELS)[number]>, also: (text: string) => string = (text) => text,
+): void {
+  const shown = (text: string): string => also(shownAddressesIn(text));
+  for (const level of CONSOLE_LEVELS) {
+    const write = target[level].bind(target);
+    target[level] = (...parts: unknown[]) => write(...parts.map((part) =>
+      (typeof part === 'string' ? shown(part) : part instanceof Error ? shown(String(part.stack ?? part.message)) : part)));
   }
 }

@@ -12,12 +12,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   WalletFeeSponsor, CUSTOMER_BALANCES, SPONSOR_BALANCES, FeeNotPaid, NetworkRefused, feeAnswerCodeOf, poolRefusalOf,
-  VIEW_TIMING, type FeePayerView, type SponsorWallet, type ViewTiming,
+  VIEW_TIMING, type FeePayerView, type SponsorWallet, type SponsorWalletHeld, type ViewTiming,
 } from './sponsor.js';
 import { FeeRefused } from './fee-ceiling.js';
 import { CUSTOMER_TOKEN_KINDS, SPONSOR_TOKEN_KINDS } from './wallet.js';
 import { saysNothingWasSent } from '../core/jobs.js';
-import { dustViewHeight, dustViewCovers } from './sponsor.js';
+import { HANDED_BACK_WINDOW_MS, dustViewHeight, dustViewCovers } from './sponsor.js';
 
 /** A ceiling well above what the double below spends, so the cases that are not about it pass. */
 const CEILING = { perTransaction: 1_000n };
@@ -931,3 +931,162 @@ describe('the block a DUST view covers', () => {
     expect(dustViewCovers(null, 0n)).toBe(false);
   });
 });
+
+/** Where a test's fee payer wallet is held: what it hands over next, and where a rebuild asked for is written. */
+const heldBy = (next: SponsorWalletHeld['next'], recover: SponsorWalletHeld['recover'] = () => {}): SponsorWalletHeld => ({ next, recover });
+
+describe('a fee payer found stuck or failing is built again, and taken over only between two payments', () => {
+  /* RED WHEN: a view that stays behind the network refuses fees for ever without anything building the wallet again. */
+  it('a view that stays behind starts a rebuild, and this fee is still refused with nothing sent', async () => {
+    const view = fakeView({ applied: 10n, tip: 20n });
+    const asked: string[] = [];
+    const held = heldBy(() => null, (why) => { asked.push(why); });
+    const { wallet } = fakeWallet({ view });
+    const e: any = await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, fakeTiming(), held)
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((x) => x);
+    expect(saysNothingWasSent(e)).toBe(true);
+    expect(asked).toEqual(['its view of the network\'s DUST stayed behind the indexer\'s block 20']);
+  });
+
+  /* RED WHEN: a view that reaches the network in time starts a rebuild it does not need. */
+  it('a view that reaches the network starts no rebuild', async () => {
+    const view = fakeView({ applied: 13n, tip: 13n });
+    const asked: string[] = [];
+    const held = heldBy(() => null, (why) => { asked.push(why); });
+    const { wallet } = fakeWallet({ view });
+    await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, fakeTiming(), held).addFeeAndFinalise({ tx: 1 }, new Date());
+    expect(asked).toEqual([]);
+  });
+
+  /* RED WHEN: a balancing refused because the wallet's DUST cannot date a spend leaves the wallet as it is. */
+  it('a balancing the wallet cannot date starts a rebuild', async () => {
+    const view = fakeView({ applied: 13n, tip: 13n });
+    const asked: string[] = [];
+    const held = heldBy(() => null, (why) => { asked.push(why); });
+    const { wallet } = fakeWallet({
+      view, async balanceFinalizedTransaction() { throw new Error('Wallet.Sync: No Dust spend can be dated yet'); },
+    });
+    await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, fakeTiming(), held).addFeeAndFinalise({ tx: 1 }, new Date()).catch(() => null);
+    expect(asked).toEqual(['its DUST could not date a spend']);
+  });
+
+  /*
+   * RED WHEN: a rebuilt wallet is not taken over, so the next fee is balanced by the wallet that was stuck.
+   * RED WHEN: the payment the old view had not shown yet is forgotten at the hand-over.
+   */
+  it('the next payment is made by the rebuilt wallet, which still waits for the payment the old one had not shown', async () => {
+    const oldView = fakeView({ applied: 13n, tip: 13n });
+    oldView.lastAccepted = 'hash-of-the-last-payment';
+    const newView = fakeView({ applied: 13n, tip: 13n });
+    const shownAsked: string[] = [];
+    newView.shows = async (h: string) => { shownAsked.push(h); return true; };
+    const rebuilt = fakeWallet({ view: newView });
+    let handed = false;
+    const held = heldBy(() => { if (handed) return null; handed = true; return rebuilt.wallet; });
+    const first = fakeWallet({ view: oldView });
+    await new WalletFeeSponsor(first.wallet, CEILING, undefined, undefined, fakeTiming(), held).addFeeAndFinalise({ tx: 1 }, new Date());
+    expect(first.calls.map(c => c.method)).not.toContain('balanceFinalizedTransaction');
+    expect(rebuilt.calls.map(c => c.method)).toContain('balanceFinalizedTransaction');
+    expect(shownAsked).toEqual(['hash-of-the-last-payment']);
+  });
+
+  /*
+   * RED WHEN: a rebuilt wallet takes over while a fee handed back to be sent elsewhere may still land, so the old
+   * wallet is stopped with that booking in it and the fee is never recorded or given back.
+   */
+  it('a rebuilt wallet waits while a handed-back fee may still land, then takes over', async () => {
+    const oldView = fakeView({ applied: 13n, tip: 13n });
+    const rebuilt = fakeWallet({ view: fakeView({ applied: 13n, tip: 13n }) });
+    let asked = 0;
+    const held = heldBy(() => null);
+    const first = fakeWallet({ view: oldView });
+    const timing = fakeTiming();
+    const sponsor = new WalletFeeSponsor(first.wallet, CEILING, undefined, undefined, timing, held);
+    await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    held.next = () => { asked += 1; return rebuilt.wallet; };
+    await sponsor.addFeeAndFinalise({ tx: 2 }, new Date());
+    expect(asked, 'asked to hand over while a handed-back fee may still land').toBe(0);
+    expect(first.calls.filter(c => c.method === 'balanceFinalizedTransaction')).toHaveLength(2);
+    await timing.sleep(HANDED_BACK_WINDOW_MS);
+    await sponsor.addFeeAndFinalise({ tx: 3 }, new Date());
+    expect(asked).toBe(1);
+    expect(rebuilt.calls.map(c => c.method)).toContain('balanceFinalizedTransaction');
+  });
+
+  /* RED WHEN: a booking made by the old wallet is given back to the rebuilt one, which does not hold it. */
+  it('a booking is given back by the wallet that made it, after a hand-over too', async () => {
+    const oldView = fakeView({ applied: 13n, tip: 13n });
+    const rebuilt = fakeWallet({ view: fakeView({ applied: 13n, tip: 13n }) });
+    const first = fakeWallet({ view: oldView });
+    const timing = fakeTiming();
+    const held = heldBy(() => null);
+    const sponsor = new WalletFeeSponsor(first.wallet, CEILING, undefined, undefined, timing, held);
+    const finished = await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    await timing.sleep(HANDED_BACK_WINDOW_MS);
+    held.next = () => rebuilt.wallet;
+    await sponsor.addFeeAndFinalise({ tx: 2 }, new Date());
+    await sponsor.release(finished as never);
+    expect(first.calls.filter(c => c.method === 'revert').map(c => c.args[0])).toEqual([finished]);
+    expect(rebuilt.calls.filter(c => c.method === 'revert').map(c => c.args[0])).not.toContain(finished);
+  });
+
+  /*
+   * RED WHEN: a payment refused at the door and paid again inside the same write is paid again by the wallet that was
+   * refused, or the refused wallet is stopped before it gave the first payment back, or stopped more than once.
+   */
+  it('a refused spend proof followed by a hand-over is paid again by the new wallet, the old one stopped once after its release', async () => {
+    const refusal = await refusedAtTheDoor(1010, 'Custom error: 170');
+    const events: string[] = [];
+    const oldView = fakeView({ applied: 13n, tip: 13n });
+    const newView = fakeView({ applied: 13n, tip: 13n });
+    const second = fakeWallet({
+      view: newView,
+      async finalizeRecipe() { events.push('new paid'); return withHash('h2'); },
+      async submitTransaction() { events.push('new sent'); return 'ref-new'; },
+    });
+    let ready = false;
+    let stopped = 0;
+    const held = heldBy(() => {
+      if (!ready) return null;
+      stopped += 1;
+      events.push('old stopped');
+      return second.wallet;
+    });
+    const first = fakeWallet({
+      view: oldView,
+      async finalizeRecipe() { events.push('old paid'); return withHash('h1'); },
+      async submitTransaction() { events.push('old sent'); ready = true; throw refusal; },
+      async revert() { events.push('old released'); },
+    });
+    const sponsor = new WalletFeeSponsor(first.wallet, CEILING, undefined, undefined, fakeTiming(), held);
+    const ref = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 'the same' }, new Date()));
+    expect(ref).toEqual(expect.objectContaining({ ref: 'ref-new', transactionHash: 'h2' }));
+    expect(events).toEqual(['old paid', 'old sent', 'old released', 'old stopped', 'new paid', 'new sent']);
+    expect(stopped).toBe(1);
+    expect(first.calls.filter(c => c.method === 'balanceFinalizedTransaction')).toHaveLength(1);
+    expect(second.calls.filter(c => c.method === 'balanceFinalizedTransaction')).toHaveLength(1);
+  });
+
+  /*
+   * RED WHEN: a hand-over is asked for anywhere but at the start of a payment, so a wallet could be stopped while a
+   * submission it made is still being awaited.
+   */
+  it('a hand-over is asked for only when a fee is about to be paid, never while a payment is being sent or given back', async () => {
+    const oldView = fakeView({ applied: 13n, tip: 13n });
+    let asked = 0;
+    const held = heldBy(() => { asked += 1; return null; });
+    const { wallet } = fakeWallet({ view: oldView });
+    const timing = fakeTiming();
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, undefined, timing, held);
+    const finished = await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    expect(asked).toBe(1);
+    await timing.sleep(HANDED_BACK_WINDOW_MS);
+    await sponsor.submit(finished);
+    await sponsor.release(finished as never);
+    sponsor.payingFor('acc_1');
+    expect(asked, 'a hand-over was asked for outside paying a fee').toBe(1);
+    await sponsor.addFeeAndFinalise({ tx: 2 }, new Date());
+    expect(asked).toBe(2);
+  });
+});
+

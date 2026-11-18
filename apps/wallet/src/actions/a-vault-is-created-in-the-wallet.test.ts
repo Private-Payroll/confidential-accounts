@@ -288,7 +288,7 @@ describe('a refused start names its kind of stop to the page only from the start
   });
 
   it('names a start\'s stop, a read that failed and a vault not built, and nothing else', async () => {
-    const { NOT_BUILT, START_READ_STOP, START_STOP } = await import('../../../../packages/web-shared/src/vault-operation.js');
+    const { NOT_BUILT, START_READ_STOP, START_STOP } = await import('../../../../packages/web-shared/src/vault-start-stops.js');
     /* RED WHEN: a kind of stop the start names is not carried, so the page cannot say which read or check stopped it. */
     for (const code of [START_STOP.readersCannotOpen, START_READ_STOP.chainUnread, START_READ_STOP.standingUnread, NOT_BUILT.committeeUnread]) {
       expect(namedCode(code)).toBe(code);
@@ -298,7 +298,8 @@ describe('a refused start names its kind of stop to the page only from the start
   });
 
   it('the start step passes the kind of stop to its refusal, for a start not finished and for a vault not built', async () => {
-    const { NOT_BUILT, START_READ_STOP, VaultNotBuilt, VaultStartOwed } = await import('../../../../packages/web-shared/src/vault-operation.js');
+    const { NOT_BUILT, START_READ_STOP, VaultStartOwed } = await import('../../../../packages/web-shared/src/vault-start-stops.js');
+    const { VaultNotBuilt } = await import('../../../../packages/web-shared/src/vault-created-and-started.js');
     const told: Record<string, unknown>[] = [];
     const ctx = { tell: (o: Record<string, string | number>) => { told.push(o); } };
     const owed = startRefusalOf(new VaultStartOwed('ab'.repeat(32) as never, 'the read ran out.', START_READ_STOP.chainUnread), ctx);

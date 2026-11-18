@@ -172,11 +172,12 @@ describe.skipIf(!existsSync(CHROMIUM))('THE WORKERS THE PAGE STARTS, IN A BROWSE
     browser = await chromium.launch(process.env.CHROMIUM_PATH === undefined ? {} : { executablePath: process.env.CHROMIUM_PATH });
   }, 120_000);
 
+  /* Closing a browser and a dev server under a whole suite's load can take longer than the default ten seconds. */
   afterAll(async () => {
     await browser?.close();
     await server?.close();
     if (cache !== '') rmSync(cache, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   /* RED WHEN: the page at its address raises an error when it opens (an uncaught error, or a message of error that is not the service being away). */
   it('opens the page with no error', async () => {

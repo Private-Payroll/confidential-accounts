@@ -4,9 +4,8 @@ import { readVaultAddress, type VaultAddress } from 'midnight-identity/profile/c
 import { fromHex, type Hex } from '../../../../src/core/crypto.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import type { DepositMoney } from '../../../../src/midnight/deposit-nonce.js';
-import {
-  depositIntoCompanyVault, DepositLandedNotYetRecorded, DepositNotYetSeen, type DepositDoors, type DepositsInFlight, type VaultService,
-} from '../../../../packages/web-shared/src/vault-operation.js';
+import { depositIntoCompanyVault, DepositLandedNotYetRecorded, DepositNotYetSeen, type DepositDoors, type DepositsInFlight } from '../../../../packages/web-shared/src/vault-private-deposit.js';
+import { type VaultService } from '../../../../packages/web-shared/src/vault-service.js';
 import { browserDepositsInFlight, browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import { VaultSecretBeingChanged } from '../../../../packages/web-shared/src/deposit-on-device.js';
 import { DepositLineNotEnded } from '../../../../packages/web-shared/src/deposit-line-ended.js';
@@ -16,11 +15,13 @@ import {
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { payForThePage, readWhatThePageAsks, type BalanceDoors } from '../chain/balance-for-page.js';
+import { payForThePage, readWhatThePageAsks } from '../chain/balance-for-page.js';
 import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
+import { depositSentFor, depositWalletFor, type DepositBalanceDoors, type DepositWallet } from './deposit-sent-by-the-wallet.js';
+import { timeShown } from '../../../../packages/web-shared/src/vault-step-reads.js';
 
 /*
  * A PRIVATE DEPOSIT, MADE WHOLE IN THE WALLET.
@@ -46,7 +47,7 @@ export interface PrivateDepositReach {
   readonly now: () => number;
   readonly pause: (ms: number, signal: AbortSignal) => Promise<void>;
   /** The wallet's own balancing for the person's account `account`: the coins it pays the deposit from. */
-  readonly balance: (identity: Identity, account: number) => BalanceDoors & { readonly stop?: () => Promise<void> };
+  readonly balance: (identity: Identity, account: number) => DepositBalanceDoors;
   /** Where the wallet keeps a deposit on its way and the coins it made, for the seat `opener`: its own storage, never the page's. */
   readonly kept?: (opener: InFlightOpener) => { readonly inFlight: DepositsInFlight; readonly coins?: CoinsKeptHere };
   /** The company and this seat as the wallet reads them; `companyReachFor` unless a test stands it in. */
@@ -64,8 +65,6 @@ const STATE = {
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const bare = (h: string): string => h.toLowerCase().replace(/^0x/u, '');
-/** The service's name for a sent deposit, kept only when it is a short plain name: anything else is kept as none. */
-const PLAIN_REF = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 /** The wallet's own storage for a deposit on its way and the coins it made: this origin's, which no page can reach. */
 const keptInTheWallet = (opener: InFlightOpener) => ({
@@ -84,11 +83,13 @@ export const moneyOf = (intent: ActIntent): DepositMoney | null => {
 /**
  * **WHAT THE SHARED DEPOSIT STEP IS GIVEN IN THE WALLET**: the wallet's own reads of the chain and the vault builder,
  * the company's records filed and believed under this seat, the deposit on its way kept in the wallet's own storage,
- * a payment made only for the coin of `money` into `vault`, and a send whose failure the page cannot turn into
- * "nothing was sent".
+ * a payment made only for the coin of `money` into `vault` from the account's wallet kept open until the service has
+ * answered, and a send whose failure the page cannot turn into "nothing was sent" (`depositSentFor`).
  */
 export function depositDoorsFor(
   ctx: StepContext, r: CompanyReach, reach: PrivateDepositReach, vault: VaultAddress, money: DepositMoney,
+  /* Opened only by `pay`, which refuses first when no account was chosen. */
+  wallet: DepositWallet = depositWalletFor(reach.balance, ctx.held.identity, ctx.held.account ?? 0, reach.now),
 ): DepositDoors {
   const person = ctx.person ?? (() => { throw new StepRefused(why('no-person')); })();
   const me = deviceSignerFrom(r.leaf, r.companyKey);
@@ -100,18 +101,7 @@ export function depositDoorsFor(
   const service: VaultService = {
     ...base,
     keys: async () => { throw new Error('a private deposit reads no readers from the service.'); },
-    deposit: async (v, tx) => {
-      let answer: { txRef?: unknown; transactionHash?: unknown } | null;
-      try {
-        answer = await r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/vaults/${v}/deposit`, { method: 'POST', body: JSON.stringify({ tx }) });
-      } catch (e) {
-        /* The page holds the finished deposit: its word that nothing was sent is never believed, so the deposit stays on its way. */
-        throw new Error(`the page did not confirm it sent the deposit (${(e as Error)?.message ?? String(e)}); it may still be sent.`);
-      }
-      const ref = typeof answer?.txRef === 'string' && PLAIN_REF.test(answer.txRef) ? answer.txRef : '';
-      const hash = typeof answer?.transactionHash === 'string' && HEX64.test(bare(answer.transactionHash)) ? bare(answer.transactionHash) : null;
-      return { txRef: ref, transactionHash: hash };
-    },
+    deposit: depositSentFor(ctx, r, wallet, reach.now),
   };
   const account = ctx.held.account;
   return {
@@ -134,20 +124,17 @@ export function depositDoorsFor(
         throw new StepRefused(why('not-as-built'));
       }
       if (account === undefined) throw new StepRefused(why('no-account'));
-      const doors = reach.balance(ctx.held.identity, account);
-      try {
-        const read = readWhatThePageAsks(await doors.ledger(), ask.transaction, vault);
-        const leaf = read.leaves[0];
-        /* Paid only for the one coin this wallet built: of the amount and the token the window showed, into this vault. */
-        if (read.pays !== 'private' || read.leaves.length !== 1 || leaf === undefined || leaf.kind !== 'shielded'
-          || bare(leaf.token) !== bare(money.token) || BigInt(leaf.amount) !== money.value) {
-          throw new StepRefused(why('not-as-built'));
-        }
-        const finished = await payForThePage(doors, read.tx, { pays: 'private', leaves: read.leaves }, { stillWanted: () => !ctx.signal.aborted });
-        return { transaction: finished, leaves: read.leaves };
-      } finally {
-        await doors.stop?.().catch(() => undefined);
+      wallet.paying();
+      const doors = wallet.doors();
+      const read = readWhatThePageAsks(await doors.ledger(), ask.transaction, vault);
+      const leaf = read.leaves[0];
+      /* Paid only for the one coin this wallet built: of the amount and the token the window showed, into this vault. */
+      if (read.pays !== 'private' || read.leaves.length !== 1 || leaf === undefined || leaf.kind !== 'shielded'
+        || bare(leaf.token) !== bare(money.token) || BigInt(leaf.amount) !== money.value) {
+        throw new StepRefused(why('not-as-built'));
       }
+      const finished = await payForThePage(doors, read.tx, { pays: 'private', leaves: read.leaves }, { stillWanted: () => !ctx.signal.aborted });
+      return { transaction: finished, leaves: read.leaves };
     },
   };
 }
@@ -161,6 +148,36 @@ export function depositDoorsFor(
 const lineNotEnded = (stop: Words, code: string | undefined): StepRefused =>
   new StepRefused(why('line-not-ended', { ...(stop.values ?? {}), stop: stop.key }), code ?? stop.key.slice(stop.key.lastIndexOf('.') + 1));
 
+/**
+ * The deposit step's stop, as the person and the page read it. A stop whose journal line could not be marked is sorted
+ * as the stop it wraps, and says the line beside its words. A deposit this wallet sent nothing for after the service
+ * refused it says why and when this device takes a new deposit into the vault.
+ */
+function depositStopped(ctx: StepContext, thrown: unknown, wallet: DepositWallet): never {
+  const notEnded = thrown instanceof DepositLineNotEnded ? thrown : null;
+  const e = notEnded === null ? thrown : notEnded.stopped;
+  if (e instanceof ActionStopped) throw e;
+  if (e instanceof StepRefused) throw notEnded === null ? e : lineNotEnded(e.words, e.code);
+  if (e instanceof DepositNotYetSeen) {
+    ctx.tell({ state: STATE.notYetSeen });
+    const unsent = wallet.unsent();
+    if (unsent === null) throw new StepRefused(why('not-yet-seen'));
+    throw new StepRefused(why(`held.${unsent.why}`, { until: timeShown(wallet.freesAt()), says: unsent.says }), unsent.why);
+  }
+  if (e instanceof VaultSecretBeingChanged) {
+    throw notEnded === null ? new StepRefused(why('secret-being-changed')) : lineNotEnded(why('secret-being-changed'), undefined);
+  }
+  if (e instanceof DepositLandedNotYetRecorded) {
+    ctx.tell({ state: STATE.landedNotRecorded });
+    throw new StepRefused(why('landed-not-recorded'));
+  }
+  /* A wallet that could not balance says which token it was short of and by how much, so the words name it. */
+  const short = thrown as { message?: string; tokenType?: unknown; amount?: unknown } | null;
+  const ofWhat = short !== null && typeof short === 'object' && short.tokenType !== undefined
+    ? ` (short of token ${String(short.tokenType)}${short.amount === undefined ? '' : `, ${String(short.amount)} of its smallest unit needed`})` : '';
+  throw new StepRefused(why('not-made', { says: `${short?.message ?? String(thrown)}${ofWhat}` }));
+}
+
 /** The one private deposit an act asks for, run whole in the wallet. */
 export function privateDepositAction(reach: PrivateDepositReach): ActionDefinition {
   return Object.freeze({
@@ -168,6 +185,7 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
       { key: 'act.private-deposit.shown.amount', values: { amount: intent.fields['amount'] ?? '', token: intent.fields['token'] ?? '' }, from: 'page' as const },
       { key: 'act.private-deposit.shown.pays', from: 'action' as const },
+      { key: 'act.private-deposit.shown.own-fee', from: 'action' as const },
       { key: 'act.private-deposit.shown.vault', values: { vault: intent.fields['vault'] ?? '' }, from: 'page' as const },
       { key: 'act.private-deposit.shown.vault-check', from: 'action' as const },
       { key: 'act.private-deposit.shown.records', from: 'action' as const },
@@ -210,32 +228,15 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
           const vault = readVaultAddress(intent.fields['vault']) ?? (() => { throw new StepRefused(why('not-a-vault')); })();
           const money = moneyOf(intent) ?? (() => { throw new StepRefused(why('nothing')); })();
           ctx.tell({ vault });
+          const wallet = depositWalletFor(reach.balance, ctx.held.identity, ctx.held.account ?? 0, reach.now);
           try {
-            const done = await depositIntoCompanyVault(depositDoorsFor(ctx, r, reach, vault, money), vault as unknown as Hex, money);
+            const done = await depositIntoCompanyVault(depositDoorsFor(ctx, r, reach, vault, money, wallet), vault as unknown as Hex, money);
             const created = typeof done.note.createdIn === 'string' && HEX64.test(bare(done.note.createdIn)) ? bare(done.note.createdIn) : null;
             ctx.tell({ state: done.notYetSpendable === undefined ? STATE.recorded : STATE.notYetSpendable, ...(created === null ? {} : { created }) });
           } catch (thrown) {
-            /* A stop whose journal line could not be marked is sorted as the stop it wraps, and says the line beside its words. */
-            const notEnded = thrown instanceof DepositLineNotEnded ? thrown : null;
-            const e = notEnded === null ? thrown : notEnded.stopped;
-            if (e instanceof ActionStopped) throw e;
-            if (e instanceof StepRefused) throw notEnded === null ? e : lineNotEnded(e.words, e.code);
-            if (e instanceof DepositNotYetSeen) {
-              ctx.tell({ state: STATE.notYetSeen });
-              throw new StepRefused(why('not-yet-seen'));
-            }
-            if (e instanceof VaultSecretBeingChanged) {
-              throw notEnded === null ? new StepRefused(why('secret-being-changed')) : lineNotEnded(why('secret-being-changed'), undefined);
-            }
-            if (e instanceof DepositLandedNotYetRecorded) {
-              ctx.tell({ state: STATE.landedNotRecorded });
-              throw new StepRefused(why('landed-not-recorded'));
-            }
-            /* A wallet that could not balance says which token it was short of and by how much, so the words name it. */
-            const short = thrown as { message?: string; tokenType?: unknown; amount?: unknown } | null;
-            const ofWhat = short !== null && typeof short === 'object' && short.tokenType !== undefined
-              ? ` (short of token ${String(short.tokenType)}${short.amount === undefined ? '' : `, ${String(short.amount)} of its smallest unit needed`})` : '';
-            throw new StepRefused(why('not-made', { says: `${short?.message ?? String(thrown)}${ofWhat}` }));
+            depositStopped(ctx, thrown, wallet);
+          } finally {
+            await wallet.stop();
           }
         },
       };

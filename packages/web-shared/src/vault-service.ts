@@ -31,7 +31,7 @@ export interface ServedVaultChain {
 /** What the service answered for one step of a vault's start it sent. */
 interface StartStepSent { readonly txRef: string; readonly transactionHash?: string | null }
 
-export interface VaultKeysView {
+interface VaultKeysView {
   readonly committee: Committee | null;
   readonly why: string | null;
   /** Every signer's records key the service holds, this device's included. */

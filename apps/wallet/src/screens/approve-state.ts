@@ -24,11 +24,12 @@ import { ownedAddressFor } from '../accounts/owned-address.js';
 /* Which wallet a company is OFFERED, which is a rule and a default
  * rather than a refusal: `../accounts/slot-choice.ts`. */
 import { chooseSlot } from '../accounts/slot-choice.js';
-import { loadSubwallets } from '../accounts/storage.js';
+import { loadSubwallets } from '../accounts/subwallet-record.js';
 import { NETWORK } from 'midnight-identity/network';
 import { fingerprintOf } from 'midnight-identity/recovery/pieces';
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
 import { rowsFor } from './approve-rows.js';
+import { isPayingAsk } from './approve-slot.js';
 import type { ApproveInputs } from './approve-inputs.js';
 
 export function useApproveState(a: ApproveInputs) {
@@ -170,9 +171,12 @@ export function useWhatIsAsked(a: ApproveInputs & ApproveState) {
    * anybody new is offered one no site has used. **It never runs again once the
    * person has touched the picker**, which is what makes it a default rather
    * than a refusal.
+   *
+   * **IT NEVER RUNS FOR AN ASK THAT PAYS**, which pays from the account picked
+   * in the window before the passkey (`paying-pick.ts`) and reads nothing here.
    */
   useEffect(() => {
-    if (choseWallet || request === null || profile === null) return;
+    if (choseWallet || request === null || profile === null || isPayingAsk(request)) return;
     setSubwallet(chooseSlot(profile, request.requester.origin).account);
   }, [choseWallet, request, profile]);
 

@@ -12,11 +12,10 @@ import { browserDepositsInFlight, browserInFlightRecords } from 'vaults-web-shar
 import { vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
 import { privateTokenFromTheWallet, publicTokenFromTheWallet } from 'vaults-web-shared/deposit-source.js';
-import {
-  checkWhatThisBrowserDeposited, depositPubliclyIntoCompanyVault, DepositLandedNotYetRecorded,
-  DepositNotSent, DepositNotYetSeen, DepositMayOutliveItsWindow, DepositStartedElsewhere, DepositStillInFlight, PublicDepositNeverLanded, PublicDepositNotYetSeen, PublicDepositRefused, PublicDepositSignedNotSent, publicDepositCannotLandAfter, sayWhatTheCheckFound, type settleDepositInFlight,
-  type DepositDoors, type JournalledDeposit, type PublicDepositDoors, type VaultStage, type WhatThisBrowserDeposited,
-} from 'vaults-web-shared/vault-operation.js';
+import { checkWhatThisBrowserDeposited, sayWhatTheCheckFound, type JournalledDeposit, type WhatThisBrowserDeposited } from 'vaults-web-shared/check-what-this-browser-sent.js';
+import { depositPubliclyIntoCompanyVault, PublicDepositNeverLanded, PublicDepositNotYetSeen, PublicDepositRefused, PublicDepositSignedNotSent, publicDepositCannotLandAfter, type PublicDepositDoors } from 'vaults-web-shared/vault-public-deposit.js';
+import { DepositLandedNotYetRecorded, DepositNotSent, DepositNotYetSeen, DepositMayOutliveItsWindow, DepositStartedElsewhere, DepositStillInFlight, type settleDepositInFlight, type DepositDoors } from 'vaults-web-shared/vault-private-deposit.js';
+import { type VaultStage } from 'vaults-web-shared/vault-doors.js';
 import type { DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import type { ProofInProgress } from 'vaults-web-shared/vault-worker-client.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -241,6 +240,8 @@ export type DepositNow =
   | {
     readonly of: typeof DEPOSITED.failed; readonly kind: DepositKind; readonly amount: PrivateAmount | PublicAmount;
     readonly mayHaveBeenSent: boolean; readonly refusal: ActRefusal; readonly reasons: readonly string[];
+    /** A private deposit the wallet sent nothing for, and which stop it was: the screen words each. */
+    readonly stopped?: Stopped;
     /** A public deposit that may have been sent: the time until which it can still arrive and the same money must not be put in again (`publicDepositCannotLandAfter`). A public deposit that never landed: the time it stopped being valid. */
     readonly until?: number;
     /** A public deposit the chain answered for: it took it and refused it, or it never landed and now never will. Nothing went into the vault either way. */
@@ -382,6 +383,25 @@ const PRIVATE_DEPOSIT = {
   recorded: 'recorded', notYetSpendable: 'not-yet-spendable', notYetSeen: 'not-yet-seen', landedNotRecorded: 'landed-not-recorded',
 } as const;
 
+/** How the wallet stopped a private deposit it sent nothing for: the build step refused, or this vault held shut after its fee or the network said no. */
+export const STOPPED = {
+  notMade: 'not-made', declined: 'declined', tooLittleDust: 'too-little-dust', notPaid: 'not-paid', networkRefused: 'network-refused',
+} as const;
+export type Stopped = (typeof STOPPED)[keyof typeof STOPPED];
+
+const STOPPED_KEY = /^act\.private-deposit\.why\.(?:(not-made)|held\.(declined|too-little-dust|not-paid|network-refused))$/u;
+
+/** The kind of stop the wallet's refusal key names, or null for a key this page has no words of its own for. */
+function stoppedOf(ended: ActOutcome): Stopped | null {
+  if (ended.of !== 'stopped' || ended.refused === undefined) return null;
+  const kind = STOPPED_KEY.exec(ended.refused);
+  const named = kind?.[1] ?? kind?.[2];
+  return Object.values(STOPPED).find((one) => one === named) ?? null;
+}
+
+
+const stoppedAs = (ended: ActOutcome): { readonly stopped?: Stopped } => { const kind = stoppedOf(ended); return kind === null ? {} : { stopped: kind }; };
+
 /** How the wallet's private deposit ended, for this page: done, or failed and whether the deposit may have been sent. */
 function endOfTheWalletsDeposit(ended: ActOutcome, amount: PrivateAmount | PublicAmount): Ended {
   const told = ended.outcome ?? {};
@@ -397,14 +417,15 @@ function endOfTheWalletsDeposit(ended: ActOutcome, amount: PrivateAmount | Publi
   /*
    * Seen by the wallet on its way, or relayed or handed to this page and not confirmed sent once the deposit's own step
    * began (the wallet names the vault as that step starts): it may have been sent. A send the action made before that
-   * step, such as the company's records anchored in its first step, is no deposit.
+   * step, such as the company's records anchored in its first step, is no deposit. A stop that told nothing at all
+   * (the wallet's window closed, ran out of time or could not be read) after anything was handed over may have sent it too.
    */
   const seen = told['state'] === PRIVATE_DEPOSIT.notYetSeen || told['state'] === PRIVATE_DEPOSIT.landedNotRecorded;
   const began = typeof told['vault'] === 'string';
   return {
     of: DEPOSITED.failed, kind: DEPOSIT_KIND.private, amount,
-    mayHaveBeenSent: seen || (began && (ended.relayed > 0 || ended.unconfirmed > 0)),
-    refusal: ACT_REFUSAL.didNotFinish, reasons: [],
+    mayHaveBeenSent: seen || ((began || ended.outcome === undefined) && (ended.relayed > 0 || ended.unconfirmed > 0)),
+    refusal: ACT_REFUSAL.didNotFinish, reasons: [], ...stoppedAs(ended),
   };
 }
 

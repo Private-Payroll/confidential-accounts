@@ -14,7 +14,7 @@ import { ChainLedger } from './chain.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
 import { saysNothingWasSent } from '../core/jobs.js';
-import { feeAnswerCodeOf } from '../midnight/sponsor.js';
+import { FeeNotPaid, feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { FeeRefused } from '../midnight/fee-ceiling.js';
 import { NETWORK } from 'midnight-identity/network';
 
@@ -228,6 +228,25 @@ describe('sending a transaction a device proved', () => {
     expect(r.steps).toContain('fee payer releases');
     expect(r.steps).toContain('company releases');
     expect(r.steps).not.toContain('submitted');
+  });
+
+  /* RED WHEN: an error leaving a sent proven transaction carries the node address with its query, the network's project token, into the sentence the page is shown; or loses its class, its mark or its code. */
+  it('shows no project token of a node address in an error that leaves it, and keeps its class, mark and code', async () => {
+    const at = 'could not reach wss://node.example.org/ws?project_id=SECRET123 in time';
+    const shown = 'could not reach wss://node.example.org/ws in time';
+    const unpaid = new FeeNotPaid(at);
+    const before: any = await rig({ addFee: async () => { throw unpaid; } }).ledger.submitProven('acc_1', BYTES, reads(tx([call(OURS)]))).catch((e) => e);
+    expect(before).toBe(unpaid);
+    expect(before.message).toBe(shown);
+    expect(saysNothingWasSent(before)).toBe(true);
+    expect(feeAnswerCodeOf(before)).toBe('fee-not-paid');
+    const plain: any = await rig({ addFee: async () => { throw new Error(`could not balance ${at}`); } }).ledger.submitProven('acc_1', BYTES, reads(tx([call(OURS)]))).catch((e) => e);
+    expect(plain.message).not.toContain('SECRET123');
+    const thrown = new Error(at);
+    const sending: any = await rig({ submit: async () => { throw thrown; } }).ledger.submitProven('acc_1', BYTES, reads(tx([call(OURS)]))).catch((e) => e);
+    expect(sending).toBe(thrown);
+    expect(sending.message).toBe(shown);
+    expect(saysNothingWasSent(sending)).toBe(false);
   });
 
   /* RED WHEN: a submission that threw is reported as nothing sent. It may have landed. */

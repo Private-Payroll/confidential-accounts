@@ -333,6 +333,24 @@ export function shownAddress(url: string): string {
   return `${u.origin}${u.pathname}`;
 }
 
+const ADDRESS_IN_TEXT = /\b(?:https?|wss?):\/\/[^\s<>"'`)\]]+/giu;
+const ENDS_A_SENTENCE = /[.,;:!?]+$/u;
+
+/**
+ * **EVERY ADDRESS INSIDE A FREE TEXT AS IT MAY BE SHOWN**: each http(s) or
+ * ws(s) address is rewritten as `shownAddress` shows it, so a failure's text
+ * that carries an endpoint carries no project token. Punctuation that ends a
+ * sentence stays outside the address, an address with no query is left exactly
+ * as written, and all other text is returned unchanged.
+ */
+export function shownAddressesIn(text: string): string {
+  return text.replace(ADDRESS_IN_TEXT, (found) => {
+    const tail = ENDS_A_SENTENCE.exec(found)?.[0] ?? '';
+    const address = found.slice(0, found.length - tail.length);
+    return (/[?#]/u.test(address) ? shownAddress(address) : address) + tail;
+  });
+}
+
 const withToken = (parameter: string, token: string) => (url: string): string => {
   const u = new URL(url);
   u.searchParams.set(parameter, token);

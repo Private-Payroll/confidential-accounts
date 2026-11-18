@@ -17,7 +17,7 @@ import { kindKeyOf } from '../../../src/midnight/records-held.js';
 import { FiledNotEntered, type Filed } from './record-entered-here.js';
 import type { RoundOnThePage } from './governed-call-on-device.js';
 import type { DirectoryHere } from './vault-page-doors.js';
-import type { VaultStartProposals } from './vault-operation.js';
+import type { VaultStartProposals } from './vault-doors.js';
 
 export interface ProposalsKeptInATest {
   readonly doors: VaultStartProposals;

@@ -162,6 +162,12 @@ export const dustViewHeight = (progress: unknown): bigint | null => {
   }
 };
 
+/** The wallet SDK's words when the DUST part cannot date a spend because its trees are not at a recent block. */
+const SYNC_FAILURE = /can be dated|holds no key material/u;
+
+/** How long a fee handed back to be sent elsewhere may still land: no rebuilt wallet takes over inside it. */
+export const HANDED_BACK_WINDOW_MS = 4 * 60_000;
+
 /** Whether a view covering `covered` (from dustViewHeight) has reached block `height`. */
 export const dustViewCovers = (covered: bigint | null, height: bigint): boolean => covered !== null && covered >= height;
 
@@ -189,6 +195,17 @@ export interface FeePayerView {
    * Absent, this view cannot say whether a deadline has passed on the chain.
    */
   chainTime?(): Promise<number>;
+}
+
+/**
+ * Where the fee payer's wallet is held, when something holds it: the one place that says which wallet pays. The
+ * sponsor asks it for a wallet built again, and tells it when the wallet it pays with is found stuck or failing.
+ */
+export interface SponsorWalletHeld {
+  /** A wallet built again since the last payment, handed over between two payments; null when there is none. */
+  next(): SponsorWallet | null;
+  /** Starts building the fee payer's wallet again, in the background, because the sponsor found it stuck or failing. */
+  recover(why: string): void;
 }
 
 /** How long a fee waits for the view, how long one write may run, and the clock it waits by. */
@@ -428,6 +445,10 @@ export class WalletFeeSponsor implements FeeSponsor {
   private readonly paidFor = new WeakMap<object, { company: string | null; estimated: bigint | null }>();
   /** Every transaction whose fee is already in the sponsored-fee record. */
   private readonly recorded = new WeakSet<object>();
+  /** The wallet that booked each recipe and finished transaction: a booking is given back by the wallet that holds it. */
+  private readonly bookedBy = new WeakMap<object, SponsorWallet>();
+  /** Fees finished and not yet recorded or given back, with when: a rebuilt wallet does not take over while one may still land. */
+  private readonly unsettled = new Map<object, number>();
   /** When the write this fee payer is paying for began: the lane names the company at the start of every write. */
   private writeStartedAt: number | null = null;
 
@@ -459,6 +480,8 @@ export class WalletFeeSponsor implements FeeSponsor {
     private fees?: SponsoredFeeSink,
     /** How long a fee waits for the view to be current, and the clock it waits by. */
     private timing: ViewTiming = VIEW_TIMING,
+    /** Where the wallet is held, when something builds it again; absent, this fee payer pays with `wallet` for good. */
+    private held?: SponsorWalletHeld,
   ) {
     if (!ceiling || typeof ceiling.perTransaction !== 'bigint' || ceiling.perTransaction <= 0n) {
       throw new Error(
@@ -466,7 +489,7 @@ export class WalletFeeSponsor implements FeeSponsor {
         + 'so it was not built. Without one it pays whatever it is handed.');
     }
     const view = wallet.view;
-    if (view) this.landed = (tx, deadline) => this.landedOnTheChain(view, tx, deadline);
+    if (view) this.landed = (tx, deadline) => this.landedOnTheChain(this.wallet.view ?? view, tx, deadline);
   }
 
   /**
@@ -516,6 +539,7 @@ export class WalletFeeSponsor implements FeeSponsor {
         return;
       }
       if (now() - started >= waitMs) {
+        if (!atTheTip) this.held?.recover(`its view of the network's DUST stayed behind the indexer's block ${tip}`);
         if (atTheTip && last !== null) {
           if (view.lastAccepted === last) view.lastAccepted = null;
           view.note(`THE WALLET'S HISTORY NEVER SHOWED ITS LAST PAYMENT ${last}: it is no longer waited for, and the next fee waits on the view alone`);
@@ -526,6 +550,21 @@ export class WalletFeeSponsor implements FeeSponsor {
       }
       await sleep(pollMs);
     }
+  }
+
+  /**
+   * A wallet built again since the last payment takes over here, before a payment starts and never during one, so no
+   * payment is balanced by one wallet and finished by another. The last payment the old view had not shown yet is
+   * carried over, so the new view still waits for it.
+   */
+  private takeHandOver(): void {
+    const now = this.timing.now();
+    for (const [tx, at] of this.unsettled) if (now - at >= HANDED_BACK_WINDOW_MS) this.unsettled.delete(tx);
+    if (this.unsettled.size > 0) return;
+    const next = this.held?.next();
+    if (!next) return;
+    if (next.view && this.wallet.view) next.view.lastAccepted = this.wallet.view.lastAccepted;
+    this.wallet = next;
   }
 
   /** The refusal for a fee not paid, written down for the operator with the view's numbers. */
@@ -551,6 +590,7 @@ export class WalletFeeSponsor implements FeeSponsor {
 
   /** Waits for the view for at most `waitMs`, then balances, proves and checks the fee against the ceiling. */
   private async payFee(customerFinalised: unknown, ttl: Date, waitMs: number): Promise<unknown> {
+    this.takeHandOver();
     await this.waitForTheView(waitMs);
     /*
      * **READ BEFORE ANYTHING IS BOOKED.** This is the only moment the expected
@@ -581,6 +621,7 @@ export class WalletFeeSponsor implements FeeSponsor {
     ).catch((e: unknown) => {
       /* A balance that could not be made is written down with the numbers that explain it, then raised as it came. */
       this.wallet.view?.note(`a fee could not be balanced: ${String((e as Error)?.message ?? e).slice(0, 200)} (${this.wallet.view.numbers()})`);
+      if (SYNC_FAILURE.test(String((e as Error)?.message ?? e))) this.held?.recover('its DUST could not date a spend');
       throw e;
     });
 
@@ -618,7 +659,10 @@ export class WalletFeeSponsor implements FeeSponsor {
       try { await this.release(finalised); } catch { /* the refusal is the error that matters */ }
       throw new FeeRefused(overCeiling);
     }
+    if (isObject(recipe)) this.bookedBy.set(recipe, this.wallet);
     if (isObject(finalised)) {
+      this.bookedBy.set(finalised, this.wallet);
+      this.unsettled.set(finalised, this.timing.now());
       this.madeFrom.set(finalised, { customerFinalised, ttl });
       this.paidFor.set(finalised, { company: this.company, estimated: this.estimated });
     }
@@ -738,6 +782,7 @@ export class WalletFeeSponsor implements FeeSponsor {
     const at = new Date().toISOString();
     const actual = await this.wallet.paidFee(String(ref)).catch(() => null);
     if (isObject(landed)) this.recorded.add(landed);
+    if (isObject(finalisedTransaction)) this.unsettled.delete(finalisedTransaction);
     if (this.fees) {
       try {
         this.fees.record({
@@ -779,7 +824,9 @@ export class WalletFeeSponsor implements FeeSponsor {
    * what the interface member this satisfies is for.
    */
   async release(booking: Booking): Promise<void> {
-    await this.wallet.revert(booking);
+    const owner = isObject(booking) ? this.bookedBy.get(booking) ?? this.wallet : this.wallet;
+    if (isObject(booking)) this.unsettled.delete(booking);
+    await owner.revert(booking);
   }
 
 
@@ -828,6 +875,7 @@ export class WalletFeeSponsor implements FeeSponsor {
 
   /* A fee added and handed back is in the record once its transaction lands, as a fee submitted here is. */
   private async recordLanded(finalised: unknown, hash: string): Promise<void> {
+    if (isObject(finalised)) this.unsettled.delete(finalised);
     if (!isObject(finalised) || this.recorded.has(finalised) || !this.fees) return;
     this.recorded.add(finalised);
     const paid = this.paidFor.get(finalised);

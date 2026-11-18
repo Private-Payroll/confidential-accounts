@@ -15,7 +15,7 @@ import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
 import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
-import { seatHereIn, vaultNotesHere, type RebuildDoors } from 'vaults-web-shared/vault-operation.js';
+import { seatHereIn, vaultNotesHere, type RebuildDoors } from 'vaults-web-shared/vault-notes-here.js';
 import { vaultRecordsRoutes } from './vault-records-route.js';
 import {
   aCompanyOfTwoSeats, acmeDirectory, acmeDirectoryDeps, ADA, ADDRESS, BO, chains, CO, sendAs, vaultRecords, type Seat,

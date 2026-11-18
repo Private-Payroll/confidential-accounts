@@ -16,6 +16,10 @@ import { recordingChannel } from '../testing/recording-channel.js';
 import { readAskRecord } from '../lib/ask-record.js';
 import { ApproveBalance } from './approve-balance.js';
 import { Approve } from './approve.js';
+import { forgetPayingPick, keepPayingPick } from './paying-pick.js';
+import { openWalletId } from '../accounts/wallets-held.js';
+import { toBase64Url } from 'midnight-identity/passkey/bytes';
+import { fingerprintOf } from 'midnight-identity/recovery/pieces';
 import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '../chain/balance-for-page.js';
 import { A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT, readWhatThePageAsks } from '../chain/balance-for-page.js';
 import { of } from 'rxjs';
@@ -618,9 +622,11 @@ describe('THE WALLET NEVER SAYS IT IS AT WORK BECAUSE A CLOCK TICKED', () => {
 
 describe('THE APPROVAL SURFACE ROUTES A BALANCE ASK TO THIS SCREEN', () => {
   let port: ReturnType<typeof watchedStore>;
-  beforeEach(() => { port = watchedStore(); });
+  beforeEach(() => { port = watchedStore(); forgetPayingPick(); });
 
   it('and bytes that are not a proven transaction are refused there, with nothing sent', async () => {
+    /* The account that pays was picked in the window before the passkey, as every payment's is. */
+    keepPayingPick(ask, { walletId: openWalletId(), fingerprint: toBase64Url(fingerprintOf(SECRET)), account: 0 });
     const opener = watchedOpener();
     const handlers: ((event: MessageEvent) => void)[] = [];
     const view: ChannelWindow = {

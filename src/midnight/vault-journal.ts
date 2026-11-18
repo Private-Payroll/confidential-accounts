@@ -305,7 +305,8 @@ export class DepositJournalInStore implements DepositJournal {
    * at a time, and it is read again after every lost race; so a line for this
    * very coin filed within `DEPOSIT_CLAIM_LIVE_MS` of this claim refuses it with
    * `DepositSlotTaken`, and the caller tries the next slot. An older line is a
-   * deposit that can no longer land, and its slot is free again.
+   * deposit that can no longer land, and its slot is free again; so is a line
+   * marked ended, whose deposit never reached anything that could send it.
    */
   async claim(vaultAddress: string, money: DepositMoney, slot: number, attemptedAt: string): Promise<DepositAttempt> {
     const nonce = depositNonceAt(this.nonces, money, slot);
@@ -317,7 +318,7 @@ export class DepositJournalInStore implements DepositJournal {
       attemptedAt,
     }), 'deposit', (lines) => {
       const recent = lines.some((l) => l.nonce.toLowerCase() === nonce.toLowerCase() && l.token.toLowerCase() === money.token.toLowerCase()
-        && l.value === money.value && !(at - Date.parse(l.attemptedAt) >= DEPOSIT_CLAIM_LIVE_MS));
+        && l.value === money.value && l.ended !== true && !(at - Date.parse(l.attemptedAt) >= DEPOSIT_CLAIM_LIVE_MS));
       return recent ? new DepositSlotTaken(slot) : null;
     });
     this.written();

@@ -4,7 +4,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
 import { ActionStopped } from './run.js';
-import { NOT_SEALED } from '../../../../packages/web-shared/src/vault-operation.js';
+import { NOT_SEALED } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { fromHex, signingPublicKeyOf } from '../../../../src/core/crypto.js';
 import { openNonceSecrets, recordsKeypairFrom, startNonceSecret } from '../../../../src/midnight/company-nonce-secret.js';
 import { MemorySealedPoolStore } from '../../../../src/midnight/vault-pool.js';
@@ -75,9 +75,12 @@ vi.mock('../../../../packages/web-shared/src/company-key-here.js', async (real) 
     return next ?? { state: 'not-needed' };
   },
 }));
-vi.mock('../../../../packages/web-shared/src/vault-operation.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/vault-operation.js')>()),
+vi.mock('../../../../packages/web-shared/src/vault-private-deposit.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-private-deposit.js')>()),
   depositIntoCompanyVault: async () => { t.order.push('deposit'); return { note: { nonce: '01'.repeat(32), token: '9b'.repeat(32), value: 1n } }; },
+}));
+vi.mock('../../../../packages/web-shared/src/vault-notes-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-notes-here.js')>()),
   vaultNotesHere: async (doors: Record<string, any>, vault: string) => { t.order.push(`refile ${vault.slice(0, 4)}`); t.rebuilt.push({ doors, vault }); return t.notes; },
 }));
 vi.mock('../../../../packages/web-shared/src/records-anchored-here.js', async (real) => ({

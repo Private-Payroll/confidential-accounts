@@ -151,7 +151,7 @@ export function ActionRunner({
   const [state, setState] = useState<RunState | null>(null);
   const [stopping, setStopping] = useState(false);
   /* What a step read with the seat's keys and waits on the person to confirm, with how to answer it. */
-  const [asked, setAsked] = useState<{ readonly lines: readonly Words[]; readonly answer: (yes: boolean) => void } | null>(null);
+  const [asked, setAsked] = useState<{ readonly lines: readonly Words[]; readonly asks: 'read' | 'fee'; readonly answer: (yes: boolean) => void } | null>(null);
   const stop = useRef<AbortController | null>(null);
   const started = useRef(false);
   const mounted = useRef(true);
@@ -181,7 +181,7 @@ export function ActionRunner({
     void runAction({
       definition: action, request, channel, held: { identity, secret, ...(wallet === undefined ? {} : { wallet }), ...(account === undefined ? {} : { account }) }, stop: halt.signal, now,
       watch: (next) => { if (mounted.current) setState(next); },
-      confirm: (lines, cut) => new Promise<boolean>((resolve) => {
+      confirm: (lines, cut, asks = 'read') => new Promise<boolean>((resolve) => {
         let answered = false;
         const answer = (yes: boolean): void => {
           if (answered) return;
@@ -191,7 +191,7 @@ export function ActionRunner({
         };
         cut.addEventListener('abort', () => answer(false), { once: true });
         if (cut.aborted || !mounted.current) answer(false);
-        else setAsked({ lines, answer });
+        else setAsked({ lines, asks, answer });
       }),
     }).then((end) => {
       keepTheEnd(end);
@@ -224,7 +224,7 @@ export function ActionRunner({
 
   if (asked !== null) {
     const at = state ?? { step: 1, steps: Math.max(1, stepsOf(action, request).length) };
-    return <ConfirmWhatWasRead lines={asked.lines} answer={asked.answer} framing={framing} step={at.step} steps={at.steps} />;
+    return <ConfirmWhatWasRead lines={asked.lines} asks={asked.asks} answer={asked.answer} framing={framing} step={at.step} steps={at.steps} />;
   }
 
   const steps = stepsOf(action, request);
@@ -260,30 +260,32 @@ export function ActionRunner({
 }
 
 /**
- * **THE CONFIRM OF WHAT A STEP READ WITH THE SEAT'S KEYS.** Its Confirm is held by the same guard as every Approve
+ * **THE CONFIRM OF WHAT A STEP READ WITH THE SEAT'S KEYS, OR OF A FEE PAID FROM THE PERSON'S OWN DUST.** Its Confirm is held by the same guard as every Approve
  * (`useConsent`), measured afresh from the moment this question appears, so a framed wallet shown too small, hidden or
  * only just drawn cannot be confirmed unread. Stop stands where the running window's Stop stood, and Confirm below it,
  * so a press meant for Stop never lands on Confirm. Focus moves to the heading, never to a button, so a key pressed as
  * the question appears answers nothing.
  */
-function ConfirmWhatWasRead({ lines, answer, framing, step, steps }: {
-  readonly lines: readonly Words[]; readonly answer: (yes: boolean) => void; readonly framing: Framing; readonly step: number; readonly steps: number;
+function ConfirmWhatWasRead({ lines, asks, answer, framing, step, steps }: {
+  readonly lines: readonly Words[]; readonly asks: 'read' | 'fee'; readonly answer: (yes: boolean) => void; readonly framing: Framing; readonly step: number; readonly steps: number;
 }): ReactNode {
   const t = useText();
   const consent = useConsent(framing, lines);
+  /* The fee question comes after the deposit was handed over, so it says so instead of the read question's words. */
+  const of = asks === 'fee' ? 'fee-' : '';
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
   return (
     <>
-      <h1 ref={heading} tabIndex={-1} data-act-confirm data-headline>{t('act.confirm.title')}</h1>
-      <p className="lede" data-act-confirm-lede>{t('act.confirm.lede', { step, steps })}</p>
+      <h1 ref={heading} tabIndex={-1} data-act-confirm data-headline>{t(`act.confirm.${of}title`)}</h1>
+      <p className="lede" data-act-confirm-lede>{t(`act.confirm.${of}lede`, { step, steps })}</p>
       <ul className="m-0 ps-6" data-act-read>
         {lines.map((line, i) => <li key={i} className="text-sm break-all" data-shown-from="wallet">{say(t, line)}</li>)}
       </ul>
       <div className="sticky bottom-0 z-10 -mx-1 flex flex-col gap-2 border-t border-border bg-background px-1 py-3" data-ask-actions>
         <Button size="lg" type="button" variant="outline" onClick={() => answer(false)} data-act-stop>{t('act.stop')}</Button>
-        <Button size="lg" type="button" onClick={() => answer(true)} disabled={!consent.ok} data-act-confirm-button>{t('act.confirm.button')}</Button>
-        <p className="m-0 text-sm text-muted-foreground">{t('act.confirm.stop-why')}</p>
+        <Button size="lg" type="button" onClick={() => answer(true)} disabled={!consent.ok} data-act-confirm-button>{t(`act.confirm.${of}button`)}</Button>
+        <p className="m-0 text-sm text-muted-foreground">{t(`act.confirm.${of}stop-why`)}</p>
         {!consent.ok && <p className="m-0 w-full text-sm text-muted-foreground" data-consent-refused>{consent.says}</p>}
       </div>
     </>

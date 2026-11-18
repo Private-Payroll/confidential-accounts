@@ -41,7 +41,7 @@ import * as midnightTypes from '@midnight-ntwrk/midnight-js-types';
 import { createLedger9ProofProvider, LedgerTransaction } from '@midnight-ntwrk/midnight-js-types';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
 import { buildPublicDeposit, buildVaultDeploy, readTransaction, whyNotOnlyThisPublicDeposit, type VaultBuilderDeps } from './vault-builder.js';
-import { whyNotTheDepositBuilt } from './vault-operation.js';
+import { whyNotTheDepositBuilt } from './vault-private-deposit.js';
 import { startVaultWorker } from './vault-worker-entry.js';
 import { provingOnWorkers } from './vault-proof-workers.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from '../../../src/server/vault-artefacts.js';

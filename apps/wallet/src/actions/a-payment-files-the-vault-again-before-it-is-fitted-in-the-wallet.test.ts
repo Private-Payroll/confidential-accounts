@@ -18,8 +18,8 @@ vi.mock('../../../../packages/web-shared/src/device-vault-holdings.js', async (r
   ...(await real<typeof import('../../../../packages/web-shared/src/device-vault-holdings.js')>()),
   deviceVaultHoldings: (doors: Record<string, any>) => { t.holdings = doors; return { isTheHoldings: true }; },
 }));
-vi.mock('../../../../packages/web-shared/src/vault-operation.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/vault-operation.js')>()),
+vi.mock('../../../../packages/web-shared/src/vault-notes-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-notes-here.js')>()),
   vaultNotesHere: async (doors: Record<string, any>, vault: string) => { t.rebuilt.push({ doors, vault }); return t.notes; },
 }));
 

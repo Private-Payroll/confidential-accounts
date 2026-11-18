@@ -1,8 +1,7 @@
 import type { Hex } from '../../../../src/core/crypto.js';
-import {
-  createCompanyVault, NOT_BUILT, type CreateVaultDoors, START_READ_STOP, START_STOP, VaultNotBuilt, VaultNotTheCompanys, VaultStartOwed,
-  type SecretKeptHere,
-} from '../../../../packages/web-shared/src/vault-operation.js';
+import { createCompanyVault, VaultNotBuilt } from '../../../../packages/web-shared/src/vault-created-and-started.js';
+import { NOT_BUILT, START_READ_STOP, START_STOP, VaultNotTheCompanys, VaultStartOwed } from '../../../../packages/web-shared/src/vault-start-stops.js';
+import { type CreateVaultDoors, type SecretKeptHere } from '../../../../packages/web-shared/src/vault-doors.js';
 import { VaultInfoRefused } from '../../../../packages/web-shared/src/vault-info-here.js';
 import { RetireRefused, retiredBy } from '../../../../packages/web-shared/src/vault-retire-round.js';
 import { readAccountAddress, readCompanyLabel, readVaultAddress } from 'midnight-identity/profile/company-label';

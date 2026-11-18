@@ -51,11 +51,13 @@ import { theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network
 import { handInFundedParties } from '../src/wiring/handed-in-wallets.js';
 import { bringUpWallet, dustViewAtTip } from './wallet-bringup.js';
 import { describeDustView } from './dust-wallet.js';
-import { feePayerOver, paidFeeFrom } from './funded-wallets.js';
+import { feePayerHeldOver, paidFeeFrom } from './funded-wallets.js';
+import { feePayerHeldFrom } from './fee-payer-held.js';
+import type { LiveWallet } from './wallet-bringup.js';
 import { coinlessCustomer } from '../src/midnight/coinless-customer.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import {
-  POSTURE_NOT_CARRIED, parametersBeforeServing, postureFrom, refuseToServe, somethingAlreadyServes, waitForThePages,
+  POSTURE_NOT_CARRIED, parametersBeforeServing, postureFrom, refuseToServe, showNoTokenInTheConsole, somethingAlreadyServes, waitForThePages,
 } from './serve-with-wallets-rules.js';
 import { applicationPageFrom, pageStartsFor, refuseWhatTheServerSaid } from './serve-rules.js';
 import { loadEnvFile } from '../src/db/connect.js';
@@ -92,6 +94,7 @@ const line = (s = '') => console.log(s);
 const step = (n: number, of: number, what: string) => line(`\n  [${n}/${of}] ${what}`);
 const good = (s: string) => line(`      ${s}`);
 
+showNoTokenInTheConsole(console);
 stopEverythingOnExit();
 
 /** Whether a page answers at an origin with a success status. No answer, or any other status, is no. */
@@ -197,9 +200,12 @@ async function main() {
   const cfg = await startEnvironment(
     env, new StaticProofServerContainer(PROVER_PORT), (s) => good(s));
 
-  const payerLive = await bringUpWallet(
-    logger, cfg, readFileSync(SPONSOR_SEED_FILE, 'utf8').trim(), NETWORK, ROOT,
-    { withDust: true, requireDust: true, onNote: (m) => good(m) });
+  const payerSeed = readFileSync(SPONSOR_SEED_FILE, 'utf8').trim();
+  const bringUpPayer = (): Promise<LiveWallet> => bringUpWallet(
+    logger, cfg, payerSeed, NETWORK, ROOT, { withDust: true, requireDust: true, onNote: (m) => good(m) });
+  const payerLive = await bringUpPayer();
+  const payer = feePayerHeldFrom(
+    payerLive, bringUpPayer, { seed: payerSeed, network: NETWORK, root: ROOT }, (line) => good(line));
   good(`the wallet that pays holds ${payerLive.night()} NIGHT and ${payerLive.dust()} DUST`);
 
   /* ---------------------------------------------------------------- 3 */
@@ -210,16 +216,15 @@ async function main() {
 
   mkdirSync(STATE_DIR, { recursive: true });
   handInFundedParties({
-    sponsor: feePayerOver(
-      {
-        provider: payerLive.wallet, facade: payerLive.wallet.wallet,
-        dust: () => payerLive.dust(), night: () => payerLive.night(),
-      },
+    sponsor: feePayerHeldOver(
+      payer,
       paidFeeFrom(publicData),
       fileFeeSink(FEE_RECORD, (p, l) => appendFileSync(p, l)),
-      ({ fee, remaining }) => good(
-        `paid ${fee ?? 'an amount that was not read back'}; `
-        + `${remaining} DUST reported after (it lags, and is not a capacity reading)`),
+      ({ fee, remaining }) => {
+        good(`paid ${fee ?? 'an amount that was not read back'}; `
+          + `${remaining} DUST reported after (it lags, and is not a capacity reading)`);
+        void payer.save();
+      },
       ceiling,
     ),
     /* The company's side holds nothing: see the header. */

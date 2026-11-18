@@ -18,10 +18,9 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import {
   ApprovalNotOwed, nothingWasSentBy, refuseARunALeaverRaisedHere,
 } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import {
-  approveStartRoundHere, carryStartRoundHere, finishedSecretRunHere, SAID, START_STOP, StartRoundRefused, startRoundOpenedHere, VaultStartOwed,
-  type CreateVaultDoors, type StartRoundKind, type StartRoundNamed,
-} from '../../../../packages/web-shared/src/vault-operation.js';
+import { approveStartRoundHere, carryStartRoundHere, finishedSecretRunHere, StartRoundRefused, startRoundOpenedHere, type StartRoundKind, type StartRoundNamed } from '../../../../packages/web-shared/src/vault-start-round.js';
+import { SAID, START_STOP, VaultStartOwed } from '../../../../packages/web-shared/src/vault-start-stops.js';
+import { type CreateVaultDoors } from '../../../../packages/web-shared/src/vault-doors.js';
 import { approversHere, governanceDoorsFor, handOverMarked, runsOutrunHere, type CompanyChain, type CompanyReach, type Handed } from './company-reach.js';
 import { vaultDoorsFor, type CreateVaultReach } from './create-vault.js';
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
