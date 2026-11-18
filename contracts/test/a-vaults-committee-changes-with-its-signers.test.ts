@@ -68,10 +68,12 @@ import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-seale
 import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
-import {
-  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
-  type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight,
-} from 'vaults-web-shared/vault-operation.js';
+import { createCompanyVault } from 'vaults-web-shared/vault-created-and-started.js';
+import { depositIntoCompanyVault, type DepositInFlight, type DepositsInFlight } from 'vaults-web-shared/vault-private-deposit.js';
+import { openCompanyVaultPool } from 'vaults-web-shared/vault-pool-opened.js';
+import { payPrivatelyFromCompanyVault } from 'vaults-web-shared/vault-pay-privately-and-merge.js';
+import { type VaultService } from 'vaults-web-shared/vault-service.js';
+import { type PaymentInFlight } from 'vaults-web-shared/vault-payment-in-flight.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
 import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chain/balance-for-page.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';

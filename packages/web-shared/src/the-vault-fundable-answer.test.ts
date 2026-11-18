@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { Hex } from '../../../src/core/crypto.js';
-import {
-  vaultFundableHere, depositIntoCompanyVault, depositPubliclyIntoCompanyVault, mergeNotesInCompanyVault,
-  payPubliclyFromCompanyVault, payPrivatelyFromCompanyVault, vaultNotesHere, openCompanyVaultPool, checkWhatThisBrowserSent,
-  VaultNotReadHere, VaultNotTheCompanys, VaultStartOwed,
-} from './vault-operation.js';
+import { vaultFundableHere } from './vault-fundable-here.js';
+import { depositIntoCompanyVault } from './vault-private-deposit.js';
+import { depositPubliclyIntoCompanyVault } from './vault-public-deposit.js';
+import { mergeNotesInCompanyVault, payPrivatelyFromCompanyVault } from './vault-pay-privately-and-merge.js';
+import { payPubliclyFromCompanyVault } from './vault-public-payout.js';
+import { vaultNotesHere } from './vault-notes-here.js';
+import { openCompanyVaultPool } from './vault-pool-opened.js';
+import { checkWhatThisBrowserSent } from './check-what-this-browser-sent.js';
+import { VaultNotReadHere, VaultNotTheCompanys, VaultStartOwed } from './vault-start-stops.js';
 import type { VaultOnChainOnTheWire } from './vault-worker-client.js';
 
 /*

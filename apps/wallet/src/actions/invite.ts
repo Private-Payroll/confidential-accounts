@@ -19,7 +19,7 @@ import {
 import { InvitationNotBound, nothingWasSentBy, signerByAddressDoorsOf, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { keptSeatInvitationForAddress, withoutSeatInvitationsKept, withSeatInvitationKept } from '../../../../packages/web-shared/src/kept-seat-invitations.js';
 import { FiledNotEntered, manifestServiceFor } from '../../../../packages/web-shared/src/record-entered-here.js';
-import { seatHereIn } from '../../../../packages/web-shared/src/vault-operation.js';
+import { seatHereIn } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';

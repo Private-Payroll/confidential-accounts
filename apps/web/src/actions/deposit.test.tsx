@@ -501,6 +501,41 @@ describe('how it ended', () => {
     expect(q(view.container, '[data-action=check-last-deposit]')).toBeNull();
   });
 
+  /* RED WHEN: a private deposit the wallet stopped for a held refusal, which the page keeps as maybe sent, does not show that refusal's own sentence with the check button; says nothing was sent or no money moved; leaves out that it may still arrive within 80 minutes or that this vault takes no new deposit from this browser until then; or shows a key or a code of the wallet's. */
+  it('words each held stop inside the may-have-been-sent case, and prints no key or code', () => {
+    const tail = ' The deposit may still arrive until its window closes, within 80 minutes. This vault takes no new deposit from this browser until then.';
+    const sentences = {
+      declined: 'Your wallet stopped because you said no to its network fee.' + tail,
+      'too-little-dust': 'Your wallet stopped because it does not hold enough DUST to pay its network fee.' + tail,
+      'not-paid': 'Your wallet stopped because its network fee could not be paid.' + tail,
+      'network-refused': 'Your wallet stopped because the network refused the deposit.' + tail,
+    } as const;
+    for (const kind of Object.keys(sentences) as Array<keyof typeof sentences>) {
+      dp.now = failed({ mayHaveBeenSent: true, reasons: [], stopped: kind });
+      const view = draw();
+      expect(q(view.container, `[data-stopped=${kind}]`)!.textContent, kind).toContain(sentences[kind]);
+      expect(q(view.container, '[data-action=check-last-deposit]'), kind).not.toBeNull();
+      expect(view.container.textContent, kind).not.toMatch(/nothing was sent|no money moved/iu);
+      expect(view.container.textContent, kind).not.toContain('act.private-deposit');
+      expect(view.container.textContent, kind).not.toMatch(/too-little-dust|not-paid|network-refused|held\./u);
+      cleanup();
+    }
+  });
+
+  /* RED WHEN: a build step that was refused with nothing sent shows anything but its own sentence, or the same words are shown for a deposit that may have been sent. */
+  it('words a refused build step only where nothing may have been sent', () => {
+    dp.now = failed({ mayHaveBeenSent: false, reasons: [], stopped: 'not-made' });
+    let view = draw();
+    expect(q(view.container, '[data-stopped=not-made]')!.textContent).toContain('This deposit could not be made, and nothing was sent. No money moved.');
+    expect(view.container.textContent).not.toContain('act.private-deposit');
+    cleanup();
+    dp.now = failed({ mayHaveBeenSent: true, reasons: [], stopped: 'not-made' });
+    view = draw();
+    expect(q(view.container, '[data-stopped]')).toBeNull();
+    expect(view.container.textContent).not.toContain('could not be made');
+    expect(q(view.container, '[data-action=check-last-deposit]')).not.toBeNull();
+  });
+
   /* RED WHEN: a refusal where the vault cannot take money does not lead to the setup steps, or leads there for one that setup cannot mend. */
   /* RED WHEN: a public deposit that may have been sent is led with the words for a private one (press Check my last deposit), offers Check my last deposit, which finds only private deposits, or offers Try again before the time until which the same money must not be put in again; or leaves out that time, or that the person looks at the wallet's public balance. */
   it('leads a public deposit that may have been sent with the time not to put the same money in before, and holds Try again until then', async () => {

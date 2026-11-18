@@ -400,10 +400,10 @@ describe('the rehearsal is said out loud, and the paying wallet is named', () =>
 });
 
 describe('the live surface — real by default, rehearsal one quiet click away', () => {
-  it('live mode is the default, says it is real, and names every host', () => {
+  it('live mode is the default, says this is a test network (the record says so), and names every host', () => {
     const fake = fakeWiring({ live: true });
     renderSend(fake.wiring);
-    expect(screen.getByText(/This is real\./u)).toBeTruthy();
+    expect(screen.getByText(/This is a test network\./u)).toBeTruthy();
     /* The hosts, named before anything is pressed. The key
      * material is OURS — vendored, pinned, served from this wallet's own
      * origin — so the Foundation's bucket is no longer a host a
@@ -421,9 +421,9 @@ describe('the live surface — real by default, rehearsal one quiet click away',
      * in its sentences - instead of the record's label, which is the one wording that
      * is true on whichever network this wallet is built for. */
     renderSend(fakeWiring({ live: true }).wiring);
-    const notice = document.querySelector('section[aria-label^="This is real."]');
+    const notice = document.querySelector('section[aria-label^="This is a test network."]');
     const label = networkRecord(NETWORK).label;
-    expect(notice?.textContent).toContain(`on ${label}, pays a real fee`);
+    expect(notice?.textContent).toContain(`moves tNIGHT on ${label}, a test network`);
     expect(notice?.textContent).toContain(`through the ${label} node`);
     const leftOver = (notice?.textContent ?? '').split(label).join('');
     for (const id of NETWORK_IDS) expect(leftOver.toLowerCase()).not.toContain(id);
@@ -435,7 +435,7 @@ describe('the live surface — real by default, rehearsal one quiet click away',
     fireEvent.click(screen.getByText('Practise on a pretend chain first'));
     expect(screen.getByText(/A rehearsal, not a real send/u)).toBeTruthy();
     fireEvent.click(screen.getByText('Back to real sending'));
-    expect(screen.getByText(/This is real\./u)).toBeTruthy();
+    expect(screen.getByText(/This is a test network\./u)).toBeTruthy();
     typeRecipient(unshieldedRecipient);
     typeAmount('1');
     fireEvent.click(checkButton());
@@ -447,7 +447,7 @@ describe('the live surface — real by default, rehearsal one quiet click away',
     const fake = fakeWiring();
     renderSend(fake.wiring);
     expect(screen.getByText(/A rehearsal, not a real send/u)).toBeTruthy();
-    expect(screen.queryByText(/This is real\./u)).toBeNull();
+    expect(screen.queryByText(/This is a test network\./u)).toBeNull();
     expect(fake.termsFetches).toHaveLength(0);
   });
 });

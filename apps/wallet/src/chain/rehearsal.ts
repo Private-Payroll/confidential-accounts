@@ -1,4 +1,4 @@
-import { Effect, Either, Exit, Scope } from 'effect';
+import { Effect, Either, Exit, Scope, Stream } from 'effect';
 import {
   V9, makeV9SimulatorBlockDataFetcher, makeV9SimulatorProvingService, makeV9SimulatorSubmissionService,
 } from '@midnightntwrk/wallet-sdk/capabilities';
@@ -106,6 +106,43 @@ const unshieldedSimSyncCapability = (): ReturnType<typeof UnshieldedV2.Sync.make
   };
 };
 
+/*
+ * THE SDK'S SIMULATOR SYNC FOR THE PRIVATE AND DUST WALLETS REPORTS THE START
+ * AS ITS PROTOCOL VERSION AFTER IT HAS SYNCED. A wallet records the version of
+ * the blocks it applies, but what it tells the facade is one state behind: the
+ * state goes out first, and the version change that follows it is only
+ * carried by the next state. The simulator sends the DUST wallet nothing more
+ * once it has the last block, and the private wallet nothing more until the
+ * clock moves, so each stays on the start and, on a fork schedule that puts
+ * ledger-v9 later, the facade reads the whole wallet as on the earlier ledger
+ * and refuses to act. (The public wallet's simulator sync sends a state for
+ * every change, so it is never behind.)
+ *
+ * So these two wrappers hand each update to the SDK's own sync twice. The
+ * second changes nothing in the wallet, because the first has moved its cursor
+ * past what the update carries; it is the state that carries the version the
+ * first one recorded. Nothing is re-implemented: the service and the capability
+ * inside are the SDK's own.
+ */
+const eachUpdateTwice = <Args extends unknown[], Update, Failure, Needs>(
+  updates: (...args: Args) => Stream.Stream<Update, Failure, Needs>,
+) => (...args: Args): Stream.Stream<Update, Failure, Needs> =>
+    Stream.flatMap(updates(...args), (update) => Stream.make(update, update));
+
+const shieldedSimSyncService = (
+  config: Parameters<typeof ShieldedV2.Sync.makeSimulatorSyncService>[0],
+): ReturnType<typeof ShieldedV2.Sync.makeSimulatorSyncService> => {
+  const inner = ShieldedV2.Sync.makeSimulatorSyncService(config);
+  return { ...inner, updates: eachUpdateTwice(inner.updates) };
+};
+
+const dustSimSyncService = (
+  config: Parameters<typeof DustV2.SyncService.makeSimulatorSyncService>[0],
+): ReturnType<typeof DustV2.SyncService.makeSimulatorSyncService> => {
+  const inner = DustV2.SyncService.makeSimulatorSyncService(config);
+  return { ...inner, updates: eachUpdateTwice(inner.updates) };
+};
+
 /**
  * The simulator's own clock, exposed the way the facade wants a clock. The
  * dust wallet projects generation from `clock.now()`, so the facade and the
@@ -182,6 +219,14 @@ export interface RehearsalOptions {
   /** Skip the DUST registration step — for tests that exercise exactly the
    * cannot-pay-a-fee refusal. */
   readonly withoutDust?: boolean;
+  /** The protocol version where the facade's fork schedule puts ledger-v9.
+   * Defaults to the start, the way the pretend chain runs; the live schedule
+   * puts it later, and a rehearsal that sets it there catches a wallet that
+   * never learned the chain had reached it. */
+  readonly ledgerNineFrom?: ProtocolVersion.ProtocolVersion;
+  /** The protocol version the pretend chain's blocks carry. Defaults to the
+   * start. */
+  readonly chainVersion?: ProtocolVersion.ProtocolVersion;
 }
 
 export interface Rehearsal {
@@ -218,7 +263,7 @@ function simulatedWallets(
     },
     new ShieldedV2.V2Builder()
       .withTransactionType<ProofErasedTransaction>()
-      .withSync(ShieldedV2.Sync.makeSimulatorSyncService, ShieldedV2.Sync.makeSimulatorSyncCapability)
+      .withSync(shieldedSimSyncService, ShieldedV2.Sync.makeSimulatorSyncCapability)
       .withSerializationDefaults()
       .withTransacting(ShieldedV2.Transacting.makeSimulatorTransactingCapability)
       .withCoinSelectionDefaults()
@@ -257,7 +302,7 @@ function simulatedWallets(
     },
     new DustV2.V2Builder()
       .withTransactionType<ProofErasedTransaction>()
-      .withSync(DustV2.SyncService.makeSimulatorSyncService, DustV2.SyncService.makeSimulatorSyncCapability)
+      .withSync(dustSimSyncService, DustV2.SyncService.makeSimulatorSyncCapability)
       .withSerializationDefaults()
       .withTransacting(DustV2.Transacting.makeSimulatorTransactingCapability)
       .withCoinSelectionDefaults()
@@ -324,6 +369,7 @@ export async function startRehearsal(
   const scope = Effect.runSync(Scope.make());
   const simulator = await Effect.runPromise(Scope.extend(V9.Simulator.init({
     networkId: NETWORK,
+    protocolVersion: options.chainVersion,
     genesisMints: [
       {
         type: 'unshielded',
@@ -355,7 +401,7 @@ export async function startRehearsal(
         relayURL: new URL(NOWHERE_WS),
         indexerClientConnection: { indexerHttpUrl: NOWHERE_HTTP, indexerWsUrl: NOWHERE_WS },
         txHistoryStorage: new NoOpTransactionHistoryStorage(),
-        forks: REHEARSAL_FORKS,
+        forks: options.ledgerNineFrom === undefined ? REHEARSAL_FORKS : { v9: options.ledgerNineFrom },
       },
       shielded: () => shielded,
       unshielded: () => unshielded,

@@ -68,7 +68,8 @@ vi.mock('./upkeep.js', async (real) => {
 
 const { payRunAction, walletHoldsTheMergeKey } = await import('./pay-run.js');
 const { LegStopped } = await import('../../../../packages/web-shared/src/leg-paid-here.js');
-const { PaymentLandedUnrecorded, PaymentNotYetSeen, PaymentStillInFlight, PublicPaymentNotYetSeen } = await import('../../../../packages/web-shared/src/vault-operation.js');
+const { PaymentLandedUnrecorded, PaymentNotYetSeen, PaymentStillInFlight } = await import('../../../../packages/web-shared/src/vault-payment-in-flight.js');
+const { PublicPaymentNotYetSeen } = await import('../../../../packages/web-shared/src/vault-public-payout.js');
 const { pureCircuits: P } = await import('../../../../contracts/managed/contract/index.js');
 
 const secret = newSecret();

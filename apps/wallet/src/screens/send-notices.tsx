@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Button, Card, CardContent, Section } from 'vaults-ui';
 import { NETWORK } from '../config.js';
-import { networkRecord } from '../../../../src/core/networks.js';
+import { networkIsReal, networkRecord } from '../../../../src/core/networks.js';
 import type { ownedAddressFor } from '../accounts/owned-address.js';
 import type { RehearsalScenario } from '../chain/rehearsal.js';
 import type { SendWiring } from '../chain/send-context.js';
@@ -29,7 +29,7 @@ export function PayingWalletCard({ owned }: {
             )}
             <p className="m-0 mt-1 text-sm text-muted-foreground">
               Money leaves <strong className="font-medium text-foreground">{owned.owner}</strong>
-              {' '}— the wallet open on{' '}
+              {', '}the wallet open on{' '}
               <a
                 className="text-primary underline-offset-4 hover:underline"
                 href={hrefOf('home')}
@@ -51,13 +51,15 @@ export function LiveNotice({ inFlight, switchMode }: {
   readonly switchMode: (next: Mode) => void;
 }): ReactNode {
   const network = networkRecord(NETWORK).label;
+  const real = networkIsReal(NETWORK);
+  const headline = real ? 'This is real.' : 'This is a test network.';
   return (
     <Section
       list={false} box={false}
-      aria-label={`This is real. ${network}`}
+      aria-label={`${headline} ${network}`}
       title={(
         <span className="flex flex-wrap items-center gap-2">
-          This is real.
+          {headline}
           <StatusBadge tone="warning">{network}</StatusBadge>
         </span>
       )}
@@ -65,13 +67,18 @@ export function LiveNotice({ inFlight, switchMode }: {
       <Card>
         <CardContent className="flex flex-col gap-3">
           <p className="m-0 text-sm text-muted-foreground">
-            Sending here moves real tNIGHT on {network}, pays a real fee in DUST, and
-            cannot be taken back. Two hosts can be dialled, and nothing is asked of
+            {real
+              ? <>Sending here moves real tNIGHT on {network}, pays a real fee in DUST, and
+                cannot be taken back.</>
+              : <>Sending here moves tNIGHT on {network}, a test network whose tokens have
+                no value, and pays a fee in DUST that has none either. It cannot be taken
+                back.</>}{' '}
+            Two hosts can be dialled, and nothing is asked of
             either until you press: checking a payment syncs this wallet from the
             indexer, and sending submits through the {network} node. The proof is
             built in this browser, from circuit key material served by this
             wallet&rsquo;s own origin and verified against pinned fingerprints
-            before use — no third party is asked for it.
+            before use. No third party is asked for it.
           </p>
           {/*
             * SAID BEFORE THEY START, NOT AFTER THEY ARE TRAPPED —
@@ -80,13 +87,13 @@ export function LiveNotice({ inFlight, switchMode }: {
             * halfway through a proof can only sit there.
             */}
           <p className="m-0 text-sm text-muted-foreground">
-            Proving happens in this browser and can take minutes — the screen keeps
+            Proving happens in this browser and can take minutes. The screen keeps
             its own clock and says which stage it is at.{' '}
             <strong className="font-medium text-foreground">
               You have to stay on this screen while it works.
             </strong>{' '}
             The proof is built in this tab and nothing is submitted until it is
-            finished, so closing the tab or letting the phone sleep sends nothing —
+            finished, so closing the tab or letting the phone sleep sends nothing:
             it throws the work away and it starts again from the form. Pick a moment
             when you can leave this open for {asClock(PROVING_USUALLY_MS)} or so.
           </p>
@@ -129,7 +136,7 @@ export function RehearsalNotice({ inFlight, scenario, setScenario, wiring, switc
             <strong className="font-medium text-foreground">
               pretend chain inside this browser
             </strong>{' '}
-            — real coin selection, a real fee, and a block that really rejects a
+            with real coin selection, a real fee, and a block that really rejects a
             malformed transaction. Nothing talks to the network and no real money can
             move here.
           </p>
@@ -162,13 +169,13 @@ export function RehearsalNotice({ inFlight, scenario, setScenario, wiring, switc
               checked={scenario === 'slow-proving'}
               onChoose={() => setScenario('slow-proving')}
             >
-              Slow proving — the proof takes minutes, as it may on the real chain
+              Slow proving: the proof takes minutes, as it may on the real chain
             </ScenarioChoice>
             <ScenarioChoice
               checked={scenario === 'submission-fails'}
               onChoose={() => setScenario('submission-fails')}
             >
-              The worst case — the proof succeeds and the network never answers
+              The worst case: the proof succeeds and the network never answers
             </ScenarioChoice>
           </fieldset>
           {!inFlight && wiring.live && (

@@ -11,7 +11,8 @@ import { deviceSignerFrom, readersIn, recordsReadHere, type DirectoryRead } from
 import type { DeviceRecords, DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { VaultBuilderClient } from 'vaults-web-shared/vault-worker-client.js';
-import { vaultNotesHere, wireOf } from 'vaults-web-shared/vault-operation.js';
+import { vaultNotesHere } from 'vaults-web-shared/vault-notes-here.js';
+import { wireOf } from 'vaults-web-shared/vault-payment-in-flight.js';
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { Fault, FAULT } from '../faults.js';

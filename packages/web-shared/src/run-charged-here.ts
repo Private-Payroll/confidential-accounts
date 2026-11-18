@@ -45,9 +45,9 @@ import { spendingPolicyHere } from './spending-policy-here.js';
 import { refuseARunALeaverRaisedHere } from './governed-call-on-device.js';
 import { oneOffOfTheProposalHere, oneOffsHere, OneOffRefused, refuseAOneOffToAnotherVendorHere, type OneOffBelieved } from './one-off-here.js';
 import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
-import {
-  chainAtOneBlockHere, DEPOSIT_TIME_TO_LIVE_MS, until, type BuiltOnHereDoors, type Pacing,
-} from './vault-operation.js';
+import { chainAtOneBlockHere } from './vault-read-here.js';
+import { DEPOSIT_TIME_TO_LIVE_MS } from './vault-private-deposit.js';
+import { until, type BuiltOnHereDoors, type Pacing } from './vault-doors.js';
 
 /** Why this device did not charge a run to its period, or could not say what a period has been charged. Nothing was sent. */
 export class RunNotChargedHere extends Error {
@@ -303,6 +303,80 @@ type RunCharged =
   | { readonly state: 'charged'; readonly spentBefore: bigint };
 
 /**
+ * The one-off payment this proposal was raised as, or null for a payroll run's leg. Refused when what this device was
+ * asked to charge, or a payroll run of the company's, says it is something else, and when it pays another vendor.
+ */
+async function oneOffChargedHere(
+  doors: RecordsHereDoors & ChargeDoors, run: { readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string },
+  runs: Awaited<ReturnType<typeof believedRunsHere>>, believed: Awaited<ReturnType<typeof oneOffsHere>>['believed'],
+): Promise<OneOffBelieved | null> {
+  /*
+   * A one-off payment, charged as a first payment with its fresh half from its record's seed: only when the proposal's own
+   * sealed body is a one-off's naming that record, tied both ways, so no record naming a payroll leg's proposal takes over
+   * its charge; and never one a payroll run also claims.
+   */
+  let oneOff: OneOffBelieved | null;
+  try {
+    oneOff = await oneOffOfTheProposalHere(doors.records, doors.accountId, doors.viewingKey, run.proposalId, believed);
+  } catch (e) {
+    throw new RunNotChargedHere(String((e as Error)?.message ?? e).replace(/\.$/u, ''), { cause: e });
+  }
+  if (oneOff !== null && (oneOff.oneOff.proposal.chainId !== String(run.order.proposal).toLowerCase() || aRunClaims(runs, run.proposalId))) {
+    throw new RunNotChargedHere('this proposal is raised as a one-off payment, and what this device was asked to charge, or a payroll run of the '
+      + 'company\'s, says it is something else, so it is not charged. Reload the page and try again');
+  }
+  if (oneOff !== null) {
+    try {
+      await refuseAOneOffToAnotherVendorHere(doors.records, oneOff.oneOff);
+    } catch (e) {
+      if (e instanceof OneOffRefused) throw new RunNotChargedHere(e.message.replace(/\.$/u, ''), { cause: e });
+      throw e;
+    }
+  }
+  return oneOff;
+}
+
+/**
+ * The charge built here, handed over to be sent, kept on this device until the chain the person's own wallet reads holds
+ * the run as charged; `charged` only then.
+ */
+async function chargeSentAndSeen(
+  doors: RecordsHereDoors & ChargeDoors, sending: { readonly kept: ChargesInFlight; readonly charge: NonNullable<ChargeDoors['charge']> },
+  { vault, proposal, proposalId }: { readonly vault: Hex; readonly proposal: string; readonly proposalId: string },
+  built: { readonly tx: string; readonly spent: string | null },
+  account: Awaited<ReturnType<typeof chainAtOneBlockHere>>['account'],
+): Promise<RunCharged> {
+  const claim = await sending.kept.claim(vault, { proposal, recordedAt: (doors.now?.() ?? new Date()).getTime() });
+  if (claim === null) {
+    throw new RunNotChargedHere('another charge from this vault is being sent from this browser. Try again in a minute');
+  }
+  try {
+    const { tx } = built;
+    const { charge } = sending;
+    await handedOver(doors.handOver, {
+      tx, call: { kind: 'account-call', contract: account, circuit: 'clearRun' },
+      viaService: () => charge(proposalId, { tx, filer: doors.filer }),
+      after: async () => undefined,
+    });
+  } catch (e) {
+    if (sentNothing(e)) await sending.kept.forget(vault, claim);
+    throw e;
+  }
+  /* ---- the run is paid only once the chain the wallet reads holds it as charged ---- */
+  const { where: seen, failed } = await whereItStandsOnceSeen(doors, vault, proposal);
+  if (seen === null) {
+    throw new ChargeNotYetSeen(vault, 'the charge of this run to its period was sent, and the chain your wallet reads does not show '
+      + `it yet.${butRead(failed)}`);
+  }
+  await sending.kept.forget(vault, claim);
+  if (seen === 'not-open') {
+    throw new Error('the charge was sent, and the chain your wallet reads no longer holds this run\'s proposal open, so it cannot '
+      + 'be paid as it stands. Reload the run to see where it stands. Nothing was paid.');
+  }
+  return { state: 'charged', spentBefore: BigInt(built.spent ?? '0') };
+}
+
+/**
  * **AN APPROVED RUN CHARGED TO ITS VAULT'S PERIOD FROM THIS DEVICE**, before
  * it is paid: `order` is what the vault is handed for it, with the approvals
  * its proposal was raised needing, as this device opened them
@@ -347,29 +421,7 @@ export async function chargeTheRunHere(
     chainAtOneBlockHere(doors, vault),
     oneOffsHere(doors.records, doors.accountId),
   ]);
-  /*
-   * A one-off payment, charged as a first payment with its fresh half from its record's seed: only when the proposal's own
-   * sealed body is a one-off's naming that record, tied both ways, so no record naming a payroll leg's proposal takes over
-   * its charge; and never one a payroll run also claims.
-   */
-  let oneOff: OneOffBelieved | null;
-  try {
-    oneOff = await oneOffOfTheProposalHere(doors.records, doors.accountId, doors.viewingKey, run.proposalId, oneOffs.believed);
-  } catch (e) {
-    throw new RunNotChargedHere(String((e as Error)?.message ?? e).replace(/\.$/u, ''), { cause: e });
-  }
-  if (oneOff !== null && (oneOff.oneOff.proposal.chainId !== String(order.proposal).toLowerCase() || aRunClaims(runs, run.proposalId))) {
-    throw new RunNotChargedHere('this proposal is raised as a one-off payment, and what this device was asked to charge, or a payroll run of the '
-      + 'company\'s, says it is something else, so it is not charged. Reload the page and try again');
-  }
-  if (oneOff !== null) {
-    try {
-      await refuseAOneOffToAnotherVendorHere(doors.records, oneOff.oneOff);
-    } catch (e) {
-      if (e instanceof OneOffRefused) throw new RunNotChargedHere(e.message.replace(/\.$/u, ''), { cause: e });
-      throw e;
-    }
-  }
+  const oneOff = await oneOffChargedHere(doors, run, runs, oneOffs.believed);
   /*
    * **A RUN THE CHAIN ALREADY HOLDS AS CHARGED IS NOT CHARGED AGAIN**, and is
    * asked about first: nothing the charge alone needs - what its salt was made
@@ -409,32 +461,5 @@ export async function chargeTheRunHere(
   }
   if (built.tx === null) return { state: 'already-charged' };
   const proposal = String(order.proposal).toLowerCase();
-  const claim = await kept.claim(vault, { proposal, recordedAt: (doors.now?.() ?? new Date()).getTime() });
-  if (claim === null) {
-    throw new RunNotChargedHere('another charge from this vault is being sent from this browser. Try again in a minute');
-  }
-  try {
-    const tx = built.tx;
-    const charge = doors.charge;
-    await handedOver(doors.handOver, {
-      tx, call: { kind: 'account-call', contract: chain.account, circuit: 'clearRun' },
-      viaService: () => charge(run.proposalId, { tx, filer: doors.filer }),
-      after: async () => undefined,
-    });
-  } catch (e) {
-    if (sentNothing(e)) await kept.forget(vault, claim);
-    throw e;
-  }
-  /* ---- the run is paid only once the chain the wallet reads holds it as charged ---- */
-  const { where: seen, failed } = await whereItStandsOnceSeen(doors, vault, proposal);
-  if (seen === null) {
-    throw new ChargeNotYetSeen(vault, 'the charge of this run to its period was sent, and the chain your wallet reads does not show '
-      + `it yet.${butRead(failed)}`);
-  }
-  await kept.forget(vault, claim);
-  if (seen === 'not-open') {
-    throw new Error('the charge was sent, and the chain your wallet reads no longer holds this run\'s proposal open, so it cannot '
-      + 'be paid as it stands. Reload the run to see where it stands. Nothing was paid.');
-  }
-  return { state: 'charged', spentBefore: BigInt(built.spent ?? '0') };
+  return chargeSentAndSeen(doors, { kept, charge: doors.charge }, { vault, proposal, proposalId: run.proposalId }, { ...built, tx: built.tx }, chain.account);
 }

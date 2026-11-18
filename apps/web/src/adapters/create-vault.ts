@@ -6,9 +6,8 @@ import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { READER_REFUSAL, rosterRefusalOf } from '../../../../src/midnight/secret-readers.js';
 import { actOnACompanyInTheWallet, api, canOpenCompanies, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import {
-  SAID, START_STOP, type SaidCode, type StartStopCode, type VaultInfoGiven,
-} from 'vaults-web-shared/vault-operation.js';
+import { SAID, START_STOP, type SaidCode, type StartStopCode } from 'vaults-web-shared/vault-start-stops.js';
+import { type VaultInfoGiven } from 'vaults-web-shared/vault-created-and-started.js';
 import { readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';

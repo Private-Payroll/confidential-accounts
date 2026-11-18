@@ -105,8 +105,10 @@ export interface RunOf {
    * Shows the person, in this window, what a step read with the seat's keys, and resolves true when they press Confirm
    * and false when they press Stop. `cut` is aborted when the action ends or is stopped while it waits, and the window
    * then takes the question down. Without it, a step that asks to confirm is stopped and nothing after it runs.
+   * `asks` is `'fee'` for the one question that may come after a hand-over: whether to pay a network fee from the
+   * person's own DUST; the window then says that, not that nothing was sent yet.
    */
-  readonly confirm?: (lines: readonly Words[], cut: AbortSignal) => Promise<boolean>;
+  readonly confirm?: (lines: readonly Words[], cut: AbortSignal, asks?: 'read' | 'fee') => Promise<boolean>;
 }
 
 /**
@@ -350,21 +352,40 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
    * person's own saved keys, sealed, is not counted: it approves, signs and sends nothing to the network. Stop, the action's end, and its deadline all answer it as no.
    */
   let confirmAsked = false;
+  const askedInTheWindow = async (lines: readonly Words[], asks: 'read' | 'fee'): Promise<boolean> => {
+    const asked = run.confirm!;
+    const yes = await new Promise<boolean>((resolve) => {
+      if (cut.signal.aborted) { resolve(false); return; }
+      cut.signal.addEventListener('abort', () => resolve(false), { once: true });
+      Promise.resolve().then(() => asked(lines, cut.signal, asks)).then((said) => resolve(said === true), () => resolve(false));
+    });
+    if (latched !== null) throw new ActionStopped(latched);
+    if (closed || run.stop.aborted) throw new ActionStopped('stopped');
+    if (!yes) return false;
+    if (now() >= deadline) throw new ActionStopped('out-of-time');
+    return true;
+  };
   const confirm = async (lines: readonly Words[]): Promise<void> => {
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
     if (confirmAsked || handedOver > 0 || run.confirm === undefined) throw new ActionStopped('step-failed');
     confirmAsked = true;
-    const asked = run.confirm;
-    const yes = await new Promise<boolean>((resolve) => {
-      if (cut.signal.aborted) { resolve(false); return; }
-      cut.signal.addEventListener('abort', () => resolve(false), { once: true });
-      Promise.resolve().then(() => asked(lines, cut.signal)).then((said) => resolve(said === true), () => resolve(false));
-    });
-    if (latched !== null) throw new ActionStopped(latched);
-    if (!yes || closed || run.stop.aborted) throw new ActionStopped('stopped');
-    if (now() >= deadline) throw new ActionStopped('out-of-time');
+    if (!await askedInTheWindow(lines, 'read')) throw new ActionStopped('stopped');
     log(`step ${current} of ${total}: confirmed in the window`);
+  };
+  /*
+   * The one question asked after a hand-over: whether this wallet pays a network fee from the person's own DUST. Asked
+   * at most once in an action; a window that cannot ask, or a second ask, answers no, and nothing is paid.
+   */
+  let feeAsked = false;
+  const confirmFee = async (lines: readonly Words[]): Promise<boolean> => {
+    if (latched !== null) throw new ActionStopped(latched);
+    if (closed || run.stop.aborted) throw new ActionStopped('stopped');
+    if (feeAsked || run.confirm === undefined) return false;
+    feeAsked = true;
+    const yes = await askedInTheWindow(lines, 'fee');
+    log(`step ${current} of ${total}: the fee ${yes ? 'confirmed' : 'declined'} in the window`);
+    return yes;
   };
 
   /* The person's saved keys, opened once on a step's first use, and let go when the action ends. */
@@ -522,7 +543,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       const ran: Promise<Raced> = Promise.resolve()
         .then(() => step.run({
           intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
-          call: (method, path, body) => callInTurn(at, method, path, body), tell, show, confirm, sentByTheWallet, seenOnTheChain, releaseReadKeys,
+          call: (method, path, body) => callInTurn(at, method, path, body), tell, show, confirm, confirmFee, sentByTheWallet, seenOnTheChain, releaseReadKeys,
         }))
         .then(() => ({ of: 'ran' as const }), (error: unknown) => {
           log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);

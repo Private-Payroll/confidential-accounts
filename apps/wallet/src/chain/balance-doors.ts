@@ -1,5 +1,6 @@
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { BalanceDoors, LedgerForBalancing } from './balance-for-page.js';
+import type { OwnFeeFacade } from './finished-paid-with-own-dust.js';
 import { facadeFor, startForAPage } from './facade.js';
 import { makeBrowserProvingService } from './proving.js';
 import type { ProofEvent } from './proving.js';
@@ -18,10 +19,13 @@ import { openWalletId } from '../accounts/wallets-held.js';
  * browser holds a checkpoint for it, and reads only what is new; otherwise it
  * reads from the beginning. Either way nothing is paid until it has heard the
  * network say it is up to date: a restored wallet reports itself unconnected
- * until then. **Nothing here ever writes a checkpoint**, and its DUST part is
- * never started - a page's deposit pays no fee from here.
+ * until then. **Nothing here ever writes a checkpoint.** Its DUST part starts
+ * only through `ownFee`, when the person has chosen to pay a deposit's network
+ * fee from their own DUST because the company's fee payer could not.
  */
-export const liveBalanceDoors = (identity: Identity, account: number): BalanceDoors & { stop: () => Promise<void> } => {
+export const liveBalanceDoors = (
+  identity: Identity, account: number,
+): BalanceDoors & { stop: () => Promise<void>; ownFee: () => Promise<OwnFeeFacade> } => {
   /* Decided now, while this wallet is the one on screen; the balance engine captures it for the same reason. */
   const walletId = openWalletId();
   const proofWatchers = new Set<(event: ProofEvent) => void>();
@@ -38,14 +42,22 @@ export const liveBalanceDoors = (identity: Identity, account: number): BalanceDo
     })();
     return running;
   };
+  /* The DUST part is started once, on the first fee this wallet pays itself, and stops with the rest. */
+  let dust: Promise<OwnFeeFacade> | null = null;
+  const ownFee = () => {
+    dust ??= facade().then(async (f) => { await f.dust.start(dustKeysFor(identity, account)); return f; });
+    return dust;
+  };
   return {
     ledger: async (): Promise<LedgerForBalancing> => import('@midnightntwrk/ledger-v9'),
     facade,
+    ownFee,
     dustKeys: () => dustKeysFor(identity, account),
     signSegment: () => unshieldedKeystoreFor(identity, account).signDataAsync,
     ownPublicAddress: () => String(unshieldedKeystoreFor(identity, account).getAddress()),
     watchProofs: (watch) => { proofWatchers.add(watch); return () => { proofWatchers.delete(watch); }; },
     stop: async () => {
+      dust = null;
       if (running === null) return;
       const f = await running.catch(() => { /* a wallet that never started has nothing to stop */ return null; });
       running = null;

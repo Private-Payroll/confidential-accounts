@@ -25,9 +25,8 @@ import { LegNotPayable, LegStopped, payAnApprovedLeg, type LegDoors, type LegPai
 import { legToPayHere, type PaymentsHereDeps } from '../../../../packages/web-shared/src/payments-made-here.js';
 import { ChargeNotYetSeen, RunNotChargedHere } from '../../../../packages/web-shared/src/run-charged-here.js';
 import { keptRunHere, payrollRoundsHere, proposalsListedHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
-import {
-  PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, PaymentStillInFlight, PublicPaymentNotYetSeen,
-} from '../../../../packages/web-shared/src/vault-operation.js';
+import { PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, PaymentStillInFlight } from '../../../../packages/web-shared/src/vault-payment-in-flight.js';
+import { PublicPaymentNotYetSeen } from '../../../../packages/web-shared/src/vault-public-payout.js';
 import { VAULT_KEYS_FOLDER } from '../chain/key-material.js';
 import {
   companyReachFor, companyRecordsFor, keptReach, paidAmongFor, pureCircuits, type CompanyReach, type Handed,

@@ -12,7 +12,9 @@
  * the chain for the very call it finished and, finding it absent, hands that same call to the network itself, so
  * one call can land only once. Anything refused before that hand-over is undone, and nothing is paid.
  */
-import type { SignSegment, UnboundTx, WalletFacade } from '@midnightntwrk/wallet-sdk';
+import type {
+  BalancingRecipe, FinalizedTx, SignSegment, UnboundTransactionRecipe, UnboundTx, WalletFacade,
+} from '@midnightntwrk/wallet-sdk';
 import { ourServiceTookNothing, serviceNotReached, type ChainCall } from '../../../../packages/web-shared/src/hand-over.js';
 import { isVaultCallKind, movesNothing, vaultCallRefusal } from '../../../../src/wiring/vault-call-checks.js';
 import {
@@ -56,9 +58,9 @@ export const ownWalletFrom = (doors: BalanceDoors): OwnWalletDoors => ({
 });
 
 /** How long the fee the wallet adds holds good, as the wallet pays for a page's call. */
-const FEE_TTL_MS = 20 * 60_000;
+export const FEE_TTL_MS = 20 * 60_000;
 
-const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(/\.\s*$/u, '');
+export const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(/\.\s*$/u, '');
 const bare = (a: unknown): string => String(a).toLowerCase().replace(/^0x/u, '');
 const entryPointName = (e: unknown): string => (e instanceof Uint8Array ? new TextDecoder().decode(e) : String(e));
 
@@ -131,27 +133,54 @@ export function notOneCallRefusal(tx: unknown, account: string, circuit: string,
   return null;
 }
 
+/** Which part of a balancing recipe holds the transaction the wallet adopted, and what a change to it changes. */
+export interface AdoptedAs { readonly part: 'baseTransaction' | 'originalTransaction'; readonly itself: string }
+const A_CALL: AdoptedAs = { part: 'baseTransaction', itself: 'the call itself' };
+
 /**
- * **WHY WHAT THE WALLET ADDS TO PAY THE FEE IS MORE THAN THE FEE, OR NULL WHEN
- * IT IS NOT**: the call is left as it was, and what is added spends DUST and
- * does nothing else - no call, no coin, no public money, no DUST registered.
+ * **WHY WHAT THE WALLET ADDS TO PAY THE FEE IS MORE THAN THE FEE, OR NULL WHEN IT IS NOT**: the adopted transaction
+ * is left as it was, and what is added spends DUST and does nothing else - no call, no coin, no public money, no DUST
+ * registered. With `shown`, the DUST it spends is read, and is no more than the fee the person confirmed.
  */
-export function moreThanTheFeeRefusal(recipe: unknown, call: unknown): string | null {
-  const r = recipe as { readonly baseTransaction?: unknown; readonly balancingTransaction?: unknown } | null;
+export function addedMoreThanTheFeeRefusal(recipe: unknown, adopted: unknown, as: AdoptedAs, shown?: bigint): string | null {
+  const r = recipe as Partial<Record<AdoptedAs['part'] | 'balancingTransaction', unknown>> | null;
   if (r === null || typeof r !== 'object') return 'this wallet could not read what it was about to add';
-  if (r.baseTransaction !== call) return 'this wallet was about to change the call itself';
-  const fee = carriedBy(r.balancingTransaction) as TxLike | null | undefined;
-  if (fee === undefined || fee === null) return 'this wallet added nothing to pay the fee';
-  if (typeof fee !== 'object' || !readable(fee)) return 'this wallet could not read what it was about to add';
-  if (!noShieldedOffer(fee)) return 'this wallet was about to spend or make a coin as well as the fee';
+  if (r[as.part] !== adopted) return `this wallet was about to change ${as.itself}`;
+  const added = dustTheFeeSpends(r.balancingTransaction);
+  if ('refused' in added) return added.refused;
+  if (shown === undefined) return null;
+  if (added.fee === null) return 'this wallet could not read the fee it was about to pay';
+  return added.fee > shown ? 'this wallet was about to pay more than the fee you confirmed' : null;
+}
+
+/** `addedMoreThanTheFeeRefusal` for a call: the call is left as it was, and no fee was shown to hold the DUST to. */
+export function moreThanTheFeeRefusal(recipe: unknown, call: unknown): string | null {
+  return addedMoreThanTheFeeRefusal(recipe, call, A_CALL);
+}
+
+/**
+ * **WHAT A TRANSACTION THE WALLET ADDS TO PAY A FEE SPENDS**: its refusal when it does anything but spend DUST (a call,
+ * a coin, public money, a DUST registration) or spends none; otherwise the DUST its spends pay, summed, or null when
+ * a spend's fee cannot be read.
+ */
+export function dustTheFeeSpends(balancing: unknown): { readonly refused: string } | { readonly fee: bigint | null } {
+  const fee = carriedBy(balancing) as TxLike | null | undefined;
+  if (fee === undefined || fee === null) return { refused: 'this wallet added nothing to pay the fee' };
+  if (typeof fee !== 'object' || !readable(fee)) return { refused: 'this wallet could not read what it was about to add' };
+  if (!noShieldedOffer(fee)) return { refused: 'this wallet was about to spend or make a coin as well as the fee' };
   let spends = 0;
+  let total: bigint | null = 0n;
   for (const intent of fee.intents?.values() ?? []) {
-    if ((intent.actions?.length ?? 0) > 0) return 'this wallet was about to make a call as well as pay the fee';
-    if (!noPublicOffer(intent)) return 'this wallet was about to move public money as well as pay the fee';
-    if ((intent.dustActions?.registrations?.length ?? 0) > 0) return 'this wallet was about to register DUST as well as pay the fee';
-    spends += intent.dustActions?.spends?.length ?? 0;
+    if ((intent.actions?.length ?? 0) > 0) return { refused: 'this wallet was about to make a call as well as pay the fee' };
+    if (!noPublicOffer(intent)) return { refused: 'this wallet was about to move public money as well as pay the fee' };
+    if ((intent.dustActions?.registrations?.length ?? 0) > 0) return { refused: 'this wallet was about to register DUST as well as pay the fee' };
+    for (const spend of intent.dustActions?.spends ?? []) {
+      spends += 1;
+      const paid = (spend as { readonly vFee?: unknown } | null)?.vFee;
+      total = total === null || typeof paid !== 'bigint' ? null : total + paid;
+    }
   }
-  return spends > 0 ? null : 'this wallet added nothing to pay the fee';
+  return spends > 0 ? { fee: total } : { refused: 'this wallet added nothing to pay the fee' };
 }
 
 /*
@@ -255,6 +284,117 @@ export class FeeRefused extends Error {
 /** What one send tells its step: whether the call was handed over, and whether the wallet had too little DUST to pay for it. */
 export interface Handed { over: boolean; noDust?: boolean }
 
+/** Why the person's own DUST paid no fee and nothing was sent. */
+export type OwnFeeUnpaid = 'declined' | 'too-little-dust' | 'not-paid';
+
+/** The parts of the wallet's facade every payment from the person's own DUST uses. */
+type PayingFacade = Pick<WalletFacade, 'dust' | 'state' | 'signRecipe' | 'finalizeRecipe'>;
+
+/**
+ * One payment of a fee from the person's own DUST, as the kind of transaction asks it: how the transaction is adopted
+ * and balanced, the deadline the fee is added with, the fee shown to the person first (absent, nobody is asked),
+ * whether a refusal gives back what was booked, and what sends the finished transaction.
+ */
+export interface OwnDustPayment<F extends PayingFacade, H, R extends BalancingRecipe, T> {
+  /** The paying account's facade with its DUST part started. */
+  readonly facade: () => Promise<F>;
+  readonly signSegment: () => SignSegment;
+  readonly stillWanted: () => boolean;
+  /** Set as the transaction is handed over, and `noDust` when the wallet holds too little DUST to pay. */
+  readonly handed: Handed;
+  /** Told the moment the transaction is handed over: from then on it may have been sent. */
+  readonly handedOver?: () => void;
+  readonly refused: (why: OwnFeeUnpaid, message: string) => FeeRefused;
+  readonly adopt: (facade: F) => H;
+  /** The refusal when the transaction cannot be adopted; absent, it is refused as the fee not added. */
+  readonly unadopted?: string;
+  readonly adoptedAs: AdoptedAs;
+  /** The deadline the fee is added with: read once, and again once the person confirms the fee. */
+  readonly ttl: (handle: H) => Date;
+  readonly balance: (facade: F, handle: H, options: { readonly ttl: Date; readonly tokenKindsToBalance: ['dust'] }) => Promise<R>;
+  /** The fee worked out and shown to the person, who must confirm it before anything is added. */
+  readonly confirm?: {
+    readonly estimate: (facade: F, handle: H, ttl: Date) => Promise<bigint>;
+    readonly asked: (fee: bigint) => Promise<boolean>;
+  };
+  /** Gives back what the fee booked when the send is refused before it is handed over; absent, nothing is given back. */
+  readonly giveBack?: (facade: F, recipe: R) => Promise<void>;
+  /** What was signed and what was to be sent, in a refusal's words. */
+  readonly names: { readonly signed: string; readonly sent: string };
+  /** Readies the finished transaction's send; what it returns runs once the transaction is handed over. */
+  readonly sender: (facade: F, finished: FinalizedTx) => () => Promise<T>;
+}
+
+/**
+ * **A FEE PAID FROM THE PERSON'S OWN DUST, AND THE TRANSACTION HANDED OVER.** The facade is opened and its DUST read
+ * up to date on this ledger; the transaction is adopted; with `confirm`, the fee is worked out and shown, and the
+ * deadline read again once the person confirms it; the fee is added with DUST only and held to
+ * `addedMoreThanTheFeeRefusal`; then it is signed and finished, and handed over while still wanted. A refusal before
+ * the hand-over is `p.refused`, nothing sent; what fails after it is thrown as it is.
+ */
+export async function paidFromOwnDust<F extends PayingFacade, H, R extends BalancingRecipe, T>(p: OwnDustPayment<F, H, R, T>): Promise<T> {
+  const refused = (why: OwnFeeUnpaid, what: string): FeeRefused => p.refused(why, `${what}, so it paid nothing and sent nothing`);
+  const tooLittleDust = (): FeeRefused => {
+    p.handed.noDust = true;
+    return refused('too-little-dust', 'your wallet holds too little DUST to pay the network fee');
+  };
+  /* Nothing is booked when balancing throws: the wallet's DUST is changed only once a fee is added whole. */
+  const notAdded = (e: unknown): FeeRefused =>
+    whyThePaymentFailed(e) === 'not-enough' ? tooLittleDust() : refused('not-paid', `this wallet could not add the fee (${said(e)})`);
+  let facade: F;
+  try {
+    facade = await p.facade();
+  } catch (e) {
+    throw refused('not-paid', `this wallet could not open its DUST to pay the fee (${said(e)})`);
+  }
+  await dustReadOnThisLedger(facade, p.stillWanted);
+  let handle: H;
+  try {
+    handle = p.adopt(facade);
+  } catch (e) {
+    throw p.unadopted === undefined ? notAdded(e) : refused('not-paid', p.unadopted);
+  }
+  let ttl = p.ttl(handle);
+  let shown: bigint | undefined;
+  if (p.confirm !== undefined) {
+    try {
+      shown = await p.confirm.estimate(facade, handle, ttl);
+    } catch (e) {
+      throw whyThePaymentFailed(e) === 'not-enough' ? tooLittleDust() : refused('not-paid', `this wallet could not work out the fee (${said(e)})`);
+    }
+    if (!await p.confirm.asked(shown)) throw p.refused('declined', 'you chose not to pay the fee from your own DUST, so this wallet paid nothing and sent nothing');
+    /* The person may take a while to answer: the deadline is read again from the time they confirmed. */
+    ttl = p.ttl(handle);
+  }
+  let recipe: R;
+  try {
+    recipe = await p.balance(facade, handle, { ttl, tokenKindsToBalance: ['dust'] });
+  } catch (e) {
+    throw notAdded(e);
+  }
+  try {
+    const more = addedMoreThanTheFeeRefusal(recipe, handle, p.adoptedAs, shown);
+    if (more !== null) throw refused('not-paid', more);
+    let send: () => Promise<T>;
+    try {
+      send = p.sender(facade, await facade.finalizeRecipe(await facade.signRecipe(recipe, p.signSegment())));
+    } catch (e) {
+      /* A send earlier in the same window was handed over: what fails now is thrown as it is. */
+      if (p.handed.over) throw e;
+      throw refused('not-paid', `this wallet could not sign or finish ${p.names.signed} (${said(e)})`);
+    }
+    if (!p.stillWanted()) throw refused('not-paid', `the window was stopped before the ${p.names.sent} was sent`);
+    p.handed.over = true;
+    p.handedOver?.();
+    return await send();
+  } catch (e) {
+    if (p.handed.over) throw e;
+    /* The refusal is what is told: a give-back that fails does not change that nothing was sent. */
+    if (p.giveBack !== undefined) await p.giveBack(facade, recipe).catch(() => undefined);
+    throw e;
+  }
+}
+
 /**
  * **ONE CALL, ITS FEE ONLY PAID, AND HANDED OVER**: the proven call read and held
  * to `notWhatIsSentRefusal`. With `way.sponsor`, the sponsorship is asked first;
@@ -263,9 +403,9 @@ export interface Handed { over: boolean; noDust?: boolean }
  * the wallet is done with it whether it was sent or not. A refusal from the
  * sponsorship is the answer, in its words; only when the sponsorship is down
  * (`ourServiceTookNothing`), could not be reached (`serviceNotReached`: it never
- * submits, so nothing of the call is out), or there is none, is the wallet's
- * DUST read up to date, the fee added and
- * held to `moreThanTheFeeRefusal`, signed and finished. The finished call goes to
+ * submits, so nothing of the call is out), or there is none, is the fee paid
+ * from the wallet's own DUST by `paidFromOwnDust`: held to what
+ * `moreThanTheFeeRefusal` allows, signed and finished. The finished call goes to
  * `way.submit`, or from the wallet to the network; a `way.submit` that could not
  * be reached is gone around by `submittedOrStraight`. Anything that fails before the
  * hand-over is undone and refused as `FeeRefused`, marked as nothing sent;
@@ -311,44 +451,24 @@ export async function sentFromTheOwnWallet(
   }
   /* Told only once the call has gone, so the window never says the person's DUST paid for a call it did not send. */
   const ownDust = way.sponsor !== undefined;
-  let facade: OwnWalletFacade;
-  try {
-    facade = await o.facade();
-  } catch (e) {
-    throw new FeeRefused(`this wallet could not open its DUST to pay the fee (${said(e)}), so it paid nothing and sent nothing`);
-  }
-  await dustReadOnThisLedger(facade, stillWanted);
-  let handle: UnboundTx;
-  let recipe: Awaited<ReturnType<OwnWalletFacade['balanceUnboundTransaction']>>;
-  try {
-    handle = facade.adoptTransaction(bytesFromBase64(tx), 'Unbound');
-    recipe = await facade.balanceUnboundTransaction(handle, { ttl: new Date(now() + FEE_TTL_MS), tokenKindsToBalance: ['dust'] });
-  } catch (e) {
-    /* Nothing is booked when balancing throws: the wallet's DUST is changed only once a fee is added whole. */
-    if (whyThePaymentFailed(e) === 'not-enough') {
-      handed.noDust = true;
-      throw new FeeRefused('your wallet holds too little DUST to pay the network fee, so it paid nothing and sent nothing');
-    }
-    throw new FeeRefused(`this wallet could not add the fee (${said(e)}), so it paid nothing and sent nothing`);
-  }
-  try {
-    const more = moreThanTheFeeRefusal(recipe, handle);
-    if (more !== null) throw new FeeRefused(`${more}, so it paid nothing and sent nothing`);
-    const signed = await facade.signRecipe(recipe, o.signSegment());
-    const finished = await facade.finalizeRecipe(signed);
-    const written = way.submit === undefined ? null : base64FromBytes(finished.serialize());
-    if (!stillWanted()) throw new FeeRefused('the window was stopped before the call was sent, so this wallet paid nothing and sent nothing');
-    handed.over = true;
-    way.handedOver?.();
-    if (written !== null) await submittedOrStraight(o, way, written, finished, async () => { await facade.submitTransaction(finished); });
-    else await facade.submitTransaction(finished);
-    if (ownDust) way.ownDustPaid?.();
-  } catch (e) {
-    if (handed.over) throw e;
-    await facade.revert(recipe).catch(() => undefined);
-    if (e instanceof FeeRefused) throw e;
-    throw new FeeRefused(`this wallet could not sign or finish the call (${said(e)}), so it paid nothing and sent nothing`);
-  }
+  await paidFromOwnDust<OwnWalletFacade, UnboundTx, UnboundTransactionRecipe, void>({
+    facade: () => o.facade(), signSegment: () => o.signSegment(), stillWanted, handed, handedOver: () => way.handedOver?.(),
+    refused: (_why, message) => new FeeRefused(message),
+    adopt: (facade) => facade.adoptTransaction(bytesFromBase64(tx), 'Unbound'),
+    adoptedAs: A_CALL,
+    ttl: () => new Date(now() + FEE_TTL_MS),
+    balance: (facade, handle, options) => facade.balanceUnboundTransaction(handle, options),
+    giveBack: (facade, recipe) => facade.revert(recipe),
+    names: { signed: 'the call', sent: 'call' },
+    sender: (facade, finished) => {
+      const written = way.submit === undefined ? null : base64FromBytes(finished.serialize());
+      return async () => {
+        if (written !== null) await submittedOrStraight(o, way, written, finished, async () => { await facade.submitTransaction(finished); });
+        else await facade.submitTransaction(finished);
+        if (ownDust) way.ownDustPaid?.();
+      };
+    },
+  });
 }
 
 /**
@@ -489,7 +609,7 @@ export const straightFromTheOwnWallet = (
  * The wallet's DUST read up to date on this wallet's ledger, or the fee refused. A part that crossed the fork while it
  * was read was read at the fork, so it is read again once the facade is on this ledger.
  */
-async function dustReadOnThisLedger(facade: OwnWalletFacade, stillWanted: (() => boolean) | undefined): Promise<void> {
+export async function dustReadOnThisLedger(facade: Pick<OwnWalletFacade, 'dust' | 'state'>, stillWanted: (() => boolean) | undefined): Promise<void> {
   const readUp = async (): Promise<void> => {
     try {
       await untilItHasReadTheChain([facade.dust], { stillWanted });

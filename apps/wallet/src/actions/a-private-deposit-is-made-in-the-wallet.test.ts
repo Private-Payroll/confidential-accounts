@@ -23,13 +23,13 @@ const t = vi.hoisted(() => ({
   run: null as null | ((doors: Record<string, any>, vault: string, money: { token: string; value: bigint }) => Promise<unknown>),
   doors: null as null | Record<string, any>,
 }));
-vi.mock('../../../../packages/web-shared/src/vault-operation.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/vault-operation.js')>()),
+vi.mock('../../../../packages/web-shared/src/vault-private-deposit.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-private-deposit.js')>()),
   depositIntoCompanyVault: (doors: Record<string, any>, vault: string, money: { token: string; value: bigint }) => { t.doors = doors; return t.run!(doors, vault, money); },
 }));
 
 const { privateDepositAction, depositDoorsFor } = await import('./private-deposit.js');
-const op = await import('../../../../packages/web-shared/src/vault-operation.js');
+const op = await import('../../../../packages/web-shared/src/vault-private-deposit.js');
 
 const secret = newSecret();
 const identity = identityFromSecret(secret);
@@ -146,12 +146,16 @@ describe('the window lists everything the deposit pays and files before the pass
 });
 
 describe('the window says exactly what the wallet does, no more', () => {
-  it('names the account the way the payment window does, and keeps the deposit on its way on this device only', async () => {
+  it('names the account as the one picked before the passkey, and keeps the deposit on its way on this device only', async () => {
     const { readFileSync } = await import('node:fs');
     const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
-    /* RED WHEN: the window promises a choice of account that a press made before the passkey, on a quiet account, never shows. */
-    expect(words['act.private-deposit.shown.pays']).not.toMatch(/which you choose once/);
-    expect(words['act.private-deposit.shown.pays']).toMatch(/this page has used before, or else of one no site has been given/);
+    /* RED WHEN: the window says the account that pays is one chosen for the page or named after the passkey, when it is
+     * the one the person picks in the window before the passkey. */
+    expect(words['act.private-deposit.shown.pays']).not.toMatch(/this page has used before|named after your passkey/);
+    expect(words['act.private-deposit.shown.pays']).toMatch(/the account you pick in this window, before your passkey, and of no other/);
+    /* RED WHEN: the first screen promises no fee without a confirm, while the record keeping around the deposit may pay its own. */
+    expect(words['act.private-deposit.shown.pays']).not.toMatch(/no network fee unless/u);
+    expect(words['act.private-deposit.shown.pays']).toMatch(/record keeping before and after the deposit may pay/u);
     /* RED WHEN: the window says no other deposit is made anywhere, when the claim lives in this device's wallet storage only. */
     for (const key of ['act.private-deposit.shown.nothing-else', 'act.private-deposit.why.not-yet-seen', 'act.private-deposit.check.one-on-its-way']) {
       expect(words[key], key).toMatch(/on this device/);
@@ -180,7 +184,8 @@ describe('the deposit is paid only as the wallet built it, from its own account'
     }, VAULT as never, MONEY);
     const ask = { company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'AAAA' } as never;
     expect((await doors.pay(ask)).transaction).toBe('AQID');
-    expect(paid).toEqual(['balanced', 'stopped']);
+    /* RED WHEN: the account's wallet is stopped before the service has answered, so a fee the fee payer could not pay opens a second one. */
+    expect(paid).toEqual(['balanced']);
     /* RED WHEN: the wallet pays for a deposit of another amount, another token or into another vault than the one it showed. */
     for (const [tx, name] of [[builtTx(1_500_001n), 'amount'], [builtTx(1_500_000n, 'aa'.repeat(32)), 'token'], [builtTx(1_500_000n, TOKEN, 'ef'.repeat(32)), 'vault']] as const) {
       const other = depositDoorsFor(ctx, reachOf(), {

@@ -5,10 +5,10 @@
  * the deposit's window with the whole margin for clocks kept, however long the build took.
  */
 import { describe, expect, it } from 'vitest';
-import {
-  DEPOSIT_TIME_TO_LIVE_MS, type DepositInFlight, DepositMayOutliveItsWindow, DepositNotYetSeen, type PaymentInFlight,
-  checkWhatThisBrowserDeposited, depositIntoCompanyVault, openCompanyVaultPool,
-} from './vault-operation.js';
+import { DEPOSIT_TIME_TO_LIVE_MS, type DepositInFlight, DepositMayOutliveItsWindow, DepositNotYetSeen, depositIntoCompanyVault } from './vault-private-deposit.js';
+import { type PaymentInFlight } from './vault-payment-in-flight.js';
+import { checkWhatThisBrowserDeposited } from './check-what-this-browser-sent.js';
+import { openCompanyVaultPool } from './vault-pool-opened.js';
 import { DepositLineNotEnded } from './deposit-line-ended.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { MemorySealedPoolStore, openPool, type SealedPool } from '../../../src/midnight/vault-pool.js';

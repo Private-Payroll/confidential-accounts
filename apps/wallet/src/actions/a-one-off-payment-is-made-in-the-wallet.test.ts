@@ -37,9 +37,12 @@ vi.mock('../../../../packages/web-shared/src/run-charged-here.js', async (real) 
   ...(await real<typeof import('../../../../packages/web-shared/src/run-charged-here.js')>()),
   chargeTheRunHere: (doors: any, run: any) => { t.calls.push('charge'); return t.charge!(doors, run); },
 }));
-vi.mock('../../../../packages/web-shared/src/vault-operation.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/vault-operation.js')>()),
+vi.mock('../../../../packages/web-shared/src/vault-pay-privately-and-merge.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-pay-privately-and-merge.js')>()),
   payPrivatelyFromCompanyVault: (doors: any, input: any) => { t.calls.push('pay-privately'); return t.payPrivately!(doors, input); },
+}));
+vi.mock('../../../../packages/web-shared/src/vault-public-payout.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/vault-public-payout.js')>()),
   payPubliclyFromCompanyVault: (doors: any, input: any) => { t.calls.push('pay-publicly'); return t.payPublicly!(doors, input); },
 }));
 vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
@@ -70,7 +73,7 @@ vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (re
 const { oneOffPaymentAction, oneOffAskedOf, payDoorsFor } = await import('./one-off-payment.js');
 const { companyRecordsFor } = await import('./company-reach.js');
 const { OneOffRefused } = await import('../../../../src/midnight/one-off-kind.js');
-const op = await import('../../../../packages/web-shared/src/vault-operation.js');
+const op = await import('../../../../packages/web-shared/src/vault-payment-in-flight.js');
 const { LegNotRaisedHere } = await import('../../../../packages/web-shared/src/run-raised-here.js');
 const { ApprovalNotOwed } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
 const { approveProposalAction } = await import('./approve-proposal.js');

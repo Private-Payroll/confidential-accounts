@@ -61,7 +61,7 @@ import type {
 } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
 import type { Deployment } from './deployment.js';
-import { shownAddress } from '../core/networks.js';
+import { shownAddress, shownAddressesIn } from '../core/networks.js';
 
 import { type ContractBook } from './account-contract.js';
 import { refusalForCapability, type WriteCapability } from './write-capability.js';
@@ -280,6 +280,21 @@ const refuseQueued = (lane: Lane, r: Running): void => {
   }
   lane.queued.clear();
 };
+
+/**
+ * An error as the page may be told of it: the same error, with every node address in its message shown without its
+ * query, which is where the network's project token travels. Its class, its marks and its code are untouched.
+ */
+function withShownAddresses(e: unknown): unknown {
+  if (e !== null && typeof e === 'object' && typeof (e as { message?: unknown }).message === 'string') {
+    try {
+      (e as { message: string }).message = shownAddressesIn((e as { message: string }).message);
+    } catch {
+      /* A message that cannot be rewritten (frozen, or only a getter) leaves the error as it is: its mark and code matter more than its text. */
+    }
+  }
+  return e;
+}
 
 /**
  * The chain ledger the product is handed.
@@ -589,8 +604,9 @@ export class ChainLedger implements Ledger {
       /* The fee payer answers the hash of what it sent when that is not what it was given. */
       return { ref: String(ref.ref), at: ref.at, transactionHash: ref.transactionHash ?? transactionHash };
     }).catch((e: unknown) => {
-      if (submitting || saysNothingWasSent(e)) throw e;
-      throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
+      const said = withShownAddresses(e);
+      if (submitting || saysNothingWasSent(said)) throw said;
+      throw new NothingWasSent(String((said as { message?: unknown })?.message ?? said));
     });
   }
 
@@ -629,8 +645,9 @@ export class ChainLedger implements Ledger {
       const done = payer.done;
       return { tx, transactionHash, ...(done === undefined || booking === null ? {} : { done: () => done.call(payer, booking) }) };
     }).catch((e: unknown) => {
-      if (saysNothingWasSent(e)) throw e;
-      throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
+      const said = withShownAddresses(e);
+      if (saysNothingWasSent(said)) throw said;
+      throw new NothingWasSent(String((said as { message?: unknown })?.message ?? said));
     });
   }
 
@@ -775,8 +792,9 @@ export class ChainLedger implements Ledger {
         }
       }
     }).catch((e: unknown) => {
-      if (submitting || saysNothingWasSent(e)) throw e;
-      throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
+      const said = withShownAddresses(e);
+      if (submitting || saysNothingWasSent(said)) throw said;
+      throw new NothingWasSent(String((said as { message?: unknown })?.message ?? said));
     });
   }
 }

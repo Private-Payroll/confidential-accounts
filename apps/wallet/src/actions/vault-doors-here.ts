@@ -10,7 +10,8 @@ import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secre
 import { rosterRefusalOf } from '../../../../src/midnight/secret-readers.js';
 import type { SealedPool } from '../../../../src/midnight/vault-pool.js';
 import { governedCallServiceFor } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import type { CreateVaultDoors, SecretKeptHere, VaultService } from '../../../../packages/web-shared/src/vault-operation.js';
+import type { CreateVaultDoors, SecretKeptHere } from '../../../../packages/web-shared/src/vault-doors.js';
+import type { VaultService } from '../../../../packages/web-shared/src/vault-service.js';
 import { vaultInfoRecordsFor } from '../../../../packages/web-shared/src/vault-info-here.js';
 import { deviceRecordsFor, deviceSignerFrom, readersIn, seatNotBelievedHere, vaultServiceFor } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { DeviceRecords } from '../../../../packages/web-shared/src/deposit-on-device.js';

@@ -14,7 +14,7 @@
  *   3. the deposit journal line is sealed here and filed signed;
  *   4. the coin is checked against the vault's history, its notes and its pool;
  *   5. the coin is handed back, and the caller (`depositIntoCompanyVault` in
- *      `vault-operation.ts`) has the vault worker build and prove the deposit
+ *      `vault-private-deposit.ts`) has the vault worker build and prove the deposit
  *      with it, using the ledger parameters the chain holds now. What this
  *      settles is that the coin is chosen where the key is, and nothing the
  *      server receives names it.

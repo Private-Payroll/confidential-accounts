@@ -79,16 +79,22 @@ vi.mock('vaults-web-shared/in-flight-in-this-browser.js', async (real) => ({
 }));
 vi.mock('vaults-web-shared/vault-coins-kept-here.js', () => ({ coinsKeptOnThisDevice: (_r: unknown, opener: unknown) => ({ isCoinsKept: true, opener }) }));
 vi.mock('./vault-private-money.js', () => ({ seatAndRecordsHere: (...a: [string, string, (() => Promise<unknown>)?]) => st.seat!(...a) }));
-vi.mock('vaults-web-shared/vault-operation.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/vault-operation.js')>()),
+vi.mock('vaults-web-shared/vault-private-deposit.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/vault-private-deposit.js')>()),
   depositIntoCompanyVault: (doors: Doors, vault: string, money: { token: string; value: bigint }) => {
     st.runs.push({ kind: 'private', doors, vault, money });
     return st.privateRun!(doors, vault, money);
   },
+}));
+vi.mock('vaults-web-shared/vault-public-deposit.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/vault-public-deposit.js')>()),
   depositPubliclyIntoCompanyVault: (doors: Doors, vault: string, money: { token: string; value: bigint }) => {
     st.runs.push({ kind: 'public', doors, vault, money });
     return st.publicRun!(doors, vault, money);
   },
+}));
+vi.mock('vaults-web-shared/check-what-this-browser-sent.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/check-what-this-browser-sent.js')>()),
   checkWhatThisBrowserDeposited: (doors: Doors, vault: string, how?: unknown) => { st.checkedHow.push(how); return st.check!(doors, vault); },
   checkWhatThisBrowserSent: async () => { throw new Error('a payment this browser kept was read'); },
 }));
@@ -157,7 +163,7 @@ const aPublicDeposit = () => async (doors: Doors, vault: string, money: { token:
 
 async function load() {
   vi.resetModules();
-  return { m: await import('./deposit.js'), op: await import('vaults-web-shared/vault-operation.js') };
+  return { m: await import('./deposit.js'), op: { ...(await import('vaults-web-shared/vault-private-deposit.js')), ...(await import('vaults-web-shared/vault-public-deposit.js')) } };
 }
 /* The adapter and the shared code under it take seconds to compile the first time; that is spent here, not in the first test's time. Each test still loads them afresh. */
 beforeAll(async () => { await load(); }, 120_000);
@@ -405,6 +411,54 @@ describe('how a deposit ended, and whether anything may have been sent', () => {
     if (unnamed.of !== m.PUT_IN.started) throw new Error('it starts');
     /* RED WHEN: a deposit whose note the chain holds and whose transaction it cannot name yet shows any transaction, or is said to be payable out. */
     expect(await unnamed.ended).toMatchObject({ of: 'done', chainTransaction: null, notYetSpendable: true });
+  });
+
+  it('names which refusal the wallet stopped a private deposit with, as the wallet really sends it, and prints no key or code', async () => {
+    const { m } = await load();
+    const stopped = (extra: Record<string, unknown>, unconfirmed: number, outcome?: Record<string, string>) => async (): Promise<unknown> =>
+      ({ of: 'stopped', step: 3, steps: 4, relayed: 0, unconfirmed, why: 'check-failed', ...(outcome === undefined ? {} : { outcome }), ...extra });
+    const K = 'act.private-deposit.why.';
+    /* A held refusal arrives after the wallet told state not-yet-seen, with the 422 deposit POST counted as handed over. */
+    const held = { vault: VAULT, state: 'not-yet-seen' };
+    const cases: Array<[Record<string, unknown>, number, Record<string, string> | undefined, string | undefined, boolean, string]> = [
+      [{ refused: `${K}not-made`, code: 'not-made' }, 0, undefined, 'not-made', false, 'a refused build step reaches the page as the same unexplained failure'],
+      [{ refused: `${K}held.declined`, code: 'declined' }, 1, held, 'declined', true, 'a fee the person said no to is not told apart'],
+      [{ refused: `${K}held.too-little-dust`, code: 'too-little-dust' }, 1, held, 'too-little-dust', true, 'too little DUST is not told apart'],
+      [{ refused: `${K}held.not-paid`, code: 'not-paid' }, 1, held, 'not-paid', true, 'a fee not paid is not told apart'],
+      [{ refused: `${K}held.network-refused`, code: 'network-refused' }, 1, held, 'network-refused', true, 'a network refusal is not told apart'],
+      [{ refused: `${K}held.something-new`, code: 'something-new' }, 1, held, undefined, true, 'a key the page has no words for is given words of its own'],
+      [{ refused: `${K}not-yet-seen` }, 1, held, undefined, true, 'another refusal is given the held words'],
+      [{}, 0, undefined, undefined, false, 'a stop with no refusal is given a refusal kind'],
+    ];
+    for (const [extra, unconfirmed, outcome, kind, maybe, redWhen] of cases) {
+      st.act = stopped(extra, unconfirmed, outcome);
+      const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
+      if (r.of !== m.PUT_IN.started) throw new Error('it starts');
+      const end: DepositNow = await r.ended;
+      if (end.of !== 'failed') throw new Error('it fails');
+      /* RED WHEN: ${redWhen}. */
+      expect(end.stopped, redWhen).toBe(kind);
+      /* RED WHEN: naming the refusal changes whether the deposit may have been sent. */
+      expect(end.mayHaveBeenSent, redWhen).toBe(maybe);
+      /* RED WHEN: a key or a code of the wallet's is handed on as a reason, so the page prints it. */
+      expect(end.reasons, redWhen).toEqual([]);
+      expect(end.refusal).toBe('did-not-finish');
+      m.putAwayEndedDeposit(VAULT);
+    }
+  });
+
+  it('says a stop with no outcome may have sent the deposit when anything was handed over, and not when nothing was', async () => {
+    const { m } = await load();
+    const cases: Array<[number, number, boolean]> = [[1, 0, true], [0, 1, true], [2, 1, true], [0, 0, false]];
+    for (const [relayed, unconfirmed, maybe] of cases) {
+      st.act = async () => ({ of: 'stopped', step: 3, steps: 4, relayed, unconfirmed, why: 'went-quiet' });
+      const r = m.putMoneyIn('u1', 'c1', VAULT, PRIVATE_TDUST, '1', 5_000_000n, REG);
+      if (r.of !== m.PUT_IN.started) throw new Error('it starts');
+      const end: DepositNow = await r.ended;
+      /* RED WHEN: a wallet window that ended with no answer, after the deposit was handed to the service, is said to have sent nothing. */
+      expect(end.of === 'failed' ? end.mayHaveBeenSent : end.of, `relayed ${relayed}, unconfirmed ${unconfirmed}`).toBe(maybe);
+      m.putAwayEndedDeposit(VAULT);
+    }
   });
 
   it('says something may have been sent whenever the wallet relayed the deposit or could not tell, and never when nothing left', async () => {

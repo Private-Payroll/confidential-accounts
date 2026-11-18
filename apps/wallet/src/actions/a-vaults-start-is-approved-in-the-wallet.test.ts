@@ -9,7 +9,7 @@ import { StepRefused, type StepContext } from './definition.js';
  * **A NEW VAULT'S ADOPTION AND ITS FIRST SECRET RUN ARE APPROVED AND CARRIED OUT FROM THE WALLET BY ANOTHER SIGNER.**
  * One signer set the vault up and raised both; a second approves each through the one approval and carries it out once
  * the chain counts its bar. The shared code that finds each proposal, checks it as the vault's start does and proves each
- * call is stood in for here (it is followed in vault-operation.test.ts, "EACH PROPOSAL OF A NEW VAULT'S START IS APPROVED AND
+ * call is stood in for here (it is followed in vault-secret-run.test.ts, "EACH PROPOSAL OF A NEW VAULT'S START IS APPROVED AND
  * CARRIED OUT BY ANOTHER SIGNER"). What is pinned: the wallet hands it exactly the vault and the proposal the window
  * showed, with the company counted for the vault check; the carrying out is its own step that reads the chain first; the
  * bar is the chain's; a round a leaving signer raised, or an adoption a removal has outrun, goes no further.
@@ -27,8 +27,8 @@ const t = vi.hoisted(() => ({
   called: [] as string[],
 }));
 const CHAIN_ID = 'dd'.repeat(32);
-vi.mock('../../../../packages/web-shared/src/vault-operation.js', async (real) => {
-  const actual = await real<typeof import('../../../../packages/web-shared/src/vault-operation.js')>();
+vi.mock('../../../../packages/web-shared/src/vault-start-round.js', async (real) => {
+  const actual = await real<typeof import('../../../../packages/web-shared/src/vault-start-round.js')>();
   return {
     ...actual,
     /* The shared code: an approval adds one on the chain; a carrying out closes the proposal. */
@@ -83,7 +83,8 @@ vi.mock('./upkeep.js', async (real) => {
 });
 
 const { approveProposalAction } = await import('./approve-proposal.js');
-const { StartRoundRefused, START_STOP } = await import('../../../../packages/web-shared/src/vault-operation.js');
+const { StartRoundRefused } = await import('../../../../packages/web-shared/src/vault-start-round.js');
+const { START_STOP } = await import('../../../../packages/web-shared/src/vault-start-stops.js');
 
 const identity = identityFromSecret(newSecret());
 const LABEL = drawCompanyLabel();

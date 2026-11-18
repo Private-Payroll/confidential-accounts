@@ -51,6 +51,14 @@ describe('describeFailure', () => {
     expect(describeFailure(new Error('the indexer did not answer'))).toBe('the indexer did not answer');
   });
 
+  it('shows no project token of a node address the failure names', () => {
+    const connect = new Error('could not connect to wss://node.example.org/ws?project_id=SECRET123 in time', { cause: new Error('https://idx.example.org/api?project_id=SECRET123 did not answer.') });
+    const text = describeFailure(connect);
+    /* RED WHEN: a failure shown to the person carries an endpoint's query, which is the network's project token. */
+    expect(text).not.toContain('SECRET123');
+    expect(text).toBe('could not connect to wss://node.example.org/ws in time <- caused by: https://idx.example.org/api did not answer.');
+  });
+
   it('a message AND a cause keep both, in that order', () => {
     const text = describeFailure(new Error('could not submit', { cause: new Error('connection reset') }));
     expect(text).toBe('could not submit <- caused by: connection reset');

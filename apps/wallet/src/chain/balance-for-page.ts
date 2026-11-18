@@ -339,15 +339,15 @@ const NOT_ENOUGH = 'Wallet.InsufficientFunds';
 const namesNotEnough = (name: unknown): boolean =>
   typeof name === 'string' && (name === NOT_ENOUGH || name.endsWith(` ${NOT_ENOUGH}`) || name === 'InsufficientFundsError');
 
-/** True when the SDK said the wallet does not hold enough, however the error reached here. */
+/** True when the SDK said the wallet does not hold enough, however the error reached here: wrapped, in a cause, or among the errors an AggregateError holds. */
 const saysNotEnough = (e: unknown): boolean => {
   const next: unknown[] = [e];
   for (let looked = 0; next.length > 0 && looked < 12; looked += 1) {
     const at = next.shift();
     if (at === null || typeof at !== 'object') continue;
-    const o = at as { _tag?: unknown; name?: unknown; cause?: unknown; error?: unknown; [FIBER_FAILURE_CAUSE]?: unknown };
+    const o = at as { _tag?: unknown; name?: unknown; cause?: unknown; error?: unknown; errors?: unknown; [FIBER_FAILURE_CAUSE]?: unknown };
     if (o._tag === NOT_ENOUGH || namesNotEnough(o.name)) return true;
-    next.push(o[FIBER_FAILURE_CAUSE], o.error, o.cause);
+    next.push(o[FIBER_FAILURE_CAUSE], o.error, o.cause, ...(Array.isArray(o.errors) ? o.errors : []));
   }
   return false;
 };

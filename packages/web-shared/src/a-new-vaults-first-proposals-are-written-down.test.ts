@@ -1,7 +1,7 @@
 /**
  * **A NEW VAULT'S TWO PROPOSALS, AS EVERY SIGNER'S DEVICE OPENS THEM.** The
  * adoption and the first secret run are written down by the device setting the
- * vault up (`createCompanyVault`, pinned in `vault-operation.test.ts`); here,
+ * vault up (`createCompanyVault`, pinned in `vault-created-and-started.test.ts`); here,
  * what every device makes of those records afterwards: each opens as a
  * proposal setting up a vault, acted on only from that vault, never as a change
  * a page approves from the company's proposals.

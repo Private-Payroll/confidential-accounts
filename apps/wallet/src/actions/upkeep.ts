@@ -33,7 +33,7 @@ import {
   type DirectoryHere, type DirectoryRead,
 } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { giveEachVaultSecretHere } from '../../../../packages/web-shared/src/vault-secret-given.js';
-import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-operation.js';
+import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import { intentShapeOf, routeOf, sendsIn } from 'midnight-identity/profile/request';

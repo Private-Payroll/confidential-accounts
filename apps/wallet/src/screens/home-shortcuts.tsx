@@ -122,7 +122,7 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
           <DialogTitle>Receive into {name}</DialogTitle>
           <DialogDescription>
             Nothing here moves money. Both addresses below are real and payable on{' '}
-            {address.network}; when comparing either, check <strong>both ends</strong> —
+            {address.network}; when comparing either, check <strong>both ends</strong>:
             every address on this network starts with the same run of characters.
           </DialogDescription>
         </DialogHeader>
@@ -139,7 +139,7 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
               Ordinary NIGHT transfers pay here
               {FAUCET_NAME !== null && (
                 <>
-                  {' '}— and the {FAUCET_NAME} pays <strong>only</strong> here: it
+                  {', '}and the {FAUCET_NAME} pays <strong>only</strong> here: it
                   rejects shielded and DUST addresses
                 </>
               )}
@@ -153,7 +153,7 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
         <AddressBlock
           kind="shielded"
           title="Shielded"
-          says="Private payments — what this product’s payroll pays. Amounts and parties stay hidden on the chain."
+          says="Private payments, what this product’s payroll pays. A private payment to this address hides its amount on the chain. A public mint to it shows its amount."
           bech32={address.bech32}
           short={shortPayee(address)}
           owner={owner}
@@ -212,7 +212,7 @@ function AddressBlock({ kind, title, says, bech32, short, owner }: {
         kit
         text={bech32}
         label={`Copy the ${kind} address`}
-        copied={`Copied — the ${kind} address of ${owner}`}
+        copied={`Copied: the ${kind} address of ${owner}`}
       />
       <details className="reveal" style={{ marginTop: '0.6rem' }}>
         <summary>Show the whole address</summary>
@@ -266,7 +266,7 @@ function EarnRow(): ReactNode {
         <DialogHeader>
           <DialogTitle>Earn is coming soon</DialogTitle>
           <DialogDescription>
-            This is where staking and yield will live — putting NIGHT to work without
+            This is where staking and yield will live: putting NIGHT to work without
             handing it to anybody.
           </DialogDescription>
         </DialogHeader>

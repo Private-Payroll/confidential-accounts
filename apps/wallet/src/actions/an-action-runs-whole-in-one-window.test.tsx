@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://identity.payroll.example/"}
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useEffect } from 'react';
 import { cleanup, fireEvent, render, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
 
@@ -42,6 +43,7 @@ vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => ({
     'confirm-after-a-send': { fields: { vault: 'vault' } },
     'confirm-after-a-write': { fields: { vault: 'vault' }, calls: [{ method: 'PUT', path: '/api/notes/:note' }] },
     'confirms-twice': { fields: { vault: 'vault' } },
+    'fee-after-a-send': { fields: { vault: 'vault' } },
   }),
 }));
 
@@ -71,7 +73,7 @@ vi.mock('./registry.js', async () => {
     check: async () => null,
     steps: () => [step(1), step(2), step(3)],
   };
-  type Ctx = { relay(tx: string): Promise<void>; confirm(lines: readonly unknown[]): Promise<void>; call(m: string, p: string, b?: string): Promise<unknown> };
+  type Ctx = { relay(tx: string): Promise<void>; confirm(lines: readonly unknown[]): Promise<void>; confirmFee(lines: readonly unknown[]): Promise<boolean>; call(m: string, p: string, b?: string): Promise<unknown> };
   const READ = [{ key: 'ask.balance.vault', values: { vault: 'read with the seat keys' } }];
   /* Reads with the seat's keys, asks for the Confirm, and only then hands its transaction over. */
   const reads = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { gate.built.push(0); await c.confirm(READ); gate.built.push(1); await c.relay('dHg1'); } };
@@ -80,11 +82,13 @@ vi.mock('./registry.js', async () => {
   /* Writes to the service, sending nothing to the chain, and only then asks for the Confirm. */
   const wrote = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.call('PUT', '/api/notes/1', '{}'); await c.confirm(READ); gate.built.push(1); } };
   const twice = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.confirm(READ); gate.built.push(1); await c.confirm(READ); gate.built.push(2); } };
+  /* Hands its transaction over, then asks whether to pay a fee from the person's own DUST. */
+  const fee = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.relay('dHg1'); if (await c.confirmFee(READ)) gate.built.push(1); } };
   const withSteps = (steps: readonly unknown[]) => ({ ...action, steps: () => steps });
   const acts: Record<string, unknown> = {
     'three-transfers': action, 'three-transfers-sent': action,
     'read-then-sign': withSteps([reads, step(2)]), 'read-fails': withSteps([fails, step(2)]), 'confirm-after-a-send': withSteps([late, step(2)]),
-    'confirm-after-a-write': withSteps([wrote, step(2)]), 'confirms-twice': withSteps([twice, step(2)]),
+    'confirm-after-a-write': withSteps([wrote, step(2)]), 'confirms-twice': withSteps([twice, step(2)]), 'fee-after-a-send': withSteps([fee]),
   };
   return { ACTIONS: acts, actionFor: (name: string) => acts[name] ?? null };
 });
@@ -185,10 +189,20 @@ const page = {
 const of = (schema: string) => posted.filter((m) => m['schema'] === schema);
 
 let phaseNow = '';
+/* Every phase the wallet has been in, in order, so a wait can be on the lock having been set and not on the phase being seen at the moment it is polled. */
+const phases: string[] = [];
 function Phase(): null {
-  phaseNow = useSession().phase.name;
+  const name = useSession().phase.name;
+  phaseNow = name;
+  useEffect(() => { phases.push(name); }, [name]);
   return null;
 }
+/** Resolves once the wallet has gone from open to locked: the lock the action's end sets. */
+const lockedAfterBeingOpen = (): Promise<void> => until(() => {
+  const opened = phases.indexOf('unlocked');
+  expect(opened).toBeGreaterThanOrEqual(0);
+  expect(phases.lastIndexOf('locked')).toBeGreaterThan(opened);
+});
 
 const runFromTheWindow = async (name?: string): Promise<void> => {
   asking = name === undefined ? actAsk() : { ...actAsk(), intent: { name, vault: VAULT } };
@@ -210,6 +224,7 @@ beforeEach(async () => {
   forgetApprovalBeforeThePasskey();
   forgetTheEnd();
   posted = [];
+  phases.length = 0;
   asking = null;
   answer = () => 'relayed';
   held.length = 0;
@@ -257,10 +272,10 @@ describe('an action runs whole in one window, on one passkey', () => {
 
   it('the opened wallet is locked again when the action ends, and the window says how it ended', async () => {
     await runFromTheWindow();
-    await until(() => expect(phaseNow).toBe('unlocked'));
     await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
-    /* RED WHEN: the seed the passkey opened is still held once the action has ended. */
-    await until(() => expect(phaseNow).toBe('locked'));
+    /* RED WHEN: the seed the passkey opened is still held once the action has ended, or was never opened. */
+    await lockedAfterBeingOpen();
+    expect(phaseNow).toBe('locked');
     /* RED WHEN: the locked window forgets the action, and shows the unlock screen or a waiting line instead. */
     await until(() => expect(document.querySelector('[data-act-ended="done"]')).not.toBeNull());
     /* RED WHEN: what a done action gave its window to show, a fingerprint to read out, is not shown there. */
@@ -325,6 +340,19 @@ describe('an action runs whole in one window, on one passkey', () => {
     /* RED WHEN: confirming asks for the passkey again. */
     expect(mockUsePasskey).toHaveBeenCalledTimes(1);
     await until(() => expect(phaseNow).toBe('locked'));
+  });
+
+  it('the fee question after a hand-over is shown as that, not as a read before anything was sent', async () => {
+    await runFromTheWindow('fee-after-a-send');
+    await until(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull());
+    const words = en as Record<string, string>;
+    /* RED WHEN: the fee question says nothing was sent yet, as the read question does, or names another button. */
+    expect(document.querySelector('[data-act-confirm]')?.textContent).toBe(words['act.confirm.fee-title']);
+    expect(document.querySelector('[data-act-confirm-lede]')?.textContent).not.toContain('sent to the network yet');
+    expect(document.querySelector('[data-act-confirm-button]')?.textContent).toBe(words['act.confirm.fee-button']);
+    fireEvent.click(document.querySelector('[data-act-confirm-button]') as HTMLElement);
+    await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
+    expect(gate.built).toEqual([1]);
   });
 
   /* RED WHEN: Stop at the window's Confirm lets the step go on, or anything is handed to the page after it. */

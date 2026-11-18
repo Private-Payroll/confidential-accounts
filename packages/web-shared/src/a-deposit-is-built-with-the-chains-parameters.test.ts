@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildDeposit, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
-import { LEDGER_PARAMETERS_HEADER } from './vault-operation.js';
+import { LEDGER_PARAMETERS_HEADER } from './vault-private-deposit.js';
 import * as L from '@midnightntwrk/ledger-v9';
 
 const VAULT = 'cd'.repeat(32);

@@ -1117,6 +1117,7 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/person-acts.ts#CHANGE': 'the ways a person\'s record is changed, compared by the code and never shown',
   'apps/web/src/adapters/deposit.ts#PRIVATE_DEPOSIT': 'the key of what the wallet\'s private deposit tells the page when it ends, and its own words for where the deposit got to, compared and never shown',
   'apps/web/src/adapters/deposit.ts#STEP_OF_STAGE': 'the shared deposit\'s own words for its stages, compared and never shown, each to the step a screen says',
+  'apps/web/src/adapters/deposit.ts#STOPPED': 'the kind of stop the wallet\'s refusal names for a private deposit, compared by the page and shown only by its own key',
   'apps/web/src/adapters/deposit.ts#AMOUNT_REFUSAL': 'why a typed amount is not put into a vault, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/deposit.ts#PUT_IN': 'what a press of Put money in came to, compared by the code',
   'apps/web/src/adapters/deposit.ts#DEPOSITED': 'where a deposit in this tab stands, compared by the code',

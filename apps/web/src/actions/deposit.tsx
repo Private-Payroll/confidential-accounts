@@ -7,8 +7,8 @@ import { ActRefused } from '../act-refused.js';
 import { useVaultActions } from '../records/vault-pending.js';
 import {
   AMOUNT_REFUSAL, CHAIN_SAID, CHECKED, checkMyLastDeposit, companyKeyHeldHere, DEPOSIT_KIND, DEPOSIT_METHODS, DEPOSIT_STEP, DEPOSITED, depositNow, MAX, putAwayEndedDeposit,
-  putMoneyIn, PUT_IN, usualSecondsOf, watchDeposit,
-  type AmountRefusal, type DepositMethod, type DepositNow, type DepositStep, type LastDepositChecked,
+  putMoneyIn, PUT_IN, STOPPED, usualSecondsOf, watchDeposit,
+  type AmountRefusal, type DepositMethod, type DepositNow, type DepositStep, type LastDepositChecked, type Stopped,
 } from '../adapters/deposit.js';
 import type { VaultStanding } from '../adapters/company-records.js';
 import { proofsRunning } from '../adapters/proofs-running.js';
@@ -393,7 +393,9 @@ function Failed({ vault, now, check, leadTo }: {
   const isPublic = now.mayHaveBeenSent && now.kind === DEPOSIT_KIND.public;
   const holding = useBefore(isPublic && now.until !== undefined ? now.until : null);
   const notSentHere = isPublic && now.signedNotSent === true && now.until !== undefined;
-  const lead = !isPublic ? t('deposit.failed.maybeSent', { reasons })
+  const heldWords = !isPublic && now.stopped !== undefined && now.stopped !== STOPPED.notMade ? stoppedWords(t)[now.stopped] : null;
+  const lead = heldWords !== null ? heldWords
+    : !isPublic ? t('deposit.failed.maybeSent', { reasons })
     : now.until === undefined ? t('deposit.failed.publicMaybeSentNoTime')
     : notSentHere ? t('deposit.failed.publicNotSent', { when: formatDate(new Date(now.until), language, UNTIL) })
     : t('deposit.failed.publicMaybeSent', { when: formatDate(new Date(now.until), language, UNTIL) });
@@ -414,7 +416,7 @@ function Failed({ vault, now, check, leadTo }: {
         </>
       ) : now.mayHaveBeenSent ? (
         <>
-          <Alert data-refusal="may-have-been-sent">
+          <Alert data-refusal="may-have-been-sent" data-stopped={heldWords === null ? undefined : now.stopped}>
             <AlertTitle>{t('act.refused.title')}</AlertTitle>
             <AlertDescription data-failed-words>{lead}</AlertDescription>
           </Alert>
@@ -422,8 +424,17 @@ function Failed({ vault, now, check, leadTo }: {
         </>
       ) : (
         <>
-          <ActRefused why={now.refusal} />
-          <p className="text-sm" data-nothing-sent>{t('deposit.failed.nothingSent')}</p>
+          {now.stopped === undefined ? (
+            <>
+              <ActRefused why={now.refusal} />
+              <p className="text-sm" data-nothing-sent>{t('deposit.failed.nothingSent')}</p>
+            </>
+          ) : (
+            <Alert data-refusal="stopped" data-stopped={now.stopped}>
+              <AlertTitle>{t('act.refused.title')}</AlertTitle>
+              <AlertDescription data-failed-words>{stoppedWords(t)[now.stopped]}</AlertDescription>
+            </Alert>
+          )}
           {now.reasons.length === 0 ? null : <p className="text-xs text-muted-foreground" data-details>{t('deposit.failed.details', { reasons })}</p>}
         </>
       )}
@@ -438,6 +449,15 @@ function Failed({ vault, now, check, leadTo }: {
   );
 }
 
+
+/** What each way the wallet stopped a private deposit says. */
+const stoppedWords = (t: ReturnType<typeof useText>): Record<Stopped, string> => ({
+  [STOPPED.notMade]: t('deposit.failed.stopped.not-made'),
+  [STOPPED.declined]: t('deposit.failed.stopped.declined'),
+  [STOPPED.tooLittleDust]: t('deposit.failed.stopped.too-little-dust'),
+  [STOPPED.notPaid]: t('deposit.failed.stopped.not-paid'),
+  [STOPPED.networkRefused]: t('deposit.failed.stopped.network-refused'),
+});
 
 /** How the time a deposit on its way is waited for until is written: the browser's date format turns it into the person's language. */
 const UNTIL = { dateStyle: 'medium', timeStyle: 'short' } as const;

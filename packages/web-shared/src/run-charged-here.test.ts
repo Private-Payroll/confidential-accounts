@@ -73,13 +73,13 @@ vi.mock('./one-off-here.js', async (real) => ({
 }));
 /* The company's proposals, as the service holds them: each sealed under the viewing key the device holds. */
 let proposalsNow: unknown[] = [];
-vi.mock('./vault-operation.js', async (real) => ({
-  ...(await real<typeof import('./vault-operation.js')>()),
+vi.mock('./vault-read-here.js', async (real) => ({
+  ...(await real<typeof import('./vault-read-here.js')>()),
   chainAtOneBlockHere: async () => ({ account: 'cc'.repeat(32), accountState: 'STATE', parameters: 'PARAMS', vaultState: '', zswapState: '', blockHash: '' }),
 }));
 const { chargeTheRunHere, periodTotalHere, runsInThePeriod, RunNotChargedHere, ChargeNotYetSeen } = await import('./run-charged-here.js');
 const { sealedOnThisDevice, inFlightInMemory } = await import('./in-flight-on-this-device.js');
-const { DEPOSIT_TIME_TO_LIVE_MS } = await import('./vault-operation.js');
+const { DEPOSIT_TIME_TO_LIVE_MS } = await import('./vault-private-deposit.js');
 type ChargeInFlight = import('./run-charged-here.js').ChargeInFlight;
 
 const leaf = (n: number) => n.toString(16).padStart(2, '0').repeat(32);

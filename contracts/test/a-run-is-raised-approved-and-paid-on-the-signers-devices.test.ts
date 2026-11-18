@@ -76,11 +76,13 @@ import { rolesInAccountState } from '../../apps/wallet/src/chain/company-label-o
 import { periodTotalHere, type ChargeInFlight } from 'vaults-web-shared/run-charged-here.js';
 import { periodOf } from '../../src/midnight/spending-policy-record.js';
 import { accountDeployedIn, roundsOnChainIn, spendingPolicyKeysOf, type AccountDeployed } from 'vaults-web-shared/governed-call-builder.js';
-import {
-  createCompanyVault, depositIntoCompanyVault, mergeNotesInCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
-  payPubliclyFromCompanyVault,
-  type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight, type PaymentsInFlight,
-} from 'vaults-web-shared/vault-operation.js';
+import { createCompanyVault } from 'vaults-web-shared/vault-created-and-started.js';
+import { depositIntoCompanyVault, type DepositInFlight, type DepositsInFlight } from 'vaults-web-shared/vault-private-deposit.js';
+import { mergeNotesInCompanyVault, payPrivatelyFromCompanyVault } from 'vaults-web-shared/vault-pay-privately-and-merge.js';
+import { openCompanyVaultPool } from 'vaults-web-shared/vault-pool-opened.js';
+import { payPubliclyFromCompanyVault } from 'vaults-web-shared/vault-public-payout.js';
+import { type VaultService } from 'vaults-web-shared/vault-service.js';
+import { type PaymentInFlight, type PaymentsInFlight } from 'vaults-web-shared/vault-payment-in-flight.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
 import {
   readWhatThePageAsks, base64FromBytes, whyThePublicBalancingIsNotWhatWasApproved,

@@ -1,11 +1,7 @@
 import { fromBase64Url, toBase64Url } from 'midnight-identity/passkey/bytes';
-import type { Passkey } from 'midnight-identity/passkey/verify';
 import { checkPlan, fingerprintOf, proveRecoverable } from 'midnight-identity/recovery/pieces';
 import type { PieceSet } from 'midnight-identity/recovery/pieces';
 import type { Secret } from 'midnight-identity/keys/derivation';
-/* The fixed set, so `saveLastUsedWallet` refuses exactly what the
- * interface refuses. `subwallets.ts` imports nothing, so this is acyclic. */
-import { isWalletAccount } from './subwallets.js';
 /* How a checkpoint's other tokens are written and read back.
  * `shielded-tokens.ts` imports nothing, so this is acyclic. */
 import { otherTokensFromStored, otherTokensToStored } from '../chain/shielded-tokens.js';
@@ -15,10 +11,26 @@ import { snapshotFacts } from '../chain/snapshot.js';
 /* Which compartment a record is in. `wallets-held.ts` imports
  * nothing from this file, so this is acyclic, exactly as `subwallets.ts` is. */
 import {
-  checkpointKeyFor, claimFingerprint, forgetWallet, heldWallet, heldWallets, keyFor,
+  checkpointKeyFor, forgetWallet, heldWallets, keyFor,
   allocateWalletId, RECORD_KINDS,
   openWallet, openWalletId, rememberWallet, sealKeyFor,
 } from './wallets-held.js';
+/* Which compartment a secret's records are on. `record-shelf.ts` imports
+ * nothing from this file, so this is acyclic. */
+import { slotOf, slotToWrite } from './record-shelf.js';
+/* How a record is judged. `record-checks.ts` imports nothing, so this is acyclic. */
+import { StorageError, isNamed, isRealNumber } from './record-checks.js';
+
+/* The error, and the records that moved to files of their own by job, read from here as before. */
+export { StorageError } from './record-checks.js';
+export type { StorageFailure } from './record-checks.js';
+export {
+  loadSubwallets, saveLastUsedWallet, saveSubwalletName,
+} from './subwallet-record.js';
+export type { SubwalletRecord } from './subwallet-record.js';
+export {
+  allPasskeys, forgetAllPasskeys, forgetPasskey, passkeyById, resetPasskeyRecordTo, savePasskey, walletOfCredential,
+} from './passkey-records.js';
 
 /**
  * WHERE THIS BROWSER KEEPS THINGS — the standalone wallet's own implementation
@@ -53,111 +65,6 @@ const STORE = 'keys';
  * file used to hold — so nothing on any existing machine moves.
  */
 
-/**
- * WHAT THIS FILE THROWS, NAMED: the session used to decide which screen
- * to show by matching one English sentence out of this file, so rewording the
- * sentence — a typo fix — would silently disconnect the screen from the state.
- * A named error is a contract code can check and a test can hold; the message
- * stays what a person reads, and rewording it now changes nothing.
- */
-export type StorageFailure =
-  /** Ciphertext is stored here and the key that opens it is gone. */
-  | 'sealed-copy-unopenable'
-  /** Something is stored here and it cannot even be read as a record. */
-  | 'record-damaged';
-
-export class StorageError extends Error {
-  readonly code: StorageFailure;
-  constructor(code: StorageFailure, message: string) {
-    super(message);
-    this.name = 'StorageError';
-    this.code = code;
-  }
-}
-
-/**
- * WHICH COMPARTMENT A SECRET'S RECORDS BELONG IN — and the whole of the
- * wrong-wallet safety on the WRITE side.
- *
- * Before this change every reader carried the same check — a record naming a
- * different secret reads as absent — and that was enough, because there was
- * one compartment and a foreign record could only ever be a leftover. With
- * several compartments a WRITER that picked the wrong one would not show
- * wallet B's names over wallet A; it would DESTROY B's names with A's, which
- * no reader-side check can undo. So the check moves to both ends.
- *
- * The answer is always THIS WINDOW'S OPEN WALLET (`openWalletId`), and the
- * only question is whether the secret in hand is that wallet's:
- *
- *   - the slot's fingerprint matches — the ordinary case;
- *   - the slot has no fingerprint on record — a wallet that predates this
- *     change, whose secret was sealed before there was anywhere to write one.
- *     The secret is here now, so it is written down once (`claimFingerprint`);
- *   - the slot's fingerprint is something else — the caller is holding a
- *     wallet this window does not have open. Readers answer as they always
- *     did, with absence; writers refuse.
- *
- * Nothing is registered yet on a landing in flight (`saveSecret` writes the
- * entry itself), so an unknown slot is this window's and is used as it is.
- */
-function slotOf(secret: Secret): string | null {
-  const id = openWalletId();
-  const fingerprint = toBase64Url(fingerprintOf(secret));
-  const registered = heldWallet(id)?.fingerprint ?? null;
-  if (registered !== null) return registered === fingerprint ? id : null;
-
-  /* Nothing registered. The RECORDS are then the evidence, and they are
-   * better evidence than the index: every one of them was written by the
-   * secret whose fingerprint it carries. */
-  const onDisk = fingerprintsInSlot(id);
-  if (onDisk.length === 0) return id;
-  if (!onDisk.includes(fingerprint)) return null;
-  claimFingerprint(id, fingerprint);
-  return id;
-}
-
-/**
- * EVERY FINGERPRINT WRITTEN INTO ONE COMPARTMENT, off the records themselves.
- *
- * This is what identifies an older wallet: its keyring is sealed
- * and carries no name, but five of its seven records were written by
- * `fingerprintOf(secret)` and say so in the clear. **The secret never has to
- * be opened to find out whose compartment this is.**
- *
- * A LIST RATHER THAN ONE VALUE, because two records disagreeing is a state
- * this browser could historically reach (records were overwritten in place,
- * one writer at a time) and the honest reading of it is *the wallet whose
- * record is here is at home* — not *the compartment belongs to whichever
- * record I happened to read first*.
- */
-function fingerprintsInSlot(walletId: string): readonly string[] {
-  const found = new Set<string>();
-  for (const kind of ['wallet-name', 'subwallets', 'secured', 'arrived', 'created'] as const) {
-    const raw = localStorage.getItem(keyFor(walletId, kind));
-    if (raw === null) continue;
-    try {
-      const parsed = JSON.parse(raw) as { fingerprint?: unknown };
-      if (typeof parsed?.fingerprint === 'string' && parsed.fingerprint !== '') {
-        found.add(parsed.fingerprint);
-      }
-    } catch {
-      /* Damaged is not evidence. The record's own reader says so too. */
-    }
-  }
-  return [...found];
-}
-
-/** As `slotOf`, for the writers — a refusal rather than a wrong shelf. */
-function slotToWrite(secret: Secret): string {
-  const slot = slotOf(secret);
-  if (slot === null) {
-    throw new Error(
-      'this window has a different wallet open than the one being written to. '
-      + 'Nothing was written. This is a defect: two wallets are never unlocked '
-      + 'at once, so a secret in hand is always the open wallet\u2019s.');
-  }
-  return slot;
-}
 
 function idb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -811,8 +718,8 @@ export function creationOf(secret: Secret): CreationRecord | null {
 
 /* ---- the name of the WHOLE wallet — the secret, not an account inside it. ----
  *
- * **THE TWO KINDS OF NAME IN THIS FILE ARE NOT THE SAME THING, AND THE COPY
- * MUST NOT BLUR THEM.** `SubwalletRecord.names` below names the ACCOUNTS in
+ * **THE TWO KINDS OF NAME ARE NOT THE SAME THING, AND THE COPY MUST NOT BLUR
+ * THEM.** `SubwalletRecord.names` (`subwallet-record.ts`) names the ACCOUNTS in
  * one wallet — the main wallet and the ten slots, each with its own address
  * and its own money. THIS record names the wallet those accounts live in.
  * One name per SECRET; nothing here is per-account.
@@ -927,150 +834,6 @@ export function walletNameOnRecord(walletId: string): string | null {
   return parseWalletName(raw)?.name ?? null;
 }
 
-/* ---- subwallet names, and which wallet was open last. ----
- *
- * DECORATION, BY DESIGN — the second trap. A name
- * is not a function of the secret, so this record is a convenience this
- * browser keeps and the design survives losing: the slots always exist and
- * are always offered (`subwallets.ts`), so a vanished name is a label to
- * re-type, never money out of reach. That is why damage here is treated as
- * ABSENCE and not as a `broken` state — unlike the keyring, there is nothing
- * behind this record to lose. The no-silent-rewrite rule is about reads
- * that destroy; this read repairs nothing and the next save simply writes a
- * whole new record.
- *
- * The same discipline still applies: the record names its account by
- * fingerprint and is DEFAULTS for any other. A browser that held wallet B
- * and now holds wallet A must not dress A's subwallets in B's names —
- * "Savings" over somebody else's account 3 is exactly the wrong-wallet
- * payment §3 exists to prevent.
- */
-
-export interface SubwalletRecord {
-  readonly fingerprint: string;
-  /** Account number (as a string key) → the person's name for it. */
-  readonly names: Readonly<Record<string, string>>;
-  /** The account open when this record was last written. */
-  readonly lastUsed: number;
-}
-
-const EMPTY_SUBWALLETS: Omit<SubwalletRecord, 'fingerprint'> =
-  Object.freeze({ names: Object.freeze({}), lastUsed: 0 });
-
-function parseSubwallets(raw: string): SubwalletRecord | null {
-  let parsed: SubwalletRecord;
-  try {
-    parsed = JSON.parse(raw) as SubwalletRecord;
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  if (!isNamed(parsed.fingerprint)) return null;
-  if (!isRealNumber(parsed.lastUsed) || !Number.isInteger(parsed.lastUsed)) return null;
-  if (parsed.lastUsed < 0 || parsed.lastUsed === 1) return null;
-  if (typeof parsed.names !== 'object' || parsed.names === null
-    || Array.isArray(parsed.names)) return null;
-  for (const [account, name] of Object.entries(parsed.names)) {
-    if (!/^\d+$/u.test(account) || account === '1') return null;
-    if (typeof name !== 'string') return null;
-  }
-  return parsed;
-}
-
-/**
- * The names and last-used wallet FOR THIS SECRET — or the defaults, for no
- * record, a damaged record, or another account's. Never throws: losing this
- * record loses labels, not money, and the screens must keep working.
- */
-export function loadSubwallets(secret: Secret): Omit<SubwalletRecord, 'fingerprint'> {
-  const slot = slotOf(secret);
-  if (slot === null) return EMPTY_SUBWALLETS;
-  const raw = localStorage.getItem(keyFor(slot, 'subwallets'));
-  if (!raw) return EMPTY_SUBWALLETS;
-  const parsed = parseSubwallets(raw);
-  if (!parsed) return EMPTY_SUBWALLETS;
-  if (parsed.fingerprint !== toBase64Url(fingerprintOf(secret))) return EMPTY_SUBWALLETS;
-  return { names: parsed.names, lastUsed: parsed.lastUsed };
-}
-
-function saveSubwallets(
-  secret: Secret, next: Omit<SubwalletRecord, 'fingerprint'>,
-): void {
-  const record: SubwalletRecord = {
-    fingerprint: toBase64Url(fingerprintOf(secret)),
-    names: next.names,
-    lastUsed: next.lastUsed,
-  };
-  localStorage.setItem(keyFor(slotToWrite(secret), 'subwallets'), JSON.stringify(record));
-}
-
-/**
- * Names or renames one wallet. An empty name removes the label — the slot
- * falls back to its own fixed name and stays offered; a slot cannot be named
- * out of existence. Account 1 is refused loudly: nothing may teach the
- * interface to treat the authority compartment as a wallet, even as a label.
- *
- * THE SECOND WRITER NOW AGREES WITH THE FIRST ABOUT WHAT AN ACCOUNT
- * IS. `saveLastUsedWallet` was widened to `isWalletAccount` and this
- * one was left as it was, because the change named one writer and one line.
- * A LATER READING named the other: *"the two writers should not disagree about what
- * an account is."* Until this line, they did — `saveSubwalletName(secret, 12,
- * 'Savings')` reached the disk and `parseSubwallets` read it back happily,
- * so the record could carry a name for a slot no screen offers and no
- * `loadSubwallets` caller would ever show. A label is not money, which is why
- * this is defence in depth rather than a fix; but a record that can hold a
- * fact nothing can display is a record two readers can disagree about, and
- * Trouble is what disagreement about which wallet is which costs.
- *
- * THE SET COMES FROM `subwallets.ts`, NOT FROM A BOUND WRITTEN HERE — same
- * reason given: that file says growing the slot count later is "safe and
- * additive", and a hardcoded `<= 11` here would make every new slot
- * unnameable the moment somebody grew it.
- */
-export function saveSubwalletName(secret: Secret, account: number, name: string): void {
-  if (!isWalletAccount(account)) {
-    throw new Error(`subwallet names live at accounts 0 and 2–11; got ${account}. `
-      + (account === 1
-        ? 'Account 1 is the authority compartment, not a wallet.'
-        : 'That is not a slot this interface offers.'));
-  }
-  const current = loadSubwallets(secret);
-  const names = { ...current.names };
-  const trimmed = name.trim();
-  if (trimmed === '') delete names[String(account)];
-  else names[String(account)] = trimmed;
-  saveSubwallets(secret, { names, lastUsed: current.lastUsed });
-}
-
-/**
- * Remembers which wallet is open, so the app opens into it next time.
- *
- * THE WRITER IS NOW AS STRICT AS THE READER, and this is defence in
- * depth rather than a fix: nothing displayed today disagrees with what is open.
- * The guard used to refuse non-integers, negatives and account 1 and NOTHING
- * ELSE, so account 12 reached the disk happily while `useWallets` silently
- * opened the main wallet instead — the record and the screen naming different
- * wallets with nothing said, which is a disagreement moved into the chrome.
- * `isWalletAccount` is the one definition of `{0} ∪ [2,11]` and it MOVES WITH
- * THE LIST: `subwallets.ts` says growing the slot count later is safe and
- * additive, and a hardcoded `> 11` here would have made every new slot
- * unopenable at the moment somebody grew it.
- *
- * WHAT THIS COSTS, said rather than left to be discovered: `shell/wallets.ts`'s
- * own guard is now REDUNDANT for the fixed set, so deleting it no longer turns
- * any test red. Two walls cannot both be mutation-pinned; the CLAIM is pinned
- * by this one, and `wallets.test.ts` says so where it used to say the opposite.
- */
-export function saveLastUsedWallet(secret: Secret, account: number): void {
-  if (!isWalletAccount(account)) {
-    throw new Error(`a wallet is account 0 or 2–11; got ${account}. `
-      + (account === 1
-        ? 'Account 1 is the authority compartment, not a wallet.'
-        : 'That is not a slot this interface offers.'));
-  }
-  const current = loadSubwallets(secret);
-  saveSubwallets(secret, { names: current.names, lastUsed: account });
-}
 
 /**
  * Deletes ONLY the secured record — the map to the pieces. Exists for
@@ -1165,12 +928,6 @@ export interface SecuredSetup {
   /** Older sets whose pieces are still out there and still work. */
   readonly superseded: readonly SupersededSet[];
 }
-
-const isRealNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value);
-
-const isNamed = (value: unknown): boolean =>
-  typeof value === 'string' && value.trim() !== '';
 
 const isVerification = (value: unknown): boolean =>
   value === null || value === 'never' || isRealNumber(value);
@@ -1329,168 +1086,3 @@ export async function saveSecuredSetup(
   localStorage.setItem(keyFor(slot, 'secured'), JSON.stringify(record));
 }
 
-/* ---- passkeys. Public data: an id, a public key, counters. ---- */
-
-interface StoredPasskey extends Omit<Passkey, 'publicKeySpki' | 'transports'> {
-  readonly publicKeySpki: string;
-  readonly transports: readonly string[];
-}
-
-export function savePasskey(passkey: Passkey, walletId: string): void {
-  const all = allPasskeys(walletId).filter((p) => p.credentialId !== passkey.credentialId);
-  const stored: StoredPasskey = {
-    ...passkey,
-    publicKeySpki: toBase64Url(passkey.publicKeySpki),
-    transports: [...passkey.transports],
-  };
-  localStorage.setItem(
-    keyFor(walletId, 'passkeys'), JSON.stringify([...all.map(toStored), stored]));
-}
-
-const toStored = (p: Passkey): StoredPasskey => ({
-  ...p,
-  publicKeySpki: toBase64Url(p.publicKeySpki),
-  transports: [...p.transports],
-});
-
-/**
- * DAMAGE IS A STATE, NOT AN EMPTY LIST. Returning `[]` for a record
- * that cannot be read told the person with a healthy keyring and a damaged
- * passkey record that their account was on another machine, while the keys
- * sat sealed and intact on this one. A damaged record — the whole of it or
- * any entry in it — raises `record-damaged` like everything else in this
- * file, so the session shows the named-state screen with its doors instead
- * of a wrong sentence. And a read never silently drops an entry: the old
- * skip-on-read meant the next `savePasskey` wrote the skipped entry out of
- * existence, which turned partial damage into permanent loss.
- */
-export function allPasskeys(walletId: string): Passkey[] {
-  const raw = localStorage.getItem(keyFor(walletId, 'passkeys'));
-  if (!raw) return [];
-
-  const damaged = (): StorageError => new StorageError(
-    'record-damaged',
-    'the record of this browser’s passkeys is damaged and cannot be read. The '
-    + 'sealed account here is untouched, but this browser cannot match a passkey to '
-    + 'it. Recover from your pieces, or start again.');
-
-  let stored: unknown;
-  try {
-    stored = JSON.parse(raw);
-  } catch {
-    throw damaged();
-  }
-  if (!Array.isArray(stored)) throw damaged();
-
-  const passkeys: Passkey[] = [];
-  for (const entry of stored as StoredPasskey[]) {
-    if (typeof entry?.credentialId !== 'string' || typeof entry?.publicKeySpki !== 'string'
-      || typeof entry?.personHandle !== 'string') {
-      throw damaged();
-    }
-    try {
-      passkeys.push({
-        ...entry,
-        publicKeySpki: fromBase64Url(entry.publicKeySpki),
-        transports: Object.freeze([...(entry.transports ?? [])]),
-      });
-    } catch {
-      throw damaged();
-    }
-  }
-  return passkeys;
-}
-
-export const passkeyById = (
-  credentialId: string, walletId: string,
-): Passkey | null =>
-  allPasskeys(walletId).find((p) => p.credentialId === credentialId) ?? null;
-
-/**
- * WHICH WALLET A CHOSEN CREDENTIAL OPENS, and the reason it has to
- * exist: the browser's chooser offers every credential for this ORIGIN, and
- * this origin now holds several wallets. `passkeyById` asks one compartment;
- * this asks all of them, in the order the list is kept.
- *
- * **A CREDENTIAL THAT OPENS NOTHING IS A NULL, NOT A THROW**, and the caller
- * says the sentence. That state is not hypothetical — a password manager keeps
- * credentials this browser's storage no longer knows about, and it is the
- * `passkey-with-no-wallet` state already seen in the wild.
- *
- * A COMPARTMENT WHOSE PASSKEY RECORD IS DAMAGED DOES NOT STOP THE SEARCH, AND
- * DOES NOT VANISH FROM IT EITHER — and getting this exactly right is the point.
- *
- * `allPasskeys` RAISES `record-damaged` rather than returning `[]`, because
- * an empty list told somebody with a healthy keyring that their account was on
- * another machine. If this function swallowed that, a single-wallet browser
- * with a damaged record would be back to exactly that sentence. So: every
- * compartment is tried, a MATCH anywhere wins — one wallet's unreadable public
- * data must not make the other three unopenable — and if nothing matched and
- * anything was damaged, the damage is raised. The caller turns a null into a
- * sentence and a `StorageError` into the named-state screen, as it always has.
- */
-export function walletOfCredential(credentialId: string): {
-  readonly walletId: string; readonly passkey: Passkey;
-} | null {
-  let damaged: StorageError | null = null;
-  for (const wallet of heldWallets()) {
-    let found: Passkey | null = null;
-    try {
-      found = passkeyById(credentialId, wallet.id);
-    } catch (e) {
-      if (e instanceof StorageError) damaged ??= e;
-      else throw e;
-      continue;
-    }
-    if (found) return { walletId: wallet.id, passkey: found };
-  }
-  if (damaged !== null) throw damaged;
-  return null;
-}
-
-/**
- * Replaces the passkey record wholesale with exactly one entry, WITHOUT
- * reading what is there. Lawful in exactly two places, both doors a person
- * pressed: `adoptPasskey` over a DAMAGED record (the person chose
- * "discard it and make a new passkey", and nothing in that store is worth
- * anything: ids and counters, public data), and `startFresh` replacing stale
- * records after the new wallet has landed. The no-rewrite rule
- * is about SILENT repair on a read path; this is neither silent nor a read.
- */
-export function resetPasskeyRecordTo(
-  passkey: Passkey, walletId: string,
-): void {
-  localStorage.setItem(keyFor(walletId, 'passkeys'), JSON.stringify([toStored(passkey)]));
-}
-
-/**
- * Removes the WHOLE passkey record, without reading it. Lawful in exactly one
- * place: the recovery LANDING. The moment the recovered secret is
- * sealed here, every credential on record gates the account this landing just
- * replaced — worth nothing, and worse than nothing: left in place, a cancelled
- * ceremony dropped the person to `locked` behind the OLD credential, and if
- * that credential was gone from the authenticator too they met "the account
- * was made elsewhere" over an account that arrived a second ago. Removing the
- * record on the landing means a cancelled sheet reaches the
- * `account-no-passkey` doorway in EVERY browser, not only an empty one. A
- * door the person pressed — finishing a recovery — never a silent repair.
- */
-export function forgetAllPasskeys(walletId: string): void {
-  localStorage.removeItem(keyFor(walletId, 'passkeys'));
-}
-
-/**
- * Removes one passkey record. Exists for the sign-up rollback: if the secret
- * cannot be saved after a registration, the passkey record must not survive
- * alone — `hasAccount()` would stay false, Welcome would show, and the next
- * create would pass this credential in `excludeCredentials`, which the
- * authenticator refuses — every retry failing identically, for ever.
- */
-export function forgetPasskey(credentialId: string, walletId: string): void {
-  const kept = allPasskeys(walletId).filter((p) => p.credentialId !== credentialId);
-  if (kept.length === 0) {
-    localStorage.removeItem(keyFor(walletId, 'passkeys'));
-    return;
-  }
-  localStorage.setItem(keyFor(walletId, 'passkeys'), JSON.stringify(kept.map(toStored)));
-}
