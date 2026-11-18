@@ -47,7 +47,7 @@ import { StaticProofServerContainer } from '@midnight-ntwrk/testkit-js';
 
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
 import { feeCeilingFrom } from '../src/midnight/fee-ceiling.js';
-import { applyNetworkId, theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
+import { theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
 import { handInFundedParties } from '../src/wiring/handed-in-wallets.js';
 import { bringUpWallet, dustViewAtTip } from './wallet-bringup.js';
 import { describeDustView } from './dust-wallet.js';
@@ -63,9 +63,10 @@ import { refuseWhileMigrationsPending } from '../src/db/migrate.js';
 import { ensureProvingParameters, parameterSources } from '../src/server/proving-parameters.js';
 import { vaultArtefactPlaces } from '../src/server/vault-artefacts.js';
 import { startTheServer, startThePages, stopChildren, stopEverythingOnExit } from './serve-product.js';
+import { createdCompaniesFile, storeDir } from '../src/wiring/deployment.js';
+import { publicDataProviderAt } from '../src/midnight/providers.js';
 
 const ROOT = join(import.meta.dirname, '..');
-const STATE_DIR = join(ROOT, '.midnight');
 /*
  * **RESOLVED ONCE, HERE, AND NOT READ AGAIN.** This launcher used to take the raw
  * value, name a seed file with it and print it, and only validate it four
@@ -73,6 +74,7 @@ const STATE_DIR = join(ROOT, '.midnight');
  * before anything refused it.
  */
 const NETWORK: NetworkName = theNetwork();
+const STATE_DIR = storeDir(ROOT, NETWORK);
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT ?? 6301);
 const SPONSOR_SEED_FILE = join(STATE_DIR, 'wallet.seed');
 const ARTIFACTS = join(ROOT, 'contracts', 'managed');
@@ -84,7 +86,7 @@ const FEE_RECORD = join(STATE_DIR, 'sponsored-fees.jsonl');
  * refuses to boot over, correctly. Set here and not left to `.env`, because the
  * server reads `.env` only for names nothing has set.
  */
-const DATA = join(STATE_DIR, 'created-companies.json');
+const DATA = createdCompaniesFile(ROOT, NETWORK);
 
 const line = (s = '') => console.log(s);
 const step = (n: number, of: number, what: string) => line(`\n  [${n}/${of}] ${what}`);
@@ -185,7 +187,6 @@ async function main() {
   /* ---------------------------------------------------------------- 2 */
   step(2, 5, 'Bringing up the wallet that pays (this is the slow part: a sync, then DUST)');
 
-  await applyNetworkId(NETWORK);
   const logger: any = {
     info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, trace: () => {},
     fatal: () => {}, silent: () => {}, level: 'silent',
@@ -204,10 +205,8 @@ async function main() {
   /* ---------------------------------------------------------------- 3 */
   step(3, 5, 'Handing the fee payer to the product, before the server exists');
 
-  const { indexerPublicDataProvider } = await import(
-    '@midnight-ntwrk/midnight-js-indexer-public-data-provider');
   const E = ENDPOINTS[NETWORK]!;
-  const publicData = indexerPublicDataProvider(E.indexerUrl, E.indexerWsUrl);
+  const publicData = await publicDataProviderAt(E);
 
   mkdirSync(STATE_DIR, { recursive: true });
   handInFundedParties({

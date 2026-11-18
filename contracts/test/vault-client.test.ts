@@ -64,6 +64,10 @@ import { payFor } from '../../src/testing/payees.js';
 import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 import { NIGHT as NIGHT_TOKEN } from '../../src/core/assets.js';
 import { noFurtherNote, notePlaces } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -88,7 +92,7 @@ const CAROL = bytes(0x0c);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault driven by the client\'s own note pool', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault driven by the client\'s own note pool [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultNotes>;
   let vaultAddr: string;
@@ -98,14 +102,17 @@ describe('a vault driven by the client\'s own note pool', () => {
   /** The note a payment offers the vault first, chosen before the call as the client chooses it. */
   let offered: Hex | undefined;
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
   const vaultBytes = () => Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
-  const ctx = (circuit: string) => createCircuitContext<VaultNotes>(
-    circuit, vaultAddr as never, BLOCK, vaultState, notes,
-    provider() as never, undefined, undefined, NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultNotes>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: notes,
+      crossContract: sim.crossContract(),
+      time: NOW,
+      parentBlockHash: BLOCK,
+    });
 
   /**
    * **THE VAULT'S STATE, PLUS WHAT THE CHAIN SAYS IT HOLDS IN PUBLIC
@@ -147,9 +154,16 @@ describe('a vault driven by the client\'s own note pool', () => {
     return cs;
   };
 
-  const ctxWith = (circuit: string, state: unknown) => createCircuitContext<VaultNotes>(
-    circuit, vaultAddr as never, BLOCK, state as never, notes,
-    provider() as never, undefined, undefined, NOW, BLOCK);
+  const ctxWith = (circuit: string, state: unknown) => createCircuitContext<VaultNotes>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: state as never,
+      privateState: notes,
+      crossContract: sim.crossContract(),
+      time: NOW,
+      parentBlockHash: BLOCK,
+    });
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);

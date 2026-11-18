@@ -23,8 +23,6 @@
     "identity:build": "tsc -p packages/identity/tsconfig.build.json",
     "vendor-keys": "node apps/wallet/scripts/vendor-keys.mjs",
     "vendor-keys:account": "node --import tsx apps/wallet/scripts/vendor-keys.mjs --account",
-    "deploy": "tsx scripts/deploy-preview.ts",
-    "preflight": "tsx scripts/preflight.ts",
     "migrate": "tsx scripts/migrate.ts"
   },
   "keywords": [],
@@ -36,20 +34,21 @@
     "vaults-ui": "file:./packages/ui",
     "vaults-web": "file:./apps/web",
     "vaults-web-shared": "file:./packages/web-shared",
-    "@midnight-ntwrk/compact-js": "2.5.5-rc.6",
-    "@midnight-ntwrk/compact-runtime": "0.19.0",
-    "@midnight-ntwrk/midnight-js-contracts": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-level-private-state-provider": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-network-id": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-protocol": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-types": "5.0.0-beta.4",
-    "@midnight-ntwrk/midnight-js-utils": "5.0.0-beta.4",
-    "@midnightntwrk/ledger-v9": "1.0.0-rc.3",
-    "@midnightntwrk/wallet-sdk": "2.0.0-beta.2",
-    "@midnightntwrk/wallet-sdk-address-format": "4.0.0-beta.2",
+    "@midnight-ntwrk/compact-js": "3.0.0",
+    "@midnight-ntwrk/compact-runtime": "0.21.0",
+    "@midnight-ntwrk/midnight-js-contracts": "5.0.0",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "5.0.0",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "5.0.0",
+    "@midnight-ntwrk/midnight-js-level-private-state-provider": "5.0.0",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "5.0.0",
+    "@midnight-ntwrk/midnight-js-protocol": "5.0.0",
+    "@midnight-ntwrk/midnight-js-types": "5.0.0",
+    "@midnight-ntwrk/midnight-js-utils": "5.0.0",
+    "@midnightntwrk/ledger-v9": "1.0.1",
+    "@midnightntwrk/wallet-sdk": "2.0.0",
+    "@midnightntwrk/wallet-sdk-address-format": "4.0.0",
+    "@midnightntwrk/zkir-v2": "2.2.0",
+    "@midnightntwrk/zkir-v3": "3.2.1",
     "@noble/ciphers": "2.3.0",
     "@noble/curves": "2.3.0",
     "@noble/hashes": "2.3.0",
@@ -66,7 +65,7 @@
     "postgres": "3.4.9"
   },
   "devDependencies": {
-    "@midnight-ntwrk/testkit-js": "5.0.0-beta.4",
+    "@midnight-ntwrk/testkit-js": "5.0.0",
     "@types/better-sqlite3": "9.6.0",
     "@types/cors": "2.8.19",
     "@types/express": "5.0.6",
@@ -83,8 +82,14 @@
     "vitest": "4.1.10"
   },
   "private": true,
+  "engines": {
+    "node": ">=24.22 <25"
+  },
+  "packageManager": "npm@11.19.1",
   "overrides": {
-    "@midnightntwrk/onchain-runtime-v4": "4.0.0-rc.3",
-    "@midnight-ntwrk/compact-runtime": "0.19.0"
+    "@midnightntwrk/onchain-runtime-v4": "4.0.1",
+    "@midnightntwrk/zkir-v3": "$@midnightntwrk/zkir-v3",
+    "@midnight-ntwrk/compact-runtime": "$@midnight-ntwrk/compact-runtime",
+    "@midnightntwrk/ledger-v9": "$@midnightntwrk/ledger-v9"
   }
 }

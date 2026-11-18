@@ -5,6 +5,7 @@
  * handed in by the page that opened it from the company's records and is kept by nothing here.
  */
 import { DIGITS, fromHex, HEX64, throwawayKeys, vaultCallWithTheAccount, type PayoutChain, type VaultBuilderDeps } from './vault-builder.js';
+import { SPENDS_NO_COIN } from './contract-call-built.js';
 /**
  * **A SECRET RUN AS IT CROSSES BETWEEN THE PAGE AND THIS WORKER**, a first secret
  * or a replacement: every number as decimal digits and every value as hex. It is
@@ -120,16 +121,15 @@ export async function buildWriteSecretCopy(
   if (!(input.parameters instanceof Uint8Array) || input.parameters.length === 0) {
     throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent.');
   }
-  const L = deps.ledger;
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+  const built = await deps.contracts.buildCall(deps.zkConfig, {
     compiledContract: deps.compiled,
     circuitId: 'writeSecretCopy',
     contractAddress: vault,
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: deps.runtimeState.deserialize(input.state),
-    initialZswapChainState: new L.ZswapChainState(),
-    ledgerParameters: L.LedgerParameters.deserialize(input.parameters),
+    /* Writing a copy moves no coin, so the builder is given no commitment tree to read. */
+    network: deps.network,
+    read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
     args: [
       hex32Of('commitment', input.run.commitment), hex32Of('reader key', copy.reader),
       copy.parts.map((p) => hex32Of('sealed copy', p)),

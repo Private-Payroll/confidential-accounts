@@ -14,6 +14,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
+import { NETWORK } from 'midnight-identity/network';
 
 /* Set BEFORE the import, as every server test does: the module wires itself up at import time. */
 useOnlyTheseSettings({
@@ -47,10 +48,10 @@ const capability: any = {
   storagePassword: async () => 'not-a-secret: a test literal',
 };
 const ledger = new ChainLedger(inner, {
-  network: 'stagenet', contractAddress: 'bcb61fef',
+  network: NETWORK, contractAddress: 'bcb61fef',
   indexerUrl: 'https://indexer.example/api/v4/graphql', indexerWsUrl: 'wss://indexer.example/ws',
   nodeUrl: 'https://rpc.example', proverUrl: 'http://prover.invalid:1',
-  sealedStateRoot: '/nowhere/.midnight/sealed', privateStateId: 'confidential-accounts-stagenet',
+  sealedStateRoot: '/nowhere/.midnight/sealed', privateStateId: `confidential-accounts-${NETWORK}`,
   zkConfigPath: '/nowhere/contracts/managed',
   vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 }, capability, { now: () => Date.now(), overdueAfterMs: OVERDUE_MS });

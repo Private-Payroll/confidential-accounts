@@ -17,16 +17,17 @@ import { withRetry } from '../midnight/retry.js';
 import { ContractBook } from './account-contract.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const DEPLOYMENT: Deployment = {
-  network: 'stagenet',
+  network: NETWORK,
   contractAddress: 'bcb61fef',
   indexerUrl: 'https://indexer.example/api/v4/graphql',
   indexerWsUrl: 'wss://indexer.example/api/v4/graphql/ws',
   nodeUrl: 'https://rpc.example',
   proverUrl: 'http://prover.invalid:1',
   sealedStateRoot: '/nowhere/.midnight/sealed',
-  privateStateId: 'confidential-accounts-stagenet',
+  privateStateId: `confidential-accounts-${NETWORK}`,
   zkConfigPath: '/nowhere/contracts/managed',
   vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 };

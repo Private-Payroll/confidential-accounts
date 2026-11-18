@@ -14,6 +14,7 @@ import { verify } from './disclosure.js';
 import { ProfileScreen } from '../../../../apps/wallet/src/screens/profile.js';
 import { Approve } from '../../../../apps/wallet/src/screens/approve.js';
 import type { ChannelWindow } from './channel.js';
+import { NETWORK } from '../wallet/network.js';
 
 /**
  * **§3.4's CLAIM, PROVED THE WAY THIS PROJECT PROVES THINGS.**
@@ -297,7 +298,7 @@ describe('the APPROVAL SCREEN gets it right with no line changed in the approval
         atOrigin: 'https://payroll-a.example',
         expectingNonce: 'n1',
         payingAddress: body.payload.address,
-        networkId: 'stagenet',
+        networkId: NETWORK,
         now: NOW,
       })).toEqual({ ok: true });
 
@@ -306,7 +307,7 @@ describe('the APPROVAL SCREEN gets it right with no line changed in the approval
         atOrigin: 'https://payroll-b.example',
         expectingNonce: 'n1',
         payingAddress: body.payload.address,
-        networkId: 'stagenet',
+        networkId: NETWORK,
         now: NOW,
       })).toMatchObject({ ok: false, code: 'origin-mismatch' });
     });

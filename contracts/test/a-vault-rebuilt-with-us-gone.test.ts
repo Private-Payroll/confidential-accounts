@@ -53,6 +53,10 @@ import { walkCompanyRecords, type CompanyRecords } from '../../src/midnight/rebu
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { toHex, fromHex, newWrappingKeypair, randomBytes, type Hex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -103,7 +107,7 @@ const vaultWitnesses = {
   nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
 };
 
-describe('a vault whose every record of ours is gone', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault whose every record of ours is gone [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: Hex;
@@ -115,13 +119,16 @@ describe('a vault whose every record of ours is gone', () => {
   const WORDS = newWords().join(' ');
   const SOMEBODY_ELSE = newWords().join(' ');
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
   /* Before the first call the state is the deployment's ContractState; after it, the call's charged state. */
   const charged = () => (vaultState?.constructor?.name === 'ContractState' ? vaultState.data : vaultState);
   const chainNotes = (): Hex[] => [...vaultLedger(charged() as never).notes].map((c: Uint8Array) => toHex(c));
@@ -217,9 +224,16 @@ describe('a vault whose every record of ours is gone', () => {
     await startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },

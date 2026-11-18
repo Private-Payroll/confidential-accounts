@@ -13,11 +13,13 @@
  * account threshold of one, and an account threshold of two - against the contract itself are
  * contracts/test/payroll-is-approved-by-two-of-five-seats.test.ts.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { newProposalId } from '../core/proposal-filing.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { newWrappingKeypair, randomBytes, signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
 import { buildRetryRun, buildRun, rootOfPayments } from '../midnight/payout-tree.js';
 import { theNetwork } from '../midnight/network.js';
@@ -62,7 +64,7 @@ const aPayee = async (n: number): Promise<void> => {
   const address = payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address, payslipKey: newWrappingKeypair().publicKey });
   const made = await inviteHere(ACME, ADA, 'employee', {
-    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01',
+    name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01',
   }, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
@@ -132,7 +134,7 @@ const TWO_APPROVALS = {
 describe('TWO OF FIVE SIGNERS RUN THE PAYROLL, AND THE SERVICE IS SENT NOTHING AS THE OTHER THREE', () => {
   it('Ada draws and raises the run, Bo approves and charges it, at two approvals, with no request sent as Cy, Dee or Eli', async () => {
     expect(seatsOnTheChain()).toHaveLength(5);
-    await aPolicyFiledBy(ADA, [ADA, BO, CY, DEE, ELI], { terms: TWO_APPROVALS, asset: TEST_SETTLEMENT_ASSET });
+    await aPolicyFiledBy(ADA, [ADA, BO, CY, DEE, ELI], { terms: TWO_APPROVALS, asset: TEST_NETWORK_COLOUR });
     await aPayee(81);
     await aPayee(82);
     const from = askedBy.length;

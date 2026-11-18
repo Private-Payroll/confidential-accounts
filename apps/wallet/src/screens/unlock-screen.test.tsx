@@ -217,7 +217,7 @@ const saying = async (text: string): Promise<HTMLElement> => {
  * **WAIT FOR THE RECORD TO REACH THE STORE, NOT FOR THE SCREEN TO SAY IT DID.**
  *
  * The screen's done state is set synchronously; the write behind it is a
- * promise (`approve.tsx`, `void save(...)`). A test that renders a SECOND time
+ * promise (`giveUnlockKey`, in `approve-answer-keys.ts`, `void save(...)`). A test that renders a SECOND time
  * and expects the first release to be remembered is racing that promise — and
  * it lost, once, in a full run rather than alone
  * (an earlier run showed it; this one is
@@ -256,7 +256,7 @@ const remembered = async (pressed: { written: () => Promise<void> }): Promise<vo
  * **PRESS THE BUTTON ONLY ONCE THE SCREEN CAN ANSWER IT.**
  *
  * `release()` returns early while the sealed profile is still loading
- * (`approve.tsx`: `if (… || profile === null || channel === null) return;`), and
+ * (`giveUnlockKey`, in `approve-answer-keys.ts`: `if (… || profile === null || channel === null) return;`), and
  * the screen renders as soon as the REQUEST arrives, which is earlier than that.
  * So a click fired the instant `Who is asking` appears can land on a button that
  * does nothing, and nothing re-fires it.
@@ -276,7 +276,7 @@ const press = async (channel: Opened, origin = ORIGIN) => {
   await settle();
   /*
    * **THE WRITE COUNT IS TAKEN BEFORE THE CLICK, WHICH IS THE ONLY MOMENT IT
-   * CAN BE.** Second cause. `approve.tsx` writes its history entry with
+   * CAN BE.** Second cause. `giveUnlockKey` (`approve-answer-keys.ts`) writes its history entry with
    * `void save(...)` — not awaited, and correctly so, because a key that has
    * gone cannot be un-given and the write must never gate the answer. So the
    * screen says *"They have the key"* before the record lands, and a test that

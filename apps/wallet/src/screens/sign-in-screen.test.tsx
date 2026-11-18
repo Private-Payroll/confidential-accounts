@@ -7,7 +7,7 @@ import { identityFromWords, secretFromWords } from 'midnight-identity/keys/deriv
 import { EMAIL, GIVEN_NAME, REGISTRY } from 'midnight-identity/profile/attributes';
 import { emptyProfile, grantTo, selfAssert } from 'midnight-identity/profile/model';
 import { load, save } from 'midnight-identity/profile/store';
-/* Second cause — `approve.tsx` writes its history entry with
+/* Second cause — `answerDisclosure` (`approve-answer-disclosure.ts`) writes its history entry with
  * `void save(...)`, which is correct and is not awaited, so a test that reads
  * the store after a press needs a way to wait for the write itself. */
 import { afterWrites, watchedStore } from '../testing/settled-store.js';
@@ -20,6 +20,7 @@ import { verify } from 'midnight-identity/profile/disclosure';
 import type { DisclosureResponse } from 'midnight-identity/profile/disclosure';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
 import { Approve } from './approve.js';
+import { NETWORK } from '../config.js';
 
 /**
  * **THE SCREEN SAYS A DIFFERENT SENTENCE.**
@@ -289,7 +290,7 @@ describe('what crosses back, and what it is bound to', () => {
       atOrigin: ORIGIN,
       expectingNonce: 'n1',
       payingAddress: response.payload.address,
-      networkId: 'stagenet',
+      networkId: NETWORK,
       now: NOW,
     })).toEqual({ ok: true });
   });
@@ -302,7 +303,7 @@ describe('what crosses back, and what it is bound to', () => {
       atOrigin: 'https://payroll-b.example',
       expectingNonce: 'n1',
       payingAddress: response.payload.address,
-      networkId: 'stagenet',
+      networkId: NETWORK,
       now: NOW,
     })).toMatchObject({ ok: false, code: 'origin-mismatch' });
   });
@@ -327,7 +328,7 @@ describe('what the wallet writes down about it', () => {
       const { sent } = open();
       await settled();
       screen.getByText('Who is asking');
-      /* Declared BEFORE the press and awaited after it. `approve.tsx`
+      /* Declared BEFORE the press and awaited after it. `answerDisclosure`
        * writes its history entry with `void save(...)`, correctly and without
        * awaiting it, so this waits for the WRITE rather than polling the store
        * for what the write said. */

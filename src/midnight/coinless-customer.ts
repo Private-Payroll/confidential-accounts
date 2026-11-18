@@ -1,5 +1,5 @@
 import { NothingWasSent } from '../core/jobs.js';
-import type { CustomerWallet } from './providers.js';
+import type { CustomerWallet, Serializable } from './providers.js';
 
 /**
  * **THE COMPANY'S SIDE OF A TRANSACTION THAT MOVES NO COINS, HELD BY NOBODY.**
@@ -27,7 +27,7 @@ export interface CoinlessKeys {
 interface Balancable {
   intents?: Map<number, unknown>;
   imbalances(segment: number): Map<{ tag: string }, bigint>;
-  bind(): unknown;
+  bind(): Serializable;
 }
 
 const NEEDS_A_COIN =
@@ -41,8 +41,8 @@ export class CoinlessCustomer implements CustomerWallet {
 
   encryptionPublicKey(): string { return this.keys.encryptionPublicKey; }
 
-  async balanceOwnLegs(tx: unknown, _ttl: Date): Promise<unknown> {
-    const t = tx as Balancable;
+  async balanceOwnLegs(tx: Serializable, _ttl: Date): Promise<Serializable> {
+    const t = tx as Partial<Balancable>;
     if (typeof t?.imbalances !== 'function' || typeof t.bind !== 'function') {
       throw new NothingWasSent('this transaction could not be read, so nothing was balanced. Nothing was sent.');
     }

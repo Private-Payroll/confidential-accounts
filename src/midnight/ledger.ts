@@ -1,93 +1,26 @@
 /**
- * The Midnight implementation of the boundary declared in core/ledger.ts.
- *
- * Status, corrected 27 Aug 2026. This header used to say the file had never been
- * run against a node. That stopped being true on 13 Aug: a full multi-signer
- * lifecycle settled on stagenet — credit, propose, approve, a mid-round deposit,
- * a second approve and execute, four of which have since been DELETED by `C292`
- * — with the chain's own state read back afterwards
- * and the new state commitment matching the contract's own scheme
- * (`REPORT-WASM-PROVING.txt:488-504`). It was proved in process through zkir
- * WASM with no proof server, at 94.2s to 114.5s per circuit end to end
- * (`:494-500`).
- *
- * WHAT IS STILL UNRUN, AND IT IS NOT A DETAIL. `settle` USED TO THROW HERE —
- * value movement was not wired, deliberately, rather than faked — and `C292`
- * removed the method rather than leaving a refusal to integrate against; there
- * is no value movement at this boundary at all. `open` throws without
- * deployment credentials (`:377`), pointing at `scripts/deploy-preview.ts`
- * as the one working deploy path. And `MidnightProofSystem` at the foot of this
- * file is a shell: `prove` and `verify` both throw (`:2019`, `:2023`) and ALL
- * THREE of the logical circuits map to nothing (`CIRCUIT_MAP`, `:2007`) — it
- * was two of three until `S23` shed `attestSolvency`.
- *
- * So: the methods the settled lifecycle exercised have been run against a node,
- * every method it did not exercise remains unverified until a transaction
- * settles through it, and the ones it exercised that no longer exist prove
- * nothing about what is here now.
- *
- * Everything is written against evidence rather than memory: the ABI in
- * contracts/managed/compiler/contract-info.json, the installed packages in
- * node_modules rather than the midnight-js source repo, which is ahead of what
- * npm publishes, and the Foundation's own DUST sponsorship example.
- *
- * Three things resolved during the spike, all of which shaped this file.
- *
- * 1. FEE SPONSORSHIP IS A FIRST CLASS FEATURE, NOT A WORKAROUND.
- *
- *    DUST is non-transferable, so it cannot be topped up into a contract-owned
- *    account. The protocol answer is two-phase balancing: the user balances the
- *    shielded and unshielded legs of the transaction and signs, then a sponsor
- *    balances only the dust leg and submits. The user wallet does not need to
- *    hold NIGHT or register for DUST generation at all.
- *
- *    This is exactly the SaaS shape we wanted. The customer never sees a token.
- *    We run the sponsor as a service, hold NIGHT, and pay their fees.
- *
- * 2. THERE IS NO SHARED PRIVATE STATE PRIMITIVE, SO WE BUILD ONE.
- *
- *    Midnight private state is per party and client held. A witness runs on one
- *    device against that device's own store. Nothing in the protocol lets N
- *    signers read the same confidential balance.
- *
- *    So the account layer supplies it: state is sealed under a viewing key and
- *    the key is wrapped to each signer's x25519 public key. That is already how
- *    core/account.ts works, which means the simulation was not a shortcut, it
- *    was the design. A commitment to the sealed state WENT ON CHAIN as well,
- *    and no longer does.
- *
- *    **AND NOTHING MAKES THE OFF-CHAIN BLOB TAMPER EVIDENT TODAY.** The
- *    contract's `stateCommitment` field was what did, and it went with the
- *    balance ledger; the value a blob is filed under is now
- *    `viewDigestOf([])`, one constant for every account and every state, which
- *    commits to nothing. Said in those words because rule 27 requires it: this
- *    property holds against nobody, and a vault-side commitment is what would
- *    restore it.
- *
- * 3. MIDNIGHT HAS NO ACCOUNT ABSTRACTION.
- *
- *    The Foundation's own wallet documentation lists the smart contract and
- *    account abstraction row as empty across every interface. Nothing to
- *    integrate with, and nothing competing.
+ * The Midnight implementation of the ledger boundary declared in core/ledger.ts, for a company's account contract.
+ * Each step is checked against the chain's current state, built, proved and sent, and the service's fee payer
+ * balances the fee, so a company never holds a token to pay fees with. `open` refuses on a ledger built without
+ * deployment credentials. What signers share off the chain is sealed under the company's viewing key and filed
+ * under `viewDigestOf([])`, one constant for every account, so nothing on the chain makes that record tamper evident.
  */
-import { payKeyCommitmentIn, sealedPayKeyIn } from './pay-key-round.js';
+import { contractStateAt } from './contract-state-at.js';
+import { sealedPayKeyIn } from './pay-key-round.js';
 import type {
-  Ledger, LedgerAddress, LedgerRecord, TxRef, ProofSystem, Circuit,
+  Ledger, LedgerAddress, LedgerRecord, TxRef,
   StateChange, LedgerStatus, SignerRef, AccountOpening,
   PaymentsAmong, RunProposal,
 } from '../core/ledger.js';
 import type { AssetId } from '../core/assets.js';
-import type { AccountPrivateState } from '../../contracts/src/witnesses.js';
-import { periodWindowOf, policyCommitmentOf, policyBarKey, type PolicyOpening } from './spending-policy.js';
-import { retryArgsOf } from './spending-policy-record.js';
+import type { PolicyOpening } from './spending-policy.js';
 import { viewDigestOf } from '../core/ledger.js';
 import { assetIdBytes, NO_ASSET } from '../core/assets.js';
+import { shownAddress } from '../core/networks.js';
 import { MidnightCommitments } from './commitments.js';
 import type { Sealed, Hex } from '../core/crypto.js';
-import { toHex, fromHex, randomBytes } from '../core/crypto.js';
+import { fromHex, randomBytes } from '../core/crypto.js';
 import { companyLabelBytes, readCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
-import { authorityIn } from 'midnight-identity/profile/contract-authority';
-import { seatBarOf } from 'midnight-identity/profile/records-key';
 /*
  * A contract's verifier keys - what a write of one must be and whether a contract
  * carries this build's - are one module the wallet, the page and this service
@@ -99,13 +32,31 @@ export {
 } from 'midnight-identity/profile/contract-keys';
 import type { NetworkName } from './network.js';
 import { arityFrom, assertArity } from './circuit-arity.js';
-import { withRetry, sleep, type RetryOptions } from './retry.js';
+import { withRetry, sleep } from './retry.js';
 import { isDeferredCircuit, deferredCircuitError } from './deferral.js';
 import { refuseACallWithoutItsPrivateState } from './governed-call.js';
-import { payRecordNonceOf, type PayRecord } from './run-keys.js';
-import type { MaintenanceAuthorityChoice } from './partial-contract.js';
 import { paysNoFees } from './fee-seat.js';
-import { authorityValueRefusals, type MaintenanceRefusal } from './authority-replacement.js';
+import {
+  UndecodedLedgerField,
+} from './contract-state-fields.js';
+import { AccountSteps, privateStateKey } from './account-steps.js';
+export { privateStateKey } from './account-steps.js';
+import { alreadyPaidOf, OCCURRENCES_ASKED, type AlreadyPaid, type PaidFor } from './already-paid.js';
+export { UndecodedLedgerField, paidMovementsIn } from './contract-state-fields.js';
+export { MidnightProofSystem } from './proof-system.js';
+export {
+  authorityShapeOf, authorityFromContractState, readContractAuthority, intendedAuthorityValue, compareAuthority,
+  type AuthorityShape, type OnChainAuthority, type AuthorityRead, type ContractStateReader, type AuthorityVerdict,
+  type AuthorityComparison,
+} from './contract-authority-read.js';
+export {
+  planAuthorityReplacement, checkEndState,
+  type MaintenancePlan, type MaintenanceEndStateRecord, type EndStateVerdict, type EndStateCheck,
+  type MaintenanceSignature,
+} from './maintenance-plan.js';
+export {
+  OCCURRENCES_ASKED, alreadyPaidOf, alreadyPaidSentence, seatBarParts, type PaidFor, type AlreadyPaid,
+} from './already-paid.js';
 export {
   authorityValueRefusals, replaceAuthorityOf, requireBuildableAuthority,
   type AuthorityReplacementPrimitives, type MaintenanceRefusal,
@@ -161,7 +112,7 @@ export type PreparedStep =
    */
   | { kind: 'setVaultThreshold'; vault: Hex; newThreshold: number; proposalId: Hex }
   /**
-   * A PAYROLL RUN, RAISED WITH ITS WINDOW AND ITS VAULT. V-67, V-73.
+   * A PAYROLL RUN, RAISED WITH ITS WINDOW AND ITS VAULT.
    *
    * A sibling of `propose` rather than an argument to it, because `propose`
    * takes its payload as an opaque hash — deliberately, so the account never
@@ -178,7 +129,7 @@ export type PreparedStep =
     required?: bigint; change: StateChange; raiseBy?: bigint;
   }
   /**
-   * Sweeping a run whose window has closed. V-67.
+   * Sweeping a run whose window has closed.
    *
    * Permissionless on chain, and it asserts nothing about completeness — a run
    * whose window passed with three payees unpaid closes exactly the same way.
@@ -271,13 +222,12 @@ export interface MidnightConfig {
   /**
    * Where the calling device's private state lives.
    *
-   * Load bearing since M-29: what a circuit is not handed as an argument it
-   * reads from this store as a witness, so a caller has to write there before
-   * it calls. `execute` was the case that established the rule and is gone
-   *; `propose` is the one that has it now — the change and the
-   * proposal salt are staged by `stageChange` below. Keyed per network — M-61
-   * was one deployment's private state being read on another chain because this
-   * was a constant.
+   * Load bearing: what a circuit is not handed as an argument it reads
+   * from this store as a witness, so a caller has to write there before
+   * it calls. `propose` is the one that has it: the change and the
+   * proposal salt are staged by `stageChange` below. Keyed per network,
+   * because one deployment's private state must never be read on another
+   * chain.
    */
   privateStateId: string;
 }
@@ -290,9 +240,9 @@ export interface MidnightConfig {
  */
 export interface FeeSponsor {
   /*
-   * Two-phase balancing, per decision 0001:
-   *   customer  balanceUnboundTransaction(tx, keys, { tokenKindsToBalance: ['shielded','unshielded'] })
-   *   sponsor   balanceFinalizedTransaction(tx, keys, { tokenKindsToBalance: ['dust'] })
+   * Two-phase balancing:
+   *   customer  balanceUnboundTransaction(tx, { ttl, tokenKindsToBalance: ['shielded','unshielded'] })
+   *   sponsor   balanceFinalizedTransaction(tx, { ttl, tokenKindsToBalance: ['dust'] })
    *
    * The token kinds must not overlap. Re-balancing a kind the other party has
    * already balanced is a double spend and the node rejects it.
@@ -311,7 +261,7 @@ export interface FeeSponsor {
    * Releases coins a balance booked and no submission took.
    *
    * **THE PHASES ABOVE ARE TWO SEPARATE CALLS THE SDK MAKES AT TWO SEPARATE
-   * TIMES, AND UNTIL THIS MEMBER EXISTED NOTHING BETWEEN THEM COULD LET GO.**
+   * TIMES, AND WITHOUT THIS MEMBER NOTHING BETWEEN THEM COULD LET GO.**
    * Phase 2 marks coins in-flight in the wallet's own state and returns; phase
    * 3 is a different entry point the SDK reaches later. Anything that goes
    * wrong in between - proving, staging, an expiry, a caller giving up - ends
@@ -412,59 +362,13 @@ export interface SealedStateStore {
 }
 
 /**
- * Where one account's private state is filed.
- *
- * Exported, and used by the scripts as well as by this class, because it is a
- * rule and rules in this project have a habit of being written twice. The
- * suffix exists because one `MidnightLedger` serves many accounts while a
- * script drives one; without a shared function the two conventions diverge and
- * the run script looks for a key the deploy never wrote. Caught before shipping
- * this time — it is the ninth instance of the pattern.
- */
-export const privateStateKey = (base: string, accountId: string): string =>
-  `${base}:${accountId}`;
-
-/* ------------------------------------------------------------------ *
- * ledger
- * ------------------------------------------------------------------ */
-
-/**
- * A 32-byte zero, for an argument a circuit takes and does not read.
- *
- * A circuit's arity is fixed, so something has to be passed. Zero is the honest
- * filler: it is a value `persistentCommit` can never produce, so it cannot
- * collide with a real proposal id, and the branch that would read it is not
- * taken.
- */
-const ZERO_32: Hex = '00'.repeat(32);
-
-/**
- * The truthful missing-private-state message.
- *
- * This used to say the device did not hold the account's SECRET KEY, which is
- * one of two causes and not the likelier one once a second contract exists:
- * private state is filed under `${contractAddress}:${key}`, so state written
- * while a different contract was addressed is invisible here without being
- * gone. The message now says what is actually missing — a staged entry for
- * THIS contract — and names both ways that happens, because reporting the
- * wrong one sent people to re-seat signers whose state was one prefix away.
- */
-const missingPrivateState = (accountId: string, address: string): string =>
-  `no private state for "${accountId}" under contract ${address} on this device. ` +
-  'Either this device was never seated on the account — it holds no secret key or ' +
-  'blinding factor for it — or the account\'s private state was written under a ' +
-  'different contract address. Nothing is staged for THIS contract either way, and ' +
-  'proving without it would prove against another contract\'s view.';
-
-/**
  * **THE CIRCUITS THAT READ NO WITNESS, AND THEREFORE NEED NO PRIVATE STATE.**
  *
  * Taken from the contract and nowhere else: a circuit is on this list only if
  * it, and everything it calls, reads none of the nine witnesses.
  * `closeExpiredRun` is the only one of the seven circuits this client drives
  * that qualifies - it opens no signer check, reads no salt and reads no asset,
- * and it is permissionless on chain by design
- * (`contracts/src/ConfidentialAccount.compact:2601`).
+ * and it is permissionless on chain by design.
  *
  * **IT EXISTS BECAUSE `null` ON ITS OWN IS A CLAIM NOTHING HOLDS UP.** A
  * `PreparedCall` may say it needs no private state, and that is the right
@@ -483,12 +387,12 @@ import { CIRCUITS_THAT_READ_NO_WITNESS } from './governed-call.js';
  * **WHICH CIRCUIT EACH PREPARED STEP CALLS, AS ONE TABLE THE COMPILER KEEPS
  * COMPLETE.**
  *
- * The names used to be written at the nine places a step is turned into a call.
- * They are here instead for one reason: **the answer to whether a step needs
- * the calling device's private state is not a property of the step, it is a
- * property of the CIRCUIT the step calls** - and with the names spread across
- * nine branches there was nowhere to compute that from, so it was written out a
- * second time by hand as well.
+ * They are written here, once, rather than at the nine places a step is
+ * turned into a call, for one reason: **the answer to whether a step
+ * needs the calling device's private state is not a property of the
+ * step, it is a property of the CIRCUIT the step calls**, and with the
+ * names spread across nine branches there would be nowhere to compute
+ * that from.
  *
  * Two steps can name the same circuit and two circuits can be named by one
  * step's neighbours, which is why this is a table and not a convention: a
@@ -536,114 +440,30 @@ export interface RunOpeningHex {
   salt: Hex;
 }
 
-/**
- * The `deadline` a raise carries: the last block time, in seconds, it may land at. Refused before
- * anything is staged when it is missing or is not a time in seconds, since the chain would refuse
- * the raise at once or never bound it.
- */
-const raiseByRequired = (raiseBy: bigint | undefined): bigint => {
-  if (raiseBy === undefined) {
-    throw new Error('this raise does not carry the time it must reach the chain by, so it was not built. Nothing was sent.');
-  }
-  if (raiseBy <= 0n || raiseBy > 32_503_680_000n) {
-    throw new Error(`${raiseBy} is not a time in seconds the raise could reach the chain by, so it was not built. Nothing was sent.`);
-  }
-  return raiseBy;
-};
-
-export class MidnightLedger implements Ledger {
+export class MidnightLedger extends AccountSteps implements Ledger {
   /** Everything this class writes goes to a chain, or it does not get written. */
   readonly wiring = 'chain' as const;
-  constructor(
-    private cfg: MidnightConfig,
-    private sponsor: FeeSponsor,
-    private blobs: SealedStateStore,
-    /** Resolves an account id to its deployed contract address. */
-    private addressOf: (accountId: string) => Promise<string | null>,
-    /** Built once by midnightProviders(). Lazy so construction needs no node. */
-    private providers: () => Promise<any>,
-    /** The CompiledContract, from CompiledContract.make + withWitnesses. */
-    private compiled: unknown,
-    /**
-     * Deployment, which needs things the rest of the interface deliberately
-     * refuses to carry. Optional: a client that only calls an existing account
-     * has no business holding either.
-     */
-    private deployment?: {
-      /*
-       * `deployer()` STOOD HERE AND IT IS GONE. `C334`, 31 Aug.
-       *
-       * It handed this class the deploying device's `secretKey` and `blinding`,
-       * because the constructor's witnesses needed them and there was no
-       * private state yet to read them from. That is exactly what made the
-       * deployer a SIGNER: the account's first seat was the leaf those two
-       * values commit to, and on the only implementation that ever existed they
-       * were `seededBytes(1)` and `seededBytes(401)` — a published formula.
-       *
-       * THE REMOVAL IS THE POINT, AND LEAVING IT UNUSED WOULD NOT HAVE BEEN.
-       * There is no injection point here any more, so no secret can reach this
-       * class at deploy: the constructor takes the founding signer's LEAF, a
-       * public value, and `AccountOpening` already carries it.
-       */
-      /**
-       * Where a new account's address is recorded, so `addressOf` can find it
-       * on the next call. A script writes a file; a service writes a row.
-       */
-      register: (accountId: string, address: string) => Promise<void>;
-      /**
-       * **SET ON A DEPLOYMENT WHOSE COMPANIES ARE MADE ON THEIR FOUNDING
-       * SIGNER'S DEVICE, WHICH IS EVERY ONE ON A CHAIN.** The state a
-       * company's first view opens with is then the company's state record,
-       * as that device sealed and signed it, and the device deploys the account, held by
-       * their own committee key from its first transaction, through the
-       * service's creation route. Opening an account here is refused by name
-       * either way.
-       */
-      fromTheFoundingSigner?: true;
-      /**
-       * The maintenance authority a deploy made by this process would give the
-       * account. Read only by `deployFromThisProcess`, which nothing calls: a
-       * company on a chain is created from its founding signer's browser.
-       */
-      maintenanceAuthority?: MaintenanceAuthorityChoice;
-      /** Passed through so a script keeps its own logging. */
-      retry?: RetryOptions;
-    },
-  ) {}
 
   /* ------------------------------------------------------------ *
    * the lifecycle
    *
-   * This class used to have one write method, `publish(accountId,
-   * commitment, sealedState)`, and it could not be implemented. `execute()`
-   * derived the new commitment from the witnesses `nextBalance`,
-   * `nextEntriesDigest` and `nextStateSalt` — deliberately, so that no public
-   * parameter could carry a balance onto the chain — and this class was handed a
-   * finished commitment and a ciphertext it could open neither of.
-   *
-   * The boundary passed the OPENING instead, which is what those witnesses
-   * wanted, and named each step of the round rather than collapsing them into
-   * one write. **THE OPENING, THE WITNESSES AND `execute` ARE ALL GONE**
-   *, and `credit` — the one operation this class used to refuse by
-   * name — went with them, because the account keeps no book for either to
-   * write to. WHAT SURVIVES IS THE SHAPE: one named method per circuit, no
-   * guessing, and a gap that shows up as a missing method rather than as a
-   * mystery at deploy time.
+   * One named method per circuit, no guessing, and a gap that shows up
+   * as a missing method rather than as a mystery at deploy time. The
+   * account keeps no book, so there is no write that carries a balance or
+   * a commitment from the caller.
    * ------------------------------------------------------------ */
 
   /**
    * Deploying the contract.
    *
-   * Not implemented here on purpose. Deployment is `deployContract` with the
-   * constructor's witnesses, a funded wallet, a DUST budget measured against
-   * the live chain and a retry around a websocket that drops — all of which
-   * `scripts/deploy-preview.ts` already does and has done successfully on two
-   * chains. Reimplementing it behind this method would be a second copy of the
-   * one thing in this project with the worst record for drifting out of sync
-   * (M-50, M-55, M-58, M-61, M-65 were all one rule written twice).
+   * Not implemented here on purpose. Deployment is `deployContract` with
+   * the constructor's witnesses, a funded wallet, a DUST budget measured
+   * against the live chain and a retry around a websocket that drops, all
+   * of which the deploy script already does. Reimplementing it
+   * behind this method would be a second copy of the one thing in this
+   * project with the worst record for drifting out of sync.
    *
-   * So it throws, and says where the working one is. M-68 is to lift that
-   * script into this method so there is one deploy path rather than two.
+   * So it throws, and says why.
    */
   async open(accountId: string, opening: AccountOpening): Promise<TxRef> {
     if (!this.deployment) {
@@ -677,10 +497,10 @@ export class MidnightLedger implements Ledger {
      * marker; nothing on chain can catch an argument that was never supplied,
      * because there would be no deploy to catch it in.
      *
-     * `SimulatedLedger.open` has always refused a threshold it cannot reach
-     * (`core/ledger.ts:932`); this path never did, and `deploy-preview.ts`
-     * passed an empty array against a threshold of two for as long as the
-     * deployer supplied the seat itself.
+     * `SimulatedLedger.open` has always refused a threshold it cannot reach;
+     * this path never did, and the deploy script passed an empty array
+     * against a threshold of two for as long as the deployer supplied the
+     * seat itself.
      */
     const foundingLeaf = opening.signerLeaves[0];
     if (!foundingLeaf) {
@@ -692,28 +512,28 @@ export class MidnightLedger implements Ledger {
       );
     }
     /*
-     * **THIS PATH SEATS ONE SIGNER, SO IT REFUSES AN OPENING THAT NAMES MORE
-     * THAN ONE RATHER THAN SEATING THE FIRST AND DROPPING THE REST.**
-     * money-safety pass.
+     * This path seats one signer, so it refuses an opening that names more
+     * than one rather than seating the first and dropping the rest.
      *
-     * `SimulatedLedger.open` seats EVERY leaf it is given and `AccountService`
-     * writes all N onto the durable record. Without this, the day the wiring
-     * points at Midnight a 2-of-3 company is created, the roster says three
-     * signers, the chain holds one, `open` returns success and nobody is told.
-     * A client record and a chain that disagree about WHO MAY APPROVE is the
-     * shape every row in the register is a variety of.
+     * `SimulatedLedger.open` seats every leaf it is given and
+     * `AccountService` writes all N onto the durable record. Without this,
+     * a 2-of-3 company would be created, the roster would say three
+     * signers, the chain would hold one, `open` would return success and
+     * nobody would be told. A client record and a chain that disagree about
+     * who may approve is the worst shape this boundary can take.
      *
-     * It is a refusal and not a warning because the alternative is a deployed
-     * contract and a spent fee. `C335` / board `4b` is the seating screen that
-     * makes the rest real; until it exists, this says so out loud.
+     * It is a refusal and not a warning because the alternative is a
+     * deployed contract and a spent fee. Until the seating screen exists,
+     * this says so out loud.
      */
     /*
-     * **THE COMPANY'S LABEL, AND AN OPENING WITHOUT ONE IS REFUSED HERE RATHER
-     * THAN DEPLOYED.** The constructor writes it into the account, and every
-     * signer's wallet derives this company's keys from it and reads it back off
-     * the account before it gives or signs anything. It is drawn by the founding
-     * signer's wallet, so there is nothing here to draw one with: an account
-     * deployed with any other value would be a company no wallet could open.
+     * The company's label, and an opening without one is refused here
+     * rather than deployed. The constructor writes it into the account, and
+     * every signer's wallet derives this company's keys from it and reads
+     * it back off the account before it gives or signs anything. It is
+     * drawn by the founding signer's wallet, so there is nothing here to
+     * draw one with: an account deployed with any other value would be a
+     * company no wallet could open.
      */
     const label = opening.companyLabel === undefined || opening.companyLabel === null
       ? null : readCompanyLabel(opening.companyLabel);
@@ -723,9 +543,9 @@ export class MidnightLedger implements Ledger {
           + 'account is created with the label its founding signer\'s wallet made up for it, and nothing '
           + 'here makes one up instead. Nothing was deployed and nothing was spent.');
     }
-    /* `T-200`: the contract's own refusal, reached before a deploy and a fee
-     * rather than after — and an unusable founding seat is not recoverable at
-     * all, for the reason `:400-406` above already writes out. */
+    /* The contract's own refusal, reached before a deploy and a fee rather
+     * than after. An unusable founding seat is not recoverable at all: every
+     * later seat needs an invitation an existing signer raised. */
     await this.refuseUnusableLeaf(foundingLeaf, `the founding signer leaf for "${accountId}"`);
     if (opening.signerLeaves.length > 1) {
       throw new Error(
@@ -737,55 +557,26 @@ export class MidnightLedger implements Ledger {
       );
     }
     /*
-     * **THIS REFUSAL IS KEPT AND WHAT IT GUARDS HAS CHANGED UNDER IT. SAYING SO
-     * IS THE POINT OF THIS PARAGRAPH.** `S35d`, rule 27.
-     *
-     * **WHAT IT USED TO BE.** `opening.threshold` was argument one of the
-     * constructor. `requireApproved` asserts
-     * `!(approvalCounts.lookup(proposal) < threshold)`; at zero that is
-     * `!(0 < 0)` and it PASSES with nobody having approved, and `thresholdFor`
-     * hands the account threshold to any vault with no entry of its own — so an
-     * account opened at zero was one where `recordPayment` moved a vault's
-     * money on a proposal no signer voted for. That is `C340`, and this line
-     * was the only thing refusing it, which is what the paragraph that stood
-     * here said.
-     *
-     * **WHAT IS TRUE NOW.** The constructor takes no threshold and sets
-     * `threshold = 1` (`C340` + `C343`, the founder, 2 Sep). A zero threshold
-     * is UNREPRESENTABLE on chain rather than refused here, so this line is no
-     * longer what stands between an account and `C340`. **Nothing it refuses
-     * reaches the constructor any more.**
-     *
-     * **AND IT CLOSED SOMETHING ELSE ON ITS WAY OUT, WHICH NOBODY HAD CLAIMED.**
-     * The refusal above accepts exactly one founding leaf; this one accepted any
-     * threshold at or above one. So `open({ signerLeaves: [a], threshold: 5 })`
-     * deployed a ONE-SIGNER ACCOUNT AT FIVE — an account that can never reach
-     * its own threshold and can never lower it, because `setThreshold` is behind
-     * `requireApproved`. That is `C343` reached through this path, it was live,
-     * and the constructor change makes it unrepresentable too.
-     *
-     * **SO WHY IT STAYS.** Three reasons, and none of them is the one it was
-     * written for. (1) `opening.threshold` is still consumed by
-     * `SimulatedLedger.open` and still becomes `account.policy.threshold`, so a
-     * non-integer or a zero is still a bad value entering our own records — this
-     * refuses it at the boundary both ledgers share, which is where the two
-     * implementations are meant to agree. (2) The `Number.isInteger` clause is
-     * not redundant with `< 1`: `NaN < 1` is `false`, so without it a `NaN`
-     * passes, and `ledger.test.ts` records that as the reason it is there.
-     * (3) **`S40` fixed four tests that had never executed against these three
-     * refusals.** Deleting one to tidy up would undo that work and would remove
-     * the only place the Midnight path states what an opening must look like.
-     *
-     * **WHAT IT NO LONGER CLAIMS.** The message used to end *"The contract does
-     * not refuse this; this does."* That is now false in both directions — the
-     * contract does not ACCEPT it either — and it is corrected below rather than
-     * left to be read as a live statement about the chain.
+     * This refusal guards our own records, not the chain. The constructor
+     * takes no threshold and sets `threshold = 1`, so a zero threshold is
+     * unrepresentable on chain (a zero would pass the approval check with
+     * nobody having approved), and nothing this refuses reaches the
+     * constructor. It stays for three reasons.
+     * (1) `opening.threshold` is still consumed by `SimulatedLedger.open`
+     * and still becomes `account.policy.threshold`, so a non-integer or a
+     * zero is still a bad value entering our own records; this refuses it
+     * at the boundary both ledgers share, where the two implementations are
+     * meant to agree.
+     * (2) The `Number.isInteger` clause is not redundant with `< 1`:
+     * `NaN < 1` is `false`, so without it a `NaN` passes.
+     * (3) It is the only place the Midnight path states what an opening
+     * must look like, and the tests exercise each of the three refusals.
      */
     if (!Number.isInteger(opening.threshold) || opening.threshold < 1) {
       throw new Error(
         `cannot open "${accountId}": a threshold of ${opening.threshold} is not a rule. It is ` +
           'refused here because it would enter our own record of the account as its policy. ' +
-          'The chain never sees it: since `C340` the constructor takes no threshold and founds ' +
+          'The chain never sees it: the constructor takes no threshold and founds ' +
           'every account at one, raised afterwards through the ordinary approval path.',
       );
     }
@@ -809,28 +600,27 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * **THE DEPLOY THIS PROCESS USED TO MAKE ITSELF, UNDER A KEY IT HELD.**
-   * Nothing calls it: on a chain a company's account is created from its
-   * founding signer's browser. It is left whole until the operator paths that
-   * reached it are removed with it; protected rather than private only so the
-   * compiler's check for unused code does not ask for it to go before then.
+  /**
+   * Deploys from this process, under a key it holds. Nothing calls it: on
+   * a chain a company's account is created from its founding signer's
+   * browser. It is left whole until the operator paths that reached it
+   * are removed with it; protected rather than private only so the
+   * compiler's check for unused code does not ask for it to go before
+   * then.
    */
   protected async deployFromThisProcess(accountId: string, opening: AccountOpening, foundingLeaf: string, label: CompanyLabel): Promise<TxRef> {
     if (!this.deployment || this.deployment.maintenanceAuthority === undefined) {
       throw new Error(`cannot open "${accountId}": this deployment has no maintenance authority to deploy under.`);
     }
     /*
-     * NOT the SDK's `deployContract`. S8c: the deployment carries the
-     * circuits `deferral.ts` names — the fifteen-circuit contract this path
-     * was built for exceeded the chain's write ceiling — and the SDK can
-     * neither build a partial operations map nor read one back
-     * (`partial-contract.ts` has the file:line for both refusals). The
-     * account is twenty circuits, created in the two steps `deferral.ts`
-     * names, so the map this builds is its first step; the path
-     * stays because it is also what pins the operations map to a decided list
-     * rather than to whatever compiled. The partial deploy also
-     * refuses to run without a deliberate maintenance authority, which is
-     * C225's fix.
+     * Not the SDK's `deployContract`: the deployment carries the circuits
+     * the partial-deploy module names, because the full contract exceeded
+     * the chain's write ceiling, and the SDK can neither build a partial
+     * operations map nor read one back. The account is created in the two
+     * steps that module names, so the map this builds is its first step.
+     * The path also pins the operations map to a decided list rather than
+     * to whatever compiled, and the partial deploy refuses to run without
+     * a deliberate maintenance authority.
      */
     const {
       submitPartialDeployTx, submitCreationInsertTx, findDeployedPartialContract,
@@ -843,57 +633,39 @@ export class MidnightLedger implements Ledger {
     const providers = await this.providers();
 
     /*
-     * The constructor COMMITTED to the opening balance from these witnesses,
-     * exactly as every later call did — which is why the boundary passed the
-     * opening and not a commitment. `next` mirrored `current` because nothing
-     * was moving yet, and leaving it undefined would have had the first
-     * `execute` commit to whatever happened to be there. All of that went with
-     * the balance ledger; the paragraph below is what is true now.
-     */
-    /*
-     * An account holds nothing, ever — `C292` — so there is no balance to open
-     * at and no asset entry on chain. The salt below is still a real random
-     * value rather than a zero: it is the proposal salt every witness has to
-     * answer with, and a predictable one would make a proposal id guessable.
+     * An account holds nothing, ever, so there is no balance to open at and
+     * no asset entry on chain. The salt below is still a real random value
+     * rather than a zero: it is the proposal salt every witness has to
+     * answer with, and a predictable one would make a proposal id
+     * guessable.
      */
     const genesisSalt = randomBytes(32);
     /*
-     * **THE RECORD THE DEPLOY PERSISTS CARRIES NO SIGNING SECRET, NO BLINDING
-     * AND NO SCOPE.**
+     * The record the deploy persists carries no signing secret, no blinding
+     * and no scope: the constructor reads none of them as witnesses, so
+     * there is nothing for this process to answer with and nothing for it
+     * to hold. They are absent, not defaulted or zeroed: a zero secret is
+     * still a secret-shaped value that a later reader could mistake for a
+     * device's, and this record must not be able to name a signer.
      *
-     * `secretKey`, `blinding` and `scope` STOOD AT THE TOP OF THIS OBJECT, in
-     * that order, and they were the deploying device's. They were here because
-     * the constructor read all three as witnesses; it reads none of them now,
-     * so there is nothing for this process to answer with and nothing for it to
-     * hold. **The three fields are not defaulted or zeroed — they are absent.**
-     * A zero secret is still a secret-shaped value that a later reader could
-     * mistake for a device's, and the whole of `C334` is that this record
-     * cannot name a signer.
+     * What the SDK requires is the shape, not the contents: the partial
+     * deploy types `initialPrivateState` as `unknown` and persists it
+     * verbatim. `AccountPrivateState` is this repository's own interface;
+     * `requireSigner()` reads all three on every governed circuit, so a
+     * signer's device holds them. A deployer is not a signer, so the record
+     * it writes does not.
      *
-     * WHAT THE SDK REQUIRES IS THE SHAPE, NOT THE CONTENTS:
-     * `partial-contract.ts` types `initialPrivateState` as `unknown` at `:228`
-     * and `:236` and persists it verbatim at `:357`. `AccountPrivateState` is
-     * this repository's own interface, and it is NOT narrowed by this round —
-     * `requireSigner()` reads all three on every governed circuit, so a SIGNER'S
-     * device holds them. A DEPLOYER is not a signer any more, so the record it
-     * writes does not.
-     *
-     * `deviceScope` went with them. It was read once and used twice — here and
-     * by `leafOf`, and both readers are gone: `leafOf` is removed with the
-     * bootstrap loop below (`T-116` recorded the one-place rule; this removes
-     * the place rather than leaving it holding nothing).
-     *
-     * The four fields that remain are the account's, not a device's: its asset
-     * blinding, the reserved "no asset" the constructor names, and a genesis
-     * salt that is a real random value rather than a zero because a predictable
-     * proposal salt would make a proposal id guessable.
+     * The four fields that remain are the account's, not a device's: its
+     * asset blinding, the reserved "no asset" the constructor names, and a
+     * genesis salt that is a real random value rather than a zero because a
+     * predictable proposal salt would make a proposal id guessable.
      */
     const initialPrivateState = {
       assetBlinding: fromHex(opening.assetBlinding),
-      // The constructor names no asset and, since `C292`, writes no commitment
-      // of any kind — it seats the founding signer's leaf and sets the
-      // threshold, and nothing else. Every witness still has to answer, so this
-      // is the reserved "no asset".
+      // The constructor names no asset and writes no commitment of any kind:
+      // it seats the founding signer's leaf and sets the threshold, and
+      // nothing else. Every witness still has to answer, so this is the
+      // reserved "no asset".
       assetId: assetIdBytes(NO_ASSET),
       proposalSalt: genesisSalt,
       changeAmount: 0n,
@@ -915,22 +687,20 @@ export class MidnightLedger implements Ledger {
         privateStateId: privateStateKey(this.cfg.privateStateId, accountId),
         initialPrivateState,
         /*
-         * ONE ARGUMENT SINCE `S35d`, AND NOTHING IN TYPESCRIPT CHECKS THAT.
-         * `args` is `unknown[]` at `partial-contract.ts:229` and
-         * `contract-info.json` carries no constructor entry, so
-         * `circuit-arity.ts` does not guard this call either. The generated
-         * `initialState` asserts the arity itself and would refuse at deploy
-         * time with a funded wallet.
+         * Two arguments, and nothing in TypeScript checks that: the SDK types
+         * `args` as `unknown[]` and `contract-info.json` carries no constructor
+         * entry, so `circuit-arity.ts` does not guard this call either. The
+         * generated `initialState` asserts the arity itself and would refuse at
+         * deploy time with a funded wallet.
          *
-         * THE THRESHOLD USED TO BE ARGUMENT ONE AND IS NOT PASSED AT ALL NOW.
-         * `C340` + `C343`, ruled by the founder 2 Sep: the constructor takes no
-         * threshold and sets `threshold = 1`. `opening.threshold` no longer
-         * reaches the chain from anywhere; what it still does is above, at the
-         * refusal that reads it.
+         * The first is the founding signer's leaf. The threshold is not passed
+         * at all: the constructor takes none and sets `threshold = 1`, so
+         * `opening.threshold` never reaches the chain; what it still does is
+         * above, at the refusal that reads it.
          *
-         * THE SECOND ARGUMENT IS THE COMPANY'S LABEL, which the account keeps
-         * in `signerRoles` from the moment it exists: its thirty-two bytes, as
-         * the founding signer's wallet drew them.
+         * The second is the company's label, which the account keeps in
+         * `signerRoles` from the moment it exists: its thirty-two bytes, as the
+         * founding signer's wallet drew them.
          */
         args: [fromHex(foundingLeaf), companyLabelBytes(label)],
         maintenanceAuthority: this.deployment!.maintenanceAuthority,
@@ -981,15 +751,14 @@ export class MidnightLedger implements Ledger {
     );
 
     /*
-     * The real check, not a formality — M-9's property, kept through the
-     * deferral. The partial find reads public state through the indexer AND
-     * compares the on-chain verifier keys against the ones we compiled, for
-     * the circuits this deployment carries — the SDK's
-     * `findDeployedContract` would compare every compiled key and refuse its
-     * own deployment. It also checks the deferred circuits are ABSENT — a
-     * check that is INERT while nothing is deferred, and filed as such
-     * rather than widened here. The private state was already written by
-     * `submitPartialDeployTx`, under this contract's address.
+     * The real check, not a formality. The partial find reads public state
+     * through the indexer and compares the on-chain verifier keys against
+     * the ones we compiled, for the circuits this deployment carries (the
+     * SDK's `findDeployedContract` would compare every compiled key and
+     * refuse its own deployment). It also checks the deferred circuits are
+     * absent, which is inert while nothing is deferred. The private state
+     * was already written by `submitPartialDeployTx`, under this contract's
+     * address.
      */
     await findDeployedPartialContract(providers as any, {
       compiledContract: this.compiled as any,
@@ -1003,31 +772,12 @@ export class MidnightLedger implements Ledger {
     });
 
     /*
-     * **THE LOOP THAT SEATED THE REST OF THE FOUNDERS STOOD HERE, AND IT WENT
-     * WITH THE DEPLOYER'S SEAT.**
-     *
-     * It walked `opening.signerLeaves`, skipped the one the deployer's own
-     * material derived to, and seated each of the others through the contract's
-     * bootstrap window **acting AS the deployer** — `{ signerId: 'deployer',
-     * leaf: deployerLeaf }`. That worked for exactly one reason: this process
-     * held a secret that satisfied `requireSigner()`. It holds none now, so the
-     * loop cannot be kept; a version of it that "still works" would be the
-     * deployer's seat back under another name.
-     *
-     * **SO `open` SEATS EXACTLY ONE SIGNER — THE FOUNDER — AND FOUNDERS 2..N
-     * ARE INVITED BY THE SIGNERS AND TAKE THEIR SEATS FROM THEIR OWN WALLETS**
-     * (`seatInvited`). That is the seating screen. It is named here rather than
-     * left to be discovered.
-     *
-     * **NOTHING THAT RUNS TODAY LOSES A CAPABILITY, AND THAT IS MEASURED
-     * RATHER THAN ASSUMED:** the only caller that ever reached this code is
-     * `scripts/deploy-preview.ts`, which passed `signerLeaves: []`, so the loop
-     * body never executed once. `docs/corrections.md` records that the skip
-     * filter has never seen a real leaf.
-     *
-     * `leafOf` loses its only caller and is REMOVED with this loop rather than
-     * left unused — see the note where it stood, under `internals`. The
-     * derivation survives in the one wrapper every product writer already uses.
+     * `open` seats exactly one signer, the founding signer. Later signers
+     * are invited by the signers and take their seats from their own
+     * wallets (`seatInvited`). This process holds no secret that satisfies
+     * `requireSigner()`, so it cannot seat anyone itself, and a loop that
+     * seated the rest "as the deployer" would be a deployer's seat under
+     * another name.
      */
 
     return {
@@ -1069,18 +819,16 @@ export class MidnightLedger implements Ledger {
       /*
        * Every proposal open at once, not "the" open one.
        *
-       * No "is it really open" dance either: a proposal that has been executed
-       * or cancelled is REMOVED from the map, so presence is the answer. The old
-       * shape had to check `proposalOpen` before reporting `proposal`, because
-       * the contract zeroed the field rather than deleting it, and a caller
-       * reading it raw would believe a closed round was open.
+       * No "is it really open" check either: a proposal that has settled or
+       * been cancelled is removed from the map, so presence is the answer and
+       * there is no stale value for a caller to believe.
        */
       openProposals: s.openProposals,
       threshold: Number(s.threshold),
       /* Absence means inherit, so an account with no exceptions reports
        * an empty array and every vault is judged by `threshold` above. */
       vaultThresholds: s.vaultThresholds,
-      signerCount: Number(s.signerCount), // `T-220` rides this line: see readContractState
+      signerCount: Number(s.signerCount), // a count derived from the set's size: see readContractState
       movementCount: Number(s.movementCount), retiredVaults: s.retiredVaults };
   }
 
@@ -1115,7 +863,7 @@ export class MidnightLedger implements Ledger {
     if (!address) return null;
     const { ledger: readLedger } = await import('../../contracts/managed/contract/index.js');
     const providers = await this.providers();
-    const state = await providers.publicDataProvider.queryContractState(address as any);
+    const state = await contractStateAt(providers.publicDataProvider, address);
     if (!state) return null;
     const leaves = (readLedger(state.data) as any)?.signerLeaves;
     if (leaves == null || typeof leaves.member !== 'function') {
@@ -1132,7 +880,7 @@ export class MidnightLedger implements Ledger {
       '../../contracts/managed/contract/index.js');
     const providers = await this.providers();
 
-    const state = await providers.publicDataProvider.queryContractState(address as any);
+    const state = await contractStateAt(providers.publicDataProvider, address);
     if (!state) return null;
 
     const parsed: any = readLedger(state.data);
@@ -1184,21 +932,6 @@ export class MidnightLedger implements Ledger {
       (nonce) => Boolean(movements.member(pureCircuits.paidOnceOf(fromHex(nonce)))), key, asked, upTo);
   }
 
-  /** The account's `movements` set, decoded, or null when it is not on this ledger. */
-  private async movementsOf(accountId: string): Promise<{ member(v: Uint8Array): boolean } | null> {
-    const address = await this.addressOf(accountId);
-    if (!address) return null;
-    const { ledger: readLedger } = await import('../../contracts/managed/contract/index.js');
-    const providers = await this.providers();
-    const state = await providers.publicDataProvider.queryContractState(address as any);
-    if (!state) return null;
-    const movements = (readLedger(state.data) as any)?.movements;
-    if (movements == null || typeof movements.member !== 'function') {
-      throw new UndecodedLedgerField('movements', 'set');
-    }
-    return movements;
-  }
-
   /**
    * Opens a round. The chain gets a commitment to the payload, never the
    * payload — `propose(payloadHash)` commits it again under `proposalSalt`, so
@@ -1228,28 +961,27 @@ export class MidnightLedger implements Ledger {
      * any server that might be tempted to hold it.
      */
     const expected = await this.changeCommitmentOf(change, await this.assetBlindingOf(accountId));
-    /* `R5`: the vault the caller named, not `noVault()` assumed. The id the
+    /* The vault the caller named, not `noVault()` assumed. The id the
      * chain holds is derived from it, so checking against any other value
      * would report a landed proposal as missing. */
     const id = MidnightCommitments.proposalId(payloadHash, change.salt, vault);
     const landed = after?.openProposals.find(p => p.id === id);
     /*
-     * FOUND BY ID, where this used to read a single `proposedChange` field.
-     * M-128: several proposals are open at once, so "the change the chain
-     * recorded" is only a question about one of them, and asking it of the
-     * account as a whole would compare this proposal against whichever one
-     * happened to be written last.
+     * Found by id. Several proposals are open at once, so "the change the
+     * chain recorded" is only a question about one of them, and asking it
+     * of the account as a whole would compare this proposal against
+     * whichever one happened to be written last.
      */
     if (!landed) {
       /*
-       * TWO OPPOSITE FAULTS USED TO SHARE ONE MESSAGE. `landed` is undefined
+       * Two opposite faults, two messages. `landed` is undefined
        * either because the state read came back empty — so nothing was ever
        * searched — or because the state is fine and no id matches, meaning the
        * proposal is genuinely absent or our derivation of the id disagrees with
        * the chain's. A read that failed and a commitment that disagrees are
        * diagnosed in opposite directions, so the message names which one it is,
        * and in the no-match case prints what we looked for beside what is
-       * actually held. Failure branch only: nothing above this line changes.
+       * actually held.
        */
       if (!after) {
         throw new Error(
@@ -1282,7 +1014,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * RAISES A PAYROLL RUN. V-67, V-73.
+   * RAISES A PAYROLL RUN.
    *
    * The same post-check as `propose`, and it earns its keep more here: a run's
    * id is computed from four values rather than one, so there are four ways to
@@ -1298,21 +1030,16 @@ export class MidnightLedger implements Ledger {
     raiseBy?: bigint,
   ): Promise<TxRef & { proposalId: Hex }> {
     /*
-     * **A RUN MUST NAME A REAL VAULT, AND THIS GUARD WAS MISSING WHILE THE
-     * SIMULATED ONE HAD IT.** `C375`, `S47`, found by that round's
-     * money-safety pass against the round's own change.
+     * A run must name a real vault. The contract's run branch takes the
+     * vault opaque and asserts nothing about it (only the governance branch
+     * asserts `vault == noVault()`). So a run raised at the sentinel
+     * settles, collects its approvals and burns its fee, and
+     * `recordPayment` can never be handed it, because a vault presents
+     * itself and recomputes the id from its own address.
      *
-     * The contract's run branch takes the vault OPAQUE — it asserts nothing
-     * about it (`contracts/src/ConfidentialAccount.compact:2119-2156`; only the
-     * governance branch asserts `vault == noVault()` at `:2254`). So a run
-     * raised at the sentinel settles, collects its approvals and burns its fee,
-     * and `recordPayment` can never be handed it, because **a vault presents
-     * ITSELF** and recomputes the id from its own address (`:2586-2609`).
-     * That is `C375`'s own shape reached from the other side.
-     *
-     * `AccountService.proposeRun` refuses it upstream, which is why nothing was
-     * losing money — but the two implementations of one boundary method must
-     * refuse the same sequences, and this is the one that pays a fee.
+     * `AccountService.proposeRun` refuses it upstream, so nothing loses
+     * money, but the two implementations of one boundary method must refuse
+     * the same sequences, and this is the one that pays a fee.
      */
     if (run.vault === MidnightCommitments.noVault()) {
       throw new Error(
@@ -1349,7 +1076,7 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * Sweeps a run whose window has closed. V-67.
+   * Sweeps a run whose window has closed.
    *
    * Returns nothing anybody should read as "the run finished". It cannot mean
    * that: a run whose window passed with three payees unpaid closes exactly the
@@ -1419,25 +1146,6 @@ export class MidnightLedger implements Ledger {
     return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
-  /*
-   * `settleRound` AND `sendTransition` STOOD HERE.
-   *
-   * `settleRound` refused, because on Midnight the transfer and the transition
-   * are one transaction and the transfer half was never written.
-   * `sendTransition` was the transition half — built, tested, and deliberately
-   * unreachable — kept because `R1` would need it.
-   *
-   * BOTH ARE GONE BECAUSE WHAT THEY MOVED IS GONE. The transition they built
-   * called the contract's `execute`, which spent the account's own balance; the
-   * balance, the circuit and the ledger fields behind it were removed together.
-   * Keeping the half that works would keep a call to a circuit that does not
-   * exist.
-   *
-   * `R6`'s RULE OUTLIVES THEM, and that is why it is written down here rather
-   * than deleted with the code: an operation with two halves is ONE transaction
-   * or it refuses the whole thing. Paying a run out of a vault is exactly such
-   * an operation, and that is where this rule is next spent.
-   */
 
   /*
    * NO METHOD SEATS A SIGNER HERE. A seat after the founding one is taken by the
@@ -1447,18 +1155,9 @@ export class MidnightLedger implements Ledger {
    */
 
   /*
-   * `REMOVE_SIGNER_SLOTS` USED TO BE HERE, and M-106 deleted the cap it named.
-   *
-   * It had to equal the `Vector<N, Bytes<32>>` the contract was compiled with,
-   * because `removeSigner` re-seated the survivors from a statically sized
-   * list. A circuit is a fixed shape, so that width was a cost every removal
-   * paid whether an account had three signers or sixteen — measured at 135,167
-   * bytes of zkir, 5.7x `execute` and the heaviest circuit in the contract. A
-   * measurement against a circuit `C292` has since deleted, kept because it is
-   * what bought the rule.
-   *
-   * Clearing one slot needs no list, so there is no width, no cap, and no
-   * number for the two sides to disagree about.
+   * Removing a signer clears one slot and needs no list, so there is no
+   * slot width, no cap, and no number for the two sides to disagree
+   * about.
    */
 
   async removeSigner(
@@ -1542,25 +1241,6 @@ export class MidnightLedger implements Ledger {
     return this.payKeyCommitmentAt(address);
   }
 
-  private async payKeyCommitmentAt(address: string): Promise<Hex | null> {
-    const read = await this.signerRolesAt(address);
-    if (read === null) throw new Error('the contract has no state on chain');
-    return payKeyCommitmentIn(read.pureCircuits, read.roles);
-  }
-
-  /** The account's `signerRoles` map as the indexer holds it now, with the functions that read it, or null with no state. */
-  private async signerRolesAt(address: string): Promise<{ roles: any; pureCircuits: any } | null> {
-    const { ledger: readLedger, pureCircuits } = await import('../../contracts/managed/contract/index.js');
-    const providers = await this.providers();
-    const state = await providers.publicDataProvider.queryContractState(address as any);
-    if (!state) return null;
-    const roles = (readLedger(state.data) as any)?.signerRoles;
-    if (roles == null || typeof roles.member !== 'function') {
-      throw new UndecodedLedgerField('signerRoles', 'map');
-    }
-    return { roles, pureCircuits };
-  }
-
   /**
    * **ONE SIGNER'S SEALED COPY OF THE PAY-RECORD KEY**, as the four entries the
    * account holds under keys derived from that signer's secret key and this
@@ -1577,13 +1257,11 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
-   * **ONE VAULT'S OWN THRESHOLD, ON CHAIN.** Mirrors
-   * `setVaultThreshold` at `contracts/src/ConfidentialAccount.compact:2699`.
+   * One vault's own threshold, on chain. Mirrors the `setVaultThreshold`
+   * circuit.
    *
-   * **NEVER RUN AGAINST A NODE.** Nothing in this class has been, apart from
-   * the lifecycle `REPORT-WASM-PROVING.txt:502` records, and this circuit was
-   * not part of it. It type-checks against the generated ABI and no further
-   * claim is made for it here.
+   * Never run against a node: it type-checks against the generated ABI
+   * and no further claim is made for it here.
    */
   async setVaultThreshold(
     accountId: string, vault: Hex, newThreshold: number, proposalId: Hex, by: SignerRef,
@@ -1599,31 +1277,24 @@ export class MidnightLedger implements Ledger {
   }
 
   /*
-   * `credit` STOOD HERE AND REFUSED BY NAME. `C292`, `V-246`.
-   *
-   * It built a `credit` call — value arriving without an approval round, M-67 —
-   * and `S23` had already shed that circuit, so it refused rather than staging
-   * an opening for a transaction that could not exist. Its refusal named the
-   * founder's decision as the door that resolved it. The decision was taken:
-   * the account keeps no book, so there is no method here left to refuse from.
-   *
-   * Money is held by a VAULT and reaches one through the vault's own deposit
-   * path. What LEFT is in `movements`, written by `recordPayment`.
+   * There is no `credit`: the account keeps no book, so no value arrives
+   * at it. Money is held by a vault and reaches one through the vault's
+   * own deposit path. What leaves is in `movements`, written by
+   * `recordPayment`.
    */
 
   /* ------------------------------------------------------------------ *
-   * the same round, one step at a time
+   * the same proposal, one step at a time
    *
-   * Everything above builds, proves, balances and submits in a single call,
-   * which is right for a script and wrong for a queue. A job has to be able to
-   * do the expensive, effect-free part — building and proving — and stop, then
-   * submit later, possibly after a crash. Decision 0008, M-82.
+   * Everything above builds, proves, balances and submits in a single
+   * call, which is right for a script and wrong for a queue. A job has to
+   * be able to do the expensive, effect-free part, building and proving,
+   * and stop, then submit later, possibly after a crash.
    *
-   * `prepare` is that first half, and it is the SAME first half: the methods
-   * above now call it rather than repeating their own checks. One copy of each
-   * rule, because the failure this project keeps repeating is a procedure
-   * written twice with the second copy missing a line — M-50, M-55, M-58, M-61,
-   *
+   * `prepare` is that first half, and it is the same first half: the
+   * methods above call it rather than repeating their own checks. One
+   * copy of each rule, because a procedure written twice with the second
+   * copy missing a line is the failure this boundary guards against.
    * ------------------------------------------------------------------ */
 
   /**
@@ -1658,601 +1329,18 @@ export class MidnightLedger implements Ledger {
       : privateStateKey(this.cfg.privateStateId, accountId);
 
     switch (step.kind) {
-      case 'propose': {
-        /*
-         * NO "a proposal is already open" REFUSAL, and its absence is the
-         * feature. This used to be the check that stopped an admin
-         * raising a vendor invoice while payroll collected signatures.
-         *
-         * M-70/M-71. `propose` records the change, and it reads it from the
-         * caller's private state because there is no argument for it. Staging
-         * is therefore not optional here. `execute` was the other reader and is
-         * gone, so this is the ONLY circuit that opens what is staged
-         * below and nothing on chain reopens what it commits to.
-         */
-        /*
-         * **THE VAULT IS REFUSED BEFORE ANYTHING IS STAGED.** `C367`, `T-237`,
-         * `contracts/src/ConfidentialAccount.compact:2319` asserts it on
-         * this branch; job 1 of this method is to refuse before a fee and before
-         * eighty seconds of proving — **and before the durable private-state
-         * write below it**, which was this round's auditor's correction: a
-         * refusal after `stageChange` leaves the caller's device holding a
-         * `proposalSalt` for a round that was never raised, and the next
-         * governance apply recomputes the wrong id and refuses about the wrong
-         * thing. It reads nothing staging produces, so it belongs above it.
-         * TWO arguments since V-32, and `R5` made the CALLER name the second
-         * rather than this method supply it. It must not be defaulted at the
-         * circuit: the vault is committed inside the proposal's identity, so a
-         * wrong value does not fail loudly — it produces an id nobody can claim.
-         */
-        if (step.vault !== MidnightCommitments.noVault()) throw new Error('a governance round cannot name a vault');
-        const raiseBy = raiseByRequired(step.raiseBy);
-        await this.stageChange(accountId, step.change);
-        /*
-         * The MERGED `propose`: the opaque path. `isRun` false, the run
-         * parts zero — the branch that would read them is not taken.
-         */
-        return {
-          address, privateStateId, circuit,
-          args: [
-            fromHex(step.payloadHash), fromHex(ZERO_32), 0n, 0n, 0n, 0n, false, fromHex(step.vault), raiseBy,
-          ],
-        };
-      }
-
-      case 'proposeRun': {
-        /*
-         * **REFUSE EARLY, AND ALL THREE REFUSALS ARE FREE OF SIDE EFFECTS.**
-         * They read `step` alone — nothing `stageChange`
-         * produces — yet sat BELOW it until this round, so a refused call left
-         * the device holding a `proposalSalt` for a round never raised and the
-         * next apply for a legitimately open proposal recomputed the wrong id
-         * and was refused about the wrong thing. `case 'propose'` was `S55`'s;
-         * these are older. **`T-324`'s cell is wrong once: `retireVault` takes
-         * the salt as an ARGUMENT (`compact:2862`, used `:2867`), not as a
-         * witness — `SC19` §1.** The duplication with the chain is deliberate:
-         * its asserts give an attacker nothing; these give a person a sentence.
-         */
-        if (step.payees < 1n) {
-          throw new Error('a payroll run needs at least one payee');
-        }
-        if (step.opensAt >= step.closesAt) {
-          throw new Error(
-            `this run's window closes at ${step.closesAt} and opens at ${step.opensAt}, ` +
-              'so no payment could ever fall inside it');
-        }
-        /*
-         * A WINDOW IN MILLISECONDS IS THE MISTAKE THIS CATCHES. The contract
-         * compares against `secondsSinceEpoch`, so a JavaScript timestamp
-         * passed straight through builds a run that opens in the year 56000 —
-         * approved, paid for, and unpayable, with nothing to say why. Anything
-         * past the year 3000 is not a payroll date.
-         */
-        if (step.closesAt > 32_503_680_000n) {
-          throw new Error(
-            `${step.closesAt} is not a time in seconds — that is the year ${
-              new Date(Number(step.closesAt) * 1000).getUTCFullYear()}. ` +
-              'Block time is seconds since the Unix epoch, not milliseconds.');
-        }
-        const raiseBy = raiseByRequired(step.raiseBy);
-        await this.stageChange(accountId, step.change);
-        /* The MERGED `propose`: the run path. `isRun` true, opaque hash zero. */
-        return {
-          address, privateStateId, circuit,
-          args: [
-            fromHex(ZERO_32), fromHex(step.root), step.payees, step.opensAt, step.closesAt,
-            step.required ?? 0n, true, fromHex(step.vault), raiseBy,
-          ],
-        };
-      }
-
-      case 'closeExpiredRun': {
-        /*
-         * No `requireOpen` beyond the contract's own. This step removes an
-         * authorisation that is already dead — every payment asserts the same
-         * bound — so the only thing a stale local view can cause is a refused
-         * transaction, and refusing here would need a second opinion about the
-         * block time that we do not have.
-         */
-        /*
-         * **AND IT CARRIES NO PRIVATE-STATE KEY, WHICH IS THE ONE `null` IN
-         * THIS METHOD - AND IT IS NOW DERIVED RATHER THAN WRITTEN HERE**, from
-         * the circuit this step names and the set of circuits that read no
-         * witness. This circuit calls no witness - no signer check, no
-         * salt, no asset - so there is nothing for a record to answer. Asking
-         * for one would refuse a sweep from any client that has never staged
-         * a call against this account, and the contract's whole argument for
-         * leaving this operation open to anybody is that an account whose
-         * signers have all left must still be able to have its expired rows
-         * taken out. Passing a key it does not need would also put this call
-         * on the path where the SDK writes the record back after settlement,
-         * for a circuit that changed nothing in it.
-         */
-        return {
-          address, privateStateId, circuit,
-          args: [fromHex(step.proposalId)],
-        };
-      }
-
-      case 'approve': {
-        await this.requireOpen(address, step.proposalId, 'approve');
-        if (step.opening) await this.stageOpening(accountId, step.proposalId, step.opening);
-        /*
-         * Deliberately no check for "have I already approved". It cannot be
-         * done: the nullifier is H(domain, address, proposal, secretKey) and
-         * the secret never leaves the signer's device. The contract rejects the
-         * duplicate, and a local check that looked authoritative would be a lie
-         * about what we can know.
-         */
-        return {
-          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
-        };
-      }
-
-      case 'cancel': {
-        await this.requireOpen(address, step.proposalId, 'cancel');
-        return {
-          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
-        };
-      }
-
-      case 'holdRun': {
-        await this.requireOpen(address, step.proposalId, 'hold this run');
-        if (step.opening) await this.stageOpening(accountId, step.proposalId, step.opening);
-        return {
-          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
-        };
-      }
-
-      case 'releaseHold': {
-        await this.requireOpen(address, step.proposalId, 'release the hold on this run');
-        return {
-          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
-        };
-      }
-
-      case 'reseatSigner': {
-        await this.requireSeatBar(address, step.proposalId, "change a signer's seat");
-        await this.refuseUnusableLeaf(step.newLeaf, 'the signer leaf being seated');
-        return {
-          address, privateStateId, circuit,
-          args: [fromHex(step.oldLeaf), fromHex(step.newLeaf), fromHex(step.proposalId)],
-        };
-      }
-
-      case 'setPolicyBar': {
-        await this.requireSeatBar(address, step.proposalId, 'change the approvals a policy change needs');
-        if (!Number.isInteger(step.newBar) || step.newBar < 1) {
-          throw new Error('a policy change needs at least one approval, and a whole number of them');
-        }
-        {
-          const now = await this.readContractState(address);
-          if (!now) throw new Error('the contract has no state on chain');
-          if (BigInt(step.newBar) > now.signerCount) {
-            throw new Error(
-              `a policy change cannot need ${step.newBar} approvals when the company has ${now.signerCount} signers; ` +
-                'seat more signers first, or choose a smaller number.',
-            );
-          }
-        }
-        return {
-          address, privateStateId, circuit,
-          args: [BigInt(step.newBar), fromHex(step.proposalId)],
-        };
-      }
-
-      case 'setThreshold': {
-        const before = await this.readContractState(address);
-        if (!before) throw new Error('the contract has no state on chain');
-        await this.requireApproved(address, step.proposalId, 'change the threshold');
-        /*
-         * **`Number.isInteger` IS HERE BECAUSE ITS SIBLING HAS IT AND THE TWO
-         * DISAGREED. `T-200` `P2`.** `setVaultThreshold` below refused
-         * `NaN`; this one did not, in the same file, on the same kind of value
-         * — so `NaN` reached `BigInt(...)` at `:1301` and threw a `RangeError`
-         * naming nothing anybody can act on, while the vault path answered in
-         * a sentence. Two mirrors of one rule that disagree is the shape this
-         * repository files as `M-104`, and one of them being safe is not the
-         * same as the pair being right.
-         */
-        if (!Number.isInteger(step.newThreshold) || step.newThreshold < 1) {
-          throw new Error('the threshold must be at least one, and a whole number');
-        }
-        /*
-         * A threshold above the seated signers would leave an account that can
-         * never approve anything again.
-         */
-        if (BigInt(step.newThreshold) > before.signerCount) {
-          throw new Error(
-            `the threshold cannot exceed the ${before.signerCount} signers on this account, ` +
-              'or one signer could seat their own.',
-          );
-        }
-        return {
-          address, privateStateId, circuit,
-          args: [BigInt(step.newThreshold), fromHex(step.proposalId)],
-        };
-      }
-
-      case 'setVaultThreshold': {
-        /*
-         * **THE ACCOUNT'S THRESHOLD, NOT THE VAULT'S.** `R5`, and it matches
-         * the circuit: `setVaultThreshold` calls `requireApproved(id)` at
-         * `:1407`, the entry point with no lookup, because the round behind it
-         * names `noVault()`. A vault whose bar is already 1 must not be able to
-         * authorise its own further changes with one signature.
-         */
-        await this.requireApproved(address, step.proposalId, "change a vault's threshold");
-        /*
-         * **THIS IS NARROWER THAN THE CONTRACT'S CHECK, DELIBERATELY, AND THE
-         * SENTENCE BELOW IS THE CONTRACT'S REASON RATHER THAN ITS PREDICATE.**
-         * `T-200` `P2`, `S46` — the line that stood here said the contract's
-         * own refusal was *reached before a fee is paid*, which reads as an
-         * equivalence and is not one.
-         *
-         * `ConfidentialAccount.compact:2777` refuses exactly `== 0` — **`:2777`
-         * and not the `:2712` this comment used to cite, which is a blank line;
-         * `T-246`'s +65 shift, read at source by `S46`.** This
-         * refuses `NaN`, non-integers and everything below 1. **It errs SAFE —
-         * strictly narrower, and `Uint<64>` makes a negative unrepresentable on
-         * the far side anyway — but a reader must not be told the two are the
-         * same check**, because the obvious tidy is to loosen this line to
-         * match the quoted one, and `:481-483` records why a non-integer is a
-         * bad value entering our own records in the first place.
-         *
-         * The quoted sentence is kept because it is the best statement of WHY
-         * anywhere in either language: *"a vault threshold of zero would
-         * authorise anything"* (`:2777`).
-         *
-         * **THE SIGNER-COUNT BOUND IS THE CIRCUIT'S**, as `setThreshold`'s is
-         * above: the circuit refuses a vault threshold above the signers
-         * seated, and the block below mirrors it. The application also refuses
-         * to RAISE such a round — `AccountService.proposeVaultThresholdChange`.
-         */
-        if (!Number.isInteger(step.newThreshold) || step.newThreshold < 1) {
-          throw new Error('a vault threshold of zero would authorise anything');
-        }
-        /*
-         * The circuit's two further rules, mirrored so a round the chain would
-         * refuse is refused here before a fee is paid: no more than the signers
-         * seated, and as many approvals as a change of who is seated when the
-         * new number is above the approvals a policy change needs (it raises
-         * that number to it) or below what the vault needs today.
-         */
-        {
-          const now = await this.readContractState(address);
-          if (!now) throw new Error('the contract has no state on chain');
-          if (step.vault === toHex((await import('../../contracts/managed/contract/index.js')).pureCircuits.companyWide())) {
-            throw new Error("the company-wide decision always takes the account's threshold, so it has no vault threshold.");
-          }
-          if (step.vault === policyBarKey()) {
-            throw new Error('that is not a vault; to change the approvals a policy change needs, raise that change instead.');
-          }
-          if (BigInt(step.newThreshold) > now.signerCount) {
-            throw new Error(
-              `a vault cannot need ${step.newThreshold} approvals when the company has ${now.signerCount} signers; ` +
-                'seat more signers first, or choose a smaller number.',
-            );
-          }
-          const barNow = seatBarParts(now).policyBar;
-          if (BigInt(step.newThreshold) > barNow && !(await this.readGovernance(address)).holdsVault(step.vault)) {
-            throw new Error(
-              `that is not a vault this company holds, so its threshold cannot exceed ${barNow}, the approvals ` +
-                'a policy change needs; adopt the vault first, or choose a smaller number.',
-            );
-          }
-          const own = now.vaultThresholds.find(v => v.vault === step.vault);
-          const today = own ? own.threshold : Number(now.threshold);
-          if (step.newThreshold > Number(seatBarParts(now).policyBar) || step.newThreshold < today) {
-            await this.requireSeatBar(address, step.proposalId, "change a vault's threshold");
-          }
-        }
-        return {
-          address, privateStateId, circuit,
-          args: [
-            fromHex(step.vault), BigInt(step.newThreshold), fromHex(step.proposalId),
-          ],
-        };
-      }
-
-      case 'setPolicy': {
-        await this.requireSeatBar(address, step.proposalId, "set this vault's spending policy");
-        if (step.vault === MidnightCommitments.noVault()) throw new Error('a spending policy is set on a vault');
-        if (!(await this.readGovernance(address)).holdsVault(step.vault)) {
-          throw new Error('that is not a vault this company holds; adopt the vault first, then set its policy.');
-        }
-        await this.stageFor(accountId, { assetId: assetIdBytes(step.asset), policy: step.policy });
-        return {
-          address, privateStateId, circuit,
-          args: [fromHex(step.vault), fromHex(policyCommitmentOf(step.policy)), fromHex(step.proposalId)],
-        };
-      }
-
-      case 'clearRun': {
-        const window = periodWindowOf(step.policy, step.period);
-        if (step.run.opensAt < window.from || step.run.closesAt > window.until) {
-          const day = (t: bigint) => new Date(Number(t) * 1000).toISOString().slice(0, 10);
-          throw new Error(
-            `this run's window, ${day(step.run.opensAt)} to ${day(step.run.closesAt)}, does not lie inside ` +
-              `the period ${day(window.from)} to ${day(window.until)} of its vault's policy, so it cannot be ` +
-              'charged to it. Charge it to the period its window lies in; if its window crosses two periods, ' +
-              'raise the run again inside one.');
-        }
-        await this.stageFor(accountId, {
-          assetId: assetIdBytes(step.asset), policy: step.policy, periodSpent: step.spent,
-        });
-        return {
-          address, privateStateId, circuit,
-          args: [
-            fromHex(step.proposalId), fromHex(step.run.vault), fromHex(step.run.root), step.run.payees,
-            step.run.opensAt, step.run.closesAt, step.run.required ?? 0n, fromHex(step.salt),
-            step.top, step.total, step.period, ...retryArgsOf(fromHex(step.fresh)),
-          ],
-        };
-      }
-
-      case 'sealPayKey': {
-        if (step.wrap.length !== 4 || step.wrap.some(p => fromHex(p).length !== 32)) {
-          throw new Error('a sealed pay-record key is four 32-byte entries');
-        }
-        const committed = await this.payKeyCommitmentAt(address);
-        if (committed === null) {
-          /*
-           * **NEVER FIRST-COME.** The first copy writes the commitment every
-           * later device checks its key against, so it is written only under a
-           * round every approving signer named it in.
-           */
-          if (!step.proposalId) {
-            throw new Error(
-              'nobody has confirmed this company\'s pay-record key on chain yet. Raise a proposal '
-              + 'that names it, get it approved, then seal your copy again with that proposal.');
-          }
-          await this.requireApproved(address, step.proposalId, 'commit this company to its pay-record key');
-        } else if (committed.toLowerCase() !== step.commitment.toLowerCase()) {
-          throw new Error(
-            'the pay-record key on this device is not the one this company confirmed on chain, so it '
-            + 'cannot be sealed. Reopen the company\'s key from its sealed records and try again.');
-        }
-        return {
-          address, privateStateId, circuit,
-          args: [
-            step.wrap.map(p => fromHex(p)), fromHex(step.commitment),
-            fromHex(step.proposalId ?? '00'.repeat(32)),
-          ],
-        };
-      }
-
-      case 'removeSigner': {
-        const before = await this.readContractState(address);
-        if (!before) throw new Error('the contract has no state on chain');
-        await this.requireSeatBar(address, step.proposalId, 'remove a signer');
-        if (before.signerCount - 1n < before.threshold) {
-          throw new Error(
-            `that would leave ${before.signerCount - 1n} signers against a threshold of ` +
-              `${before.threshold}, and the account could never approve anything again.`,
-          );
-        }
-        /* The circuit's second floor: never fewer signers than a policy change needs. */
-        const { policyBar } = seatBarParts(before);
-        if (before.signerCount - 1n < policyBar) {
-          throw new Error(
-            `that would leave ${before.signerCount - 1n} signers when a policy change needs ${policyBar}; ` +
-              'seat another signer first, or lower the approvals policy changes need.',
-          );
-        }
-        /* The leaf leaving, 0 to keep the threshold in force, and the approved removal. */
-        return {
-          address, privateStateId, circuit,
-          args: [fromHex(step.removedLeaf), 0n, fromHex(step.proposalId)],
-        };
-      }
+      case 'propose': case 'proposeRun': case 'closeExpiredRun': case 'approve': case 'cancel':
+      case 'holdRun': case 'releaseHold':
+        return this.prepareRunStep(accountId, step, address, privateStateId, circuit);
+      case 'reseatSigner': case 'setPolicyBar': case 'setThreshold': case 'removeSigner':
+        return this.prepareSeatStep(accountId, step, address, privateStateId, circuit);
+      case 'setVaultThreshold':
+        return this.prepareVaultThresholdStep(accountId, step, address, privateStateId, circuit);
+      case 'setPolicy': case 'clearRun': case 'sealPayKey':
+        return this.preparePolicyStep(accountId, step, address, privateStateId, circuit);
     }
   }
 
-  /**
-   * Has any slot been vacated by a removal?
-   *
-   * Read from the tree rather than remembered, because it is a property of the
-   * account rather than of this call: the tree holds the vacancy marker at a
-   * cleared slot, so asking it for a path to that marker answers the question
-   * exactly. No path means nothing has been vacated and a new signer appends.
-   */
-  /**
-   * **A SIGNER LEAF THE CONTRACT WILL NOT SEAT, REFUSED BEFORE A FEE IS PAID.**
-   * `T-200` `P2`, `S46`, mirroring two contract asserts that had no client
-   * counterpart at all.
-   *
-   * The contract's `constructor` refuses a founding leaf that is
-   * `default<Bytes<32>>` or `vacantSlot()`, and `reseatSigner` and `seatInvited`
-   * refuse the same two for a leaf being seated — all with the same message, *"that is not a
-   * usable signer leaf"*. **NAMED RATHER THAN CITED, AND THE CITATIONS THAT
-   * STOOD HERE WERE BOTH WRONG:** `:1508-1509` is `requireApproved`'s
-   * approval-count assert and `:1859-1860` is `const removedLeaf = leaf;`. The
-   * asserts are at `:1613-1614` and `:1964-1965` today and will not stay there.
-   * **Both were unmirrored**, so
-   * `:611` and `:1271` passed `fromHex(...)` straight through and the refusal
-   * arrived from the chain — for the founding leaf, after a deploy and a fee,
-   * and `src/midnight/ledger.ts:400-406` already reasons that an unusable
-   * founding seat is PERMANENTLY fatal: every later seat needs an invitation an
-   * existing signer raised, so nobody can ever seat the first.
-   *
-   * **THE CONVENTION IS THE FILE'S OWN**, not one invented here: `proposeRun`'s
-   * two mirrored asserts (`:1162`, `:1165`) match `ConfidentialAccount.compact`
-   * `:2126` and `:2127` exactly, and `:2313-2316` names that convention in the
-   * contract's own words.
-   *
-   * **AND `T-200`'s OWN CITATION OF `:2712` IS STALE — IT IS `:2777`.** `S46`
-   * opened the file: `:2712` is blank and `:2777` carries the vault-threshold
-   * assert. That is `T-246`'s +65 shift, and the same slip is in `SC9`'s report
-   * and in the `T-200` row. Every compact citation in this round was read at
-   * source rather than inherited (rule 23).
-   *
-   * **ONE HELPER AND NOT TWO CHECKS, AND THAT IS NOT `M-106`.** The two
-   * contract asserts are the same rule — *a leaf must be a value the tree can
-   * hold and can tell apart from an empty slot* — read at two entry points. A
-   * shared rule is the mistake when two sites want DIFFERENT rules; here they
-   * want the same one, and writing it twice is how they drift.
-   *
-   * **THE VACANCY MARKER IS READ FROM THE COMPILED ARTIFACT, NEVER RESTATED.**
-   * `pureCircuits.vacantSlot()` is the contract's own definition of it.
-   * A TypeScript constant for it would be a second definition of a value the
-   * chain compares against, which is `decision 0004` and `C306`.
-   */
-  private async refuseUnusableLeaf(leaf: Hex, what: string): Promise<void> {
-    if (leaf === ZERO_32) {
-      throw new Error(
-        `${what} is thirty-two zero bytes. Supply a signer leaf that is neither thirty-two `
-        + 'zero bytes nor the vacancy marker. The contract refuses this value — it answers '
-        + '"that is not a usable signer leaf", in its constructor for a founding leaf and in '
-        + '`reseatSigner` for a leaf being seated — because thirty-two zero bytes is what an '
-        + 'empty slot reads as, so a seat holding it is a seat nothing can ever prove.');
-    }
-    const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
-    if (leaf === toHex(pureCircuits.vacantSlot())) {
-      throw new Error(
-        `${what} is the vacancy marker itself. Supply a signer leaf that is neither `
-        + 'thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it '
-        + 'answers "that is not a usable signer leaf", in its constructor for a founding leaf '
-        + 'and in `reseatSigner` for a leaf being seated — because the tree uses the marker to '
-        + 'mean THIS SLOT IS EMPTY, so seating it makes a slot that is simultaneously taken '
-        + 'and free.');
-    }
-  }
-
-  /**
-   * Is this proposal open on chain?
-   *
-   * BY ID, because there is no longer a single "the" open proposal, and BY
-   * PRESENCE, because the contract deletes a proposal when it settles or is
-   * cancelled rather than zeroing a flag beside it. Presence is therefore the
-   * whole answer, where the old shape had to read a boolean and a commitment
-   * and hope they agreed.
-   */
-  private async requireOpen(
-    address: string, proposalId: Hex, what: string,
-  ): Promise<{ approvals: number; threshold: number }> {
-    const before = await this.readContractState(address);
-    if (!before) throw new Error('the contract has no state on chain');
-    const open = before.openProposals.find(p => p.id === proposalId);
-    if (!open) {
-      throw new Error(
-        `cannot ${what}: there is no open proposal ${proposalId.slice(0, 12)} on this account. ` +
-          'It has either settled, been cancelled, or was never raised here.',
-      );
-    }
-    return { approvals: open.approvals, threshold: Number(before.threshold) };
-  }
-
-  /**
-   * Open AND past the threshold.
-   *
-   * One copy, because all four circuits that spend an approved proposal need
-   * exactly this, and four copies of a rule with one of them missing a line is
-   * the failure this project keeps recording (M-50, M-55, M-58, M-61, M-65,
-   * M-72, M-75, M-104).
-   */
-  private async requireApproved(address: string, proposalId: Hex, what: string): Promise<void> {
-    const { approvals, threshold } = await this.requireOpen(address, proposalId, what);
-    /* The circuit's own reading: the proposal's bar when it was raised, and no signer removed
-     * or re-seated since, before the higher of that bar and the threshold today. */
-    const gov = await this.readGovernance(address);
-    const hold = gov.holdOf(proposalId);
-    if (!hold) {
-      throw new Error(
-        `cannot ${what}: that proposal has no record of the approvals it needs, so it can never be ` +
-          'carried out. Raise it again.',
-      );
-    }
-    if (hold.removals !== gov.removalsSoFar) {
-      throw new Error(
-        `cannot ${what}: ${gov.removalsSoFar - hold.removals} signer removal(s) or re-seat(s) since ` +
-          'this was raised, and the contract refuses it for that. Raise it again.',
-      );
-    }
-    const needed = hold.needed > BigInt(threshold) ? hold.needed : BigInt(threshold);
-    if (BigInt(approvals) < needed) {
-      throw new Error(
-        `cannot ${what}: that proposal has ${approvals} of ${needed} approvals. ` +
-          'The contract would reject it.',
-      );
-    }
-  }
-
-  /**
-   * What the governance circuits read besides the counts: whether some bytes are a vault the
-   * company holds (adopted and not retired), a proposal's bar and removal count when it was
-   * raised, and the removal count now. Each through a guard, as every other read here.
-   */
-  private async readGovernance(address: string): Promise<{
-    holdsVault(vault: Hex): boolean;
-    holdOf(proposalId: Hex): { needed: bigint; removals: bigint } | undefined;
-    removalsSoFar: bigint;
-  }> {
-    const { ledger: readLedger, pureCircuits } = await import('../../contracts/managed/contract/index.js');
-    const providers = await this.providers();
-    const state = await providers.publicDataProvider.queryContractState(address as any);
-    if (!state) throw new Error('the contract has no state on chain');
-    const parsed: any = readLedger(state.data);
-    /* The contract's own set of adopted vault addresses, read by address. It is not the device's
-     * record of vaults by name, which only `vault-record.ts` reads. */
-    const adopted = parsed?.[ADOPTED_SET];
-    if (adopted == null || typeof adopted.member !== 'function') throw new UndecodedLedgerField(ADOPTED_SET, 'set');
-    const holds = parsed?.proposalHolds;
-    if (holds == null || typeof holds.member !== 'function' || typeof holds.lookup !== 'function') {
-      throw new UndecodedLedgerField('proposalHolds', 'map');
-    }
-    const countKey = pureCircuits.removalCountKey();
-    if (!holds.member(countKey)) throw new UndecodedLedgerField('proposalHolds', 'map');
-    return {
-      holdsVault: (vault) => Boolean(adopted.member(fromHex(vault))),
-      holdOf: (id) => {
-        const key = fromHex(id);
-        if (!holds.member(key)) return undefined;
-        const h = holds.lookup(key);
-        return { needed: BigInt(h.needed), removals: BigInt(h.removals) };
-      },
-      removalsSoFar: BigInt(holds.lookup(countKey).removals),
-    };
-  }
-
-  /**
-   * Open AND at the higher of the threshold and the approvals a policy change
-   * needs: the number the circuits that change who is seated, and those that
-   * change a policy or that number, ask for. A device that compared with the
-   * threshold alone would let through, and charge a fee for, a call the chain
-   * then refuses.
-   */
-  private async requireSeatBar(address: string, proposalId: Hex, what: string): Promise<void> {
-    /* The circuits ask `requireApproved`'s questions first: the bar when raised, no removal since. */
-    await this.requireApproved(address, proposalId, what);
-    const { approvals } = await this.requireOpen(address, proposalId, what);
-    const now = await this.readContractState(address);
-    if (!now) throw new Error('the contract has no state on chain');
-    const { bar, policyBar } = seatBarParts(now);
-    if (BigInt(approvals) < bar) {
-      throw new Error(
-        `cannot ${what}: that proposal has ${approvals} of ${bar} approvals. ` +
-          `It needs as many as a policy change needs (${policyBar}) and at least the threshold ` +
-          `(${now.threshold}). The contract would reject it.`,
-      );
-    }
-  }
-
-  /*
-   * `stageState`, `checkAfter` AND `viewDigestAfter` STOOD HERE.
-   *
-   * All three served one call: the account's own spend. `stageState` wrote the
-   * sealed blob and staged the balance opening, `checkAfter` compared the
-   * commitment the chain then held against the one the opening produced, and
-   * `viewDigestAfter` predicted the address the blob would be looked up at.
-   *
-   * WHAT THEY CHECKED NO LONGER EXISTS: there is no per-asset commitment on
-   * chain to compare against. The rule they enforced — that the caller's
-   * private state and the sealed blob must describe the same state, decision
-   * 0004 — is not repealed. It applies to whatever the vault path stages, and
-   * the shape to copy is the one that stood here: blob first, opening second,
-   * chain read third and compared rather than assumed.
-   */
 
   async fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null> {
     const address = await this.addressOf(accountId);
@@ -2280,191 +1368,10 @@ export class MidnightLedger implements Ledger {
    * the one fees go to; nothing here has watched it pay.
    */
   describe(): string {
-    return `Midnight ${this.cfg.networkId} via ${this.cfg.nodeUrl}, `
+    return `Midnight ${this.cfg.networkId} via ${shownAddress(this.cfg.nodeUrl)}, `
       + (paysNoFees(this.sponsor)
         ? 'with no fee payer, so nothing can be written'
         : 'with fees paid by the fee payer it was given');
-  }
-
-  /* ---------------- internals ---------------- */
-
-  /*
-   * `leafOf` STOOD HERE AND IT IS REMOVED, NOT LEFT UNUSED.
-   *
-   * Its own docstring said what it was for: *"It is the only place that
-   * computes the deployer's leaf"*. There is no deployer's leaf any more. Its
-   * single caller was the bootstrap loop in `open`, which went with the
-   * deployer's seat, so what is left would be a private method with no callers
-   * on the exact path this round exists to close — and a derivation left lying
-   * about is how the next round re-wires it.
-   *
-   * **THE DERIVATION IS NOT LOST AND IS NOT DUPLICATED.**
-   * `MidnightCommitments.signerLeaf` / `.signerPublicKey` are the one wrapper
-   *, and `src/core/signer-leaf.ts:181-190`'s
-   * `storedSignerLeaf` is the one derivation every product writer calls —
-   * including whoever computes the founding leaf this class is now handed.
-   */
-
-  private async requireDeployed(accountId: string): Promise<string> {
-    const address = await this.addressOf(accountId);
-    if (!address) throw new Error(`account "${accountId}" is not deployed on Midnight`);
-    return address;
-  }
-
-
-
-  /*
-   * `stageView` STOOD HERE.
-   *
-   * It wrote the caller's balance opening — `current` and `next` — into private
-   * state so the spend circuit could read it as witnesses. There is no such
-   * circuit and no such witness.
-   *
-   * `C228` IS NOT LOST WITH IT, and it is the expensive part: the private-state
-   * provider files under `${contractAddress}:${key}` where the address half is
-   * a mutable closure set by whichever SDK entry point ran last, so EVERY read
-   * or write must call `setContractAddress` first. `stageChange` below does.
-   */
-
-  /**
-   * The commitment to an approved change, from the CONTRACT'S own circuit.
-   *
-   * The rule `commitmentOf` used to carry alongside it, and which outlived it:
-   * recomputing this hash in TypeScript would be a second definition of a
-   * scheme. `commitmentOf` was over the account's state and went with the
-   * balance ledger; decision 0004 binds what is left.
-   */
-  /**
-   * The account's asset blinding, from this device's private state.
-   *
-   * Throws rather than defaulting. A wrong or missing blinding derives a
-   * different asset key, so the change commitment `propose` writes is not the
-   * one this device recomputes in its own post-check, and the call fails with
-   * "the chain recorded a different change than the one supplied" — true of the
-   * commitment, and completely misleading about the cause.
-   *
-   * **IT USED TO SAY THE KEY ADDRESSED NO BALANCE THE ACCOUNT HOLDS.** There is
-   * no balance map for a key to address since `C292`, and no circuit compares
-   * an asset key to anything on chain. **The error message below said so too,
-   * and `S27` corrected it** — it is executable text a customer is
-   * shown, which is why it could not be left for a comment sweep.
-   *
-   * WHAT THE REPLACEMENT DOES AND DOES NOT CLAIM. It says the blinding is what
-   * derives the asset key the change commitment is built from, and that every
-   * signer needs the same one. It deliberately does NOT say the other signers
-   * approve that commitment: `approve` takes a proposal id and nothing else
-   * (`contracts/src/ConfidentialAccount.compact:2330`), the id does not contain
-   * the change, and since `C292` no circuit reopens the change at all. The
-   * consequence that IS true is the one stated above — this device cannot
-   * compute or check the commitment a proposal carries.
-   */
-  private async assetBlindingOf(accountId: string): Promise<Hex> {
-    const providers = await this.providers();
-    // Read under the account's own contract address, like every other private
-    // state access. C228: a read that inherits the last address can answer
-    // with another contract's blinding, which derives a different asset key and
-    // therefore a change commitment this account's own signers cannot
-    // reproduce.
-    providers.privateStateProvider.setContractAddress(await this.requireDeployed(accountId));
-    const existing = await providers.privateStateProvider.get(
-      privateStateKey(this.cfg.privateStateId, accountId));
-    if (!existing?.assetBlinding) {
-      throw new Error(
-        `no asset blinding in the private state for "${accountId}" on this device. ` +
-          'It is written when the account is opened and every signer needs the same one — ' +
-          'without it this device cannot derive the account\'s asset key, and so cannot ' +
-          'compute or check the change commitment a proposal carries.',
-      );
-    }
-    return toHex(existing.assetBlinding);
-  }
-
-  private async changeCommitmentOf(c: StateChange, assetBlinding: Hex): Promise<Hex> {
-    const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
-    /*
-     * No `as any`. It carried one until M-125 added the asset parameter — which
-     * is precisely the arity change a cast would have hidden, and M-107 is the
-     * record of that happening once already.
-     */
-    return toHex(
-      pureCircuits.changeCommitmentOf(
-        fromHex(MidnightCommitments.assetKey(c.asset, assetBlinding)),
-        c.amount,
-        fromHex(c.batchDigest),
-        fromHex(c.salt),
-      ),
-    );
-  }
-
-  /**
-   * Puts the approved change where the witnesses will find it.
-   *
-   * `changeAmount`, `changeBatchDigest` and `proposalSalt` were read from the
-   * calling device at BOTH ends of a round — the proposer committed to them and
-   * `execute` was checked against that commitment. `C292` deleted `execute`, so
-   * `propose` is the only circuit that reads them and nothing on chain reopens
-   * what it writes. `proposalSalt` is the exception that still has readers at
-   * the far end: every governance circuit and `recordPayment` recompute the
-   * proposal's id from it.
-   *
-   * Merged rather than replaced. `stageNext` made the same argument and went
-   * with the balance ledger; the reason is unchanged — a device's private state
-   * holds more than one call's worth of witnesses, and overwriting the record
-   * would drop the ones this call does not set.
-   */
-  private async stageChange(accountId: string, change: StateChange): Promise<void> {
-    const providers = await this.providers();
-    // The same rule as stageView, for the same reason: the address is set
-    // from the account this stage is for, never inherited.
-    const address = await this.requireDeployed(accountId);
-    providers.privateStateProvider.setContractAddress(address);
-    const key = privateStateKey(this.cfg.privateStateId, accountId);
-    const existing = await providers.privateStateProvider.get(key);
-    if (!existing) {
-      throw new Error(missingPrivateState(accountId, address));
-    }
-    await providers.privateStateProvider.set(key, {
-      ...existing,
-      // The asset travels with the change, because `propose` derives the asset
-      // key from it. It was BOTH ends of a round until `C292` removed
-      // the far one, and there is no map for the key to index any more.
-      assetId: assetIdBytes(change.asset),
-      changeAmount: change.amount,
-      changeBatchDigest: fromHex(change.batchDigest),
-      proposalSalt: fromHex(change.salt),
-    });
-  }
-
-  /**
-   * Writes the named values into this account's private state on this device,
-   * beside what is already there, for a call whose witnesses read them.
-   */
-  /** Stages what one run's id opens to, beside any this device already holds. */
-  private async stageOpening(accountId: string, proposalId: Hex, opening: RunOpeningHex): Promise<void> {
-    const providers = await this.providers();
-    const address = await this.requireDeployed(accountId);
-    providers.privateStateProvider.setContractAddress(address);
-    const key = privateStateKey(this.cfg.privateStateId, accountId);
-    const existing: AccountPrivateState | null = await providers.privateStateProvider.get(key);
-    if (!existing) throw new Error(missingPrivateState(accountId, address));
-    await this.stageFor(accountId, {
-      runOpenings: {
-        ...(existing.runOpenings ?? {}),
-        [proposalId.replace(/^0x/, '').toLowerCase()]: {
-          payload: fromHex(opening.payload), vault: fromHex(opening.vault), salt: fromHex(opening.salt),
-        },
-      },
-    });
-  }
-
-  private async stageFor(accountId: string, values: Partial<AccountPrivateState>): Promise<void> {
-    const providers = await this.providers();
-    const address = await this.requireDeployed(accountId);
-    providers.privateStateProvider.setContractAddress(address);
-    const key = privateStateKey(this.cfg.privateStateId, accountId);
-    const existing = await providers.privateStateProvider.get(key);
-    if (!existing) throw new Error(missingPrivateState(accountId, address));
-    await providers.privateStateProvider.set(key, { ...existing, ...values });
   }
 
   /**
@@ -2487,24 +1394,24 @@ export class MidnightLedger implements Ledger {
    *
    * `findDeployedContract` is the SDK's intended entry point: it reads the
    * contract's public state through the indexer, checks the verifier keys on
-   * chain match the ones we compiled, and hands back a typed `callTx`. Doing
-   * this by hand is what M-16 tried and lost six rounds to.
+   * chain match the ones we compiled, and hands back a typed `callTx`.
+   * Doing this by hand has cost more than it saved.
    *
    * The verifier key check is not a formality. If Midnight ships a proof
    * system change and our contract was deployed frozen, this is where it
-   * surfaces, as a mismatch rather than a mystery. That is M-9.
+   * surfaces, as a mismatch rather than a mystery.
    */
   private async connect(address: string, privateStateId: string | null) {
     /*
-     * NOT `findDeployedContract`. S8c: against a partial deployment,
-     * the SDK's find compares all FIFTEEN compiled verifier keys against the
-     * deployed state and throws `ContractTypeError` naming the deferred
-     * circuits as "undefined or have mismatched verifier keys" — on every
-     * call, deferred or not, in words that read as key corruption. The
-     * partial find keeps what M-9 valued — the deployed keys are compared
-     * byte-for-byte against the compiled ones, through the SDK's own
-     * `verifyContractState` — for the deployed circuits that exist, checks
-     * the deferred ones are absent, and hands back the same typed `callTx`.
+     * Not `findDeployedContract`: against a partial deployment, the SDK's
+     * find compares all fifteen compiled verifier keys against the deployed
+     * state and throws `ContractTypeError` naming the deferred circuits as
+     * "undefined or have mismatched verifier keys", on every call, deferred
+     * or not, in words that read as key corruption. The partial find keeps
+     * what matters: the deployed keys are compared byte-for-byte against the
+     * compiled ones, through the SDK's own `verifyContractState`, for the
+     * deployed circuits that exist; it checks the deferred ones are absent
+     * and hands back the same typed `callTx`.
      */
     const { findDeployedPartialContract } = await import('./partial-contract.js');
     const providers = await this.providers();
@@ -2527,17 +1434,13 @@ export class MidnightLedger implements Ledger {
        * Passed, the same SDK refuses by name instead - "No private state found
        * at private state ID" - which is a sentence a reader can act on.
        *
-       * **PASSED RATHER THAN SPREAD, AND THE REASON IS THE FIND RATHER THAN
-       * THE SDK.** This line used to spread the field in and leave it out on
-       * `null`, because the find's option was an optional string and `null` is
-       * not a string. The find now takes the answer as `string | null` and
-       * REQUIRES it, so leaving it out is a compile error there and an omitted
-       * answer is refused at run time - which is the whole point of the change
-       * and is worth more here than a line that cannot say `null` out loud.
-       * The SDK's own gate is truthiness rather than presence, so it treats an
-       * absent field and a `null` one the same; a later reader should not be
-       * told otherwise, because a sentence that overstates what holds a line up
-       * is how the line comes to be simplified away.
+       * Passed rather than spread: the find takes the answer as
+       * `string | null` and requires it, so leaving it out is a compile error
+       * there and an omitted answer is refused at run time, which is worth more
+       * here than a line that cannot say `null` out loud. The SDK's own gate is
+       * truthiness rather than presence, so it treats an absent field and a
+       * `null` one the same; a sentence that overstates what holds a line up is
+       * how the line comes to be simplified away.
        */
       privateStateId,
     });
@@ -2619,11 +1522,11 @@ export class MidnightLedger implements Ledger {
      */
     refuseACallWithoutItsPrivateState(circuit, privateStateId, CIRCUITS_THAT_READ_NO_WITNESS);
     /*
-     * BEFORE connecting: a deferred circuit fails here, naming the cause.
+     * Before connecting: a deferred circuit fails here, naming the cause.
      * Left to run on, the failure would be the chain's
-     * `VerifierKeyNotPresent` after a proof was paid for — or, worse, the
-     * SDK's generic error with the cause a guess. S8c item 1: a call to a
-     * circuit the deployment defers must say so, not fail generically.
+     * `VerifierKeyNotPresent` after a proof was paid for, or, worse, the
+     * SDK's generic error with the cause a guess. A call to a circuit the
+     * deployment defers must say so, not fail generically.
      */
     if (isDeferredCircuit(circuit)) {
       throw deferredCircuitError(circuit);
@@ -2633,1298 +1536,21 @@ export class MidnightLedger implements Ledger {
     if (typeof call !== 'function') {
       throw new Error(`the deployed contract has no circuit "${circuit}"`);
     }
-    // Arity is checked against the CONTRACT's declared ABI, not against this
-    // wrapper's signature.
-    
-    // The first version of this guard read `call.length`, which is always 0:
-    // every generated circuit function is `(...args) => {…}` and a rest
-    // parameter contributes nothing to Function.length. So it never fired, and
-    // the exact M-27 mistake would have sailed through it. The test missed it
-    // because the stub was also written with `(...args)`. A test built from the
-    // same wrong model as the fix cannot catch the model.
+    // Arity is read from the contract's declared ABI and not from
+    // `call.length`, which is always 0: every generated circuit function is
+    // `(...args) => {…}` and a rest parameter contributes nothing to
+    // Function.length. A test stub written with `(...args)` shares that
+    // blind spot, so the arity check must not rely on it.
     assertArity(arityFrom(this.cfg.zkConfigPath), circuit, args.length);
     return call(...args);
   }
-
-  /**
-   * The account contract's declared arities.
-   *
-   * MOVED OUT OF THIS FILE — `circuit-arity.ts`, V-82. It was private here and
-   * the vault client never got it, which is precisely how a thirteenth argument
-   * to a twelve-argument circuit survived. Two clients, one definition.
-   */
-  /* Read where it is used rather than held as a field: a field initialiser runs
-   * before the constructor's parameter properties exist, and `arityFrom` caches
-   * per path at module level, so calling it per call reads the file once. */
-
-  /**
-   * Reads the account's committed state from the chain.
-   *
-   * NOTHING ABOUT WHAT THE ACCOUNT HAS DONE IS ON CHAIN. The ledger of entries
-   * is in the sealed blob, which is why `fetch` needs both this and the blob
-   * store, and why an account state without a retrievable blob is fatal rather
-   * than empty. It used to be "only the commitment is on chain"; `C292` removed
-   * the commitment too, so the blob is addressed by a constant and the chain
-   * says nothing about its contents at all.
-   */
-  private async readContractState(address: string): Promise<{
-    assets: Array<{ key: string; commitment: Hex }>;
-    openProposals: Array<{ id: Hex; change: Hex; approvals: number }>;
-    threshold: bigint;
-    vaultThresholds: Array<{ vault: Hex; threshold: number }>;
-    signerCount: bigint;
-    /* The two `docs/accepted-risks.md` §1's detector needs. */
-    movementCount: bigint;
-    retiredVaults: Hex[];
-    updatedAt: string;
-  } | null> {
-    const { ledger: readLedger } = await import('../../contracts/managed/contract/index.js');
-    const providers = await this.providers();
-
-    const state = await providers.publicDataProvider.queryContractState(address as any);
-    if (!state) return null;
-
-    const parsed = readLedger(state.data);
-    /*
-     * **READ BEFORE THE OBJECT BELOW IS BUILT, SO A MISSING MAP REFUSES RATHER
-     * THAN RETURNING A STATUS WITH A ZERO IN IT.**
-     *
-     * The pair type is written here rather than inferred, for the reason
-     * `mapField`'s own note gives: `tsconfig.scripts.json` has `strict: false`
-     * and will accept an `any` flowing through, so a future mismatch is only a
-     * compile error if somebody wrote the shape down.
-     * `contracts/managed/contract/index.d.ts:281-287` is where this one is
-     * declared, `lookup` included.
-     */
-    const approvalCounts = mapField<[Uint8Array, bigint]>(parsed, 'approvalCounts') as CountedMap;
-    // The lifecycle fields are read because `prepare` has to know whether a
-    // circuit is legal before calling it — `requireOpen` and `requireApproved`
-    // are what use them — and because they are public by design: the threshold
-    // and the approval count are what make the account auditable. See decision
-    // 0003. There is no commitment read alongside them any more, and `publish`
-    // and `execute`, which this sentence used to name, are both gone.
-    return {
-
-      /*
-       * NO ASSETS, AND THIS IS READ OFF THE CONTRACT RATHER THAN ASSUMED.
-       *
-       *
-       * `assetBalances` was one of the contract's four public maps and it is
-       * gone, so there is nothing to decode and the guard below counts three,
-       * not four. The field stays on `LedgerStatus`, empty, because it is the
-       * shape both implementations answer in.
-       */
-      assets: [],
-      /*
-       * Every open proposal, sorted so two reads of an unchanged account produce
-       * an identical array — a map's iteration order is not a promise, and
-       * anything that gets compared has to be stable.
-       *
-       * **THE APPROVAL COUNT COMES THROUGH `mapField` TOO, AND UNTIL `S6c` IT
-       * DID NOT.** `R5b` guarded three of the contract's four maps and
-       * this line read the fourth off `parsed` directly — `parsed.approvalCounts
-       * .lookup(id)` — which is the one shape the guard exists to refuse. A
-       * reader that handed over no `approvalCounts` threw a `TypeError` about
-       * an internal expression here, and the obvious repair to THAT is `?? 0n`:
-       * an unread count becoming a count of zero, which is the same defect as
-       * `?? []` one map along and reads just as careful.
-       *
-       * **A guard on three of four is what makes the fourth look checked**,
-       * which is `C188`'s own closing argument turned on the round that wrote
-       * it.
-       *
-       * `lookup` rather than iteration, because the count is fetched per
-       * proposal and every open proposal is guaranteed an entry by the contract
-       * itself — `propose` writes `approvalCounts` for every proposal it opens,
-       * one for a raiser who may approve and nought for a run's raiser who may
-       * not, and `closeProposal` removes the two together. Every
-       * circuit that spends or withdraws a proposal goes through
-       * `closeProposal` and there is no other remover; `execute` was one of its
-       * callers and is gone, which is why this sentence used to name
-       * it. So a proposal without a count is a contract-level inconsistency and
-       * not a case this boundary invents a zero for.
-       */
-      openProposals: [...mapField<[Uint8Array, Uint8Array]>(parsed, 'openProposals')]
-        .map(([id, change]) => ({
-          id: toHex(id),
-          change: toHex(change),
-          approvals: Number(approvalCounts.lookup(id)),
-        }))
-        .sort((a, b) => a.id.localeCompare(b.id)),
-      threshold: parsed.threshold,
-      /*
-       * **THE VAULTS SOMEBODY GAVE THEIR OWN THRESHOLD, AND NO OTHERS.** `R5`,
-       * `thresholds` is an `export ledger` map
-       * (`contracts/src/ConfidentialAccount.compact:251`), so this is a read of
-       * public state and not a derivation.
-       *
-       * Sorted for the reason `assets` and `openProposals` are: a map's
-       * iteration order is not a promise and this array gets compared.
-       *
-       * **`Number()` ON A `Uint<64>`, and the same reservation applies here as
-       * everywhere else in this file** — a threshold is a count of signers, so
-       * it cannot approach 2^53 for any account that could ever meet it, and a
-       * value that did would be one nobody could satisfy anyway.
-       *
-       * **AN EMPTY MAP HERE MEANS "NO VAULT HAS ITS OWN THRESHOLD" AND NOTHING
-       * ELSE.** `mapField` is what makes that true: a map the reader did not
-       * hand over refuses above rather than arriving here as `[]`. See its own
-       * note — the distinction is the difference between *inherit* and *we
-       * could not read the exceptions*, and those two have opposite meanings.
-       */
-      vaultThresholds: [...mapField<[Uint8Array, bigint]>(parsed, 'thresholds')]
-        .map(([vault, threshold]) => ({ vault: toHex(vault), threshold: Number(threshold) }))
-        .sort((a, b) => a.vault.localeCompare(b.vault)),
-      /*
-       * DERIVED, NOT READ. S35c deleted the `signerCount` ledger field: two
-       * public fields meaning the same number is the drift this project keeps
-       * recording, and `Set.size()` is an ON-CHAIN read rather than a
-       * TypeScript-only one. This is the ONLY place on this boundary that
-       * touches the chain for it — everything downstream reads the number this
-       * line produces and is unchanged.
-       *
-       * AND IT GOES THROUGH A GUARD, BECAUSE THE PARAGRAPH BELOW SAID IT WOULD.
-       * `mapField`'s note ends *"if a fourth is ever exported again, this
-       * paragraph is where somebody will find out"* — S35c is that fourth read,
-       * and the first draft of this line spread it off `parsed` directly, which
-       * is `C188` exactly. Found by S35c's test-coverage pass and its
-       * money-safety pass, independently. What it costs unguarded is not a
-       * crash: `?? 0n` is the repair anybody reaches for, and a seat count of
-       * zero makes this client refuse every threshold change and every removal — the contract still
-       * refuses correctly, and OUR refusals stop refusing.
-       */
-      signerCount: setSize(parsed, 'signerLeaves'),
-      /*
-       * **THE TWO FIELDS `docs/accepted-risks.md` §1's DETECTOR NEEDS, AND THE
-       * ONLY REASON EITHER IS READ.** `SC10` measured that
-       * `LedgerStatus` carried five of the contract's fourteen public fields
-       * and that these two were not among them, so the detector the founder's
-       * `C395` ruling rests on could not be written against this boundary.
-       *
-       * **BOTH GO THROUGH THE SAME GUARDS AS EVERYTHING ELSE HERE**, which is
-       * `C188`'s rule and the paragraph above `signerCount` is the worked
-       * example of what skipping them costs: a `?? 0n` repair turns *we could
-       * not read it* into a confident zero, and a confident zero here would
-       * report a burn that had not happened or hide one that had.
-       *
-       * `movements` is a COUNT — the set's own `size()`, on chain — because the
-       * comparison the ruling describes is between magnitudes. `retiredAt` is
-       * read for its KEYS only: nothing removes from it, so presence is *ever
-       * retired* and the marker value it stores carries nothing else.
-       */
-      movementCount: setSize(parsed, 'movements'),
-      retiredVaults: [...mapField<[Uint8Array, bigint]>(parsed, 'retiredAt')]
-        .map(([vault]) => toHex(vault))
-        .sort((a, b) => a.localeCompare(b)),
-      updatedAt: new Date().toISOString(),
-    };
-  }
 }
 
-/**
- * **ONE OF THE CONTRACT'S MAPS, OR A REFUSAL NAMING WHICH ONE WAS MISSING.**
- * `R5b`, and it exists because a guess was wrong in a way both typecheckers
- * accepted.
- *
- * `readContractState` spread three of these directly. That is correct about the
- * SHAPE — the generated reader declares all three as non-optional accessors
- * with `[Symbol.iterator](): Iterator<[Uint8Array, …]>`
- * (`contracts/managed/contract/index.d.ts:256`, `:277`, `:298`) — and it says
- * nothing about PRESENCE, which is the assumption that actually broke:
- * `parsed.thresholds` arrived `undefined` and `[...undefined]` threw a
- * `TypeError` naming an internal expression.
- *
- * **THE REFUSAL IS THE POINT AND `?? []` IS THE DEFECT.** The obvious repair is
- * to coerce a missing map to an empty one, and for `thresholds` that is the
- * dangerous direction rather than the safe one:
- *
- *   · an account where nobody has set an exception decodes to an EMPTY map, and
- *     the honest answer is *every vault inherits the account's threshold*
- *   · a map we failed to read is not that, and answering *inherit* for it means
- *     a vault somebody deliberately gave a HIGHER threshold is judged by the
- *     account's lower one — and the round settles early
- *
- * **Those two are distinguishable, and this function is where the distinction
- * is kept.** An empty map is an accessor that iterates zero times; a missing one
- * is not an accessor at all. `midnight-ledger-decodes-what-it-claims.test.ts`
- * pins both sides, because a property that is only true while nobody writes
- * `?? []` is not a property.
- *
- * Applied to all three maps and not only to the new one. The two it was NOT
- * applied to were the analogy the wrong guess was drawn from; a guard on one of
- * three is the shape that makes the other two look checked.
- *
- * **AND THREE OF FOUR IS THE SAME SHAPE ONE LEVEL UP, WHICH IS `C188` AND WHICH
- * `S6c` CLOSED.** `approvalCounts` — then the contract's fourth public map —
- * was read off `parsed` directly at the `openProposals` call site for as long
- * as this function existed, which is to say the sentence above was true of
- * three maps and confidently wrong about the account. It goes through here now,
- * as a `CountedMap`. **THERE ARE NOW THREE MAPS AND THERE ARE THREE GUARDS** —
- * `assetBalances` went with the balance ledger, which is a map
- * removed rather than a guard dropped. **If a fourth is ever exported again,
- * this paragraph is where somebody will find out that the count is a thing
- * this file states out loud.**
- *
- * **AND IT FIRED. `S35c`, 2 Sep.** That round deleted the `signerCount` ledger
- * field and derived the number from `signerLeaves`, which is a fourth
- * collection read off `parsed` — a SET rather than a map, so `mapField`'s
- * pair-iterator test is the wrong shape for it and `setSize` below is its
- * sibling. **The prediction did not fire on its own: the first draft of that
- * line spread it directly and two auditors found it.** So the honest statement
- * of the count is now THREE MAPS AND ONE SET, four guards, and the thing that
- * catches the fifth is somebody reading this paragraph rather than the
- * paragraph itself.
- *
- * `Symbol.iterator` rather than `isEmpty` is the test deliberately: the real
- * reader returns an accessor and the tests supply arrays, and what both promise
- * — and all this function needs — is that they iterate as pairs.
- *
- * **THE PAIR TYPE IS WRITTEN AT EACH CALL SITE, COPIED FROM THE GENERATED
- * `.d.ts` RATHER THAN INFERRED.** `openProposals` is
- * `Iterator<[Uint8Array, Uint8Array]>` and `thresholds` is
- * `Iterator<[Uint8Array, bigint]>`. Writing them down is what makes a
- * future mismatch a compile error in the STRICT tree — `tsconfig.scripts.json`
- * has `strict: false` and accepted the original spread of an `any`, which is
- * how a wrong assumption reached a test run with two green typechecks behind it.
- */
-export class UndecodedLedgerField extends Error {
-  /*
-   * `kind` DEFAULTS TO `map` SO THE THREE EXISTING REFUSALS ARE BYTE-IDENTICAL.
-   * `S35c` added a SET to the guarded set and the message has to say which noun
-   * it means; rewriting the three map messages to a neutral word would have
-   * churned three tests that assert the exact sentence, for nothing.
-   */
-  constructor(readonly field: string, kind: 'map' | 'set' = 'map') {
-    super(
-      `the contract's "${field}" ${kind} was not in the decoded state, so this boundary ` +
-        'cannot say what it holds. **This is not the same as the map being empty** — an ' +
-        'empty map is a true statement about the account and a missing one is our ' +
-        'ignorance, and for "thresholds" the two have opposite meanings: empty means every ' +
-        'vault inherits the account\'s threshold, missing means a vault with its own may be ' +
-        'about to be judged by the wrong number. Read the state again.',
-    );
-    this.name = 'UndecodedLedgerField';
-  }
-}
-
-/**
- * The account's completed payments, off its decoded public state, as hex.
- * Separate so it can be held against the compiled contract's own state
- * without a chain. A field that did not decode as a set refuses rather than
- * reading as an empty one.
- */
-export function paidMovementsIn(parsed: any): Hex[] {
-  const movements = parsed?.movements;
-  if (movements == null || typeof movements[Symbol.iterator] !== 'function') {
-    throw new UndecodedLedgerField('movements', 'set');
-  }
-  return [...(movements as Iterable<Uint8Array>)].map((m) => toHex(m).toLowerCase());
-}
-
-/**
- * A decoded map this boundary LOOKS A KEY UP IN, rather than only iterating.
- *
- * Copied from the generated reader
- * (`contracts/managed/contract/index.d.ts:281-287`) rather than inferred, and
- * the two halves are both used: `mapField` proves the map is THERE by its
- * iterator, and `lookup` is how a count is fetched for one proposal.
- */
-type CountedMap = Iterable<[Uint8Array, bigint]> & { lookup(key: Uint8Array): bigint };
-
-/** The account contract's ledger field holding the addresses of the vaults it adopted. */
-const ADOPTED_SET = 'vaults';
-
-const mapField = <T>(parsed: any, field: string): Iterable<T> => {
-  const m = parsed?.[field];
-  if (m == null || typeof m[Symbol.iterator] !== 'function') {
-    throw new UndecodedLedgerField(field);
-  }
-  return m as Iterable<T>;
-};
-
-/**
- * **ONE OF THE CONTRACT'S SETS, COUNTED — OR A REFUSAL NAMING WHICH ONE WAS
- * MISSING.** `mapField`'s sibling, and everything that note argues applies here
- * unchanged; read it first.
- *
- * `S35c` is why this exists. Deleting the `signerCount` ledger field made the
- * seat count a read of `signerLeaves`, and `signerLeaves` is a `Set` accessor —
- * `{ isEmpty, size, member, [Symbol.iterator] }` over single values rather than
- * pairs (`contracts/managed/contract/index.d.ts`). `mapField` would accept it
- * and hand back an iterable this caller does not want; `size()` is the on-chain
- * read and is what the boundary actually needs.
- *
- * **AND THE DIRECTION THAT IS DANGEROUS IS THE SAME ONE.** An account really
- * can have an empty set — never, for `signerLeaves`, since the constructor
- * seats one, which is why this returns the count rather than tolerating zero —
- * but a collection we FAILED TO READ answering `0` is the shape that matters:
- * `signerCount: 0` makes every caller downstream refuse every threshold
- * change and every removal on a live account. `?? 0n` is the defect, exactly as `?? []` is for a map.
- *
- * `typeof size === 'function'` rather than `Symbol.iterator`, because `size` is
- * the thing being called and a guard that proves a different member is present
- * is a guard on the wrong member.
- */
-const setSize = (parsed: any, field: string): bigint => {
-  const s = parsed?.[field];
-  if (s == null || typeof s.size !== 'function') {
-    throw new UndecodedLedgerField(field, 'set');
-  }
-  return s.size();
-};
-
-/* ------------------------------------------------------------------ *
- * proofs
- * ------------------------------------------------------------------ */
-
-/**
- * Maps our three logical circuits onto Compact circuits. NONE OF THEM MAP NOW.
- *
- * `balance-at-least` USED TO MAP onto `attestSolvency`, which returned a
- * boolean and never the balance. **S23 shed `attestSolvency` from the
- * contract**, so that name no longer denotes anything the chain can verify and
- * naming it here would be this file claiming a route it does not have. All
- * three are `null`, and none is stubbed with something that returns true.
- *
- * `MidnightProofSystem.prove` has never proved any of them — it throws "not
- * implemented" for want of the proof server — so no working path is lost here.
- * What the PRODUCT calls solvency attestation runs on a different proof system
- * entirely (`src/core/payroll.ts`), which this map does not reach.
- */
-const CIRCUIT_MAP: Record<Circuit, string | null> = {
-  'balance-at-least': null,
-  'payroll-total': null,
-  'payment-record': null,
-};
-
-export class MidnightProofSystem implements ProofSystem {
-  constructor(private cfg: MidnightConfig) {}
-
-  async prove(circuit: Circuit, _publicInputs: Record<string, unknown>, _witness: unknown): Promise<Hex> {
-    const target = CIRCUIT_MAP[circuit];
-    if (!target) throw new Error(`no Compact circuit for "${circuit}" yet`);
-    throw new Error('not implemented: requires the proof server at ' + this.cfg.proverUrl);
-  }
-
-  async verify(_circuit: Circuit, _publicInputs: Record<string, unknown>, _proof: Hex): Promise<boolean> {
-    throw new Error('not implemented: verification happens on chain');
-  }
-
-  describe(): string {
-    return `Midnight proof server at ${this.cfg.proverUrl}`;
-  }
-}
-
-/* ================================================================== *
- * WHAT AUTHORITY A DEPLOYED CONTRACT ACTUALLY CARRIES — `C354`, `2y9-1`
- * ================================================================== */
-
-/**
- * WHAT AUTHORITY A DEPLOYED CONTRACT CARRIES ON CHAIN, AND WHETHER IT IS THE
- * ONE WE MEANT TO INSTALL. `C354` `P0`, board row `2y9-1`.
- *
- * Nothing in this repository has ever read a contract's maintenance authority
- * back, so a half-applied change has been undetectable. The founder ruled on
- * 5 Sep that the authority moves to the company's own signers, for the account
- * and for the vaults; **nothing could verify that it had been installed until
- * this existed.** A round that installs an authority it cannot read back has
- * proved nothing.
- *
- * **IT IS A READ.** It signs nothing, submits nothing, changes nothing and
- * touches no key. It does not install, replace or propose an authority, and it
- * does not decide which authority is right — that is ruled, and `2y9-3`'s to
- * install.
- *
- * ── WHY IT IS HERE AND NOT IN A FILE OF ITS OWN ──────────────────────────────
- *
- * It is appended to an existing file rather than given one of its own, at the
- * end, where it moves no line above it. That keeps every `file:line` locator
- * elsewhere in this repository pointing at what it pointed at before.
- *
- * **THE HONEST COST OF THAT CHOICE: this file is longer than one subject should
- * make it.** Splitting it is a mechanical change and it is worth doing; it was
- * not worth doing in the same change as the work below.
- *
- * **AND WHERE IT PARTS FROM THE SCOPE DOCUMENT, RULE 20, NEITHER MARKED
- * CORRECT.** `docs/scope-the-vault-rebuild.md` §2.4 says the read-back "is one
- * edit at the existing `queryContractState` reader, `src/midnight/ledger.ts:1834-1848`".
- * **AGAINST THAT, MEASURED:** that reader is `readContractState`, it is private,
- * and its second statement is `readLedger(state.data)` against the ACCOUNT's
- * compiled artifact — so it throws for a vault, and the read-back must serve any
- * address, the vaults above all, because `C349` is the vault half. The file is
- * the scope document's; the method is not. **FOR THE SCOPE DOCUMENT:** one
- * reader is one place to keep correct.
- *
- * ── WHY THIS IS NOT AN SDK CALL, WHICH IS THE POINT ──────────────────────────
- *
- * **THE SDK LOOKS LIKE IT ALREADY DOES THIS AND IT DOES NOT.**
- * `ReplaceAuthority`, `VerifierKeyInsert`, `submitReplaceAuthorityTx` and
- * `MaintenanceUpdate` appear in this repository ONLY IN COMMENTS — `SC20` `F3`,
- * re-confirmed at source by `S61`: six hits across `src/`, `scripts/`,
- * `contracts/` and every `.command`, all of them comment lines.
- *
- * And it matters more than a missing helper, because of what the founder's
- * ruling does: **choosing a committee switches Midnight's SDK maintenance
- * interface OFF for that contract, permanently**. Under a committee no
- * signing key is stored (`partial-contract.ts:358-360`), and every SDK
- * maintenance entry point opens by asserting exactly that slot —
- * `midnight-js-contracts/dist/index.mjs:398-399`, `:470-471`, `:547-548`. **A
- * read-back built on one of those would work today for `single-key` and stop
- * working on the day this project does the thing it has decided to do.**
- *
- * **SO THIS READS A LEDGER PROPERTY, NOT AN SDK ENTRY POINT.**
- * `publicDataProvider.queryContractState` returns a deserialized `ContractState`
- * — the indexer transports it as hex and the provider calls
- * `deserializeCompactContractState`
- * (`midnight-js-indexer-public-data-provider/dist/index.mjs:268`, `:1354`) — and
- * `.maintenanceAuthority` is a field on that object
- * (`@midnightntwrk/ledger-v9/ledger-v9.d.ts:848`, exposing `.committee` `:784`,
- * `.threshold` `:788`, `.counter` `:792`). No signing key is consulted, so a
- * committee costs nothing a single key does not.
- *
- * **MEASURED BY `S61`, NOT REASONED (rule 9), IN TWO PARTS BECAUSE ONE WAS NOT
- * ENOUGH.**
- *
- *   1. **LIVE, ON ALL THREE CONTRACTS** this project has deployed on stagenet —
- *      one GraphQL query each, nothing signed or submitted. The account
- *      `90ebef16…` answered a committee of one, threshold `1`, counter `0`, over
- *      `11` entry points; the vaults `payroll-test-1` `d082252c…` and
- *      `payroll-test-2` `82e1dde9…` answered the same shape over `4`. **AND THE
- *      KEYS MATCH THE DISK EXACTLY, ON ALL THREE**: the verifying key derived
- *      from each `.midnight/*-authority.json` IS that contract's on-chain key.
- *      That is this comparison, run against the real chain, by the door.
- *      *(An earlier draft of this paragraph said "two" and named two of the
- *      three — three were measured. Caught by `S61`'s money-safety pass;
- *      a comment in a money-path file is a truth claim under rule 14.)*
- *   2. **FOR A COMMITTEE**, which is on no disk anywhere and so cannot be read
- *      live: a `ContractState` carrying 2-of-3 and 3-of-3 committees round-trips
- *      through the indexer's own deserializer with committee, threshold and
- *      counter intact, as does an empty committee. **The read is
- *      kind-independent, which is what `§5` asked and is what `2y9-2` and
- *      `2y9-3` inherit.**
- *
- * ── WHAT THE CHAIN CAN AND CANNOT TELL YOU ───────────────────────────────────
- *
- * **THE CHAIN DOES NOT CARRY A KIND. IT CARRIES A VALUE.** There is no
- * `single-key` on chain: the SDK's single key IS a committee of one at threshold
- * one (`compact-js ContractExecutable.js:276-290`, `DEFAULT_CMA_THRESHOLD = 1`),
- * and `partial-contract.ts:311-316` builds all three of this project's kinds into
- * that one struct. **MEASURED, BYTE-IDENTICAL: a `single-key` authority over key
- * A and a `committee` of `[A]` at threshold `1` serialize to the same bytes.** So
- * `authorityShapeOf` reports the shape of the VALUE, and nothing may read
- * `one-key` as *the choice was `single-key`*. **Rule 27 in the direction that
- * matters: the kind is not recoverable, so nothing may claim to have recovered it.**
- *
- * **WHICH IS WHY THE COMPARISON IS OVER THE VALUE AND NOT THE LABEL** —
- * `SC6b`'s rule stated concretely: compare the LIVE AUTHORITY against the
- * intended END STATE, not against a counter. `ReplaceAuthority` replaces
- * WHOLESALE (`midnight-ledger` at `ledger-9.1.0.0-rc.3`, `ledger/src/semantics.rs:1566-1567`), so *did my change land* is a whole-value
- * equality test and not a diff.
- *
- * **AND THE COUNTER IS DELIBERATELY EXCLUDED.** It increments once per applied
- * update (`semantics.rs:1562-1563`), so a byte-identical resubmission hits
- * `ReplayCounterMismatch` — and that error carries only the address (`:1559-1560`)
- * and cannot say whose update landed. Comparing counters would make a settled
- * contract look unsettled for ever. **MEASURED: the counter IS part of the
- * serialized value (`0` and `7` differ in bytes), so excluding it is a decision
- * taken here, not a property inherited.**
- *
- * ── THE THIRD STATE, WHICH IS THE HALF `C354` IS ACTUALLY ABOUT ──────────────
- *
- * `C354`'s defect is that **a half-applied change is undetectable.** So the
- * answer has THREE states and not two: they agree, they disagree, or **the chain
- * could not be asked.** `R4`'s distinction — and `S55` shipped a `P1` by
- * collapsing exactly this three into two: ***the ledger cannot answer* is NOT
- * *the answer is no*.** `src/core/account.ts`'s `chainHolds` is the same problem
- * solved once already and this copies its shape.
- *
- * **A CONTRACT THE PROVIDER HOLDS NOTHING FOR IS `unknown`, NOT `disagree`, AND
- * THAT IS THE CAREFUL CHOICE.** `queryContractState` answers `null` both for an
- * address with no contract AND for an indexer that has not caught up to the
- * block that deployed one — `index.mjs:1354` cannot tell them apart. Reading
- * `null` as *your change did not land* would be `S55`'s error in a new shape: a
- * definite negative reported from an ambiguous answer. So it refuses rather than
- * proceeding, which is the third outcome `SC6b` asked for — and the READ keeps
- * `absent` and `unreachable` apart, so a caller wanting the distinction has it.
- */
-
-/**
- * The shape of an authority VALUE, which is all the chain carries.
- *
- * `one-key` is named for what it is rather than for a kind, because it is what
- * `single-key` AND a committee of one at threshold one both look like on chain.
- *
- * **`anyone` EXISTS BECAUSE `S61`'s money-safety pass CAUGHT THIS ROUND
- * REPORTING THE MOST DANGEROUS VALUE ON CHAIN WITH THE NAME OF THE SAFEST.**
- * A threshold of ZERO is not *unmaintainable*: `verify.rs:1857` is
- * `if self.signatures.len() < authority.threshold as usize`, and it is the ONLY
- * FUNCTIONAL read of `threshold` in that crate (at 8.2, and still at
- * `ledger-9.1.0.0-rc.3`) — so at `0`, `0 < 0` is false
- * and a maintenance update carrying NO SIGNATURES AT ALL is well-formed.
- * **Anybody in the world can rewrite that contract's rules.**
- * *(This paragraph used to continue "and the verification loop at `:1775` (8.2; `:1843-1856` at ledger 9) never
- * runs, so committee membership is never consulted either". **That is FALSE and was
- * measured false on ledger 9 by `S74`'s platform fact-check:** the loop iterates
- * the SIGNATURES, not the threshold, so at threshold zero an out-of-range seat and a
- * wrong signature are both still refused. It has nothing to iterate only when no
- * signatures are attached — the one case that had been tried. The conclusion is
- * unchanged; the mechanism was wrong. `docs/corrections.md`.)*
- * The first draft of this function returned `'no-one'` for it — the word this
- * codebase uses for `unmaintainable`, documented at `partial-contract.ts:118-130`
- * as *"nobody — not us, not a stolen key — can ever change which proofs this
- * deployment accepts"* — and returned `'committee'` for an N-key committee at
- * threshold zero, which reads as *M-of-N is in force*. Both are now `anyone`.
- */
-export type AuthorityShape = 'anyone' | 'no-one' | 'one-key' | 'committee';
-
-/** A signing or verifying key as the runtime structures it. */
-type AuthorityKey = import('./partial-contract.js').TaggedKey;
-
-/** A contract's maintenance authority exactly as the chain holds it. */
-export interface OnChainAuthority {
-  /** The committee's verifying keys, IN CHAIN ORDER — the order is part of the value. */
-  committee: AuthorityKey[];
-  threshold: number;
-  /** Replay protection. Read and reported; never compared. */
-  counter: bigint;
-  shape: AuthorityShape;
-  /**
-   * **THE COMMITTEE LISTS ONE KEY MORE THAN ONCE, SO ITS THRESHOLD IS NOT WHAT
-   * IT LOOKS LIKE.** Raised by `S61`'s platform fact-check as a READING of
-   * `midnight-src/midnight-ledger/` at 8.2.0-rc.1 — **AND MEASURED ON LEDGER 9 BY
-   * `S74`, WHICH IS THE BUILD THE CHAIN RUNS: it is real. One signature value,
-   * attached at three seats holding the same key, satisfies `[K,K,K]` at threshold
-   * 3 and the transaction is WELL-FORMED.** `MAINTENANCE-INSTRUCTION-CHECK.command`
-   * variant (b) is where a person re-takes that measurement.
-   * `committee` is a plain `Vec<ContractMaintenanceVerifyingKey>`, each a Schnorr
-   * or an ECDSA key (`onchain-state/src/state.rs:700`, `:724-728`), and nothing
-   * anywhere requires its entries to be distinct; `data_to_sign`
-   * (`ledger/src/structure.rs:2997-3005`, `:3020-3022`) covers address, updates and counter and NOT the
-   * signer index, so ONE signature value is valid at EVERY index whose slot
-   * holds that key. A committee of `[K, K, K]` at threshold 3 is therefore
-   * satisfied by the single holder of `K` signing once and attaching it at
-   * indices 0, 1 and 2 — strictly ascending, so the ordering guard at
-   * `verify.rs:1824-1830` passes; each verifies against its own slot at `:1843-1856`;
-   * and `len() == 3 >= 3` at `:1857`. **`requireMaintenanceAuthority`
-   * (`partial-contract.ts:174-205`) checks the committee's SIZE and the
-   * threshold's RANGE and does not check for duplicates.** So this is read back
-   * and reported rather than assumed away.
-   */
-  hasDuplicateMembers: boolean;
-}
-
-/**
- * Four states, because the read has four honest answers and the comparison's
- * three are built from them rather than guessed at.
- */
-export type AuthorityRead =
-  | { state: 'read'; address: string; authority: OnChainAuthority }
-  /** The provider answered and holds no contract state at this address. */
-  | { state: 'absent'; address: string; why: string }
-  /** The provider could not be asked, or threw. NEVER read as an answer. */
-  | { state: 'unreachable'; address: string; why: string }
-  /** State came back in a shape this does not recognise. Refuses; never guesses. */
-  | { state: 'unreadable'; address: string; why: string };
-
-/**
- * The shape of a value, from the value alone.
- *
- * A threshold above the committee size is the state the runtime documents as
- * valid and impossible to satisfy — *"If the threshold is greater than the
- * number of committee members, it is impossible for them to sign anything"* —
- * so it is `no-one` however many keys are listed. **MEASURED: the constructor
- * accepts it**, so this is a state that can exist and not a hypothetical.
- */
-export function authorityShapeOf(
-  committee: readonly AuthorityKey[], threshold: number,
-): AuthorityShape {
-  /* FIRST, and it must stay first: a threshold below one is satisfied by no
-   * signatures at all, whatever the committee holds. */
-  if (threshold < 1) return 'anyone';
-  if (committee.length === 0) return 'no-one';
-  if (threshold > committee.length) return 'no-one';
-  if (committee.length === 1 && threshold === 1) return 'one-key';
-  return 'committee';
-}
-
-/**
- * The authority off a `ContractState`, or a refusal naming what was missing.
- *
- * What counts as a readable authority is `authorityIn`'s to say, once; this adds
- * the shape and whether a key is listed twice. Every key's digits come back in
- * lower case, so a comparison against a key written in another case folds that
- * side. Structural rather than typed against the runtime class, so this boundary
- * states what it relies on and a mismatch cannot flow through as an `any`.
- */
-export function authorityFromContractState(
-  state: unknown,
-): OnChainAuthority | { why: string } {
-  const read = authorityIn(state);
-  if ('why' in read) return { why: read.why };
-  const committee = read.committee.map((k) => ({ tag: k.tag, value: k.value }));
-  const distinct = new Set(committee.map((k) => `${k.tag.toLowerCase()}:${k.value}`));
-  return {
-    committee, threshold: read.threshold, counter: read.counter,
-    shape: authorityShapeOf(committee, read.threshold),
-    hasDuplicateMembers: distinct.size !== committee.length,
-  };
-}
-
-/**
- * Just enough of a public data provider to ask one question, so the door passes
- * the real one and a test passes a function. Named rather than `any` so a change
- * in the provider is a compile error here.
- */
-export type ContractStateReader = (address: string) => Promise<unknown>;
-
-/**
- * WHAT AUTHORITY THIS DEPLOYED CONTRACT CARRIES ON CHAIN. `C354`, first limb.
- *
- * A READ: one query, nothing signed, nothing submitted, no key touched. A throw
- * from the provider is `unreachable` and never `absent` — the whole point of the
- * row is that those are different.
- */
-export async function readContractAuthority(
-  read: ContractStateReader, address: string,
-): Promise<AuthorityRead> {
-  let state: unknown;
-  try {
-    state = await read(address);
-  } catch (e) {
-    return {
-      state: 'unreachable', address,
-      why: `the chain could not be asked: ${e instanceof Error ? e.message : String(e)}`,
-    };
-  }
-  if (state === null || state === undefined) {
-    return {
-      state: 'absent', address,
-      why: 'the provider answered and holds no contract state at this address — either nothing ' +
-        'is deployed there, or the indexer has not caught up to the block that deployed it. ' +
-        'It is not evidence that an authority is wrong.',
-    };
-  }
-  const authority = authorityFromContractState(state);
-  if ('why' in authority) return { state: 'unreadable', address, why: authority.why };
-  return { state: 'read', address, authority };
-}
-
-/**
- * The on-chain VALUE a choice in `.midnight/*-authority.json` is meant to
- * produce. **Not invented here: it is exactly what `partial-contract.ts:311-316`
- * constructs**, restated so a comparison can be made without deploying anything.
- *
- * `single-key` needs the VERIFYING key and the file holds a SIGNING key, so a
- * derivation is unavoidable — `deriveVerifyingKey` is passed in rather than
- * imported, because it is the runtime's and this module must stay loadable
- * without WASM. **MEASURED against both live contracts: the key derived from
- * each `.midnight/` file IS the key on chain, exactly.**
- */
-export function intendedAuthorityValue(
-  choice: MaintenanceAuthorityChoice,
-  deriveVerifyingKey: (signingKey: AuthorityKey) => AuthorityKey,
-): { committee: AuthorityKey[]; threshold: number } {
-  switch (choice.kind) {
-    case 'committee':
-      /*
-       * **A THRESHOLD BELOW ONE IS REFUSED HERE AND NOT ONLY IN
-       * `requireMaintenanceAuthority`, AND THE REASON IS THIS ROUND'S OWN
-       * NEAR-MISS.** `S61`'s money-safety pass found that a `0` typed into
-       * a choice file would make this return `threshold: 0`, the chain carry
-       * `0`, and `compareAuthority` answer `agree` — the door then printing
-       * *"Every contract carries the authority recorded for it"* over a contract
-       * anybody in the world can maintain. **A comparator that agrees about a
-       * value neither side should ever hold is worse than one that refuses.**
-       * `requireMaintenanceAuthority` does catch it, and the door now calls it —
-       * but this function is exported and a caller that forgets is exactly how
-       * the near-miss happened.
-       */
-      if (!Number.isInteger(choice.threshold) || choice.threshold < 1) {
-        throw new Error(
-          `a maintenance authority at threshold ${choice.threshold} is not a committee. Set ` +
-            'the threshold to at least one and no more than the number of keys in the ' +
-            'committee. A threshold ABOVE the committee size is the unmaintainable state — ' +
-            'say { kind: "unmaintainable" } deliberately if that is the intent, rather than ' +
-            'reaching it by arithmetic. A threshold BELOW one is WORLD-WRITABLE, not ' +
-            'unmaintainable: MEASURED on `@midnightntwrk/ledger-v9@1.0.0-rc.3`, a maintenance ' +
-            'update carrying NO SIGNATURES AT ALL is well-formed against an authority at ' +
-            'threshold zero, so anybody at all could replace this contract\'s verifier keys ' +
-            'while holding nothing. Committee membership IS still checked — a signature at an ' +
-            'out-of-range seat is refused, and so is a wrong signature at a valid seat — what ' +
-            'is missing is any requirement to attach one. This refuses rather than comparing ' +
-            'the value against the chain.',
-        );
-      }
-      return {
-        committee: choice.committee.map((k) => ({ tag: k.tag, value: k.value })),
-        threshold: choice.threshold,
-      };
-    case 'single-key': {
-      const vk = deriveVerifyingKey(choice.signingKey);
-      return { committee: [{ tag: vk.tag, value: vk.value }], threshold: 1 };
-    }
-    case 'unmaintainable':
-      return { committee: [], threshold: 1 };
-  }
-}
-
-/**
- * THREE STATES, NOT TWO. `R4`; `S55` shipped a `P1` collapsing exactly this.
- *
- * `unknown` means the chain could not be asked and NOTHING may be concluded from
- * it — not that the authority is wrong, and not that it is right.
- */
-export type AuthorityVerdict = 'agree' | 'disagree' | 'unknown';
-
-export interface AuthorityComparison {
-  verdict: AuthorityVerdict;
-  address: string;
-  /** Always present. On `unknown` it says why the chain could not answer. */
-  why: string;
-  /** The chain's value, when there was one. */
-  onChain?: OnChainAuthority;
-  /** The value the choice on disk is meant to produce. */
-  intended?: { committee: AuthorityKey[]; threshold: number };
-}
-
-const sameAuthorityKey = (a: AuthorityKey, b: AuthorityKey) =>
-  a.tag.toLowerCase() === b.tag.toLowerCase() &&
-  a.value.toLowerCase() === b.value.toLowerCase();
-
-const authorityMultiset = (ks: readonly AuthorityKey[]) =>
-  ks.map((k) => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`).sort().join('|');
-
-/**
- * DOES THE CHAIN CARRY WHAT WE MEANT TO INSTALL? `C354`, the half the row is
- * actually about — a half-applied change across N contracts is silent at both
- * ends unless something asks this question, per contract.
- *
- * **ORDER IS PART OF THE VALUE AND IS REPORTED AS SUCH.** MEASURED: the same
- * three keys in a different order serialize to different bytes. Two committees
- * with the same members in a different order authorise exactly the same signers,
- * so calling that `disagree` is defensible only if the reason is said out loud —
- * a round that "fixed" it would spend a real update replacing a value with an
- * equivalent one. It is `disagree` here, because a wholesale replace is a
- * whole-value test, and `why` names it precisely so `2y9-2` decides knowingly
- * rather than discovers it.
- *
- * **THE COUNTER IS NOT COMPARED.** `SC6b`: against the end state, never against
- * a counter.
- */
-export function compareAuthority(
-  read: AuthorityRead,
-  intended: { committee: AuthorityKey[]; threshold: number },
-): AuthorityComparison {
-  if (read.state !== 'read') {
-    return {
-      verdict: 'unknown', address: read.address, intended,
-      why: `the chain could not be asked what authority this contract carries — ${read.why}`,
-    };
-  }
-  const chain = read.authority;
-  const base = { address: read.address, onChain: chain, intended };
-
-  if (chain.threshold !== intended.threshold) {
-    return {
-      ...base, verdict: 'disagree',
-      why: `the chain carries threshold ${chain.threshold} and the intended end state is ` +
-        `${intended.threshold}.`,
-    };
-  }
-  if (chain.committee.length !== intended.committee.length) {
-    return {
-      ...base, verdict: 'disagree',
-      why: `the chain carries ${chain.committee.length} key(s) and the intended end state has ` +
-        `${intended.committee.length}.`,
-    };
-  }
-  const inOrder = chain.committee.every((k, i) => sameAuthorityKey(k, intended.committee[i]!));
-  if (inOrder) {
-    return {
-      ...base, verdict: 'agree',
-      why: 'the chain carries the intended authority: same keys, same order, same threshold. ' +
-        `Its replay counter is ${chain.counter}, which is not part of this comparison.`,
-    };
-  }
-  if (authorityMultiset(chain.committee) === authorityMultiset(intended.committee)) {
-    return {
-      ...base, verdict: 'disagree',
-      why: 'SAME MEMBERS, DIFFERENT ORDER. The same people can sign either way, so nothing is ' +
-        'newly at risk — but the on-chain VALUE differs, and a wholesale replace is a ' +
-        'whole-value test. Reordering the intended list to match the chain settles it without a ' +
-        'transaction; installing it costs a real update that changes who can sign by nothing.',
-    };
-  }
-  return {
-    ...base, verdict: 'disagree',
-    why: 'the chain carries a DIFFERENT SET OF KEYS from the intended end state at the same ' +
-      'threshold. On a maintenance authority this is the whole of `C353`: whoever these keys ' +
-      'belong to can replace the rules this contract obeys.',
-  };
-}
-
-/* ================================================================== *
- * BUILDING A MAINTENANCE INSTRUCTION BY HAND — `C351`'s BUILD LIMB,
- * `C354`'s SECOND LIMB. Board row `2y9-2`.
- * ================================================================== */
-
-/**
- * THE MACHINERY THAT BUILDS A MAINTENANCE UPDATE, BECAUSE THE FOUNDER'S RULING
- * SWITCHES THE SDK's OFF. `C351` build limb, `C354` second limb.
- *
- * The founder ruled on 5 Sep that the COMPANY'S OWN SUPER ADMINS - a committee
- * of their own wallet keys - hold the maintenance authority, for the account and
- * for the vaults, and that we hold nothing. That
- * is the same rule as everything else here — we never custody funds and never
- * hold the wallet key — applied to the key that can replace a contract's
- * verifier keys, which `C353` establishes is a drain key on every vault's
- * unshielded money.
- *
- * **THE COST IS PERMANENT AND WAS ACCEPTED KNOWINGLY: a committee authority
- * switches Midnight's SDK maintenance interface OFF for that contract, for
- * ever.** Under a committee no signing key is stored
- * (`partial-contract.ts:358-360`) and every SDK maintenance entry point opens by
- * asserting exactly that slot (`midnight-js-contracts/dist/index.mjs:398-399`,
- * `:470-471`, `:547-548`). And it would not help if it were there:
- * `createSignedMaintenanceUpdate` always signs at `DEFAULT_SIGNATURE_INDEX = 0`
- * (`ContractExecutable.js:269`, `:31`), a 1-of-N vote the chain refuses at any
- * threshold above one. **So every committee update this product will ever issue
- * is built from `ledger-v9`'s own primitives, by `committeeUpdateOf`.**
- *
- * **IT BUILDS. IT DOES NOT SUBMIT.** Nothing in this block sends a transaction,
- * pays a fee, or contacts a chain. Constructing, checking and assembling
- * signatures is a session's work; submitting is a person's act behind a door
- * (rules 1, 42a-i).
- *
- * **AND IT NEVER TOUCHES A SIGNING KEY. NOT AS A PARAMETER, NOT AS A FIXTURE,
- * NOT AS A LITERAL.** `C400` is the reason the sentence is this blunt: on 5 Sep
- * a round put the live maintenance-authority signing key — the key `C353` is
- * about — into a TRACKED source file in a repository that is going public, and
- * its own auditor caught it. **The API below accepts SIGNATURES, which are
- * public the moment they reach a chain, and VERIFYING keys, which are already on
- * one. There is no parameter anywhere in this block that a signing key fits.**
- * Signing happens outside this repository, on the machine that holds the key.
- *
- * ── WHY IT IS APPENDED HERE AND NOT IN A FILE OF ITS OWN ─────────────────────
- *
- * **THE REASON HAS LAPSED AND IS RECORDED RATHER THAN QUIETLY DROPPED.** Every
- * `.ts`/`.tsx`/`.mjs` under `src`, `scripts` and `contracts/test` was once
- * counted into a derived record of this repository's own size, and that record
- * also cited lines in this file, so ONE new file in those trees, or one line
- * inserted above a cited line, made a written-down number wrong. **That record
- * is no longer kept and nothing checks those citations**, so this block sits at
- * the END of the file that already holds the read-back and the comparator for
- * no reason stronger than that it was put there, and it may be moved.
- *
- * ── THE FOUR THINGS `S61` SETTLED BY MEASUREMENT, USED AND NOT RE-LITIGATED ──
- *
- *   1. The read-back is a LEDGER PROPERTY and not an SDK call, so building
- *      without the SDK costs nothing in the ability to verify the work.
- *   2. `compareAuthority` above IS the *did my change land* test — whole-value,
- *      end-state, counter excluded. It is reused; no second comparator is
- *      written.
- *   3. **`unknown` REFUSES.** A plan that treated *the chain could not be asked*
- *      as *disagree* would re-sign against a chain it never read, which is the
- *      whole of `C354`.
- *   4. `T-356`, `T-357`, `T-359` and `T-361` are this block's, and each is
- *      answered below at the place it belongs.
- *
- * ── WHAT WAS MEASURED HERE, AGAINST THE BUILD THE NODE PINS ──────────────────
- *
- * Every claim in this block was taken off `@midnightntwrk/ledger-v9@1.0.0-rc.3` by
- * constructing the object, deploying it into a `LedgerState` and calling
- * `Transaction.wellFormed` (`ledger-v9.d.ts:2508`) with proofs disabled and
- * signature verification ON. **NO PROVING, NO DEPLOY, NO SUBMISSION, NO KEY
- * GENERATED, NO CHAIN CONTACT.** That is `T-360`'s door, and
- * `MAINTENANCE-INSTRUCTION-CHECK.command` is where a person runs it.
- *
- * **AND THE VERSION CLAIM IS STATED AS NARROWLY AS THE EVIDENCE ALLOWS, BECAUSE THIS
- * PROJECT HAS BEEN CORRECTED TWICE FOR THE OPPOSITE.** The node's
- * `midnight-src/midnight-node/Cargo.toml:108` asks for `=1.0.0`, which a pre-release does
- * NOT satisfy; what actually pins the build is the `[patch.crates-io]` entry at `:464`,
- * `tag = "crate-ledger-9.1.0.0-rc.3"`. **So this package carries THE SAME VERSION STRING
- * as the tag the node patches in.** The npm package ships no source and the `.wasm` carries
- * no version string, so *built from that tag* is NOT established — it is the best evidence
- * available and it is not a measurement. `docs/corrections.md`, 1 Sep, twice, for exactly
- * this shape.
- *
- * **AND WHERE THIS BLOCK CITES RUST IT CITES `midnight-ledger` AT `ledger-9.1.0.0-rc.3`**,
- * whose `ledger-wasm` crate is `1.0.0-rc.3` (`ledger-wasm/Cargo.toml:3`), the version of
- * the package measured here. It used to cite `8.2.0-rc.1`; every citation was re-read at
- * the ledger-9 tag and each still agrees with the ledger-9 measurement beside it.
- *
- * **THE MEASUREMENTS THAT CHANGED THE DESIGN, RATHER THAN CONFIRMING IT:**
- *
- *   - **`T-357` IS NO LONGER A READING. IT IS MEASURED, ON LEDGER 9.** A
- *     committee of `[K, K, K]` at threshold 3, satisfied by the single holder of
- *     `K` signing ONCE and attaching that one signature at indices 0, 1 and 2,
- *     is **WELL-FORMED**. `T-360` variant (b), answered.
- *   - **`T-356` IS MEASURED TOO.** A contract whose authority is at threshold 0
- *     accepts a maintenance update carrying NO SIGNATURES AT ALL: **WELL-FORMED**.
- *     `T-360` variant (c), answered.
- *   - **AND VARIANT (a) GOES THE OTHER WAY, WHICH IS THE ONE WORTH KNOWING:** the
- *     same signature index twice is refused — *"transaction is not in normal
- *     form"* — so the ascending-index guard DOES reach ledger 9. The bypass lives
- *     in the committee list and not in the signature list, exactly as `T-357`
- *     says and not as the claim `S61` withdrew said.
- *   - **THE NEW AUTHORITY'S OWN COUNTER MUST BE `updateCounter + 1`, AND IT IS
- *     NOT THE CALLER'S TO CHOOSE.** Measured: any other value is refused as *"not
- *     in normal form"*, including `0`. So `committeeUpdateOf` derives it and
- *     takes no parameter for it.
- *   - **`wellFormed` DOES NOT CHECK THE UPDATE's COUNTER AGAINST THE CHAIN.**
- *     Measured: an update built against counter 1 for a contract sitting at
- *     counter 0 is WELL-FORMED, and fails at APPLY with *"the signed counter …
- *     did not match the expected one"* as a `partialSuccess` — on chain, with the
- *     fee spent (`semantics.rs:1559-1560`; maintenance is skipped in the guaranteed
- *     segment at `:1552`, and `2.2`'s note that maintenance is
- *     fallible-segment only). **Rule 14: no screen and no door may read a
- *     well-formed verdict as *this will land*.**
- *   - **AND A NEGATIVE THRESHOLD IS NOT REFUSED — IT WRAPS.** Measured: passing `-1` to
- *     `ContractMaintenanceAuthority` installs a threshold of `4294967295`, silently, and it
- *     applies; `-2` gives `4294967294`, and `1.7` truncates to `1`. Nothing throws. The
- *     product is held off it only by `authorityValueRefusals` refusing a NON-INTEGER as
- *     well as a value below one, which is why that check tests both and not just the sign.
- *   - **A THRESHOLD ABOVE THE COMMITTEE SIZE INSTALLS.** Measured: replacing a
- *     1-of-1 with a 2-of-1 is WELL-FORMED and applies. The ledger validates
- *     nothing about a new authority except its counter (`verify.rs:1831-1842`)
- *     and, at apply, its serialized size against `max_contract_metadata_size`
- *     (`semantics.rs:1632-1653`, `verify.rs:384-391`; 50,000 bytes by default,
- *     `structure.rs:1284`); apply is `cstate.maintenance_authority = auth.clone()`,
- *     `semantics.rs:1566-1567`. Threshold against committee size is not checked. **Every refusal below is ours or it is nobody's
- *     — rule 27, and this block is the code that makes it not-nobody's.**
- *
- * The refusals of the authority VALUE itself - the threshold, the committee,
- * repeated and malformed members - live in `authority-replacement.ts`, beside
- * the one function that builds a replacement, so that code a browser runs can
- * reach them without this module. What stays here refuses the verifier keys.
- */
-
-
-/**
- * WHAT TO DO ABOUT ONE CONTRACT, DECIDED BEFORE ANYTHING IS BUILT.
- *
- * Three actions and not two, for the reason `compareAuthority` has three
- * verdicts. **`refuse` is the load-bearing one**: a plan that turned *the chain
- * could not be asked* into *build it again* would re-sign against a chain it
- * never read and spend a real update on a contract that may already be correct.
- */
-export type MaintenancePlan =
-  | { action: 'settled'; address: string; why: string; comparison: AuthorityComparison }
-  | {
-      action: 'build'; address: string; why: string; comparison: AuthorityComparison;
-      /** The counter the update is valid against: the one just read off the chain. */
-      updateCounter: bigint;
-      /** What the contract's counter will be once this update applies. */
-      expectedCounter: bigint;
-      intended: { committee: AuthorityKey[]; threshold: number };
-    }
-  | { action: 'refuse'; address: string; why: string; refusals: MaintenanceRefusal[]; comparison?: AuthorityComparison };
-
-/**
- * PLAN ONE CONTRACT'S AUTHORITY CHANGE. `C354`'s second limb, stated as code.
- *
- * **THE NO-OP IS NOT A RETRY AND THAT IS THE POINT OF THE ROW.** Resubmitting a
- * byte-identical signed update after it landed hits `ReplayCounterMismatch`
- * (`semantics.rs:1559-1563`), and that error carries only the address (`:1560`) —
- * it cannot say whose update landed. So *did my change land* is asked of the LIVE
- * AUTHORITY against the INTENDED END STATE, whole-value, before anything is
- * built. Equal: do nothing, and doing nothing is the correct outcome rather than
- * a missed opportunity. Not equal: build against the counter JUST READ, because
- * the counter is inside the signed data and every older signature is dead.
- * Unreadable: refuse.
- *
- * **THE COUNTER COMES FROM THE CHAIN READ AND FROM NOWHERE ELSE — AND THE FRESHNESS
- * OF THAT READ IS THE CALLER'S, WHICH THIS CANNOT CHECK.** An earlier draft of this
- * paragraph said the counter is *read here*, and it is not: this takes an
- * `AuthorityRead` a caller supplies, and `AuthorityRead` carries no timestamp and no
- * block height, so a CACHED read passes a stale counter straight through. Found by
- * this round's own money-safety pass against this round's own sentence.
- * **What is true is the narrower thing: no counter enters from any source OTHER than
- * that read, and none is a parameter of anything below.** A stale one is still a fee
- * spent on a recorded on-chain failure — maintenance applies in the fallible segment
- * only, so a refusal lands as `partialSuccess` with the fee already taken. Making a
- * read carry its own age is raised rather than built here.
- */
-export function planAuthorityReplacement(
-  read: AuthorityRead,
-  intended: { committee: readonly AuthorityKey[]; threshold: number },
-  opts: { emptyCommitteeIsDeliberate: boolean },
-): MaintenancePlan {
-  const refusals = authorityValueRefusals(intended.committee, intended.threshold, opts);
-  if (refusals.length > 0) {
-    return {
-      action: 'refuse', address: read.address, refusals,
-      why: 'the intended end state is not a value this product will install: ' +
-        refusals.map((r) => r.code).join(', ') + '. Nothing was built and no chain was consulted ' +
-        'for a verdict on it.',
-    };
-  }
-
-  const pair = {
-    committee: intended.committee.map((k) => ({ tag: k.tag, value: k.value })),
-    threshold: intended.threshold,
-  };
-  const comparison = compareAuthority(read, pair);
-
-  /* `unknown` REFUSES. `S61` §7(3), and `S55` shipped a `P1` collapsing exactly
-   * this three into two. *The ledger cannot answer* is NOT *the answer is no*. */
-  if (comparison.verdict === 'unknown') {
-    return {
-      action: 'refuse', address: read.address, comparison, refusals: [],
-      why: `NOTHING MAY BE BUILT FOR THIS CONTRACT: ${comparison.why} Building anyway would ` +
-        'mean signing a counter nobody read, against a contract that may already carry the ' +
-        'intended authority. Ask again when the chain answers.',
-    };
-  }
-
-  if (comparison.verdict === 'agree') {
-    return {
-      action: 'settled', address: read.address, comparison,
-      why: 'the chain already carries the intended end state, so there is nothing to build and ' +
-        'nothing to sign. Re-running this change is a NO-OP here rather than a refusal on ' +
-        'chain, which is `C354`\'s second limb.',
-    };
-  }
-
-  const chain = read.state === 'read' ? read.authority : undefined;
-  /* Unreachable in practice: `compareAuthority` returns `unknown` for every
-   * non-`read` state and that branch returned above. Stated rather than
-   * asserted, because a later edit to either function should fail HERE. */
-  if (!chain) {
-    return {
-      action: 'refuse', address: read.address, comparison, refusals: [],
-      why: 'the comparison disagreed without a chain value to disagree with, which is a defect ' +
-        'in this module rather than a fact about the contract. Nothing was built.',
-    };
-  }
-
-  return {
-    action: 'build', address: read.address, comparison, intended: pair,
-    updateCounter: chain.counter,
-    expectedCounter: chain.counter + 1n,
-    why: `${comparison.why} The update will be built against counter ${chain.counter}, which is ` +
-      `the value just read, and the contract's counter becomes ${chain.counter + 1n} if it lands.`,
-  };
-}
-
-/**
- * THE DURABLE PER-CONTRACT END-STATE RECORD — `T-361`, and `2.3`'s *what must be
- * durable, and when*.
- *
- * A maintenance change has NO on-chain handle: it is not a circuit call, it
- * leaves no proposal, and the job runner's three recovery branches all miss it
- * (`src/midnight/job-runner.ts:247-299`). So the intended end state and the target
- * address must be written somewhere a second device reads BEFORE anything is
- * submitted, or a device that did not build the change has nothing to compare
- * against.
- *
- * **AND IT CARRIES AN EXPECTED COUNTER, WHICH IS THE PART `T-361` IS ABOUT.**
- * `compareAuthority` deliberately excludes the counter, and that exclusion is
- * correct — `ReplaceAuthority` replaces wholesale, so the VALUE is the
- * settlement, and comparing counters would make every settled contract look
- * unsettled for ever. **But the counter can never be rolled back or reset**
- * (`semantics.rs:1559-1563`; `verify.rs:1831-1842`), below `u32::MAX`, where the
- * `saturating_add` stops it advancing, which makes it the one
- * monotonic witness the chain offers. Without an expected value, `agree` cannot
- * tell *we installed this* from *somebody replaced it, did something else in the
- * same update, and put an identical authority back* — and one `MaintenanceUpdate`
- * carries `ReplaceAuthority` AND `VerifierKeyInsert` in one `updates` array,
- * which is precisely how `T-359`'s verifier-key swap would be packaged.
- *
- * **NOTHING SECRET GOES IN IT.** Verifying keys are on a public chain; the
- * address is public; the counter is public. There is no field here a signing key
- * fits, and that is deliberate (`C400`, `C232`: a record is a plaintext home for
- * whatever is put in it).
- */
-export interface MaintenanceEndStateRecord {
-  /** The contract this record is about. One record per contract, never per logical change. */
-  address: string;
-  /** An operator-facing name, for a screen. Never used in a comparison. */
-  label: string;
-  committee: AuthorityKey[];
-  threshold: number;
-  /** The counter the update was signed against — the value read off the chain when it was built. */
-  builtAgainstCounter: bigint;
-  /** `builtAgainstCounter + 1`. What the contract's counter becomes if this update lands. */
-  expectedCounter: bigint;
-  /**
-   * Entry points whose verifier key this update also writes — **by name AND by the
-   * first eight bytes of the key, because the name alone is what a swap leaves
-   * unchanged.** `T-359`, and this round's own money-safety pass found the first
-   * draft storing the name and discarding the bytes: a record that says *we wrote
-   * `recordPayment`* cannot afterwards say WHICH key was written, so `checkEndState`
-   * could report `settled` for an update that also rewrote the thing `C353` is
-   * about. **Eight bytes is an identifier for a person and not a proof** — the proof
-   * is `compareVerifierKeys` over full bytes against the chain.
-   */
-  verifierKeyInserts: { operation: string; version: string; fingerprint: string }[];
-  /** When it was built, for a person reading a stalled change. Never compared. */
-  builtAt: string;
-}
-
-/**
- * WHAT THE CHAIN SAYS ABOUT A RECORD WE WROTE. Four answers, and the fourth is
- * the one `T-361` buys.
- *
- *   `settled`     — the value matches AND the counter is exactly what we expected.
- *   `not-yet`     — the value does not match; the change has not landed.
- *   `unexplained` — the value matches and the counter does NOT. Something else
- *                   moved this contract. It is not a failure and it is not a
- *                   success, and it must not be printed as either.
- *   `unknown`     — the chain could not be asked.
- */
-export type EndStateVerdict = 'settled' | 'not-yet' | 'unexplained' | 'unknown';
-
-export interface EndStateCheck {
-  verdict: EndStateVerdict;
-  address: string;
-  why: string;
-  comparison: AuthorityComparison;
-}
-
-/**
- * DID THE CHANGE WE RECORDED ACTUALLY LAND, AND DID ANYTHING ELSE HAPPEN HERE?
- *
- * The value half is `compareAuthority` — reused, not rewritten.
- * The counter half is this function's own, and it never turns a `disagree` into
- * an `agree` or the reverse: it only splits `agree` into *settled* and
- * *unexplained*.
- */
-export function checkEndState(
-  record: MaintenanceEndStateRecord,
-  read: AuthorityRead,
-): EndStateCheck {
-  const comparison = compareAuthority(read, {
-    committee: record.committee, threshold: record.threshold,
-  });
-  if (comparison.verdict === 'unknown') {
-    return { verdict: 'unknown', address: record.address, comparison, why: comparison.why };
-  }
-  if (comparison.verdict === 'disagree') {
-    return {
-      verdict: 'not-yet', address: record.address, comparison,
-      why: `the change recorded for this contract has NOT landed: ${comparison.why}`,
-    };
-  }
-  const actual = read.state === 'read' ? read.authority.counter : undefined;
-  if (actual === record.expectedCounter) {
-    return {
-      verdict: 'settled', address: record.address, comparison,
-      why: `the chain carries the recorded end state and its counter is ${actual}, exactly the ` +
-        'value this change was expected to leave. Nothing else has been applied here since.',
-    };
-  }
-  return {
-    verdict: 'unexplained', address: record.address, comparison,
-    why: `THE VALUE MATCHES AND THE COUNTER DOES NOT. Expected ${record.expectedCounter}, the ` +
-      `chain carries ${actual}. The counter can never be rolled back or reset, so this contract ` +
-      'has taken a maintenance update this record does not account for. One update carries a ' +
-      'ReplaceAuthority AND a VerifierKeyInsert in the same array, so an identical authority ' +
-      'put back is exactly what a verifier-key swap looks like from here. This is neither a ' +
-      'pass nor a failure: somebody reads the verifier keys (`T-359`) before anything else.',
-  };
-}
-
-/**
- * A signature over a maintenance update, in the shape the runtime uses
- * (`ledger-v9.d.ts:154`). **It is the same `{tag, value}` shape as a key and it
- * is NOT a key**: a signature is public the moment the update reaches a chain,
- * which is why this API accepts one and accepts no signing key anywhere.
- */
-export type MaintenanceSignature = AuthorityKey;
-
-/* ── `T-359` — READING THE VERIFIER KEYS BACK, WHICH IS THE THING `C353`
- *              ACTUALLY SWAPS ──────────────────────────────────────────────
- *
- * The read and the comparison are one module the wallet, the page and this
- * service share (`midnight-identity/profile/contract-keys`), re-exported at the
- * top of this file. Only a key held at an earlier version beside a newer one is
- * out of their sight. */
+/* The verifier keys are read back and compared by the module the wallet, the page and this service share
+ * (`midnight-identity/profile/contract-keys`), re-exported at the top of this file. */
 
 
 
 
 
 /** One person on a run, as the approving device asks about them: everything but the occurrence. */
-export type PaidFor = Omit<PayRecord, 'occurrence'> & { occurrence?: number };
-
-/** What the chain has recorded as paid for one person's kind of pay for one month. */
-export interface AlreadyPaid {
-  person: string;
-  month: string;
-  kind: string;
-  /** Every occurrence the chain records as paid, lowest first. Empty when none is. */
-  paid: number[];
-  /** The occurrence the run pays this person as, when the caller said. */
-  occurrence?: number;
-  /** True when the chain already records the occurrence this run would pay. */
-  refused: boolean;
-}
-
-/**
- * How many occurrences the device asks about for each person: the first
- * payment and seven numbered extras. A person paid more extras than that for
- * one month reads as paid for the ones asked about.
- */
-export const OCCURRENCES_ASKED = 8;
-
-/**
- * **THE APPROVING DEVICE'S CHECK, AS A PURE FUNCTION OF THE CHAIN'S ANSWER.**
- * For each person, which occurrences of their kind of pay for their month the
- * account records as paid, and whether the occurrence this run pays them as is
- * one of them. `has` answers for one nonce whether the account holds its
- * `paidOnceOf`; the chain cannot tell a run that paid a person from one whose
- * payment was recorded without being made, so a `paid` occurrence means
- * recorded on chain as paid, and nothing more.
- */
-export const alreadyPaidOf = (
-  has: (nonce: Hex) => boolean, key: Hex, asked: readonly PaidFor[], upTo = OCCURRENCES_ASKED,
-): AlreadyPaid[] =>
-  asked.map((p) => {
-    const limit = Math.max(upTo, (p.occurrence ?? 0) + 1);
-    const paid: number[] = [];
-    for (let occurrence = 0; occurrence < limit; occurrence++) {
-      if (has(payRecordNonceOf(key, { person: p.person, month: p.month, kind: p.kind, occurrence }))) {
-        paid.push(occurrence);
-      }
-    }
-    return {
-      person: p.person, month: p.month, kind: p.kind, paid,
-      ...(p.occurrence === undefined ? {} : { occurrence: p.occurrence }),
-      refused: p.occurrence !== undefined && paid.includes(p.occurrence),
-    };
-  });
-
-/**
- * **THE WORDS FOR ONE PERSON'S CHECK**, or null when the chain records nothing
- * for them. Never more than the chain can say: recorded on chain as paid.
- */
-export const alreadyPaidSentence = (a: AlreadyPaid, name: string): string | null => {
-  if (a.paid.length === 0) return null;
-  const one = (o: number) => (o === 0 ? 'the regular payment' : `extra ${o}`);
-  const which = a.paid.map(one).join(' and ');
-  const [year, month] = a.month.split('-').map(Number);
-  const named = year && month
-    ? new Date(Date.UTC(year, month - 1, 1)).toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })
-    : a.month;
-  return `${name}: ${a.kind} for ${named} is recorded on chain as paid (${which}).`
-    + (a.refused && a.occurrence !== undefined
-      ? ` This run pays ${one(a.occurrence)} again. The chain will refuse that one payment.`
-      : '');
-};
-
-/**
- * The approvals a change of who is seated, a policy change, or a change to the
- * number a policy change needs, asks for (`bar`, the one rule `seatBarOf`), and
- * that number itself (`policyBar`), which reads as the threshold while none is
- * stored.
- */
-export function seatBarParts(state: {
-  threshold: bigint;
-  vaultThresholds: Array<{ vault: Hex; threshold: number }>;
-}): { bar: bigint; policyBar: bigint } {
-  const key = policyBarKey();
-  const stored = state.vaultThresholds.find(v => v.vault === key);
-  const storedBar = stored ? BigInt(stored.threshold) : null;
-  return { bar: seatBarOf(state.threshold, storedBar), policyBar: storedBar ?? state.threshold };
-}

@@ -126,15 +126,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('a vault retired and adopted again from its page', () => {
-  it('a vault the company\'s account holds shows Retire as not built yet, and pressing it opens nothing', async () => {
+  it('a vault the company\'s account holds offers Retire, and pressing it opens the retire panel for that vault', async () => {
     const c = await draw();
     const retire = button(c, 'retire-vault');
-    /* RED WHEN: the wallet holds no key to prove a retire and the vault page still offers a Retire button that can be pressed, which promises an action every press refuses. */
-    expect([retire.textContent, retire.disabled, retire.hasAttribute('data-soon')]).toEqual([EN['vault.retire'], true, true]);
+    /* RED WHEN: the wallet proves a retire but the vault page still draws Retire as an action not built yet, so a company cannot retire an empty vault. */
+    expect([retire.textContent, retire.disabled, retire.hasAttribute('data-soon')]).toEqual([EN['vault.retire'], false, false]);
     await act(async () => { fireEvent.click(retire); });
     await settle();
-    /* RED WHEN: pressing the Retire that is not built yet opens the retire panel, or the page offers Adopt again on a vault that is not retired. */
-    expect(document.querySelector('[data-panel] [data-retire-vault]')).toBeNull();
+    /* RED WHEN: pressing Retire opens no panel, or a panel for another vault, or the page offers Adopt again on a vault that is not retired. */
+    expect(document.querySelector('[data-panel] [data-retire-vault]')?.getAttribute('data-retire-vault')).toBe(VAULT);
     expect(q(c, '[data-action=adopt-again]')).toBeNull();
   });
 

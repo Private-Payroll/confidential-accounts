@@ -1,12 +1,14 @@
-import { DustWallet, NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
-import type { DustWallet as RunningDustWallet } from '@midnightntwrk/wallet-sdk-dust-wallet';
-import { DustSecretKey, LedgerParameters } from '@midnightntwrk/ledger-v9';
+import { DefaultForkSchedule, NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
+import type { DustKeysByEpoch, DustWallet as RunningDustWallet } from '@midnightntwrk/wallet-sdk-dust-wallet';
+import { DustSecretKey as V8DustSecretKey } from '@midnightntwrk/wallet-sdk/ledger/v8';
+import { DustSecretKey } from '@midnightntwrk/ledger-v9';
 import { DustAddress } from '@midnightntwrk/wallet-sdk-address-format';
 import type { Identity } from 'midnight-identity';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
 import { withOwnClock } from './balance.js';
 import type { BalanceEngine, BalanceState } from './balance.js';
 import { isWalletAccount } from '../accounts/subwallets.js';
+import { projectionsDustWallet } from '../../../../src/midnight/projections-dust-wallet.js';
 import { describeFailure } from '../lib/failure-text.js';
 
 /**
@@ -51,6 +53,16 @@ export function dustSecretKeyFor(identity: Identity, account: number): DustSecre
   return DustSecretKey.fromSeed(identity.moneyAt(account).dust);
 }
 
+/**
+ * The same account's DUST key for each ledger version the chain may be on, both
+ * from the one seed; refuses an account that is not a wallet this interface offers.
+ */
+export function dustKeysFor(identity: Identity, account: number): DustKeysByEpoch {
+  guardAccount(account);
+  const seed = identity.moneyAt(account).dust;
+  return { v8: V8DustSecretKey.fromSeed(seed), v9: DustSecretKey.fromSeed(seed) };
+}
+
 /** The DUST address for one account — where generated DUST is credited. */
 export const dustAddressFor = (identity: Identity, account: number): string =>
   DustAddress.encodePublicKey(NETWORK, dustSecretKeyFor(identity, account).publicKey);
@@ -73,14 +85,16 @@ export const DUST_CONFIG = {
   /* Same reasoning as the other two wallets: history is later, audited work;
    * a no-op keeps every fact about payments out of every store until then. */
   txHistoryStorage: new NoOpTransactionHistoryStorage(),
+  forks: DefaultForkSchedule,
 } as const;
 
-/** The SDK's dust wallet for ONE account, through the right door. Exported
- * so the agreement test, the facade and the probe exercise what the app runs. */
-export function dustWalletFor(identity: Identity, account: number): RunningDustWallet {
-  guardAccount(account);
-  return DustWallet(DUST_CONFIG).startWithSecretKey(
-    dustSecretKeyFor(identity, account), LedgerParameters.initialParameters().dust);
+/**
+ * The SDK's dust wallet for ONE account, through the right door: syncing by projections and started on the newest
+ * block's ledger version (`projectionsDustWallet`), the same wallet the service's fee payer runs. Exported so the
+ * agreement test, the facade and the probe exercise what the app runs.
+ */
+export async function dustWalletFor(identity: Identity, account: number): Promise<RunningDustWallet> {
+  return (await projectionsDustWallet(DUST_CONFIG)).startWithKeys(dustKeysFor(identity, account));
 }
 
 /**
@@ -102,8 +116,12 @@ const startDustRaw: BalanceEngine = (identity, account, onState) => {
   let wallet: RunningDustWallet | null = null;
   let subscription: { unsubscribe(): void } | null = null;
   let numberShown = false;
-  try {
-    wallet = dustWalletFor(identity, account);
+  void (async (): Promise<void> => {
+    wallet = await dustWalletFor(identity, account);
+    if (stopped) {
+      void wallet.stop().catch(() => { /* already stopping is fine */ });
+      return;
+    }
     subscription = wallet.state.subscribe({
       next: (state) => {
         const progress = state.progress;
@@ -124,12 +142,10 @@ const startDustRaw: BalanceEngine = (identity, account, onState) => {
         if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
       },
     });
-    wallet.start(dustSecretKeyFor(identity, account)).catch((e: unknown) => {
+    wallet.start(dustKeysFor(identity, account)).catch((e: unknown) => {
       if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
     });
-  } catch (e) {
-    tell({ name: 'failed', message: describeFailure(e) });
-  }
+  })().catch((e: unknown) => tell({ name: 'failed', message: describeFailure(e) }));
 
   return () => {
     stopped = true;

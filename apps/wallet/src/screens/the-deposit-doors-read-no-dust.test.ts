@@ -9,7 +9,7 @@ import { identityFromSecret, newSecret } from 'midnight-identity';
  * SDK'S FACADE REPLACED. The helpers they are made of are pinned on their own;
  * here it is the doors themselves: the facade they assemble is restored from
  * this wallet's own checkpoint, and the parts they start are the private part,
- * the public part and the pending transactions - never DUST.
+ * the public part and the transaction lifecycle - never DUST.
  */
 
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
@@ -27,7 +27,7 @@ vi.mock('../chain/facade.js', async (original) => {
       const part = (name: string) => ({ start: async () => { started.push(name); } });
       return {
         shielded: part('shielded'), unshielded: part('unshielded'), dust: part('dust'),
-        pendingTransactionsService: part('pending'),
+        transactionLifecycleService: part('lifecycle'),
         start: async () => { started.push('all three, DUST with them'); },
         stop: async () => { started.push('stopped'); },
       };
@@ -35,7 +35,7 @@ vi.mock('../chain/facade.js', async (original) => {
   };
 });
 
-const { liveBalanceDoors } = await import('./approve-balance.js');
+const { liveBalanceDoors } = await import('../chain/balance-doors.js');
 const { saveWalletCheckpoint } = await import('../accounts/storage.js');
 const { coinPublicKeyOf } = await import('../chain/balance.js');
 const { ORIGINAL_SLOT, forgetOpenWallet } = await import('../accounts/wallets-held.js');
@@ -59,7 +59,7 @@ describe('THE DEPOSIT SCREEN\'S DOORS', () => {
     /* RED WHEN: the doors read the private chain from the beginning although this wallet has its own checkpoint. */
     expect(asked).toEqual([{ account: 0, restoreShieldedFrom: snapshot }]);
     /* RED WHEN: the doors start DUST beside the private read, which a page's deposit never pays from and which doubled the wait. */
-    expect(started.sort()).toEqual(['pending', 'shielded', 'unshielded']);
+    expect(started.sort()).toEqual(['lifecycle', 'shielded', 'unshielded']);
     await doors.stop();
     expect(started).toContain('stopped');
   });
@@ -70,6 +70,6 @@ describe('THE DEPOSIT SCREEN\'S DOORS', () => {
     await doors.facade();
     /* RED WHEN: another wallet's checkpoint, or anything but none, is handed in. */
     expect(asked).toEqual([{ account: 0, restoreShieldedFrom: undefined }]);
-    expect(started.sort()).toEqual(['pending', 'shielded', 'unshielded']);
+    expect(started.sort()).toEqual(['lifecycle', 'shielded', 'unshielded']);
   });
 });

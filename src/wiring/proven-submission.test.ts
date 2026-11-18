@@ -7,6 +7,7 @@
  * ledger double that answers the company's address, and with a company side and
  * a fee payer that record what they were asked for.
  */
+import { provenUnbound, finalisedEmpty } from '../testing/ledger-transactions.js';
 import { describe, it, expect } from 'vitest';
 import { refusalForProven, refusalUnlessOnlyACallTo } from './proven-submission.js';
 import { ChainLedger } from './chain.js';
@@ -15,11 +16,17 @@ import type { WriteCapability } from './write-capability.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { FeeRefused } from '../midnight/fee-ceiling.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const OURS = 'aa'.repeat(32);
 const THEIRS = 'bb'.repeat(32);
 const call = (address: string) => ({ address, entryPoint: 'approve' });
-const tx = (...intents: unknown[][]) => ({ intents: new Map(intents.map((actions, i) => [i + 1, { actions }])) });
+const UNBOUND = (await provenUnbound(1)).serialize();
+const FINALISED = (await finalisedEmpty(1)).serialize();
+/** A transaction's calls as the door reads them, carrying a real transaction's bytes for the balance that follows. */
+const tx = (...intents: unknown[][]) => ({
+  intents: new Map(intents.map((actions, i) => [i + 1, { actions }])), serialize: () => UNBOUND,
+});
 
 describe('what a proven transaction may do before it is paid for', () => {
   /* RED WHEN: the rule refuses a transaction that only calls the company's own contract. */
@@ -102,14 +109,14 @@ describe('what a proven transaction may do before it is paid for', () => {
 });
 
 const DEPLOYMENT: Deployment = {
-  network: 'stagenet',
+  network: NETWORK,
   contractAddress: 'bcb61fef',
   indexerUrl: 'https://indexer.example/api/v4/graphql',
   indexerWsUrl: 'wss://indexer.example/api/v4/graphql/ws',
   nodeUrl: 'https://rpc.example',
   proverUrl: 'http://prover.invalid:1',
   sealedStateRoot: '/nowhere/.midnight/sealed',
-  privateStateId: 'confidential-accounts-stagenet',
+  privateStateId: `confidential-accounts-${NETWORK}`,
   zkConfigPath: '/nowhere/contracts/managed',
   vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 };
@@ -128,11 +135,11 @@ const rig = (over: {
     customer: {
       coinPublicKey: () => 'not-a-secret: a test literal',
       encryptionPublicKey: () => 'not-a-secret: a test literal',
-      balanceOwnLegs: async (t: unknown) => { steps.push('company balances'); return { companyBalanced: t }; },
+      balanceOwnLegs: async (t) => { steps.push('company balances'); return { companyBalanced: t, serialize: () => t.serialize() }; },
       release: async () => { steps.push('company releases'); },
     } as WriteCapability['customer'],
     sponsor: {
-      addFeeAndFinalise: over.addFee ?? (async (t: unknown) => { steps.push('fee added'); return { paid: t }; }),
+      addFeeAndFinalise: over.addFee ?? (async (t: unknown) => { steps.push('fee added'); return { paid: t, serialize: () => FINALISED }; }),
       submit: over.submit ?? (async () => { steps.push('submitted'); return { ref: 'ref-from-the-fee-payer', at: '' }; }),
       release: async () => { steps.push('fee payer releases'); },
       payingFor: (id: string) => { steps.push(`paying for ${id}`); },
@@ -207,6 +214,20 @@ describe('sending a transaction a device proved', () => {
     const refused: any = await dear.ledger.submitProven('acc_1', BYTES, reads(tx([call(OURS)]))).catch((e) => e);
     expect(refused).toBeInstanceOf(FeeRefused);
     expect(feeAnswerCodeOf(refused)).toBeNull();
+  });
+
+  /*
+   * RED WHEN: a fee payer's answer that cannot be sealed as a finished transaction leaves either side's
+   * coins booked, so the company's next payment or the fee payer's next fee finds them taken.
+   */
+  it('a fee payer\'s answer that is not a finished transaction is nothing sent, and both bookings are let go', async () => {
+    const r = rig({ addFee: async () => { r.steps.push('fee added'); return { serialize: () => new Uint8Array([9, 9, 9]) }; } });
+    const refused: any = await r.ledger.submitProven('acc_1', BYTES, reads(tx([call(OURS)]))).catch((e) => e);
+    expect(refused).toBeInstanceOf(Error);
+    expect(saysNothingWasSent(refused)).toBe(true);
+    expect(r.steps).toContain('fee payer releases');
+    expect(r.steps).toContain('company releases');
+    expect(r.steps).not.toContain('submitted');
   });
 
   /* RED WHEN: a submission that threw is reported as nothing sent. It may have landed. */

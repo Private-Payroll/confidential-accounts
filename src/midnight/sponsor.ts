@@ -23,8 +23,7 @@
  * Verified against the installed `@midnightntwrk/wallet-sdk-facade`, not
  * against a document:
  *
- *   balanceFinalizedTransaction(tx, { shieldedSecretKeys, dustSecretKey },
- *                               { ttl, tokenKindsToBalance? })
+ *   balanceFinalizedTransaction(tx, { ttl, tokenKindsToBalance? })
  *     -> { type: 'FINALIZED_TRANSACTION', originalTransaction, balancingTransaction }
  *   finalizeRecipe(recipe) -> FinalizedTransaction     // proves and merges
  *
@@ -35,14 +34,17 @@
  * **ONE FEE AT A TIME, FROM A VIEW THAT IS CURRENT.** The DUST spend is proved
  * against this wallet's own copy of the network's DUST trees and checked by the
  * node against the network's. So before it balances, the fee payer waits until
- * its view has applied every DUST event the indexer holds, read fresh, and shows
+ * its view covers the newest block the indexer holds, read fresh, and shows
  * its own last accepted payment; a view that does not get there in time is a
  * refusal with nothing sent. A spend proof the node refuses at admission (170)
  * is answered once: the view is waited for again and the fee is balanced again
  * with a fresh proof. Any other refusal at admission is answered as nothing
  * sent, because a transaction the node refused there never entered its pool.
  */
+import type { WalletFacade } from '@midnightntwrk/wallet-sdk-facade';
+import { WalletTransaction, type FinalizedTx } from '@midnightntwrk/wallet-sdk-abstractions';
 import type { FeeSponsor } from './ledger.js';
+import { CUSTOMER_TOKEN_KINDS, SPONSOR_TOKEN_KINDS, type Booking } from './wallet.js';
 import type { TxRef } from '../core/ledger.js';
 import type { SponsoredFeeSink } from './sponsored-fees.js';
 import {
@@ -129,6 +131,40 @@ export function poolRefusalOf(e: unknown): PoolRefusal | null {
   return null;
 }
 
+/*
+ * HOW FAR A DUST WALLET'S VIEW OF THE NETWORK HAS GOT, JUDGED ONE WAY EVERYWHERE.
+ *
+ * The DUST wallet syncs by projections: each pass asks the indexer for the newest block, reads this wallet's own
+ * DUST up to it, checks both tree roots against that block, and records the block's height. Its other progress
+ * numbers count tree indices and nullifier scans, and a pass reports some of them before its state update lands, so
+ * they say nothing about which block the view has reached. The height a finished pass recorded does.
+ */
+/** A DUST wallet's sync progress, as the wallet library reports it. */
+interface DustProgress {
+  readonly highestIndex?: bigint | number;
+  isStrictlyComplete?(): boolean;
+}
+
+/**
+ * The block height a DUST view covers: the height its last finished pass recorded, while the view reports itself
+ * complete and connected. None for a view part-way through catching up, disconnected, or that has never finished a
+ * pass, and none for anything unreadable.
+ */
+export const dustViewHeight = (progress: unknown): bigint | null => {
+  const p = progress as DustProgress | null | undefined;
+  try {
+    if (!p || typeof p.isStrictlyComplete !== 'function' || !p.isStrictlyComplete()) return null;
+    const height = BigInt(p.highestIndex ?? 0);
+    return height > 0n ? height : null;
+  } catch {
+    /* A progress that cannot be read gives no height, which every caller reads as a view that has not caught up. */
+    return null;
+  }
+};
+
+/** Whether a view covering `covered` (from dustViewHeight) has reached block `height`. */
+export const dustViewCovers = (covered: bigint | null, height: bigint): boolean => covered !== null && covered >= height;
+
 /**
  * **THE FEE PAYER'S OWN VIEW OF THE NETWORK'S DUST, READ BEFORE EVERY FEE.**
  *
@@ -136,9 +172,9 @@ export function poolRefusalOf(e: unknown): PoolRefusal | null {
  * accepted payment belongs to the wallet and not to the object that sent it.
  */
 export interface FeePayerView {
-  /** The last DUST event this wallet's view has applied, or null before the first. */
+  /** The block height this wallet's DUST view covers (`dustViewHeight`), or null while it covers none. */
   applied(): bigint | null;
-  /** The newest DUST event the indexer holds, read now. Throws when the indexer does not answer. */
+  /** The height of the newest block the indexer holds, read now. Throws when the indexer does not answer. */
   tip(): Promise<bigint>;
   /** Whether this wallet's own history shows its DUST side of the transaction with this hash. */
   shows(transactionHash: string): Promise<boolean>;
@@ -185,7 +221,7 @@ export const VIEW_TIMING: ViewTiming = {
 
 const hashOf = (tx: unknown): string | null => {
   try {
-    const h = (tx as { transactionHash?: () => unknown })?.transactionHash?.();
+    const h = (tx as { transactionHash?: () => unknown } | null)?.transactionHash?.();
     return h === undefined || h === null ? null : String(h);
   } catch {
     return null;
@@ -262,13 +298,17 @@ const isObject = (x: unknown): x is object => x !== null && (typeof x === 'objec
  * than this interface already asks for.
  */
 export interface SponsorWallet {
-  balanceFinalizedTransaction(
-    tx: unknown,
-    secretKeys: { shieldedSecretKeys: unknown; dustSecretKey: unknown },
-    options: { ttl: Date; tokenKindsToBalance?: string[] },
-  ): Promise<unknown>;
-  finalizeRecipe(recipe: unknown): Promise<unknown>;
-  submitTransaction(tx: unknown): Promise<string>;
+  /**
+   * The wallet's sealed handle for a finalised transaction it is handed: the handle itself, or the transaction's
+   * bytes adopted by this wallet (`finalisedHandleFor`). Refuses anything that is not a transaction.
+   */
+  handleOf(tx: unknown): FinalizedTx;
+  /** The ledger's own transaction a handle carries, which the fee ceiling and the hash are read from; null if none. */
+  ledgerTransactionOf(tx: FinalizedTx): unknown;
+  /** Balances the fee payer's DUST leg only: its options name the token kinds, typed by the facade itself. */
+  balanceFinalizedTransaction: WalletFacade['balanceFinalizedTransaction'];
+  finalizeRecipe: WalletFacade['finalizeRecipe'];
+  submitTransaction: WalletFacade['submitTransaction'];
   /**
    * Release coins booked by a balance that was not spent.
    *
@@ -277,7 +317,7 @@ export interface SponsorWallet {
    * got, and a release that could only be given one of them would be a release
    * that cannot run at the point it is needed.
    */
-  revert(booking: unknown): Promise<void>;
+  revert: WalletFacade['revert'];
   /**
    * What this transaction is expected to cost, before anything is committed to.
    *
@@ -298,7 +338,7 @@ export interface SponsorWallet {
    * payment is refused before anything is booked. Unread, the payment goes on
    * to the balance, and the amount read off the balanced transaction decides.
    */
-  estimateFee(tx: unknown, ttl: Date): Promise<bigint>;
+  estimateFee(tx: FinalizedTx, ttl: Date): Promise<bigint>;
   /**
    * What a submitted transaction actually cost, or `null` when it cannot be
    * said.
@@ -324,8 +364,6 @@ export interface SponsorWallet {
    * waiting; every wallet a deployment pays with has one.
    */
   view?: FeePayerView;
-  shieldedSecretKeys: unknown;
-  dustSecretKey: unknown;
   balances(): Promise<{ dust: bigint; night: bigint }>;
 }
 
@@ -334,8 +372,25 @@ export interface SponsorWallet {
  * arguments: this is the invariant, not a tuning knob, and a caller who could
  * pass `'all'` here could create a double spend from a plausible-looking call.
  */
-export const CUSTOMER_BALANCES = ['shielded', 'unshielded'] as const;
-export const SPONSOR_BALANCES = ['dust'] as const;
+export const CUSTOMER_BALANCES = CUSTOMER_TOKEN_KINDS;
+export const SPONSOR_BALANCES = SPONSOR_TOKEN_KINDS;
+
+/**
+ * The sealed handle for a finalised transaction, for a fee payer's wallet: a handle this wallet SDK sealed is
+ * used as it is, and anything else that writes itself out as bytes is adopted by the wallet, which stamps it with
+ * the protocol version it acts at. Anything else is refused with nothing paid and nothing sent.
+ */
+export const finalisedHandleFor = (adopt: WalletFacade['adoptTransaction']) => (tx: unknown): FinalizedTx => {
+  if (WalletTransaction.is(tx)) {
+    const finalised = WalletTransaction.atStage(tx, 'Finalized');
+    if (finalised._tag === 'Some') return finalised.value;
+  }
+  const serialize = (tx as { serialize?: unknown } | null | undefined)?.serialize;
+  if (typeof serialize !== 'function') {
+    throw new FeeNotPaid('the fee payer was handed something that is not a finalised transaction, so no fee was paid and nothing was sent.');
+  }
+  return adopt(serialize.call(tx), 'Finalized');
+};
 
 /** What a person is told when the node refused the transaction at admission. */
 const refusedWords = (r: PoolRefusal, afterOneMore: boolean): string =>
@@ -429,8 +484,8 @@ export class WalletFeeSponsor implements FeeSponsor {
   }
 
   /**
-   * Waits until the view has applied every DUST event the indexer holds, read
-   * now, and shows the last payment the network accepted from this wallet.
+   * Waits until the view covers the newest block the indexer holds, read
+   * now (`dustViewCovers`), and shows the last payment the network accepted from this wallet.
    *
    * Refuses with `FeeNotPaid` when it does not get there within the bound, or
    * when the indexer cannot be asked, so nothing is booked and nothing is sent.
@@ -453,8 +508,7 @@ export class WalletFeeSponsor implements FeeSponsor {
       throw this.notPaid(view, `the indexer could not say how far the network's DUST has got (${String((e as Error)?.message ?? e)})`);
     }
     for (;;) {
-      const applied = view.applied();
-      const atTheTip = applied !== null && applied >= tip;
+      const atTheTip = dustViewCovers(view.applied(), tip);
       const last = view.lastAccepted;
       const shown = last === null || await view.shows(last).catch(() => false);
       if (atTheTip && shown) {
@@ -468,7 +522,7 @@ export class WalletFeeSponsor implements FeeSponsor {
         }
         throw this.notPaid(view, atTheTip
           ? 'its view of the network\'s DUST does not show its own last payment yet'
-          : `its view of the network's DUST is behind the indexer's ${tip}`);
+          : `its view of the network's DUST is behind the indexer's block ${tip}`);
       }
       await sleep(pollMs);
     }
@@ -508,16 +562,13 @@ export class WalletFeeSponsor implements FeeSponsor {
      * not a reason to refuse, and the amount read off the balanced transaction
      * below decides either way. **What is not read is recorded as not read.**
      */
-    this.estimated = await this.wallet.estimateFee(customerFinalised, ttl).catch(() => null);
+    const handle = this.wallet.handleOf(customerFinalised);
+    this.estimated = await this.wallet.estimateFee(handle, ttl).catch(() => null);
     const tooDear = refusalForExpected(this.estimated, this.ceiling);
     if (tooDear) throw new FeeRefused(tooDear);
 
     const recipe = await this.wallet.balanceFinalizedTransaction(
-      customerFinalised,
-      {
-        shieldedSecretKeys: this.wallet.shieldedSecretKeys,
-        dustSecretKey: this.wallet.dustSecretKey,
-      },
+      handle,
       /*
        * **DUST ONLY, ALWAYS, AND NEVER THE ARGUMENT'S OWN DEFAULT.** Anything
        * wider re-balances what the customer already balanced, which the node
@@ -543,7 +594,7 @@ export class WalletFeeSponsor implements FeeSponsor {
      * a recipe rather than a transaction, and the failure lands at submission
      * as a type error from inside the SDK — which names none of this.
      */
-    let finalised: unknown;
+    let finalised: FinalizedTx;
     try {
       finalised = await this.wallet.finalizeRecipe(recipe);
     } catch (e) {
@@ -562,7 +613,7 @@ export class WalletFeeSponsor implements FeeSponsor {
      * transaction, as it is on the submit path below, because that is what the
      * booking has become.
      */
-    const overCeiling = refusalForCommitted(dustSpentBy(finalised), this.ceiling);
+    const overCeiling = refusalForCommitted(dustSpentBy(this.wallet.ledgerTransactionOf(finalised)), this.ceiling);
     if (overCeiling) {
       try { await this.release(finalised); } catch { /* the refusal is the error that matters */ }
       throw new FeeRefused(overCeiling);
@@ -614,11 +665,12 @@ export class WalletFeeSponsor implements FeeSponsor {
   private async handIn(tx: unknown): Promise<{ ref: string } | { refusal: PoolRefusal }> {
     const again = isObject(tx) && this.handedIn.has(tx);
     if (isObject(tx)) this.handedIn.add(tx);
+    const handle = this.wallet.handleOf(tx);
     try {
-      return { ref: String(await this.wallet.submitTransaction(tx)) };
+      return { ref: String(await this.wallet.submitTransaction(handle)) };
     } catch (e) {
       /* Swallowed here: `e` names what happened, and a failed release must not replace it. */
-      try { await this.release(tx); } catch { /* see above */ }
+      try { await this.release(handle); } catch { /* see above */ }
       const refusal = again ? null : poolRefusalOf(e);
       if (refusal === null) throw e;
       const view = this.wallet.view;
@@ -675,7 +727,7 @@ export class WalletFeeSponsor implements FeeSponsor {
       ref = second.ref;
       landed = again;
     }
-    const transactionHash = hashOf(landed);
+    const transactionHash = this.hashOfTransaction(landed);
     if (this.wallet.view) this.wallet.view.lastAccepted = transactionHash;
     /*
      * **EVERYTHING FROM HERE IS AFTER THE MONEY HAS MOVED, SO NOTHING FROM HERE
@@ -726,9 +778,10 @@ export class WalletFeeSponsor implements FeeSponsor {
    * whoever owns both phases has to be able to say *let that go*, and that is
    * what the interface member this satisfies is for.
    */
-  async release(booking: unknown): Promise<void> {
+  async release(booking: Booking): Promise<void> {
     await this.wallet.revert(booking);
   }
+
 
   /**
    * Whether the chain shows a transaction this sponsor finalised, read through
@@ -742,8 +795,17 @@ export class WalletFeeSponsor implements FeeSponsor {
    */
   readonly landed?: (finalisedTransaction: unknown, deadline: Date) => Promise<boolean | null>;
 
+  /** The hash of a transaction this fee payer handles, or null when it cannot be read: never a guess. */
+  private hashOfTransaction(tx: unknown): string | null {
+    try {
+      return hashOf(this.wallet.ledgerTransactionOf(this.wallet.handleOf(tx)));
+    } catch {
+      return null; // unreadable: the callers treat null as "not known", never as a hash
+    }
+  }
+
   private async landedOnTheChain(view: FeePayerView, finalisedTransaction: unknown, deadline: Date): Promise<boolean | null> {
-    const hash = hashOf(finalisedTransaction);
+    const hash = this.hashOfTransaction(finalisedTransaction);
     if (hash === null) return null;
     try {
       if (await view.shows(hash)) {
@@ -752,8 +814,7 @@ export class WalletFeeSponsor implements FeeSponsor {
         return true;
       }
       const tip = await view.tip();
-      const applied = view.applied();
-      if (applied === null || applied < tip) return null;
+      if (!dustViewCovers(view.applied(), tip)) return null;
       if (view.chainTime === undefined || await view.chainTime() <= deadline.getTime()) return null;
       if (await view.shows(hash)) {
         await this.recordLanded(finalisedTransaction, hash);

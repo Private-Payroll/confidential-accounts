@@ -10,6 +10,7 @@ import { DISCLOSURE_DOMAIN, RESPONSE_SCHEMA, preimage, readPreimage } from './pa
 import { addressOfVerifyingKey, mint, recheck, verify } from './disclosure.js';
 import type { DisclosureResponse } from './disclosure.js';
 import type { Disclosure, Sent } from './model.js';
+import { NETWORK } from '../wallet/network.js';
 
 /**
  * **THE CHANGE'S CENTRAL PROPERTY: A DISCLOSURE MINTED FOR ONE ORIGIN IS REFUSED
@@ -22,7 +23,6 @@ import type { Disclosure, Sent } from './model.js';
  * and the tampering one (edit the origin so the payload agrees with itself).
  */
 
-const NETWORK = 'stagenet' as const;
 const identity = identityFromWords(TEST_MNEMONIC);
 const SUBWALLET = 3;
 

@@ -76,7 +76,7 @@ const packagesReachedBy = async (file: string): Promise<string[]> => {
 
   const reached = [...modules]
     .filter((id) => WEBASSEMBLY.test(id))
-    .map((id) => id.replace(/^.*node_modules[/\\](@midnightntwrk[/\\][^/\\]+)[/\\].*$/, '$1'));
+    .map((id) => id.replace(/^.*node_modules[/\\](@midnight-?ntwrk[/\\][^/\\]+)[/\\].*$/, '$1'));
   return [...new Set(reached)].sort();
 };
 
@@ -89,7 +89,8 @@ describe('what the indexer client brings with it', () => {
         'the reader for the contract\'s public state no longer reaches the wallet SDK\'s ledger. '
         + 'If that is true, this reader could live in the page after all and the reason it is '
         + 'kept off the page has gone - read what changed before changing this list')
-        .toEqual(['@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4']);
+        /* Both ledgers' runtimes: the reader decodes what the chain served under either ledger. */
+        .toEqual(['@midnight-ntwrk/onchain-runtime-v3', '@midnightntwrk/ledger-v8', '@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4']);
     });
 
   /**

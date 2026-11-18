@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { SPENDS_NO_COIN } from './contract-call-built.js';
 import { aRunMadeHere, aLedgerHolding, RUN_FRESH, RUN_VOUCHED } from './a-run-made-here.test-support.js';
 import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -143,14 +144,12 @@ const depsWith = (log: string[], handed: Handed[], over: {
 } = {}): GovernedCallDeps => ({
   ledger: {
     ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk', clear: () => {} }) },
-    ZswapChainState: class { },
-    LedgerParameters: { deserialize: (b: Uint8Array) => ({ parameters: [...b] }) },
   },
   runtimeState: { deserialize: (b: Uint8Array) => ({ state: [...b] }) },
   contracts: new Proxy({}, {
     get: (_t, name) => {
       log.push(`reached ${String(name)}`);
-      if (name !== 'createUnprovenCallTxFromInitialStates') return undefined;
+      if (name !== 'buildCall') return undefined;
       return async (zk: unknown, options: any) => {
         handed.push({ options, zk });
         if (over.build) return over.build(options);
@@ -159,6 +158,7 @@ const depsWith = (log: string[], handed: Handed[], over: {
     },
   }) as GovernedCallDeps['contracts'],
   accountCompiled: 'COMPILED',
+  network: 'undeployed',
   accountZkConfig: 'ZK',
   accountPure,
   /* The chain holds every proposal asked about open. */
@@ -260,18 +260,18 @@ describe('ONE GOVERNED CALL', () => {
     const out = await build(depsWith(log, handed), { account: ACCOUNT.toUpperCase(), order: raise, material, chain });
     expect(out.proven).toEqual(new Uint8Array([9, 9]));
     /* RED WHEN: any other entry point of the package is reached - one that reads or writes a private-state store among them. */
-    expect(log).toEqual(['reached createUnprovenCallTxFromInitialStates', 'proved UNPROVEN for propose']);
+    expect(log).toEqual(['reached buildCall', 'proved UNPROVEN for propose']);
     const { options, zk } = handed[0]!;
     expect(zk).toBe('ZK');
     expect(options.compiledContract).toBe('COMPILED');
     expect(options.circuitId).toBe('propose');
     expect(options.contractAddress).toBe(ACCOUNT);
-    expect(options.initialContractState).toEqual({ state: [1] });
-    expect(options.ledgerParameters).toEqual({ parameters: [2] });
-    /* RED WHEN: the call is given a store and a key rather than the record. */
+    /* RED WHEN: the call is built on states other than the account's and the parameters served, or for another network. */
+    expect(options.read).toEqual({ contract: new Uint8Array([1]), zswap: SPENDS_NO_COIN, parameters: new Uint8Array([2]) });
+    expect(options.network).toBe('undeployed');
+    /* RED WHEN: the call is given a store and a key rather than the record, or reads any contract but the account. */
     expect(Object.keys(options).sort()).toEqual([
-      'args', 'circuitId', 'coinPublicKey', 'compiledContract', 'contractAddress', 'initialContractState',
-      'initialPrivateState', 'initialZswapChainState', 'ledgerParameters',
+      'args', 'circuitId', 'coinPublicKey', 'compiledContract', 'contractAddress', 'initialPrivateState', 'network', 'read',
     ]);
     expect(options.args).toEqual(argumentsFor(raise, RAISE_BY));
   });
@@ -886,7 +886,7 @@ describe('A RAISE PAST ITS DEADLINE', () => {
       /* RED WHEN: a raise a millisecond before its deadline is refused. */
       const ok: string[] = [];
       await build({ ...depsWith(ok, []), now: () => at - 1 }, { account: ACCOUNT, order: fixed, material, chain });
-      expect(ok[0]).toBe('reached createUnprovenCallTxFromInitialStates');
+      expect(ok[0]).toBe('reached buildCall');
     }
   });
 });

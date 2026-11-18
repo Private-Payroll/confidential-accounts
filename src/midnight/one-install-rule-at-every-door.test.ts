@@ -81,7 +81,7 @@ const doors: Record<string, (c: Case) => boolean | Promise<boolean>> = {
   /* The one door every contract born held is built through: past the holders it needs a ledger, so any other failure means it built on. */
   'a contract built held from its first transaction': async (c) => {
     try {
-      await heldStateFromTheStart({ ledger: undefined, runtimeState: undefined, contracts: undefined as never },
+      await heldStateFromTheStart({ ledger: undefined, runtimeState: undefined, contracts: undefined as never, network: 'undeployed' },
         { compiled: null, zkConfig: null, args: [], circuits: [], holders: c.to });
       return true;
     } catch (e) { return !/this maintenance authority will not be built/u.test(String(e)); }

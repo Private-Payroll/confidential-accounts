@@ -34,7 +34,7 @@ const ours: Identity = identityFromWords(TEST_MNEMONIC);
 describe('the right unshielded door — the address-agreement test', () => {
   it('the wallet that would sync IS the address the card shows, per account', async () => {
     for (const account of [0, 2, 11]) {
-      const wallet = unshieldedWalletFor(ours, account);
+      const wallet = await unshieldedWalletFor(ours, account);
       const fromWallet = MidnightBech32m.encode(NETWORK, await wallet.getAddress()).asString();
       await wallet.stop().catch(() => {});
       expect(fromWallet).toBe(unshieldedAddressFor(ours, account));
@@ -45,7 +45,7 @@ describe('the right unshielded door — the address-agreement test', () => {
     const seen = new Set<string>();
     for (const account of WALLET_ACCOUNTS) {
       const address = unshieldedAddressFor(ours, account);
-      expect(address).toMatch(/^mn_addr_stagenet1/);
+      expect(address).toMatch(new RegExp(`^mn_addr_${NETWORK}1`));
       seen.add(address);
     }
     /* Eleven wallets, eleven addresses — a repeat would mean two subwallets
@@ -59,7 +59,7 @@ describe('the right unshielded door — the address-agreement test', () => {
     const bytes = ours.moneyAt(0).night;
     const wrongKind = createKeystore({ kind: 'ecdsa', secret: bytes }, NETWORK)
       .getBech32Address().asString();
-    expect(wrongKind).toMatch(/^mn_addr_stagenet1/); /* plausible-looking… */
+    expect(wrongKind).toMatch(new RegExp(`^mn_addr_${NETWORK}1`)); /* plausible-looking… */
     expect(wrongKind).not.toBe(unshieldedAddressFor(ours, 0)); /* …and wrong. */
   });
 
@@ -102,7 +102,7 @@ describe('the unshielded address travels with its owner — the OwnedAddress rul
     const payload = address.slice(address.lastIndexOf('1') + 1);
     expect(short).toBe(
       `${address.slice(0, address.lastIndexOf('1') + 1)}${payload.slice(0, 8)}…${payload.slice(-8)}`);
-    expect(short.startsWith('mn_addr_stagenet1')).toBe(true);
+    expect(short.startsWith(`mn_addr_${NETWORK}1`)).toBe(true);
     expect(short.endsWith(payload.slice(-8))).toBe(true);
   });
 });

@@ -19,6 +19,8 @@ import { RELAY_PATIENCE_MS, runAction } from './run.js';
 import { readActEnded } from 'midnight-identity/profile/act-channel';
 import type { ActEnded, ActingChannel } from 'midnight-identity/profile/channel';
 import type { ActRequest } from 'midnight-identity/profile/request';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 const COMPANY = 'acc_choice';
 const ACCOUNT = 'ac'.repeat(32);
@@ -79,9 +81,11 @@ const ledger = async () => ({
 /* The person's wallet: no DUST of its own to pay with, and every call it sends logged. */
 const aChain = (log: unknown[]) => ({
   ownWallet: () => ({
-    ledger, keys: () => ({}) as never, signSegment: () => ({}) as never,
+    ledger, signSegment: () => ({}) as never,
     facade: async () => ({
       dust: { state: { subscribe: (w: { next: (s: unknown) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
+      state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+      adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
       balanceUnboundTransaction: async () => { throw new Error('no fee is paid from this wallet'); },
       submitTransaction: async () => { log.push('sent to the chain'); },
       revert: async () => undefined,

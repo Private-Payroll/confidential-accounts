@@ -1,60 +1,36 @@
-import { CostModel } from '@midnightntwrk/ledger-v9';
-import type { ProvingProvider, UnprovenTransaction } from '@midnightntwrk/ledger-v9';
-import type { ProvingService, UnboundTransaction } from '@midnightntwrk/wallet-sdk/proving';
-import type { KeyMaterialProvider } from '@midnight-ntwrk/zkir-v2';
+import { CostModel, Transaction } from '@midnightntwrk/ledger-v9';
+import type { ProvingProvider } from '@midnightntwrk/ledger-v9';
+import type {
+  AnyVersionUnboundTransaction, AnyVersionUnprovenTransaction, VersionedProvingService,
+} from '@midnightntwrk/wallet-sdk/capabilities/proving';
+import type { KeyMaterialProvider } from '@midnightntwrk/zkir-v2';
 import { makePinnedKeyMaterialProvider } from './key-material.js';
 import { describeFailure } from '../lib/failure-text.js';
+import { createLedger9ProofProvider } from '@midnight-ntwrk/midnight-js-types';
+import { provedTransaction, type Provable } from '../../../../packages/web-shared/src/vault-proof-workers.js';
 
 /**
- * THE IN-BROWSER PROVER, MADE TO ACTUALLY ANSWER.
+ * THE IN-BROWSER PROVER: the facade's proving service for this wallet. Each
+ * ledger-v9 transaction is proved with `transaction.prove(provider,
+ * CostModel.initialCostModel())`, the call the SDK's own WASM proving service
+ * makes, with each proof computed in a web worker of this app's own
+ * (`proving-worker.ts`). The worker proves a contract's circuit with the
+ * zkir-v3 engine and one of the network's own keys with the zkir-v2 engine,
+ * chosen by where the key lives (`zkirEngineFor`).
  *
- * This is an IMPLEMENTATION of the SDK's one-method proving seam
- * (`ProvingService.prove` — wallet-sdk-capabilities/dist/proving/
- * provingService.d.ts:16), which is what the seam exists for. It does what
- * `makeWasmProvingService` does — `transaction.prove(provider,
- * CostModel.initialCostModel())`, the exact call in provingService.js:26,
- * with the proof computed by `@midnight-ntwrk/zkir-v2` in a web worker —
- * and differs in one MEASURED place and one DECIDED place (the key
- * material's source; below):
+ * The worker says `ready` once its listener stands, and the page posts nothing
+ * before it hears that: a message posted to a module worker while its
+ * WebAssembly is still loading is dropped, and a proof posted at once would
+ * never be answered. A worker that finished is kept for the next proof of the
+ * same circuit rather than terminated, so it does not read its key again
+ * (`keptProvers`). Key material is fetched by the thread that owns the workers
+ * (the page, or the wallet's account builder) and moved to the worker that
+ * asked, not copied, so a proving key leaves memory with the proof. A proof
+ * still running at the SDK's own ten-minute ceiling is refused.
  *
- * **The SDK's worker never hears its work order in this app.** Its worker
- * (wallet-sdk-prover-client/dist/proof-worker.js) registers its message
- * listener at the end of a module graph that initialises WASM under a
- * top-level await, while the page side (WasmProver.js:67-71) posts the
- * one-and-only op the moment the worker is constructed. A message posted to
- * a module worker while its top-level await is pending is DROPPED — measured
- * in a real Chromium against the SDK's own worker file: an immediate post is
- * never answered; the same post five seconds later is (it fails the schema
- * decode, which is an ANSWER). There is no ready signal in the SDK's
- * protocol, so every real proof would sit the full ten-minute internal
- * timeout and die with "prove action timed out" — an error that reads like
- * slow proving and is a lost postMessage. Worth telling the Foundation.
- *
- * So this service's worker (`proving-worker.ts`, ours, bundled by vite's
- * own `new Worker(new URL(...))` support) says `ready` AFTER its listener
- * stands, and the page posts nothing before it hears that. Everything else
- * mirrors the SDK except one thing: each proof gets a worker of its own, but
- * a worker that finished is kept for the next proof of the same circuit
- * rather than terminated, because a kept worker does not read its key again
- * (`keptProvers`). Key material is fetched by the thread that owns the
- * workers (the page, or the wallet's account builder) and MOVED to the worker
- * that asked, not copied: the owner keeps nothing once it is sent, so a
- * proving key leaves memory with the proof. The SDK's own ten-minute ceiling
- * is kept: a proof that long is a fact the report should carry, not a hang.
- *
- * WHERE KEY MATERIAL COMES FROM — it changed, and the change closed two
- * defects. An earlier build reused the SDK's own default provider, which downloads
- * from a hardcoded Amazon bucket ("dev" in its name, no integrity check —
- * it) — and that bucket has CORS disabled, so no web page can fetch from
- * it at all: measured on a real machine, it killed the first real send at
- * proving. The SDK's own configuration makes the source injectable
- * (`keyMaterialProvider?` — provingService.d.ts:25; a `?` in a type is a
- * door), so the default here is now OUR provider (`key-material.ts`):
- * artefacts vendored to this wallet's own origin by `npm run vendor-keys`,
- * every byte verified against a SHA-256 pinned at vendoring, cached in
- * IndexedDB, and refusing loudly on any mismatch — never falling back to
- * the bucket. The bucket's name no longer appears anywhere in this app's
- * send path, which is the point.
+ * Key material comes only from this wallet's own origin (`key-material.ts`):
+ * artefacts vendored with their SHA-256 pinned, cached in IndexedDB, and
+ * refused on any mismatch, with no fallback to any other source.
  */
 
 /** The SDK's own ceiling (MAX_TIME_TO_PROCESS, WasmProver.js:27). */
@@ -111,6 +87,7 @@ export const buffersOf = (value: unknown): ArrayBuffer[] => {
 
 interface Job {
   readonly op: 'prove' | 'check';
+  readonly keyLocation: string;
   readonly preimage: Uint8Array;
   readonly overwriteBindingInput?: bigint;
   readonly km: KeyMaterialProvider;
@@ -146,7 +123,7 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
   const post = (kept: Kept): void => {
     const job = kept.job;
     if (job === null || !kept.ready) return;
-    kept.worker.postMessage({ op: job.op, preimage: job.preimage, overwriteBindingInput: job.overwriteBindingInput });
+    kept.worker.postMessage({ op: job.op, keyLocation: job.keyLocation, preimage: job.preimage, overwriteBindingInput: job.overwriteBindingInput });
   };
 
   const make = (): Kept => {
@@ -222,7 +199,7 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
         reject(new Error(`the ${op} did not finish within ten minutes, the SDK's own ceiling for a single proof`));
       }, PROVING_CEILING_MS);
       kept.job = {
-        op, preimage, overwriteBindingInput, km,
+        op, keyLocation, preimage, overwriteBindingInput, km,
         resolve: (value) => {
           if (settled) return;
           settled = true;
@@ -258,15 +235,25 @@ const theProvers = (): ReturnType<typeof keptProvers> => {
   return provers;
 };
 
-export function makeBrowserProvingService(
+/** Where the proofs run and who hears of each one: the wallet's own kept workers when no workers are named. */
+export interface BrowserProvingOptions {
+  /** Each proof starting and ending, as it happens. */
+  readonly onProof?: (event: ProofEvent) => void;
+  /** Where the proofs run. The wallet's own kept workers when absent. */
+  readonly provers?: ReturnType<typeof keptProvers>;
+}
+
+/**
+ * The provider the ledger calls back into, one proof obligation at a time
+ * (`ProvingProvider`): each proof and check runs in a kept worker for its
+ * key's location, which goes with it so the worker proves with the engine that
+ * location calls for, and key material is read from `keyMaterialProvider`, the
+ * wallet's own pinned material when none is named.
+ */
+export function browserProvingProvider(
   keyMaterialProvider?: KeyMaterialProvider,
-  options: {
-    /** Each proof starting and ending, as it happens. */
-    readonly onProof?: (event: ProofEvent) => void;
-    /** Where the proofs run. The wallet's own kept workers when absent. */
-    readonly provers?: ReturnType<typeof keptProvers>;
-  } = {},
-): ProvingService<UnboundTransaction> {
+  options: BrowserProvingOptions = {},
+): ProvingProvider {
   const km = keyMaterialProvider ?? defaultKeyMaterial();
   const workers = options.provers ?? theProvers();
 
@@ -279,24 +266,48 @@ export function makeBrowserProvingService(
       .then((value) => { said(); return value; }, (e: unknown) => { said(); throw e; });
   };
 
-  /* The provider shape the ledger calls back into, per proof obligation
-   * (`ProvingProvider`, ledger-v9.d.ts:2365). The worker needs no
-   * `keyLocation`: it is carried inside the preimage
-   * (proofDataIntoSerializedPreimage, ledger-v9.d.ts:610). It is read here
-   * only to say which kept worker has that circuit's key already. */
-  const provider: ProvingProvider = {
+  return {
     check: (preimage, keyLocation) =>
       callWorker('check', keyLocation, preimage) as Promise<(bigint | undefined)[]>,
     prove: (preimage, keyLocation, overwriteBindingInput) =>
       callWorker('prove', keyLocation, preimage, overwriteBindingInput) as Promise<Uint8Array>,
-    /* Straight through, as the SDK's own provider passes it
-     * (WasmProver.js:132) — key material is page-side either way. */
+    /* Key material is read on this side, as the SDK's own provider reads it. */
     lookupKey: (keyLocation) => km.lookupKey(keyLocation),
   };
+}
 
+/**
+ * What the wallet's contract builders prove with: a transaction as Midnight.js builds it, or one a builder made
+ * itself, handed to Midnight.js's own proof provider over `browserProvingProvider`, the way the page's builders hand
+ * theirs (`provedTransaction`). Midnight.js opens the handle; nothing here reads inside it.
+ */
+export function builderProving(
+  keyMaterialProvider?: KeyMaterialProvider,
+  options: BrowserProvingOptions = {},
+): (unproven: Provable) => Promise<{ serialize(): Uint8Array }> {
+  const prover = createLedger9ProofProvider(browserProvingProvider(keyMaterialProvider, options));
+  return (unproven) => provedTransaction(prover, unproven);
+}
+
+/**
+ * The facade's proving service for this wallet: a ledger-v9 transaction is
+ * proved in the browser through `browserProvingProvider`, and any other is
+ * refused before anything is proved.
+ */
+export function makeBrowserProvingService(
+  keyMaterialProvider?: KeyMaterialProvider,
+  options: BrowserProvingOptions = {},
+): VersionedProvingService<AnyVersionUnboundTransaction, AnyVersionUnprovenTransaction> {
+  const provider = browserProvingProvider(keyMaterialProvider, options);
+  /* The SDK's own invocation for a ledger-v9 transaction. A transaction of an
+   * earlier ledger is refused: this wallet holds no prover for it. */
   return {
-    /* The SDK's own invocation, verbatim: provingService.js:26. */
-    prove: (transaction: UnprovenTransaction) =>
-      transaction.prove(provider, CostModel.initialCostModel()) as Promise<UnboundTransaction>,
+    prove: async (transaction) => {
+      if (!(transaction instanceof Transaction)) {
+        throw new Error('this transaction was built for an earlier ledger than the one this wallet proves for, '
+          + 'so nothing was proved and nothing was sent.');
+      }
+      return transaction.prove(provider, CostModel.initialCostModel());
+    },
   };
 }

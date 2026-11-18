@@ -2,7 +2,7 @@
  * The IndexedDB store's failure paths.
  *
  * The happy path is tested where it belongs — in an actual browser, driving an
- * actual Worker (`browser-proving/worker-probe.ts`). A fake IndexedDB proving
+ * actual Worker. A fake IndexedDB proving
  * that a fake IndexedDB works would be the vacuous shape this project has now
  * hit three times.
  *

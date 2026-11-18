@@ -24,9 +24,8 @@ import { readFileSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { privateStateFor, leafOfDevice, COMPANY_LABEL } from './simulator.js';
@@ -79,7 +78,7 @@ describe.skipIf(!KEYS.ok)('THE RECORD ANCHOR, MOVED ON FROM A SIGNER\'S DEVICE [
   const client = vaultBuilderOver((() => {
     const listeners: Array<(e: { data: unknown }) => void> = [];
     const deps = async () => ({
-      ledger: L, runtimeState: (runtime as any).ContractState, contracts,
+      ledger: L, runtimeState: (runtime as any).ContractState, contracts: callsTheProductBuilds(),
       accountCompiled, accountZkConfig: accountZk, accountPure: circuits, accountLedger: (accountModule as any).ledger,
       accountTree: { StateBoundedMerkleTree: runtime.StateBoundedMerkleTree, CompactTypeBytes: runtime.CompactTypeBytes, CompactTypeMerkleTreeDigest: runtime.CompactTypeMerkleTreeDigest },
       prove: async (unproven: any) => unproven,
@@ -124,7 +123,6 @@ describe.skipIf(!KEYS.ok)('THE RECORD ANCHOR, MOVED ON FROM A SIGNER\'S DEVICE [
   };
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     founder = privateStateFor(1);
     const init = await new (accountModule as any).Contract(witnesses).initialState(

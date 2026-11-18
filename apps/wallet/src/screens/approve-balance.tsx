@@ -2,119 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { BalanceRequest } from 'midnight-identity/profile/request';
-import type { Channel, ProgressStage } from 'midnight-identity/profile/channel';
-import { balancedAnswerFor } from 'midnight-identity/profile/balance';
-import type { LeavesTheWallet } from 'midnight-identity/profile/balance';
-import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
+import type { Channel } from 'midnight-identity/profile/channel';
+import { accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
-import { Button, Section } from 'vaults-ui';
-import { StatusAlert } from '../components/status.js';
-import { hrefOf } from '../routes.js';
-import {
-  BalanceRefused, NotHandedOver, payForThePage, readWhatThePageAsksToBalance, whyThePaymentFailed,
-} from '../chain/balance-for-page.js';
-import type {
-  BalanceDoors, FacadeForBalancing, LedgerForBalancing, PageAskPays, UnboundTransactionLike,
-} from '../chain/balance-for-page.js';
-import { facadeFor, facadeKeysFor, startForAPage } from '../chain/facade.js';
-import { makeBrowserProvingService } from '../chain/proving.js';
-import type { ProofEvent } from '../chain/proving.js';
-import { coinPublicKeyOf } from '../chain/balance.js';
-import { loadWalletCheckpoint } from '../accounts/storage.js';
-import { openWalletId } from '../accounts/wallets-held.js';
-import { unshieldedKeystoreFor } from '../chain/unshielded.js';
-import { nightFromStars } from '../chain/amount.js';
+import { BalanceRefused, readWhatThePageAsksToBalance } from '../chain/balance-for-page.js';
+import type { BalanceDoors } from '../chain/balance-for-page.js';
+import { liveBalanceDoors } from '../chain/balance-doors.js';
 import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
+import { BalanceAsk, PaidPublicly, PaidPrivately } from './approve-balance-views.js';
+import type { Stage } from './approve-balance-views.js';
+import { startPaying } from './approve-balance-pay.js';
 
-/**
- * THE SCREEN FOR A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT IT BUILT.
- * A private deposit a page built is refused here: this wallet makes a private
- * deposit whole, in its own action, from its own reads.
- *
- * **THE ONLY ASK THAT PAYS FOR A TRANSACTION A PAGE BUILT**, so it is written the
- * way the send screen is: what leaves, read from the transaction itself; where
- * it goes, as the page names it and whole; and a press that is the only way
- * anything is paid - this screen's Pay, or the Approve in the locked wallet's
- * window, which showed what leaves from the same transaction. The network fee
- * is not on this screen because this wallet does not pay it.
- */
+export { NIGHT_TOKEN, describeLeaving } from './approve-balance-views.js';
 
-/**
- * The live doors: the wallet the person chose, on the real network, proving in
- * this browser. The wallet is started on the press and holds nothing until it
- * has read the chain; `payForThePage` waits for that before it adds a coin.
- *
- * **ITS PRIVATE PART STARTS FROM WHERE THIS WALLET LAST GOT TO**, when this
- * browser holds a checkpoint for it, and reads only what is new; otherwise it
- * reads from the beginning. Either way nothing is paid until it has heard the
- * network say it is up to date: a restored wallet reports itself unconnected
- * until then. **Nothing here ever writes a checkpoint**, and its DUST part is
- * never started - a page's deposit pays no fee from here.
- */
-export const liveBalanceDoors = (identity: Identity, account: number): BalanceDoors & { stop: () => Promise<void> } => {
-  /* Decided now, while this wallet is the one on screen; the balance engine captures it for the same reason. */
-  const walletId = openWalletId();
-  const proofWatchers = new Set<(event: ProofEvent) => void>();
-  let running: Promise<Awaited<ReturnType<typeof facadeFor>>> | null = null;
-  const facade = () => {
-    running ??= (async () => {
-      const checkpoint = await loadWalletCheckpoint(coinPublicKeyOf(identity, account), account, walletId);
-      const proving = makeBrowserProvingService(undefined, {
-        onProof: (event) => { for (const watch of proofWatchers) watch(event); },
-      });
-      const started = await facadeFor(identity, account, proving, {}, { restoreShieldedFrom: checkpoint?.serialized });
-      await startForAPage(started, facadeKeysFor(identity, account));
-      return started;
-    })();
-    return running as unknown as Promise<FacadeForBalancing>;
-  };
-  return {
-    ledger: async () => (await import('@midnightntwrk/ledger-v9')) as unknown as LedgerForBalancing,
-    facade,
-    keys: () => {
-      const keys = facadeKeysFor(identity, account);
-      return { shieldedSecretKeys: keys.shielded, dustSecretKey: keys.dust };
-    },
-    signSegment: () => unshieldedKeystoreFor(identity, account).signDataAsync,
-    ownPublicAddress: () => String(unshieldedKeystoreFor(identity, account).getAddress()),
-    watchProofs: (watch) => { proofWatchers.add(watch); return () => { proofWatchers.delete(watch); }; },
-    stop: async () => {
-      if (running === null) return;
-      const f = await running.catch(() => null);
-      running = null;
-      await f?.stop().catch(() => { /* already stopping */ });
-    },
-  };
-};
-
-/** One figure, in words a person reads. NIGHT is named; any other token is shown by its identifier. */
-export const NIGHT_TOKEN = '0'.repeat(64);
-export const describeLeaving = (l: LeavesTheWallet): string =>
-  l.kind === 'unshielded' && l.token === NIGHT_TOKEN
-    ? `${nightFromStars(BigInt(l.amount))} NIGHT, from your public balance`
-    : `${l.amount} base units of the ${l.kind === 'shielded' ? 'private' : 'public'} token below`;
-
-type Stage =
-  | { of: 'reading' }
-  | { of: 'ready'; tx: UnboundTransactionLike; leaves: LeavesTheWallet[]; pays: PageAskPays }
-  | { of: 'refused'; says: string }
-  /** `reading`: the wallet is still reading the chain, nothing is booked, and the person may still say no. */
-  | { of: 'paying'; reading: boolean; proving: boolean; leaves: LeavesTheWallet[]; pays: PageAskPays }
-  | { of: 'failed'; says: string; leaves: LeavesTheWallet[]; pays: PageAskPays }
-  | { of: 'sent'; at: number; leaves: LeavesTheWallet[]; pays: PageAskPays };
-
-/** What this wallet cannot check of the vault, and the one check that is made: by the company's own service, and only there. */
-const VAULT_CHECK = 'This wallet cannot check that the vault belongs to that company. If this page is run by the company\u2019s own service, '
-  + 'that service will not send a deposit into a vault it did not see created for the company and that is not pinned to the '
-  + 'company\u2019s account on the chain. A page run by someone else gives you no such check. Compare the vault with one the '
-  + 'company gave you another way.';
-
-export function ApproveBalance({
-  request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
-  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader, answerAtOnce = false,
-  reads = readWhatThePageAsksToBalance,
-}: {
+export interface ApproveBalanceProps {
   readonly request: BalanceRequest;
   readonly identity: Identity;
   readonly account: number;
@@ -139,7 +41,25 @@ export function ApproveBalance({
    * this wallet makes a private deposit whole as an action. Replaceable so a test can read a payment of any kind.
    */
   readonly reads?: typeof readWhatThePageAsksToBalance;
-}): ReactNode {
+}
+
+/**
+ * THE SCREEN FOR A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT IT BUILT.
+ * A private deposit a page built is refused here: this wallet makes a private
+ * deposit whole, in its own action, from its own reads.
+ *
+ * **THE ONLY ASK THAT PAYS FOR A TRANSACTION A PAGE BUILT**, so it is written the
+ * way the send screen is: what leaves, read from the transaction itself; where
+ * it goes, as the page names it and whole; and a press that is the only way
+ * anything is paid - this screen's Pay, or the Approve in the locked wallet's
+ * window, which showed what leaves from the same transaction. The network fee
+ * is not on this screen because this wallet does not pay it.
+ */
+export function ApproveBalance({
+  request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
+  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader, answerAtOnce = false,
+  reads = readWhatThePageAsksToBalance,
+}: ApproveBalanceProps): ReactNode {
   const doors = useMemo(() => doorsFor(identity, account), [doorsFor, identity, account]);
   /* **NOTHING IS PAID UNTIL THE COMPANY'S ACCOUNT IS READ OFF THE CHAIN AND
    * CARRIES THE LABEL THE PAGE NAMES**, so the fingerprint a person compares is
@@ -226,87 +146,9 @@ export function ApproveBalance({
   const pay = useCallback((): void => {
     if (stage.of !== 'ready' || channel === null || channel.over() || pressing.current.size > 0 || !onChain) return;
     const { tx, leaves, pays } = stage;
-    const pressedWith = doors;
-    const stillThisWallet = (): boolean => onScreen.current === pressedWith;
-    let booked = false;
-    let sentAt = 0;
-    /*
-     * **WHAT THE WALLET IS DOING, SAID TO THE PAGE AS IT HAPPENS**: each report
-     * of the read that moved and the moment before coins are added are said as
-     * "reading" (the only stage the page has for work before a proof); "proving"
-     * is said only on a private deposit's proof starting or ending, never for a
-     * public deposit, which makes none. Never from a clock. A stage already said
-     * is said again at most once a second, which is still only ever on an event.
-     */
-    let said: { stage: ProgressStage; at: number } | null = null;
-    const say = (next: ProgressStage): void => {
-      const at = now();
-      if (said !== null && said.stage === next && at - said.at < 1_000) return;
-      said = { stage: next, at };
-      channel.progress(next);
-    };
-    const unwatch = pressedWith.watchProofs?.((event) => {
-      if (pays === 'public' || event.op !== 'prove') { say('reading'); return; }
-      say('proving');
-      if (stillThisWallet()) setStage((was) => (was.of === 'paying' ? { ...was, reading: false, proving: true } : was));
-    });
-    pressing.current.add(pressedWith);
-    setBusy(true);
-    const over = (): void => {
-      unwatch?.();
-      pressing.current.delete(pressedWith);
-      if (booked) booking.current -= 1;
-      if (mounted.current) { setBusy(pressing.current.size > 0); setHeld(booking.current > 0); }
-      if (!mounted.current || !stillThisWallet()) void pressedWith.stop?.();
-    };
-    setStage({ of: 'paying', reading: false, proving: false, leaves, pays });
-    void payForThePage(pressedWith, tx, { pays, leaves }, {
-      onReading: () => { if (!declined.current && stillThisWallet()) setStage({ of: 'paying', reading: true, proving: false, leaves, pays }); },
-      onRead: () => say('reading'),
-      onBalancing: () => {
-        booked = true;
-        booking.current += 1;
-        if (mounted.current) setHeld(true);
-        say('reading');
-        if (stillThisWallet()) setStage((was) => (was.of === 'paying' ? { ...was, reading: false } : was));
-      },
-      /* **ASKED LAST BEFORE ANY COIN IS SET ASIDE**: not if the person said no, left, or picked another wallet. */
-      stillWanted: () => !declined.current && mounted.current && stillThisWallet(),
-      /*
-       * **HANDED OVER ONLY IF THE PAGE HAS NOT ALREADY BEEN ANSWERED.** A "no"
-       * that landed in the moment before the button went down was sent then; a
-       * press made with another wallet may have answered first. Either way this
-       * one is not handed over, and what it set aside is let go.
-       */
-      handOver: (finished) => {
-        sentAt = now();
-        return !declined.current && channel.answer(balancedAnswerFor(request, finished, leaves, sentAt));
-      },
-    }).then(() => {
-      over();
-      setStage({ of: 'sent', at: sentAt, leaves, pays });
-    }, (e: unknown) => {
-      over();
-      /* The person said no, and the page was told so then. */
-      if (declined.current) return;
-      /* Stopped before anything was set aside because another wallet was picked: that wallet's screen stands. */
-      if (!booked && !stillThisWallet()) return;
-      /*
-       * **THE PERSON APPROVED, SO THE PAGE IS TOLD IT FAILED, NEVER THAT THEY
-       * DECLINED** - and only now, after what was set aside has been let go.
-       * If the page was already answered, nothing more crosses, and a press
-       * made with a wallet no longer on screen leaves that screen as it is.
-       */
-      const told = channel.refuse('failed', whyThePaymentFailed(e));
-      if (!told && !stillThisWallet()) return;
-      setStage({
-        of: 'failed', leaves, pays,
-        says: e instanceof NotHandedOver
-          ? e.message
-          : pays === 'public'
-            ? `${e instanceof Error ? e.message : String(e)} The page was given nothing and has been told this payment failed.`
-            : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go. The page was given nothing and has been told this payment failed.`,
-      });
+    startPaying({
+      tx, leaves, pays, channel, doors, request, now, setStage, setBusy, setHeld,
+      refs: { pressing, booking, declined, mounted, onScreen },
     });
   }, [stage, channel, doors, request, now, onChain]);
   useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && !busy && !channel.over() && onChain, pay);
@@ -315,167 +157,14 @@ export function ApproveBalance({
   const locked = busy || stage.of === 'sent' || stage.of === 'failed';
   useEffect(() => { tellBusy.current?.(locked); }, [locked]);
 
-  const publicly = stage.of !== 'reading' && stage.of !== 'refused' && stage.pays === 'public';
-  const headline = (
-    <h1 data-headline>
-      {publicly
-        ? `Pay publicly into a company vault for ${request.requester.origin}`
-        : `Pay into a company vault for ${request.requester.origin}`}
-    </h1>
-  );
-
-  const where = (
-    <Section
-      list={false} box={false} aria-label="Where the money goes"
-      title="Where the money goes"
-      description={publicly
-        ? 'What the page says. This wallet checked that the transaction calls this vault\'s public deposit and nothing else, and that it puts exactly the amount shown above into this vault.'
-        : 'What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault.'}
-    >
-      <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
-      <CompanyOnChain
-        label={request.company} account={request.account} check={check} doing="paid"
-        compareWith="the person at this company who asked you to pay gave you themselves, and not through this page"
-      />
-      <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
-      <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>{request.vault}</p>
-      <p className="m-0 text-sm text-muted-foreground" data-vault-check>{VAULT_CHECK}</p>
-    </Section>
-  );
-
-  const leavingList = (leaves: readonly LeavesTheWallet[]) => (
-    <div data-leaves>
-      {leaves.map((l) => (
-        <div key={`${l.kind}:${l.token}`} style={{ marginBottom: '0.5rem' }}>
-          <p className="m-0 text-foreground text-lg" data-leaving-amount>{describeLeaving(l)}</p>
-          <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-leaving-token>{`${l.kind} token ${l.token}`}</p>
-        </div>
-      ))}
-    </div>
-  );
-
-  if (stage.of === 'sent' && stage.pays === 'public') {
-    return (
-      <>
-        <h1 data-paid-heading>{`You paid publicly for a deposit for ${request.requester.origin}`}</h1>
-        <p className="lede" data-paid>
-          {`On ${new Date(stage.at).toLocaleString()} this wallet added the public money below to the deposit and handed it back. `}
-          The company&rsquo;s service sends it. Until the chain has it, nothing has moved, and your public balance still
-          shows this money. Do not spend it elsewhere first, or this deposit will fail.
-        </p>
-        {leavingList(stage.leaves)}
-        <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.vault}</p>
-        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
-      </>
-    );
-  }
-
-  if (stage.of === 'sent') {
-    return (
-      <>
-        <h1 data-paid-heading>{`You paid for a deposit for ${request.requester.origin}`}</h1>
-        <p className="lede" data-paid>
-          {`On ${new Date(stage.at).toLocaleString()} this wallet added the coins below to the transaction and handed it back. `}
-          The company&rsquo;s service sends it. Until the chain has it, nothing has moved, and the coins it uses are set
-          aside in this wallet. If the transaction is never sent, they may stay set aside.
-        </p>
-        {leavingList(stage.leaves)}
-        <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.vault}</p>
-        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
-      </>
-    );
-  }
+  if (stage.of === 'sent' && stage.pays === 'public') return <PaidPublicly request={request} stage={stage} />;
+  if (stage.of === 'sent') return <PaidPrivately request={request} stage={stage} />;
 
   return (
-    <>
-      {headline}
-      {stage.of === 'reading' && <p className="lede" data-reading>Reading what the page sent. Nothing has been paid.</p>}
-      {stage.of === 'refused' && (
-        <StatusAlert tone="danger" title="This wallet will not pay for this">
-          <p className="m-0" data-balance-refused>{stage.says}</p>
-        </StatusAlert>
-      )}
-      {(stage.of === 'ready' || stage.of === 'paying' || stage.of === 'failed') && (
-        <Section
-          list={false} box={false} aria-label="What leaves this wallet"
-          title="What leaves this wallet"
-          description="Worked out from the transaction itself, not from anything the page said."
-        >
-          {leavingList(stage.leaves)}
-          <p className="m-0 text-sm text-muted-foreground" data-no-fee>
-            You pay no network fee. The company pays it.
-          </p>
-        </Section>
-      )}
-      {publicly && (
-        <StatusAlert tone="warning" role={null} title="This deposit is public">
-          <p className="m-0" data-public-deposit>
-            The token and the amount above leave your public balance, and anyone reading the chain can see them, your
-            wallet&rsquo;s public address, and the vault they went into.
-          </p>
-          {stage.leaves.some((l) => l.token === NIGHT_TOKEN) && (
-            <p className="m-0" data-night-stops-dust>
-              NIGHT that goes into the vault no longer generates DUST for this wallet.
-            </p>
-          )}
-        </StatusAlert>
-      )}
-      {where}
-      {whoIsAsking}
-      {whichWallet}
-      {stage.of === 'paying' && stage.reading && (
-        <p className="lede" data-reading-the-chain>
-          {publicly
-            ? 'Your wallet is reading the network to find your public coins before it adds them. Nothing has been paid, and you can still choose not to pay.'
-            : 'Your wallet is reading the network to find your private coins before it adds them. This can take a few minutes. Nothing has been paid, and you can still choose not to pay.'}
-        </p>
-      )}
-      {stage.of === 'paying' && !stage.reading && !publicly && !stage.proving && (
-        <p className="lede" data-paying>
-          Adding your private coins and signing in this browser. Nothing is sent to the network from here.
-        </p>
-      )}
-      {stage.of === 'paying' && !stage.reading && !publicly && stage.proving && (
-        <p className="lede" data-paying data-proving>
-          Proving your coins in this browser. This can take a few minutes, and nothing is sent to the network from
-          here.
-        </p>
-      )}
-      {stage.of === 'paying' && !stage.reading && publicly && (
-        <p className="lede" data-paying>
-          Adding your public coins and signing in this browser. Nothing is sent to the network from here.
-        </p>
-      )}
-      {stage.of === 'failed' && (
-        <StatusAlert tone="danger" title="Nothing was paid">
-          <p className="m-0" data-balance-failed>{stage.says}</p>
-        </StatusAlert>
-      )}
-      <StatusAlert tone="warning" role={null} title="What is paid, is paid">
-        <p className="m-0">
-          Once the company sends this transaction, the money is in its vault. Who can move it from there is decided by
-          the company&rsquo;s account and its vault, not by this wallet, and nothing in this wallet can take it back.
-        </p>
-      </StatusAlert>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="lg"
-          type="button"
-          variant="default" onClick={pay} data-approve data-pay
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null || busy || channel.over() || !onChain}
-        >
-          {publicly ? 'Pay publicly into the vault' : 'Pay into the vault'}
-        </Button>
-        {stage.of === 'refused' ? (
-          <Button size="lg" type="button" variant="ghost" data-close onClick={close} disabled={busy}>
-            Close
-          </Button>
-        ) : (
-          <Button size="lg" type="button" variant="ghost" data-decline onClick={decline} disabled={held || (stage.of === 'paying' && !stage.reading)}>
-            Do not pay
-          </Button>
-        )}
-      </div>
-    </>
+    <BalanceAsk
+      stage={stage} request={request} check={check} consent={consent} channel={channel}
+      busy={busy} held={held} onChain={onChain} whoIsAsking={whoIsAsking} whichWallet={whichWallet}
+      pay={pay} close={close} decline={decline}
+    />
   );
 }

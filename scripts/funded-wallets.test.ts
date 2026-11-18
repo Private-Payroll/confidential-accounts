@@ -6,10 +6,18 @@
  * fee payer asked the wallet for and what it filed.
  */
 import { describe, it, expect } from 'vitest';
-import { fundedPartiesOver, feePayerViewOf, sponsorWalletOver, type LiveWalletParts } from './funded-wallets.js';
+import { Intent, Transaction } from '@midnightntwrk/ledger-v9';
+import { fundedPartiesOver, feePayerViewOf, indexerHttpOf, sponsorWalletOver, type LiveWalletParts } from './funded-wallets.js';
+import { NETWORK_IDS, endpointsOf, networkRecord } from '../src/core/networks.js';
 import type { SponsoredFee } from '../src/midnight/sponsored-fees.js';
 
 type Call = { method: string; args: unknown[] };
+
+/** A finalised transaction with one intent and no DUST spends, as the ledger shapes one. */
+const spendsNoDust = () => Transaction.fromParts('undeployed', undefined, undefined, Intent.new(new Date(Date.now() + 60_000))).bind();
+
+/** A transaction as the company's side hands it over: something that writes itself out as bytes. */
+const companyTx = { serialize: () => Uint8Array.of(1) };
 
 const live = (calls: Call[], label: string): LiveWalletParts => {
   const rec = (method: string, answer: (...a: any[]) => unknown) =>
@@ -24,11 +32,13 @@ const live = (calls: Call[], label: string): LiveWalletParts => {
       getEncryptionPublicKey: () => `${label}-enc`,
     },
     facade: {
+      adoptTransaction: (bytes: Uint8Array, stage: string) => { calls.push({ method: `${label}.adoptTransaction`, args: [bytes, stage] }); return { adopted: [...bytes] }; },
+      submitTransaction: rec('submitTransaction', () => 'ref-1'),
       estimateTransactionFee: rec('estimateTransactionFee', () => 700n),
       balanceFinalizedTransaction: rec('balanceFinalizedTransaction', (tx: unknown) => ({ recipe: tx })),
       balanceUnboundTransaction: rec('balanceUnboundTransaction', (tx: unknown) => ({ recipe: tx })),
       /* A balanced transaction declares what it spends from DUST. */
-      finalizeRecipe: rec('finalizeRecipe', (r: any) => ({ ...r.recipe, intents: new Map() })),
+      finalizeRecipe: rec('finalizeRecipe', () => spendsNoDust()),
       signRecipe: rec('signRecipe', (r: unknown) => r),
       revert: rec('revert', () => undefined),
     },
@@ -52,11 +62,11 @@ describe('the fee payer handed to the server', () => {
     const calls: Call[] = [];
     const parties = fundedPartiesOver(
       live(calls, 'payer'), live(calls, 'company'), async () => 650n, sink([]), () => {}, CEILING);
-    await parties.sponsor.addFeeAndFinalise({ tx: 1 }, new Date(Date.now() + 60_000));
+    await parties.sponsor.addFeeAndFinalise(companyTx, new Date(Date.now() + 60_000));
 
     const balance = calls.find(c => c.method === 'payer.balanceFinalizedTransaction');
     expect(balance, 'the paying wallet was never asked to balance').toBeDefined();
-    const options = balance!.args[2] as { tokenKindsToBalance?: unknown };
+    const options = balance!.args[1] as { tokenKindsToBalance?: unknown };
     expect(options.tokenKindsToBalance, 'the argument was left to its default').toBeDefined();
     expect(options.tokenKindsToBalance).toEqual(['dust']);
     expect(calls.some(c => c.method.startsWith('company.')),
@@ -73,7 +83,7 @@ describe('the fee payer handed to the server', () => {
     const parties = fundedPartiesOver(
       live(calls, 'payer'), live(calls, 'company'), async () => 650n, sink(records), () => {}, CEILING);
     parties.sponsor.payingFor('acc_demo');
-    const finalised = await parties.sponsor.addFeeAndFinalise({ tx: 1 }, new Date(Date.now() + 60_000));
+    const finalised = await parties.sponsor.addFeeAndFinalise(companyTx, new Date(Date.now() + 60_000));
     await parties.sponsor.submit(finalised);
 
     expect(records).toHaveLength(1);
@@ -111,7 +121,7 @@ describe('the fee payer handed to the server', () => {
     const parties = fundedPartiesOver(
       live(calls, 'payer'), live(calls, 'company'), async () => null, sink([]), () => {},
       { perTransaction: 699n });
-    await expect(parties.sponsor.addFeeAndFinalise({ tx: 1 }, new Date(Date.now() + 60_000)))
+    await expect(parties.sponsor.addFeeAndFinalise(companyTx, new Date(Date.now() + 60_000)))
       .rejects.toThrow(/expected to cost 700 SPECKs/);
     expect(calls.some(c => c.method === 'payer.balanceFinalizedTransaction'),
       'coins were booked above the ceiling').toBe(false);
@@ -127,10 +137,13 @@ describe('the fee payer handed to the server', () => {
 
 describe('the fee payer\'s view of the network\'s DUST', () => {
   /** A running wallet as the fee payer's view reads it: its state, its history, and its DUST wallet's indexer. */
-  const running = (history: Record<string, unknown>) => ({
-    state: () => ({ subscribe: ({ next }: { next: (s: unknown) => void }) => { next({ dust: { progress: { appliedIndex: 41n } } }); return { unsubscribe() {} }; } }),
+  const running = (history: Record<string, unknown>, complete = true) => ({
+    state: () => ({ subscribe: ({ next }: { next: (s: unknown) => void }) => {
+      next({ dust: { progress: { highestIndex: 41n, isStrictlyComplete: () => complete } } });
+      return { unsubscribe() {} };
+    } }),
     queryTxHistoryByHash: async (h: string) => history[h],
-    dust: { constructor: { configuration: { indexerClientConnection: { indexerWsUrl: 'wss://indexer/ws' } } } },
+    dust: { constructor: { configuration: { indexerClientConnection: { indexerHttpUrl: 'https://indexer/graphql' } } } },
   });
 
   /*
@@ -148,24 +161,50 @@ describe('the fee payer\'s view of the network\'s DUST', () => {
 
   /*
    * RED WHEN: the view says it shows a payment its own history holds without its DUST side.
-   * RED WHEN: the network's newest event is asked of anything but the installed DUST wallet's indexer, from the view's applied event.
+   * RED WHEN: the network's newest block is asked of anything but the installed DUST wallet's indexer, or the view is
+   * judged by anything but the block a finished pass reached.
    */
   it('shows a payment only when the wallet\'s history holds its DUST side, and asks the wallet\'s own indexer', async () => {
-    const asked: Array<[string, bigint | null]> = [];
+    const asked: string[] = [];
     const view = feePayerViewOf(running({ shown: { dust: { spentUtxos: [] } }, partly: { unshielded: {} } }),
-      async (url, from) => { asked.push([url, from]); return 50n; }, () => {})!;
+      async (url) => { asked.push(url); return 50n; }, () => {})!;
     expect(await view.shows('shown')).toBe(true);
     expect(await view.shows('partly')).toBe(false);
     expect(await view.shows('unknown')).toBe(false);
     expect(view.applied()).toBe(41n);
     expect(await view.tip()).toBe(50n);
-    expect(asked).toEqual([['wss://indexer/ws', 41n]]);
-    expect(view.numbers()).toMatch(/^dust applied 41 of 50;/);
+    expect(asked).toEqual(['https://indexer/graphql']);
+    expect(view.numbers()).toMatch(/^dust view at block 41 of 50;/);
+  });
+
+  /* RED WHEN: a view part-way through a pass is said to cover the block its last pass reached. */
+  it('covers no block while the wallet is part-way through catching up', () => {
+    const view = feePayerViewOf(running({}, false), async () => 50n, () => {})!;
+    expect(view.applied()).toBeNull();
   });
 
   /* RED WHEN: an object that is not a running wallet is given a view that waits on nothing it can read. */
   it('gives no view for an object that is not a running wallet', () => {
     expect(feePayerViewOf({})).toBeUndefined();
     expect(feePayerViewOf(null)).toBeUndefined();
+  });
+});
+
+describe('the indexer the fee payer asks for the newest block', () => {
+  it('IS THE RECORD\'S OWN QUERY ADDRESS, CARRYING THE SUBSCRIPTION\'S PROJECT TOKEN', () => {
+    for (const id of NETWORK_IDS.filter((n) => networkRecord(n).endpoints !== null)) {
+      const asking = networkRecord(id).endpoints!.projectToken !== null;
+      const e = endpointsOf(id, () => 'aProjectToken42');
+      /* RED WHEN the query address is cut out of the subscription address by hand, which loses or garbles
+       * the token on a network that asks for one and misses a path that does not end in `/ws`. */
+      expect(indexerHttpOf(e.indexerWs), id).toBe(e.indexer);
+      if (asking) expect(new URL(indexerHttpOf(e.indexerWs)).searchParams.get('project_id'), id).toBe('aProjectToken42');
+    }
+  });
+
+  it('an address no record names is the same path over http, without its /ws and with its query kept', () => {
+    /* RED WHEN an unrecorded subscription address loses its query or keeps its `/ws`. */
+    expect(indexerHttpOf('wss://indexer.example/graphql/ws?key=k')).toBe('https://indexer.example/graphql?key=k');
+    expect(indexerHttpOf('ws://localhost:1/graphql/ws')).toBe('http://localhost:1/graphql');
   });
 });

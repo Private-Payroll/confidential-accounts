@@ -18,9 +18,10 @@
  * Runs in the vault worker, never in the page: the indexer reader reaches the
  * ledger's WebAssembly (see `public-data.ts`). The endpoints are the wallet's
  * own and nothing else; a wallet that names none is refused by name before
- * anything is read.
+ * anything is read. The wallet and the company's service read a company's
+ * account with the same `accountAtOneBlockOver`, each over its own reader.
  */
-import { publicDataProviderFor, refuseEndpointsThatCannotWork, type IndexerEndpoints, type PublicDataProvider } from './public-data.js';
+import { publicDataProviderFor, refuseEndpointsThatCannotWork, type IndexerEndpoints } from './public-data.js';
 import {
   eventOnTheWire, indexerNoteEvents, indexerVaultTransactions, transactionThatCreatedOutput,
   type EventOnTheWire, type NoteEvents, type VaultTransactions,
@@ -32,7 +33,14 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { publicHoldingsOf } from '../../../src/midnight/public-balance.js';
 import { boundedRead } from './read-bound.js';
-import type { AccountCallChainOnTheWire, PayoutChainOnTheWire, VaultOnChainOnTheWire } from './vault-worker-client.js';
+import { decodedState } from '../../../src/midnight/decoded-state.js';
+import type { VaultOnChainOnTheWire } from './vault-worker-client.js';
+import {
+  accountAtOneBlockOver, accountCallChainOf, atOneBlockOver, payoutChainOf, toBase64,
+  type AccountAtOneBlock, type AccountCallChainOnTheWire, type BlockReader, type PayoutChainOnTheWire, type VaultAtOneBlock,
+} from './one-block-read.js';
+export { accountAtOneBlockOver, accountCallChainOf, atOneBlockOver, payoutChainOf };
+export type { AccountAtOneBlock, BlockReader, VaultAtOneBlock };
 
 /** Where the chain is read from: one contract's state now, a vault's transactions, and each transaction's events. */
 export interface VaultChainSource {
@@ -46,13 +54,7 @@ export interface VaultChainSource {
    * the commitment tree, the vault's state and the ledger's parameters, and the
    * account's state. Null while either contract is not held at that block.
    */
-  atOneBlock(vault: string, account: string): Promise<{
-    readonly blockHash: string;
-    readonly zswap: { serialize(): Uint8Array };
-    readonly vault: { serialize(): Uint8Array };
-    readonly parameters: { serialize(): Uint8Array };
-    readonly account: { serialize(): Uint8Array };
-  } | null>;
+  atOneBlock(vault: string, account: string): Promise<VaultAtOneBlock | null>;
   /**
    * The newest block the indexer holds, named first, and as of it the
    * account's state and the ledger's parameters: what a call to the account
@@ -105,53 +107,20 @@ export async function accountPresenceAt(
   return { held: body.data.contractAction !== null, blockHeight: height as number, blockTime: time as number };
 }
 
-/** The part of the indexer's reader that names a block and reads contracts as of it, as the package declares it. */
-export type BlockReader = Pick<PublicDataProvider, 'queryBlock' | 'queryZSwapAndContractState' | 'queryContractState'>;
-
-/**
- * **ONE BLOCK, NAMED FIRST, AND BOTH CONTRACTS READ AS OF IT.** The vault's
- * call reads the account's state inside the same circuit, so the two must be
- * the same moment; the commitment tree comes from that block too, because the
- * chain keeps only a window of past roots a spend may prove against. Null when
- * the indexer names no block, or holds either contract at none.
- */
-export async function atOneBlockOver(
-  r: BlockReader, vault: string, account: string,
-): ReturnType<VaultChainSource['atOneBlock']> {
-  const block = await r.queryBlock();
-  if (block === null) return null;
-  const at = { type: 'blockHash' as const, blockHash: block.hash };
-  const [both, accountState] = await Promise.all([r.queryZSwapAndContractState(vault, at), r.queryContractState(account, at)]);
-  if (both === null || accountState === null || accountState === undefined) return null;
-  const [zswap, vaultState, parameters] = both;
-  return { blockHash: block.hash, zswap, vault: vaultState, parameters, account: accountState };
-}
-
-/**
- * **ONE BLOCK, NAMED FIRST, AND THE ACCOUNT READ AS OF IT, WITH THE LEDGER'S
- * PARAMETERS THE SAME READ GIVES**: what a call to the account alone - a
- * recovery of its record anchor, its proposal and approvals - is built on,
- * from the indexer the person's own wallet names. Null when the indexer names
- * no block, or holds the account at none.
- */
-export async function accountAtOneBlockOver(
-  r: BlockReader, account: string,
-): Promise<NonNullable<Awaited<ReturnType<NonNullable<VaultChainSource['accountAtOneBlock']>>>> | null> {
-  const block = await r.queryBlock();
-  if (block === null) return null;
-  const read = await r.queryZSwapAndContractState(account, { type: 'blockHash' as const, blockHash: block.hash });
-  if (read === null || read === undefined) return null;
-  const [, state, parameters] = read;
-  return { blockHash: block.hash, account: state, parameters };
-}
 
 /** The chain as the indexer the wallet names serves it. */
 export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource => {
   refuseEndpointsThatCannotWork(indexer);
   const reader = publicDataProviderFor(indexer);
   return {
-    contractState: async (address) => (await reader).queryContractState(address),
-    deployState: async (address) => (await (await reader).queryDeployContractState(address)) ?? null,
+    /* Decoded here with the contract runtime, so a refusal can read the state's authority and circuits. */
+    contractState: async (address) => (await import('../../../src/midnight/contract-state-at.js')).contractStateAt(await reader, address),
+    deployState: async (address) => {
+      const read = await (await reader).queryDeployContractState(address);
+      if (read === null) return null;
+      const { ContractState } = await import('@midnight-ntwrk/compact-runtime');
+      return decodedState(read.contractState, ContractState);
+    },
     transactions: indexerVaultTransactions(indexer.indexerUri, indexer.indexerWsUri),
     events: indexerNoteEvents(indexer.indexerUri),
     /*
@@ -167,11 +136,6 @@ export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource 
 };
 
 const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-const toBase64 = (bytes: Uint8Array): string => {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-};
 
 /**
  * **THE VAULT, READ.** `vault` reads a vault's ledger and holds its pure
@@ -295,16 +259,9 @@ async function accountCircuitsOf(
 export async function readChainAtOneBlock(
   source: VaultChainSource, vault: string, account: string,
 ): Promise<PayoutChainOnTheWire | null> {
-  const at = await source.atOneBlock(vault, account);
-  if (at === null) return null;
-  return {
-    blockHash: at.blockHash,
-    vaultState: toBase64(at.vault.serialize()),
-    zswapState: toBase64(at.zswap.serialize()),
-    parameters: toBase64(at.parameters.serialize()),
-    accountState: toBase64(at.account.serialize()),
-  };
+  return payoutChainOf(await source.atOneBlock(vault, account));
 }
+
 
 /**
  * **WHAT A CALL TO THE ACCOUNT ALONE IS BUILT ON, READ AT ONE BLOCK** at the
@@ -316,10 +273,9 @@ export async function readAccountCallChain(source: VaultChainSource, account: st
   if (source.accountAtOneBlock === undefined) {
     throw new Error('this page cannot read the company\'s account at the indexer your wallet names. Reload the page to use the current build');
   }
-  const at = await source.accountAtOneBlock(account);
-  if (at === null) return null;
-  return { blockHash: at.blockHash, accountState: toBase64(at.account.serialize()), parameters: toBase64(at.parameters.serialize()) };
+  return accountCallChainOf(await source.accountAtOneBlock(account));
 }
+
 
 /** Whether the indexer the person's wallet names holds a contract at `account`, with the newest block's time. Throws when it cannot say. */
 export async function readAccountPresence(source: VaultChainSource, account: string): Promise<AccountPresence> {

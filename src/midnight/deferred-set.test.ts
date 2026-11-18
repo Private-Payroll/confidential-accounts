@@ -1,44 +1,30 @@
 /**
- * THE DEFERRED-SET CHECK MOVES WITH THE LIST. S9, emptied by S25.
+ * The deferred-set check moves with the list.
  *
- * `S8c` built `findDeployedPartialContract` to check BOTH directions against
- * `src/midnight/deferral.ts`: the kept circuits' verifier keys must match
- * byte-for-byte, and the deferred circuits must be ABSENT. `S9` changed which
- * circuits defer, and this file was the proof that round owed.
+ * `findDeployedPartialContract` checks both directions against `deferral.ts`: the kept circuits' verifier keys
+ * must match byte for byte, and the deferred circuits must be absent. The deferred list is now empty, because
+ * the contract fits under the ceiling whole, so the absent direction has nothing left to be absent. The tests
+ * that exercised it are not kept iterating an empty list, which would report green while asserting nothing.
+ * What stands in their place is a test that the list is empty and that nothing removed from the contract is
+ * treated as merely deferred. As a result a deployment carrying an operation nobody decided on is not refused by
+ * name; that is a gap in the client and not something a test invents.
  *
- * `S25` EMPTIED THE DEFERRED LIST — `S23` shed `credit` and `attestSolvency`
- * from the contract, and what remained fit under the ceiling whole — so the
- * ABSENT direction has nothing left to be absent. **The tests that
- * exercised it are DELETED rather than left iterating an empty list**, which
- * would report green while asserting nothing. What replaces them is a test
- * that the list IS empty and that nothing shed is treated as merely deferred.
- * The consequence — that a deployment carrying an operation nobody decided is
- * no longer refused by name — is a `BACKLOG.md` row, not a check invented
- * here.
+ * The contract's own circuit set is a change to what is compiled, and this file says so in two places on
+ * purpose: the count below, and the comparison against `contracts/managed/keys/`, which is read off disk and
+ * will disagree until the contract is compiled again. A red line there is this file doing its job, and is not a
+ * number to bring back into agreement by hand.
  *
- * **`C292`/`S26` THEN TOOK `execute` OUT OF THE CONTRACT**, with the account's
- * balance ledger, so the contract's own set is TEN. That is a change to what is
- * COMPILED, and this file says so in two places on purpose: the count below,
- * and the comparison against `contracts/managed/keys/` — which is read off disk
- * and will disagree until `COMPILE-CONTRACT.command` regenerates it. **A red
- * line there is this file doing its job**, and is not a number to bring back
- * into agreement by hand; that is exactly the defect `V-251` was raised for.
+ * Every fixture except three is derived from the lists in `deferral.ts`, so a change to them carries its own
+ * proof rather than a stale copy. The three exceptions are deliberate: the test that pins what is decided (a
+ * silent change to it should fail a test), and the two fixtures that are records of real deployments, the live
+ * account and an older one. Both are written as records and neither tracks the source tree, because what a chain
+ * is carrying does not change when a `.compact` file does.
  *
- * Every fixture except three is DERIVED from the lists in `deferral.ts`, so the
- * next round to change them inherits the proof rather than a stale copy. The
- * three exceptions are deliberate: the test that pins what `S25` decided (a
- * product decision — a silent change to it should fail a test), and the two
- * fixtures that are records of REAL DEPLOYMENTS — the live account and `S8b`'s
- * older one. **Both are written as history and neither tracks the source tree**,
- * because what a chain is carrying does not change when a `.compact` file
- * does.
- *
- * The fake `verifyContractState` MIRRORS the SDK's semantics rather than
- * stubbing them (`midnight-js-contracts/dist/index.mjs:2016-2052`): every
- * requested circuit must exist in the deployed state with a byte-identical
- * verifier key, and every failure is reported by name in one throw. T-34's
- * rule: a stub without the semantics could not fail the way the product would.
+ * The fake `verifyContractState` mirrors the SDK's semantics rather than stubbing them: every requested circuit
+ * must exist in the deployed state with a byte-identical verifier key, and every failure is reported by name in
+ * one throw. A stub without the semantics could not fail the way the product would.
  */
+import { served, testAddress, TEST_SETTINGS } from '../testing/served-state.js';
 import { describe, it, expect, vi } from 'vitest';
 import type { PrivateStateAnswer } from './governed-call.js';
 import { existsSync, readdirSync } from 'node:fs';
@@ -85,7 +71,8 @@ const providersFor = (state: unknown) => {
     names.map((n) => [n, keyFor(n)] as [string, Uint8Array]));
   return {
     providers: {
-      publicDataProvider: { queryContractState: vi.fn(async () => state) },
+      config: TEST_SETTINGS,
+      publicDataProvider: { queryContractState: vi.fn(async () => served(state)) },
       zkConfigProvider: { getVerifierKeys },
     },
     getVerifierKeys,
@@ -97,7 +84,8 @@ const providersFor = (state: unknown) => {
  * dynamically at call time, so `vi.doMock` here governs it.
  */
 vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
-  verifyContractState: (verifierKeys: Array<[string, Uint8Array]>, state: any) => {
+  verifyContractState: async (verifierKeys: Array<[string, Uint8Array]>, servedState: any) => {
+    const state = servedState.deserialize();
     const bad = verifierKeys
       .filter(([name, key]) => {
         const op = state.operation(name);
@@ -117,7 +105,7 @@ const find = async (state: unknown, privateStateId: PrivateStateAnswer = 'a-key:
   const { providers, getVerifierKeys } = providersFor(state);
   const call = findDeployedPartialContract(providers as any, {
     compiledContract: {},
-    contractAddress: 'addr_under_test',
+    contractAddress: testAddress(1),
     privateStateId,
   });
   return { call, getVerifierKeys };
@@ -127,40 +115,34 @@ const find = async (state: unknown, privateStateId: PrivateStateAnswer = 'a-key:
  * the lists themselves
  * ------------------------------------------------------------------ */
 
-describe('the deferral list: S25\'s decision, stated where a diff will show it', () => {
+describe('the deferral list: nothing is deferred, stated where a diff will show it', () => {
   it('defers NOTHING — the whole contract deploys', () => {
-    // Deliberately NOT derived: this is the product decision. A round that
-    // defers a circuit again should have to change this line in the same turn.
+    // Deliberately not derived: this is the product decision. Deferring a circuit again should have to change
+    // this line in the same change.
     expect([...DEFERRED_CIRCUITS]).toEqual([]);
   });
 
-  it('deploys retireVault, which S9 deferred and C288 is the cost of', () => {
+  it('deploys retireVault, because a vault with no retirement has no ending', () => {
     /*
-     * THE POINT OF S25. `S9` deferred `retireVault` on the reasoning that "a
-     * vault cannot be retired on this deployment, which version one accepts".
-     * Version one no longer accepts it — `C288` — and `Vault.compact:1018`
-     * calls `account.retireVault(...)`, so a vault with no retirement has no
-     * ending. A deploy run against a list that defers it again re-opens C288.
+     * `retireVault` was once deferred on the reasoning that a vault cannot be retired on that deployment, but the
+     * vault contract calls `account.retireVault(...)`, so a vault with no retirement has no ending. A deploy
+     * run against a list that defers it again leaves vaults that can never be retired.
      */
     expect(DEPLOYED_CIRCUITS).toContain('retireVault');
     expect(isDeployedCircuit('retireVault')).toBe(true);
     expect(isDeferredCircuit('retireVault')).toBe(false);
   });
 
-  it('treats a REMOVED circuit as absent, not as deferred', () => {
+  it('treats a removed circuit as absent, not as deferred', () => {
     /*
-     * `credit` and `attestSolvency` were shed from the contract by S23, and
-     * `execute` was removed by `C292`/`S26` with the account's balance ledger.
-     * None of the three is deferred — deferred means compiled, tested and left
-     * out of ONE deployment — and anything that asks "is it deferred?" to
-     * decide whether a call can be made would get the wrong answer for a name
-     * that does not exist at all. `scripts/sponsor-test.ts` asks
-     * `isDeployedCircuit` for exactly this reason.
+     * `credit`, `attestSolvency` and `execute` were removed from the contract. None of the three is deferred:
+     * deferred means compiled, tested and left out of one deployment, and anything that asks "is it deferred?"
+     * to decide whether a call can be made would get the wrong answer for a name that does not exist at all.
+     * Callers that decide whether a call can be made ask `isDeployedCircuit` for exactly this reason.
      *
-     * **`execute` IS THE ONE THAT MATTERS HERE AND THE OTHER TWO ARE NOT.** It
-     * is present in the LIVE deployment (see the fixture below) and absent from
-     * the contract, which is the one combination where a predicate answering
-     * "not deferred" could be read as "so it can be called".
+     * `execute` is the one that matters here. It is present in the live deployment (see the fixture below) and
+     * absent from the contract, which is the one combination where a predicate answering "not deferred" could be
+     * read as "so it can be called".
      */
     for (const shed of ['credit', 'attestSolvency', 'execute']) {
       expect(isDeferredCircuit(shed)).toBe(false);
@@ -177,60 +159,32 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
   });
 
   it('the two lists name twenty-two circuits between them, none twice', () => {
-    // Fifteen before the S11 merges (addSigner+removeSigner → amendSigner,
-    // propose+proposeRun → propose), thirteen after them, eleven once S23 shed
-    // credit and attestSolvency, ten since `C292`/`S26` removed `execute` with
-    // the account's balance ledger, eleven since removing a signer and
-    // setting the threshold became one circuit, and TWELVE since each signer
-    // seals the key the record of who was paid for which month is made with,
-    // fourteen with the spending policy, and EIGHTEEN since a run can be held
-    // and released, a signer re-seated with other rights, and the approvals a
-    // policy change needs set on their own, and NINETEEN since a vault's change
-    // that moves no money is approved by a step of its own, TWENTY since a batch
-    // of payees is recorded by a step of its own, TWENTY-ONE since any signer
-    // moves the company's record anchor on, TWENTY-TWO since a quorum can
-    // recover the anchor past a batch nobody can check, and TWENTY-THREE since
-    // a person invited takes their seat from their own wallet by a step of its
-    // own, and adding a signer is no longer a branch of another, and
-    // TWENTY-TWO again since every removal is carried out by the one circuit
-    // that also sets the threshold.
-    
-    // "No overlap" is what this used to claim, and while DEFERRED_CIRCUITS is
-    // empty that claim cannot fail, so it is not made. What IS checked is that
-    // the concatenation has no duplicate — which can fail — and that
-    // assertKnownCircuitSet accepts the set it was built from.
+    // The count is what the source decides today: the set has grown and shrunk as circuits were merged, removed
+    // and added, and this number moves with `deferral.ts` and the compiled contract together.
+    // "No overlap" is not claimed: while DEFERRED_CIRCUITS is empty it cannot fail. What is checked is that the
+    // concatenation has no duplicate, which can fail, and that assertKnownCircuitSet accepts the set it was
+    // built from.
     const all = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS];
     expect(all).toHaveLength(22);
     expect(new Set(all).size).toBe(22);
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
-  it.skipIf(!existsSync(KEY_DIR))('names exactly the circuits the COMPILED CONTRACT has keys for [needs contracts/managed/keys; `npm run compact` builds them]', () => {
+  it.skipIf(!existsSync(KEY_DIR))('names exactly the circuits the compiled contract has keys for [needs contracts/managed/keys; `npm run compact` builds them]', () => {
     /*
-     * READ OFF DISK, NOT TRANSCRIBED, and the difference is the whole point.
+     * Read off disk, not transcribed, and the difference is the whole point.
      *
-     * A hand-written list of eleven names asserted against a hand-written list
-     * of eleven names is green whatever `contracts/` holds — which is exactly
-     * how `S23` shed two circuits and left `deferral.ts` naming thirteen with
-     * every test still passing (`V-251`). `contracts/managed/keys/` is the
-     * deployable set: `partial-contract.ts` asks the zk config provider for a
-     * verifier key per deployed circuit, so a name here without a key on disk
-     * is a deploy that stops, and a key on disk without a name here is a
-     * circuit the deployment silently drops.
+     * A hand-written list of names asserted against a hand-written list of names is green whatever `contracts/`
+     * holds, which is how a contract can shed circuits and leave `deferral.ts` naming them with every test still
+     * passing. `contracts/managed/keys/` is the deployable set: `partial-contract.ts` asks the zk config provider
+     * for a verifier key per deployed circuit, so a name here without a key on disk is a deploy that stops, and
+     * a key on disk without a name here is a circuit the deployment silently drops. The comparison is against
+     * the compiled artefact, so the next contract change fails this line rather than a deploy.
      *
-     * This is the test `V-251` asked for: the comparison is against the
-     * artefact, so the NEXT contract change fails this line rather than a
-     * deploy.
-     *
-     * **AND THAT IS WHAT IT IS DOING NOW, SO READ THE FAILURE BEFORE CHANGING
-     * IT.** `C292`/`S26` removed `execute` from `ConfidentialAccount.compact`
-     * and from `deferral.ts` — TEN — while `contracts/managed/keys/` still
-     * holds the eleven keys of the last compile, `execute.verifier` among them.
-     * The number below is the count the source decides, not a reading of the
-     * directory, so both assertions go red together and for one reason.
-     * **THE DOOR IS `npm run compact`**, followed by the redeploy that
-     * a changed contract already owes. Editing either number to make this green
-     * against a stale artefact is the whole of `V-251`.
+     * If the keys on disk are from an older compile, both assertions go red together and for one reason: the
+     * count below is what the source decides, not a reading of the directory. Compile the contract again
+     * (`npm run compact`) and redeploy what a changed contract owes. Editing either number to make this green
+     * against a stale artefact defeats the test.
      */
     const keyed = [...new Set(
       readdirSync(KEY_DIR)
@@ -252,27 +206,18 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
   });
 
   /*
-   * `it('no deployed circuit is treated as deferred')` WAS HERE AND IS GONE.
-   *
-   * It iterated `DEPLOYED_CIRCUITS` and asked a Set built from
-   * `DEPLOYED_CIRCUITS` whether it held each name, then asked an EMPTY Set
-   * whether it held them. Neither half could go red for any change to either
-   * list. A test that cannot fail is not weaker coverage than one that can —
-   * it is a report that something is checked when nothing is, which is `C286`'s
-   * rule applied to a test file.
+   * There is no test that a deployed circuit is not treated as deferred: it would ask a set built from
+   * `DEPLOYED_CIRCUITS` whether it held each name, then ask an empty set the same, and neither half could go red
+   * for any change to either list. A test that cannot fail reports that something is checked when nothing is.
    */
 });
 
 /* ------------------------------------------------------------------ *
- * direction one: the deferred set must be ABSENT — and it is empty
+ * direction one: the deferred set must be absent, and it is empty
  *
- * The two tests that lived here, both driven by `it.each([...DEFERRED_CIRCUITS])`
- * over a pair of real deferred names, are DELETED by S25 rather than left to
- * iterate nothing: an empty `it.each` reports no failure and proves no
- * property, which is the precise shape of a test that has quietly stopped
- * testing. What they covered — a deployment carrying an operation this client
- * did not decide on is refused BY NAME — is unenforced while the deferred list
- * is empty, and that is a BACKLOG row rather than a check invented here.
+ * There are no tests here that iterate the deferred list: an empty `it.each` reports no failure and proves no
+ * property. What they would cover, that a deployment carrying an operation this client did not decide on is
+ * refused by name, is unenforced while the deferred list is empty.
  * ------------------------------------------------------------------ */
 
 describe('findDeployedPartialContract: the deployment must be exactly the deployed set', () => {
@@ -283,36 +228,24 @@ describe('findDeployedPartialContract: the deployment must be exactly the deploy
     expect(getVerifierKeys).toHaveBeenCalledWith([...DEPLOYED_CIRCUITS]);
   });
 
-  it('refuses the LIVE stagenet shape, because it is missing retireVault', async () => {
+  it('refuses the live stagenet shape, because it is missing retireVault', async () => {
     /*
-     * **NOT DERIVED, AND NOT DERIVABLE. THIS IS A RECORD OF A CHAIN.** Copied
-     * from `.midnight/stagenet-contract.json`, written by the deploy itself:
-     * `90ebef16…`, block 217,275, `SucceedEntirely`, stamped
-     * `2026-08-28T18:47:08Z` — 29 Aug 00:17 IST. `C288` is the row for the fact
-     * that it cannot retire a vault. The client must REFUSE it rather than
-     * build calls against it; the redeploy is what closes C288, not a
-     * reconnection.
+     * Not derived, and not derivable: this is a record of a chain. It is the operation set of the live account
+     * (`90ebef16...`, block 217,275, `SucceedEntirely`, deployed 29 Aug 00:17 IST), which cannot retire a vault.
+     * The client must refuse it rather than build calls against it; a redeploy fixes that, a reconnection does
+     * not.
      *
-     * **IT DOES NOT MOVE WHEN THE SOURCE TREE MOVES, AND THAT IS THE POINT OF
-     * WRITING IT OUT.** `C292`/`S26` took `execute` out of
-     * `ConfidentialAccount.compact`. It did not take it off the chain. Editing
-     * this array to match the new contract would produce a fixture describing a
-     * deployment that has never existed, and would quietly delete the only
+     * It does not move when the source tree moves, and that is the point of writing it out. `execute` was taken
+     * out of the contract source and not off the chain. Editing this array to match the new contract would
+     * produce a fixture describing a deployment that has never existed, and would quietly delete the only
      * statement in `src/` of what the account is actually running.
      *
-     * WHAT DOES THE REFUSING IS THE MISSING `retireVault`, AND NOTHING ELSE.
-     * **This deployment now carries TWO operations this client does not know —
-     * `credit`, shed by `S23`, and `execute`, removed by `C292`/`S26` — and
-     * NEITHER is refused by name.** The deferred-absence check that would have
-     * named them iterates an empty list since `S25`
-     * (`partial-contract.ts:417`), and `verifyContractState` reduces over the
-     * CLIENT's keys, so it is structurally silent about extras. **So this test
-     * would pass identically with both names removed from the fixture, and it
-     * would pass identically with a name nobody ever decided on added to it.**
-     * That is stated rather than fixed: `V-259` is the row, the check it asks
-     * for is a NEW one, and a test file is not where a missing check gets
-     * invented. Under `C286` and rule 27 — nothing enforces the extras
-     * direction today.
+     * What does the refusing is the missing `retireVault` and nothing else. This deployment carries two
+     * operations this client does not know, `credit` and `execute`, and neither is refused by name: the
+     * deferred-absence check iterates an empty list, and `verifyContractState` reduces over the client's keys, so
+     * it is structurally silent about extras. This test would pass identically with both names removed from the
+     * fixture, and identically with a name nobody decided on added to it. Nothing enforces the extras direction
+     * today.
      */
     const live = [
       'adopt', 'amendSigner', 'approve', 'cancel', 'closeExpiredRun', 'credit',
@@ -328,19 +261,13 @@ describe('findDeployedPartialContract: the deployment must be exactly the deploy
  * ------------------------------------------------------------------ */
 
 describe('findDeployedPartialContract: the kept circuits must match byte-for-byte', () => {
-  it('refuses S8b\'s OLD eleven-circuit deployment instead of silently accepting it', async () => {
+  it('refuses an older eleven-circuit deployment instead of silently accepting it', async () => {
     /*
-     * History, written as history: the shape deployed on 28 Aug at
-     * 93ac…9d8, before S9 re-decided the split. **It lacks FIVE circuits this
-     * client now requires** — `adopt`, `amendSigner`, `recordPayment`,
-     * `retireVault`, `setVaultThreshold` — **and carries six the contract no
-     * longer has at all**, `execute` and `credit` among them. A client that
-     * accepted it would build proofs against an operations map nobody chose —
-     * C231's money shape, the exact defect this check exists to stop.
-     *
-     * The counts moved because the CONTRACT moved (`S11`'s merges, `S23`'s
-     * shed, `C292`/`S26`'s removal of `execute`). **The array did not**, and
-     * must not: it is what block 215,346 is carrying.
+     * The shape deployed on 28 Aug at 93ac...9d8, before the split was re-decided. It lacks five circuits this
+     * client now requires (`adopt`, `amendSigner`, `recordPayment`, `retireVault`, `setVaultThreshold`) and
+     * carries six the contract no longer has at all, `execute` and `credit` among them. A client that accepted it
+     * would build proofs against an operations map nobody chose, which is the exact defect this check exists to
+     * stop. The array does not move when the contract does, and must not: it is what that block is carrying.
      */
     const oldEleven = [
       'addSigner', 'approve', 'attestSolvency', 'cancel', 'closeExpiredRun',

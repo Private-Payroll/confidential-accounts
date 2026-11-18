@@ -19,23 +19,18 @@ const CHAIN = {
 const hex = (b: unknown) => Buffer.from(b as Uint8Array).toString('hex');
 
 const standIns = () => {
-  const asked: Array<{ circuitId: string; contractAddress: string; args: unknown[]; served: (a: string, at?: { blockHash?: string }) => Promise<unknown> }> = [];
+  const asked: Array<{ circuitId: string; contractAddress: string; args: readonly unknown[]; account: unknown }> = [];
   const proved: Array<string | undefined> = [];
   const deps: VaultBuilderDeps = {
     ledger: {
       ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk' }) },
-      ZswapChainState: { deserialize: () => ({}) },
-      LedgerParameters: { deserialize: () => ({}) },
     },
     runtimeState: { deserialize: (b: Uint8Array) => ({ state: b[0] }) },
     contracts: {
-      createUnprovenDeployTxFromVerifierKeys: async () => { throw new Error('no deploy here'); },
-      createUnprovenCallTxFromInitialStates: async (
-        _zk: unknown, options: { circuitId: string; contractAddress: string; args: unknown[] }, _epk: unknown,
-        read: { publicDataProvider: { queryContractState: (a: string, at?: { blockHash?: string }) => Promise<unknown> } },
-      ) => {
-        asked.push({ ...options, served: read.publicDataProvider.queryContractState });
-        return { private: { unprovenTx: 'unproven' } };
+      buildDeploy: async () => { throw new Error('no deploy here'); },
+      buildCall: async (_zk, call) => {
+        asked.push({ circuitId: call.circuitId, contractAddress: call.contractAddress, args: call.args ?? [], account: call.account });
+        return { private: { unprovenTx: 'unproven' as never, transaction: null, nextZswapLocalState: null } };
       },
     },
     compiled: {},
@@ -57,10 +52,8 @@ describe('a vault retired from the device that carries it', () => {
     expect(proved).toEqual(['retire']);
     /* RED WHEN: the proposal and the salt swap places, or either is not the one approved. */
     expect(asked[0]!.args.map(hex)).toEqual([PROPOSAL, SALT]);
-    /* RED WHEN: the account's state is served for another contract or another block than the one the call was read at. */
-    expect(await asked[0]!.served(ACCOUNT, { blockHash: CHAIN.blockHash })).toEqual({ state: 4 });
-    expect(await asked[0]!.served(VAULT, { blockHash: CHAIN.blockHash })).toBeNull();
-    expect(await asked[0]!.served(ACCOUNT, { blockHash: '98'.repeat(32) })).toBeNull();
+    /* RED WHEN: the vault's call reads any account but the company's, or its state at any block but the one the call was read at. */
+    expect(asked[0]!.account).toEqual({ address: ACCOUNT, state: CHAIN.accountState, blockHash: CHAIN.blockHash });
   });
 
   it('BUILDS NOTHING FOR A PROPOSAL, A SALT, A VAULT OR AN ACCOUNT THAT IS NOT THIRTY-TWO BYTES', async () => {

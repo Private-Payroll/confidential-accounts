@@ -11,6 +11,8 @@ import { straightFromTheOwnWallet, type FeeAndSubmit, type OwnWalletDoors } from
 import { handOverFor, handOverMarked } from '../actions/company-reach.js';
 import { handedOver, NotHandedOver } from '../../../../packages/web-shared/src/hand-over.js';
 import type { StepContext } from '../actions/definition.js';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 const ACCOUNT = 'ac'.repeat(32);
 const VAULT = 'fa'.repeat(32);
@@ -19,8 +21,8 @@ const intentOf = (actions: readonly unknown[], over: Record<string, unknown> = {
   ({ actions, guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined, ...over });
 
 /** The person's own wallet: the proven call read as the one call to `to` its words name; each send and undo logged. */
-const aWallet = (log: string[], made?: ReadonlyMap<string, unknown>): OwnWalletDoors => ({
-  ledger: async () => ({
+const aWallet = (log: string[], made?: ReadonlyMap<string, unknown>): OwnWalletDoors => {
+  const ledger = {
     Transaction: {
       deserialize: (_s: 'signature', _p: 'proof', _b: 'pre-binding' | 'binding', raw: Uint8Array) => {
         if (made?.has(Buffer.from(raw).toString())) return made.get(Buffer.from(raw).toString());
@@ -45,22 +47,28 @@ const aWallet = (log: string[], made?: ReadonlyMap<string, unknown>): OwnWalletD
         return { guaranteedOffer: undefined, fallibleOffer: undefined, intents, imbalances: () => new Map(), identifiers };
       },
     },
-  }) as never,
-  keys: () => ({ shieldedSecretKeys: 'shielded', dustSecretKey: 'dust' }),
-  signSegment: () => (async () => 'signed') as never,
-  facade: async () => ({
-    dust: { state: { subscribe: (w: { next: (s: unknown) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } } as never,
-    balanceUnboundTransaction: async (call: never, _k: unknown, options: { tokenKindsToBalance: string[] }) => {
-      log.push(`fee in ${options.tokenKindsToBalance.join(',')}`);
-      return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, intentOf([], { dustActions: { spends: [1], registrations: [] } })]]) } };
-    },
-    signRecipe: async (r: never) => r,
-    finalizeRecipe: async (r: never) => r,
-    submitTransaction: async (tx: { intents?: Map<number, unknown> }) => { log.push(tx.intents?.has(2) === true && log.includes('sponsored') ? 'sent as sponsored' : 'sent'); },
-    revert: async () => { log.push('fee undone'); },
-  }),
-  stop: async () => { log.push('stopped'); },
-});
+  };
+  return {
+    ledger: async () => ledger as never,
+    signSegment: () => (async () => 'signed') as never,
+    facade: async () => ({
+      dust: { state: { subscribe: (w: { next: (s: unknown) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } } as never,
+      state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+      /* A handle the facade adopts carries the transaction its bytes are, read as the ledger reads them. */
+      adoptTransaction: (bytes: Uint8Array) => ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes),
+      balanceUnboundTransaction: async (call: never, options: { tokenKindsToBalance?: 'all' | string[] }) => {
+        const kinds = options.tokenKindsToBalance;
+        log.push(`fee in ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
+        return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, intentOf([], { dustActions: { spends: [1], registrations: [] } })]]) } };
+      },
+      signRecipe: async (r: never) => r,
+      finalizeRecipe: async (r: never) => r,
+      submitTransaction: async (tx: { intents?: Map<number, unknown> }) => { log.push(tx.intents?.has(2) === true && log.includes('sponsored') ? 'sent as sponsored' : 'sent'); },
+      revert: async () => { log.push('fee undone'); },
+    }) as never,
+    stop: async () => { log.push('stopped'); },
+  };
+};
 
 const anAct = (fields: Record<string, string>, account: number | null = 0) => ({
   intent: { name: 'approve-proposal', fields }, held: { identity: {} as never, ...(account === null ? {} : { account }) },
@@ -75,6 +83,19 @@ describe('A CALL SENT STRAIGHT TO THE CHAIN', () => {
     });
     /* RED WHEN: the wallet pays in anything but DUST, sends nothing, or is left running. */
     expect(log).toEqual(['fee in dust', 'sent', 'stopped']);
+  });
+
+  it('a wallet whose facade is held before this wallet\'s ledger reads nothing, pays nothing and sends nothing, and says what clears it', async () => {
+    // RED WHEN: the call is handed to a facade still acting before the production v9 fork, which reads it with the earlier ledger
+    const log: string[] = [];
+    const behind = (): OwnWalletDoors => {
+      const w = aWallet(log);
+      return { ...w, facade: async () => ({ ...(await w.facade()), state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 - 1n }) }) as never };
+    };
+    await expect(straightFromTheOwnWallet(behind, Date.now, () => true)(b64({ circuit: 'approve', to: ACCOUNT }), {
+      kind: 'account-call', contract: ACCOUNT, circuit: 'approve',
+    })).rejects.toThrow(/could not learn from the network which ledger version.*asks the network again/su);
+    expect(log.filter((l) => l !== 'stopped')).toEqual([]);
   });
 
   it('a call to another contract, another circuit or a vault named as the account is refused before anything is paid, and says nothing was sent', async () => {

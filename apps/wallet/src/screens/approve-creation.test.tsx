@@ -7,9 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity/keys/derivation';
 import { parseAsk, REQUEST_SCHEMA, type CreationRequest } from 'midnight-identity/profile/request';
@@ -71,30 +69,37 @@ const ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 beforeAll(async () => {
   if (!ON_DISK) return;
-  setNetworkId(NET as never);
   /*
-   * The device's own builder, loaded by a path this app's typecheck does not
-   * follow: it reaches the service's modules, which are checked under their own
-   * settings and not this app's.
+   * The device's own builder, and the call builders the product hands it,
+   * loaded by paths this app's typecheck does not follow: they reach the
+   * service's modules, which are checked under their own settings and not this
+   * app's. Which compiler built the keys is read through the node provider: it
+   * reads one small file, which works under this test's DOM.
    */
   const builder = '../../../../packages/web-shared/src/vault-builder.js';
+  const calls = '../../../../contracts/test/the-calls-the-product-builds.js';
+  const { callsTheProductBuilds } = (await import(/* @vite-ignore */ calls)) as { callsTheProductBuilds: () => unknown };
+  const { NodeZkConfigProvider } = await import('@midnight-ntwrk/midnight-js-node-zk-config-provider');
+  const built = new NodeZkConfigProvider(join(KEYS, '..'));
   const { buildAccountDeploy } = (await import(/* @vite-ignore */ builder)) as {
     buildAccountDeploy: (deps: unknown, input: unknown) => Promise<{ proven: Uint8Array; address: string }>;
   };
-  const built = await buildAccountDeploy({
-    ledger: L, runtimeState: (runtime as any).ContractState, contracts: contracts as any, network: NET,
+  const made = await buildAccountDeploy({
+    ledger: L, runtimeState: (runtime as any).ContractState, contracts: callsTheProductBuilds(), network: NET,
     accountCompiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
       CompiledContract.withWitnesses(witnesses as never)),
     /* The key files read here rather than through the node provider, whose reads fail under this test's DOM. */
     accountKeys: {
       getVerifierKey: async (c: string) => keyFile(c),
       getVerifierKeys: async (cs: readonly string[]) => cs.map((c) => [c, keyFile(c)] as [string, Uint8Array]),
+      /* Which compiler built these keys is read from the build itself, so the deploy is built for this ledger. */
+      getArtifactRuntimeVersion: () => built.getArtifactRuntimeVersion(),
     },
     prove: async (tx: any) => tx.prove({
       check: async () => { throw new Error('asked to check'); }, prove: async () => { throw new Error('asked to prove'); }, lookupKey: async () => undefined,
     } as never, L.CostModel.initialCostModel()),
   } as never, { foundingLeaf: '7c'.repeat(32), label: LABEL, foundingKey: committeeKeyFor(identity, LABEL) });
-  deploy = { proven: built.proven, address: built.address };
+  deploy = { proven: made.proven, address: made.address };
 }, 120_000);
 
 const askOf = (over: Record<string, unknown> = {}) => parseAsk({

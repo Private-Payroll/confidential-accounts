@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { Worker as ThreadWorker } from 'node:worker_threads';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../../../../contracts/managed/contract/index.js';
 import { witnesses } from '../../../../contracts/src/witnesses.js';
 import { privateStateFor, leafOfDevice, COMPANY_LABEL } from '../../../../contracts/test/simulator.js';
@@ -119,7 +118,6 @@ describe.skipIf(!KEYS_HERE)('THE WALLET ANCHORS THE COMPANY\'S RECORDS WITH ITS 
   });
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     const init = await new (accountModule as any).Contract(witnesses).initialState(
       runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), COMPANY_LABEL);

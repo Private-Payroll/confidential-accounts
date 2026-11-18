@@ -2,7 +2,7 @@
  * WHAT IS WRITTEN DOWN WHEN A VAULT IS CREATED, AND WHERE.
  *
  * The account has one deployment and one file: `.midnight/<network>-contract.json`,
- * written by `scripts/deploy-preview.ts`. **A company has MANY vaults**, so a
+ * written by the deploy script. **A company has MANY vaults**, so a
  * vault cannot borrow that shape, and the three questions the account's record
  * never had to answer are answered here.
  *
@@ -26,11 +26,11 @@
  * Three reasons, and the first two are the ones that decide it:
  *
  *   · **The name has to exist BEFORE the address does.** The maintenance
- *     authority is chosen before the deploy — that is the whole of `C225` —
+ *     authority is chosen before the deploy —
  *     and a file keyed by address cannot be written until after the deploy has
  *     already used it. So the choice is filed under the name, and the address
  *     joins it afterwards.
- *   · **`C236`: A VAULT'S RAW ADDRESS MUST NEVER REACH A SCREEN.** A filename
+ *   · **A VAULT'S RAW ADDRESS MUST NEVER REACH A SCREEN.** A filename
  *     is a screen — it is in every listing, every error, every backup log. A
  *     file called `vault-authority-<64 hex>.json` puts the one value that
  *     destroys money in front of somebody every time they open a folder.
@@ -58,7 +58,7 @@
  *
  * So `addVault` throws on a name that is taken, and says what to do: pick
  * another name for the new one, or — if the first really is finished with —
- * move its entry aside deliberately, the same manual step `S9` made step zero
+ * move its entry aside deliberately, the same manual step that comes first
  * for the account's authority file, because no code can tell stale from
  * precious.
  *
@@ -66,7 +66,7 @@
  * 4. WHERE THE AUTHORITY CHOICE IS RECORDED, GIVEN THERE ARE MANY
  *
  * `.midnight/vault-authority-<name>.json`, **one per vault**, beside
- * `.midnight/maintenance-authority.json` which is and stays the ACCOUNT's.
+ * the account's own maintenance-authority file, which is and stays the ACCOUNT's.
  * Gitignored with the rest of `.midnight/`, because in `single-key` mode the
  * file holds key material.
  *
@@ -79,12 +79,12 @@
  *     two payments out of different pots have nothing to say to each other;
  *     a shared authority puts that back.
  *   · The account's key is already recorded as a TEMPORARY state, with a
- *     `fixedBy` naming the round that replaces it. Reusing it for vaults would
+ *     `fixedBy` naming what replaces it. Reusing it for vaults would
  *     silently extend a temporary decision to contracts that did not exist when
- *     it was taken — and the round that replaces the account's deployment would
+ *     it was taken — and whatever replaces the account's deployment would
  *     then be replacing every vault's authority as a side effect nobody wrote
  *     down.
- *   · A per-vault file inherits `S9`'s move-aside discipline for free: a stale
+ *   · A per-vault file inherits the same move-aside discipline for free: a stale
  *     file is refused per vault rather than silently inherited by all of them.
  *
  * **What it costs, stated rather than engineered around:** N keys to hold and
@@ -121,7 +121,7 @@ export function assertVaultName(name: string): string {
         'It is narrow because the name becomes a FILENAME and a record key: a name carrying a ' +
         'slash, a dot or a space is one that can escape a directory or shadow another vault. ' +
         'And it is a name rather than an address because a vault\'s address must never reach a ' +
-        'screen — C236.',
+        'screen.',
     );
   }
   return name;
@@ -179,7 +179,7 @@ export function mintedSignerIds(
           'record names the signer by ID and nothing else. Replacing the secret behind an id ' +
           'leaves every pool wrapped to the old key openable by nobody, with nothing on chain ' +
           "or on disk to say so — and a pool key is the only record of a note's nonce, colour " +
-          'and value (C284), which a commitment on chain cannot be inverted to recover. C275.' +
+          'and value, which a commitment on chain cannot be inverted to recover.' +
           `\n\nIf these signers really must be replaced for "${name}", that is a RE-SEAL of ` +
           "that vault's pool by somebody who can already open it, not an edit of a key file. " +
           'There is no door for it today and this refusal is not going to pretend otherwise.',
@@ -226,7 +226,7 @@ export interface VaultEntry {
    * it before authorising a payment — `recordPayment` does not, deliberately
    * (`ConfidentialAccount.compact`, the note above `retireVault`). So this
    * field can be wrong in either direction without any money moving that
-   * should not have. It is here because `C127`'s shape is the reason `vaults`
+   * should not have. It is here because that shape is the reason `vaults`
    * exists at all: a vault that has been FUNDED and has never PAID appears
    * nowhere on chain, and a company that lost its devices could not find it.
    */
@@ -448,7 +448,7 @@ export function describeVaultForReport(entry: VaultEntry): string[] {
     `maintenance authority ${a.kind} — committee of ${a.committeeSize}, threshold ${a.threshold}` +
       (a.fixedBy ? `  (TEMPORARY, replaced by: ${a.fixedBy})` : ''),
     `adopted by the account ${entry.adopted ? 'yes' : 'not yet — adopt is a governed round on the account'}`,
-    'address               NOT SHOWN, AND NEVER WILL BE. C236: a plain send to a vault\'s',
+    'address               NOT SHOWN, AND NEVER WILL BE: a plain send to a vault\'s',
     '                      address is money on chain that nobody can spend, permanently, and',
     '                      no contract can refuse it. Funding a vault is a deposit CALL.',
   ];

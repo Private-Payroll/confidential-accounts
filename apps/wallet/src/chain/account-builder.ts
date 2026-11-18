@@ -4,10 +4,13 @@ import {
 } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { ACCOUNT_CIRCUITS_THE_WALLET_PROVES } from './account-circuits.js';
 import { makePinnedKeyMaterialProvider, type PinnedKeyMaterialOptions } from './key-material.js';
-import { keptProvers, makeBrowserProvingService, type ProofEvent } from './proving.js';
+import { builderProving, keptProvers, type ProofEvent } from './proving.js';
 import { describeFailure } from '../lib/failure-text.js';
 import { buildAccountDeploy, creationCarriedAgain, finishedCreation } from '../../../../packages/web-shared/src/vault-builder.js';
-import { zkConfigOver } from '../../../../packages/web-shared/src/zk-config.js';
+import { zkConfigOver, byCircuitName, runtimeVersionOf, verifierOnlySource } from '../../../../packages/web-shared/src/zk-config.js';
+import type { ContractCalls } from '../../../../packages/web-shared/src/contract-call-built.js';
+import { accountTreeOf, contractPieces } from './contract-pieces.js';
+import ACCOUNT_MANIFEST from '../../../../contracts/managed/compiler/contract-manifest.json' with { type: 'json' };
 
 /**
  * THE WALLET'S ACCOUNT BUILDER: a signer's call to the company account, built
@@ -123,6 +126,9 @@ const toBase64 = (bytes: Uint8Array): string => {
 const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 const HEX64 = /^[0-9a-f]{64}$/iu;
 
+/** What the account builder loads once: everything a build needs but the network, which each ask names. */
+export type AccountBuildingDeps = Omit<GovernedCallDeps, 'network' | 'contracts'> & { readonly contracts: ContractCalls };
+
 export interface AccountBuilderOptions {
   /** Where the wallet's own key material is read from, and who is told when it is not kept. */
   readonly keyMaterial?: Omit<PinnedKeyMaterialOptions, 'accountCircuits' | 'compiledVerifierKeys'>;
@@ -140,48 +146,34 @@ export interface AccountBuilderOptions {
  * was compiled with: a proof with keys from another compile is refused before
  * it starts.
  */
-export const accountBuilderDeps = (options: AccountBuilderOptions = {}): (() => Promise<GovernedCallDeps>) => {
-  let loaded: Promise<GovernedCallDeps> | null = null;
+export const accountBuilderDeps = (options: AccountBuilderOptions = {}): (() => Promise<AccountBuildingDeps>) => {
+  let loaded: Promise<AccountBuildingDeps> | null = null;
   return () => {
     loaded ??= (async () => {
-      const [ledger, runtime, contracts, compactJs, account, accountWitnesses] = await Promise.all([
-        import('@midnightntwrk/ledger-v9'),
-        import('@midnight-ntwrk/compact-runtime'),
-        import('@midnight-ntwrk/midnight-js-contracts'),
-        import('@midnight-ntwrk/compact-js'),
-        import('../../../../contracts/managed/contract/index.js'),
-        import('../../../../contracts/src/witnesses.js'),
-      ]);
+      const { ledger, runtime, compactJs, account, accountWitnesses, contracts } = await contractPieces();
       const keyMaterial = makePinnedKeyMaterialProvider({
         ...options.keyMaterial,
         accountCircuits: ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
         compiledVerifierKeys: (account as unknown as { expectedVk: Readonly<Record<string, string>> }).expectedVk,
       });
-      const service = makeBrowserProvingService(keyMaterial, {
+      const prove = builderProving(keyMaterial, {
         ...(options.provers === undefined ? {} : { provers: options.provers }),
         ...(options.onProof === undefined ? {} : { onProof: options.onProof }),
       });
       const CompiledContract = (compactJs as unknown as { CompiledContract: any }).CompiledContract;
       return {
         ledger,
-        runtimeState: (runtime as any).ContractState,
-        accountTree: {
-          StateBoundedMerkleTree: (runtime as any).StateBoundedMerkleTree,
-          CompactTypeBytes: (runtime as any).CompactTypeBytes,
-          CompactTypeMerkleTreeDigest: (runtime as any).CompactTypeMerkleTreeDigest,
-        },
-        contracts: contracts as any,
+        runtimeState: runtime.ContractState,
+        accountTree: accountTreeOf(runtime),
+        contracts,
         accountCompiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
           CompiledContract.withWitnesses((accountWitnesses as any).witnesses)),
-        accountZkConfig: {
-          getVerifierKey: (circuit: string) => keyMaterial.accountVerifierKey(circuit),
-          getVerifierKeys: async (circuits: readonly string[]) =>
-            Promise.all(circuits.map(async (c): Promise<[string, Uint8Array]> => [c, await keyMaterial.accountVerifierKey(c)])),
-        },
+        accountZkConfig: zkConfigOver(verifierOnlySource((c) => keyMaterial.accountVerifierKey(c), 'the company account'), byCircuitName,
+          runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')),
         accountPure: (account as any).pureCircuits,
         accountLedger: (account as any).ledger,
-        prove: async (unproven: any) => service.prove(unproven) as Promise<{ serialize(): Uint8Array }>,
-      } as GovernedCallDeps;
+        prove,
+      } as AccountBuildingDeps;
     })();
     loaded.catch(() => { loaded = null; });
     return loaded;
@@ -213,7 +205,39 @@ const verifiersOf = (verifiers: ReadonlyArray<readonly [string, string]>) => {
         if (kind !== 'verifier' || key === undefined) throw new Error(`this wallet holds no ${kind} for "${circuit}" to build the account with.`);
         return key;
       },
-    } as never, (circuit) => circuit),
+    }, (circuit) => circuit, runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')),
+  };
+};
+
+/** Where a signer's pay-record key stands on the account, and the key sealed to the wrapping key; refuses an ask that is not four keys. */
+const payKeyStandingAnswer = async (
+  d: AccountBuildingDeps, ask: Extract<AccountBuilderAsk, { ask: 'pay-key-standing' }>,
+): Promise<AccountBuilderAnswer> => {
+  if (![ask.account, ask.key, ask.signingSecret, ask.wrappingPublicKey].every((h) => HEX64.test(String(h)))) {
+    throw new Error('that is not an account, a pay-record key, a signer\'s key and a wrapping key, so nothing was read.');
+  }
+  const [{ payKeyStandingOf }, { sealPayKeyTo }] = await Promise.all([
+    import('../../../../src/midnight/pay-key-round.js'),
+    import('../../../../src/midnight/run-keys.js'),
+  ]);
+  const P = d.accountPure as unknown as Parameters<typeof payKeyStandingOf>[0];
+  const ledger = d.accountLedger!((d.runtimeState.deserialize(fromBase64(ask.accountState)) as { data: unknown }).data);
+  const s = payKeyStandingOf(P, {
+    address: ask.account.toLowerCase(), account: ledger as never, key: ask.key.toLowerCase() as never,
+    secretKey: ask.signingSecret.toLowerCase() as never,
+  });
+  return {
+    id: ask.id, ok: true, ask: 'pay-key-standing',
+    standing: {
+      committed: s.committed, isThisKey: s.isThisKey, sealedMine: s.sealedMine,
+      round: {
+        commitment: s.round.commitment, payload: s.round.payload, salt: s.round.salt, proposal: s.round.proposal,
+        open: s.round.open, approvals: String(s.round.approvals), needed: String(s.round.needed), stale: s.round.stale,
+        approvedHere: s.round.approvedHere,
+      },
+      noVault: hexOf(P.noVault()),
+      wrap: sealPayKeyTo(ask.key.toLowerCase() as never, ask.wrappingPublicKey.toLowerCase() as never),
+    },
   };
 };
 
@@ -224,15 +248,14 @@ const verifiersOf = (verifiers: ReadonlyArray<readonly [string, string]>) => {
  * nothing is proved.
  */
 export const answerAccountAsk = async (
-  deps: () => Promise<GovernedCallDeps>,
+  deps: () => Promise<AccountBuildingDeps>,
   ask: AccountBuilderAsk,
 ): Promise<AccountBuilderAnswer> => {
   try {
-    const d = await deps();
-    if (ask.ask !== 'pay-key-standing') {
-      const { setNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
-      setNetworkId(ask.network as never);
-    }
+    const loaded = await deps();
+    if (ask.ask === 'pay-key-standing') return await payKeyStandingAnswer(loaded, ask);
+    /* The network travels with each ask into what it builds; the builder holds no network of its own. */
+    const d = { ...loaded, network: ask.network };
     switch (ask.ask) {
       case 'governed-call': {
         const built = await buildGovernedCall(d, {
@@ -254,37 +277,9 @@ export const answerAccountAsk = async (
         });
         return { id: ask.id, ok: true, ask: 'recover-anchor', tx: toBase64(built.proven), placement: built.placement };
       }
-      case 'pay-key-standing': {
-        if (![ask.account, ask.key, ask.signingSecret, ask.wrappingPublicKey].every((h) => HEX64.test(String(h)))) {
-          throw new Error('that is not an account, a pay-record key, a signer\'s key and a wrapping key, so nothing was read.');
-        }
-        const [{ payKeyStandingOf }, { sealPayKeyTo }] = await Promise.all([
-          import('../../../../src/midnight/pay-key-round.js'),
-          import('../../../../src/midnight/run-keys.js'),
-        ]);
-        const P = d.accountPure as unknown as Parameters<typeof payKeyStandingOf>[0];
-        const ledger = d.accountLedger!((d.runtimeState.deserialize(fromBase64(ask.accountState)) as { data: unknown }).data);
-        const s = payKeyStandingOf(P, {
-          address: ask.account.toLowerCase(), account: ledger as never, key: ask.key.toLowerCase() as never,
-          secretKey: ask.signingSecret.toLowerCase() as never,
-        });
-        return {
-          id: ask.id, ok: true, ask: 'pay-key-standing',
-          standing: {
-            committed: s.committed, isThisKey: s.isThisKey, sealedMine: s.sealedMine,
-            round: {
-              commitment: s.round.commitment, payload: s.round.payload, salt: s.round.salt, proposal: s.round.proposal,
-              open: s.round.open, approvals: String(s.round.approvals), needed: String(s.round.needed), stale: s.round.stale,
-              approvedHere: s.round.approvedHere,
-            },
-            noVault: hexOf(P.noVault()),
-            wrap: sealPayKeyTo(ask.key.toLowerCase() as never, ask.wrappingPublicKey.toLowerCase() as never),
-          },
-        };
-      }
       case 'account-deploy': {
         const built = await buildAccountDeploy({
-          ledger: d.ledger, runtimeState: d.runtimeState, contracts: d.contracts as never, prove: d.prove, network: ask.network,
+          ledger: d.ledger, runtimeState: d.runtimeState, contracts: d.contracts, prove: d.prove, network: ask.network,
           accountCompiled: d.accountCompiled, accountKeys: verifiersOf(ask.verifiers).zkConfig, now: clockOf(ask.now),
         } as never, { foundingLeaf: ask.foundingLeaf, label: ask.label, foundingKey: ask.foundingKey });
         return { id: ask.id, ok: true, ask: 'account-deploy', account: built.address, tx: toBase64(built.proven) };
@@ -324,7 +319,7 @@ export interface WorkerScopeLike {
  */
 export const startAccountBuilder = (
   scope: WorkerScopeLike,
-  deps?: () => Promise<GovernedCallDeps>,
+  deps?: () => Promise<AccountBuildingDeps>,
 ): void => {
   let current: number | null = null;
   const say = (word: AccountBuilderWord): void => { try { scope.postMessage(word); } catch { /* the starter has gone */ } };

@@ -6,8 +6,11 @@ import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import * as midnightTypes from '@midnight-ntwrk/midnight-js-types';
+import { contractCallsOf } from './contract-call-built.js';
+import { transactionSettingsFor } from '../../../src/midnight/providers.js';
+import { accountModuleFor } from '../../../src/midnight/contract-modules.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
 import { keysOnDisk, VAULT_KEYS } from '../../../contracts/test/keys-on-disk.js';
 import type { Committee } from '../../../src/midnight/vault-committee.js';
@@ -30,7 +33,8 @@ const committee: Committee = { committee: [vk(1), vk(2)].sort((a, b) => (a.value
 const keyFile = async (c: string) => new Uint8Array(readFileSync(join(MANAGED, 'keys', `${c}.verifier`)));
 const expected = (vaultModule as unknown as { expectedVk: Record<string, string> }).expectedVk;
 const deps = (): VaultBuilderDeps => ({
-  ledger: L, runtimeState: (runtime as any).ContractState, contracts: contracts as any, network: NET,
+  ledger: L, runtimeState: (runtime as any).ContractState, network: NET,
+  contracts: contractCallsOf({ contracts, types: midnightTypes, ledger: L, ContractState: runtime.ContractState, settingsFor: transactionSettingsFor, accountModuleFor }),
   compiled: CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
     CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('no'); }, nonceSecret: () => { throw new Error('no'); } } as never)),
   zkConfig: new NodeZkConfigProvider(MANAGED),
@@ -58,7 +62,6 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
   let born: { address: string; proven: Uint8Array };
   let other: { address: string; proven: Uint8Array };
   beforeAll(async () => {
-    setNetworkId(NET as never);
     born = await buildVaultBornHeld(deps(), { account: ACCOUNT, holders: committee });
     other = await buildVaultBornHeld(deps(), { account: ACCOUNT, holders: { committee: [vk(3)], threshold: 1 } });
   }, 120_000);

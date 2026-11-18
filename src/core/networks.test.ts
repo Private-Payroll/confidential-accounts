@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  NETWORK_IDS, endpointsOf, isNetworkId, networkRecord, recordsFrom, websocketNodeOf,
+  NETWORK_IDS, endpointsOf, isNetworkId, networkRecord, recordsFrom, shownAddress, websocketNodeOf,
 } from './networks.js';
 
 /**
@@ -21,7 +21,7 @@ import {
 
 const AT_LEAST_ONE = (id: string) => ({
   version: 1,
-  networks: { [id]: { id, kind: 'test', label: 'A network', endpoints: null } },
+  networks: { [id]: { id, kind: 'test', label: 'A network', testToken: null, endpoints: null } },
 });
 
 describe('§1 the document, and what the reader will not take', () => {
@@ -50,8 +50,8 @@ describe('§1 the document, and what the reader will not take', () => {
   });
 
   it('REFUSES A RECORD MISSING A FIELD, AND `null` IS NOT MISSING', () => {
-    const ok = { id: 'stagenet', kind: 'test', label: 'A network', endpoints: null };
-    for (const field of ['id', 'kind', 'label', 'endpoints']) {
+    const ok = { id: 'stagenet', kind: 'test', label: 'A network', testToken: null, endpoints: null };
+    for (const field of ['id', 'kind', 'label', 'testToken', 'endpoints']) {
       const short: Record<string, unknown> = { ...ok };
       delete short[field];
       /*
@@ -75,7 +75,7 @@ describe('§1 the document, and what the reader will not take', () => {
      */
     expect(() => recordsFrom({
       version: 1,
-      networks: { stagenet: { id: 'preview', kind: 'test', label: 'x', endpoints: null } },
+      networks: { stagenet: { id: 'preview', kind: 'test', label: 'x', testToken: null, endpoints: null } },
     })).toThrow(/carries the id "preview", and a record's key is its id/);
   });
 
@@ -87,20 +87,20 @@ describe('§1 the document, and what the reader will not take', () => {
      */
     for (const kind of ['testing', 'Test', '', 'staging', null, 1]) {
       expect(() => recordsFrom({
-        version: 1, networks: { stagenet: { id: 'stagenet', kind, label: 'x', endpoints: null } },
+        version: 1, networks: { stagenet: { id: 'stagenet', kind, label: 'x', testToken: null, endpoints: null } },
       }), JSON.stringify(kind)).toThrow(/is either "test" or "real"/);
     }
   });
 
   it('REFUSES endpoints that are half written, and takes null for the ones that may be absent', () => {
     const full = {
-      node: 'https://n', nodeWs: null, indexer: 'https://i', indexerWs: 'wss://i', faucet: null,
+      node: 'https://n', nodeWs: null, indexer: 'https://i', indexerWs: 'wss://i', faucet: null, projectToken: null,
     };
     const withEndpoints = (e: unknown) => () => recordsFrom({
-      version: 1, networks: { stagenet: { id: 'stagenet', kind: 'test', label: 'x', endpoints: e } },
+      version: 1, networks: { stagenet: { id: 'stagenet', kind: 'test', label: 'x', testToken: null, endpoints: e } },
     });
     expect(withEndpoints(full)).not.toThrow();
-    for (const key of ['node', 'nodeWs', 'indexer', 'indexerWs', 'faucet']) {
+    for (const key of ['node', 'nodeWs', 'indexer', 'indexerWs', 'faucet', 'projectToken']) {
       const short: Record<string, unknown> = { ...full };
       delete short[key];
       /* RED WHEN a missing endpoint key is defaulted rather than refused. */
@@ -114,6 +114,29 @@ describe('§1 the document, and what the reader will not take', () => {
     }
     expect(withEndpoints({ ...full, faucet: 7 })).toThrow(/neither a url nor null/);
     expect(withEndpoints('https://n')).toThrow(/neither an object nor null/);
+    /* RED WHEN a project token is half described, so the reader would carry
+     * an undefined token or carry it under no name. */
+    const token = { setting: 'A_PROJECT_TOKEN', parameter: 'project_id' };
+    expect(withEndpoints({ ...full, projectToken: token })).not.toThrow();
+    expect(withEndpoints({ ...full, projectToken: { parameter: 'project_id' } })).toThrow(/projectToken whose "setting" is not a name/);
+    expect(withEndpoints({ ...full, projectToken: { ...token, parameter: '' } })).toThrow(/projectToken whose "parameter" is not a name/);
+    expect(withEndpoints({ ...full, projectToken: 'project_id' })).toThrow(/projectToken that is neither an object nor null/);
+  });
+
+  it('REFUSES A TEST TOKEN THAT IS NOT A COLOUR, AND ANY TEST TOKEN ON A REAL NETWORK', () => {
+    const colour = 'ab'.repeat(32);
+    const withTestToken = (kind: string, testToken: unknown) => () => recordsFrom({
+      version: 1, networks: { n: { id: 'n', kind, label: 'x', testToken, endpoints: null } },
+    });
+    expect(withTestToken('test', colour)).not.toThrow();
+    expect(withTestToken('real', null)).not.toThrow();
+    /* RED WHEN a test token other than 64 lower-case hex characters is taken,
+     * which names money no mint made. */
+    for (const bad of ['AB'.repeat(32), 'ab'.repeat(31), '', 7]) {
+      expect(withTestToken('test', bad), JSON.stringify(bad)).toThrow(/testToken that is neither 64 lower-case hex/);
+    }
+    /* RED WHEN a network where real money settles may name a test token. */
+    expect(withTestToken('real', colour)).toThrow(/settles real money and names a test token/);
   });
 });
 
@@ -227,7 +250,7 @@ describe('§3 what the records this build ships actually say', () => {
       const e = networkRecord(id).endpoints;
       if (e === null) continue;
       for (const [field, url] of Object.entries(e)) {
-        if (url === null) continue;
+        if (url === null || field === 'projectToken') continue;
         /* RED WHEN a url is written without a scheme, which is a fetch that
          * fails somewhere far from here. */
         expect(url, `${id}.${field}`).toMatch(/^(https?|wss?):\/\//);
@@ -240,5 +263,76 @@ describe('§3 what the records this build ships actually say', () => {
       }
     }
     expect(seen.size).toBeGreaterThan(10);
+  });
+});
+
+describe('§4 a network reached only with a project token gets it in one place, and the record never holds it', () => {
+  const asking = NETWORK_IDS.filter(id => networkRecord(id).endpoints?.projectToken);
+  const settingOf = (id: string) => networkRecord(id).endpoints!.projectToken!;
+  const TOKEN = 'aProjectToken42';
+
+  it('there is a network that asks for one, and its record names the setting, not a token', () => {
+    /* RED WHEN no record asks for a token, so everything below is vacuous. */
+    expect(asking.length).toBeGreaterThan(0);
+    const text = readFileSync(fileURLToPath(new URL('./networks.json', import.meta.url)), 'utf8');
+    for (const id of asking) {
+      /* RED WHEN a record carries a token, or a url with one already joined. */
+      expect(JSON.stringify(networkRecord(id).endpoints), id).not.toContain(`${settingOf(id).parameter}=`);
+    }
+    expect(text).not.toMatch(/[?&][a-z_]+=/);
+  });
+
+  it('EVERY NODE AND INDEXER ENDPOINT CARRIES THE TOKEN, READ FROM THE SETTING THE RECORD NAMES', () => {
+    for (const id of asking) {
+      const { setting, parameter } = settingOf(id);
+      const asked: string[] = [];
+      const e = endpointsOf(id, (name) => { asked.push(name); return name === setting ? TOKEN : undefined; });
+      /* RED WHEN the token is read from any setting but the one the record names. */
+      expect(asked, id).toEqual([setting]);
+      const recorded = networkRecord(id).endpoints!;
+      for (const [field, url] of [['node', e.node], ['indexer', e.indexer], ['indexerWs', e.indexerWs],
+        ['websocket node', websocketNodeOf(e)]] as const) {
+        /* RED WHEN an endpoint is handed out without the token, which the
+         * network answers with a refusal naming nothing of ours. */
+        expect(new URL(url).searchParams.get(parameter), `${id} ${field}`).toBe(TOKEN);
+      }
+      /* RED WHEN joining the token moves an endpoint to another host or path. */
+      expect(new URL(e.indexer).host + new URL(e.indexer).pathname).toBe(new URL(recorded.indexer).host + new URL(recorded.indexer).pathname);
+      expect(new URL(e.indexerWs).pathname).toBe(new URL(recorded.indexerWs).pathname);
+      /* The faucet is not the network's own host, and is left as recorded. */
+      expect(e.faucet).toBe(recorded.faucet);
+    }
+  });
+
+  it('A NETWORK THAT ASKS FOR A TOKEN AND HAS NONE IS REFUSED BY NAME, WHEN IT IS ASKED FOR', () => {
+    for (const id of asking) {
+      const { setting } = settingOf(id);
+      for (const none of [undefined, '', '   ']) {
+        /* RED WHEN an endpoint is handed out with no token, to be refused by
+         * the network far from here. */
+        expect(() => endpointsOf(id, () => none), `${id} ${JSON.stringify(none)}`).toThrow(`${setting} is not set here`);
+      }
+    }
+  });
+
+  it('AN ENDPOINT IS SHOWN WITHOUT ITS QUERY, SO THE TOKEN GOES ONLY TO THE NETWORK', () => {
+    for (const id of asking) {
+      const e = endpointsOf(id, () => TOKEN);
+      for (const url of [e.node, e.indexer, e.indexerWs, websocketNodeOf(e)]) {
+        /* RED WHEN an endpoint is shown with its query, which is the project token. */
+        expect(shownAddress(url), url).not.toContain(TOKEN);
+        expect(shownAddress(url), url).toBe(`${new URL(url).origin}${new URL(url).pathname}`);
+      }
+    }
+    /* RED WHEN text that is not an address is shown with whatever follows its query mark. */
+    expect(shownAddress(`not an address?project_id=${TOKEN}`)).toBe('not an address');
+  });
+
+  it('a network that asks for no token is reached exactly as recorded, whatever is set', () => {
+    for (const id of NETWORK_IDS.filter(n => networkRecord(n).endpoints !== null && !asking.includes(n))) {
+      const { projectToken: _none, ...recorded } = networkRecord(id).endpoints!;
+      /* RED WHEN a token is joined to a network that did not ask for one. */
+      expect(endpointsOf(id, () => TOKEN), id).toEqual(recorded);
+    }
   });
 });

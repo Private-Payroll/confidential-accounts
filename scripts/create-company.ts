@@ -39,7 +39,7 @@ import { startProduct } from '../src/wiring/product.js';
 import { deploymentWriteCapability } from '../src/wiring/write-capability-for-deployment.js';
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
 import { feeCeilingFrom } from '../src/midnight/fee-ceiling.js';
-import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
+import { theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { fundedPartiesOver, paidFeeFrom } from './funded-wallets.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
@@ -47,10 +47,19 @@ import {
   CREATED, NOT_CREATED, PARTLY_CREATED, refuseIncompleteSetup, refuseUnprovenCompany,
   refuseUnseatableCompany, type CreatePreconditions,
 } from './create-company-rules.js';
+import { createdCompaniesFile, storeDir } from '../src/wiring/deployment.js';
+import { publicDataProviderAt } from '../src/midnight/providers.js';
+import { standDownWhenMissing, thisRun, whatIsMissing } from './end-to-end-waits.js';
+import type { NetworkName } from '../src/midnight/network.js';
+
+/* Without the network named and the fee payer's funded seed on this machine, nothing below runs. */
+standDownWhenMissing('Creating a company on the chain', whatIsMissing(thisRun(), {
+  fundedSeedFor: (n) => join(storeDir(join(import.meta.dirname, '..'), n as NetworkName), 'wallet.seed'),
+}, join(import.meta.dirname, '..')));
 
 const ROOT = join(import.meta.dirname, '..');
-const STATE_DIR = join(ROOT, '.midnight');
 const NETWORK = theNetwork();
+const STATE_DIR = storeDir(ROOT, NETWORK);
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT ?? 6301);
 const SPONSOR_SEED_FILE = join(STATE_DIR, 'wallet.seed');
 const COMPANY_SEED_FILE = join(STATE_DIR, `${NETWORK}-company.seed`);
@@ -61,7 +70,7 @@ const FEE_RECORD = join(STATE_DIR, 'sponsored-fees.jsonl');
  * door that wrote into whatever the last `npm run dev` left behind would make
  * the one record that matters indistinguishable from a rehearsal.
  */
-const DATA = process.env.DATA_PATH ?? join(STATE_DIR, 'created-companies.json');
+const DATA = process.env.DATA_PATH ?? createdCompaniesFile(ROOT, NETWORK);
 
 const COMPANY_NAME = process.env.COMPANY_NAME ?? 'The First Company';
 
@@ -154,7 +163,6 @@ async function main() {
   /* ---------------------------------------------------------------- 2 */
   step(2, 6, 'Bringing up the two wallets');
 
-  await applyNetworkId(NETWORK);
   const logger: any = {
     info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, trace: () => {},
     fatal: () => {}, silent: () => {}, level: 'silent',
@@ -178,10 +186,8 @@ async function main() {
   /* ---------------------------------------------------------------- 3 */
   step(3, 6, 'Assembling what a deployment holds before it can write');
 
-  const { indexerPublicDataProvider } = await import(
-    '@midnight-ntwrk/midnight-js-indexer-public-data-provider');
   const E = ENDPOINTS[NETWORK]!;
-  const publicData = indexerPublicDataProvider(E.indexerUrl, E.indexerWsUrl);
+  const publicData = await publicDataProviderAt(E);
 
   mkdirSync(STATE_DIR, { recursive: true });
   /*

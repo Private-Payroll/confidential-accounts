@@ -11,10 +11,13 @@ import type { BalanceRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import { settled } from '../testing/settled-channel.js';
 import { recordingChannel } from '../testing/recording-channel.js';
-import { ApproveBalance, liveBalanceDoors } from './approve-balance.js';
+import { ApproveBalance } from './approve-balance.js';
+import { liveBalanceDoors } from '../chain/balance-doors.js';
 import { PublicKey } from '@midnightntwrk/wallet-sdk';
 import { unshieldedKeystoreFor } from '../chain/unshielded.js';
 import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '../chain/balance-for-page.js';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 /*
  * The screen a person sees when a company's page asks this wallet to pay for a
@@ -55,18 +58,22 @@ const read = (): WalletPartForBalancing => ({
 const stillReading = (): WalletPartForBalancing => ({
   state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => false } }); return { unsubscribe: () => {} }; } },
 });
-const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}) => (): BalanceDoors => ({
+const doorsWith = (log: string[], facade: Record<string, unknown> = {}) => (): BalanceDoors => ({
   ledger: async () => ({
     Transaction: {
       deserialize: () => ({
         intents: new Map([[1, { actions: [{ address: VAULT, entryPoint: 'depositUnshielded', guaranteedTranscript: { effects } }] }]]),
         imbalances: (s: number) => new Map(s === 0 ? [[{ tag: 'unshielded', raw: NIGHT }, -2_500_000n]] : []),
+        serialize: () => new Uint8Array([1]),
       }),
     },
   }),
   facade: async () => ({
-    balanceUnboundTransaction: async (_t, _k, o) => {
-      log.push(`balance ${o.tokenKindsToBalance.join(',')}`);
+    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+    adoptTransaction: () => 'handle',
+    balanceUnboundTransaction: async (_t: unknown, o: { tokenKindsToBalance?: 'all' | readonly string[] }) => {
+      const kinds = o.tokenKindsToBalance;
+      log.push(`balance ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
       return {
         type: 'UNBOUND_TRANSACTION',
         baseTransaction: { intents: new Map([[1, { guaranteedUnshieldedOffer: {
@@ -80,8 +87,8 @@ const doorsWith = (log: string[], facade: Partial<FacadeForBalancing> = {}) => (
     shielded: read(),
     unshielded: read(),
     ...facade,
-  }) as FacadeForBalancing,
-  keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
+  }) as unknown as FacadeForBalancing,
+  dustKeys: () => ({}) as never,
   signSegment: () => async () => ({}) as never,
   ownPublicAddress: () => ME,
   now: () => NOW,
@@ -138,7 +145,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
     const plain = doorsWith(log);
     const make = doorsWith(log, { balanceUnboundTransaction: (async (...a: unknown[]) => {
       await held;
-      return (await plain().facade()).balanceUnboundTransaction(...(a as [never, never, never]));
+      return (await plain().facade()).balanceUnboundTransaction(...(a as [never, never]));
     }) as never });
     const doors = (): BalanceDoors => ({ ...make(), watchProofs: (w) => { watching.to = w; return () => { watching.to = null; }; } });
     render(

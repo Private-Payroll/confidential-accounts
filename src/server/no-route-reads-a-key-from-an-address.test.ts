@@ -48,12 +48,12 @@ describe('no route reads a viewing key from an address', () => {
       'index.ts: reported req.originalUrl',
       'index.ts: reported req.originalUrl',
       'index.ts: reported req.originalUrl',
-      /* `GET /api/payslips?company=co_…&period=YYYY-MM`: a public label and a month. */
-      'index.ts: company',
-      'index.ts: period',
-      /* `GET /api/payslips/addresses?company=co_…`: a public label. */
-      'index.ts: company',
       'invitations-route.ts: reported req.originalUrl',
+      /* `GET /api/payslips?company=co_…&period=YYYY-MM`: a public label and a month. */
+      'payslip-routes.ts: company',
+      'payslip-routes.ts: period',
+      /* `GET /api/payslips/addresses?company=co_…`: a public label. */
+      'payslip-routes.ts: company',
       /* A relay of a proven call refused or failed, written down as every other is. */
       'proposal-relays.ts: reported req.originalUrl',
       /* `GET .../tree/headers?after=…&limit=…`: the batch to read after and how many, two whole numbers. */

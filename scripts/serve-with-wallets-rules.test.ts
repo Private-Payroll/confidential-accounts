@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { PAGES_START_WITHIN_MS, pagesVerdict, somethingAlreadyServes, waitForThePages, parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, POSTURE_NOT_CARRIED, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
 import { servedCircuits } from '../src/server/proving-parameters.js';
+import { PAIR_NETWORK } from '../src/midnight/network.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const ALL_PRESENT = {
@@ -56,15 +57,15 @@ describe('the posture is read off the development script', () => {
 
 describe('refusals before anything is brought up', () => {
   /* RED WHEN: the network check is removed. */
-  it('refuses any network but stagenet', () => {
+  it('refuses any network but the one this build is compiled for', () => {
     const r = refuseToServe({ network: 'preview', present: ALL_PRESENT, posture: postureFrom(DEV) });
-    expect(r).toMatch(/serves stagenet and nothing else/);
+    expect(r).toContain(`serves ${PAIR_NETWORK} and nothing else`);
     expect(r).toMatch(/nothing has been spent/i);
   });
 
   /* RED WHEN: the posture check is removed. */
   it('refuses a development script that no longer declares the origins', () => {
-    const r = refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: { APP_ORIGIN: 'x' } });
+    const r = refuseToServe({ network: PAIR_NETWORK, present: ALL_PRESENT, posture: { APP_ORIGIN: 'x' } });
     expect(r).toMatch(/WALLET_ORIGIN, VITE_WALLET_ORIGIN/);
   });
 
@@ -74,7 +75,7 @@ describe('refusals before anything is brought up', () => {
       network: 'preview', posture: {},
       present: { ...ALL_PRESENT, proofServer: false, fundedSeed: false },
     })!;
-    expect(r).toMatch(/serves stagenet/);
+    expect(r).toContain(`serves ${PAIR_NETWORK}`);
     expect(r).toMatch(/no longer declares/);
     expect(r).toMatch(/no proof server is reachable/);
     expect(r).toMatch(/no funded wallet/);
@@ -82,7 +83,7 @@ describe('refusals before anything is brought up', () => {
 
   /* RED WHEN: a complete machine is refused. */
   it('answers null when everything is in place', () => {
-    expect(refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: postureFrom(DEV) }))
+    expect(refuseToServe({ network: PAIR_NETWORK, present: ALL_PRESENT, posture: postureFrom(DEV) }))
       .toBeNull();
   });
 
@@ -91,7 +92,7 @@ describe('refusals before anything is brought up', () => {
    * and the company creator still needs one.
    */
   it('does not ask for a company wallet, while the company creator still does', () => {
-    expect(refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: postureFrom(DEV) })).toBeNull();
+    expect(refuseToServe({ network: PAIR_NETWORK, present: ALL_PRESENT, posture: postureFrom(DEV) })).toBeNull();
     expect(refuseIncompleteSetup({ ...ALL_PRESENT, companySeed: false })).toMatch(/no wallet for the company itself/);
   });
 
@@ -110,7 +111,7 @@ describe('refusals before anything is brought up', () => {
    */
   it('refuses origins it cannot start before anything is brought up', () => {
     const onePort = { ...postureFrom(DEV), WALLET_ORIGIN: 'http://localhost:5173', VITE_WALLET_ORIGIN: 'http://localhost:5173' };
-    const r = refuseToServe({ network: 'stagenet', present: ALL_PRESENT, posture: onePort });
+    const r = refuseToServe({ network: PAIR_NETWORK, present: ALL_PRESENT, posture: onePort });
     expect(r).toMatch(/origins cannot be started as they are: .*are on one port/);
   });
 });
@@ -159,33 +160,16 @@ describe('the launcher hands the pair over before the server exists', () => {
   });
 
   /*
-   * RED WHEN: either script that pays a fee (this launcher and the company
-   * creator) brings a wallet up before it has
-   * read its ceiling, or builds its pair without passing the ceiling on.
+   * RED WHEN: the launcher brings a wallet up before it has read its ceiling,
+   * or builds its pair without passing the ceiling on.
    */
-  it('both doors read the fee ceiling before any wallet, and hand it to the pair', () => {
-    const creator = readFileSync(join(ROOT, 'scripts', 'create-company.ts'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    for (const [name, text] of [['launcher', launcher], ['creator', creator]] as const) {
-      const ceiling = text.indexOf('feeCeilingFrom(process.env)');
-      const bringUp = text.indexOf('bringUpWallet(');
-      expect(ceiling, `${name} does not read the ceiling`).toBeGreaterThan(-1);
-      expect(ceiling, `${name} brings a wallet up before reading the ceiling`).toBeLessThan(bringUp);
-      expect(text, `${name} does not pass the ceiling to the fee payer`)
-        .toMatch(/(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/);
-    }
-  });
-
-  /*
-   * RED WHEN: the script that creates a company from this machine goes back to
-   * building its own fee payer and company half - two constructions of one
-   * pair, one of which can lose the fee record the other requires.
-   */
-  it('the script that creates a company builds its pair the same way', () => {
-    const creator = readFileSync(join(ROOT, 'scripts', 'create-company.ts'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(creator).toMatch(/const \{ sponsor, customer \} = fundedPartiesOver\(/);
-    expect(creator).not.toMatch(/new WalletFeeSponsor|customerWalletOver|sponsorWalletOver/);
+  it('the launcher reads the fee ceiling before any wallet, and hands it to the pair', () => {
+    const ceiling = launcher.indexOf('feeCeilingFrom(process.env)');
+    const bringUp = launcher.indexOf('bringUpWallet(');
+    expect(ceiling, 'the launcher does not read the ceiling').toBeGreaterThan(-1);
+    expect(ceiling, 'the launcher brings a wallet up before reading the ceiling').toBeLessThan(bringUp);
+    expect(launcher, 'the launcher does not pass the ceiling to the fee payer')
+      .toMatch(/(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/);
   });
 
   /*

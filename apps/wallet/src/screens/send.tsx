@@ -1,27 +1,15 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity, Secret } from 'midnight-identity';
-import { NETWORK } from '../config.js';
-import { dustFromSpecks, exactSpecks, exactStars, nightFromStars } from '../chain/amount.js';
-import { ownedAddressFor } from '../accounts/owned-address.js';
-import { hrefOf } from '../routes.js';
-import { loadSubwallets } from '../accounts/storage.js';
-import { MAIN_ACCOUNT, isWalletAccount } from '../accounts/subwallets.js';
-import { CopyButton } from '../components/ui.js';
 import type { RehearsalScenario } from '../chain/rehearsal.js';
 import { SendContext } from '../chain/send-context.js';
-import { pendingGuardFor, transactionStatusOnChain } from '../chain/pending.js';
-import { STAGE_WORDS, parseRecipient, starsFromNight } from '../chain/send.js';
-import { loadTermsSeen, recordTermsSeen } from '../chain/terms.js';
-import type {
-  Recipient, SendController, SendFacts, SendState,
-} from '../chain/send.js';
-import { describeFailure } from '../lib/failure-text.js';
-import { Mark } from '../shell/mark.js';
-import { Button, Card, CardContent, Input, Label, Section } from 'vaults-ui';
-import { Textarea } from 'vaults-ui/components/textarea';
-import { StatusAlert, StatusBadge } from '../components/status.js';
-import { GLYPH, Glyph } from '../glyphs.js';
+import type { SendController, SendState } from '../chain/send.js';
+import { ConfirmCard } from './send-confirm.js';
+import { SendForm } from './send-form.js';
+import { usePayingWallet, useSendDoors, useSendForm, useWakeLock } from './send-hooks.js';
+import { LiveNotice, PayingWalletCard, RehearsalNotice } from './send-notices.js';
+import { SendEnding, WorkingCard } from './send-stages.js';
+import { TermsCard } from './send-terms.js';
 
 /**
  * SENDING — the screen where every sending rule faces a
@@ -43,12 +31,13 @@ import { GLYPH, Glyph } from '../glyphs.js';
  *    report exactly what is known and hand over the identifiers,
  *    never a cheerful summary it has not earned.
  *
- * THE MODE IS A REHEARSAL AND THE SCREEN SAYS SO. Everything below the
- * banner is the real flow over the SDK's simulated chain — real balancing,
- * real fees, real (simulated) proving, real block inclusion, no network and
- * no real money. The scenario picker exists so the waiting states and the
- * dangerous middle can be rehearsed on purpose: the first time somebody
- * sees that screen must not be the time it is true.
+ * THE MODE IS NAMED AND THE SCREEN SAYS SO. Live is the default, and its
+ * notice says the send is real. The rehearsal, one quiet click away, is the
+ * same flow over the SDK's simulated chain — real balancing, real fees, real
+ * (simulated) proving, real block inclusion, no network and no real money —
+ * and its banner says so. The scenario picker exists so the waiting states
+ * and the dangerous middle can be rehearsed on purpose: the first time
+ * somebody sees that screen must not be the time it is true.
  *
  * ==========================================================================
  * THE RESTYLE, AND WHAT IT WAS NOT ALLOWED TO MOVE
@@ -76,87 +65,19 @@ import { GLYPH, Glyph } from '../glyphs.js';
  * error, the truth for the tab that dies anyway (it did not happen), and the
  * warning said BEFORE somebody is trapped rather than after.
  *
- * **NOTHING NEW HERE READS MONEY.** The design freezes the money card for
+ * **NOTHING HERE READS MONEY.** The design freezes the money card for
  * later, and that deferral is only free while nothing else learns to read what
- * money exists. This file's mentions of the atomic units are the same six it
- * already had — the §7.17 line beside the typed amount, and the read-back on
- * the confirmation — and no accessor was added.
+ * money exists. The atomic units appear in two places only — the §7.17 line
+ * beside the typed amount (`send-form.tsx`) and the read-back on the
+ * confirmation (`send-confirm.tsx`) — and no accessor was added.
  */
-
-/**
- * HOW LONG A PROOF USUALLY TAKES — ONE CONSTANT, AND IT IS COPY RATHER THAN
- * DESIGN.
- *
- * THE RULE: *"Where a duration is stated, it comes from one named
- * constant with a comment saying it is a laptop measurement and phones are
- * unmeasured. When the number lands it is one edit."*
- *
- * **74 SECONDS IS A MEASUREMENT AND IT IS A LAPTOP'S** — a real
- * plain-transfer proof in a real browser, on a laptop. **A PHONE HAS NEVER
- * BEEN MEASURED.** The SDK's prover is single-threaded WASM and a phone is
- * plausibly three to five times this, which is why the decision was to build
- * this screen for the WORST CASE and let the number arrive later.
- * The design below is the same design at fifteen
- * seconds and at six minutes; when somebody finally points the probe at a
- * phone, this line is the edit.
- */
-const PROVING_USUALLY_MS = 74_000;
-
-const asClock = (forMs: number): string => {
-  const seconds = Math.floor(forMs / 1000);
-  const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`;
-};
-
-const kindWords = (recipient: Recipient): string => (recipient.kind === 'shielded'
-  ? 'a SHIELDED address — a private payment; the amount and the parties stay '
-    + 'hidden on the chain'
-  : 'an UNSHIELDED address — an ordinary NIGHT transfer, visible on the chain');
-
-/**
- * THE SCREEN WAKE LOCK, AND ITS ABSENCE IS A STATE RATHER THAN AN ERROR.
- *
- * THE RULE: *"a browser that refuses it still proves, and the screen
- * then says keep this awake yourself rather than pretending it has been
- * handled. Never let a rejected lock take the send down."*
- *
- * The API is not in this project's TypeScript lib and it is declared narrowly
- * here rather than widened globally, because this file uses exactly two
- * members of it. Two different facts reach the same sentence: `request`
- * REJECTS when a browser refuses (a hidden document, a policy, a battery
- * saver), and `navigator.wakeLock` is simply ABSENT where the API was never
- * implemented. They read the same to a person, who can do nothing different
- * about either, so they say the same thing.
- */
-interface WakeSentinel { readonly release: () => Promise<void> }
-interface WakeLockApi { readonly request: (kind: 'screen') => Promise<WakeSentinel> }
-const wakeLockApi = (): WakeLockApi | null => {
-  const holder = navigator as Navigator & { wakeLock?: WakeLockApi };
-  return holder.wakeLock ?? null;
-};
-
-/** `idle` before and after; `held` while the browser is keeping the screen
- * on; `unheld` when it refused or never had the API. */
-type WakeState = 'idle' | 'held' | 'unheld';
 
 export function Send({ identity, secret }: {
   readonly identity: Identity;
   readonly secret: Secret;
 }): ReactNode {
   const wiring = useContext(SendContext);
-
-  /* The PAYING wallet is the one open on the home screen — same storage,
-   * same guard. Switching wallets stays on home, where switching is
-   * unmistakable; this screen only ever pays from the wallet it names. */
-  const [{ names, account }] = useState(() => {
-    const stored = loadSubwallets(secret);
-    return {
-      names: stored.names,
-      account: isWalletAccount(stored.lastUsed) ? stored.lastUsed : MAIN_ACCOUNT,
-    };
-  });
-  const owned = useMemo(
-    () => ownedAddressFor(identity, account, names, NETWORK), [identity, account, names]);
+  const { account, owned } = usePayingWallet(identity, secret);
 
   /* LIVE IS THE DEFAULT — the seam flipped. The rehearsal stays a
    * quiet click away, because a long wait and an unknown outcome are worth
@@ -164,62 +85,31 @@ export function Send({ identity, secret }: {
   const [mode, setMode] = useState<'live' | 'rehearsal'>(wiring.live ? 'live' : 'rehearsal');
   const [scenario, setScenario] = useState<RehearsalScenario>('ordinary');
   const [engineState, setEngineState] = useState<SendState | null>(null);
-  const controller = useRef<SendController | null>(null);
-  const doors = useMemo(
-    () => (mode === 'live' && wiring.live
-      /* The LIVE doors gain the two pending doors here, where the secret is:
-       * the written-down middle (pending.ts, this account's store) and the
-       * chain-by-identifier question the engine watches with. The rehearsal
-       * doors carry their own throwaway versions. */
-      ? {
-        ...wiring.live.doorsFor(identity, account),
-        pending: pendingGuardFor(secret, account),
-        transactionStatus: transactionStatusOnChain,
-      }
-      : wiring.rehearsalDoorsFor(identity, account, scenario)),
-    [wiring, mode, identity, secret, account, scenario]);
+  const engine = useRef<SendController | null>(null);
+  const doors = useSendDoors(wiring, mode, identity, secret, account, scenario);
   /* Leaving the screen stops the listening, never an in-flight submission
    * (a transaction on its way to a network cannot be recalled), and ends
    * the rehearsal chain behind the doors. */
   useEffect(() => () => {
-    controller.current?.detach();
+    engine.current?.detach();
     void doors.stop?.();
   }, [doors]);
 
-  const [recipientText, setRecipientText] = useState('');
-  const [amountText, setAmountText] = useState('');
-
-  /* Live, per-keystroke honesty: the kind said back in words the moment an
-   * address parses; the exact STARs the moment an amount does; the refusal
-   * verbatim the moment either fails. */
-  type Parsed<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
-  const tryParse = <T,>(parse: () => T): Parsed<T> => {
-    try {
-      return { ok: true, value: parse() };
-    } catch (e) {
-      return { ok: false, error: (e as Error).message };
-    }
-  };
-  const recipientInfo: Parsed<Recipient> | null = useMemo(
-    () => (recipientText.trim() ? tryParse(() => parseRecipient(recipientText, NETWORK)) : null),
-    [recipientText]);
-  const amountInfo: Parsed<bigint> | null = useMemo(
-    () => (amountText.trim() ? tryParse(() => starsFromNight(amountText)) : null),
-    [amountText]);
-
-  const ready = recipientInfo?.ok === true && amountInfo?.ok === true;
+  const {
+    recipientText, setRecipientText, amountText, setAmountText, recipientInfo, amountInfo, ready,
+  } = useSendForm();
 
   const begin = (): void => {
     if (!recipientInfo?.ok || !amountInfo?.ok) return;
-    controller.current = wiring.start(
+    engine.current = wiring.start(
       doors,
       { recipient: recipientInfo.value, stars: amountInfo.value },
       setEngineState);
   };
 
   const reset = (): void => {
-    controller.current?.detach();
-    controller.current = null;
+    engine.current?.detach();
+    engine.current = null;
     setEngineState(null);
   };
 
@@ -250,776 +140,50 @@ export function Send({ identity, secret }: {
    * a phone awake for something that no longer needs them.
    */
   const proving = engineState?.name === 'working' && engineState.stage === 'proving';
-  const [wake, setWake] = useState<WakeState>('idle');
-  useEffect(() => {
-    if (!proving) {
-      setWake('idle');
-      return undefined;
-    }
-    const api = wakeLockApi();
-    if (api === null) {
-      setWake('unheld');
-      return undefined;
-    }
-    let sentinel: WakeSentinel | null = null;
-    let gone = false;
-    /* A REJECTION IS A STATE. It is caught here and never reaches the engine,
-     * so a browser that refuses the lock still proves and still sends — the
-     * screen simply asks the person to do what the browser would not. */
-    void api.request('screen').then(
-      (granted) => {
-        if (gone) {
-          void granted.release().catch(() => { /* releasing twice is fine */ });
-          return;
-        }
-        sentinel = granted;
-        setWake('held');
-      },
-      () => { setWake('unheld'); },
-    );
-    /* Released when proving ends, however it ends — a terminal state, a
-     * failure, or the screen going away under it. */
-    return () => {
-      gone = true;
-      void sentinel?.release().catch(() => { /* the browser took it back */ });
-    };
-  }, [proving]);
+  const wake = useWakeLock(proving);
 
   return (
     <div className="flex flex-col gap-6">
       {/* ----------------------------------------------------- who is paying */}
-      <header className="flex flex-col gap-3">
-        <h1 className="m-0">Send</h1>
-        <Card>
-          <CardContent className="flex items-start gap-3">
-            <Mark address={owned.address.bech32} account={owned.account} size={32} />
-            <div className="min-w-0 flex-1">
-              <p className="m-0 text-base font-semibold text-foreground">{owned.name}</p>
-              {owned.owner !== owned.name && (
-                <p className="m-0 text-xs text-muted-foreground">{owned.slot}</p>
-              )}
-              <p className="m-0 mt-1 text-sm text-muted-foreground">
-                Money leaves <strong className="font-medium text-foreground">{owned.owner}</strong>
-                {' '}— the wallet open on{' '}
-                <a
-                  className="text-primary underline-offset-4 hover:underline"
-                  href={hrefOf('home')}
-                >
-                  the home screen
-                </a>
-                , where switching happens.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </header>
+      <PayingWalletCard owned={owned} />
 
       {/* -------------------------------------- which chain this screen is on */}
-      {mode === 'live' && (
-        <Section
-          list={false} box={false}
-          aria-label={`This is real. ${NETWORK}`}
-          title={(
-            <span className="flex flex-wrap items-center gap-2">
-              This is real.
-              <StatusBadge tone="warning">{NETWORK}</StatusBadge>
-            </span>
-          )}
-        >
-          <Card>
-            <CardContent className="flex flex-col gap-3">
-              <p className="m-0 text-sm text-muted-foreground">
-                Sending here moves real tNIGHT on {NETWORK}, pays a real fee in DUST, and
-                cannot be taken back. Two hosts can be dialled, and nothing is asked of
-                either until you press: checking a payment syncs this wallet from the
-                indexer, and sending submits through the stagenet node. The proof is
-                built in this browser, from circuit key material served by this
-                wallet&rsquo;s own origin and verified against pinned fingerprints
-                before use — no third party is asked for it.
-              </p>
-              {/*
-                * SAID BEFORE THEY START, NOT AFTER THEY ARE TRAPPED —
-                * Somebody who knows this takes a while and
-                * needs the screen open can choose their moment; somebody told
-                * halfway through a proof can only sit there.
-                */}
-              <p className="m-0 text-sm text-muted-foreground">
-                Proving happens in this browser and can take minutes — the screen keeps
-                its own clock and says which stage it is at.{' '}
-                <strong className="font-medium text-foreground">
-                  You have to stay on this screen while it works.
-                </strong>{' '}
-                The proof is built in this tab and nothing is submitted until it is
-                finished, so closing the tab or letting the phone sleep sends nothing —
-                it throws the work away and it starts again from the form. Pick a moment
-                when you can leave this open for {asClock(PROVING_USUALLY_MS)} or so.
-              </p>
-              {!inFlight && (
-                <p className="m-0">
-                  <Button type="button" variant="ghost" size="sm" onClick={() => switchMode('rehearsal')}>
-                    Practise on a pretend chain first
-                  </Button>
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </Section>
-      )}
+      {mode === 'live' && <LiveNotice inFlight={inFlight} switchMode={switchMode} />}
 
       {mode === 'live' && <TermsCard fetchTerms={wiring.live?.fetchTerms ?? null} />}
 
       {mode === 'rehearsal' && (
-        <Section
-          list={false} box={false}
-          aria-label="A rehearsal, not a real send rehearsal"
-          title={(
-            <span className="flex flex-wrap items-center gap-2">
-              A rehearsal, not a real send
-              <StatusBadge tone="accent">rehearsal</StatusBadge>
-            </span>
-          )}
-        >
-          <Card>
-            <CardContent className="flex flex-col gap-4">
-              <p className="m-0 text-sm text-muted-foreground">
-                Everything below runs the real send flow against a{' '}
-                <strong className="font-medium text-foreground">
-                  pretend chain inside this browser
-                </strong>{' '}
-                — real coin selection, a real fee, and a block that really rejects a
-                malformed transaction. Nothing talks to the network and no real money can
-                move here.
-              </p>
-              {/*
-                * THE SCENARIO PICKER SURVIVES THE RESTYLE, and the design
-                * says why in one sentence: *"a restyle that loses the
-                * picker loses the only way anybody has ever seen the dangerous
-                * middle."* It is also how those states are photographed.
-                *
-                * `data-scenarios` replaces the old `send-scenarios` class: the
-                * fact under test is that the FIELDSET disables in flight, and
-                * a data attribute is a handle rather than a style.
-                */}
-              <fieldset
-                data-scenarios=""
-                className={[
-                  'm-0 flex flex-col gap-1 rounded-md border border-border',
-                  'bg-muted px-4 pt-2 pb-3 disabled:opacity-55',
-                ].join(' ')}
-                disabled={inFlight}
-              >
-                <legend className="px-1 text-xs font-medium text-muted-foreground">What to rehearse</legend>
-                <ScenarioChoice
-                  checked={scenario === 'ordinary'}
-                  onChoose={() => setScenario('ordinary')}
-                >
-                  A send that works
-                </ScenarioChoice>
-                <ScenarioChoice
-                  checked={scenario === 'slow-proving'}
-                  onChoose={() => setScenario('slow-proving')}
-                >
-                  Slow proving — the proof takes minutes, as it may on the real chain
-                </ScenarioChoice>
-                <ScenarioChoice
-                  checked={scenario === 'submission-fails'}
-                  onChoose={() => setScenario('submission-fails')}
-                >
-                  The worst case — the proof succeeds and the network never answers
-                </ScenarioChoice>
-              </fieldset>
-              {!inFlight && wiring.live && (
-                <p className="m-0">
-                  <Button type="button" variant="ghost" size="sm" onClick={() => switchMode('live')}>
-                    Back to real sending
-                  </Button>
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </Section>
+        <RehearsalNotice
+          inFlight={inFlight} scenario={scenario} setScenario={setScenario}
+          wiring={wiring} switchMode={switchMode}
+        />
       )}
 
       {/* ------------------------------------------------- who, and how much */}
       {!inFlight && (
-        <Section list={false} box={false} aria-label="Who, and how much" title="Who, and how much">
-          <Card>
-            <CardContent className="flex flex-col">
-              <Label htmlFor="send-recipient" className="mb-2">The recipient&rsquo;s address</Label>
-              <Textarea
-                className="font-mono text-sm tracking-tight"
-                id="send-recipient"
-                
-                aria-label="The recipient's address"
-                value={recipientText}
-                rows={3}
-                spellCheck={false}
-                aria-invalid={recipientInfo?.ok === false}
-                placeholder={`mn_addr_${NETWORK}1… or mn_shield-addr_${NETWORK}1…`}
-                onChange={(e) => setRecipientText(e.target.value)}
-              />
-              {recipientInfo?.ok === true && (
-                <p className="m-0 mt-2 text-sm text-muted-foreground" role="status">
-                  This is {kindWords(recipientInfo.value)}.
-                </p>
-              )}
-              {recipientInfo?.ok === false && <Refusal>{recipientInfo.error}</Refusal>}
-
-              <Label htmlFor="send-amount" className="mb-2 mt-5">The amount, in tNIGHT</Label>
-              <Input
-                id="send-amount"
-                aria-label="The amount, in tNIGHT"
-                value={amountText}
-                inputMode="decimal"
-                aria-invalid={amountInfo?.ok === false}
-                placeholder="0.000000"
-                onChange={(e) => setAmountText(e.target.value)}
-              />
-              {amountInfo?.ok === true && (
-                <p className="m-0 mt-2 text-sm text-muted-foreground" role="status">
-                  {/* §7.17: the number that will actually move, beside the typed
-                    * one, BEFORE anything is agreed to. */}
-                  Exactly {exactStars(amountInfo.value)} — the chain counts STARs, and
-                  this is the figure the transaction will carry.
-                </p>
-              )}
-              {amountInfo?.ok === false && <Refusal>{amountInfo.error}</Refusal>}
-
-              <div className="mt-5">
-                <Button type="button" variant="default" disabled={!ready} onClick={begin}>
-                  Check this payment
-                </Button>
-              </div>
-              <p className="m-0 mt-3 text-xs text-muted-foreground">
-                Checking builds and balances the transaction so you can see what would
-                actually happen — the fee, and the balance after. Nothing is sent until
-                you agree on the next screen.
-              </p>
-            </CardContent>
-          </Card>
-        </Section>
+        <SendForm
+          recipientText={recipientText} setRecipientText={setRecipientText}
+          recipientInfo={recipientInfo}
+          amountText={amountText} setAmountText={setAmountText} amountInfo={amountInfo}
+          ready={ready} begin={begin}
+        />
       )}
 
       {/* -------------------------------------------------------- the working */}
-      {engineState?.name === 'working' && (
-        <Section
-          list={false} box={false}
-          aria-label={({
-            starting: 'Reading the wallet…', balancing: 'Building and balancing…', signing: 'Authorising…',
-            proving: 'Proving…', submitting: 'Submitting…',
-          } as Record<string, string>)[engineState.stage]}
-          title={(
-            <>
-              {engineState.stage === 'starting' && 'Reading the wallet…'}
-              {engineState.stage === 'balancing' && 'Building and balancing…'}
-              {engineState.stage === 'signing' && 'Authorising…'}
-              {engineState.stage === 'proving' && 'Proving…'}
-              {engineState.stage === 'submitting' && 'Submitting…'}
-            </>
-          )}
-        >
-          <Card>
-            <CardContent className="flex flex-col gap-3">
-              {/* The wallet's own clock, on screen. Never a still frame:
-                * the engine re-emits every second and this line moves. */}
-              {/* `data-clock` is a HANDLE, not a style. The screenshot driver has
-                * to wait for the clock to reach a minute to photograph the
-                * waiting screen a minute in, and a duration went in the prose
-                * beside it — so a walker matching the page for the text `1m`
-                * now matches the sentence instead of the clock, instantly, and
-                * photographs zero seconds while reporting a minute. */}
-              <p
-                data-clock=""
-                className="m-0 font-mono text-3xl tracking-tight tabular-nums text-foreground"
-                aria-hidden="true"
-              >
-                {asClock(engineState.forMs)}
-              </p>
-              <p className="m-0 text-sm text-muted-foreground" role="status" aria-live="polite">
-                {STAGE_WORDS[engineState.stage]}
-              </p>
-              {engineState.stage === 'proving' && (
-                <>
-                  {/* HONEST PROGRESS: how long this usually takes, and where the
-                    * number came from. Never a bar pretending to know a
-                    * percentage — nothing on this screen can know one. */}
-                  <p className="m-0 text-sm text-muted-foreground">
-                    On a laptop this usually finishes in around{' '}
-                    {asClock(PROVING_USUALLY_MS)}. A phone has never been measured and
-                    may be several times that. There is no percentage to show you — a
-                    proof does not report its own progress — so the clock above is the
-                    honest one.
-                  </p>
-                  <WakeNote wake={wake} />
-                  {/*
-                    * THE TAB THAT DIES ANYWAY GETS THE TRUTH, AND TODAY THE
-                    * TRUTH IS THAT IT DID NOT HAPPEN. Nothing is submitted
-                    * while a proof is being built, so no money moved and
-                    * nothing is pending. The record's whole value is that it
-                    * distinguishes SUBMITTED from NEVER STARTED, and this
-                    * state is firmly the second — so the screen says so rather
-                    * than implying it might still land.
-                    */}
-                  <StatusAlert tone="warning" role={null} title="Stay on this screen.">
-                    <p className="m-0">
-                      Nothing has been sent yet. If this tab closes, or the browser is
-                      put to sleep or switched away from on a phone, the proof stops and
-                      this payment simply does not happen — no money moves, nothing is
-                      left pending, and there is nothing to come back to. You would begin
-                      again from the form.
-                    </p>
-                  </StatusAlert>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </Section>
-      )}
+      {engineState?.name === 'working' && <WorkingCard engineState={engineState} wake={wake} />}
 
       {/* --------------------------------------------------- the confirmation */}
       {engineState?.name === 'confirm' && (
         <ConfirmCard
           facts={engineState.facts}
           owner={owned.owner}
-          onSend={() => controller.current?.confirm()}
-          onCancel={() => controller.current?.cancel()}
+          onSend={() => engine.current?.confirm()}
+          onCancel={() => engine.current?.cancel()}
         />
       )}
 
       {/* --------------------------------------------------------- the endings */}
-      {engineState?.name === 'cancelled' && (
-        <Section list={false} box={false} aria-label="Nothing was sent." title="Nothing was sent.">
-          <Card>
-            <CardContent className="flex flex-col gap-4">
-              <p className="m-0 text-sm text-muted-foreground">
-                The transaction was discarded and the coins it had set aside are released.
-                No money moved.
-              </p>
-              <p className="m-0">
-                <Button type="button" variant="outline" onClick={reset}>Start again</Button>
-              </p>
-            </CardContent>
-          </Card>
-        </Section>
-      )}
-
-      {engineState?.name === 'refused' && (
-        <Section list={false} box={false} aria-label="This payment was refused." title="This payment was refused.">
-          <Card>
-            <CardContent className="flex flex-col gap-4">
-              {/* The engine's message says what happened and that nothing moved —
-                * verbatim, never rewritten (§3, an old habit). */}
-              <Refusal>{engineState.message}</Refusal>
-              <p className="m-0">
-                <Button type="button" variant="outline" onClick={reset}>Start again</Button>
-              </p>
-            </CardContent>
-          </Card>
-        </Section>
-      )}
-
-      {engineState?.name === 'failed' && (
-        <Section list={false} box={false} aria-label="This payment did not go through." title="This payment did not go through.">
-          <Card>
-            <CardContent className="flex flex-col gap-4">
-              {/* A RESOLVED middle — the chain itself answered, so unlike
-                * the unknown state this one is allowed the word "failed". */}
-              <Refusal>{engineState.message}</Refusal>
-              <div>
-                <p className="m-0 text-sm text-muted-foreground">
-                  The identifier{engineState.identifiers.length === 1 ? '' : 's'}, for records:
-                </p>
-                {engineState.identifiers.map((id) => (
-                  <Bytes key={id}>{id}</Bytes>
-                ))}
-              </div>
-              <p className="m-0">
-                <Button type="button" variant="outline" onClick={reset}>Start again</Button>
-              </p>
-            </CardContent>
-          </Card>
-        </Section>
-      )}
-
-      {engineState?.name === 'sent' && (
-        <Section
-          list={false} box={false}
-          aria-label="Sent."
-          title={(
-            <span className="flex items-center gap-2">
-              <Glyph icon={GLYPH.success} className="size-5 text-good" />
-              Sent.
-            </span>
-          )}
-        >
-          <Card>
-            <CardContent className="flex flex-col gap-4">
-              <p className="m-0 text-sm text-muted-foreground">
-                The network accepted the transaction: {nightFromStars(engineState.facts.stars)}{' '}
-                tNIGHT to {shortUnshieldedOrPayee(engineState.facts)} — with a fee of{' '}
-                {dustFromSpecks(engineState.facts.feeSpecks)} tDUST. DUST grows back on its
-                own; the fee is not gone for ever, only for a while.
-              </p>
-              <div>
-                <p className="m-0 text-sm text-muted-foreground">
-                  Its identifier, for checking or for records:
-                </p>
-                <Bytes>{engineState.txId}</Bytes>
-                <CopyButton
-                  kit
-                  text={engineState.txId}
-                  label="Copy the transaction identifier"
-                />
-              </div>
-              <p className="m-0">
-                <Button type="button" variant="outline" onClick={reset}>Start again</Button>
-              </p>
-            </CardContent>
-          </Card>
-        </Section>
-      )}
-
-      {engineState?.name === 'unknown' && (
-        <Section list={false} box={false} aria-label="Whether this sent is not known." title="Whether this sent is not known.">
-          <StatusAlert tone="warning" role="alert">
-            <div className="flex flex-col gap-3 text-foreground">
-              <p className="m-0 text-sm">{engineState.message}</p>
-              <div>
-                <p className="m-0 text-sm">
-                  The identifier{engineState.identifiers.length === 1 ? '' : 's'} to check:
-                </p>
-                {engineState.identifiers.map((id) => (
-                  <Bytes key={id}>{id}</Bytes>
-                ))}
-                <CopyButton
-                  kit
-                  text={engineState.identifiers.join('\n')}
-                  label="Copy the identifiers"
-                />
-              </div>
-              {/* The middle is WATCHED, always — stillWaiting can no
-                * longer be false, and the copy button above is a courtesy,
-                * never the remedy. */}
-              <p className="m-0 text-sm" role="status" aria-live="polite">
-                Still confirming — this wallet is watching the chain and will say
-                sent or failed on its own. This payment is also carried on the home
-                screen until it settles. Do not send it again.
-              </p>
-            </div>
-          </StatusAlert>
-        </Section>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------- small pieces */
-
-/**
- * A REFUSAL, VERBATIM. `role="alert"` is the fact and the colour follows it —
- * the same discipline the kit's fields follow for `aria-invalid`.
- *
- * IT IS WRITTEN HERE RATHER THAN TAKEN FROM `StatusAlert`, FOR ONE REASON
- * WORTH NAMING: the engine's refusal message is asserted CHARACTER FOR
- * CHARACTER by `send-screen.test.tsx`, so the element carrying `role="alert"`
- * has to contain that message and nothing else — no icon, no title, nothing
- * decorative with a text node in it.
- */
-function Refusal({ children }: { readonly children: ReactNode }): ReactNode {
-  return (
-    <div
-      role="alert"
-      className={[
-        'mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2',
-        'text-sm break-words text-destructive',
-      ].join(' ')}
-    >
-      {children}
-    </div>
-  );
-}
-
-/**
- * BYTES SOMEBODY MAY HAVE TO COMPARE OR PASTE — an address, a transaction
- * identifier. `select-all` so one click takes the whole thing rather than a
- * word out of the middle of it.
- */
-function Bytes({ children }: { readonly children: ReactNode }): ReactNode {
-  return (
-    <div
-      className={[
-        'my-2 rounded-md border border-border bg-muted px-3 py-2',
-        'font-mono text-xs leading-relaxed break-all text-muted-foreground select-all',
-      ].join(' ')}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** One rehearsal scenario. A real radio in a real fieldset — the fieldset is
- * what disables the whole set in one attribute while a send is in flight. */
-function ScenarioChoice({ checked, onChoose, children }: {
-  readonly checked: boolean;
-  readonly onChoose: () => void;
-  readonly children: ReactNode;
-}): ReactNode {
-  return (
-    <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-sm text-foreground">
-      <input
-        type="radio"
-        name="scenario"
-        className="size-4 shrink-0 accent-primary"
-        checked={checked}
-        onChange={onChoose}
-      />
-      {children}
-    </label>
-  );
-}
-
-/**
- * WHETHER THE BROWSER IS KEEPING THE SCREEN ON — and the refusal is a
- * SENTENCE, never a silence. THE RULE: *"its absence is a state, not
- * an error."* A browser that will not hold the lock still proves, so the
- * screen asks the person to do the one thing the browser would not.
- */
-function WakeNote({ wake }: { readonly wake: WakeState }): ReactNode {
-  if (wake === 'held') {
-    return (
-      <p className="m-0 flex items-start gap-2 text-sm text-muted-foreground">
-        <Glyph icon={GLYPH.success} className="size-5 mt-0.5 text-good" />
-        This browser is keeping the screen awake while the proof is built.
-      </p>
-    );
-  }
-  if (wake === 'unheld') {
-    return (
-      <p className="m-0 flex items-start gap-2 text-sm text-muted-foreground">
-        <Glyph icon={GLYPH.warning} className="size-5 mt-0.5 text-warn" />
-        This browser will not keep the screen awake — keep it awake yourself, and do
-        not let the device lock while this runs.
-      </p>
-    );
-  }
-  return null;
-}
-
-const shortUnshieldedOrPayee = (facts: SendFacts): string => {
-  const at = facts.recipientBech32.lastIndexOf('1');
-  const payload = at > 0 ? facts.recipientBech32.slice(at + 1) : facts.recipientBech32;
-  const network = at > 0 ? facts.recipientBech32.slice(0, at + 1) : '';
-  return `${network}${payload.slice(0, 8)}…${payload.slice(-8)}`;
-};
-
-/**
- * THE NETWORK'S TERMS — a decision, built exactly as decided: shown
- * ONCE, on the first live send screen, the hash recorded locally, BLOCKING
- * NOTHING. Fetching is an indexer call, so it happens here — on a screen a
- * person deliberately opened to send real money — and nowhere else. A fetch
- * that fails blocks nothing either: the card says so quietly and the terms
- * show whenever they next can.
- */
-function TermsCard({ fetchTerms }: {
-  readonly fetchTerms: (() => Promise<{ hash: string; url: string }>) | null;
-}): ReactNode {
-  type TermsState =
-    | { readonly name: 'already-seen' }
-    | { readonly name: 'fetching' }
-    | { readonly name: 'show'; readonly hash: string; readonly url: string }
-    | { readonly name: 'failed'; readonly message: string };
-  const [state, setState] = useState<TermsState>(() => (
-    loadTermsSeen() !== null ? { name: 'already-seen' } : { name: 'fetching' }));
-  useEffect(() => {
-    if (state.name !== 'fetching' || !fetchTerms) return undefined;
-    let stale = false;
-    fetchTerms().then((terms) => {
-      if (stale) return;
-      recordTermsSeen(terms);
-      setState({ name: 'show', hash: terms.hash, url: terms.url });
-    }).catch((e: unknown) => {
-      if (stale) return;
-      setState({ name: 'failed', message: describeFailure(e) });
-    });
-    return () => { stale = true; };
-    /* Runs once: 'fetching' is only ever the initial state. */
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  if (state.name === 'already-seen' || !fetchTerms) return null;
-  return (
-    <Section list={false} box={false} aria-label="The network’s terms" title={<>The network&rsquo;s terms</>}>
-      <Card>
-        <CardContent className="flex flex-col gap-3">
-          {state.name === 'fetching' && (
-            <p className="m-0 text-sm text-muted-foreground" role="status">
-              Asking the indexer for the network&rsquo;s current terms and
-              conditions… Sending is not blocked by this.
-            </p>
-          )}
-          {state.name === 'show' && (
-            <>
-              <p className="m-0 text-sm text-muted-foreground">
-                The network publishes terms and conditions that wallets are expected to
-                show once. They are at{' '}
-                <a
-                  className="text-primary underline-offset-4 hover:underline"
-                  href={state.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {state.url}
-                </a>
-                . This is the network&rsquo;s expectation, not a gate of this
-                wallet&rsquo;s: nothing about sending is blocked by it.
-              </p>
-              <p className="m-0 text-xs text-muted-foreground">
-                Their fingerprint (SHA-256), recorded in this browser so this card is
-                not shown again:{' '}
-                <span className="font-mono break-all">{state.hash}</span>
-              </p>
-            </>
-          )}
-          {state.name === 'failed' && (
-            <p className="m-0 text-xs text-muted-foreground" role="status">
-              The network&rsquo;s terms could not be fetched right now
-              ({state.message}). Sending is not blocked; they will be shown when they
-              next can be.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-    </Section>
-  );
-}
-
-/**
- * THE CONFIRMATION — read back from the balanced transaction, and the one
- * place the irreversibility sentence lives. §4: what is shown here is what
- * WILL HAPPEN, not what was typed; where the two could disagree, the engine
- * has already refused rather than let this card render.
- *
- * EVERY ONE OF THOSE SENTENCES IS KEPT AND ONLY WHAT CARRIES THEM CHANGES.
- * The four facts are four labelled rows in the order they were in — to,
- * amount, fee, what the balance becomes — because that is the order somebody
- * checks them in, and reordering it to look better is exactly what
- * the design forbids.
- *
- * TWO SENTENCES SIT BELOW THE CARD AND THEY ARE NOT THE SAME SENTENCE. The
- * first is §4's irreversibility line, said ONCE and only here. The second is
- * the other: how long this will hold somebody on this screen. Both belong BEFORE
- * the button, and neither may be moved after it.
- */
-function ConfirmCard({ facts, owner, onSend, onCancel }: {
-  readonly facts: SendFacts;
-  readonly owner: string;
-  readonly onSend: () => void;
-  readonly onCancel: () => void;
-}): ReactNode {
-  return (
-    <Section list={false} box={false} aria-label="Look at what will happen." title="Look at what will happen.">
-      <Card>
-        <CardContent className="flex flex-col divide-y divide-border">
-          <Fact label="To">
-            <p className="m-0 font-mono text-sm break-all text-foreground">
-              {shortUnshieldedOrPayee(facts)}
-            </p>
-            <p className="m-0 mt-1.5 text-sm text-muted-foreground">
-              {facts.kind === 'shielded'
-                ? 'A shielded address — a private payment.'
-                : 'An unshielded address — an ordinary, visible NIGHT transfer.'}
-              {' '}Check <strong className="font-medium text-foreground">both ends</strong> against
-              what you were given.
-            </p>
-            <details className="group mt-2">
-              <summary
-                className={[
-                  'inline-flex cursor-pointer list-none items-center gap-1.5 text-sm',
-                  'text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden',
-                ].join(' ')}
-              >
-                <Glyph
-                  icon={GLYPH.next}
-                  className="size-4 transition-transform group-open:rotate-90"
-                />
-                Show the whole address
-              </summary>
-              <Bytes>{facts.recipientBech32}</Bytes>
-            </details>
-          </Fact>
-
-          <Fact label="Amount">
-            <p className="m-0 text-3xl tracking-tight font-semibold tabular-nums text-foreground">
-              {nightFromStars(facts.stars)}{' '}
-              <span className="text-base font-medium text-muted-foreground">tNIGHT</span>
-            </p>
-            <p className="m-0 mt-1.5 text-sm text-muted-foreground">
-              Exactly {exactStars(facts.stars)}.{' '}
-              {facts.readBack === 'transaction'
-                ? 'Read back out of the built transaction — this is what will actually move.'
-                : 'A shielded amount cannot be read back off the transaction — it is '
-                  + 'encrypted to its recipient, which is the privacy working. This is the '
-                  + 'one value the transaction was built from; the fee below was read back.'}
-            </p>
-          </Fact>
-
-          <Fact label="The fee, in DUST">
-            <p className="m-0 text-sm text-foreground">
-              {dustFromSpecks(facts.feeSpecks)} tDUST
-              <span className="text-xs text-muted-foreground"> — exactly {exactSpecks(facts.feeSpecks)}, read
-              back from the transaction&rsquo;s own dust spends</span>
-            </p>
-          </Fact>
-
-          <Fact label={`${owner} afterwards`}>
-            <p className="m-0 text-sm text-foreground">
-              {facts.kind === 'shielded' ? 'Shielded' : 'Unshielded'} NIGHT:{' '}
-              {nightFromStars(facts.nightBefore)} →{' '}
-              <strong className="font-semibold">{nightFromStars(facts.nightAfter)}</strong>{' '}
-              tNIGHT
-              <span className="text-xs text-muted-foreground"> ({exactStars(facts.nightAfter)})</span>
-            </p>
-            <p className="m-0 mt-1 text-sm text-foreground">
-              DUST: {dustFromSpecks(facts.dustBefore)} →{' '}
-              <strong className="font-semibold">{dustFromSpecks(facts.dustAfter)}</strong>{' '}
-              tDUST
-              <span className="text-xs text-muted-foreground"> — and it grows back from the registered NIGHT</span>
-            </p>
-          </Fact>
-        </CardContent>
-      </Card>
-
-      {/* Said ONCE, plainly, BEFORE — and never afterwards. */}
-      <p className="m-0 max-w-prose text-sm font-medium text-warn-text">
-        Sending cannot be undone. There is no cancel and no refund on a chain —
-        money that leaves comes back only if its recipient chooses to return it.
-      </p>
-      {/* The other thing somebody needs before pressing, and it is a different
-        * fact from the one above: how long this will hold them here. */}
-      <p className="m-0 max-w-prose text-sm text-muted-foreground">
-        Building the proof takes around {asClock(PROVING_USUALLY_MS)} on a laptop and
-        longer on a phone, and this screen has to stay open the whole time.
-      </p>
-
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="default" onClick={onSend}>Send it</Button>
-        <Button type="button" variant="outline" onClick={onCancel}>Don&rsquo;t send</Button>
-      </div>
-    </Section>
-  );
-}
-
-/** One labelled fact on the confirmation. The label is an `h3` under the
- * section's `h2` — the ladder the kit's `Section` sets out. */
-function Fact({ label, children }: {
-  readonly label: ReactNode;
-  readonly children: ReactNode;
-}): ReactNode {
-  return (
-    <div className="py-4 first:pt-0 last:pb-0">
-      <h3 className="m-0 mb-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        {label}
-      </h3>
-      {children}
+      <SendEnding engineState={engineState} reset={reset} />
     </div>
   );
 }

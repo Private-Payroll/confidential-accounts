@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { Worker as ThreadWorker } from 'node:worker_threads';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { identityFromSecret } from 'midnight-identity/keys/derivation';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
@@ -134,7 +133,6 @@ describe.skipIf(!KEYS_HERE)('A SIGNER INVITED BY ADDRESS IS SEATED FROM THEIR OW
   } as never) as Promise<{ ok: boolean; tx?: string; error?: string }>;
 
   beforeAll(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     /* The company's two signers raise the invitation of Dee's private address with every right, and approve it to the seat bar. */
     const sim = await AccountSimulator.liveAccount([A, B], 2n);

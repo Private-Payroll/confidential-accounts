@@ -1,6 +1,6 @@
 /**
  * The asset registry, and the only place that knows how many decimal places a
- * token has. D10 and D11 in docs/scope-v1-data-model.md.
+ * token has.
  *
  * **AN ASSET IS ITS LEDGER TOKEN.** Vaults only ever hold real tokens, so every
  * asset is identified by the 32-byte token type the ledger gives it: the same
@@ -29,7 +29,7 @@
  */
 
 import { NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network';
-import { isNetworkId, networkRecord, type NetworkKind } from './networks.js';
+import { NETWORK_IDS, isNetworkId, networkRecord, type NetworkKind } from './networks.js';
 
 /**
  * **AN ASSET'S IDENTITY: ITS LEDGER TOKEN, AS 64 LOWER-CASE HEX CHARACTERS.**
@@ -160,44 +160,34 @@ export const NO_ASSET: AssetId = '4e4f4e4500000000000000000000000000000000000000
  * `unshielded` is `null` - a statement, not a gap.
  */
 /**
- * **THE COLOUR, AND IT IS A REAL ONE ON A REAL CHAIN.**
+ * **THE COLOUR IS THE NETWORK RECORD'S, AND IT IS A REAL ONE ON A REAL CHAIN.**
  *
- * Sixty-four hex characters that a mint actually produced on stagenet and that
- * a settled transaction has already moved: the shielded deposit of 30 Aug
- * carries it, and the note it created is held by a vault on chain today.
- * **This is not a number chosen to look like one.** A colour nothing ever
- * minted is money no wallet can fund a deposit with, which is a payment that
- * fails after the approvals and the fee.
+ * A colour is produced by one mint on one chain, so it is a fact about that
+ * network and lives in that network's record (`testToken`), read off the
+ * mint's own answer. This registry keeps no colour and no list of networks of
+ * its own. A colour nothing ever minted is money no wallet can fund a deposit
+ * with, which is a payment that fails after the approvals and the fee.
  *
- * **IT IS THE ONE VALUE HERE THAT A PERSON MAY CHANGE, AND ONLY BY MINTING.**
- * A fresh mint produces a fresh colour, and that colour is read off the mint's
- * own answer rather than derived, so the way to change it is to mint and put
- * the number the mint reports here. Changing it to anything else names money
- * that does not exist.
+ * The test token a network carries, or `null` for a network with no record or
+ * no test token.
  */
-const TEST_SETTLEMENT_COLOUR = 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679';  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone; this is the asset's own identity and there is no other way to name it
-
-/** The test settlement token's identity: its colour, which is its token type. */
-export const TEST_SETTLEMENT_ASSET: AssetId = TEST_SETTLEMENT_COLOUR;
+export const testTokenOn = (network: string): AssetId | null =>
+  isNetworkId(network) ? networkRecord(network).testToken : null;
 
 /**
- * **WHERE THE MONEY THIS COLOUR NAMES ACTUALLY IS, AND IT IS A CLOSED LIST.**
- *
- * A colour is produced by one mint on one chain, so this is a fact about the
- * ASSET rather than about any network: on any other chain this colour names
- * money that was never minted, and a payment in it fails after the approvals
- * and the fees have been paid for.
- *
- * **IT IS A LIST OF CHAINS THE MONEY IS ON AND NOT A LIST OF CHAINS IT IS NOT**:
- * a network nobody has thought of yet is refused by default rather than
- * admitted by default, and that is the whole difference.
- *
- * **IT IS NOT WHAT KEEPS THE ROW OFF A REAL CHAIN.** That is the network's own
- * `kind`, one function down. Two conditions, and the one that matters for
- * somebody's pay does not depend on anybody having remembered to write a name
- * down here.
+ * **EVERY TEST COLOUR ANY RECORD NAMES, AND ONLY THOSE.** What makes a token
+ * a test token is that some test network minted it, not that the network this
+ * build is on did: a build on a network with no test token of its own still
+ * knows every other network's colour, and refuses each of them.
  */
-export const TEST_SETTLEMENT_MINTED_ON: readonly string[] = Object.freeze(['stagenet']);
+const TEST_TOKENS: readonly AssetId[] = Object.freeze(NETWORK_IDS
+  .filter(id => networkRecord(id).kind === 'test')
+  .map(id => networkRecord(id).testToken)
+  .filter((t): t is AssetId => t !== null));
+
+/** The networks whose record names a test token, read off the records. */
+export const NETWORKS_WITH_A_TEST_TOKEN: readonly string[] = Object.freeze(
+  NETWORK_IDS.filter(id => testTokenOn(id) !== null));
 
 /**
  * **A TEST ASSET MAY ONLY EXIST WHERE THE NETWORK'S OWN RECORD SAYS NO REAL
@@ -210,13 +200,9 @@ export const TEST_SETTLEMENT_MINTED_ON: readonly string[] = Object.freeze(['stag
  *    gets the answer that cannot hurt anybody.
  * 2. **Its `kind` must be `test`.** This is the condition that stands between
  *    a worthless token and somebody's real pay, and it is read off the one
- *    record every part of this application reads. It used to be a list of names
- *    kept here - so a network that was real and was not on the list was
- *    admitted, and a network that was real and WAS spelled slightly differently
- *    was admitted too.
- * 3. **The colour must have been minted there.** A fact about the asset rather
- *    than the network, and the reason a test chain nobody has minted on gets
- *    nothing.
+ *    record every part of this application reads, never off a list of names.
+ * 3. **A test token must have been minted there.** Its record names the
+ *    colour, and a test chain nobody has minted on gets nothing.
  *
  * **THE ANSWER IS COMPILED IN, NOT CONFIGURED.** The network reaches this
  * function from `midnight-identity/network` - one constant naming the network
@@ -239,10 +225,10 @@ export const aTestAssetMayExistOn = (network: string): boolean =>
  * The two conditions, as a function of the two values they are about.
  *
  * **IT IS SEPARATE SO THE ONE THAT MATTERS CAN BE WATCHED REFUSING ON ITS
- * OWN.** With the real records the two hide each other: every network whose
- * record says real money settles there is also a network this colour was never
- * minted on, so a `kind` check that had stopped working would refuse anyway and
- * nothing would say. Handed a kind directly, it can be asked the question that
+ * OWN.** With the real records the two hide each other: a network whose
+ * record says real money settles there can never name a test token, so a
+ * `kind` check that had stopped working would refuse anyway and nothing would
+ * say. Handed a kind directly, it can be asked the question that
  * actually stands between a worthless token and somebody's pay.
  *
  * **IT IS NOT A WAY IN.** It answers about the values it is given and changes
@@ -250,10 +236,13 @@ export const aTestAssetMayExistOn = (network: string): boolean =>
  * build is compiled for, and the test beside this file pins that call.
  */
 export const aTestAssetMayExistOnAKindOf = (kind: NetworkKind, network: string): boolean =>
-  kind === 'test' && TEST_SETTLEMENT_MINTED_ON.includes(network);
+  kind === 'test' && testTokenOn(network) !== null;
 
-/** Whether a token is one that exists only so the private path can be walked. */
-export const isATestAsset = (code: AssetId): boolean => code === TEST_SETTLEMENT_ASSET;
+/**
+ * Whether a token is one that exists only so the private path can be walked:
+ * the test token of any test network, not only of the network this build is on.
+ */
+export const isATestAsset = (code: AssetId): boolean => TEST_TOKENS.includes(code);
 
 /**
  * The test rows a given network gets, which is all of them or none of them.
@@ -263,13 +252,14 @@ export const isATestAsset = (code: AssetId): boolean => code === TEST_SETTLEMENT
  * nobody runs.
  */
 export function testAssetsFor(network: string): readonly Asset[] {
-  if (!aTestAssetMayExistOn(network)) return [];
+  const colour = testTokenOn(network);
+  if (colour === null || !aTestAssetMayExistOn(network)) return [];
   return [{
-    code: TEST_SETTLEMENT_ASSET,
+    code: colour,
     symbol: 'tUSD',
     name: 'Test Dollar',
     decimals: 6,
-    ledger: Object.freeze({ shielded: TEST_SETTLEMENT_ASSET, unshielded: null }),
+    ledger: Object.freeze({ shielded: colour, unshielded: null }),
     enabled: true,
     sortOrder: 90,
   }];
@@ -540,11 +530,16 @@ function refuseAnAmbiguousLedgerIdentity(rows: readonly Asset[]): void {
  * **A REGISTRY CARRYING A TEST ASSET ON A NETWORK THAT MAY NOT HAVE ONE DOES
  * NOT BUILD.**
  *
- * `SEED_ASSETS` already leaves the row out off stagenet, so on the ordinary
- * path this never fires. **It is here for the path that is not ordinary**: a
+ * `SEED_ASSETS` already leaves the row out on a network with no test token,
+ * so on the ordinary path this never fires. **It is here for the path that is not ordinary**: a
  * registry assembled by hand, a list spread from somewhere else, a row copied
  * into a fixture that then reaches a server. The seed is one way to get a row
  * into a registry and this is the only way to get a registry.
+ *
+ * **A TEST COLOUR IS REFUSED ON EVERY NETWORK BUT THE ONE THAT MINTED IT.**
+ * Every colour any record names is a test colour, so a row copied from another
+ * network's build is refused here even where this network has none of its
+ * own, and above all on a network where real money settles.
  *
  * It throws rather than dropping the row. A registry quietly missing an asset
  * is a payroll run that refuses for a reason nobody can find; a registry that
@@ -552,16 +547,18 @@ function refuseAnAmbiguousLedgerIdentity(rows: readonly Asset[]): void {
  * happen when a worthless token is a network away from real people.
  */
 export function refuseATestAssetOffItsNetwork(rows: readonly Asset[], network: string): void {
-  if (aTestAssetMayExistOn(network)) return;
-  const found = rows.filter(r => isATestAsset(r?.code)).map(r => r.symbol ?? r.code);
+  const here = aTestAssetMayExistOn(network) ? testTokenOn(network) : null;
+  const found = rows.filter(r => isATestAsset(r?.code) && r.code !== here);
   if (found.length === 0) return;
+  const mintedOn = (code: AssetId): string => NETWORKS_WITH_A_TEST_TOKEN.filter(id => testTokenOn(id) === code).join(', ');
   throw new Error(
-    `${found.join(', ')} ${found.length === 1 ? 'is a test asset' : 'are test assets'} and this `
-    + `build is on "${network}". A test asset is backed by nothing, so a payroll run settling in `
-    + 'one pays real people nothing at all, with real approvals behind it and no way back. It '
-    + `exists on ${TEST_SETTLEMENT_MINTED_ON.join(', ')} and nowhere else, and it may exist only `
-    + 'on a network whose own record says no real money settles there. Remove the row, or run '
-    + 'this build on a network a test asset is allowed on; there is no setting that permits it '
+    `${found.map(r => r.symbol ?? r.code).join(', ')} ${found.length === 1 ? 'is a test asset' : 'are test assets'} `
+    + `(${found.map(r => `${r.symbol ?? r.code} minted on ${mintedOn(r.code)}`).join('; ')}) and this build is `
+    + `on "${network}". `
+    + 'A test asset is backed by nothing, so a payroll run settling in one pays real people nothing '
+    + 'at all, with real approvals behind it and no way back. It exists only on the network that '
+    + 'minted it, and only where that network\'s own record says no real money settles. Remove the '
+    + 'row, or run this build on the network that minted it; there is no setting that permits it '
     + 'and none may be added.');
 }
 
@@ -715,77 +712,43 @@ export const sumAmounts = (xs: readonly bigint[]): bigint => xs.reduce((a, b) =>
 /**
  * **THE LARGEST AMOUNT ANY CHANGE MAY CARRY, AND THE ONE PLACE IT IS WRITTEN.**
  *
+ * `Uint<128>`, because that is the type of the amount `changeCommitmentOf`
+ * commits to and of the `changeAmount` witness the contract range-checks
+ * before a call is built.
  *
- * `Uint<128>`, because that is what `changeCommitmentOf` argument 2 is
- * (`contracts/managed/contract/index.js:4220`) and what the `changeAmount`
- * witness is range-checked against before a call is built (`:1380`).
- *
- * **IT LIVES HERE AND NOT IN `src/midnight/`, AND THE DIRECTION IS FORCED.**
- * `core/` may not import `src/midnight/` — that dependency rule is what keeps
- * the standalone build working and it is stated at `src/wiring/selection.ts:84-93`
- * — and the value has to be readable from `core/` because that is where a
- * change is BUILT. `src/midnight/commitments.ts:42` now reads it from here
- * rather than declaring its own; a second copy of the value would be the
- * eleventh time a duplicated constant has cost this project.
+ * **IT LIVES HERE AND NOT BESIDE THE CONTRACT BINDINGS** because the core may
+ * not import them, and a change is BUILT in the core; the bindings read their
+ * ceiling from here rather than declaring a second copy.
  */
 export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
 
 /**
  * **THE SUM A CHANGE COMMITS TO, REFUSED WHERE IT IS BUILT.**
  *
- * ── WHY A SECOND SUMMING FUNCTION AND NOT A CHECK INSIDE `sumAmounts` ────────
+ * `sumAmounts` above serves display subtotals and arithmetic that never
+ * becomes a circuit argument. **This one is for the value that becomes the
+ * change's amount**, and it is separate so its refusal cannot be inherited by
+ * a caller that only wanted to add three numbers up: the check sits where the
+ * value is made, not at each consumer.
  *
- * `sumAmounts` above is used for display subtotals and for arithmetic that has
- * nothing to do with a circuit argument. **This one is for the value that
- * becomes `StateChange.amount`**, and it is separate so the refusal cannot be
- * inherited by a caller that only wanted to add three numbers up — the shape
- * `newProposalSalt` uses (`src/core/crypto.ts:141-146`): the assert is where
- * the value is MADE, not at either consumer, and it is a NAMED generator rather
- * than a widened shared one.
- *
- * ── WHAT WAS REACHABLE BEFORE IT, MEASURED ──────────────────────────────────
- *
- * `AccountService.propose` summed with a bare reduce and nothing bounded the
- * result. The live door was the plug-in one, since deleted: its install route
- * took `perProposal` as a string and converted it with `parseAmount`, **which
- * refuses a sign, separators and an exponent and imposes NO MAXIMUM** (above)
- * — so the only ceiling on the path was a number the same caller set. Its
- * propose route then passed every check the plug-in service made and wrote
- * `entries`.
- *
- * **AND ON TODAY'S WIRING NOTHING DOWNSTREAM REFUSES IT.**
- * `src/wiring/selection.ts:144` selects the simulated scheme, whose
- * `changeCommitment` HMACs the decimal string (`src/core/ledger.ts:2106-2110`)
- * and takes a bigint of any magnitude. The round opens, collects approvals, and
- * names a change no contract can ever reproduce: approvals spent on a round
- * that can never be paid, reached through a second door. On the Midnight wiring
- * it is loud instead, at the witness range check, before anything is submitted.
- *
- * **THE GUARD THAT SHOULD HAVE CAUGHT IT EXISTS AND IS DEAD CODE**, which is
- * why this is a new function rather than a call to that one: `checkAmount`
- * (`src/midnight/commitments.ts:44-55`) does exactly this and its only caller
- * is `MidnightCommitments.changeCommitment` (`:219-222`), **which nothing in
- * `src/` calls** — `MidnightLedger` reaches `pureCircuits` directly
- * (`src/midnight/ledger.ts:1672`). A tested guard on a path the product does
- * not take proves nothing about the product.
- *
- * **A NEGATIVE IS ALSO REFUSED BY `parseAmount`'s REGEX** (above). It is
- * refused here as well, because the ceiling and the floor are one rule about
- * one value and splitting them across files is how one of them goes missing.
+ * Without it, a proposal whose total does not fit the contract's `Uint<128>`
+ * could be opened and approved on a scheme that takes a bigint of any size,
+ * and then never be paid by any contract. A negative total is refused too,
+ * because the ceiling and the floor are one rule about one value.
  */
 export const sumChangeAmount = (xs: readonly bigint[], what: string): bigint => {
   const total = sumAmounts(xs);
   if (total < 0n) {
     throw new Error(
       `${what} sums to ${total}, which is negative. A change commitment's amount is the ` +
-        'contract\'s Uint<128> and cannot represent it, so this round would be approved and ' +
+        'contract\'s Uint<128> and cannot represent it, so this proposal would be approved and ' +
         'then impossible to settle.',
     );
   }
   if (total > MAX_CHANGE_AMOUNT) {
     throw new Error(
       `${what} sums to ${total}, which does not fit the contract's Uint<128>. The largest ` +
-        `amount a change can carry is ${MAX_CHANGE_AMOUNT}. A round raised above it collects ` +
+        `amount a change can carry is ${MAX_CHANGE_AMOUNT}. A proposal raised above it collects ` +
         'approvals and can never be settled by any payment.',
     );
   }

@@ -30,6 +30,7 @@ import { witnesses } from '../src/witnesses.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { fromHex, toHex } from '../../src/core/crypto.js';
 import { keysOnDisk } from './keys-on-disk.js';
+import { callsTheProductBuilds, readFrom } from './the-calls-the-product-builds.js';
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -104,7 +105,7 @@ const BUILDS_HERE = ON_DISK.ok && STAND_IN_KEY !== undefined;
 
 describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, leaves the vault's receipt unbalanced [needs every verifier key in contracts/managed/keys and contracts/managed-vault/keys, pinned by its module, and the stand-in signing key; `npm run compact` then `npm run compact:vault -- --full` build the keys]", () => {
   /*
-   * The transaction is built by the SDK's own `createUnprovenCallTxFromInitialStates`
+   * The transaction is built by the product's own call builder over the SDK
    * against this contract's compiled circuit, exactly as a caller holding every
    * argument would build it, and nothing is minted in it. The ledger's own
    * `imbalances` then says what the balancing check would find. No proof is made:
@@ -112,12 +113,11 @@ describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, lea
    * unproven transaction only needs one to name its key location.
    */
   const build = async (sim: AccountSimulator, args: unknown[]) => {
-    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     const rt: any = await import('@midnight-ntwrk/compact-runtime');
-    const sdk: any = await import('@midnight-ntwrk/midnight-js-contracts');
     const { CompiledContract } = await import('@midnight-ntwrk/compact-js');
-    const { applyNetworkId } = await import('../../src/midnight/network.js');
-    await applyNetworkId('undeployed');
+    const { NodeZkConfigProvider } = await import('@midnight-ntwrk/midnight-js-node-zk-config-provider');
+    const built = new NodeZkConfigProvider(join(KEYS, '..'));
     const key = new Uint8Array(readFileSync(join(KEYS, STAND_IN_KEY!)));
     const state: any = sim.contractStateForCall;
     for (const n of state.operations()) {
@@ -132,19 +132,20 @@ describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, lea
       getVerifierKeys: async (ns: string[]) => ns.map((n) => [n, key]),
       getZKIR: async () => new Uint8Array(),
       getProverKey: async () => new Uint8Array(),
+      /* Which compiler built these keys is read from the build itself, so the call is built for this ledger. */
+      getArtifactRuntimeVersion: () => built.getArtifactRuntimeVersion(),
     };
-    const out: any = await sdk.createUnprovenCallTxFromInitialStates(zk, {
+    const out = await callsTheProductBuilds().buildCall(zk, {
       compiledContract: compiled,
       circuitId: 'recordPaymentFromVault',
       contractAddress: sim.address,
       coinPublicKey: hex(bytes(7)),
-      initialContractState: state,
-      initialZswapChainState: new L.ZswapChainState(),
-      ledgerParameters: L.LedgerParameters.initialParameters(),
+      network: 'undeployed',
+      read: readFrom(state),
       initialPrivateState: sim.currentPrivateState,
       args,
     }, hex(bytes(8)));
-    return { tx: out.private.unprovenTx, L };
+    return { tx: out.private.transaction as any, L };
   };
 
   /* The SDK reads the wall clock for the block time, so this run's window is around it. */
@@ -319,7 +320,7 @@ describe('which vault may pay', () => {
     const run = await approvedRun(sim, PAYROLL, payments, c);
     await sim.as(sim.applying(A, c)).recordPaymentFromVault(claim(run, payments, PAYROLL, c, 0));
     const fx = sim.lastEffects;
-    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     const receipt = L.rawTokenType(pureCircuits.paymentReceiptTag(), hex(PAYROLL));
     /* RED WHEN the receipt's amount or its token changes. */
     expect(unshielded(fx.unshieldedInputs)).toEqual([[receipt, 1n]]);
@@ -369,7 +370,7 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
     await sim.as(sim.applying(A, c)).recordPaymentFromVault(args);
     expect(sim.ledger.movements.member(
       pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(true);
-    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     const receipt = L.rawTokenType(pureCircuits.paymentReceiptTag(), hex(PAYROLL));
     /* RED WHEN the receipt is keyed on the run's vault instead of the paying vault. */
     expect(unshielded(sim.lastEffects.unshieldedInputs)).toEqual([[receipt, 1n]]);

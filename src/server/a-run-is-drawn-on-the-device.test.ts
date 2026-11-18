@@ -10,11 +10,13 @@
  * the product does it. The chain's read is the test's.
  */
 import { RecordWithheld } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { canonical, newWrappingKeypair, parseCanonical, unseal, unwrapKey, type Hex } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { sealPerson } from '../core/person-record.js';
 import { openSealedRun, sealedRunOf } from '../core/run-legs.js';
 import { signRunFiling } from '../core/run-filing.js';
@@ -48,7 +50,7 @@ aCompanyOfTwoSeats((app, deps) => {
 const NETWORK = theNetwork();
 const MONTH = '2026-11';
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
-const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
+const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
@@ -243,7 +245,7 @@ const aRoundFor = (runId: string, raisedAt?: string): SealedProposal => {
       accountId: CO, viewingKey: KEY as Hex, vault: 'c5'.repeat(32) as Hex, summary: 'Payroll', proposedBy: ADA.seat,
       /* A window its identity on chain (a test's, not made from it) does not hold it to: it stays live until the chain says. */
       payload: { runId, form: 'shielded', entries: [], window: { root: '0b'.repeat(32) as Hex, payees: '1', opensAt: '0', closesAt: '1' } },
-      change: { asset: TEST_SETTLEMENT_ASSET, amount: 0n, batchDigest: batchDigestOf([]), salt, vouched: { head: '1a'.repeat(32) as Hex, r: '5e'.repeat(32) as Hex } },
+      change: { asset: TEST_NETWORK_COLOUR, amount: 0n, batchDigest: batchDigestOf([]), salt, vouched: { head: '1a'.repeat(32) as Hex, r: '5e'.repeat(32) as Hex } },
     }),
   } as SealedProposal;
 };

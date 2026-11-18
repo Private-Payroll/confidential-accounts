@@ -144,7 +144,7 @@ const workerFor = (chain: ReturnType<typeof aChain>): RecoveryDoors['builder'] =
       },
       runtimeState: { deserialize: (b: Uint8Array) => ({ data: b }) },
       contracts: {
-        createUnprovenCallTxFromInitialStates: async (_zk: unknown, o: any) => {
+        buildCall: async (_zk: unknown, o: any) => {
           circuit = o.circuitId;
           return { private: { nextPrivateState: o.initialPrivateState, unprovenTx: 'UNPROVEN' } };
         },

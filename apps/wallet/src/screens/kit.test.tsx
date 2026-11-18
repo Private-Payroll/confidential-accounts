@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '../testing/render.js';
+import { networkRecord } from '../../../../src/core/networks.js';
+import { NETWORK } from '../config.js';
 
 /*
  * THE GALLERY. Three claims, and each one is a thing that would be a
@@ -112,5 +114,13 @@ describe('the component gallery', () => {
     render(<SessionProvider><App /></SessionProvider>);
     expect(screen.getByText('If you lose this device your money is gone')).toBeTruthy();
     expect(screen.getByText(/Nobody can recover it, including us/)).toBeTruthy();
+  });
+  it('names the network by its record, and writes no network name of its own', () => {
+    render(<SessionProvider><App /></SessionProvider>);
+    /* RED WHEN the Network row is a literal name again: the row then shows
+     * the bare id and not the record's label ('Midnight Stagenet' today). */
+    const shown = screen.getAllByText(networkRecord(NETWORK).label).find((el) => el.closest('main') !== null);
+    expect(shown).toBeTruthy();
+    expect(shown!.textContent).not.toBe(NETWORK);
   });
 });

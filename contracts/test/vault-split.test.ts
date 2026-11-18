@@ -33,6 +33,10 @@ import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 import { coinsKeptBy } from '../../src/midnight/vault-coins.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -69,21 +73,24 @@ const heldBy = (
   coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
 ) => vaultCircuits.heldCommitmentOf(coin, vaultCircuits.noteBlindingOf(addr, coin));
 
-describe('a vault splits one of its own notes', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault splits one of its own notes [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;
   let vaultState: any;
   let priv: VaultPrivate;
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
   const vaultBytes = () => Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
 
   const pool = (state: any = vaultState) => vaultLedger(state as never).notes;
 

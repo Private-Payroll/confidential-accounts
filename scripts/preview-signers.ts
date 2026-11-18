@@ -1,43 +1,30 @@
 /**
- * THE DEMO SIGNERS' REAL IDENTITIES, BORN ON THIS MACHINE AND KEPT OFF GIT.
+ * THE SIGNERS OF AN ACCOUNT DEPLOYED FROM THIS MACHINE: REAL IDENTITIES, BORN HERE AND KEPT OUT OF THE REPOSITORY.
  *
+ * **WHY NOT A FORMULA.** A signer's identity computed from a small integer by a
+ * formula in this repository is an identity any reader can compute, from any
+ * machine, for ever; two of them is a threshold on a 2-of-N account, and a
+ * threshold is what stands between a reader and every `recordPayment` that moves
+ * a vault's money. Deterministic bytes are right for a payload, a batch digest or
+ * a salt that two processes must agree on and nobody's money depends on. They are
+ * wrong for an IDENTITY: real devices generate their keys with
+ * `newSigningKeypair` and their blindings with `newBlinding`, and so does this.
  *
- * **WHAT THIS REPLACES, AND WHY IT HAD TO BE REPLACED.** Every signer these
- * preview scripts seat on a real deployed account used to be
- * `seededBytes(n)` — `out[i] = (seed * 31 + i * 7) % 256`, a published formula
- * in a repository that is going public. Signer A was seated by the
- * CONSTRUCTOR, so every account this project deployed carried a seat that any
- * reader could take, from any machine, for ever; B through E were seated by the
- * run, so the same was true of them one step later. Two signers is a threshold
- * on a 2-of-N account, and a threshold is what stands between a reader and
- * every `recordPayment` that moves a vault's money.
+ * **WHY A FILE AT ALL.** The deploy seats a signer's leaf on chain, and a later
+ * run has to prove membership of that same leaf, minutes later, in a DIFFERENT
+ * PROCESS. Two processes agreeing on an identity means either a formula both can
+ * compute, or a value one writes down and the other reads. `.midnight/` is kept
+ * out of the repository for exactly this: it already holds the wallet seed and
+ * the maintenance authority.
  *
- * `seeded.ts` IS NOT DELETED AND ITS FORMULA IS NOT WRONG. Deterministic bytes
- * from a small integer are the right thing for a payload, a batch digest or a
- * salt that two processes must agree on and nobody's money depends on. They
- * were the wrong thing for an IDENTITY, which `seeded.ts`'s own header has said
- * since it was written: *"real devices generate their keys with
- * `newSigningKeypair` and their blindings with `newBlinding`"*. This file is
- * that sentence, carried out.
- *
- * **WHY A FILE AT ALL, WHICH IS THE PART THAT LOOKS LIKE A SHORTCUT AND IS
- * NOT.** `DEPLOY-PREVIEW.command` seats a signer's leaf on chain and
- * `RUN-PREVIEW`'s script has to prove membership of that same leaf, minutes
- * later, in a DIFFERENT PROCESS. Two processes agreeing on an identity means
- * either a formula both can compute — which is what put us here — or a value
- * one writes down and the other reads. `.midnight/` is gitignored for exactly
- * this: it already holds the wallet seed and the maintenance authority.
- *
- * **PER ACCOUNT, NEVER SHARED, AND THAT IS `C275` WRITTEN DOWN.** The mint used
- * to write every vault's test signers into ONE file keyed by id, so the second
- * vault's run overwrote the first's in place — and `payroll-test-1`'s pool is
- * unopenable today because of it. The account id is in the filename and
+ * **PER ACCOUNT, NEVER SHARED.** One file for every account would let the second
+ * account's run overwrite the first's signers in place, and the first account's
+ * pool could no longer be opened. The account id is in the filename, and
  * `assertPreviewAccountId` is why it can only ever be a filename.
  *
- * **NEVER OVERWRITTEN.** A file that exists is REUSED, exactly as
- * `wallet.seed` is. Regenerating on a redeploy would strand every signer this
- * project has already seated on chain under the previous material — which is
- * `C275`'s failure with the direction reversed.
+ * **NEVER OVERWRITTEN.** A file that exists is REUSED, exactly as `wallet.seed`
+ * is. Regenerating on a redeploy would strand every signer already seated on
+ * chain under the previous material.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -148,7 +135,7 @@ export function parsePreviewSigners(raw: unknown, file: string): PreviewSigners 
  * one machine plays all five, so all five secrets are on this disk. What that
  * buys is the property that matters for a public repository: **the material is
  * not in the repository, and no reader of it can compute any of these
- * identities.** Who holds the secret is `C330`'s question and board `4a`'s.
+ * identities.**
  */
 export function readOrCreatePreviewSigners(
   stateDir: string, network: string, accountId: string,
@@ -163,9 +150,9 @@ export function readOrCreatePreviewSigners(
   }
   const record: PreviewSignersRecord = {
     note:
-      'Demo signer material for the preview scripts, drawn from real entropy and kept out ' +
-      'of git. C334: nothing in the repository may grant a seat on an account. Deleting this ' +
-      'file strands every signer already seated on chain from it.',
+      'Demo signer material for an account deployed from this machine, drawn from real entropy ' +
+      'and kept out of the repository: nothing in the repository may grant a seat on an account. ' +
+      'Deleting this file strands every signer already seated on chain from it.',
     network,
     accountId,
     createdAt: new Date().toISOString(),

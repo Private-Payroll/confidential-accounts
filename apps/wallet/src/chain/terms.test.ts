@@ -6,6 +6,7 @@ import { identityFromWords } from 'midnight-identity';
 import { loadTermsSeen, recordTermsSeen } from './terms.js';
 import { liveDoors } from './send-context.js';
 import { unshieldedKeystoreFor } from './unshielded.js';
+import { NETWORK } from '../config.js';
 
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
 
@@ -20,14 +21,14 @@ describe('the terms record — a network fact, kept plainly', () => {
     expect(seen?.url).toBe('https://terms.example/t');
     expect(typeof seen?.seenAt).toBe('number');
     /* Scoped to the network, so a testnet record can never stand in for
-     * stagenet's. */
-    expect(localStorage.getItem('midnight-identity:terms:stagenet')).toBeTruthy();
+     * the compiled network's. */
+    expect(localStorage.getItem(`midnight-identity:terms:${NETWORK}`)).toBeTruthy();
   });
 
   it('a damaged record is a cache miss, never a dead end — the terms just show again', () => {
-    localStorage.setItem('midnight-identity:terms:stagenet', 'not json');
+    localStorage.setItem(`midnight-identity:terms:${NETWORK}`, 'not json');
     expect(loadTermsSeen()).toBeNull();
-    localStorage.setItem('midnight-identity:terms:stagenet', JSON.stringify({ hash: 7 }));
+    localStorage.setItem(`midnight-identity:terms:${NETWORK}`, JSON.stringify({ hash: 7 }));
     expect(loadTermsSeen()).toBeNull();
   });
 });
@@ -56,23 +57,12 @@ describe('the live doors — the live half of the seam', () => {
     await doors.stop();
   });
 
-  it('the keys carry the facade\'s own parameter names, freshly derived per call', () => {
-    const doors = liveDoors(ours, 2);
-    const first = doors.keys();
-    const second = doors.keys();
-    expect(first.shieldedSecretKeys).toBeTruthy();
-    expect(first.dustSecretKey).toBeTruthy();
-    /* Fresh per call — the WASM objects are single-use across some SDK
-     * boundaries (the earlier lesson). */
-    expect(first.shieldedSecretKeys).not.toBe(second.shieldedSecretKeys);
-  });
-
   it('the change-detection address is the same wallet the keystore pays from', () => {
     const doors = liveDoors(ours, 2);
     expect(doors.ownUnshieldedHex).toBe(unshieldedKeystoreFor(ours, 2).getAddress());
   });
 
   it('refuses the reserved account, like every other door', () => {
-    expect(() => liveDoors(ours, 1).keys()).toThrow(/authority/);
+    expect(() => liveDoors(ours, 1).ownUnshieldedHex).toThrow(/authority/);
   });
 });

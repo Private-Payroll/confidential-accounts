@@ -24,6 +24,10 @@ import { fromHex, toHex, type Hex } from '../../src/core/crypto.js';
 import { noFurtherNote, notePlaces, unusedNotePlace } from '../../src/midnight/vault-step-notes.js';
 import { replayVault, keptByAStep, whyNoStepCouldBe, type VaultEvent } from '../../src/midnight/vault-recovery.js';
 import { STEP_LIMITS } from '../../src/midnight/payment-plan.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -93,13 +97,16 @@ class World {
   }
 
   async call(circuit: string, ...args: unknown[]): Promise<unknown> {
-    const provider = {
-      getContractState: async (_b: string, address: unknown) =>
-        String(address) === String(this.sim.address) ? (this.sim.contractStateForCall as never) : undefined,
-    };
-    const ctx = createCircuitContext<VaultPrivate>(
-      circuit as never, this.addr as never, BLOCK, this.state, this.priv,
-      provider as never, undefined, undefined, NOW, BLOCK);
+    const ctx = createCircuitContext<VaultPrivate>({
+        circuitId: circuit as never,
+        contractAddress: this.addr as never,
+        coinPublicKeyOrZswapState: BLOCK,
+        contractState: this.state,
+        privateState: this.priv,
+        crossContract: this.sim.crossContract(),
+        time: NOW,
+        parentBlockHash: BLOCK,
+      });
     const out: any = await (this.vault.impureCircuits as any)[circuit](ctx, ...args);
     this.state = out.context.callContext.currentQueryContext.state;
     this.lastFx = out.context.callContext.currentQueryContext.effects;
@@ -156,7 +163,7 @@ const paidMarks = (w: World, leaf: Uint8Array, nonce: Uint8Array) =>
   [w.sim.ledger.movements.member(P.paidMovementOf(leaf)), w.sim.ledger.movements.member(P.paidOnceOf(nonce))];
 const receiptsMinted = (w: World) => [...w.lastFx.unshieldedMints].length;
 
-describe('a payment that draws on several notes', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a payment that draws on several notes [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('PAYS A PAYEE NO SINGLE NOTE COVERS FROM TWO NOTES, AND KEEPS THE EXACT CHANGE', async () => {
     const w = await World.started();
     const first = coin(0x71, 60n);
@@ -200,7 +207,7 @@ describe('a payment that draws on several notes', () => {
   });
 });
 
-describe('a batch of up to four payees, approved together', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a batch of up to four payees, approved together [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('PAYS FOUR PAYEES FROM THREE NOTES WITH ONE RECEIPT, MARKS EACH PAID, KEEPS THE CHANGE AND MARKS THE RUN PAID FROM', async () => {
     const w = await World.started();
     const notes = [coin(0x71, 100n), coin(0x72, 100n), coin(0x73, 100n)];
@@ -421,7 +428,7 @@ describe('a batch of up to four payees, approved together', () => {
 /** `batchLeafOf([1…, 2…, 0, 0], [5, 7, 0, 0])`, worked out once by the contract. */
 const BATCH_LEAF_PIN = '597ad2ccaa579ca30a6fd26aff90679b351fd823efe925ee1d66069e1dbd766b';
 
-describe('a merge, which needs no approval', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a merge, which needs no approval [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('MERGES TWO, THREE OR FOUR NOTES INTO ONE THE VAULT KEEPS, WORTH EXACTLY WHAT THEY HELD', async () => {
     for (const count of [2, 3, 4]) {
       const w = await World.started();
@@ -496,7 +503,7 @@ describe('the places a step is handed', () => {
   });
 });
 
-describe('recovery names every coin these steps made', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('recovery names every coin these steps made [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('REBUILDS THE POOL AFTER A TWO-NOTE PAYMENT, A BATCH AND A MERGE, AND THE MERGED NOTE IT NAMES IS SPENT', async () => {
     const w = await World.started();
     const notes = [coin(0x71, 60n), coin(0x72, 50n), coin(0x73, 300n), coin(0x74, 40n), coin(0x75, 45n)];
@@ -538,7 +545,7 @@ describe('recovery names every coin these steps made', () => {
   });
 });
 
-describe('the journal alone names what every note of a step left, when the pool write was lost', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('the journal alone names what every note of a step left, when the pool write was lost [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('A TWO-NOTE PAYMENT, A BATCH OF TWO NOTES AND A MERGE, EACH JOURNALLED BEFORE ITS CALL, ARE REBUILT FROM THEIR LINES, AND WHAT THEY NAME SPENDS', async () => {
     const w = await World.started();
     const notes = [coin(0x81, 60n), coin(0x82, 50n), coin(0x83, 100n), coin(0x84, 90n), coin(0x85, 40n), coin(0x86, 45n)];

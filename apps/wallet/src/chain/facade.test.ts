@@ -9,8 +9,9 @@ import type { Identity } from 'midnight-identity';
 import { EMPTY, firstValueFrom } from 'rxjs';
 import { ZswapLocalState, coinCommitment, coinNullifier, shieldedToken } from '@midnightntwrk/ledger-v9';
 import { NETWORK } from '../config.js';
-import { secretKeysFor, walletFor } from './balance.js';
-import { FACADE_CONFIG, NODE_RPC_URL, facadeFor, facadeKeysFor, failingProving, startForAPage } from './facade.js';
+import { networkRecord, websocketNodeOf } from '../../../../src/core/networks.js';
+import { secretKeysFor, shieldedKeysFor, walletFor } from './balance.js';
+import { FACADE_CONFIG, NODE_RPC_URL, facadeFor, failingProving, seedsFor, startForAPage } from './facade.js';
 import type { FacadeServiceOverrides } from './facade.js';
 import { unshieldedAddressFor, unshieldedWalletFor } from './unshielded.js';
 import { dustAddressFor, dustWalletFor } from './dust.js';
@@ -34,7 +35,7 @@ import { dustAddressFor, dustWalletFor } from './dust.js';
 
 const ours: Identity = identityFromWords(TEST_MNEMONIC);
 
-/* The SDK's DEFAULT submission and pending services dial the node and the
+/* The SDK's DEFAULT submission and lifecycle services dial the node and the
  * indexer DURING init — measured: `WalletFacade.init` never resolves in
  * this offline sandbox without these. So the offline tests inject inert
  * ones through the SDK's own `InitParams` seams. Nothing submitted through
@@ -45,12 +46,17 @@ const offlineServices: FacadeServiceOverrides = {
       new Error('offline test: nothing may submit'))) as never,
     close: () => Promise.resolve(),
   }),
-  pendingTransactionsService: () => ({
+  transactionLifecycleService: () => ({
     start: () => Promise.resolve(),
     stop: () => Promise.resolve(),
     state: () => EMPTY,
-    addPendingTransaction: () => Promise.reject(new Error('offline test')),
-    clear: () => Promise.resolve(),
+    balanced: () => Promise.resolve(),
+    finalized: () => Promise.resolve(),
+    submitted: () => Promise.reject(new Error('offline test: nothing may submit')),
+    reverted: () => Promise.resolve(),
+    orphanBeyond: () => Promise.resolve(),
+    included: () => Promise.resolve(),
+    serializeState: () => Promise.resolve('{}'),
   }),
 };
 
@@ -76,15 +82,18 @@ describe('the facade composes the SAME wallets the screens show', () => {
 
   it('the no-prover prover refuses instead of proving nothing', async () => {
     await expect(failingProving.prove(
-      undefined as never)).rejects.toThrow(/without a prover on purpose/);
+      undefined as never, undefined as never)).rejects.toThrow(/without a prover on purpose/);
   });
 
-  it('the endpoints are stagenet\'s, stated once', () => {
-    expect(NODE_RPC_URL).toBe('wss://rpc.stagenet.shielded.tools');
-    expect(FACADE_CONFIG.networkId).toBe('stagenet');
+  it('the endpoints are the built network\'s, read from its record', () => {
+    /* RED WHEN the wallet's node or indexer is written anywhere but the
+     * network's record, or is another network's. */
+    const recorded = networkRecord(NETWORK).endpoints!;
+    expect(new URL(NODE_RPC_URL).host).toBe(new URL(websocketNodeOf(recorded)).host);
+    expect(FACADE_CONFIG.networkId).toBe(NETWORK);
     expect(FACADE_CONFIG.relayURL.protocol).toBe('wss:');
     expect(new URL(FACADE_CONFIG.indexerClientConnection.indexerHttpUrl).host)
-      .toBe('indexer.stagenet.shielded.tools');
+      .toBe(new URL(recorded.indexer).host);
     /* The guide's own fee margin, and a whole number of blocks. */
     expect(FACADE_CONFIG.costParameters.feeBlocksMargin).toBe(5);
   });
@@ -128,30 +137,31 @@ describe('the facade composes the SAME wallets the screens show', () => {
     }
   }, 60_000);
 
-  it('facadeKeysFor derives the keys the wallets themselves were built from', () => {
-    const keys = facadeKeysFor(ours, 2);
-    /* The coin public key is the shielded wallet's identity; the dust public
-     * key is the dust wallet's — both must be the account-2 derivations. */
-    expect(keys.shielded.coinPublicKey).toBeTruthy();
-    expect(dustAddressFor(ours, 2)).toContain('mn_dust_stagenet1');
-    expect(() => facadeKeysFor(ours, 1)).toThrow(/authority/);
+  it('the facade is started from the seeds every key this wallet shows is derived from', () => {
+    const seeds = seedsFor(ours, 2);
+    /* RED WHEN: the facade is started from seeds other than the account's own, so it pays from a wallet the screens do not show. */
+    expect(seeds.shielded).toEqual(ours.moneyAt(2).zswap);
+    expect(seeds.dust).toEqual(ours.moneyAt(2).dust);
+    expect(seeds.unshielded).toEqual(ours.moneyAt(2).night);
+    expect(dustAddressFor(ours, 2)).toContain(`mn_dust_${NETWORK}1`);
+    expect(() => seedsFor(ours, 1)).toThrow(/authority/);
   });
 });
 
 describe('A PAGE\'S PAYMENT STARTS WHAT IT PAYS FROM, FROM WHERE THIS WALLET LAST GOT TO', () => {
-  it('starts the private part, the public part and the pending transactions - and never the DUST wallet', async () => {
+  it('starts the private part, the public part and the transaction lifecycle - and never the DUST wallet', async () => {
     const started: string[] = [];
     const part = (name: string) => ({ start: async () => { started.push(name); } });
     await startForAPage({
-      shielded: part('shielded'), unshielded: part('unshielded'), pendingTransactionsService: part('pending'),
+      shielded: part('shielded'), unshielded: part('unshielded'), transactionLifecycleService: part('lifecycle'),
       dust: part('dust'),
-    } as never, facadeKeysFor(ours, 2));
+    } as never, { shielded: shieldedKeysFor(ours, 2) });
     /* RED WHEN: the payment starts DUST's read from the beginning of the chain beside the one it waits for, or stops letting a failed transaction go. */
-    expect(started.sort()).toEqual(['pending', 'shielded', 'unshielded']);
+    expect(started.sort()).toEqual(['lifecycle', 'shielded', 'unshielded']);
   });
 
   it('rebuilds the private part from a snapshot of this account, which says it is not connected until it hears the network', async () => {
-    const cold = walletFor(ours, 2);
+    const cold = await walletFor(ours, 2);
     /* A snapshot that has read to event 4242, so a part rebuilt from it can be told apart from one started cold. */
     const serialized = JSON.stringify({ ...JSON.parse(await cold.serializeState()) as object, offset: '4242' });
     await cold.stop().catch(() => {});
@@ -174,7 +184,7 @@ describe('A PAGE\'S PAYMENT STARTS WHAT IT PAYS FROM, FROM WHERE THIS WALLET LAS
      * to event 4242, so a part rebuilt from it is told apart from one started
      * cold by where it starts.
      */
-    const other = walletFor(ours, 0);
+    const other = await walletFor(ours, 0);
     const account0 = JSON.stringify({ ...JSON.parse(await other.serializeState()) as object, offset: '4242' });
     await other.stop().catch(() => {});
     const ownSnapshot = JSON.parse(serialized) as { state: string; publicKeys: { coinPublicKey: string } };

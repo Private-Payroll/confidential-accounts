@@ -5,14 +5,16 @@
  * a proof of one: they accept with their code for exactly that address, and are admitted on the fingerprint they
  * read out. Either way they are paid only at the address version 1 of their record was filed with.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import * as L from '@midnightntwrk/ledger-v9';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { addressOfVerifyingKey } from 'midnight-identity/profile/disclosure';
 import { CLAIMED_HANDOVER_SCHEMA, type AddressClaim, type AddressClaimFor } from 'midnight-identity/profile/address-claim';
 import { signUnshieldedClaim } from 'midnight-identity/profile/address-claim-signed';
-import { NIGHT, TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+import { NIGHT } from '../core/assets.js';
 import { acceptanceProofOf, invitationIdOf, tokenOfLink } from '../core/invitation.js';
 import { sealToInbox } from '../core/sealed-records.js';
 import { openPerson, sealPerson, whyNotPayable } from '../core/person-record.js';
@@ -148,7 +150,7 @@ describe('A PERSON ADDED BY AN UNSHIELDED ADDRESS IS ADMITTED BY THEIR WALLET\'S
     const byLink = await inviteHere(ACME, ADA, 'employee', { ...pay(70, typed), address: undefined } as never, ORIGIN, fromAda);
     await expect((async () => claimIntentOf(await openInvitationHere(byLink.link, sendAs(null))))()).rejects.toThrow(/not made by an address/u);
     /* RED WHEN: the page asks a wallet to claim a shielded address, which no device can check a claim of. */
-    const byShielded = await inviteHere(ACME, ADA, 'employee', pay(79, payeeFor('79'.repeat(32), NETWORK).bech32, TEST_SETTLEMENT_ASSET), ORIGIN, fromAda);
+    const byShielded = await inviteHere(ACME, ADA, 'employee', pay(79, payeeFor('79'.repeat(32), NETWORK).bech32, TEST_NETWORK_COLOUR), ORIGIN, fromAda);
     await expect((async () => claimIntentOf(await openInvitationHere(byShielded.link, sendAs(null))))()).rejects.toThrow(/made by a private address/u);
   });
 
@@ -214,7 +216,7 @@ describe('A PERSON ADDED BY AN UNSHIELDED ADDRESS IS ADMITTED BY THEIR WALLET\'S
     const typed = unshieldedOf(75);
     const code = signJoinCode(walletOf(75), LABEL, 'emp_00000000000000000075', { kind: 'payee', address: typed, payslipKey: PAYSLIP });
     const base = {
-      id: 'emp_00000000000000000075', accountId: 'acc', name: 'x', email: null, title: 't', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n,
+      id: 'emp_00000000000000000075', accountId: 'acc', name: 'x', email: null, title: 't', asset: TEST_NETWORK_COLOUR, baseAmount: 1n,
       startDate: '2026-10-01', status: 'active' as const, wrappingPublicKey: PAYSLIP as never, handedOverBy: code.committeeKey.value,
       admittedBy: 'ada', admittedAt: 'x', selfRaised: false, payeeCode: code, address: payeeOf(typed, NETWORK), invitedAddress: typed,
     };
@@ -227,7 +229,7 @@ describe('A PERSON ADDED BY A SHIELDED ADDRESS IS ADMITTED ON THE FINGERPRINT TH
   const shieldedOf = (n: number): string => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
   const addedByShielded = async (n: number) => {
     const typed = shieldedOf(n);
-    const made = await inviteHere(ACME, ADA, 'employee', pay(n, typed, TEST_SETTLEMENT_ASSET), ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', pay(n, typed, TEST_NETWORK_COLOUR), ORIGIN, fromAda);
     return { typed, made, person: made.person! };
   };
   const accepted = async (n: number, typed: string, link: string, person: string) => {
@@ -284,7 +286,7 @@ describe('A PERSON ADDED BY A SHIELDED ADDRESS IS ADMITTED ON THE FINGERPRINT TH
     const typed = shieldedOf(86);
     const code = signJoinCode(walletOf(86), LABEL, 'emp_00000000000000000086', { kind: 'payee', address: typed, payslipKey: PAYSLIP });
     const base = {
-      id: 'emp_00000000000000000086', accountId: 'acc', name: 'x', email: null, title: 't', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n,
+      id: 'emp_00000000000000000086', accountId: 'acc', name: 'x', email: null, title: 't', asset: TEST_NETWORK_COLOUR, baseAmount: 1n,
       startDate: '2026-10-01', status: 'active' as const, wrappingPublicKey: PAYSLIP as never, handedOverBy: code.committeeKey.value,
       admittedBy: 'ada', admittedAt: 'x', selfRaised: false, payeeCode: code, address: payeeOf(typed, NETWORK), invitedAddress: typed,
     };

@@ -1,4 +1,6 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,7 +30,7 @@ import type { User } from './types.js';
 import { payFor } from '../testing/payees.js';
 
 import { TEST_TOKEN } from '../testing/assets.js';
-import { TEST_SETTLEMENT_ASSET, NIGHT } from './assets.js';
+import { NIGHT } from './assets.js';
 /**
  * **A PERSON CAN BE RECORDED AS A PUBLIC PAYEE, AND A PAYROLL RUN PAYS THEM
  * PUBLICLY.**
@@ -300,7 +302,7 @@ describe('the door, the refusal, and the record', () => {
   it('§3 A TRANSFER IS A TRANSFER IN THE RECORD, AND THERE IS NOTHING TO SET IT TO', () => {
     /*
      * The misfiling this exists to prevent is a transfer written into the log
-     * as a payroll, where an auditor reading it in a year sees somebody's
+     * as a payroll, where a reader of the log in a year sees somebody's
      * salary. `movement` is a literal, so there is no assignment that could do
      * it, and `entryKindOf` is the only bridge to the ledger's vocabulary.
      */
@@ -385,7 +387,7 @@ describe('the door, the refusal, and the record', () => {
      * payment the settlement cannot make - the thing the privacy rule is about.
      */
     expect(assets.all().filter(a => privateForm(a).of === 'available').map(a => a.code))
-      .toEqual([TEST_SETTLEMENT_ASSET]);
+      .toEqual([TEST_NETWORK_COLOUR]);
     /*
      * **AND THE ANSWER IS THE ROW'S, NOT A NAME'S.** Every asset above has the
      * same answer whether it is read off the row or off a list naming the one
@@ -425,7 +427,7 @@ describe('the door, the refusal, and the record', () => {
      * WHO THE PAYEE IS.**
      *
      * A bonus, an expense or a correction raised as a one-off transfer to an
-     * employee's own address publishes them, with every check in the round
+     * employee's own address publishes them, with every check in the payroll
      * passing. So the roster is a required argument here and there is no
      * default that could quietly stop the check being made.
      */
@@ -450,8 +452,8 @@ describe('the door, the refusal, and the record', () => {
      * `proposalId` was settable at construction, so a transfer could be made
      * already pointing at somebody else's approved round. The chain refuses
      * that settlement on the root check and no money moves; the RECORD still
-     * attributes the transfer to a round that never authorised it, in exactly
-     * the document an auditor reads.
+     * attributes the transfer to a payroll that never authorised it, in exactly
+     * the document a reader of the log opens.
      */
     expect(publicTransfer().proposalId).toBeNull();
     /*
@@ -632,7 +634,7 @@ describe('the door, the refusal, and the record', () => {
     const wrappingPublicKey = newWrappingKeypair().publicKey;
 
     h.payroll.addSelfAsPayee(account.id, me, {
-      name: 'The Founder', email: null, title: 'Founder',
+      name: 'The Owner', email: null, title: 'Owner',
       asset: TEST_TOKEN, baseAmount: 5_000_00n,
     }, viewingKey, { wrappingPublicKey, address: payeeFor('a1'.repeat(32), NETWORK) });
 

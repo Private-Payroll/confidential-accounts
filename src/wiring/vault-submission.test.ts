@@ -3,9 +3,8 @@ import { keysOnDisk, VAULT_KEYS } from '../../contracts/test/keys-on-disk.js';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds } from '../../contracts/test/the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
 import { buildDeposit, buildVaultBornHeld, type VaultBuilderDeps } from 'vaults-web-shared/vault-builder.js';
 import { committeeReplacement, type Committee } from '../midnight/vault-committee.js';
@@ -28,7 +27,7 @@ const zk = new NodeZkConfigProvider(new URL('../../contracts/managed-vault', imp
 const deps: VaultBuilderDeps = {
   ledger: L,
   runtimeState: (runtime as any).ContractState,
-  contracts: contracts as any,
+  contracts: callsTheProductBuilds(),
   compiled: CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
     CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('no'); }, nonceSecret: () => { throw new Error('no'); } } as never)),
   zkConfig: zk,
@@ -99,7 +98,6 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
   let verifierKeys: Map<string, Uint8Array>;
 
   beforeAll(async () => {
-    setNetworkId(NET as never);
     const built = await buildVaultBornHeld(deps, { account: ACCOUNT, holders: committee });
     deploy = readDeploy(built.proven);
     /* Any key outside the committee: what the old hand-over was signed with, which the readers below still refuse. */

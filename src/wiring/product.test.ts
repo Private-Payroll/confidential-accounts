@@ -38,7 +38,7 @@ import {
 } from './product.js';
 import { ContractBook } from './account-contract.js';
 import { wiring } from './selection.js';
-import { deploymentRecordPath, type Deployment } from './deployment.js';
+import { deploymentRecordPath, storeDir, type Deployment } from './deployment.js';
 import { theNetwork } from '../midnight/network.js';
 
 /** The network this pair is compiled for. Read, never spelled out here. */
@@ -121,15 +121,12 @@ describe('what a person is told when there is no deployment', () => {
 
 describe('starting the product with nothing configured', () => {
   /**
-   * The ordinary case, and the one a person actually meets: a directory with no
-   * deployment record in it.
-   *
-   * **THE PATH IS IN THE SENTENCE.** A refusal that says a record is missing
-   * without saying where it was looked for sends somebody to search a
-   * filesystem, and the two candidate directories differ only by the network
-   * name.
+   * The ordinary case on a fresh network: a directory with no deployment record
+   * in it, because every company is founded from its signer's browser and this
+   * service deploys none. The refusal is the proof server's, the next fact
+   * with no default, and it does not ask for a deploy that will never happen.
    */
-  it('refuses, names the record it looked for, and hands back no chain ledger', () => {
+  it('with no record, refuses for the proof server and not for a deploy', () => {
     const root = mkdtempSync(join(tmpdir(), 'mn-s97-empty-'));
     const started = startProduct(noAddress, root, {});
 
@@ -137,8 +134,17 @@ describe('starting the product with nothing configured', () => {
     if (started.started) return;
 
     expect(started.refusal).toContain(CANNOT_START);
-    expect(started.refusal).toContain(deploymentRecordPath(root, NETWORK));
-    expect(started.refusal).toContain(NETWORK);
+    expect(started.refusal).toContain('proof server');
+    expect(started.refusal).not.toContain(deploymentRecordPath(root, NETWORK));
+  });
+
+  it('and with no record and a proof server, it starts with no address of its own', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mn-s97-norecord-'));
+    const started = startProduct(noAddress, root, { MIDNIGHT_PROVER_URL: 'http://127.0.0.1:1' });
+    expect(started.started, started.started ? '' : started.refusal).toBe(true);
+    if (!started.started) return;
+    expect(started.deployment.contractAddress).toBeNull();
+    expect(started.wiring.name).toBe('chain');
   });
 
   /**
@@ -150,7 +156,7 @@ describe('starting the product with nothing configured', () => {
    */
   it('moves on to the next missing fact rather than repeating the first', () => {
     const root = mkdtempSync(join(tmpdir(), 'mn-s97-record-'));
-    mkdirSync(join(root, '.midnight'), { recursive: true });
+    mkdirSync(storeDir(root, NETWORK), { recursive: true });
     writeFileSync(
       deploymentRecordPath(root, NETWORK),
       JSON.stringify({ network: NETWORK, contractAddress: '0200aabb' }),
@@ -176,7 +182,7 @@ describe('starting the product with nothing configured', () => {
    */
   it('and it starts when the four facts are there', () => {
     const root = mkdtempSync(join(tmpdir(), 'mn-s97-full-'));
-    mkdirSync(join(root, '.midnight'), { recursive: true });
+    mkdirSync(storeDir(root, NETWORK), { recursive: true });
     writeFileSync(
       deploymentRecordPath(root, NETWORK),
       JSON.stringify({ network: NETWORK, contractAddress: '0200aabb' }),

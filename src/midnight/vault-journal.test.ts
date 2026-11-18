@@ -1,6 +1,6 @@
 /**
- * **THE ATTEMPT JOURNALS OVER ANY STORE.** The file-backed journals the doors
- * use are pinned in `scripts/vault-journal.test.ts` and the database-backed
+ * **THE ATTEMPT JOURNALS OVER ANY STORE.** The file-backed journals are
+ * pinned beside the tools that keep them, and the database-backed
  * ones in `src/db/vault-records.test.ts`; this file pins what the journal does
  * whatever holds it, against the in-memory store.
  */

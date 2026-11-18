@@ -44,7 +44,8 @@ import { newSeatBlinding, type SeatOpening } from '../core/seat-opening.js';
 import type { SeatByAddressChange } from '../core/invitation.js';
 import type { RecordsAsked } from '../midnight/records-held.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { anchoredOver, roundsOnATestChain } from '../testing/record-tree-double.js';
@@ -952,7 +953,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     const { signJoinCode } = await import('midnight-identity/profile/join-code');
     const { signRecordsKey } = await import('midnight-identity/profile/records-key');
     const { payeeFor } = await import('../testing/payees.js');
-    const { TEST_SETTLEMENT_ASSET } = await import('../core/assets.js');
+    const { TEST_NETWORK_COLOUR } = await import('../testing/a-test-network.js');
     const at = joined.account.id;
     const sendAs = (who: Who) => async (path: string, init: { method: string; body?: string }) => {
       const r = await fetch(base + path, { method: init.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${tokens[who]}` }, ...(init.body === undefined ? {} : { body: init.body }) });
@@ -963,7 +964,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
       id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account,
       keyEpoch: opened.body.keyEpoch, viewingKey: joined.viewingKey,
     };
-    const made = await inviteHere(company, adaInJoined, 'employee', { name: 'Fen', email: 'fen@joined.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n, classification: 'full-time' as const, startDate: '2026-10-01' }, ORIGIN, sendAs('ada'));
+    const made = await inviteHere(company, adaInJoined, 'employee', { name: 'Fen', email: 'fen@joined.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 1n, classification: 'full-time' as const, startDate: '2026-10-01' }, ORIGIN, sendAs('ada'));
     /* Fen's own wallet signs the code for where Fen is paid, and Fen's device accepts the link with it. */
     const address = payeeFor('7e'.repeat(32), NETWORK).bech32;
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(77)), adaInJoined.label, USERS.vic, { kind: 'payee', address, payslipKey: 'cd'.repeat(32) });

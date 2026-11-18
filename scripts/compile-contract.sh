@@ -25,7 +25,7 @@ compactc not found.
 The contract tests run the compiled circuits, so the compiler is required to
 run the full suite. Install it with:
 
-    ./scripts/clone-midnight-src.sh
+    export $(node .github/checks/fetch-compiler.mjs)
 
 Or, to run only the core tests and skip the contract:
 

@@ -96,8 +96,6 @@ const count = (pattern: RegExp) => Object.fromEntries(FILES
 
 /** What the broad read above finds that is not a walk over a contract state's balance, each with why. */
 const NOT_A_CONTRACT_BALANCE: Record<string, { count: number; why: string }> = {
-  'scripts/chain-probe.ts': { count: 2, why: 'a phase code named for the wallet\'s balancing step' },
-  'scripts/run-preview.ts': { count: 2, why: 'a phase code named for the wallet\'s balancing step' },
   'src/core/ledger.ts': { count: 2, why: 'a proof\'s witness, not a contract state' },
   'src/midnight/public-balance.ts': { count: 1, why: 'the one reader' },
   'src/midnight/vault-circuits.ts': { count: 1, why: 'a deploy is refused unless its starting balance is empty' },
@@ -135,13 +133,13 @@ describe('the census can see what it looks for', () => {
 });
 
 describe('a vault\'s public balance has one way in', () => {
-  it('nothing asks the indexer\'s balance query except the platform probe that records its raw answer', () => {
+  it('nothing asks the indexer\'s balance query', () => {
     /*
      * RED WHEN any product file, service route or operator door asks the
      * balance query again. The one file named records what the indexer client
      * answers, beside the transaction it studies, and shows or decides nothing.
      */
-    expect(where(BALANCE_QUERY)).toEqual(['scripts/chain-probe.ts']);
+    expect(where(BALANCE_QUERY)).toEqual([]);
   });
 
   it('nothing but the reader reads a contract state\'s balance', () => {
@@ -167,6 +165,6 @@ describe('a vault\'s public balance has one way in', () => {
      */
     expect(where(SERVED_LIST).filter((f) => f.startsWith('apps/web/') || f.startsWith('packages/web-shared/')))
       .toEqual(['packages/web-shared/src/device-vault-holdings.ts', 'packages/web-shared/src/money-on-chain.ts',
-        'packages/web-shared/src/vault-on-chain-here.ts', 'packages/web-shared/src/vault-worker-client.ts']);
+        'packages/web-shared/src/vault-on-chain-here.ts', 'packages/web-shared/src/vault-worker-wire.ts']);
   });
 });

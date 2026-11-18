@@ -12,6 +12,8 @@ import {
   whyThePaymentFailed, whyThePublicBalancingIsNotWhatWasApproved,
 } from './balance-for-page.js';
 import type { BalanceDoors, FacadeForBalancing, LedgerForBalancing, UnboundTransactionLike } from './balance-for-page.js';
+import { of } from 'rxjs';
+import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 
 const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
 const TOKEN = 'cd'.repeat(32);
@@ -35,6 +37,7 @@ const publicDeposit = (over: {
     actions: over.actions ?? [{ address: VAULT, entryPoint: 'depositUnshielded', guaranteedTranscript: { effects: effects() }, ...over.call }],
   }]]),
   imbalances: (segment: number) => new Map(segment === 0 ? (over.owed ?? [[{ tag: 'unshielded', raw: TOKEN }, -700n], [{ tag: 'dust' }, -3n]]) : []),
+  serialize: () => new Uint8Array([1, 2, 3]),
   ...over.shape,
 });
 const ledgerReturning = (tx: unknown): LedgerForBalancing => ({ Transaction: { deserialize: () => tx } });
@@ -83,6 +86,16 @@ describe('WHAT THE WALLET READS FROM A PAGE\'S PUBLIC DEPOSIT', () => {
   });
 });
 
+/** A part of the wallet that has read the chain to the end. */
+const aPartThatHasRead = {
+  state: {
+    subscribe: (o: { next: (s: unknown) => void }) => {
+      o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } });
+      return { unsubscribe: () => {} };
+    },
+  },
+};
+
 describe('THE PRESS, FOR A PUBLIC DEPOSIT', () => {
   const LEAVES = [{ token: TOKEN, amount: '700', kind: 'unshielded' as const }];
   const added = (outputs: Array<{ value: bigint; owner: string; type: string }>, inputs = [{ value: 1000n, type: TOKEN }]) =>
@@ -90,14 +103,20 @@ describe('THE PRESS, FOR A PUBLIC DEPOSIT', () => {
   const doorsWith = (recipe: unknown, log: string[], own: string | null = ME): BalanceDoors => ({
     ledger: async () => ledgerReturning(publicDeposit()),
     facade: async () => ({
-      balanceUnboundTransaction: async (_t, _k, options) => { log.push(`balance ${options.tokenKindsToBalance.join(',')}`); return recipe; },
+      state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+      adoptTransaction: (_bytes: Uint8Array, stage: string) => `${stage} handle`,
+      balanceUnboundTransaction: async (_t: unknown, options: { tokenKindsToBalance?: 'all' | readonly string[] }) => {
+        const kinds = options.tokenKindsToBalance;
+        log.push(`balance ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
+        return recipe;
+      },
       signRecipe: async () => { log.push('sign'); return 'signed'; },
       finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([7]) }; },
       revert: async () => { log.push('revert'); },
-      unshielded: { state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
-      shielded: { state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
-    }) as FacadeForBalancing,
-    keys: () => ({ shieldedSecretKeys: 'z', dustSecretKey: 'd' }),
+      unshielded: aPartThatHasRead,
+      shielded: aPartThatHasRead,
+    }) as unknown as FacadeForBalancing,
+    dustKeys: () => ({}) as never,
     signSegment: () => async () => ({}) as never,
     ...(own === null ? {} : { ownPublicAddress: () => own }),
     now: () => 1_000,

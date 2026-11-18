@@ -67,7 +67,7 @@ const deps = () => ({
     ZswapChainState: class {}, LedgerParameters: { deserialize: () => ({}) },
   },
   contracts: {
-    createUnprovenCallTxFromInitialStates: async (_: unknown, o: { args: unknown[]; initialPrivateState: never }) => {
+    buildCall: async (_: unknown, o: { args: unknown[]; initialPrivateState: never }) => {
       built = { args: o.args, record: o.initialPrivateState };
       return { private: { nextPrivateState: o.initialPrivateState, unprovenTx: {} } };
     },

@@ -11,10 +11,11 @@
  * values. Nothing else can catch the failure that actually happened.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NETWORK } from 'midnight-identity/network';
 
 const removed: string[] = [];
-const installs: Array<{ how: string }> = [];
-let installHow: 'restored' | 'fresh' | 'unchanged' | 'refused' = 'fresh';
+const installs: Array<{ how: string; options?: unknown }> = [];
+let installHow: 'restored' | 'fresh' | 'unbuilt' | 'refused' = 'fresh';
 /** The reason a 'refused' carries, which is what the gate switches on. */
 let installReason: 'not-a-floor' | 'disagrees' | 'not-applied' | 'unreadable' | undefined;
 /** Where the strict DUST wait ends, and what it was asked to read. */
@@ -27,27 +28,52 @@ vi.mock('node:fs', async (orig) => ({
 }));
 
 vi.mock('./dust-wallet.js', () => ({
-  installDustWallet: async () => {
-    installs.push({ how: installHow });
+  buildWalletWithDust: async (...args: any[]) => {
+    installs.push({ how: installHow, options: args[5] });
+    if (installHow === 'unbuilt') throw new Error('the wallet configuration carries no history store, so no wallet was built');
+    const { MidnightWalletProvider } = await import('@midnight-ntwrk/testkit-js') as any;
+    const wallet = await MidnightWalletProvider.build();
     return {
-      how: installHow,
-      detail: 'stub',
-      ...(installReason ? { reason: installReason } : {}),
+      wallet,
+      installed: { how: installHow, detail: 'stub', ...(installReason ? { reason: installReason } : {}) },
+      forkV9: 2000000n,
     };
   },
+  facadeAtLedger9: async (_facade: unknown, forkV9: bigint) => { trace.push(`ledger 9 at ${forkV9}`); },
+  registrationSidesSynced: async (facade: any, forkV9: bigint) => {
+    trace.push(`sides at ${forkV9}`);
+    return facade.waitForSyncedState();
+  },
   dustCachePath: () => '/tmp/stub-dust-cache.state',
-  dustIndexerWsOf: () => 'wss://indexer.example/ws',
-  dustTipAt: async (url: string) => { tipAskedOf.push(url); return 5n; },
+  dustIndexerHttpOf: () => 'https://indexer.example/graphql',
+  networkHeightAt: async (url: string) => { tipAskedOf.push(url); return 5n; },
   describeDustView: (a: bigint | null, t: bigint | null) => `dust applied ${a} of ${t}`,
-  waitForDustAtTip: async (_live: unknown, tipNow: (from: bigint | null) => Promise<bigint>) => {
+  waitForDustAtTip: async (_live: unknown, tipNow: () => Promise<bigint>) => {
     trace.push('wait for the DUST view');
-    await tipNow(null);
+    await tipNow();
     return atTip;
   },
 }));
 
 /** Every call, in order, so a missing or misordered step is visible. */
 let trace: string[] = [];
+/** The DUST each built wallet reports now; a registration may raise it, as generation would. */
+let dustNow: bigint[] = [];
+/** The DUST a registration makes appear, or none when the generated DUST never comes. */
+let dustAfterRegistering = 0n;
+/** What each registration was handed: the wallet, the owner of the NIGHT, and its answer. */
+let registered: Array<{ wallet: unknown; key: string; transaction: string }> = [];
+
+vi.mock('../src/midnight/dust-registration.js', () => ({
+  registerNightForDust: async (wallet: any, owner: any, options: any) => {
+    const mine = builds - 1;
+    trace.push(`register#${mine}`);
+    const transaction = await options.send('registration');
+    registered.push({ wallet, key: owner.verifyingKey, transaction });
+    dustNow[mine] = dustAfterRegistering;
+    return { registered: 2, fee: 5n, transaction };
+  },
+}));
 /** How much DUST each successive wallet reports. One entry per build. */
 let dustPerBuild: bigint[] = [];
 /** Whether the shielded scan reports itself caught up. `false` makes the wait run out. */
@@ -59,18 +85,23 @@ vi.mock('@midnight-ntwrk/testkit-js', () => ({
     build: async () => {
       const mine = builds++;
       trace.push(`build#${mine}`);
-      const dust = dustPerBuild[mine] ?? 0n;
+      dustNow[mine] = dustPerBuild[mine] ?? 0n;
+      const dust = () => dustNow[mine]!;
       let started = false;
       return {
         start: async (gate: boolean) => { trace.push(`start(${gate})#${mine}`); started = true; },
         stop: async () => { trace.push(`stop#${mine}`); },
+        unshieldedKeystore: { getPublicKey: () => `own-key#${mine}`, signDataAsync: async () => `own-signature#${mine}` },
         wallet: {
+          waitForSyncedState: async () => { trace.push(`synced#${mine}`); return { dust: { balance: () => dust() } }; },
+          finalizeRecipe: async (recipe: string) => `finalised ${recipe}`,
+          submitTransaction: async (tx: string) => { trace.push(`submit#${mine} ${tx}`); return `tx-of-${mine}`; },
           state: () => {
             trace.push(`subscribe#${mine}${started ? '' : ' BEFORE-START'}`);
             return {
               subscribe: ({ next }: { next: (s: unknown) => void }) => {
                 next({
-                  dust: { balance: () => dust },
+                  dust: { balance: () => dust() },
                   unshielded: { balances: { NIGHT_TOKEN: 5n }, progress: { isCompleteWithin: () => true } },
                   shielded: { progress: { isConnected: shieldedCaught, isCompleteWithin: () => shieldedCaught } },
                 });
@@ -84,19 +115,20 @@ vi.mock('@midnight-ntwrk/testkit-js', () => ({
   },
 }));
 
-vi.mock('@midnight-ntwrk/midnight-js-protocol/ledger', () => ({
+vi.mock('@midnight-ntwrk/midnight-js-protocol/v9', () => ({
   unshieldedToken: () => ({ raw: 'NIGHT_TOKEN' }),
 }));
 
-const { bringUpWallet } = await import('./wallet-bringup.js');
+const { bringUpWallet, noDustAfterTheDeadline } = await import('./wallet-bringup.js');
 
 const bring = (opts = {}) =>
-  bringUpWallet({}, {}, 'seed', 'stagenet' as never, '/tmp', {
+  bringUpWallet({}, {}, 'seed', NETWORK, '/tmp', {
     cachedTimeoutMs: 60, coldTimeoutMs: 60, ...opts,
   });
 
 beforeEach(() => {
   trace = []; builds = 0; dustPerBuild = []; removed.length = 0;
+  dustNow = []; dustAfterRegistering = 0n; registered = [];
   installs.length = 0; installHow = 'fresh'; shieldedCaught = true;
   installReason = undefined;
   atTip = { ok: true, applied: 5n, tip: 5n }; tipAskedOf = [];
@@ -134,6 +166,13 @@ describe('bringUpWallet', () => {
     expect(trace.some(t => t.includes('BEFORE-START'))).toBe(false);
   });
 
+  /* RED WHEN: a wallet is built with anything but the one DUST wallet there is, which syncs by projections. */
+  it('builds its wallet with nothing but the note, so every DUST wallet is the projections one', async () => {
+    dustPerBuild = [7n];
+    await bring();
+    expect(Object.keys(installs[0]!.options as object)).toEqual(['note']);
+  });
+
   it('reads DUST through the method, not a field', async () => {
     // `dust.balance(new Date())`, because dust accrues over time. Reading it as
     // a property returns undefined and every gate downstream passes wrongly.
@@ -143,12 +182,24 @@ describe('bringUpWallet', () => {
     expect(live.night()).toBe(5n);
   });
 
-  it('skips dust entirely for a wallet that is meant to be empty', async () => {
-    // The sponsorship test's customer. Installing a dust wallet it will never
-    // use only adds a sync, and waiting for DUST that will never arrive would
-    // hang the run.
+  /*
+   * RED WHEN: a wallet that will not pay is built by the testkit, whose facade reads an unstarted DUST wallet's
+   * version and writes for ledger 8; or any wallet is handed on before its facade writes for ledger 9.
+   */
+  it('builds every wallet with our DUST wallet, and hands none on before the facade writes for ledger 9', async () => {
+    const empty = await bring({ withDust: false });
+    expect(installs).toHaveLength(1);
+    expect(trace.indexOf('ledger 9 at 2000000')).toBeGreaterThan(trace.indexOf('start(false)#0'));
+    expect(empty.dust()).toBe(0n);
+    trace = []; installs.length = 0; dustPerBuild = [7n]; builds = 0;
+    await bring();
+    expect(trace).toContain('ledger 9 at 2000000');
+  });
+
+  it('skips the DUST wait entirely for a wallet that is meant to be empty', async () => {
+    // The sponsorship test's customer. Waiting for DUST that will never arrive
+    // would hang the run.
     const live = await bring({ withDust: false });
-    expect(installs).toHaveLength(0);
     expect(live.dust()).toBe(0n);
     expect(trace).toContain('start(false)#0');
   });
@@ -197,13 +248,12 @@ describe('bringUpWallet', () => {
    * runs, and before they were written it could have been deleted whole and
    * every other test in this repository would still have passed.
    */
-  it('STOPS the run when no wallet of ours was installed at all', async () => {
-    // TURNS RED IF: 'unchanged' stops stopping the run. It means the library's
-    // own dust wallet is in place, whose fee overhead is nothing — the floor's
-    // absence known with certainty. This used to pass silently.
-    installHow = 'unchanged';
+  it('STOPS the run when no wallet with our DUST wallet could be built at all', async () => {
+    // TURNS RED IF: a failed build is caught and a wallet without our DUST
+    // wallet, whose fee overhead is nothing, is used instead.
+    installHow = 'unbuilt';
     dustPerBuild = [7n];
-    await expect(bring()).rejects.toThrow(/fee floor in force/i);
+    await expect(bring()).rejects.toThrow(/no wallet was built/i);
   });
 
   it('STOPS the run when the floor is KNOWN to disagree', async () => {
@@ -267,7 +317,7 @@ describe('bringUpWallet', () => {
     expect(trace).toContain('wait for the DUST view');
     expect(trace).toContain('stop#0');
     /* RED WHEN: the network's DUST is read from anywhere but the indexer the installed DUST wallet syncs from. */
-    expect(tipAskedOf).toEqual(['wss://indexer.example/ws']);
+    expect(tipAskedOf).toEqual(['https://indexer.example/graphql']);
   });
 
   /*
@@ -282,6 +332,57 @@ describe('bringUpWallet', () => {
     atTip = { ok: true, applied: 9n, tip: 9n };
     await bring({ withDust: true, requireDust: true, onNote: (m: string) => notes.push(m) });
     expect(notes.join('\n')).toMatch(/dust wallet caught up: dust applied 9 of 9/);
+  });
+
+  /*
+   * RED WHEN: a wallet with no DUST is not registered at bring-up, so the fee payer of a new network never gets DUST;
+   * or the registration comes after the wait for DUST it is meant to end.
+   */
+  it('REGISTERS ITS OWN NIGHT when it holds no DUST, after the sync and before the wait for DUST', async () => {
+    dustPerBuild = [0n];
+    dustAfterRegistering = 9n;
+    const live = await bring({ requireDust: true, withDust: true });
+    expect(trace.indexOf('register#0')).toBeGreaterThan(trace.indexOf('synced#0'));
+    expect(trace.indexOf('synced#0')).toBeGreaterThan(trace.findIndex((t) => t.startsWith('subscribe#0')));
+    /* RED WHEN: the registration waits for the whole wallet, not ledger 9 and the unshielded and DUST sides. */
+    expect(trace.indexOf('sides at 2000000')).toBe(trace.indexOf('synced#0') - 1);
+    expect(live.dust()).toBe(9n);
+    /* RED WHEN: the registration is signed by any key but this wallet's own, or sent through any wallet but its own. */
+    expect(registered).toHaveLength(1);
+    expect(registered[0]!.key).toBe('own-key#0');
+    expect(trace).toContain('submit#0 finalised registration');
+    expect(registered[0]!.transaction).toBe('tx-of-0');
+  });
+
+  /* RED WHEN: a wallet that already holds DUST registers again, which spends a fee for nothing. */
+  it('registers nothing when the wallet already holds DUST', async () => {
+    dustPerBuild = [7n];
+    await bring({ requireDust: true, withDust: true });
+    expect(trace).toContain('synced#0');
+    expect(registered).toEqual([]);
+  });
+
+  /* RED WHEN: a registration whose DUST never comes hands back a wallet that will pay, instead of refusing. */
+  it('STILL REFUSES when the DUST does not come after the registration', async () => {
+    dustPerBuild = [0n];
+    dustAfterRegistering = 0n;
+    await expect(bring({ requireDust: true })).rejects.toThrow(/no DUST/i);
+    expect(registered).toHaveLength(1);
+  });
+
+  /* RED WHEN: a wallet with no NIGHT is told its DUST failed to sync, when nothing could ever have been registered. */
+  it('names the cause that fits when DUST never comes: no NIGHT to register, or a view that did not catch up', async () => {
+    expect(noDustAfterTheDeadline(0n)).toMatch(/holds no NIGHT[\s\S]*What resolves it: send NIGHT to this wallet's address/u);
+    expect(noDustAfterTheDeadline(0n)).not.toMatch(/failing to sync/u);
+    expect(noDustAfterTheDeadline(5n)).toMatch(/holds 5 NIGHT, registered for DUST generation[\s\S]*failing to sync/u);
+    dustPerBuild = [0n];
+    await expect(bring({ requireDust: true })).rejects.toThrow(/holds 5 NIGHT/u);
+  });
+
+  /* RED WHEN: a wallet meant to be empty is synced or registered. */
+  it('registers nothing for a wallet that skips dust entirely', async () => {
+    await bring({ withDust: false });
+    expect(trace.some((t) => t.startsWith('synced#') || t.startsWith('register#'))).toBe(false);
   });
 
   it('returns a usable wallet without DUST when the caller allows it', async () => {

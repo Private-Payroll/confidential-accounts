@@ -27,30 +27,35 @@
  * landed and never sends anywhere; the note a payment spends and the pool after
  * it, which it files only sealed; and a payment's confirmed hash.
  */
-import { committeeReplacement, type Committee } from '../../../src/midnight/vault-committee.js';
+import { type Committee, committeeReplacement } from '../../../src/midnight/vault-committee.js';
 import { VAULT_CIRCUITS } from '../../../src/midnight/vault-contract.js';
-import { heldStateFromTheStart, type HeldStateDeps } from '../../../src/midnight/held-from-the-start.js';
+import { heldStateFromTheStart } from '../../../src/midnight/held-from-the-start.js';
 import { CREATION_STEPS, overTheCeiling } from '../../../src/midnight/deferral.js';
 import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
 import { companyLabelBytes, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../src/core/crypto.js';
-import type { CallAsBuilt } from '../../../src/midnight/note-index.js';
+import { type EventOnTheWire, indexForSpend } from '../../../src/midnight/note-index.js';
 import {
-  afterStep, notesToSpend, paymentsFitAnswer, withIndexRead, witnessesOver, type Note, type PaymentsFitAnswer, type VaultNotes,
+  type Note, type PaymentsFitAnswer, paymentsFitAnswer, type VaultNotes, withIndexRead, witnessesOver,
 } from '../../../src/midnight/vault-notes.js';
-import { changeCoinOf, type VaultCoin } from '../../../src/midnight/vault-coins.js';
-import {
-  establishCreatingTransaction, indexForSpend, theTransactionTheseEventsAreFrom, vaultNoteCommitment,
-  type EventOnTheWire, type ServedEvent,
-} from '../../../src/midnight/note-index.js';
+import { changeCoinOf } from '../../../src/midnight/vault-coins.js';
 import { payeeAddress, unshieldedPayeeAddress } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
-import { pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import {
+  pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire,
+} from '../../../src/midnight/private-payment-wire.js';
 import { notePlaces } from '../../../src/midnight/vault-step-notes.js';
 import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
 import { INTENT_LIFETIME_MS } from '../../../src/midnight/intent-lifetime.js';
-import { PUBLIC_DEPOSIT_ENTRY, publicTakesOfTranscript, readPublicDepositCall, type PublicDepositCallRefusal } from './public-deposit-call.js';
-
+import { SPENDS_NO_COIN, type ContractCalls } from './contract-call-built.js';
+import type { Provable } from './vault-proof-workers.js';
+import { PUBLIC_DEPOSIT_ENTRY, type PublicDepositCallRefusal, readPublicDepositCall } from './public-deposit-call.js';
+import { DIGITS, noteFromWire, type NoteOnTheWire, servedFromWire } from './vault-notes-wire.js';
+export { newestTimeToLive, readTransaction, type TransactionRead } from './transaction-read-here.js';
+export {
+  confirmPayment, DIGITS, type NoteOnTheWire, notesForPayment, noteToWire, type PaymentConfirmation,
+  poolAfterPayment,
+} from './vault-notes-wire.js';
 
 export interface SigningKeyLike { readonly tag: string; readonly value: string }
 
@@ -59,11 +64,8 @@ export interface VaultBuilderDeps {
   readonly ledger: any;
   /** `@midnight-ntwrk/compact-runtime`'s `ContractState`, which the call builder reads. */
   readonly runtimeState: { deserialize(bytes: Uint8Array): unknown };
-  /** `createUnprovenDeployTxFromVerifierKeys` and `createUnprovenCallTxFromInitialStates`. */
-  readonly contracts: {
-    createUnprovenDeployTxFromVerifierKeys(...args: any[]): Promise<any>;
-    createUnprovenCallTxFromInitialStates(...args: any[]): Promise<any>;
-  };
+  /** Midnight.js's `createUnprovenDeployTxFromVerifierKeys` and `createUnprovenCallTxFromInitialStates`. */
+  readonly contracts: ContractCalls;
   /** The vault's compiled contract, with its witnesses. */
   readonly compiled: unknown;
   /** The vault's compiled contract with the witnesses a payment out hands it. Absent where nothing pays out. */
@@ -71,13 +73,13 @@ export interface VaultBuilderDeps {
   /** Hands out the vault circuits' verifying keys. */
   readonly zkConfig: unknown;
   /** Proves an unproven transaction. `circuit` names the one it calls, when it calls one. */
-  readonly prove: (unproven: any, circuit?: string) => Promise<{ serialize(): Uint8Array }>;
+  readonly prove: (unproven: Provable, circuit?: string) => Promise<{ serialize(): Uint8Array }>;
   readonly network: string;
   readonly random?: (n: number) => Uint8Array;
   readonly now?: () => number;
 }
 
-const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+export const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 export const fromHex = (h: string): Uint8Array => {
   const out = new Uint8Array(h.length / 2);
   for (let i = 0; i < out.length; i += 1) out[i] = Number.parseInt(h.slice(2 * i, 2 * i + 2), 16);
@@ -86,7 +88,7 @@ export const fromHex = (h: string): Uint8Array => {
 export const HEX64 = /^[0-9a-f]{64}$/u;
 
 /** Keys the call builder asks for, from randomness this function drops. */
-export const throwawayKeys = (deps: VaultBuilderDeps) => {
+export const throwawayKeys = (deps: Pick<VaultBuilderDeps, 'ledger' | 'random'>) => {
   const seed = (deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))))(32);
   const keys = deps.ledger.ZswapSecretKeys.fromSeed(seed);
   const out = { coinPublicKey: keys.coinPublicKey, encryptionPublicKey: keys.encryptionPublicKey };
@@ -109,10 +111,10 @@ export async function buildVaultDeploy(
   const temporaryKey = deps.ledger.signingKeyFromBip340(secret) as SigningKeyLike;
   secret.fill(0);
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.createUnprovenDeployTxFromVerifierKeys(
+  const built = await deps.contracts.buildDeploy(
     deps.zkConfig, keys.coinPublicKey,
     { compiledContract: deps.compiled, args: [{ bytes: fromHex(account) }], signingKey: temporaryKey },
-    keys.encryptionPublicKey);
+    keys.encryptionPublicKey, deps.network);
   const vault = String(built.public.contractAddress).toLowerCase();
   const proven = await deps.prove(built.private.unprovenTx);
   return { vault, temporaryKey: { tag: temporaryKey.tag, value: temporaryKey.value }, proven: proven.serialize() };
@@ -152,7 +154,7 @@ interface HeldDeploy {
  * circuit, so proving asks the prover nothing).
  */
 async function deployHeldFromTheStart(
-  deps: HeldStateDeps & Pick<VaultBuilderDeps, 'prove' | 'network' | 'now'>,
+  deps: Pick<VaultBuilderDeps, 'ledger' | 'runtimeState' | 'contracts' | 'random' | 'prove' | 'network' | 'now'>,
   input: Parameters<typeof heldStateFromTheStart>[1],
 ): Promise<HeldDeploy> {
   const L = deps.ledger;
@@ -235,164 +237,6 @@ export async function finishedCreation(
   return { proven: proven.serialize(), bytesWritten };
 }
 
-/** What a transaction says of itself, read from its own bytes, with nothing taken from whoever handed them over. */
-export interface TransactionRead {
-  /** Every identifier the chain can be asked about it by. Binding it and merging a fee into it leave each one as it was. */
-  readonly identifiers: readonly string[];
-  /** The earliest time to live across its intents (milliseconds since the epoch): after it the transaction can no longer land. Null when an intent carries none this can read. */
-  readonly timeToLive: number | null;
-  /** Every contract call it makes. A deploy is not a call and is not listed. */
-  readonly calls: readonly CallAsBuilt[];
-  /**
-   * Every private coin it creates for a contract, in either part: as an output, which the contract then holds, or
-   * marked `madeAndSpent` when it is made and spent inside the transaction, so the contract never holds it. A coin it
-   * creates for a person (the wallet's own change) is not listed. Null when an offer cannot be read, so an unread offer
-   * is never taken for one that creates nothing.
-   */
-  readonly coinsForContracts?: readonly CoinForAContract[] | null;
-  /**
-   * Every public token each call takes in, as its proven transcripts state it. Null when a call's transcript cannot be
-   * read, so an unread call is never taken for one that takes nothing.
-   */
-  readonly publicTakes?: readonly PublicTake[] | null;
-  /** Every call it makes to a vault's public deposit, each with what it puts in or why it is no such call (`readPublicDepositCall`). */
-  readonly publicDeposits?: readonly PublicDepositInTransaction[];
-}
-
-/** One call to a vault's public deposit in a transaction: the vault (as `CallAsBuilt` names it) and the ledger colour (lower-case hex) and amount (base units, decimal) it puts in, or why it is no such call. */
-type PublicDepositInTransaction =
-  | { readonly vault: string; readonly colour: string; readonly amount: string }
-  | { readonly vault: string; readonly refused: PublicDepositCallRefusal };
-
-/** A private coin a transaction creates for a contract: the contract (lower-case hex without a prefix) and the coin's commitment as the ledger records it (lower-case hex); `madeAndSpent` when it is spent in the same transaction. */
-interface CoinForAContract {
-  readonly contract: string;
-  readonly commitment: string;
-  readonly madeAndSpent?: true;
-}
-
-/** A public token one call takes in: the contract and circuit taking it (as `CallAsBuilt` names them), the ledger colour (lower-case hex) and the amount (base units, decimal). */
-interface PublicTake {
-  readonly address: string;
-  readonly entryPoint: string;
-  readonly colour: string;
-  readonly amount: string;
-}
-
-const bareHex = (v: unknown): string => String(v).toLowerCase().replace(/^0x/u, '');
-
-/** The coins an offer creates for a contract, or null when the offer cannot be read. */
-const coinsForContractsIn = (offer: unknown): CoinForAContract[] | null => {
-  if (offer === undefined || offer === null) return [];
-  const o = offer as { outputs?: unknown; transients?: unknown };
-  const found: CoinForAContract[] = [];
-  for (const [list, madeAndSpent] of [[o.outputs, false], [o.transients, true]] as const) {
-    if (list === undefined || list === null) continue;
-    if (!Array.isArray(list)) return null;
-    for (const coin of list as Array<{ contractAddress?: unknown; commitment?: unknown } | null>) {
-      if (coin === null || typeof coin !== 'object') return null;
-      if (coin.contractAddress === undefined || coin.contractAddress === null) continue;
-      if (typeof coin.commitment !== 'string' && !(coin.commitment instanceof Uint8Array)) return null;
-      found.push({
-        contract: bareHex(coin.contractAddress),
-        commitment: coin.commitment instanceof Uint8Array ? hex(coin.commitment) : bareHex(coin.commitment),
-        ...(madeAndSpent ? { madeAndSpent: true as const } : {}),
-      });
-    }
-  }
-  return found;
-};
-
-/** The public tokens one call's transcripts take in, or null when a transcript cannot be read. */
-const publicTakesOf = (address: string, entryPoint: string, action: { guaranteedTranscript?: unknown; fallibleTranscript?: unknown }): PublicTake[] | null => {
-  const takes: PublicTake[] = [];
-  for (const transcript of [action.guaranteedTranscript, action.fallibleTranscript]) {
-    if (transcript === undefined || transcript === null) continue;
-    const read = publicTakesOfTranscript(transcript);
-    if (typeof read === 'string') return null;
-    for (const take of read) takes.push({ address, entryPoint, colour: take.colour, amount: take.value.toString() });
-  }
-  return takes;
-};
-
-/**
- * **A TRANSACTION, READ FROM ITS BYTES**: as finished and bound, or proved and not yet bound. Null when it is neither,
- * so bytes this cannot read are never taken for a transaction that has run out or that names nothing. Every intent's
- * time to live is checked by the chain, so the earliest is the one that ends when the transaction can land.
- */
-export function readTransaction(deps: Pick<VaultBuilderDeps, 'ledger'>, bytes: Uint8Array): TransactionRead | null {
-  let tx: { intents?: unknown; identifiers?: () => unknown };
-  try {
-    tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'binding', bytes);
-  } catch {
-    try {
-      tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes);
-    } catch {
-      return null;
-    }
-  }
-  let identifiers: string[];
-  try {
-    const listed = typeof tx?.identifiers === 'function' ? tx.identifiers() : [];
-    identifiers = Array.isArray(listed) ? listed.map(String) : [];
-  } catch {
-    return null;
-  }
-  const intents = tx?.intents instanceof Map ? [...tx.intents.entries()] as Array<[unknown, any]> : [];
-  let timeToLive: number | null = intents.length === 0 ? null : Number.POSITIVE_INFINITY;
-  const calls: CallAsBuilt[] = [];
-  let publicTakes: PublicTake[] | null = [];
-  const publicDeposits: PublicDepositInTransaction[] = [];
-  for (const [segment, intent] of intents) {
-    const ttl: unknown = intent?.ttl;
-    if (!(ttl instanceof Date) || !Number.isFinite(ttl.getTime())) timeToLive = null;
-    else if (timeToLive !== null) timeToLive = Math.min(timeToLive, ttl.getTime());
-    for (const action of Array.isArray(intent?.actions) ? intent.actions : []) {
-      if (action?.entryPoint === undefined || action?.address === undefined) continue;
-      const parts: number[] = [];
-      if (action.guaranteedTranscript !== undefined && action.guaranteedTranscript !== null) parts.push(0);
-      if (action.fallibleTranscript !== undefined && action.fallibleTranscript !== null) parts.push(Number(segment));
-      const address = String(action.address).toLowerCase().replace(/^0x/u, '');
-      const entryPoint = action.entryPoint instanceof Uint8Array ? new TextDecoder().decode(action.entryPoint) : String(action.entryPoint);
-      calls.push({ address, entryPoint, segments: parts });
-      const takes = publicTakesOf(address, entryPoint, action);
-      publicTakes = publicTakes === null || takes === null ? null : [...publicTakes, ...takes];
-      if (entryPoint === PUBLIC_DEPOSIT_ENTRY) {
-        const deposit = readPublicDepositCall(action, address);
-        publicDeposits.push('refused' in deposit ? { vault: address, refused: deposit.refused }
-          : { vault: address, colour: deposit.colour, amount: deposit.amount.toString() });
-      }
-    }
-  }
-  const offers = tx as { guaranteedOffer?: unknown; fallibleOffer?: unknown };
-  let coinsForContracts: CoinForAContract[] | null = coinsForContractsIn(offers.guaranteedOffer);
-  if (offers.fallibleOffer !== undefined && offers.fallibleOffer !== null) {
-    if (!(offers.fallibleOffer instanceof Map)) coinsForContracts = null;
-    else {
-      for (const offer of offers.fallibleOffer.values()) {
-        const more = coinsForContractsIn(offer);
-        coinsForContracts = coinsForContracts === null || more === null ? null : [...coinsForContracts, ...more];
-      }
-    }
-  }
-  return { identifiers, timeToLive, calls, coinsForContracts, publicTakes, publicDeposits };
-}
-
-/**
- * **THE NEWEST TIME TO LIVE OF TRANSACTIONS KEPT** (milliseconds since the epoch): the moment after which the last of
- * them can no longer land, each one's own being its earliest intent's (`readTransaction`). Null when there are none or
- * any one cannot be read, so a transaction this cannot read is never taken for one that has run out.
- */
-export function newestTimeToLive(deps: Pick<VaultBuilderDeps, 'ledger'>, transactions: readonly Uint8Array[]): number | null {
-  let newest: number | null = null;
-  for (const bytes of transactions) {
-    const ttl = readTransaction(deps, bytes)?.timeToLive ?? null;
-    if (ttl === null) return null;
-    newest = newest === null ? ttl : Math.max(newest, ttl);
-  }
-  return newest;
-}
-
 /**
  * **A COMPANY'S CREATION, CARRIED AGAIN IN FRESH TRANSACTIONS.** Each
  * transaction lives thirty minutes; one that ran out before it landed can never
@@ -468,17 +312,17 @@ export async function buildDeposit(
       + 'Read them from the vault\'s payout state and pass them as the deposit\'s parameters.');
   }
   const keys = throwawayKeys(deps);
-  const L = deps.ledger;
-  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+  const built = await deps.contracts.buildCall(deps.zkConfig, {
     compiledContract: deps.compiled,
     circuitId: 'deposit',
     contractAddress: input.vault.toLowerCase(),
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: deps.runtimeState.deserialize(input.state),
-    /* A deposit spends nothing of the chain's, so the builder is given no commitment tree to read. */
-    initialZswapChainState: new L.ZswapChainState(),
-    /* The parameters the chain holds now, read by the page; never the ledger's starting ones. */
-    ledgerParameters: L.LedgerParameters.deserialize(input.parameters),
+    /*
+     * A deposit spends nothing of the chain's, so the builder is given no commitment tree to read, and the parameters
+     * the chain holds now, read by the page; never the ledger's starting ones.
+     */
+    network: deps.network,
+    read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
     args: [{ nonce: fromHex(nonce), color: fromHex(token), value }],
   }, keys.encryptionPublicKey);
   const proven = await deps.prove(built.private.unprovenTx, 'deposit');
@@ -516,22 +360,19 @@ export async function buildPublicDeposit(
     throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
   }
   const keys = throwawayKeys(deps);
-  const L = deps.ledger;
-  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+  const built = await deps.contracts.buildCall(deps.zkConfig, {
     compiledContract: deps.compiled,
     circuitId: PUBLIC_DEPOSIT_ENTRY,
     contractAddress: vault,
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: deps.runtimeState.deserialize(input.state),
     /* A public deposit touches no private coin, so the builder is given no commitment tree to read. */
-    initialZswapChainState: new L.ZswapChainState(),
-    ledgerParameters: L.LedgerParameters.deserialize(input.parameters),
+    network: deps.network,
+    read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
     args: [fromHex(input.token), input.amount],
   }, keys.encryptionPublicKey);
-  const unproven = built.private.unprovenTx;
-  const refused = whyNotOnlyThisPublicDeposit(unproven, { vault, token: input.token, amount: input.amount });
+  const refused = whyNotOnlyThisPublicDeposit(built.private.transaction, { vault, token: input.token, amount: input.amount });
   if (refused !== null) throw new Error(`${refused} Nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.`);
-  const proven = await deps.prove(unproven, PUBLIC_DEPOSIT_ENTRY);
+  const proven = await deps.prove(built.private.unprovenTx, PUBLIC_DEPOSIT_ENTRY);
   return { proven: proven.serialize() };
 }
 
@@ -600,15 +441,6 @@ const runOf = (
   };
 };
 
-/** A note the pool holds, as it crosses from the page. */
-export interface NoteOnTheWire {
-  readonly nonce: string;
-  readonly token: string;
-  readonly value: string;
-  readonly createdIn?: string;
-}
-
-/** One zswap event of one transaction, as it crosses to this worker. */
 export type { EventOnTheWire } from '../../../src/midnight/note-index.js';
 
 /** The chain as one block saw it, each value its bytes. */
@@ -620,39 +452,14 @@ export interface PayoutChain {
   readonly accountState: Uint8Array;
 }
 
-export const DIGITS = /^[0-9]+$/u;
-
-const noteFromWire = (n: NoteOnTheWire): Note => {
-  if (!HEX64.test(n.nonce) || !HEX64.test(n.token) || !DIGITS.test(n.value)
-    || (n.createdIn !== undefined && !HEX64.test(n.createdIn))) {
-    throw new Error('the pool handed over holds a note that is not one, so nothing was chosen.');
-  }
-  const checked = n as unknown as { readonly nonce: Hex; readonly token: Hex; readonly value: string; readonly createdIn?: Hex };
-  return {
-    nonce: checked.nonce, token: checked.token, value: BigInt(checked.value),
-    ...(checked.createdIn === undefined ? {} : { createdIn: checked.createdIn }),
-  };
-};
-
-export const noteToWire = (n: Note): NoteOnTheWire => ({
-  nonce: n.nonce, token: n.token, value: n.value.toString(),
-  ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
-});
-
 /**
- * **WHICH NOTES A PAYMENT SPENDS**, chosen by the one function every payment
- * chooses by, from the pool the page opened: in place order, the first the one
- * the vault is offered, the rest the further notes the payment takes. Refuses
- * with what the pool holds.
+ * The vault's states at one block, and the company account read at that same block alone: what a vault call that
+ * asks the account is built on.
  */
-export function notesForPayment(
-  input: { readonly notes: readonly NoteOnTheWire[]; readonly token: string; readonly amount: string },
-): NoteOnTheWire[] {
-  if (!HEX64.test(input.token) || !DIGITS.test(input.amount)) {
-    throw new Error('this payment names no token or amount a note could cover, so nothing was chosen.');
-  }
-  return notesToSpend(input.notes.map(noteFromWire), input.token as Hex, BigInt(input.amount)).map(noteToWire);
-}
+const atTheBlock = (chain: PayoutChain, account: string) => ({
+  read: { contract: chain.vaultState, zswap: chain.zswapState, parameters: chain.parameters },
+  account: { address: account, state: chain.accountState, blockHash: chain.blockHash },
+});
 
 /**
  * **WHETHER THESE NOTES CAN MAKE THESE PAYMENTS, ONE AT A TIME**, by the one
@@ -674,47 +481,6 @@ export function paymentsFitNotes(input: {
   });
   return paymentsFitAnswer({ notes: input.notes.map(noteFromWire) }, payments);
 }
-
-/**
- * **THE POOL AFTER A PAYMENT LANDED**: every note it spent gone and its change
- * added, applied to what the pool holds now and not to the copy the payment was
- * built from. The same function the operator's client applies.
- */
-export function poolAfterPayment(input: {
-  readonly notes: readonly NoteOnTheWire[];
-  /** The note the payment spent first. */
-  readonly spent: string;
-  /** Every further note it spent, in place order; absent or empty when it spent one. */
-  readonly further?: readonly string[];
-  readonly amount: string;
-  readonly change: NoteOnTheWire | null;
-  readonly createdIn: string | null;
-}): NoteOnTheWire[] {
-  const further = input.further ?? [];
-  if (!HEX64.test(input.spent) || further.some((n) => !HEX64.test(n)) || !DIGITS.test(input.amount)
-    || (input.createdIn !== null && !HEX64.test(input.createdIn))) {
-    throw new Error('this payment cannot be recorded as it was described, so the pool was not changed.');
-  }
-  const change: VaultCoin | undefined = input.change === null ? undefined : (() => {
-    const c = noteFromWire(input.change);
-    return { nonce: c.nonce, token: c.token, value: c.value };
-  })();
-  const next = afterStep(
-    { notes: input.notes.map(noteFromWire) },
-    { spent: [input.spent as Hex, ...further.map((n) => n as Hex)], pays: BigInt(input.amount), kept: change },
-    input.createdIn === null ? undefined : input.createdIn as Hex);
-  return next.notes.map(noteToWire);
-}
-
-const servedFromWire = (events: readonly EventOnTheWire[]): ServedEvent[] => events.map((e) => ({
-  transactionHash: e.transactionHash,
-  details: {
-    tag: e.details.tag,
-    ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
-    ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
-    ...(e.details.mtIndex === undefined || !DIGITS.test(e.details.mtIndex) ? {} : { mtIndex: BigInt(e.details.mtIndex) }),
-  },
-}));
 
 /**
  * **ONE PUBLIC PAYMENT OUT OF THE VAULT, BUILT AND PROVED HERE.**
@@ -764,30 +530,20 @@ export async function buildPublicPayout(
   /* No note is handed in: the public payout spends none, and asking for one fails by name. */
   const pending: { spending?: Hex } = {};
   const compiled = deps.compiledWith(witnessesOver(() => ({ notes: [] }), pending));
-  const L = deps.ledger;
-  const accountState = deps.runtimeState.deserialize(input.chain.accountState);
-  const blockHash = input.chain.blockHash;
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+  const built = await deps.contracts.buildCall(deps.zkConfig, {
     compiledContract: compiled,
     circuitId: 'payoutUnshielded',
     contractAddress: vault,
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: deps.runtimeState.deserialize(input.chain.vaultState),
-    initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
-    ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+    network: deps.network,
+    ...atTheBlock(input.chain, account),
     args: [
       runOf(order, payment),
       /* The payee's public address in the recipient position, and nothing that could be a coin key. */
       fromHex(payee.userAddress), fromHex(payment.token), amount, fromHex(payment.blinding),
     ],
-  }, keys.encryptionPublicKey, {
-    blockHash,
-    publicDataProvider: {
-      queryContractState: async (address: unknown, at?: { blockHash?: string }) =>
-        (String(address).toLowerCase() === account && at?.blockHash === blockHash ? accountState : null),
-    },
-  });
+  }, keys.encryptionPublicKey);
   if (pending.spending !== undefined) {
     throw new Error('the vault asked to spend a note for a public payment, so it was not sent. Nothing was sent.');
   }
@@ -795,65 +551,33 @@ export async function buildPublicPayout(
   return { proven: proven.serialize() };
 }
 
-/** What a payment's own events say: it landed as built, the chain has not answered yet, or it is not as built. */
-export type PaymentConfirmation =
-  | { readonly state: 'landed'; readonly createdIn: string }
-  | { readonly state: 'not-yet' }
-  | { readonly state: 'not-as-built'; readonly why: string };
-
 /**
- * **WHETHER THE CHAIN HOLDS THIS PAYMENT, READ OFF THIS PAYMENT'S OWN EVENTS.**
- *
- * Two payments out of one note for one amount make the same change coin, so
- * the vault's note set cannot tell which of them landed. The transaction's own
- * events can: every one must be this transaction's, one output must be a
- * person's, and the change - when there is one - must be an output of this
- * transaction, owned by this vault. The hash answered is the one the change is
- * recorded under.
- *
- * **THREE ANSWERS, BECAUSE THEY NEED THREE ACTS.** No events yet, or an indexer
- * that cannot say yet, is `not-yet`, and the caller asks again. Events that are
- * there and are not this payment as it was built are `not-as-built`, and asking
- * again will not change them.
+ * **EVERY INDEX IS READ FROM THE CHAIN'S EVENTS NOW, BY THE ONE FUNCTION EVERY
+ * SPEND READS IT BY.** A note with no recorded transaction, events that are
+ * not that transaction's, or events that do not show this note created for
+ * this vault, each stop here with a sentence and before a proof. Answers the
+ * pool with each index read, and each note at the place the chain filed it.
  */
-export async function confirmPayment(input: {
-  readonly vault: string;
-  readonly transactionHash: string;
-  readonly change: NoteOnTheWire | null;
-  readonly events: readonly EventOnTheWire[];
-  /**
-   * A merge of the vault's own notes, judged as one: it pays nobody, so an
-   * output to a person under its name is not it, and the one coin it keeps
-   * must be an output of the transaction, owned by this vault.
-   */
-  readonly merge?: true;
-}): Promise<PaymentConfirmation> {
-  const vault = input.vault.toLowerCase();
-  const transaction = { hash: input.transactionHash as Hex };
-  const served = servedFromWire(input.events);
-  if (served.length === 0) return { state: 'not-yet' };
-  try {
-    const hash = theTransactionTheseEventsAreFrom(served, transaction);
-    if (served.some((e) => e.transactionHash.toLowerCase().replace(/^0x/u, '') !== hash)) {
-      return { state: 'not-as-built', why: 'the events read for this payment are not all its own' };
-    }
-    const paysAPerson = served.some((e) => e.details.tag === 'zswapOutput' && e.details.contract === undefined);
-    if (input.merge === true) {
-      if (paysAPerson) return { state: 'not-as-built', why: 'the transaction under this merge\'s name pays somebody, and a merge pays nobody' };
-      if (input.change === null) return { state: 'not-as-built', why: 'a merge keeps one coin, and none was named for this one' };
-    } else if (!paysAPerson) {
-      return { state: 'not-as-built', why: 'the transaction under this payment\'s name paid nobody' };
-    }
-    if (input.change === null) return { state: 'landed', createdIn: hash };
-    const change = noteFromWire(input.change);
-    const commitment = await vaultNoteCommitment(change, vault as Hex);
-    const { createdIn } = establishCreatingTransaction(served, { vault: vault as Hex, commitment, transaction });
-    return { state: 'landed', createdIn };
-  } catch (cause) {
-    if ((cause as Error)?.name === 'NoteIndexUnreadable') return { state: 'not-yet' };
-    return { state: 'not-as-built', why: (cause as Error)?.message ?? String(cause) };
+const indexesReadFromTheChain = async (
+  vault: Hex, all: ReadonlyArray<{ readonly note: Note; readonly events: readonly EventOnTheWire[] }>,
+) => {
+  let notes: VaultNotes = { notes: all.map((n) => n.note) };
+  const places = [];
+  for (const { note, events } of all) {
+    const served = servedFromWire(events);
+    const index = await indexForSpend(vault, note, {
+      eventsOf: async (tx) => {
+        if (!('hash' in tx) || tx.hash !== note.createdIn) {
+          throw new Error('the chain\'s events handed over are not for the transaction that created this note.');
+        }
+        return served;
+      },
+    });
+    notes = withIndexRead(notes, note.nonce, index);
+    places.push({ nonce: fromHex(note.nonce), color: fromHex(note.token), value: note.value, mt_index: index });
   }
-}
+  return { notes, places };
+};
 
 /**
  * **ONE PRIVATE PAYMENT OUT OF THE VAULT, BUILT AND PROVED HERE.**
@@ -931,27 +655,7 @@ export async function buildPayout(
     || all.reduce((t, n) => t + n.note.value, 0n) < amount) {
     throw new Error('the notes chosen do not cover this payment, so nothing was built.');
   }
-  /*
-   * **EVERY INDEX IS READ FROM THE CHAIN'S EVENTS NOW, BY THE ONE FUNCTION EVERY
-   * SPEND READS IT BY.** A note with no recorded transaction, events that are
-   * not that transaction's, or events that do not show this note created for
-   * this vault, each stop here with a sentence and before a proof.
-   */
-  let notes: VaultNotes = { notes: all.map((n) => n.note) };
-  const places = [];
-  for (const { note, events } of all) {
-    const served = servedFromWire(events);
-    const index = await indexForSpend(vault as Hex, note, {
-      eventsOf: async (tx) => {
-        if (!('hash' in tx) || tx.hash !== note.createdIn) {
-          throw new Error('the chain\'s events handed over are not for the transaction that created this note.');
-        }
-        return served;
-      },
-    });
-    notes = withIndexRead(notes, note.nonce, index);
-    places.push({ nonce: fromHex(note.nonce), color: fromHex(note.token), value: note.value, mt_index: index });
-  }
+  const { notes, places } = await indexesReadFromTheChain(vault as Hex, all);
   /* THE NOTES CHOSEN, WITH THE INDEXES JUST READ: the witness hands the circuit the first, and the call's further place the rest. */
   const pending: { spending?: Hex } = {};
   const secret = fromHex(input.secret);
@@ -961,18 +665,15 @@ export async function buildPayout(
     nonceSecret: (ctx: unknown) => [ctx, secret],
   } as ReturnType<typeof witnessesOver>);
 
-  const L = deps.ledger;
-  const accountState = deps.runtimeState.deserialize(input.chain.accountState);
-  const blockHash = input.chain.blockHash;
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+  const built = await deps.contracts.buildCall(deps.zkConfig, {
     compiledContract: compiled,
     circuitId: 'payout',
     contractAddress: vault,
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: deps.runtimeState.deserialize(input.chain.vaultState),
-    initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
-    ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+    network: deps.network,
+    /* The account's state as the same block saw it, and nothing else: no other contract is asked. */
+    ...atTheBlock(input.chain, account),
     args: [
       runOf(order, payment),
       fromHex(payee.coinPublicKey), fromHex(payment.token), amount, fromHex(payment.blinding),
@@ -981,14 +682,7 @@ export async function buildPayout(
     ],
     /* The payee's wallet reads the payment with this key; it came out of the same decode as the coin key. */
     additionalCoinEncPublicKeyMappings: new Map([[payee.coinPublicKey, payee.encryptionPublicKey]]),
-  }, keys.encryptionPublicKey, {
-    blockHash,
-    /* The account's state as the same block saw it, and nothing else: no other contract is asked. */
-    publicDataProvider: {
-      queryContractState: async (address: unknown, at?: { blockHash?: string }) =>
-        (String(address).toLowerCase() === account && at?.blockHash === blockHash ? accountState : null),
-    },
-  });
+  }, keys.encryptionPublicKey);
   if (pending.spending !== chosen.nonce) {
     throw new Error('the vault did not spend the note this device chose, so nothing was sent and the pool is unchanged.');
   }
@@ -1066,16 +760,14 @@ export async function buildMerge(
     /* The vault's secret, for this one call; the vault refuses one that is not the secret it holds. */
     nonceSecret: (ctx: unknown) => [ctx, secret],
   } as ReturnType<typeof witnessesOver>);
-  const L = deps.ledger;
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+  const built = await deps.contracts.buildCall(deps.zkConfig, {
     compiledContract: compiled,
     circuitId: 'mergeNotes',
     contractAddress: vault,
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: deps.runtimeState.deserialize(input.chain.vaultState),
-    initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
-    ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+    network: deps.network,
+    read: { contract: input.chain.vaultState, zswap: input.chain.zswapState, parameters: input.chain.parameters },
     /* Every note at the place the chain filed it; the places past the last are unused. */
     args: [fromHex(token), notePlaces(places, STEP_LIMITS.mergeNotes)],
   }, keys.encryptionPublicKey);
@@ -1101,26 +793,16 @@ export async function vaultCallWithTheAccount(
   deps: VaultBuilderDeps,
   call: { readonly vault: string; readonly account: string; readonly circuitId: string; readonly args: unknown[]; readonly chain: PayoutChain },
 ): Promise<{ proven: Uint8Array }> {
-  const L = deps.ledger;
-  const accountState = deps.runtimeState.deserialize(call.chain.accountState);
-  const blockHash = call.chain.blockHash;
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+  const built = await deps.contracts.buildCall(deps.zkConfig, {
     compiledContract: deps.compiled,
     circuitId: call.circuitId,
     contractAddress: call.vault,
     coinPublicKey: keys.coinPublicKey,
-    initialContractState: deps.runtimeState.deserialize(call.chain.vaultState),
-    initialZswapChainState: L.ZswapChainState.deserialize(call.chain.zswapState),
-    ledgerParameters: L.LedgerParameters.deserialize(call.chain.parameters),
+    network: deps.network,
+    ...atTheBlock(call.chain, call.account),
     args: call.args,
-  }, keys.encryptionPublicKey, {
-    blockHash,
-    publicDataProvider: {
-      queryContractState: async (address: unknown, at?: { blockHash?: string }) =>
-        (String(address).toLowerCase() === call.account && at?.blockHash === blockHash ? accountState : null),
-    },
-  });
+  }, keys.encryptionPublicKey);
   const proven = await deps.prove(built.private.unprovenTx, call.circuitId);
   return { proven: proven.serialize() };
 }

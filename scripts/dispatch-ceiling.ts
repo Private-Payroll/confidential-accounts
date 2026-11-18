@@ -71,7 +71,7 @@
  * ── WHAT COULD AND COULD NOT BE DERIVED AT RUN TIME ─────────────────────────
  *
  * The five LEDGER limits are derived live, from our own `LedgerParameters`
- * (`limitsFromLedger` in `scripts/tx-size.ts`). The five numbers above CANNOT
+ * (`limitsFromLedger`, in the transaction-size measurement). The five numbers above CANNOT
  * be: four are Substrate class limits, a different layer than the ledger, and
  * `LedgerParameters` does not express them; the fifth is the node's own
  * setting, which the chain's root can change at any time (`set_tx_size_weight`,

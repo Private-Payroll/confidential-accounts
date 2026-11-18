@@ -369,7 +369,7 @@ describe('THE ACCEPTANCE IS SEALED, AND THE ADDRESS NEVER CROSSES IN THE CLEAR',
         atOrigin: ORIGIN,
         expectingNonce: 'n1',
         payingAddress: inside.payload.address,
-        networkId: 'stagenet',
+        networkId: NETWORK,
         now: NOW,
       })).toEqual({ ok: true });
       expect(inside.payload.address).toBe(

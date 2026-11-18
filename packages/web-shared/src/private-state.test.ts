@@ -20,7 +20,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  derivedPrivateState, signerHalfOf, SignerMaterialHeldInMemory, NO_CONTRACT_ADDRESSED,
+  derivedPrivateState, signerHalfOf, SignerMaterialHeldInMemory,
   type AccountHalfStore, type SignerMaterial, type StorableHalf,
 } from './private-state.js';
 import { fromHex, toHex } from '../../../src/core/crypto.js';
@@ -38,8 +38,8 @@ const ADA: SignerMaterial = {
   scope: bytes32(3),
 };
 
-const A_CONTRACT = '0200aa'.padEnd(70, '0');
-const ANOTHER_CONTRACT = '0200bb'.padEnd(70, '0');
+const A_CONTRACT = 'aa'.padEnd(64, '0');
+const ANOTHER_CONTRACT = 'bb'.padEnd(64, '0');
 const ID = 'device-side:acc_1';
 
 /**
@@ -154,9 +154,9 @@ describe('the record a governed call is handed', () => {
    */
   it('composes the signer\'s own three with what the account staged', async () => {
     const d = aDevice({ stored: { assetId: new Uint8Array([7]), changeAmount: 500n } });
-    d.provider.setContractAddress(A_CONTRACT);
+    const v = d.provider.forContract(A_CONTRACT);
 
-    const record = (await d.provider.get(ID))!;
+    const record = (await v.get(ID))!;
     expect({
       secretKey: toHex(record.secretKey),
       assetId: record.assetId === undefined ? 'absent' : [...record.assetId].join(),
@@ -179,9 +179,9 @@ describe('the record a governed call is handed', () => {
    */
   it('composes a complete record for an approval on a device that has staged nothing', async () => {
     const d = aDevice({ stored: undefined });
-    d.provider.setContractAddress(A_CONTRACT);
+    const v = d.provider.forContract(A_CONTRACT);
 
-    const record = (await d.provider.get(ID))!;
+    const record = (await v.get(ID))!;
     expect([toHex(record.secretKey), toHex(record.blinding), toHex(record.scope)])
       .toEqual([ADA.signingSecret, ADA.blinding, ADA.scope]);
   });
@@ -198,8 +198,8 @@ describe('the record a governed call is handed', () => {
    */
   it('answers with nothing when this device holds no material for that company', async () => {
     const d = aDevice({ material: null });
-    d.provider.setContractAddress(A_CONTRACT);
-    expect(await d.provider.get(ID)).toBeNull();
+    const v = d.provider.forContract(A_CONTRACT);
+    expect(await v.get(ID)).toBeNull();
   });
 
   /**
@@ -229,9 +229,9 @@ describe('the record a governed call is handed', () => {
         assetId: new Uint8Array([7]),
       },
     });
-    d.provider.setContractAddress(A_CONTRACT);
+    const v = d.provider.forContract(A_CONTRACT);
 
-    const record = (await d.provider.get(ID))!;
+    const record = (await v.get(ID))!;
     expect({
       pinnedPath: record.pinnedPath,
       pinAnyLeaf: 'pinAnyLeaf' in record,
@@ -258,9 +258,9 @@ describe('what the write-back after a settled call is allowed to keep', () => {
    */
   it('writes the account half and none of the five', async () => {
     const d = aDevice();
-    d.provider.setContractAddress(A_CONTRACT);
+    const v = d.provider.forContract(A_CONTRACT);
 
-    await d.provider.set(ID, {
+    await v.set(ID, {
       secretKey: new Uint8Array(32).fill(1),
       blinding: new Uint8Array(32).fill(2),
       scope: new Uint8Array(32).fill(3),
@@ -292,9 +292,9 @@ describe('what the write-back after a settled call is allowed to keep', () => {
    */
   it('REFUSES a write whose allowed field carries the signer\'s own key', async () => {
     const d = aDevice();
-    d.provider.setContractAddress(A_CONTRACT);
+    const v = d.provider.forContract(A_CONTRACT);
 
-    await expect(d.provider.set(ID, {
+    await expect(v.set(ID, {
       assetBlinding: fromHex(ADA.signingSecret),
       assetId: new Uint8Array([7]),
     } as never)).rejects.toThrow(/own key material to storage under the name "assetBlinding"/);
@@ -310,8 +310,8 @@ describe('what the write-back after a settled call is allowed to keep', () => {
    */
   it('does write the account half rather than discarding it', async () => {
     const d = aDevice();
-    d.provider.setContractAddress(A_CONTRACT);
-    await d.provider.set(ID, { assetId: new Uint8Array([7]) } as never);
+    const v = d.provider.forContract(A_CONTRACT);
+    await v.set(ID, { assetId: new Uint8Array([7]) } as never);
 
     expect(d.writes.map((w) => [w.address, w.id, [...(w.half.assetId ?? [])].join()]))
       .toEqual([[A_CONTRACT, ID, '7']]);
@@ -322,33 +322,56 @@ describe('which company a read is about', () => {
   /**
    * **THE ADDRESS IS PASSED DOWN AND NOT REMEMBERED UNDERNEATH.**
    *
-   * The scheme sets the address before every read and write it makes. A store
-   * that kept its own copy would answer from whichever contract was addressed
+   * Each company is reached through its own view. A store that kept its own
+   * copy of an address would answer from whichever contract was addressed
    * last, which is another company's record under this company's name.
    *
-   * RED WHEN: the address stops being handed to the store - both reads then
-   * name the same one. Watched.
+   * RED WHEN: the address stops being handed to the store, or one view answers
+   * under another's address - both reads then name the same one. Watched.
    */
-  it('asks the store under the address the call was set to, each time', async () => {
+  it('asks the store under the address the view was opened for, each time', async () => {
     const d = aDevice();
-    d.provider.setContractAddress(A_CONTRACT);
-    await d.provider.get(ID);
-    d.provider.setContractAddress(ANOTHER_CONTRACT);
-    await d.provider.get(ID);
+    const one = d.provider.forContract(A_CONTRACT);
+    const other = d.provider.forContract(ANOTHER_CONTRACT);
+    await one.get(ID);
+    await other.get(ID);
+    await one.get(ID);
 
-    expect(d.reads.map((r) => r.address)).toEqual([A_CONTRACT, ANOTHER_CONTRACT]);
+    expect(d.reads.map((r) => r.address)).toEqual([A_CONTRACT, ANOTHER_CONTRACT, A_CONTRACT]);
   });
 
   /**
-   * **AND A READ BEFORE ANY ADDRESS IS SET IS REFUSED RATHER THAN GUESSED.**
+   * **ONE COMPANY HAS ONE ADDRESS, HOWEVER IT IS WRITTEN.** The scheme compares
+   * addresses in lower case, so a store keyed on the case it was handed would
+   * keep one company's record under two names, and a read under one would miss
+   * a write under the other.
    *
-   * RED WHEN: the missing address falls back to anything - the read then
-   * succeeds and answers about a company nobody named. Watched.
+   * RED WHEN: the view keeps the address in the case it was given. Watched.
    */
-  it('REFUSES to read or write before it is told which company', async () => {
+  /* RED WHEN: a view is opened for an empty or malformed address, so a company's private state is kept under no company. */
+  it('opens no view for something that is not a contract address', () => {
     const d = aDevice();
-    await expect(d.provider.get(ID)).rejects.toThrow(NO_CONTRACT_ADDRESSED);
-    await expect(d.provider.set(ID, {} as never)).rejects.toThrow(NO_CONTRACT_ADDRESSED);
+    expect(() => d.provider.forContract('')).toThrow(/is not a contract address/);
+    expect(() => d.provider.forContract(`0200${A_CONTRACT}`)).toThrow(/is not a contract address/);
+  });
+
+  it('names the store\'s entry in lower case, whatever case the address arrived in', async () => {
+    const d = aDevice();
+    const view = d.provider.forContract(A_CONTRACT.toUpperCase());
+    await view.set(ID, { assetId: new Uint8Array([7]) } as never);
+
+    expect([view.contractAddress, d.writes[0]!.address]).toEqual([A_CONTRACT, A_CONTRACT]);
+  });
+
+  /**
+   * **AND THERE IS NO SETTER LEFT FOR A CALLER TO REACH.** An address held in
+   * a field is one a call can inherit from whichever call set it last.
+   *
+   * RED WHEN: the provider offers a contract-address setter again. Watched.
+   */
+  it('offers no way to set a contract address outside a view', () => {
+    const d = aDevice();
+    expect('setContractAddress' in d.provider).toBe(false);
   });
 });
 
@@ -360,38 +383,37 @@ describe('the ways a record could leave this device, and the fact that none of t
    * An import is the same hazard in the other direction: a record chosen by
    * somebody else, including the two fields that forge a membership path.
    *
-   * The four maintenance-authority methods are refused for a different reason
+   * The six maintenance-authority methods are refused for a different reason
    * and the message says which: that authority is not something a browser holds
    * here, so a device keeping one would be a durable place for key material
-   * that nothing in this design has accounted for.
+   * that nothing in this design has accounted for. Clearing every company at
+   * once is refused because nothing here reaches across companies.
    *
-   * **ONE CASE OVER ALL EIGHT, because a list that refuses seven is a list with
+   * **ONE CASE OVER ALL NINE, because a list that refuses eight is a list with
    * one way out of it.**
    *
-   * RED WHEN: any one of the eight returns instead of throwing. Watched, per
-   * method.
+   * RED WHEN: any one of the nine returns instead of throwing, or clearing every
+   * company reaches the store. Watched, per method.
    */
   it('REFUSES every method that would move a record on or off this device', async () => {
     const d = aDevice();
-    d.provider.setContractAddress(A_CONTRACT);
     const p: any = d.provider;
+    const view: any = d.provider.forContract(A_CONTRACT);
 
     /*
-     * **THE METHOD HAS TO EXIST AND THE REFUSAL HAS TO SAY WHY, AND BOTH HALVES
-     * ARE HERE BECAUSE THE FIRST VERSION OF THIS CASE HAD NEITHER.** It wrapped
-     * each call in a `catch` that discarded what it caught, so a method that had
-     * been renamed, deleted or left undefined read exactly like one that
-     * refused - measured, by misspelling one of the eight and watching this case
-     * stay green. A refusal nobody can distinguish from an absence is not a
-     * refusal, and what this file claims about these eight is that whoever
-     * reaches one is TOLD why rather than handed a record.
+     * **THE METHOD HAS TO EXIST AND THE REFUSAL HAS TO SAY WHY.** A case that
+     * discarded what each call threw would read a method that had been renamed,
+     * deleted or left undefined exactly like one that refused. A refusal nobody
+     * can distinguish from an absence is not a refusal, and what this file
+     * claims about these nine is that whoever reaches one is TOLD why rather
+     * than handed a record.
      */
     const outcomes = await Promise.all(
-      ['exportPrivateStates', 'importPrivateStates', 'exportSigningKeys', 'importSigningKeys',
-        'setSigningKey', 'getSigningKey', 'removeSigningKey', 'clearSigningKeys']
-        .map(async (name) => {
-          if (typeof p[name] !== 'function') return `${name}: NOT THERE AT ALL`;
-          try { await p[name](); return `${name}: ANSWERED`; } catch (e: any) {
+      [['exportPrivateStates', view], ['importPrivateStates', view], ['exportSigningKeys', p], ['importSigningKeys', p],
+        ['setSigningKey', p], ['getSigningKey', p], ['removeSigningKey', p], ['clearSigningKeys', p], ['clearAll', p]]
+        .map(async ([name, on]) => {
+          if (typeof on[name] !== 'function') return `${name}: NOT THERE AT ALL`;
+          try { await on[name](); return `${name}: ANSWERED`; } catch (e: any) {
             const said = String(e?.message ?? e);
             return /is not something this device can do/.test(said)
               ? `${name}: refused, saying why`
@@ -405,14 +427,16 @@ describe('the ways a record could leave this device, and the fact that none of t
       'exportSigningKeys: refused, saying why', 'importSigningKeys: refused, saying why',
       'setSigningKey: refused, saying why', 'getSigningKey: refused, saying why',
       'removeSigningKey: refused, saying why', 'clearSigningKeys: refused, saying why',
+      'clearAll: refused, saying why',
     ]);
+    expect(d.cleared, 'clearing every company reached the store').toEqual([]);
   });
 
   /**
-   * **AND THE MATERIAL GOES WHEN THE SESSION DOES.**
+   * **AND THE MATERIAL GOES WHEN THE PERSON SIGNS OUT.**
    *
    * Locking a company, or signing out, has to end this device's ability to act
-   * on it - otherwise "held in memory for a session" is a sentence about
+   * on it - otherwise "held in memory while signed in" is a sentence about
    * nothing.
    *
    * RED WHEN: releasing keeps the entry - the record is still composed after
@@ -420,11 +444,11 @@ describe('the ways a record could leave this device, and the fact that none of t
    */
   it('stops composing anything once the material is released', async () => {
     const d = aDevice();
-    d.provider.setContractAddress(A_CONTRACT);
-    expect(await d.provider.get(ID)).not.toBeNull();
+    const v = d.provider.forContract(A_CONTRACT);
+    expect(await v.get(ID)).not.toBeNull();
 
     d.memory.releaseAll();
-    expect(await d.provider.get(ID)).toBeNull();
+    expect(await v.get(ID)).toBeNull();
   });
 });
 

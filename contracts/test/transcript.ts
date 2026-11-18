@@ -33,7 +33,7 @@
  * impure circuit ends with `finalizeCallProofData(context, partialProofData)`
  * (e.g. `contracts/managed/contract/index.js:323`) before returning the
  * context. Until this file, our own code touched `publicTranscript` exactly
- * once — as a hand-built EMPTY stub at `scripts/cross-contract-spike.ts:144`,
+ * once — as a hand-built EMPTY stub in an offline spike,
  * which is what asserting over an absent transcript looks like.
  *
  * ---
@@ -321,8 +321,8 @@ export class Transcript {
    * THE POSITIVE CONTROL, AND IT IS NOT OPTIONAL.
    *
    * An absence check over a transcript this instrument failed to read is green
-   * for the worst possible reason — `scripts/cross-contract-spike.ts:144` is
-   * that mistake sitting in this repository already. A test that asserts
+   * for the worst possible reason — a hand-built empty stub is
+   * exactly that mistake. A test that asserts
    * something IS published proves the scan can find things at all.
    */
   assertPublishes(values: Record<string, Secret>): void {

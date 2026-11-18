@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
+import { privateAddressHere, publicAddressElsewhere, publicAddressHere } from '../addresses-here.test-support.js';
 import type { ProposalRow } from './company-records.js';
 
 type Row = ProposalRow;
@@ -490,8 +491,8 @@ describe('raising a run the wallet draws', () => {
 describe('raising a one-off payment', () => {
   const VAULT = 'ab'.repeat(32);
   const NIGHT = '00'.repeat(32);
-  const PRIVATE = 'mn_shield-addr_stagenet1qv9pzxqlyckngw6zf9g9whn9d3eh4qvg37tfmf9tk2uup37w6hww86h3lrlsvrg5rv3zjvph8ez5c566v95x7anasj9e9xdq57htt0qwwj5qx';
-  const PUBLIC = 'mn_addr_stagenet1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5z5tpwxqergd3c8g7rusqqmwelz';
+  const PRIVATE = privateAddressHere(0x33);
+  const PUBLIC = publicAddressHere(0x44);
   const draft = { vault: VAULT, token: NIGHT, amount: '12.5', payee: PUBLIC, payeeName: '', reason: 'Chairs', vendor: null } as const;
   const wire = { name: 'one-off-payment', record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), vault: VAULT, token: NIGHT, amount: '12500000', payee: PUBLIC, reason: 'Chairs' };
   const refusing = (code: string) => ({ of: 'stopped', step: 1, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: `act.one-off-payment.why.${code}` });
@@ -518,7 +519,7 @@ describe('raising a one-off payment', () => {
       [{ amount: 'abc' }, F.amount, P.badAmount], [{ amount: '-1' }, F.amount, P.badAmount], [{ amount: '1e3' }, F.amount, P.badAmount], [{ amount: '1,000' }, F.amount, P.badAmount],
       [{ amount: '0' }, F.amount, P.zeroAmount], [{ amount: '0.0' }, F.amount, P.zeroAmount], [{ amount: '1.0000001' }, F.amount, P.tooManyDecimals],
       [{ amount: '340282366920938463463374607431768.211456' }, F.amount, P.badAmount], [{ payee: '' }, F.payee, P.noAddress], [{ payee: 'hello' }, F.payee, P.badAddress],
-      [{ payee: PUBLIC.replace('mn_addr_stagenet', 'mn_addr_preview') }, F.payee, P.badAddress], [{ reason: ' ' }, F.reason, P.noReason],
+      [{ payee: publicAddressElsewhere(0x44) }, F.payee, P.badAddress], [{ reason: ' ' }, F.reason, P.noReason],
       [{ reason: 'x'.repeat(501) }, F.reason, P.reasonTooLong], [{ payeeName: 'n'.repeat(129) }, F.name, P.nameTooLong],
     ];
     for (const [over, field, problem] of cases) {

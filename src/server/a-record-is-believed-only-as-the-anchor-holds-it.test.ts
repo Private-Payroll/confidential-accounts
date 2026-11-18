@@ -13,9 +13,11 @@
  * The one to read first is "A PERSON'S EARLIER VERSION".
  */
 import type { RecordsAsked } from '../midnight/records-held.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import type { Hex } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { theNetwork } from '../midnight/network.js';
 import { signRunFiling, type RunToFile } from '../core/run-filing.js';
 import { sealRecord } from '../core/sealed-records.js';
@@ -80,7 +82,7 @@ const serving = (id: string, version: SealedCompanyRecord) => (body: unknown) =>
   ...(body as object),
   people: ((body as { people: Array<{ filed: { id: string } }> }).people).map((row) => (row.filed.id === id ? { ...row, filed: toCompanyWire(version) } : row)),
 });
-const pay = { name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500_101n, classification: 'full-time' as const, startDate: '2026-10-01' };
+const pay = { name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_101n, classification: 'full-time' as const, startDate: '2026-10-01' };
 
 describe('THE COMPANY\'S PEOPLE, READ THROUGH THE ANCHOR', () => {
   let pat = '';

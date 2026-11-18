@@ -22,16 +22,17 @@ import { describe, it, expect } from 'vitest';
 import { ChainLedger } from './chain.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const DEPLOYMENT: Deployment = {
-  network: 'stagenet',
+  network: NETWORK,
   contractAddress: 'bcb61fef',
   indexerUrl: 'https://indexer.example/api/v4/graphql',
   indexerWsUrl: 'wss://indexer.example/api/v4/graphql/ws',
   nodeUrl: 'https://rpc.example',
   proverUrl: 'http://prover.invalid:1',
   sealedStateRoot: '/nowhere/.midnight/sealed',
-  privateStateId: 'confidential-accounts-stagenet',
+  privateStateId: `confidential-accounts-${NETWORK}`,
   zkConfigPath: '/nowhere/contracts/managed',
   vaultZkConfigPath: '/nowhere/contracts/managed-vault',
 };
@@ -182,7 +183,7 @@ describe('the chain wiring refuses a write above the ledger', () => {
     const { ledger } = recorder();
     expect(ledger.describe()).toContain('read-only');
     expect(ledger.describe()).not.toContain('sponsored');
-    expect(ledger.describe()).toContain('stagenet');
+    expect(ledger.describe()).toContain(NETWORK);
   });
 
   /*
@@ -192,11 +193,25 @@ describe('the chain wiring refuses a write above the ledger', () => {
    * is the half a fixed string passes: an operator on a deployment that CAN
    * write would be told it cannot, on the one line the health route prints.
    */
+  /*
+   * RED WHEN: the sentence the health route hands anybody names the indexer
+   * with its query, which on a network reached with a project token is the
+   * token itself.
+   */
+  it('names the indexer without the project token its address carries', async () => {
+    const ledger = new ChainLedger({} as any, {
+      ...DEPLOYMENT, indexerUrl: 'https://indexer.example/api/v0?project_id=aProjectToken42',
+    });
+    expect(ledger.describe()).toContain('via https://indexer.example/api/v0,');
+    expect(ledger.describe()).not.toContain('aProjectToken42');
+    expect(ledger.describe()).not.toContain('project_id');
+  });
+
   it('a deployment that can write does not describe itself as read-only', async () => {
     const { ledger } = recorder(CAPABLE);
     expect(ledger.describe()).not.toContain('read-only');
     expect(ledger.describe()).toContain('reading and writing');
-    expect(ledger.describe()).toContain('stagenet');
+    expect(ledger.describe()).toContain(NETWORK);
   });
 });
 

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buffersOf, KEPT_IDLE_MS, keptProvers, makeBrowserProvingService } from './proving.js';
+import { LedgerTransaction } from '@midnight-ntwrk/midnight-js-types';
+import * as L from '@midnightntwrk/ledger-v9';
+import { browserProvingProvider, builderProving, buffersOf, KEPT_IDLE_MS, keptProvers, makeBrowserProvingService } from './proving.js';
 import type { ProofEvent, ProvingWorkerLike } from './proving.js';
 
 /*
@@ -50,7 +52,8 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     expect(AWorker.made).toHaveLength(2);
     const [w1, w2] = AWorker.made as [AWorker, AWorker];
     w1.says({ op: 'ready' }); w2.says({ op: 'ready' });
-    expect(w1.orders).toEqual([{ op: 'prove', preimage: new Uint8Array([1]), overwriteBindingInput: undefined }]);
+    /* RED WHEN: a worker is not told which key the proof is for, so it cannot choose the prover that key needs. */
+    expect(w1.orders).toEqual([{ op: 'prove', keyLocation: SPEND, preimage: new Uint8Array([1]), overwriteBindingInput: undefined }]);
     /* The second finishes first. */
     w2.says({ op: 'result', value: 'output proof' });
     w1.says({ op: 'result', value: 'spend proof' });
@@ -196,13 +199,7 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const run = vi.fn(async (..._args: unknown[]) => 'done' as unknown);
     const recording = { run, stop: () => undefined, idle: 0 } as unknown as ReturnType<typeof keptProvers>;
     const keys = km('a');
-    const service = makeBrowserProvingService(keys as never, { provers: recording });
-    let provider: {
-      prove(p: Uint8Array, k: string, b?: bigint): Promise<unknown>;
-      check(p: Uint8Array, k: string): Promise<unknown>;
-      lookupKey(k: string): Promise<unknown>;
-    } | null = null;
-    await service.prove({ prove: (p: never) => { provider = p; return Promise.resolve('proved'); } } as never);
+    const provider = browserProvingProvider(keys as never, { provers: recording });
     await provider!.prove(new Uint8Array([5]), OUTPUT, 3n);
     await provider!.check(new Uint8Array([6]), SPEND);
     await provider!.prove(new Uint8Array([7]), SPEND);
@@ -217,18 +214,25 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     expect(keys.lookupKey.mock.calls).toEqual([[OUTPUT], [SPEND]]);
   });
 
+  it('the proving service refuses anything that is not a ledger-v9 transaction, and proves nothing', async () => {
+    // RED WHEN: something that is not a ledger-v9 transaction is proved, or reaches the workers at all
+    const run = vi.fn(async (..._args: unknown[]) => 'done' as unknown);
+    const recording = { run, stop: () => undefined, idle: 0 } as unknown as ReturnType<typeof keptProvers>;
+    const service = makeBrowserProvingService(km('a') as never, { provers: recording });
+    await expect(service.prove({ prove: async () => 'proved' } as never, 0n as never)).rejects.toThrow(/earlier ledger/u);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('the proving service says each proof starting and ending, and a failed check ends too', async () => {
     // RED WHEN: a proof or a check that starts is never reported as ended, or a failure is not passed on
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
     const events: ProofEvent[] = [];
-    const service = makeBrowserProvingService(km('a') as never, { provers, onProof: (e) => events.push(e) });
-    let provider: { prove(p: Uint8Array, k: string, b?: bigint): Promise<unknown>; check(p: Uint8Array, k: string): Promise<unknown> } | null = null;
-    await service.prove({ prove: (p: never) => { provider = p; return Promise.resolve('proved'); } } as never);
+    const provider = browserProvingProvider(km('a') as never, { provers, onProof: (e) => events.push(e) });
     const proof = provider!.prove(new Uint8Array([5]), OUTPUT, 3n);
 
     expect(events).toEqual([{ op: 'prove', at: 'start' }]);
     AWorker.made[0]!.says({ op: 'ready' });
-    expect(AWorker.made[0]!.orders).toEqual([{ op: 'prove', preimage: new Uint8Array([5]), overwriteBindingInput: 3n }]);
+    expect(AWorker.made[0]!.orders).toEqual([{ op: 'prove', keyLocation: OUTPUT, preimage: new Uint8Array([5]), overwriteBindingInput: 3n }]);
     AWorker.made[0]!.says({ op: 'result', value: new Uint8Array([6]) });
     await proof;
     expect(events).toEqual([{ op: 'prove', at: 'start' }, { op: 'prove', at: 'end' }]);
@@ -377,3 +381,35 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
   });
 });
 
+describe('A CALL MIDNIGHT.JS 5 BUILT IS PROVED BY THE WALLET\'S BUILDERS', () => {
+  /** An unproven transaction as Midnight.js 5 hands a built call over: a sealed v9 handle, not a ledger object. */
+  const builtByMidnightJs = (tx: L.UnprovenTransaction) => LedgerTransaction.seal('v9', 'Unproven', tx);
+  const asked: { op: string; keyLocation: string }[] = [];
+  const workers = {
+    run: vi.fn(async (op: string, keyLocation: string) => {
+      asked.push({ op, keyLocation });
+      throw new Error('the test worker holds no key');
+    }),
+  };
+
+  it('a handle with nothing to prove comes back proved, as a handle, and is not refused', async () => {
+    // RED WHEN: the builders' prover hands the handle to a service that takes only a ledger object, and refuses it
+    const raw = L.Transaction.fromParts('undeployed');
+    const proven = await builderProving(km('a'), { provers: workers as never })(builtByMidnightJs(raw));
+    expect(LedgerTransaction.isLedgerTransaction(proven)).toBe(true);
+    expect(proven.serialize().length).toBeGreaterThan(0);
+  });
+
+  it('a handle carrying a proof obligation reaches the wallet\'s own provers, keyed by its location', async () => {
+    // RED WHEN: the handle is refused as built for an earlier ledger before any proof is asked for
+    asked.length = 0;
+    const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(32).fill(7));
+    const coin = L.createShieldedCoinInfo(L.shieldedToken().raw, 5n);
+    const output = L.ZswapOutput.new(coin, 0, keys.coinPublicKey, keys.encryptionPublicKey);
+    const raw = L.Transaction.fromParts('undeployed', L.ZswapOffer.fromOutput(output, coin.type, coin.value));
+    const proving = builderProving(km('a'), { provers: workers as never })(builtByMidnightJs(raw));
+    await expect(proving).rejects.toThrow(/the test worker holds no key/);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked[0]!.keyLocation).toMatch(/output/);
+  });
+});

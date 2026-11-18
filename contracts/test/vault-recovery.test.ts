@@ -56,6 +56,10 @@ import {
 import { notesNeedingATransaction, whatTheRebuildWrites } from '../../scripts/reconcile-vault-pool-rules.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW. Payments assert they fall inside the
@@ -119,7 +123,7 @@ const NO_INDEX_YET = 0n;
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault whose pool is gone, and the chain that still knows', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault whose pool is gone, and the chain that still knows [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;
@@ -132,14 +136,17 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
   const FIRST = { nonce: toHex(bytes(0x77)), token: toHex(TOKEN_BYTES), value: 1_000n };
   const SECOND = { nonce: toHex(bytes(0x88)), token: toHex(TOKEN_BYTES), value: 400n };
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
 
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
+      circuitId: circuit,
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
 
   /** The vault's note set exactly as the chain publishes it: commitments. */
   const chainNotes = (): Hex[] =>
@@ -215,9 +222,16 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     await startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },

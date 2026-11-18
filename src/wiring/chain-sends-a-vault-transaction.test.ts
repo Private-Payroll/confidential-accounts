@@ -6,12 +6,13 @@ import { FeeNotPaid, NetworkRefused, WalletFeeSponsor, feeAnswerCodeOf } from '.
 import { FeeRefused } from '../midnight/fee-ceiling.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
+import { NETWORK } from 'midnight-identity/network';
 
 /*
  * `ChainLedger.sendVault`: a transaction a device built for a vault, paid for
  * by the fee payer alone, through the one lane every write takes.
  */
-const DEPLOYMENT = { network: 'stagenet', indexerUrl: 'x', indexerWsUrl: 'x' } as unknown as Deployment;
+const DEPLOYMENT = { network: NETWORK, indexerUrl: 'x', indexerWsUrl: 'x' } as unknown as Deployment;
 
 interface Tx { bound: boolean; hash: string; log: string[] }
 
@@ -30,7 +31,7 @@ const setUp = (payer: Partial<WriteCapability['sponsor']> = {}) => {
     compiled: {},
     customer: {
       coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {},
-      balanceOwnLegs: async () => { log.push('THE COMPANY SIDE WAS ASKED'); return null; },
+      balanceOwnLegs: async () => { log.push('THE COMPANY SIDE WAS ASKED'); return null as never; },
     },
     sponsor,
     storagePassword: async () => 'x',
@@ -155,8 +156,8 @@ describe('A VAULT TRANSACTION A DEVICE SENT', () => {
       cause: { code: 1010, message: '1010: Invalid Transaction: Custom error: 170', data: 'Custom error: 170' },
     });
     let balanced = 0;
-    const payer = new WalletFeeSponsor({
-      shieldedSecretKeys: 's', dustSecretKey: 'd',
+    const payer = new WalletFeeSponsor(<never>{
+      handleOf: (tx: unknown) => tx as never, ledgerTransactionOf: (tx: unknown) => tx,
       balanceFinalizedTransaction: async (tx: unknown) => { balanced += 1; if (balanced > 1) throw new Error('could not balance dust'); return { tx }; },
       finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1' }),
       submitTransaction: async () => { throw refusal; },
@@ -168,7 +169,7 @@ describe('A VAULT TRANSACTION A DEVICE SENT', () => {
     const { unbound } = setUp();
     const ledger = new ChainLedger({} as never, DEPLOYMENT, {
       maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
-      customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+      customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null as never },
       sponsor: payer as never, storagePassword: async () => 'x',
     });
     const e = await ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]),

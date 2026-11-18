@@ -1,91 +1,77 @@
 /**
- * Which testkit environment to use for a given network — including networks
- * testkit has no class for.
+ * The testkit environment for a network, built from the network's one record.
  *
- * testkit-js ships `PreviewTestEnvironment`, `PreprodTestEnvironment`,
- * `QanetTestEnvironment`, `LocalTestEnvironment` and
- * `EnvVarRemoteTestEnvironment`. That list is the same in 4.1.1 and in
- * 5.0.0-beta.4 — checked by listing the exports of both, not by reading release
- * notes. **There is no Stagenet class**, and the Foundation's guidance is to
- * build on Stagenet.
+ * testkit-js ships classes of its own for some networks, each with hosts
+ * written into the package and no project token, and none for others.
+ * `EnvVarRemoteTestEnvironment` reads its endpoints from `MN_TEST_*` variables,
+ * so every network goes through it, filled from the record by
+ * `exportTestkitEnv`: one table of endpoints in the project, with a network's
+ * project token joined where its record asks for one, and the same endpoints
+ * for the wallets a door brings up and the readers beside them.
  *
- * `EnvVarRemoteTestEnvironment` is the supported answer rather than a
- * workaround: it reads its endpoints from `MN_TEST_*` variables, which is
- * exactly the escape hatch for a network the package predates. We fill those in
- * from `src/midnight/network.ts`, so there is still one table of endpoints in
- * the project and not two.
- *
- * Both scripts go through here. The deploy and the run had already drifted
- * apart once — a sync-progress fix landed in one and not the
- * other, and that cost a deployment — so anything both of them do lives in one
- * module now.
+ * Every script that brings up a wallet goes through here, so anything they all
+ * do lives in one module.
  */
-import {
-  PreviewTestEnvironment,
-  PreprodTestEnvironment,
-  QanetTestEnvironment,
-  EnvVarRemoteTestEnvironment,
-} from '@midnight-ntwrk/testkit-js';
+import { EnvVarRemoteTestEnvironment } from '@midnight-ntwrk/testkit-js';
 
-import { type NetworkName, hasTestkitEnvironment, exportTestkitEnv } from '../src/midnight/network.js';
-
-const CLASSES: Partial<Record<NetworkName, new (logger: unknown) => unknown>> = {
-  preview: PreviewTestEnvironment as never,
-  preprod: PreprodTestEnvironment as never,
-  qanet: QanetTestEnvironment as never,
-};
+import { shownAddress } from '../src/core/networks.js';
+import { type NetworkName, exportTestkitEnv } from '../src/midnight/network.js';
 
 export type EnvironmentChoice = {
   env: any;
-  /** How it was built, for the log. Silence here is how an afternoon goes missing. */
+  /** Which endpoints it was built with, for the log, each without its query so no project token is printed. */
   how: string;
 };
 
 /**
- * Builds a testkit environment for `network`.
- *
- * Deliberately not silent about which route it took. A run that says which
- * endpoints it is talking to costs one line and saves the class of confusion
- * where a transaction quietly goes to the wrong chain.
+ * Builds a testkit environment for `network` from its record, and says which
+ * endpoints it reaches: a run that names them costs one line and saves the
+ * confusion of a transaction quietly going to the wrong chain.
  */
 export function testEnvironmentFor(network: NetworkName, logger: unknown): EnvironmentChoice {
-  const Cls = CLASSES[network];
-  if (Cls && hasTestkitEnvironment(network)) {
-    return { env: new (Cls as any)(logger), how: `testkit's own ${network} environment` };
-  }
-
   const vars = exportTestkitEnv(network);
   return {
     env: new (EnvVarRemoteTestEnvironment as any)(logger),
     how:
-      `no testkit class for "${network}", so its endpoints were supplied directly:\n` +
-      `      node    ${vars.MN_TEST_NODE}\n` +
-      `      indexer ${vars.MN_TEST_INDEXER}` +
-      (vars.MN_TEST_FAUCET ? `\n      faucet  ${vars.MN_TEST_FAUCET}` : ''),
+      `"${network}", reached at the endpoints its record names:\n` +
+      `      node    ${shownAddress(vars.MN_TEST_NODE!)}\n` +
+      `      indexer ${shownAddress(vars.MN_TEST_INDEXER!)}` +
+      (vars.MN_TEST_FAUCET ? `\n      faucet  ${shownAddress(vars.MN_TEST_FAUCET)}` : ''),
   };
 }
 
 /**
- * Starts a testkit environment, RETRYING THE HEALTH CHECK. M-116, moved here by M-137.
+ * What a failed health check says, with the endpoint it asked named by its host
+ * and path only, so a project token in the query never reaches a door's output.
+ */
+export function healthCheckFailure(e: any): string {
+  const message = String(e?.message ?? e).split('\n')[0];
+  const url = e?.config?.url;
+  if (typeof url !== 'string') return message;
+  let where = url.split('?')[0]!;
+  try { const u = new URL(url); where = `${u.host}${u.pathname}`; } catch { /* the bare form above */ }
+  return `${message}, from ${where}`;
+}
+
+/**
+ * Whether a failed health check is worth asking again: a timeout, a dropped
+ * connection, or a gateway answering that it is busy or that what is behind it
+ * did not answer (502, 503, 504). Anything else is the network saying no.
+ */
+export const looksTransient = (why: string): boolean =>
+  /timeout|ECONNABORTED|ECONNRESET|ETIMEDOUT|socket hang up|status code 50[234]/i.test(why);
+
+/**
+ * Starts a testkit environment, RETRYING THE HEALTH CHECK.
  *
  * `env.start()` pings the node, the indexer, the proof server and the faucet
- * with `axios … { timeout: 1000 }`. The value is hardcoded in four places in
- * `testkit-js`, so it cannot be configured from the caller. Against public
- * internet endpoints one second is marginal by design — the run that worked
- * measured 500ms, 670ms and 870ms — so a slow moment anywhere kills the run
- * before it starts, with `AxiosError: timeout of 1000ms exceeded` and nothing
- * to say which endpoint was slow.
- *
- * A retry is the right shape rather than a workaround. The check is a liveness
- * probe with no side effects, so running it again costs a second and is safe by
- * construction, and a transient blip is exactly what a retry is for. If the
- * network really is down, four attempts say so just as clearly.
- *
- * IT LIVES HERE BECAUSE THE DEPLOY DID NOT HAVE IT. `run-preview.ts` carried
- * this loop and `deploy-preview.ts` called `env.start` bare, against the same
- * four endpoints on the same network — so the script that must succeed FIRST
- * was the one without the protection. That is the drift this module's own
- * header says it exists to prevent, in the module that says it.
+ * with a one-second timeout written into testkit-js, which the caller cannot
+ * change. Against public endpoints one second is marginal, so a slow moment
+ * anywhere would end the run before it starts, saying nothing about which
+ * endpoint was slow. The check is a liveness probe with no side effects, so
+ * running it again is safe and a transient blip is what a retry is for; a
+ * network that really is down still fails after the last attempt. Every script
+ * that brings up a wallet starts its environment here, so none goes without it.
  */
 export async function startEnvironment(
   env: any,
@@ -97,11 +83,10 @@ export async function startEnvironment(
     try {
       return await env.start(container);
     } catch (e: any) {
-      const why = String(e?.message ?? e).split('\n')[0];
-      const looksTransient = /timeout|ECONNABORTED|ECONNRESET|ETIMEDOUT|socket hang up/i.test(why);
-      if (attempt === attempts || !looksTransient) throw e;
+      const why = healthCheckFailure(e);
+      if (attempt === attempts || !looksTransient(why)) throw new Error(why, { cause: e });
       note(`  the environment health check failed (${why}) — attempt ${attempt} of ${attempts}, retrying`);
-      note('  its timeout is one second and is hardcoded in the testkit; see M-116');
+      note('  its timeout is one second and is written into the testkit, so it cannot be raised here');
       await new Promise(r => setTimeout(r, 3000 * attempt));
     }
   }

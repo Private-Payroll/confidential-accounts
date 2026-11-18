@@ -156,7 +156,7 @@ describe('no extended public key above the leaf leaves this library', () => {
   });
 
   it('the words for an extended key appear in no source file at all', () => {
-    expect(carrying(/xpub|xprv|publicExtendedKey|extendedPublicKey|\.neutered\(/u)).toEqual([SELF]);
+    expect(carrying(/xpub|xprv|publicExtendedKey|extendedPublicKey|\.neu[t]ered\(/u)).toEqual([SELF]);
   });
 });
 
@@ -207,30 +207,21 @@ describe('the wallet page asks nobody anything when it opens', () => {
     }
   });
 
-  it('the whole application reaches exactly three origins, and they are named here', () => {
-    /* THE ENUMERATION IS THE POINT, AND THE FIRST VERSION OF THIS FILE DID NOT
-     * HAVE IT. `SECURITY.md` tried to enumerate the wallet's network activity
-     * in prose and got it wrong twice in one sentence — it missed the proving
-     * artefacts (`apps/wallet/src/chain/key-material.ts:227`, reached from the send path via
-     * `apps/wallet/src/chain/proving.ts:61`) and missed `apps/wallet/src/chain/facade.ts` entirely. A list in
-     * prose is a list that goes stale; this is the same list, derived.
+  it('the whole application writes no origin of its own but the unresolvable rehearsal one', () => {
+    /* THE ENUMERATION IS THE POINT. The wallet reaches the compiled network's
+     * node and indexer, and both come from the network's one record through
+     * `endpointsOf`, never from an address written in the wallet; the only
+     * address the wallet writes itself is `rehearsal.invalid`, deliberately
+     * unresolvable, so a rehearsal cannot reach anything.
      *
-     * A FOURTH FILE HERE IS A NEW PARTY THIS WALLET TALKS TO, and whoever
-     * added it has to come past this test and past `SECURITY.md`. */
+     * A SECOND FILE HERE IS A NEW PARTY THIS WALLET TALKS TO, and whoever
+     * added it has to come past this test. */
     const offenders = sources()
       .filter(([file]) => !/\.test\.tsx?$|\.fixtures\.ts$/u.test(file) && file !== SELF)
       .filter(([, code]) => /["'`](?:https?|wss?):\/\//u.test(code))
       .map(([file]) => file).sort();
-    expect(offenders).toEqual([
-      /* The stagenet RPC node the SDK facade talks to. */
-      'apps/wallet/src/chain/facade.ts',
-      /* `rehearsal.invalid` — deliberately unresolvable, so a rehearsal
-       * cannot reach anything. Not a party; the absence of one. */
-      'apps/wallet/src/chain/rehearsal.ts',
-      /* The indexer balances are read from, asked only when the person
-       * presses the button, and named on screen for that reason. */
-      'apps/wallet/src/config.ts',
-    ]);
+    /* RED WHEN a wallet file writes an address of its own, a party the network's record does not name. */
+    expect(offenders).toEqual(['apps/wallet/src/chain/rehearsal.ts']);
   });
 
   it('the stylesheet pulls in no remote font or sheet', () => {

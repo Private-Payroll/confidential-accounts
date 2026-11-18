@@ -102,7 +102,7 @@ export function readAsTheWalletDoes(identity: Identity, ask: KeyringRequest, k: 
 }
 
 /**
- * **A KEYRING ASK ANSWERED AS THE PERSON'S WALLET ANSWERS IT** (`apps/wallet/src/screens/approve.tsx`, `releaseKeyring`):
+ * **A KEYRING ASK ANSWERED AS THE PERSON'S WALLET ANSWERS IT** (`apps/wallet/src/screens/approve-answer-keys.ts`, `giveKeyring`):
  * the release, and when the ask handed saved keys in, what the wallet read from them, with the creation changes it was
  * asked for made and sealed again. Saved keys that do not open are refused as the wallet refuses them.
  */

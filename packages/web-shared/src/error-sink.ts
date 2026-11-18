@@ -203,6 +203,9 @@ export const installErrorSink = (
     try { send({ page: w.location.href, entries }); } catch { /* never the app's problem */ }
   };
 
+  /* A window that closes right after its last line (the wallet's action window does) sends what it holds as it goes. */
+  try { w.addEventListener('pagehide', () => flush()); } catch { /* never the app's problem */ }
+
   const record = (level: string, message: unknown, stack?: unknown) => {
     try {
       if (queue.length >= QUEUE_CAP) return;

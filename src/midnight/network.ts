@@ -3,46 +3,12 @@ import {
   NETWORK_IDS, endpointsOf, isNetworkId, networkRecord, websocketNodeOf,
   type NetworkRecord,
 } from '../core/networks.js';
+import { settingOrProjectToken } from './project-token-setting.js';
 
 /**
- * Which network we are on, and how to say so to the SDK.
- *
- * This file exists because of a bug that type-checked perfectly and could never
- * have worked. providers.ts did:
- *
- *     setNetworkId(ledger.NetworkId[networkIdName(cfg.networkId)])
- *
- * `ledger.NetworkId` is a numeric enum, so that passes a NUMBER. But
- * `midnight-js-network-id` declares `type NetworkId = string`, and the network
- * id is not a flag: it is interpolated verbatim as a segment of every bech32m
- * address the SDK encodes and decodes.
- *
- *     setNetworkId('testnet')  ->  mn_shield-cpk_testnet1qurswpc8...
- *     setNetworkId(2)          ->  mn_shield-cpk_21qurswpc8...
- *
- * Consequences, both executed and observed rather than reasoned about:
- *
- *   - With the network named `testnet`, every deploy and every call throws
- *     "Expected 2 address, got testnet one" from parseCoinPublicKeyToHex,
- *     which midnight-js-contracts calls on every single transaction.
- *   - With the network named `undeployed` the enum is 0, and bech32m refuses
- *     the character outright: "Segment network: 0 contains disallowed
- *     characters".
- *
- * The `as any` on the ledger import is what hid it from tsc.
- *
- * The authority for the correct form is the Foundation's own testkit-js@4.1.1,
- * in node_modules, which does exactly this:
- *
- *     case 'preview': setNetworkId('preview'); break;
- *     case 'preprod': setNetworkId('preprod'); break;
- *     case 'qanet':   setNetworkId('qanet');   break;
- *     default:        setNetworkId('undeployed');
- *
- * Lowercase name strings. Never the enum.
- *
- * network.test.ts proves both halves of this: that the old form fails and the
- * new form round-trips. Do not "tidy" this into the enum.
+ * Which network the service is on, read once from the environment and checked against the network the wallet
+ * was compiled for. The network's id is the lowercase name the address codec interpolates into every address
+ * (never a number); it reaches the SDK in the providers' transaction settings, built from the network's record.
  */
 
 /**
@@ -91,38 +57,36 @@ export interface NetworkEndpoints {
  * exists, still says whether real money settles there, and still refuses a
  * test asset - so being unreachable is no longer what keeps an asset off a
  * chain.
+ *
+ * **EACH ENTRY IS READ THROUGH `endpointsOf` WHEN IT IS ASKED FOR**, so a
+ * network that asks for a project token carries it, read from the environment
+ * the service has by then loaded, and is refused by name when it has none.
  */
+const endpointsFor = (id: string): NetworkEndpoints => {
+  const e = endpointsOf(id, settingOrProjectToken());
+  return Object.freeze({
+    indexerUrl: e.indexer,
+    indexerWsUrl: e.indexerWs,
+    nodeUrl: e.node,
+    nodeWsUrl: websocketNodeOf(e),
+    ...(e.faucet === null ? {} : { faucetUrl: e.faucet }),
+  });
+};
+
 export const ENDPOINTS: Partial<Record<string, NetworkEndpoints>> = Object.freeze(
-  Object.fromEntries(
+  Object.defineProperties({}, Object.fromEntries(
     NETWORK_IDS
-      .map((id) => [id, networkRecord(id).endpoints] as const)
-      .filter((pair): pair is readonly [string, NonNullable<NetworkRecord['endpoints']>] => pair[1] !== null)
-      .map(([id, e]) => [id, Object.freeze({
-        indexerUrl: e.indexer,
-        indexerWsUrl: e.indexerWs,
-        nodeUrl: e.node,
-        nodeWsUrl: websocketNodeOf(e),
-        ...(e.faucet === null ? {} : { faucetUrl: e.faucet }),
-      })]),
-  ),
+      .filter((id) => networkRecord(id).endpoints !== null)
+      .map((id) => [id, { enumerable: true, get: () => endpointsFor(id) }]),
+  )),
 );
 
 /**
- * Networks testkit-js ships a TestEnvironment class for.
- *
- * Checked against testkit-js@5.0.0-beta.4 by listing its exports: Preview,
- * Preprod, Qanet, Local and EnvVar. There is no Stagenet, in 4.1.1 or in
- * 5.0. Anything not in this list has to go through the environment-variable
- * route, which is a supported path rather than a workaround.
- */
-export const TESTKIT_ENVIRONMENTS = ['preview', 'preprod', 'qanet'] as const;
-
-export const hasTestkitEnvironment = (name: string): boolean =>
-  (TESTKIT_ENVIRONMENTS as readonly string[]).includes(name);
-
-/**
- * Configures `EnvVarRemoteTestEnvironment` for a network testkit has no class
- * for, by setting the variables it reads.
+ * Configures `EnvVarRemoteTestEnvironment` for a network from its record, by
+ * setting the variables it reads. Every network a door or the run path reaches
+ * goes this way, the ones testkit ships a class of its own for included: those
+ * classes carry their own hosts and no project token, so a network whose record
+ * has moved would be reached at hosts the record no longer names.
  *
  * The names are read out of the built testkit, not guessed:
  *   MN_TEST_NETWORK_ID, MN_TEST_WALLET_NETWORK_ID, MN_TEST_INDEXER,
@@ -132,7 +96,7 @@ export const hasTestkitEnvironment = (name: string): boolean =>
  * a run is actually talking to is how an afternoon disappears.
  */
 export function exportTestkitEnv(name: string): Record<string, string> {
-  const e = endpointsOf(name);
+  const e = endpointsOf(name, settingOrProjectToken());
   const vars: Record<string, string> = {
     MN_TEST_NETWORK_ID: name,
     MN_TEST_WALLET_NETWORK_ID: name,
@@ -144,18 +108,6 @@ export function exportTestkitEnv(name: string): Record<string, string> {
   if (e.faucet !== null) vars.MN_TEST_FAUCET = e.faucet;
   for (const [k, v] of Object.entries(vars)) process.env[k] = v;
   return vars;
-}
-
-/**
- * Tells the SDK which network we are on.
- *
- * Call this exactly once, during provider assembly. Every wallet and contract
- * operation throws until it has been called, and every one of them produces a
- * wrong or rejected address if it was called with the wrong shape.
- */
-export async function applyNetworkId(name: string): Promise<void> {
-  const { setNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
-  setNetworkId(name);
 }
 
 /* ------------------- the network the two products share ------------------ */
@@ -212,6 +164,14 @@ export const PAIR_NETWORK: NetworkName = WALLET_NETWORK;
  */
 export function theNetwork(env: { MIDNIGHT_NETWORK_ID?: string | undefined } = process.env): NetworkName {
   return theNetworkNamed(env.MIDNIGHT_NETWORK_ID, PAIR_NETWORK);
+}
+
+/**
+ * Whether this run names its network in `MIDNIGHT_NETWORK_ID`, rather than taking the one the build is compiled for.
+ * A check that runs the product against a live network asks this first, and stands down when no network is named.
+ */
+export function aNetworkIsNamed(env: { MIDNIGHT_NETWORK_ID?: string | undefined } = process.env): boolean {
+  return (env.MIDNIGHT_NETWORK_ID?.trim() ?? '') !== '';
 }
 
 /**

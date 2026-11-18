@@ -13,7 +13,9 @@ import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profi
 import { aJoinersWallet, aWalletSecret } from '../testing/a-joiners-wallet.js';
 import type { Hex } from '../core/crypto.js';
 import { enteredHere } from '../testing/records-entered.js';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { canonical, newSigningKeypair, newSymmetricKey } from '../core/crypto.js';
@@ -27,7 +29,7 @@ import { invitationSecret, refuseASeatKeyNotFromTheInvitee } from '../core/seat-
 import { openPerson } from '../core/person-record.js';
 import { payeeFor } from '../testing/payees.js';
 import { theNetwork } from '../midnight/network.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import type { PendingSignerPayload } from '../core/types.js';
 import {
   acceptanceHashOf, acceptanceProofOf, invitationIdOf, invitationLink, InvitationNotOpened, isUtcMoment, newInvitationToken, whyThisOfferCannotBeMade, offerKeyOf, openOffer, sealOffer, signInvitationFiling, signOffer,
@@ -658,7 +660,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
   const VERAS_ADDRESS = payeeFor('5a'.repeat(32), theNetwork()).bech32;
   /* What a vendor's offer says; the invitation is made with their payment terms and network besides, which stay out of it. */
   const VERA = { name: 'Vera Vendorson', email: 'vera@vendors.co', startDate: '2025-03-04', endDate: '2025-09-30', address: VERAS_ADDRESS };
-  const VERA_ADDED = { ...VERA, terms: { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 70000n }, network: theNetwork() };
+  const VERA_ADDED = { ...VERA, terms: { kind: 'monthly' as const, asset: TEST_NETWORK_COLOUR, amount: 70000n }, network: theNetwork() };
   /*
    * A company whose vendors, as the adding device reads them, hold no address yet: this file adds Vera at one address
    * several times to read what each offer carries, never to pay her. One vendor entry per address is the vendor

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { asContractAddress } from '@midnight-ntwrk/midnight-js-types';
 import { join } from 'node:path';
 import type { Hex } from '../core/crypto.js';
 import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
@@ -8,6 +9,13 @@ import type { VaultChain } from './company-vaults.js';
 import { startingLedgerFrom } from '../wiring/vault-submission.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { heldStateFromTheStart } from '../midnight/held-from-the-start.js';
+import { PAIR_NETWORK } from '../midnight/network.js';
+import { publicDataProviderAt } from '../midnight/providers.js';
+import { asThisRuntimeReadsIt, contractStateAt } from '../midnight/contract-state-at.js';
+import { contractCallsOf } from '../../packages/web-shared/src/contract-call-built.js';
+import {
+  accountAtOneBlockOver, accountCallChainOf, atOneBlockOver, payoutChainOf,
+} from '../../packages/web-shared/src/one-block-read.js';
 import { payKeyCommitmentIn } from '../midnight/pay-key-round.js';
 import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
 import { vaultsInAccountState } from 'midnight-identity/profile/account-state';
@@ -30,35 +38,26 @@ import { assertVaultLedgerIsThisBuilds } from '../midnight/vault-ledger-shape.js
 const hex = (bytes: Uint8Array): Hex => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') as Hex;
 
 export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: string }): Promise<VaultChain> {
-  const [{ indexerPublicDataProvider }, runtime, vault] = await Promise.all([
-    import('@midnight-ntwrk/midnight-js-indexer-public-data-provider'),
-    import('@midnight-ntwrk/compact-runtime'),
+  const [provider, vault] = await Promise.all([
+    publicDataProviderAt({ indexerUrl: indexer.url, indexerWsUrl: indexer.wsUrl }),
     import('../../contracts/managed-vault/contract/index.js'),
   ]);
   type Serialisable = { serialize(): Uint8Array };
-  type AtBlock = { type: 'blockHash'; blockHash: string };
-  const provider = indexerPublicDataProvider(indexer.url, indexer.wsUrl) as unknown as {
-    queryContractState(address: string, at?: AtBlock): Promise<Serialisable | null | undefined>;
-    queryBlock(): Promise<{ hash: string; height: number } | null>;
-    queryZSwapAndContractState(address: string, at: AtBlock): Promise<[Serialisable, Serialisable, Serialisable] | null>;
-  };
   const events = indexerNoteEvents(indexer.url);
-  const base64 = (x: Serialisable): string => Buffer.from(x.serialize()).toString('base64');
-  const asRuntime = (state: unknown): { data: unknown } =>
-    (runtime as unknown as { ContractState: { deserialize(b: Uint8Array): { data: unknown } } })
-      .ContractState.deserialize((state as { serialize(): Uint8Array }).serialize());
+  const asRuntime = (state: unknown): { data: unknown } => asThisRuntimeReadsIt(state as Serialisable);
   const readLedger = (vault as unknown as {
     ledger(data: unknown): Parameters<typeof startingLedgerFrom>[0] & { notes: Iterable<Uint8Array> };
   }).ledger;
   const vaultTransactions = indexerVaultTransactions(indexer.url, indexer.wsUrl);
   const history = vaultOutputHistoryFrom({ transactions: vaultTransactions, events: indexerNoteEvents(indexer.url) });
   return {
-    contractState: async (address) => (await provider.queryContractState(address)) ?? null,
+    /* Decoded with this build's runtime: the provider serves bytes with the era that wrote them, and the authority is read off the decoded state. */
+    contractState: async (address) => contractStateAt(provider, address),
     serialize: (state) => (state as { serialize(): Uint8Array }).serialize(),
     accountVaults: async (account) => {
       let state: Serialisable | null | undefined;
       try {
-        state = await provider.queryContractState(account);
+        state = (await provider.queryContractState(asContractAddress(account)))?.contractState;
       } catch (e) {
         throw new Error(`the chain could not be asked which vaults the company's account lists: ${(e as Error)?.message ?? String(e)}`);
       }
@@ -80,38 +79,13 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
      * be the same moment; the commitment tree comes from that block too, because
      * the chain keeps only a window of past roots a spend may prove against.
      */
-    payoutState: async (vault, account) => {
-      const block = await provider.queryBlock();
-      if (block === null) return null;
-      const at: AtBlock = { type: 'blockHash', blockHash: block.hash };
-      const [both, accountState] = await Promise.all([
-        provider.queryZSwapAndContractState(vault, at),
-        provider.queryContractState(account, at),
-      ]);
-      if (both === null || accountState === null || accountState === undefined) return null;
-      const [zswap, vaultState, parameters] = both;
-      return {
-        blockHash: block.hash,
-        vaultState: base64(vaultState),
-        zswapState: base64(zswap),
-        parameters: base64(parameters),
-        accountState: base64(accountState),
-      };
-    },
+    payoutState: async (vault, account) => payoutChainOf(await atOneBlockOver(provider, vault, account)),
     /*
      * **THE ACCOUNT ALONE, AT ONE NAMED BLOCK**, with the parameters that block
      * holds. A raise and an approval move no coin, so the commitment tree is
      * not handed over.
      */
-    accountCallState: async (account) => {
-      const block = await provider.queryBlock();
-      if (block === null) return null;
-      const at: AtBlock = { type: 'blockHash', blockHash: block.hash };
-      const both = await provider.queryZSwapAndContractState(account, at);
-      if (both === null) return null;
-      const [, accountState, parameters] = both;
-      return { blockHash: block.hash, accountState: base64(accountState), parameters: base64(parameters) };
-    },
+    accountCallState: async (account) => accountCallChainOf(await accountAtOneBlockOver(provider, account)),
     eventsOf: async (transactionHash) => (await events.eventsOf({ hash: transactionHash })).map(eventOnTheWire),
     /* The vault's own transactions, newest first, the same list its history of outputs is read from. */
     createdBy: async (vault, commitment) => {
@@ -153,7 +127,7 @@ export function accountVerifierKeysIn(root: string): () => Promise<ReadonlyMap<s
 export function accountCreationExpectationsIn(root: string) {
   const keysOf = accountVerifierKeysIn(root);
   const loaded = (async () => {
-    const [L, runtime, contracts, compactJs, account, witnessesModule, zk, labels] = await Promise.all([
+    const [L, runtime, contracts, compactJs, account, witnessesModule, zk, labels, types, providers, modules] = await Promise.all([
       import('@midnightntwrk/ledger-v9'),
       import('@midnight-ntwrk/compact-runtime'),
       import('@midnight-ntwrk/midnight-js-contracts'),
@@ -162,10 +136,17 @@ export function accountCreationExpectationsIn(root: string) {
       import('../../contracts/src/witnesses.js'),
       import('@midnight-ntwrk/midnight-js-node-zk-config-provider'),
       import('midnight-identity/profile/company-label'),
+      import('@midnight-ntwrk/midnight-js-types'),
+      import('../midnight/providers.js'),
+      import('../midnight/contract-modules.js'),
     ]);
     const CompiledContract = (compactJs as any).CompiledContract;
     return {
-      L: L as any, runtime: runtime as any, contracts: contracts as any, labels, account: account as any,
+      L: L as any, runtime: runtime as any, labels, account: account as any,
+      contracts: contractCallsOf({
+        contracts, types, ledger: L, ContractState: runtime.ContractState, settingsFor: providers.transactionSettingsFor,
+        accountModuleFor: modules.accountModuleFor,
+      }),
       compiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
         CompiledContract.withWitnesses((witnessesModule as any).witnesses)),
       zkConfig: new zk.NodeZkConfigProvider(join(root, 'contracts', 'managed')),
@@ -179,7 +160,7 @@ export function accountCreationExpectationsIn(root: string) {
       if (label === null) throw new Error('the label recorded for this company is not one.');
       const leaf = Uint8Array.from(opening.foundingLeaf.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
       const state = await heldStateFromTheStart(
-        { ledger: d.L, runtimeState: d.runtime.ContractState, contracts: d.contracts },
+        { ledger: d.L, runtimeState: d.runtime.ContractState, contracts: d.contracts, network: PAIR_NETWORK },
         {
           compiled: d.compiled, zkConfig: d.zkConfig, args: [leaf, d.labels.companyLabelBytes(label)], circuits: CREATION_STEPS.first,
           holders: { committee: [{ tag: opening.foundingKey.tag, value: opening.foundingKey.value.toLowerCase() }], threshold: 1 },
@@ -194,9 +175,9 @@ export function accountCreationExpectationsIn(root: string) {
       return keysOf();
     },
     async payKeyCommitment(state: unknown): Promise<string | null> {
-      const { account, runtime } = await loaded;
+      const { account } = await loaded;
       /* Read as the contract runtime reads a state, whichever reader served it. */
-      const asRead = runtime.ContractState.deserialize((state as { serialize(): Uint8Array }).serialize());
+      const asRead = asThisRuntimeReadsIt(state as { serialize(): Uint8Array });
       const roles = (account.ledger(asRead.data) as { signerRoles?: unknown })?.signerRoles;
       if (roles == null || typeof (roles as { member?: unknown }).member !== 'function') {
         throw new Error('the account\'s state does not carry its roles map as this build reads it.');

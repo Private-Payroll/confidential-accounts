@@ -13,6 +13,10 @@ import {
   ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
   ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL, VAULT_CIRCUITS_THE_WALLET_PROVES,
 } from './account-circuits.js';
+import { ACCOUNT_KEYS, keysOnDisk } from '../../../../contracts/test/keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /*
  * The account circuits a vault circuit the wallet proves calls are read here from the compiled vault itself, run on
@@ -31,11 +35,8 @@ const witnesses = {
   nonceSecret: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.secret],
 };
 
-/**
- * Starts a vault, makes a deposit into it, pays one payee of an approved run privately and one publicly, and merges
- * two notes, as the wallet does, and says which account circuits each call reached.
- */
-const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]>> => {
+/** A live account with a started vault on it, and a `call` that runs one vault circuit and notes the account circuits it reached. */
+const aVaultOnAnAccount = async () => {
   const sim = await AccountSimulator.liveAccount([A, B], 2n);
   sim.at(NOW);
   const vault = new Vault<VaultPrivate>(witnesses as never);
@@ -43,36 +44,41 @@ const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]
   let state = (await vault.initialState(createConstructorContext({} as VaultPrivate, BLOCK), { bytes: fromHex(String(sim.address)) } as never)).currentContractState;
   const priv: VaultPrivate = { coin: { nonce: new Uint8Array(32), color: new Uint8Array(32), value: 0n, mt_index: 0n }, secret: TEST_VAULT_SECRET };
   const reached: Record<string, string[]> = {};
-  let publicMoney: bigint | null = null;
+  const held = { publicMoney: null as bigint | null };
   const call = async (circuit: string, ...args: unknown[]): Promise<unknown> => {
-    if (publicMoney !== null) {
-      const held = new ocrt.ContractState();
-      (held as { data: unknown }).data = (state as { data?: unknown }).data ?? state;
-      held.balance = new Map([[{ tag: 'unshielded', raw: 'ab'.repeat(32) } as never, publicMoney]]);
-      state = held as never;
+    if (held.publicMoney !== null) {
+      const withMoney = new ocrt.ContractState();
+      (withMoney as { data: unknown }).data = (state as { data?: unknown }).data ?? state;
+      withMoney.balance = new Map([[{ tag: 'unshielded', raw: 'ab'.repeat(32) } as never, held.publicMoney]]);
+      state = withMoney as never;
     }
-    const asked: string[] = [];
-    const provider = {
-      getContractState: async (_b: string, address: unknown) => {
-        if (String(address) !== String(sim.address)) return undefined;
-        const account = sim.contractStateForCall as { operation(id: string): unknown };
-        const own = Object.getPrototypeOf(account).operation as (id: string) => unknown;
-        account.operation = (id: string) => { asked.push(id); return own.call(account, id); };
-        return account as never;
-      },
-    };
-    const ctx = createCircuitContext<VaultPrivate>(circuit as never, addr as never, BLOCK, state, priv, provider as never, undefined, undefined, NOW, BLOCK);
+    const ctx = createCircuitContext<VaultPrivate>({
+      circuitId: circuit as never, contractAddress: addr as never, coinPublicKeyOrZswapState: BLOCK, contractState: state, privateState: priv,
+      crossContract: sim.crossContract(), time: NOW, parentBlockHash: BLOCK,
+    });
     const out: any = await (vault.impureCircuits as any)[circuit](ctx, ...args);
+    // The account circuits this call ran, read off the runtime's record of every call it made. Not the operations it
+    // looked up: binding a call checks the key of every circuit the account has, so a lookup is no sign of a call.
+    const asked = (out.context.callProofDataTrace as { circuitId: string; contractAddress: string }[])
+      .filter((made) => String(made.contractAddress) === String(sim.address)).map((made) => made.circuitId);
     state = out.context.callContext.currentQueryContext.state;
     try { sim.adoptFromCall(out.context); } catch { /* this call did not reach the account */ }
     reached[circuit] = [...new Set([...(reached[circuit] ?? []), ...asked])];
     return out.result;
   };
   await startTheVault({ sim, vault: fromHex(addr), call, approvers: [A, B], now: NOW });
+  return { sim, vaultBytes: fromHex(addr), priv, reached, held, call };
+};
+
+/**
+ * Starts a vault, makes a deposit into it, pays one payee of an approved run privately and one publicly, and merges
+ * two notes, as the wallet does, and says which account circuits each call reached.
+ */
+const accountCircuitsMoneyCallsReach = async (): Promise<Record<string, string[]>> => {
+  const { sim, vaultBytes, priv, reached, held, call } = await aVaultOnAnAccount();
   const note = { nonce: new Uint8Array(32).fill(0x77), color: new Uint8Array(32).fill(0x9b), value: 1_000n };
   await call('deposit', note);
   priv.coin = { ...note, mt_index: 0n };
-  const vaultBytes = fromHex(addr);
   const payee = new Uint8Array(32).fill(0x0a);
   const blinding = new Uint8Array(32).fill(0x40);
   const [from, until] = [BigInt(NOW - 3_600), BigInt(NOW + 3_600)];
@@ -87,7 +93,7 @@ const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]
   await call('payout', await approvedRun(note.color, vaultPure.payoutDetails, 0xc1), payee, note.color, 250n, blinding, noFurtherNote());
   const night = new Uint8Array(32).fill(0xab);
   const run = await approvedRun(night, vaultPure.unshieldedPayoutDetails, 0xc2);
-  publicMoney = 500n;
+  held.publicMoney = 500n;
   await call('payoutUnshielded', run, payee, night, 250n, blinding);
   const merged = [0x81, 0x82].map((n, i) => ({ nonce: new Uint8Array(32).fill(n), color: note.color, value: BigInt(5 + i) }));
   for (const m of merged) await call('deposit', m);
@@ -95,8 +101,33 @@ const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]
   return reached;
 };
 
+/**
+ * Starts a vault that holds nothing, drops a public token it no longer holds from its set, and retires it under a
+ * retirement the account's signers approved, as the wallet does, and says which account circuits each call reached.
+ */
+const accountCircuitsRetireCallsReach = async (): Promise<Record<string, string[]>> => {
+  const { sim, vaultBytes, reached, call } = await aVaultOnAnAccount();
+  await call('forgetUnshielded', new Uint8Array(32).fill(0xab));
+  const c = change(0n, 0xc3);
+  const payload = accountPure.retireVaultPayload(vaultBytes);
+  await sim.as(sim.applying(A, c)).propose(payload);
+  const id = sim.proposalId(payload, c.salt);
+  await sim.as(sim.applying(B, c)).approve(id);
+  await call('retire', id, c.salt);
+  return reached;
+};
+
+/** Every vault circuit the wallet proves, run as the wallet runs it, with the account circuits each reached. */
+const accountCircuitsEachCallReaches = async (): Promise<Record<string, string[]>> => {
+  const money = await accountCircuitsMoneyCallsReach();
+  const retire = await accountCircuitsRetireCallsReach();
+  const both: Record<string, string[]> = { ...money };
+  for (const [c, r] of Object.entries(retire)) both[c] = [...new Set([...(both[c] ?? []), ...r])];
+  return both;
+};
+
 describe('the account circuits the wallet holds keys for', () => {
-  it('are, for each vault circuit the wallet proves, exactly the account circuits that circuit calls when it runs', async () => {
+  it.skipIf(!ACCOUNT_KEYS_ON_DISK)('are, for each vault circuit the wallet proves, exactly the account circuits that circuit calls when it runs [needs contracts/managed/keys; `npm run compact` builds them]', async () => {
     // RED WHEN: a vault circuit the wallet proves calls an account circuit the wallet holds no key for, so that transaction can never be proved here
     const reached = await accountCircuitsEachCallReaches();
     expect(Object.keys(reached).sort()).toEqual([...VAULT_CIRCUITS_THE_WALLET_PROVES].sort());
@@ -110,7 +141,7 @@ describe('the account circuits the wallet holds keys for', () => {
     expect(Object.keys(ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS).sort()).toEqual([...VAULT_CIRCUITS_THE_WALLET_PROVES].sort());
     // RED WHEN: an account circuit no vault circuit calls is served to the wallet's prover as if a vault had called it
     for (const c of ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL) expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS, c).toContain(c);
-    expect([...ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL].sort()).toEqual(['approveVaultChange', 'recordPaymentFromVault']);
+    expect([...ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL].sort()).toEqual(['approveVaultChange', 'recordPaymentFromVault', 'retireVault']);
   });
 
   it('are read from the vault\'s one list of its calls into the account, never kept beside it', () => {
@@ -133,8 +164,8 @@ describe('the account circuits the wallet holds keys for', () => {
   });
 
   it('are the circuits the wallet proves itself and the ones its vault circuits call, each once', () => {
-    // RED WHEN: the keys copied into the wallet leave out the account call a vault's first secret makes, or the one a payment out of a vault makes
-    expect([...ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR].sort()).toEqual([...ACCOUNT_CIRCUITS_THE_WALLET_PROVES, 'approveVaultChange', 'recordPaymentFromVault'].sort());
+    // RED WHEN: the keys copied into the wallet leave out the account call a vault's first secret makes, the one a payment out of a vault makes, or the one retiring a vault makes
+    expect([...ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR].sort()).toEqual([...ACCOUNT_CIRCUITS_THE_WALLET_PROVES, 'approveVaultChange', 'recordPaymentFromVault', 'retireVault'].sort());
     expect(new Set(ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR).size).toBe(ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR.length);
   });
 });

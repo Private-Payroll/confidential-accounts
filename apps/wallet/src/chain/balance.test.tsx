@@ -13,13 +13,14 @@ import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { ShieldedWallet } from '@midnightntwrk/wallet-sdk/shielded';
-import { NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
+import { DefaultForkSchedule, NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
 import { MidnightBech32m } from '@midnightntwrk/wallet-sdk-address-format';
 import {
   addressFor, identityFromSecret, identityFromWords, newSecret, secretFromWords,
 } from 'midnight-identity';
 import type { Identity, Secret } from 'midnight-identity';
-import { INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
+import { INDEXER_HOST, INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
+import { networkRecord } from '../../../../src/core/networks.js';
 import {
   VIEWING_KEY_FIELD, mentionsViewingKey,
 } from '../../scripts/viewing-key-tripwire.mjs';
@@ -65,7 +66,7 @@ const A_STATE = snapshotForTest({ coinPublicKey: 'coin-key-a' });
 
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
 
-const bech32Of = async (wallet: ReturnType<typeof walletFor>): Promise<string> => {
+const bech32Of = async (wallet: Awaited<ReturnType<typeof walletFor>>): Promise<string> => {
   const address = await wallet.getAddress();
   return MidnightBech32m.encode(NETWORK, address).asString();
 };
@@ -75,7 +76,7 @@ describe('the right door — §1.1, the address-agreement test', () => {
 
   it('the synced wallet IS the displayed wallet, for the main wallet and the slots', async () => {
     for (const account of [0, 2, 11]) {
-      const wallet = walletFor(ours, account);
+      const wallet = await walletFor(ours, account);
       const fromWallet = await bech32Of(wallet);
       await wallet.stop().catch(() => {});
       expect(fromWallet).toBe(addressFor(ours.moneyAt(account).zswap, NETWORK).bech32);
@@ -93,33 +94,39 @@ describe('the right door — §1.1, the address-agreement test', () => {
         indexerHttpUrl: INDEXER_HTTP_URL, indexerWsUrl: INDEXER_WS_URL,
       },
       txHistoryStorage: new NoOpTransactionHistoryStorage(),
+      forks: DefaultForkSchedule,
     }).startWithSeed(secret);
-    const fromWrongDoor = await bech32Of(wrong as ReturnType<typeof walletFor>);
-    await (wrong as ReturnType<typeof walletFor>).stop().catch(() => {});
+    const fromWrongDoor = await bech32Of(await wrong);
+    await (await wrong).stop().catch(() => {});
     for (const account of WALLET_ACCOUNTS) {
       expect(fromWrongDoor).not.toBe(addressFor(ours.moneyAt(account).zswap, NETWORK).bech32);
     }
   }, 60_000);
 
-  it('refuses the reserved account and slots the picker does not offer', () => {
-    expect(() => walletFor(ours, 1)).toThrow(/authority/);
-    expect(() => walletFor(ours, 12)).toThrow(/not a wallet/);
+  it('refuses the reserved account and slots the picker does not offer', async () => {
+    await expect(walletFor(ours, 1)).rejects.toThrow(/authority/);
+    await expect(walletFor(ours, 12)).rejects.toThrow(/not a wallet/);
   });
 });
 
-describe('the network is stagenet, and the endpoints live beside it — §3', () => {
+describe('the wallet reads the indexer of the network it is built for, from that network\'s record', () => {
   it('one named constant, and the indexer answers for exactly that network', () => {
-    expect(NETWORK).toBe('stagenet');
+    /* RED WHEN the wallet's indexer is written anywhere but the network's
+     * record, or is another network's. */
+    const recorded = networkRecord(NETWORK).endpoints!;
     expect(new URL(INDEXER_HTTP_URL).protocol).toBe('https:');
-    expect(new URL(INDEXER_HTTP_URL).host).toBe('indexer.stagenet.shielded.tools');
+    expect(new URL(INDEXER_HTTP_URL).host).toBe(new URL(recorded.indexer).host);
+    expect(new URL(INDEXER_HTTP_URL).pathname).toBe(new URL(recorded.indexer).pathname);
     expect(new URL(INDEXER_WS_URL).protocol).toBe('wss:');
-    expect(new URL(INDEXER_WS_URL).host).toBe('indexer.stagenet.shielded.tools');
+    expect(new URL(INDEXER_WS_URL).host).toBe(new URL(recorded.indexerWs).host);
+    expect(new URL(INDEXER_WS_URL).pathname).toBe(new URL(recorded.indexerWs).pathname);
+    expect(INDEXER_HOST).toBe(new URL(recorded.indexer).host);
   });
 
   it('every address the wallet shows carries the network in the string', () => {
     const secret = newSecret();
     expect(addressFor(identityFromSecret(secret).money.zswap, NETWORK).bech32)
-      .toMatch(/^mn_shield-addr_stagenet1/);
+      .toMatch(new RegExp(`^mn_shield-addr_${NETWORK}1`));
   });
 });
 
@@ -534,12 +541,12 @@ describe('zero and “I do not know” are different sentences — §4', () => {
     expect(screen.getByText(/Exactly 1,234,567 STARs/)).toBeTruthy();
     expect(screen.getByText(/as of/)).toBeTruthy();
     expect(screen.getByText(/1 NIGHT = 1,000,000 STARs/)).toBeTruthy();
-    /* §7.17 is MEASURED since 19 Aug (5000 tNIGHT → 5,000,000,000 STARs),
-     * so the card states the measurement — and the old assumption sentence
-     * must be GONE: a caveat that outlives its answer teaches people to
-     * skim caveats. (This test asserted that sentence once; edited the
-     * day the measurement landed, declared in the log.) */
-    expect(screen.getByText(/measured on stagenet/)).toBeTruthy();
+    /* The conversion note states the Foundation's figures and no measurement
+     * dated on one network, which would be false on any other. The old
+     * assumption sentence must stay GONE: a caveat that outlives its answer
+     * teaches people to skim caveats. RED WHEN the note names a network or a
+     * date again. */
+    expect(screen.getByText(/1 NIGHT = 1,000,000 STARs/).textContent).not.toMatch(/measured|stagenet|19 Aug/i);
     expect(screen.queryByText(/assumption still riding/)).toBeNull();
     /* The owner rule, extended: the number sits under the wallet's own name.
      * `.card` -> `[data-hero]`: the hero is the kit's `Card`, which does not
@@ -839,10 +846,10 @@ describe('checkpoints: sealed, named by their wallet, and only ever a cache', ()
 
   it('the RESTORE door agrees with the address card too', async () => {
     /* The checkpoint path constructs the wallet through `restore` rather
-     * than `startWithSecretKeys`; a restore that came back as a different
+     * than `startWithKeys`; a restore that came back as a different
      * wallet would be the §1.1 failure sneaking in through the cache. */
     const ours = identityFromWords(TEST_MNEMONIC);
-    const cold = walletFor(ours, 2);
+    const cold = await walletFor(ours, 2);
     const serialized = await cold.serializeState();
     await cold.stop().catch(() => {});
     const restored = walletRestoredFrom(serialized);

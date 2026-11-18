@@ -48,6 +48,10 @@ import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vau
 import { type PayoutLeafInput, type PayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -78,17 +82,13 @@ const govChange = (seed: number): Change => change(0n, seed);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault holds public money as well as private', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault holds public money as well as private [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;
   let vaultState: unknown;
   const priv: VaultPrivate = { coin: { nonce: bytes(0x77), color: NIGHT, value: 1_000n, mt_index: 0n } };
 
-  const provider = () => ({
-    getContractState: async (_b: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
 
   /**
    * The vault's current state, plus what the chain says it holds in public money.
@@ -103,9 +103,16 @@ describe('a vault holds public money as well as private', () => {
   };
 
   const ctxFor = (circuitId: string, state: unknown) =>
-    createCircuitContext<VaultPrivate>(
-      circuitId, vaultAddr as never, BLOCK, state as never, priv,
-      provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+    createCircuitContext<VaultPrivate>({
+        circuitId: circuitId,
+        contractAddress: vaultAddr as never,
+        coinPublicKeyOrZswapState: BLOCK,
+        contractState: state as never,
+        privateState: priv,
+        crossContract: sim.crossContract(),
+        time: VAULT_NOW,
+        parentBlockHash: BLOCK,
+      });
 
   const adopt = (r: { context: { callContext: { currentQueryContext: { state: unknown } } } }) => {
     vaultState = r.context.callContext.currentQueryContext.state;
@@ -125,9 +132,16 @@ describe('a vault holds public money as well as private', () => {
     await startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState as never, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState as never,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },

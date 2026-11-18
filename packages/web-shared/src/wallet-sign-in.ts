@@ -14,14 +14,14 @@ export type { ActAsked, ActOutcome } from './wallet-act.js';
  *
  * `@midnightntwrk/dapp-connector-api` is INJECTED — *"Wallets inject their
  * Initial API under the `window.midnight` object"* — and injecting into another
- * origin's page is what a browser EXTENSION does. There is no extension.
- * `packages/web-shared/src/connector-wallet.ts` stays for anybody who does have one; it is not
- * the path for our wallet, and this file is the other case. §4.
+ * origin's page is what a browser EXTENSION does. Our wallet is not an
+ * extension: it is a page of its own, and this file is how another page talks
+ * to it.
  *
  * ── WHAT THIS FILE DOES AND DOES NOT DECIDE ───────────────────────────────
  *
  * **IT VERIFIES NOTHING.** The signature is checked on the server, because the
- * server is what mints a session and a check made by the thing being persuaded
+ * server is what signs a person in, and a check made by the thing being persuaded
  * is not a check. What happens here is the plumbing: open the wallet, wait for
  * it to say it is listening, send one ask, and take one answer. An action the
  * wallet runs whole (`actInTheWallet`, in `wallet-act.ts`) is the same
@@ -595,8 +595,8 @@ export function askWalletToSignIn(
  * and still only in the narrow sense of refusing to listen to anybody else.
  *
  * **IT STILL JUDGES NOTHING ABOUT THE ANSWER**, which is why the return type is
- * `unknown`. For a sign-in the server decides, because the server is what mints
- * a session. For an unlock **the browser decides, because the key never reaches
+ * `unknown`. For a sign-in the server decides, because the server is what signs
+ * a person in. For an unlock **the browser decides, because the key never reaches
  * the server at all** — and `readRelease` is where that happens, in
  * `wallet-unlock.ts`, one layer up from here.
  *
@@ -760,7 +760,7 @@ export function askWallet(
        * WITHOUT BEING JUDGED. There is no shape check here on purpose: a check
        * in the browser would be a second opinion about what is acceptable, and
        * the server's is the only one that decides anything. A malformed answer
-       * has to be refused where the session would otherwise be minted.
+       * has to be refused where the person would otherwise be signed in.
        */
       const answer = event.data as unknown;
       stop();

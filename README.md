@@ -163,15 +163,6 @@ npm run compact        # plus proving keys, minutes
 npm run compact:vault  # the vault
 ```
 
-Contract work against the Foundation's own source needs a clone of it:
-
-```bash
-./scripts/clone-midnight-src.sh            # about 1.2 GB
-SLIM=1 ./scripts/clone-midnight-src.sh     # skip the heavy repos, about 180 MB
-```
-
-That script installs no compiler of its own; it calls the same fetcher.
-
 The proof server needs Docker:
 
 ```bash

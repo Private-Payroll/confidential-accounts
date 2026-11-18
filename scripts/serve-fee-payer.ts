@@ -32,17 +32,19 @@ import { join } from 'node:path';
 import { StaticProofServerContainer } from '@midnight-ntwrk/testkit-js';
 
 import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
-import { applyNetworkId, theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
+import { theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
 import { feePayerApp } from '../src/fee-payer/service.js';
 import { finalisedTransactionCodec, FEE_PAYER_URL_SETTING } from '../src/fee-payer/client.js';
 import { bringUpWallet } from './wallet-bringup.js';
 import { feePayerOver, paidFeeFrom, type LiveWalletParts } from './funded-wallets.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
 import { feePayerSetupFrom, FEE_PAYER_HOST } from './serve-fee-payer-rules.js';
+import { storeDir } from '../src/wiring/deployment.js';
+import { publicDataProviderAt } from '../src/midnight/providers.js';
 
 const ROOT = join(import.meta.dirname, '..');
-const STATE_DIR = join(ROOT, '.midnight');
 const NETWORK: NetworkName = theNetwork();
+const STATE_DIR = storeDir(ROOT, NETWORK);
 const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT ?? 6301);
 const FEE_RECORD = join(STATE_DIR, 'sponsored-fees.jsonl');
 
@@ -83,7 +85,6 @@ async function main() {
   /* ---------------------------------------------------------------- 2 */
   step(2, 3, 'Bringing up the wallet that pays (a sync, then DUST)');
 
-  await applyNetworkId(NETWORK);
   const logger: any = {
     info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, trace: () => {},
     fatal: () => {}, silent: () => {}, level: 'silent',
@@ -100,10 +101,8 @@ async function main() {
   /* ---------------------------------------------------------------- 3 */
   step(3, 3, 'Serving');
 
-  const { indexerPublicDataProvider } = await import(
-    '@midnight-ntwrk/midnight-js-indexer-public-data-provider');
   const E = ENDPOINTS[NETWORK]!;
-  const publicData = indexerPublicDataProvider(E.indexerUrl, E.indexerWsUrl);
+  const publicData = await publicDataProviderAt(E);
   mkdirSync(STATE_DIR, { recursive: true });
   const feeRecord = fileFeeSink(FEE_RECORD, (p, l) => appendFileSync(p, l));
 

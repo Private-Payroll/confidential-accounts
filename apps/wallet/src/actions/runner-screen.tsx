@@ -155,7 +155,12 @@ export function ActionRunner({
   const stop = useRef<AbortController | null>(null);
   const started = useRef(false);
   const mounted = useRef(true);
-  const go = atOnce || pressed;
+  /*
+   * An action that pays never starts on the press before the passkey: the wallet it pays from is chosen under
+   * `payingFrom`, after the wallet opens, and the run takes the wallet chosen when it starts (16 Nov, preprod: a deposit
+   * started at once paid from the last-used subwallet, which held nothing, while the person had picked Main wallet).
+   */
+  const go = (atOnce && payingFrom === undefined) || pressed;
 
   useEffect(() => {
     mounted.current = true;

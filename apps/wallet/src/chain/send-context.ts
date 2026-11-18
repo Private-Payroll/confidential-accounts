@@ -1,9 +1,7 @@
 import { createContext } from 'react';
 import type { WalletFacade } from '@midnightntwrk/wallet-sdk';
 import type { Identity } from 'midnight-identity';
-import { secretKeysFor } from './balance.js';
-import { dustSecretKeyFor } from './dust.js';
-import { facadeFor, facadeKeysFor } from './facade.js';
+import { facadeFor, seedsFor } from './facade.js';
 import { makeBrowserProvingService } from './proving.js';
 import { rehearsalDoors } from './rehearsal.js';
 import type { RehearsalScenario } from './rehearsal.js';
@@ -13,12 +11,11 @@ import { unshieldedKeystoreFor } from './unshielded.js';
 import { fetchNetworkTerms } from './terms.js';
 
 /**
- * THE SEND SCREEN'S ONE SEAM — and this is the change it was built for: this
- * file, alone, is what changed to make sending REAL. The rehearsal wired every door to
- * a rehearsal; this adds the LIVE wiring — the stagenet facade with the WASM
- * prover injected at the SDK's one proving seam — and makes it the default.
- * The engine (`send.ts`), its tests, and the screen's states are the same
- * code that rehearsed: that was the point of building it this way.
+ * THE SEND SCREEN'S ONE SEAM: the LIVE wiring — the facade over the wallet's
+ * network with the WASM prover injected at the SDK's one proving seam — is
+ * the default, and the rehearsal's doors plug into the same place. The
+ * engine (`send.ts`), its tests, and the screen's states are the same code
+ * either way.
  *
  * THE REHEARSAL STAYS REACHABLE, deliberately. Its reasoning holds: the
  * scenario picker turns the two states nobody can rehearse in
@@ -28,19 +25,17 @@ import { fetchNetworkTerms } from './terms.js';
  *
  * WHAT THE LIVE DOORS DIAL, named because naming hosts is this wallet's
  * habit: the indexer (sync, and the by-identifier question
- * the unknown middle watches with) and the stagenet node (submission).
- * That is ALL: the third host, the Foundation's key-material
- * bucket, is gone from the send path — it refuses web pages outright
- * (CORS is not enabled for it; measured), so the key material is
- * vendored to this wallet's OWN origin by `npm run vendor-keys` and verified
- * against pinned SHA-256s before any proof (`key-material.ts`, injected at
- * the SDK's own `keyMaterialProvider?` seam — a lesson applied).
- * The send screen says so before anything is pressed.
+ * the unknown middle watches with) and the network's node (submission).
+ * That is ALL: key material is vendored to this wallet's OWN origin by
+ * `npm run vendor-keys` and verified against pinned SHA-256s before any
+ * proof (`key-material.ts`). The send screen says so before anything is
+ * pressed.
  */
 
 export interface SendWiring {
-  /** The real thing: stagenet, WASM prover, real money. Null only in tests
-   * that exercise the rehearsal side alone. */
+  /** The real thing: the network this wallet is built for, the WASM
+   * prover, and that network's coins. Null only in tests that exercise the
+   * rehearsal side alone. */
   readonly live: {
     readonly doorsFor: (identity: Identity, account: number) =>
     SendDoors & { readonly stop?: () => Promise<void> };
@@ -68,29 +63,18 @@ export function liveDoors(
   let running: Promise<WalletFacade> | null = null;
   const facade = (): Promise<WalletFacade> => {
     running ??= (async () => {
-      /* The in-browser prover, injected at the SDK's one proving seam —
-       * the rehearsal put `makeSimulatorProvingService()` in this exact
-       * spot. Ours rather than `makeWasmProvingService` for one measured
-       * reason (`proving.ts`): the SDK's worker never hears its work order. */
+      /* The in-browser prover, injected at the SDK's one proving seam where
+       * the rehearsal puts the simulator's (`proving.ts` says why it is ours). */
       const started = await facadeFor(identity, account, makeBrowserProvingService());
-      const keys = facadeKeysFor(identity, account);
-      await started.start(keys.shielded, keys.dust);
+      await started.start(seedsFor(identity, account));
       return started;
     })();
     return running;
   };
   return {
     facade,
-    keys: () => ({
-      /* The facade's own parameter names — see the note on SendDoors.keys. */
-      shieldedSecretKeys: secretKeysFor(identity, account),
-      dustSecretKey: dustSecretKeyFor(identity, account),
-    }),
-    /* The unshielded signer, derived per call like the keys. The
-     * keystore's own `signDataAsync` IS the SDK's `SignSegment` shape, and
-     * the registration path in this wallet already hands over the very same
-     * function (probe.ts, rehearsal.ts) — the transfer path simply never
-     * did. */
+    /* The unshielded signer, derived per call. The keystore's own
+     * `signDataAsync` IS the SDK's `SignSegment` shape. */
     signSegment: () => unshieldedKeystoreFor(identity, account).signDataAsync,
     ownUnshieldedHex: unshieldedKeystoreFor(identity, account).getAddress(),
     stop: async () => {

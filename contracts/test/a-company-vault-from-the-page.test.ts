@@ -31,6 +31,7 @@
  * service's reader below takes an unproven transaction as itself where a proven
  * one would be read.
  */
+import { served } from '../../src/testing/served-state.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { NoteIndexUnreadable } from '../../src/midnight/note-index.js';
 import { createHash } from 'node:crypto';
@@ -39,7 +40,7 @@ import type { AddressInfo } from 'node:net';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
-import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { callsTheProductBuilds } from './the-calls-the-product-builds.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { identityFromWords, newWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
@@ -264,7 +265,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   /** The worker's own handler, reached through the page's own client, with no Worker. */
   const builder = (proves = true) => {
     const deps = async () => ({
-      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
+      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: callsTheProductBuilds(),
       /*
        * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, every applied
        * transaction and its own events, and one moment of both contracts with the commitment tree. The worker reads
@@ -501,7 +502,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       signedIn,
       records: { of: (r) => serverStores.get(r)! },
       accountOf: vaultAccountFromTheIndexer({
-        queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
+        queryContractState: async (a) => { const c = chain.contract(a); return (c === null ? null : served({ data: asRuntime(c).data })) as never; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
       mayFileUnder: mayFileUnderOver(store, directoryChainOver(() => chain.contract(company))),

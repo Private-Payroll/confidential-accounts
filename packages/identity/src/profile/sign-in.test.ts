@@ -10,6 +10,7 @@ import type { ChannelState, ChannelWindow } from './channel.js';
 import { addressOfVerifyingKey, mint, verify } from './disclosure.js';
 import { RESPONSE_SCHEMA, preimage, readPreimage } from './payload.js';
 import type { Sent } from './model.js';
+import { NETWORK } from '../wallet/network.js';
 
 /**
  * **SIGNING IN IS ITS OWN KIND OF ASK.**
@@ -34,7 +35,6 @@ import type { Sent } from './model.js';
 
 const NOW = 1_755_000_000_000;
 const ORIGIN = 'https://payroll-a.example';
-const NETWORK = 'stagenet' as const;
 const identity = identityFromWords(TEST_MNEMONIC);
 const SUBWALLET = 3;
 

@@ -91,7 +91,10 @@ const run = (dir) => {
   try {
     out = execFileSync(
       process.execPath,
-      ['--test', join(dir, 'commit.test.mjs'), join(dir, 'toolchain.test.mjs')],
+      // TAP, NAMED RATHER THAN LEFT TO THE DEFAULT. Node 24's default reporter
+      // prints neither "# pass N" nor "not ok N - name" when its output is not
+      // a terminal, so read with the default this run counted no cases at all.
+      ['--test', '--test-reporter=tap', join(dir, 'commit.test.mjs'), join(dir, 'toolchain.test.mjs')],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
   } catch (e) {

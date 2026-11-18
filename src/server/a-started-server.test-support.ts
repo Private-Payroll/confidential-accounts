@@ -148,3 +148,15 @@ export const stopEverythingStarted = async (withinMs = 10_000): Promise<number[]
   for (const child of [...watched.keys()]) left.push(...await stopTheWholeGroup(child, withinMs));
   return left;
 };
+
+/**
+ * The project-token setting the compiled network's endpoints ask for, with a value that reaches no provider, or
+ * nothing for a network that asks for none. A server started without it refuses before it reads anything else.
+ */
+export const aProjectTokenSettingForTheNetwork = async (): Promise<Record<string, string>> => {
+  const { networkRecord } = await import('../core/networks.js');
+  const { theNetwork } = await import('../midnight/network.js');
+  const token = networkRecord(theNetwork()).endpoints?.projectToken ?? null;
+  // not-a-secret: a value no provider issued, so nothing is asked of one with it.
+  return token === null ? {} : { [token.setting]: 'aTestProjectToken0000000000000000' };
+};

@@ -36,13 +36,13 @@
  * half: a database that cannot be asked is a server that does not start.
  */
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
-import { startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
+import { aProjectTokenSettingForTheNetwork, startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
 import { aDatabaseWithEveryMigrationApplied } from './a-database-with-every-migration-applied.test-support.js';
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { deploymentRecordPath } from '../wiring/deployment.js';
+import { deploymentRecordPath, storeDir } from '../wiring/deployment.js';
 import { theNetwork } from '../midnight/network.js';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
@@ -89,7 +89,7 @@ const NO_PROVER = 'http://127.0.0.1:1';  // not-a-secret: a port nothing listens
  * somewhere real.
  */
 function withADeployment(dir: string): void {
-  mkdirSync(join(dir, '.midnight'), { recursive: true });
+  mkdirSync(storeDir(dir, NETWORK), { recursive: true });
   writeFileSync(
     deploymentRecordPath(dir, NETWORK),
     JSON.stringify({ network: NETWORK, contractAddress: '0200aabb' }),
@@ -132,6 +132,7 @@ async function start(
     NODE_ENV: 'development',
     PORT: '0',                                   // ephemeral: never seizes 8787
     DATA_PATH: join(dir, 'db.json'),
+    ...(await aProjectTokenSettingForTheNetwork()),
   };
   if (deployment === 'configured') env.MIDNIGHT_PROVER_URL = NO_PROVER;
   for (const [k, v] of Object.entries(overrides)) {
@@ -277,10 +278,13 @@ describe('starting the payroll server', () => {
     expect(r.listened, r.out).toBe(false);
     expect(r.code).toBe(1);
 
-    /* What is wrong, and where it looked. */
+    /*
+     * What is wrong. A chain whose companies are founded from their signers' browsers has no deployment record on
+     * this machine, so the first fact missing is the proof server, which has no default.
+     */
     expect(r.out).toContain('cannot start');
     expect(r.out).toContain('nothing has been served');
-    expect(r.out).toContain(`${NETWORK}-contract.json`);
+    expect(r.out).toContain('proof server');
 
     /* No stack, and no internals. */
     expect(r.out).not.toMatch(/\n\s+at /);

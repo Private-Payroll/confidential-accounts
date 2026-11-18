@@ -1,5 +1,5 @@
 /**
- * THE VAULT, FROM THE CLIENT. V-74.
+ * THE VAULT, FROM THE CLIENT.
  *
  * A second contract binding, not a second mechanism. `MidnightLedger` is tied
  * to one compiled artefact and one `zkConfigPath`; the vault is a different
@@ -18,15 +18,15 @@
  * resolver fetches each callee lazily, at the point the circuit calls it,
  * pinned to the block the root contract's state was read at.
  *
- * Measured in `node_modules` rather than assumed — see the MEASURED HERE block
- * in `docs/midnight/03-midnight-js.md`. Reading the test's hand-built provider
+ * Measured in `node_modules` rather than assumed. Reading the test's hand-built provider
  * as a preview of the client would have produced a plumbing layer that already
  * exists, and would have got the block pinning wrong.
  *
  * So this file never mentions the account's address. The VAULT pins it, in its
- * own ledger state, at construction (V-37) — which is also what stops anybody
+ * own ledger state, at construction — which is also what stops anybody
  * pointing a vault at a contract that would answer "approved, pay me".
  */
+import { contractStateAt } from './contract-state-at.js';
 import type { Hex } from '../core/crypto.js';
 import { type Payee, type PayeeAddress } from './payee-address.js';
 import { arityFrom, assertArity } from './circuit-arity.js';
@@ -34,7 +34,6 @@ import { fromHex, toHex } from '../core/crypto.js';
 import type { MidnightConfig, FeeSponsor } from './ledger.js';
 import { paysNoFees } from './fee-seat.js';
 import type { SignerRef, TxRef } from '../core/ledger.js';
-import type { SumStep } from './payout-tree.js';
 import {
   witnessesOver, witnessesWithoutAPool, afterDeposit, afterStep, notesToSpend, paymentsFit,
   withIndexRead,
@@ -56,159 +55,19 @@ import {
 } from './deposit-nonce.js';
 import { notePlaces } from './vault-step-notes.js';
 import { STEP_LIMITS } from './payment-plan.js';
-
-/** One payment, exactly as `PayrollRun.payeeArgs` hands it over. */
-export interface VaultPayment {
-  proposal: Hex;
-  root: Hex;
-  payees: bigint;
-  opensAt: bigint;
-  closesAt: bigint;
-  salt: Hex;
-  /**
-   * WHO IS PAID — ONE VALUE CARRYING BOTH KEYS. A-1, and it closes V-80.
-   *
-   * This used to be `recipient: Hex` (the coin key, which goes to the circuit)
-   * beside `payslipKey: Hex` (the encryption key, which does not — it rides on
-   * the transaction in `additionalCoinEncPublicKeyMappings` and is what makes
-   * the payment visible in the payee's own wallet).
-   *
-   * **Two fields meant they could disagree, and the disagreement was silent:**
-   * omit the encryption key and midnight-js refuses to build the transaction,
-   * which is the platform protecting us; supply the WRONG one and the payment
-   * settles perfectly into a coin the payee's wallet will never show them, with
-   * nothing anywhere objecting.
-   *
-   * One value, one decode, and that pairing cannot be wrong. A wrong address is
-   * now a wrong RECIPIENT — loud and ordinary. `V-78` is what remains: this
-   * does not stop the wrong person's correct address.
-   */
-  /**
-   * **AND IT CARRIES THE KIND, WHICH IS WHAT DECIDES THE CIRCUIT.** `C246`,
-   *
-   *
-   * `Payee` is a union whose tag came out of the same decode as the 32 bytes
-   * that go to the circuit. `payout` reads it and dispatches; **there is no
-   * argument here, and no method to choose, by which a caller could name one
-   * kind for a payee who is the other.** That matters more here than anywhere
-   * else in this file: the two are both `{ bytes: Bytes<32> }` at the kernel,
-   * so nothing downstream of raw bytes can tell them apart, and an unshielded
-   * send to a Zswap coin public key removes the money permanently.
-   */
-  payee: Payee;
-  token: Hex;
-  amount: bigint;
-  blinding: Hex;
-  nonce: Hex;
-  /**
-   * The vault the approved run names: this vault for its own run, or the
-   * company-wide name for a run any adopted vault may pay. The account
-   * recomputes the proposal from it, so it is the run's value, never the payer's.
-   */
-  runVault: Hex;
-  /** The approvals the run was raised with. Part of what the proposal commits to. */
-  required: bigint;
-  /** The asset the run's root commits to, exactly as the run was built with it. */
-  asset: Hex;
-  /**
-   * The payee's path in the run's sum tree, leaf to root: one step per level,
-   * each the node beside it, that node's sum and which side the payee is on.
-   * The account rebuilds the root from it with this payment's amount and token.
-   */
-  path: readonly SumStep[];
-}
-
-/**
- * **ONE PAYMENT OUT OF AN APPROVED RUN, BEHIND ONE CALL, WHOEVER MAKES IT.**
- *
- * Everything the payment needs arrives as arguments: the approved run's own
- * values and this payee's leaf and path (`VaultPayment`), where the chain's
- * events are read, and, for private money, the vault's current nonce secret.
- * Nothing is read from the device that built the run. So a signer's own device
- * and a separate service that proves on the company's behalf call exactly this,
- * with the same run, and neither can pay what the other could not.
- *
- * Every payee of a run is one call and one transaction; a batch is these calls
- * in turn, each retried on its own.
- */
-export interface PaysFromAVault {
-  payout(
-    vaultAddress: string,
-    p: VaultPayment,
-    by: SignerRef,
-    events?: NoteEvents,
-    nonceSecret?: Hex,
-  ): Promise<VaultPaid>;
-}
-
-/** How many levels a payee's path has: the circuit takes exactly this many steps. */
-const RUN_PATH_STEPS = 16;
-
-/**
- * **THE RUN, IN THE SHAPE BOTH PAYMENT CIRCUITS TAKE IT.**
- *
- * One builder for both kinds, so the private and the public payment cannot
- * hand the account two different readings of one approved run. A path of the
- * wrong length, or a step that is not a node, a sum and a side, is refused here
- * by name before anything is proved: the account would refuse it too, but only
- * after a proof and a fee.
- */
-export const runArgOf = (p: VaultPayment) => {
-  const path = p.path as readonly unknown[];
-  if (!Array.isArray(path) || path.length !== RUN_PATH_STEPS) {
-    throw new Error(
-      `a payee's path in the run's sum tree has ${RUN_PATH_STEPS} steps, and this payment's has `
-      + `${Array.isArray(path) ? path.length : 'none'}. Nothing is proved or paid. Pay with the `
-      + 'path the run itself gives for this payee.');
-  }
-  return {
-    proposal: fromHex(p.proposal),
-    runVault: fromHex(p.runVault),
-    root: fromHex(p.root),
-    payees: p.payees,
-    opensAt: p.opensAt,
-    closesAt: p.closesAt,
-    required: p.required,
-    salt: fromHex(p.salt),
-    nonce: fromHex(p.nonce),
-    asset: fromHex(p.asset),
-    path: path.map((step, level) => {
-      const s = step as Partial<SumStep> | null;
-      if (s === null || typeof s !== 'object' || typeof s.sibling !== 'bigint'
-        || typeof s.siblingSum !== 'bigint' || typeof s.goesLeft !== 'boolean') {
-        throw new Error(
-          `step ${level} of this payee's path is not a node, a sum and a side. Nothing is proved or `
-          + 'paid. Pay with the path the run itself gives for this payee.');
-      }
-      return { sibling: s.sibling, siblingSum: s.siblingSum, goesLeft: s.goesLeft };
-    }),
-  };
-};
-
-/**
- * **THE VAULT'S CURRENT NONCE SECRET, CHECKED FOR SHAPE AND NOTHING MORE.**
- *
- * Every coin a private payment makes takes its nonce from this secret and the
- * spent note, so the payment cannot be proved without it, and the vault checks
- * it against the commitment it holds. It is supplied by whoever pays: the
- * company's nonce-secret record, opened by a signer, holds it. Absent, of the
- * wrong length, or all zeros, the payment stops here before a note is chosen or
- * anything written down.
- */
-const nonceSecretFor = (secret: Hex | undefined): Uint8Array => {
-  if (secret === undefined) {
-    throw new Error(
-      'a private payment makes its coins under the vault\x27s current nonce secret, and none was '
-      + 'given. Nothing is proved or paid. Open the company\x27s nonce secret for this vault and '
-      + 'pay again with it.');
-  }
-  if (!/^[0-9a-f]{64}$/u.test(secret) || /^0+$/u.test(secret)) {
-    throw new Error(
-      'the nonce secret given for this payment is not a 32-byte secret. Nothing is proved or paid. '
-      + 'Open the company\x27s nonce secret for this vault and pay again with it.');
-  }
-  return fromHex(secret);
-};
+import {
+  VaultChainUnreadable, VaultPoolDisagreesWithChain, VaultCannotAfford, VaultAlreadyHoldsNotes,
+} from './vault-refusals.js';
+import { noPaymentJournal, noDepositJournal, type PaymentJournal, type DepositJournal } from './vault-journals.js';
+import { runArgOf, nonceSecretFor, type VaultPayment, type PaysFromAVault } from './vault-payment.js';
+export {
+  VaultChainUnreadable, VaultPoolDisagreesWithChain, VaultCannotAfford, VaultAlreadyHoldsNotes,
+} from './vault-refusals.js';
+export {
+  noPaymentJournal, noDepositJournal,
+  type PaymentAttempt, type PaymentJournal, type DepositAttempt, type DepositJournal,
+} from './vault-journals.js';
+export { runArgOf, type VaultPayment, type PaysFromAVault } from './vault-payment.js';
 
 /**
  * **WHAT A SETTLED PAYMENT HANDS BACK, AND THE TWO KINDS DO NOT HAND BACK THE
@@ -267,8 +126,8 @@ export interface VaultDeposited extends TxRef {
    * An indexer a moment behind a node and an indexer this client can no longer
    * ask are two different situations with two different acts: wait and repair
    * the note when it catches up, or bring the client and the indexer back into
-   * step first. They used to read the same on screen, so somebody told to wait
-   * for an answer that would never come waited.
+   * step first. If they read the same on screen, somebody told to wait
+   * for an answer that would never come waits.
    *
    * Absent means retryable, which is the safe default: telling somebody to stop
    * waiting for an answer that WOULD have come is worse than the other way
@@ -331,8 +190,8 @@ export interface NotePool {
    */
   save(vaultAddress: string, notes: VaultNotes, builtOn: PoolVersion): Promise<void>;
   /**
-   * The FIRST pool a vault ever has. `C242`, and it is on this interface rather
-   * than only on the implementation because until `S6f` nothing could reach it.
+   * The FIRST pool a vault ever has. It is on this interface rather than only
+   * on the implementation so the client can reach it.
    *
    * **Separate from `save` on purpose, and the separation is the safety.**
    * `save` refuses to create — *"a pool that begins mid-history is a pool
@@ -341,155 +200,18 @@ export interface NotePool {
    *
    * **Whoever implements this holds signer key material**, because a pool is
    * sealed under a fresh key wrapped to each signer and `sealPool` refuses a
-   * pool wrapped to nobody (`V-91`). That is why a deploy that holds no signer
+   * pool wrapped to nobody. That is why a deploy that holds no signer
    * key cannot call it, and why a deploy deliberately does not create one.
    */
   create(vaultAddress: string, notes: VaultNotes): Promise<void>;
 }
 
 /**
- * **WHAT A PRIVATE PAYMENT WRITES DOWN BEFORE ITS MONEY MOVES.**
+ * WHAT ONE CIRCUIT CALL IS, before any of it reaches the SDK.
  *
- * A payment spends one note and the chain keeps its change as a commitment,
- * which discloses nothing. The change note's nonce follows from the spent
- * note and the vault's nonce secret, and its colour is the spent note's colour,
- * so a rebuild holding the secret can derive both. **Its value is the spent note's value minus this payment's amount, and
- * the amount exists nowhere but in this process until the pool is written** --
- * which happens AFTER the call. A process that stops in between leaves the
- * vault holding money it cannot name, and a commitment cannot be inverted to
- * find it.
- *
- * So the attempt is recorded first: the note about to be spent, whole, and
- * the amount leaving it. Recorded, not applied -- this is what was ATTEMPTED,
- * and a line for a call that never landed is correct and harmless, because
- * the rebuild proposes it to the chain and the chain says whether it holds
- * the note. A pool entry for the same call would be the opposite: a claim the
- * vault holds a note it may not, which is every later payment refused.
- */
-export interface PaymentAttempt {
-  /** The note the step is about to spend first, exactly as the pool holds it. */
-  readonly spent: { readonly nonce: Hex; readonly token: Hex; readonly value: bigint };
-  /**
-   * Every further note the same step spends, in place order, exactly as the
-   * pool holds them. Absent or empty when it spends one note. Every note a step
-   * spends is written down, because the coin it keeps is worth what all of
-   * them held, and a line naming only the first describes a coin the chain
-   * never made.
-   */
-  readonly further?: ReadonlyArray<{ readonly nonce: Hex; readonly token: Hex; readonly value: bigint }>;
-  /**
-   * What the step is: a payment of one payee, a batch, or a merge. Absent on a
-   * line written before steps took several notes, which is a payment. A merge
-   * sends nothing out and keeps one coin worth all it spent.
-   */
-  readonly step?: 'payment' | 'batch' | 'merge';
-  /** How much is leaving: a payment's amount, a batch's total, nothing for a merge. The coin kept is worth the rest. */
-  readonly amount: bigint;
-  /** When, so two lines for one note can be told apart by a reader. */
-  readonly attemptedAt: string;
-}
-
-/**
- * Where a payment's attempts are kept. An interface for the reason `NotePool`
- * is one: what it holds is a nonce, a colour and a value -- exactly what the
- * pool seals -- so it belongs in whatever sealed store the customer trusts
- * with the pool, and never in this module, whose callers include tests and a
- * server that must write no file.
- *
- * **`record` throws, and then nothing is proved or paid.** It is called after
- * the note is chosen and before the call, so a store that cannot be written
- * stops the payment while stopping still costs nothing. A refusal here after
- * the money moved would move the loss rather than remove it, and the order of
- * the two statements in `payPrivately` is the whole guarantee.
- */
-export interface PaymentJournal {
-  record(vaultAddress: string, attempt: PaymentAttempt): Promise<void>;
-}
-
-/**
- * The journal a `VaultLedger` has when it is given none: one that refuses a
- * private payment by name, before anything is proved. A ledger built to read
- * holdings, or to move public money, never reaches it; one built to pay
- * privately without saying where the attempt is written is one that would
- * open the window this record exists to close, and it is stopped instead.
- */
-export const noPaymentJournal = (): PaymentJournal => ({
-  record: async () => {
-    throw new Error(
-      'a private payment writes down the note it is about to spend and the amount before the '
-      + 'money moves, and this ledger was given nowhere to write it. Nothing is proved or paid. '
-      + 'Construct the ledger with a payment journal -- the sealed one the payment door keeps '
-      + 'beside the pool -- and pay again.');
-  },
-});
-
-/**
- * **WHAT A PRIVATE DEPOSIT WRITES DOWN BEFORE ITS MONEY MOVES.**
- *
- * A deposit creates a coin addressed to the vault, and its nonce is chosen by
- * the depositor before the transaction exists. The chain keeps only the coin's
- * commitment, which cannot be inverted, and the pool is written AFTER the call.
- * So between the call landing and the pool write, the nonce exists in this
- * process and nowhere else - and a process that stops there has put money in
- * the vault that nobody can name.
- *
- * So the coin is recorded first, whole. Like a payment's line it records an
- * ATTEMPT: a line for a call that never landed is correct and harmless, because
- * the rebuild proposes it to the chain and the chain does not hold it.
- */
-export interface DepositAttempt {
-  /** The coin the deposit is about to create. */
-  readonly coin: { readonly nonce: Hex; readonly token: Hex; readonly value: bigint };
-  /** When, so two lines for one nonce can be told apart by a reader. */
-  readonly attemptedAt: string;
-}
-
-/**
- * Where a deposit's attempts are kept, and **what chooses a deposit's nonce**.
- *
- * `claim` files one line at the journal's next version, with the nonce derived
- * from the vault's nonce secret, the coin and the `slot` it is handed
- * (`claimNewDepositCoin` chooses the lowest slot whose coin was never made),
- * and hands back the coin it recorded. It is called before the call, and a
- * `claim` that throws stops the deposit while stopping still costs nothing. The
- * ledger calls the contract only with a coin a claim returned.
- *
- * `nonceAt` is the same derivation with nothing filed, so slots whose coin
- * already exists are passed over without a line each.
- */
-export interface DepositJournal {
-  claim(vaultAddress: string, money: DepositMoney, slot: number, attemptedAt: string): Promise<DepositAttempt>;
-  nonceAt(vaultAddress: string, money: DepositMoney, slot: number): Hex;
-}
-
-/**
- * **THE DEPOSIT JOURNAL A `VaultLedger` HAS WHEN IT IS GIVEN NONE: ONE THAT
- * REFUSES A PRIVATE DEPOSIT, BY NAME, BEFORE ANYTHING IS PROVED.**
- *
- * Journalling a deposit used to be something one door did in its own code, so
- * the guarantee lasted exactly as long as every caller remembered it. It is
- * the ledger's now, the same way the payment's is: a ledger that would deposit
- * privately without saying where the coin is written is one that would open
- * the window the journal exists to close, and it is stopped instead.
- */
-export const noDepositJournal = (): DepositJournal => {
-  const refuse = (): never => {
-    throw new Error(
-      'a private deposit writes down the coin it is about to create before the money moves, and '
-      + 'this ledger was given nowhere to write it. Nothing is proved or deposited. Construct the '
-      + 'ledger with a deposit journal -- the sealed one the deposit door keeps beside the pool -- '
-      + 'and deposit again.');
-  };
-  return { nonceAt: refuse, claim: async () => refuse() };
-};
-
-/**
- * WHAT ONE CIRCUIT CALL IS, before any of it reaches the SDK. V-82.
- *
- * Separated out because the fault this fixes was invisible: the arguments and
- * the encryption mapping were assembled and handed to midnight-js in one
- * breath, in a shape midnight-js does not read, and the only thing that ever
- * checked the shape was our own fake. **A plan can be asserted on without a
+ * Separated out because a fault here is invisible: arguments and an encryption
+ * mapping assembled and handed to midnight-js in one breath, in a shape
+ * midnight-js does not read, are only ever checked by a fake. **A plan can be asserted on without a
  * node, a proof server or a stub pretending to be either.**
  */
 export interface CallPlan {
@@ -522,165 +244,6 @@ export const planCall = (
   mappings: new Map(Object.entries(encryptionKeys ?? {})),
 });
 
-/**
- * **WHY NONE OF THE REFUSALS BELOW NAMES THE VAULT IT IS ABOUT. `C236`.**
- *
- * Every one of them used to end `(vault <64 hex>)`, which reads as helpful and
- * is the one value in this system that destroys money when a person acts on it:
- * a plain send to a vault's address is owned by the vault and spendable by
- * nobody, permanently, and no contract can refuse it. `S6e` decided a vault is
- * identified to people by a NAME and enforced it for the deploy report's own
- * lines — but **an error message is a screen too, and it reaches one by a route
- * the guard cannot cover**: an instrument's failure block deliberately does not
- * go through `createScreen`, because an error thrown from inside the guard
- * would make the failure unprintable.
- *
- * So the address is removed from the WORDS and kept as the `vaultAddress`
- * PROPERTY, which is where a caller that genuinely needs it looks. Nothing that
- * prints an error prints a property it did not ask for — except a whole-object
- * serialiser, which is why every instrument that uses one redacts.
- *
- * The cost is real and small: an operator running two vaults sees a refusal
- * that does not say which. The instrument knows the NAME and says it, which is
- * the identifier the whole product is built on.
- */
-const WHICH_VAULT =
-  ' (the vault is not named here: its address is the one value that destroys money when '
-  + 'somebody pastes it into a wallet, and an error message is a screen — C236. The caller '
-  + 'holds it as this error\'s `vaultAddress` property, and an instrument names the vault by '
-  + 'the NAME it was deployed under.)';
-
-/**
- * **THE CHAIN COULD NOT BE READ, WHICH IS NOT THE SAME AS THE CHAIN SAYING NO.**
- * `C198`, and `C110` is the measurement that makes it a separate class.
- *
- * A transaction the node had finalised read as `not found` to the indexer 168ms
- * later. So *"we could not check"* and *"the chain disagrees"* have opposite
- * consequences — the first is retried, the second is investigated and nothing
- * is paid until it is — and a caller that cannot tell them apart will do the
- * wrong one of those two things.
- */
-export class VaultChainUnreadable extends Error {
-  constructor(
-    readonly vaultAddress: string,
-    why: string,
-    /**
-     * **WHICH OF THE VAULT'S TWO BALANCES COULD NOT BE READ.** `S6k`, and the
-     * reason it is a parameter rather than a second class.
-     *
-     * A caller must NOT be able to act on the difference — *"we could not
-     * check"* has one consequence whichever half of the vault it is about, and
-     * that is the whole reason this class is separate from
-     * `VaultPoolDisagreesWithChain`. So there is one class and one
-     * `catch`. What differs is only the sentence a person reads, and the two
-     * sentences are not interchangeable: on the private side there IS a local
-     * number and withholding it is the deliberate act; on the public side
-     * **there is no local number at all**, because the chain's own figure is
-     * the only record there has ever been.
-     */
-    about: 'note-pool' | 'public-balance' = 'note-pool',
-  ) {
-    super(
-      `this vault's balance cannot be confirmed, because the chain could not be read: ${why}. ` +
-      (about === 'note-pool'
-        ? '**No local number is returned, deliberately** — the pool alone is our bookkeeping ' +
-          'and not the money, and a balance nothing has reconciled is the thing this refusal ' +
-          'exists to stop being shown. '
-        : '**There is no local number to fall back to, and that is the design rather than a ' +
-          'gap** — a contract\'s unshielded balance is the LEDGER\'s own figure, per contract ' +
-          'per colour, and this client keeps no second copy of it (C245, S6j). ') +
-      'This is NOT the chain disagreeing; it is us not knowing. Retry, ' +
-      'and if it persists look at the indexer rather than the pool.' + WHICH_VAULT);
-    this.name = 'VaultChainUnreadable';
-  }
-}
-
-/**
- * **THE POOL AND THE CHAIN DISAGREE, SO THERE IS NO BALANCE TO REPORT.**
- *
- * Not a smaller balance and not a caveated one. The pool is our record of which
- * notes exist; the chain holds the commitments. When they differ, the vault's
- * spendable balance is unknown until somebody reconciles them, and a number
- * shown in the meantime is one a payroll run would be sized against.
- */
-export class VaultPoolDisagreesWithChain extends Error {
-  constructor(readonly vaultAddress: string, detail: string) {
-    super(
-      `this vault's pool disagrees with the chain, so it has no balance to report: ${detail}. ` +
-      'Rebuild the pool from the chain before spending — see replayVault in ' +
-      'src/midnight/vault-recovery.ts.' + WHICH_VAULT);
-    this.name = 'VaultPoolDisagreesWithChain';
-  }
-}
-
-/**
- * **A RUN THAT CANNOT BE PAID OUT OF THIS VAULT, FOR ANY OF THREE REASONS.**
- *
- *
- * One type rather than three, deliberately. The three reasons are
- * distinguishable — `cause` carries the original — but a caller must not be
- * able to act on the difference, because there is no version of *"the chain
- * could not be read"* or *"the pool disagrees with the chain"* that means it is
- * safe to start paying people. **EITHER REFUSAL IS `cannot afford`**, and the
- * failure this replaces is a caller that reads a refusal, decides it was only a
- * read problem, and starts a run against an unreconciled pool: it pays until it
- * stops, mid-run, and the person who goes unpaid is picked at random.
- */
-export class VaultCannotAfford extends Error {
-  constructor(
-    readonly vaultAddress: string,
-    readonly why: 'chain-unreadable' | 'pool-disagrees' | 'notes-do-not-cover'
-      /**
-       * **THE PUBLIC SIDE'S ONLY SHORTFALL, AND IT IS A SUM.**
-       *
-       * There is no `public-balance-disagrees`, because there is nothing local
-       * that could disagree — see `unshieldedBalance`. And there is no note
-       * arithmetic: an unshielded balance is one number the ledger subtracts
-       * from, so a total IS the question here, which is exactly what it is not
-       * on the private side (`C203`, `noteToSpend` does not merge).
-       */
-      | 'public-balance-short',
-    detail: string,
-    options?: { cause?: unknown },
-  ) {
-    super(
-      `this run cannot be paid out of this vault (${why}): ${detail} — so nothing is submitted. ` +
-      '**A run started against a pool nothing has reconciled pays until it stops**, and it ' +
-      'stops mid-run: the payees before the shortfall are paid, the ones after are not, and ' +
-      'the split is arbitrary.' + WHICH_VAULT, options);
-    this.name = 'VaultCannotAfford';
-  }
-}
-
-/**
- * **THIS VAULT ALREADY HOLDS NOTES, SO ITS POOL CANNOT BE STARTED EMPTY.**
- * `C242`, and it is the refusal that keeps `C242`'s fix from becoming `S6d`'s
- * confusion.
- *
- * An empty pool and an unreadable pool are opposite claims about a company's
- * treasury, and `SealedNotePool` keeps them apart on the READ side: an absent
- * record throws, never `{notes: []}`. Creating one is the other side of the
- * same rule, and it is where the confusion could be MANUFACTURED — a vault
- * whose pool record was lost is a vault for which `create` succeeds and writes
- * a truthful-looking empty pool over a treasury that is not empty. `balance`
- * would then report zero and every note on chain would be unexplained.
- *
- * So an empty pool may only be created for a vault the CHAIN agrees is empty.
- */
-export class VaultAlreadyHoldsNotes extends Error {
-  constructor(readonly vaultAddress: string, holds: bigint) {
-    super(
-      `refusing to start an EMPTY note pool for a vault whose on-chain set holds ${holds} ` +
-      'note(s). An empty pool is a claim that this vault has no money, and writing one here ' +
-      'would make that claim about a treasury that exists: balance would report zero and every ' +
-      'commitment on chain would read as unexplained. **This is not a new vault** — it is a ' +
-      'vault whose pool record is missing, which is what replayVault ' +
-      '(src/midnight/vault-recovery.ts) rebuilds, from the chain and the payment history. ' +
-      WHICH_VAULT);
-    this.name = 'VaultAlreadyHoldsNotes';
-  }
-}
-
 export class VaultLedger implements PaysFromAVault {
   constructor(
     private cfg: MidnightConfig,
@@ -705,7 +268,7 @@ export class VaultLedger implements PaysFromAVault {
      *
      * Required rather than read off `cfg`, because `cfg.zkConfigPath` is the
      * ACCOUNT's, and a guard pointed at the wrong contract's ABI is confidently
-     * wrong, which is worse than absent. V-82.
+     * wrong, which is worse than absent.
      */
     private vaultZkConfigPath: string,
     /**
@@ -731,26 +294,21 @@ export class VaultLedger implements PaysFromAVault {
 
 
   /**
-   * Connects with the witnesses attached WHERE THE SDK READS THEM. V-82.
+   * Connects with the witnesses attached WHERE THE SDK READS THEM.
    *
-   * The previous version assigned `witnesses` to the object `findDeployedContract`
-   * returned. **They belong to the `CompiledContract`** — `ledger.ts` has always
-   * done it that way — so the assignment was inert against the real SDK,
-   * `pending.spending` was never set, and every payout ended at our own guard
-   * telling the operator to rebuild the pool from the chain: an error confidently
-   * wrong about what went wrong.
+   * Witnesses belong to the `CompiledContract` (as `ledger.ts` does it), not to
+   * the object `findDeployedContract` returns: attached there they would be
+   * inert against the real SDK, `pending.spending` would never be set, and every
+   * payout would end at our own guard telling the operator to rebuild the pool
+   * from the chain, an error confidently wrong about what went wrong.
    *
    * `withWitnesses` returns a NEW compiled contract rather than mutating one, so
-   * binding per call costs an object and keeps all three properties that were
-   * bought expensively: the pool loaded fresh, read through a getter, and
+   * binding per call costs an object and keeps all three properties: the pool loaded fresh, read through a getter, and
    * the note the contract actually took reported back rather than assumed.
    *
    * ----------------------------------------------------------------------
-   * **THE FIND IS THE VAULT'S OWN NOW, AND IT IS NEITHER OF THE OTHER TWO.**
-   *
-   *
-   * This used to call the SDK's `findDeployedContract` directly. Two things
-   * are wrong with that and only the second is obvious:
+   * **THE FIND IS THE VAULT'S OWN, NOT THE SDK'S `findDeployedContract`.** Calling
+   * the SDK's find directly is wrong in two ways, and only the second is obvious:
    *
    *   · **It samples and stores a signing key** for any address the private
    *     state store holds none for (`setOrGetInitialSigningKey`,
@@ -760,10 +318,10 @@ export class VaultLedger implements PaysFromAVault {
    *
    *   · **It never checks the contract is a vault at all.** Pointed at an
    *     account it fails on verifier keys, generically, naming circuits
-   *     nobody called — `C231`'s shape one contract along.
+   *     nobody called.
    *
    * `findDeployedVaultContract` (`src/midnight/vault-contract.ts`) keeps
-   * `M-9`'s byte-for-byte key comparison through the SDK's own
+   * the byte-for-byte key comparison through the SDK's own
    * `verifyContractState`, refuses an operations map that is not exactly the
    * vault's own — saying so by name when the address is an account — sets
    * the private-state address from the vault the call is for before anything
@@ -806,16 +364,16 @@ export class VaultLedger implements PaysFromAVault {
    * a second attempt that costs a millisecond.
    *
    * ------------------------------------------------------------------------
-   * **THIS IS NOT THE DEFECT `save` WAS SHAPED TO REMOVE, AND THE DIFFERENCE IS
-   * THE WHOLE POINT.** `vault-pool.ts` says the version used to be read at the
-   * moment of writing, so a writer holding a copy from before a minute of proving
-   * would read whatever version was there by then, add one, and erase the write
-   * that came in between. **That defect was re-reading the VERSION while writing
-   * STALE NOTES.** Here the notes are re-read with the version and the change is
-   * applied to them, so the other writer's note is carried forward rather than
-   * erased. `save`'s refusal is untouched and just as strict: it still takes the
-   * version of the load its change was built on, and that load is now the one
-   * immediately before the write.
+   * **THIS IS NOT THE DEFECT `save` IS SHAPED TO REMOVE, AND THE DIFFERENCE IS
+   * THE WHOLE POINT.** `save` takes the version of the load its change was built
+   * on, because reading the version at the moment of writing would let a writer
+   * holding a copy from before a minute of proving read whatever version was
+   * there by then, add one, and erase the write that came in between. **That
+   * defect is re-reading the VERSION while writing STALE NOTES.** Here the notes
+   * are re-read with the version and the change is applied to them, so the other
+   * writer's note is carried forward rather than erased. `save`'s refusal is just
+   * as strict: it takes the version of the load its change was built on, and that
+   * load is the one immediately before the write.
    *
    * **WHAT MAKES RE-APPLYING SAFE IS THAT THE CHANGE REFUSES WHEN IT CANNOT BE
    * TRUE.** `afterDeposit` refuses a nonce the pool already holds; `afterPayment`
@@ -878,12 +436,12 @@ export class VaultLedger implements PaysFromAVault {
    * The pool is loaded fresh and the witnesses read it through a getter, so the
    * contract sees it as it stands at the moment of the call. A snapshot taken
    * when this class was constructed is the "can make exactly one payment"
-   * defect wearing a closure — which has already happened once here.
+   * defect wearing a closure.
    */
   private async call(
     address: string, circuit: string, args: unknown[],
     /**
-     * The payees this call pays, as coin key → ENCRYPTION key. V-77.
+     * The payees this call pays, as coin key → ENCRYPTION key.
      *
      * **This is what tells the payee they were paid.** midnight-js attaches a
      * coin ciphertext to every shielded output bound for a user, encrypted to
@@ -959,14 +517,13 @@ export class VaultLedger implements PaysFromAVault {
   }
 
   /**
-   * **ONE CIRCUIT CALL THAT NEVER TOUCHES THE NOTE POOL.** `C245`, `C242`,
-   *
+   * **ONE CIRCUIT CALL THAT NEVER TOUCHES THE NOTE POOL.**
    *
    * `call` above loads the pool first, because a shielded circuit reads
    * `noteToSpend` and the pool is where the answer is. **The three unshielded
    * circuits read no witness at all** — public money is a ledger balance — so
    * loading one would make a public deposit require the very record a new
-   * vault has not got, which is `C242` gating a path it has nothing to do with.
+   * vault has not got, gating a path the pool has nothing to do with.
    *
    * **THIS IS WHY IT IS A SECOND METHOD RATHER THAN A FLAG ON THE FIRST.** A
    * boolean would leave the load in the code path, one refactor away from
@@ -983,7 +540,7 @@ export class VaultLedger implements PaysFromAVault {
   ): Promise<{ result: any }> {
     /*
      * NO ENCRYPTION MAPPING, and its absence is a fact rather than an omission:
-     * `V-77`'s obligation exists so a payee's wallet can find a shielded coin,
+     * the encryption key exists so a payee's wallet can find a shielded coin,
      * and an unshielded UTXO is public — the payee's wallet finds it by
      * looking. `planCall` builds an empty map, which midnight-js treats
      * identically to none.
@@ -997,20 +554,18 @@ export class VaultLedger implements PaysFromAVault {
    * Arity, connect, dispatch — the part both call paths share, and nothing
    * about a pool.
    *
-   * Factored so the two paths cannot drift on the guard that matters: `M-104`
-   * is this project's standing reason never to write a rule the money depends
-   * on twice, and an arity check that had been copied would be one circuit
-   * behind on whichever copy was forgotten.
+   * Factored so the two paths cannot drift on the guard that matters: a rule
+   * the money depends on is written once, and an arity check that had been
+   * copied would be one circuit behind on whichever copy was forgotten.
    */
   private async submit(
     address: string, plan: CallPlan, witnesses: unknown,
   ): Promise<any> {
     /*
-     * ARITY, AGAINST THE VAULT'S OWN DECLARED ABI. V-82.
+     * ARITY, AGAINST THE VAULT'S OWN DECLARED ABI.
      *
-     * This is the guard `ledger.ts` has had since M-38 and this client did not,
-     * and its absence is exactly how an options object became a thirteenth
-     * argument to a circuit that declares twelve. It counts the CIRCUIT's
+     * This is the same guard `ledger.ts` makes. Without it an options object
+     * could become an extra argument to a circuit that declares fewer. It counts the CIRCUIT's
      * arguments — the transaction context is the SDK's and is not one of them.
      */
     assertArity(arityFrom(this.vaultZkConfigPath), plan.circuit, plan.args.length);
@@ -1022,7 +577,7 @@ export class VaultLedger implements PaysFromAVault {
     }
 
     /*
-     * THE MAPPING TRAVELS IN A TRANSACTION CONTEXT, FIRST, AND NOWHERE ELSE. V-82.
+     * THE MAPPING TRAVELS IN A TRANSACTION CONTEXT, FIRST, AND NOWHERE ELSE.
      *
      * midnight-js reads it in exactly one place — `createCircuitCallTxInterface`,
      * `midnight-js-contracts/dist/index.mjs:1879-1886`:
@@ -1031,10 +586,10 @@ export class VaultLedger implements PaysFromAVault {
      *     const callArgs = txCtx ? args.slice(1) : args;
      *     createCallTxOptions(..., txCtx?.getAdditionalMappings(), callArgs);
      *
-     * Three things have to be true and the old code satisfied none of them: the
+     * Three things have to be true: the
      * FIRST argument, a real `TransactionContext` (identified by a module-private
      * `unique symbol`), read through the METHOD `getAdditionalMappings()`. A
-     * plain object in last position was not a mapping — it was an extra circuit
+     * plain object in last position is not a mapping — it is an extra circuit
      * argument.
      *
      * **Exactly one circuit call goes inside each scope.** A scope batches every
@@ -1045,7 +600,7 @@ export class VaultLedger implements PaysFromAVault {
      * The sponsor is untouched by any of this: the scope submits through
      * `submitTx(providers, ...)`, so `walletProvider.balanceTx` and
      * `midnightProvider.submitTx` — the customer's legs and the sponsor's dust —
-     * are reached exactly as before. Checked in the SDK, not assumed.
+     * are reached as they always are. Checked in the SDK, not assumed.
      */
     return this.scopedCall(fn, plan);
   }
@@ -1056,7 +611,7 @@ export class VaultLedger implements PaysFromAVault {
    * `protected` so a test can watch what is handed to the SDK without a node, a
    * proof server or a chain. **That seam is not where this convention is
    * pinned** — a test that only watches an overridden method is a test of our
-   * own model, which is the failure that produced V-82 in the first place.
+   * own model.
    * `vault-call-convention.test.ts` drives the REAL
    * `withContractScopedTransaction` and asserts that the context it builds hands
    * our mapping back through `getAdditionalMappings()`, which is the single line
@@ -1084,7 +639,7 @@ export class VaultLedger implements PaysFromAVault {
    * defensive version would reach for — a circuit context's
    * `currentZswapLocalState`, a `zswapLocalState` beside it — are shapes this
    * client never sees; accepting them would be this file guessing at the SDK
-   * again, which is `V-82`. What arrives here is `UnsubmittedCallTxData`'s
+   * again. What arrives here is `UnsubmittedCallTxData`'s
    * `private` block and nothing else, so that is what is read, and a result
    * that does not carry one is handed to `changeCoinOf` to be REFUSED rather
    * than quietly treated as a payment that left no change.
@@ -1129,24 +684,23 @@ export class VaultLedger implements PaysFromAVault {
   }
 
   /**
-   * **THE FIRST POOL A VAULT EVER HAS. `C242`, AND IT IS THIS ROUND'S FIRST
-   * JOB RATHER THAN ITS LAST.**
+   * **THE FIRST POOL A VAULT EVER HAS, CREATED BEFORE ITS FIRST DEPOSIT.**
    *
-   * A vault deployed today cannot be funded. `SealedNotePool.load` refuses
+   * A freshly deployed vault cannot be funded until it has one. `SealedNotePool.load` refuses
    * when no record exists — correctly, because an absent pool and an empty
    * vault are opposite facts — and `deposit` below loads before it calls, so
    * **the client cannot take the first deposit.** A deploy deliberately does
    * not create one: a pool is sealed under a fresh key
    * wrapped to each signer, `sealPool` refuses a pool wrapped to nobody
-   * (`V-91`), and a deploy instrument holds no signer key material.
+   * and a deploy instrument holds no signer key material.
    *
    * **SO IT IS CREATED HERE, BY WHATEVER SUPPLIED THE `NotePool`** — which is
    * the thing holding the signer keys, and the only thing that can be. This
    * class holds none and gains none: it supplies the half the pool
    * implementation cannot have, which is the CHAIN.
    *
-   * **AND THAT IS THE WHOLE REASON THIS IS NOT JUST `pool.create`.** `S6d`
-   * established that answering *empty* where the truth is *unreadable* makes
+   * **AND THAT IS THE WHOLE REASON THIS IS NOT JUST `pool.create`.** Answering
+   * *empty* where the truth is *unreadable* makes
    * `balance` report zero and leaves every note on chain unexplained. `create`
    * refuses to overwrite a record it can see — but a vault whose pool record
    * has been LOST looks exactly like a vault that never had one, and for that
@@ -1158,8 +712,8 @@ export class VaultLedger implements PaysFromAVault {
    *   · the chain says it holds notes — `VaultAlreadyHoldsNotes`, naming
    *     `replayVault`, because that is a rebuild and not an initialisation;
    *   · the chain could not be read — `VaultChainUnreadable`, and nothing is
-   *     written. A state the node had finalised read as absent to the
-   *     indexer 168ms later, and a vault that reads as empty because we asked
+   *     written. A state the node had finalised can read as absent to the
+   *     indexer moments later, and a vault that reads as empty because we asked
    *     too early is exactly the vault this refusal exists for.
    *
    * **WHEN IT MUST HAPPEN: after the vault exists and before its first
@@ -1169,7 +723,7 @@ export class VaultLedger implements PaysFromAVault {
    *
    * **WHAT THE PRODUCT MUST NEVER OFFER UNTIL THIS HAS RUN FOR A VAULT: that
    * vault, as a destination for money, by any route.** A deployed vault is not
-   * a fundable vault. `C236` is why this matters more than downtime: the vault
+   * a fundable vault. This matters more than downtime: the vault
    * has an address, anybody can address a shielded output to it, and money that
    * arrives without a `deposit` call is owned by the vault and spendable by
    * nobody, permanently.
@@ -1182,29 +736,27 @@ export class VaultLedger implements PaysFromAVault {
   }
 
   /**
-   * **WHETHER A RUN CAN BE PAID OUT OF THIS VAULT — `balance`'s FIRST
-   * PRODUCTION CALLER.**
+   * **WHETHER A RUN CAN BE PAID OUT OF THIS VAULT.**
    *
-   * `S6c` built `balance` to reconcile the whole pool against the chain or
-   * refuse, in three outcomes, and recorded that it had no production caller.
-   * This is it, and it is the shape that row asks for: **either refusal is
-   * *cannot afford*.**
+   * `balance` reconciles the whole pool against the chain or refuses, in three
+   * outcomes. This is its production caller: **either refusal is *cannot
+   * afford*.**
    *
    * Two questions, in this order, and the order is the point:
    *
    *   1. **Does the pool agree with the chain?** `balance` answers or refuses.
-   *      A run started against an unreconciled pool is `C203`'s territory —
-   *      a stranger who watched a deposit can reshape the pool, and the
-   *      mitigation the register records for that is exactly this check.
+   *      A run started against an unreconciled pool is a risk: a stranger who
+   *      watched a deposit can reshape the pool, and this check is the
+   *      mitigation.
    *   2. **Does what it holds cover these payments, one at a time?**
    *      `paymentsFit`, through the same `noteToSpend` the payment path uses.
    *      **A SUM IS NOT THE QUESTION**: notes do not merge, so a pool whose
    *      total covers a run can still stop halfway through it.
    *
    * **NOTHING IS RETURNED.** There is deliberately no number and no boolean: a
-   * caller that can read a `false` and carry on is the failure this replaces,
-   * and a balance shown beside a refusal is the stale number `C198` exists to
-   * end. It throws or it does not.
+   * caller that can read a `false` and carry on would start a run against a
+   * pool nothing has reconciled, and a balance shown beside a refusal is a
+   * stale number. It throws or it does not.
    *
    * **IT DOES NOT CHECK INDICES**, and that is deliberate rather than an
    * oversight: a note's index is read from the chain by the payment itself,
@@ -1216,9 +768,9 @@ export class VaultLedger implements PaysFromAVault {
     /**
      * **THE PAYEE IS REQUIRED, AND IT IS NOT DECORATION.**
      *
-     * This took `{ token, amount }` and could not tell a note from a ledger
-     * balance — so the first public run put through it would have been refused
-     * for a vault holding plenty, by a check reading the wrong treasury. The
+     * Without the payee a check could not tell a note from a ledger balance, and
+     * a public run would be refused for a vault holding plenty, by a check
+     * reading the wrong treasury. The
      * kind is not a flag added here; it rides on the payee, which is where it
      * already lives, so no call site can supply payments whose stated kind
      * disagrees with the addresses they will actually be paid at.
@@ -1231,9 +783,9 @@ export class VaultLedger implements PaysFromAVault {
      * **SPLIT BY THE PAYEE'S OWN KIND, BECAUSE THE TWO HALVES OF A VAULT ARE
      * TWO DIFFERENT QUESTIONS.**
      *
-     * `S6j` established that ONE APPROVED RUN CAN HOLD BOTH KINDS SIDE BY SIDE,
-     * payee by payee, so a mixed run is not an edge case to reject — it is the
-     * shape the design produces. Asking one question about it gets the wrong
+     * ONE APPROVED RUN CAN HOLD BOTH KINDS SIDE BY SIDE, payee by payee, so a
+     * mixed run is not an edge case to reject — it is the shape the design
+     * produces. Asking one question about it gets the wrong
      * answer twice over: the pool knows nothing about NIGHT, so a public
      * payment run through `paymentsFit` is refused for a vault that is funded;
      * and the chain's public balance says nothing about notes.
@@ -1302,9 +854,10 @@ export class VaultLedger implements PaysFromAVault {
         /*
          * NAMED AS A TOTAL, because that is what would fail. The ledger
          * subtracts each payment's `unshielded_outputs` from one number
-         * (`ledger/src/semantics.rs:1477-1490` at `ledger-9.1.0.0-rc.3`), so a run whose total exceeds the balance
-         * pays until it stops — the same mid-run split `C203` is about,
-         * arriving through the half of the vault that has no pool.
+         * (`ledger/src/semantics.rs:1477-1490` at `ledger-9.1.0.0-rc.3`), so a run
+         * whose total exceeds the balance pays until it stops — the same mid-run
+         * split an unreconciled pool causes, arriving through the half of the
+         * vault that has no pool.
          */
         throw new VaultCannotAfford(
           vaultAddress, 'public-balance-short',
@@ -1318,9 +871,8 @@ export class VaultLedger implements PaysFromAVault {
   /**
    * Money arriving. No approval, by design — nobody needs permission to be paid.
    *
-   * ONE ARGUMENT, WHERE THIS USED TO PASS A BLINDING TOO. S6a closes C124 by
-   * deriving the blinding inside the circuit from the coin and the vault's
-   * address, so there is nothing for this client to supply, to store, or to get
+   * ONE ARGUMENT: THE COIN. The circuit derives the blinding from the coin and
+   * the vault's address, so there is nothing for this client to supply, to store, or to get
    * wrong — and a deposit made by somebody who has never heard of us produces a
    * note this company can still open.
    */
@@ -1357,7 +909,7 @@ export class VaultLedger implements PaysFromAVault {
      *
      * Optional, and the ordinary case never reaches it: a finalised call
      * reports its own transaction hash and that is what the note records. It is
-     * here for the case where it does not - and that case used to leave a note
+     * here for the case where it does not, which would otherwise leave a note
      * the vault owns and nothing can spend, written with no word said.
      */
     events?: NoteEvents,
@@ -1416,19 +968,19 @@ export class VaultLedger implements PaysFromAVault {
      * from the transaction that created it. **A note whose pool entry does not
      * record that transaction cannot be spent**: the money is on chain, it is
      * the vault's, and every payment that would reach it is refused. Recording
-     * it used to be a separate act somebody had to remember, and a step nobody
+     * it is not a separate act somebody has to remember, because a step nobody
      * is forced to take is a step that will be missed.
      *
      * So it happens in the same action, and in the SAME WRITE. Not a second
      * `pool.save` afterwards: three writers already write this pool with no
      * lock between them, and a fourth would be a fourth.
      *
-     * **IT NO LONGER LENGTHENS THE WINDOW THE NEXT COMMENT IS ABOUT, AND THAT
-     * IS THE DEFECT.** It used to sit between the load the write was built on and
-     * the write itself, so in the branch where the call reported no hash the
-     * window was a network round trip wide rather than an instant. The pool is
-     * now read AFTER this line, so everything between that read and the write is
-     * local: nothing in the window waits on a chain, an indexer or a prover.
+     * **IT DOES NOT LENGTHEN THE WINDOW THE NEXT COMMENT IS ABOUT.** Were it
+     * between the load the write was built on and the write itself, then in the
+     * branch where the call reported no hash the window would be a network round
+     * trip wide rather than an instant. The pool is read AFTER this line, so
+     * everything between that read and the write is local: nothing in the window
+     * waits on a chain, an indexer or a prover.
      */
     const recorded = await this.creatingTransactionOf(result, events, coin, vaultAddress);
 
@@ -1444,8 +996,8 @@ export class VaultLedger implements PaysFromAVault {
      * between these two statements leaves the chain holding a note the pool has
      * never heard of.
      *
-     * **The second is the recoverable one, and `CLAUDE.md`'s rule is that
-     * between two designs of similar cost the one that fails recoverably wins.**
+     * **The second is the recoverable one, and between two designs of similar
+     * cost the one that fails recoverably wins.**
      * The chain is authoritative and the note is derivable from the deposit the
      * owner made, so `replayVault` (`src/midnight/vault-recovery.ts`) rebuilds
      * the pool from the history and the money moves again.
@@ -1453,14 +1005,13 @@ export class VaultLedger implements PaysFromAVault {
      * **SO `replayVault` IS NOT A SAFETY NET BESIDE THIS DESIGN. IT IS PART OF
      * IT.** Delete it, or let it rot, and this ordering silently becomes the
      * unrecoverable one — a vault whose money is stuck with no way back. That
-     * is why it is named here rather than left to be discovered: a cleanup
-     * round that greps for callers finds it apparently unused, and it is not.
-     * `vault-ledger.test.ts` fails if this comment loses the name.
+     * is why it is named here rather than left to be discovered: a later
+     * tidy-up that greps for callers finds it apparently unused, and it is not.
+     * A test fails if this comment loses the name.
      *
-     * `C200` WAS the open half — `replayVault` modelled one chained coin while
-     * the vault held a pool — and `S6d` closed it: the recovery now proposes
-     * every note the history has ever held to the chain's own `notes` set and
-     * keeps what the chain confirms. **It is RUN, not asserted**:
+     * The recovery proposes every note the history has ever held to the chain's
+     * own `notes` set and keeps what the chain confirms. **It is RUN, not
+     * asserted**:
      * `contracts/test/vault-recovery.test.ts` drives a vault to this exact
      * window, recovers, and SPENDS what comes back.
      */
@@ -1473,14 +1024,15 @@ export class VaultLedger implements PaysFromAVault {
      * forward rather than erased, and this deposit's note is recorded rather
      * than refused after its money has moved. `afterDeposit` still refuses a
      * nonce the pool already holds, so a note written twice is impossible and
-     * the second attempt throws rather than duplicating.     *
+     * the second attempt throws rather than duplicating.
+     *
      * **AND THE RECOVERY IS STILL LOAD-BEARING, MORE SO RATHER THAN LESS.** The
      * pool is still written AFTER the money moves, so a crash BETWEEN the call
      * above and this write still leaves the chain holding a note the pool has
      * never heard of. Re-applying the change removes the case where another
      * writer caused that; it cannot remove the case where this process stops.
      * What rebuilds the pool from the chain and this vault's own history is
-     * `replayVault` in `src/midnight/vault-recovery.ts`, and a round that deletes
+     * `replayVault` in `src/midnight/vault-recovery.ts`, and a change that deletes
      * it as unused makes this ordering the unrecoverable one without touching a
      * line of it.
      */
@@ -1558,8 +1110,8 @@ export class VaultLedger implements PaysFromAVault {
       /*
        * **THE THREE QUESTIONS AND THE SHAPE OF THE HASH ARE STATED ONCE**, in
        * `establishCreatingTransaction`, which every writer of `createdIn` calls.
-       * This used to spell the composition out here and re-check the hash inline
-       * - two statements of one money rule, agreeing until one of them was
+       * Spelling the composition out here and re-checking the hash inline would
+       * be two statements of one money rule, agreeing until one of them was
        * edited.
        */
       const { createdIn } = establishCreatingTransaction(
@@ -1600,16 +1152,15 @@ export class VaultLedger implements PaysFromAVault {
   }
 
   /**
-   * **PUBLIC MONEY ARRIVING, AND THE ROUND'S CENTRAL FACT IS THAT THIS METHOD
-   * HAS NO POOL IN IT.**
+   * **PUBLIC MONEY ARRIVING, AND THE CENTRAL FACT IS THAT THIS METHOD HAS NO
+   * POOL IN IT.**
    *
    * `deposit` above loads the note pool before it calls, which is correct for
-   * shielded money and is why `C242` says a vault deployed without a pool
-   * cannot take its first deposit. **None of that applies here, and the
-   * difference is not a convenience.**
+   * shielded money and is why a vault deployed without a pool cannot take its
+   * first shielded deposit. **None of that applies here, and the difference is
+   * not a convenience.**
    *
-   * `S6j` established from the ledger's own source what an unshielded balance
-   * is: `ContractState.balance`, *"the public balances held by this contract"*,
+   * The ledger's own source says what an unshielded balance is: `ContractState.balance`, *"the public balances held by this contract"*,
    * per contract per colour, moved only by a call's declared effects and
    * defended by the chain itself — `unshielded_inputs` added with `checked_add`
    * and `unshielded_outputs` subtracted with `checked_sub`, an underflow being
@@ -1617,8 +1168,7 @@ export class VaultLedger implements PaysFromAVault {
    * no note, no nonce, no commitment, no merkle index, no pool, no ciphertext
    * and no recovery on that side.**
    *
-   * **SO WHAT A VAULT HOLDING ONLY PUBLIC MONEY NEEDS, STATED AS A LIST,
-   * BECAUSE THE ROUND ASKED FOR IT IN THOSE WORDS:**
+   * **SO WHAT A VAULT HOLDING ONLY PUBLIC MONEY NEEDS, STATED AS A LIST:**
    *
    *   · a deployed vault at an address, carrying this contract's seven circuits;
    *   · a wallet that can fund the call's declared `unshielded_input`;
@@ -1631,7 +1181,7 @@ export class VaultLedger implements PaysFromAVault {
    * CHECKABLE.** This method does not reference `this.pool` — not to load, not
    * to save, not behind a branch — so a `VaultLedger` whose `NotePool` throws on
    * every method can still fund a vault and pay out of it publicly.
-   * `vault-ledger.test.ts` constructs exactly that pool and drives both, because
+   * The vault client's tests construct exactly that pool and drive both, because
    * *"the branch was not taken"* and *"there is no branch"* are different claims
    * and only the second survives somebody refactoring the first.
    *
@@ -1644,9 +1194,9 @@ export class VaultLedger implements PaysFromAVault {
    *
    * **WHAT IS RECORDED ANYWHERE BY THIS CALL: the COLOUR, on chain, by the
    * circuit, inside the same transaction that moves the money.** Not a balance.
-   * A second name for a number the chain already publishes is what `C124` and
-   * `V-47` were both about, and `C199`'s crash window between a transaction and
-   * a local write cannot exist where there is no local write.
+   * A second name for a number the chain already publishes is a copy that can
+   * drift from it, and the crash window between a transaction and a local write
+   * cannot exist where there is no local write.
    */
   async depositUnshielded(
     vaultAddress: string,
@@ -1674,10 +1224,9 @@ export class VaultLedger implements PaysFromAVault {
    * seconds of proving.
    *
    * ----------------------------------------------------------------------
-   * **ONE METHOD, AND THE PAYEE CHOOSES THE CIRCUIT. `C246`.**
+   * **ONE METHOD, AND THE PAYEE CHOOSES THE CIRCUIT.**
    *
-   * The contract has two circuits and that was measured and argued
-   *: the arguments differ, the recipient `Either` is REVERSED
+   * The contract has two circuits: the arguments differ, the recipient `Either` is REVERSED
    * between them, and a boolean selecting one at run time is a way to lose
    * money that an entry-point name does not have.
    *
@@ -1754,29 +1303,29 @@ export class VaultLedger implements PaysFromAVault {
   /**
    * **A PAYMENT IN PUBLIC MONEY. NO POOL, NO NOTE, NO CHANGE, NO RECOVERY.**
    *
-   *
    * The whole of it, beside the same five arguments `payout` takes:
    *
    *   · **no `pool.load`** — there is nothing local to check the payment
    *     against, and nothing local that a crash could leave disagreeing with
-   *     the chain. `C199`'s window does not exist here.
+   *     the chain. The crash window of the private path does not exist here.
    *   · **no `noteToSpend`** — no note is chosen, so the client cannot pick the
-   *     wrong one and `V-96`'s and `C205`'s territory is absent rather than
-   *     handled.
-   *   · **no encryption-key mapping** — `V-77`'s obligation has no counterpart:
+   *     wrong one and the whole class of choosing a note wrongly is absent
+   *     rather than handled.
+   *   · **no encryption-key mapping** — the private path's obligation has no counterpart:
    *     a UTXO addressed to a `UserAddress` is public and the payee's wallet
-   *     finds it by looking. **So `C7`'s silent half — the right person paid
+   *     finds it by looking. **So the silent failure of the private path — the right person paid
    *     into a coin they can never see — cannot arise on this path.** Passing an
    *     empty mapping and passing none are the same thing to midnight-js
    *     (`planCall`'s note), so this passes none and says why.
    *   · **no `changeCoinOf` and no `pool.save`** — `sendUnshielded` takes an
-   *     exact amount and produces no change coin, which is `C239` absent for
-   *     the same reason.
+   *     exact amount and produces no change coin, so there is no change to read
+   *     back.
    *
-   * **WHAT IS NOT ABSENT IS THE RULEBOOK.** The account's approval, `V-64`'s
-   * paid-once record, `V-67`'s window and the run's root are checked by exactly
+   * **WHAT IS NOT ABSENT IS THE RULEBOOK.** The account's approval, its
+   * paid-once record, its window and the run's root are checked by exactly
    * the same account call the shielded circuit makes, `recordPaymentFromVault`,
-   * from inside `payoutUnshielded`, over the same run built by `runArgOf`. That is the argument for this whole path: **it drops
+   * from inside `payoutUnshielded`, over the same run built by `runArgOf`. That
+   * is the argument for this whole path: **it drops
    * the entire note model and keeps the entire rulebook.**
    *
    * **AND THE SUFFICIENCY CHECK IS THE LEDGER'S, NOT OURS.** There is no
@@ -1867,8 +1416,8 @@ export class VaultLedger implements PaysFromAVault {
       })), STEP_LIMITS.paymentNotes - 1),
       /*
        * BOTH HALVES OUT OF ONE VALUE, in one expression, so no call site can
-       * pair one payee's coin key with another's reading key. That pairing was
-       * the silent half of C7 and it no longer has anywhere to go wrong.
+       * pair one payee's coin key with another's reading key, which would pay
+       * the right person into a coin they can never see.
        */
     ], { [payee.coinPublicKey]: payee.encryptionPublicKey }, readIndexes, secret);
 
@@ -1890,12 +1439,11 @@ export class VaultLedger implements PaysFromAVault {
     }
 
     /*
-     * **THE CHANGE COIN IS READ OUT OF THE CALL'S OWN RESULT. `C239`, TAKEN.**
+     * **THE CHANGE COIN IS READ OUT OF THE CALL'S OWN RESULT.**
      *
-     * `afterPayment` used to derive the change note's nonce here with
-     * `changeNonceOf`, while this very line was holding the result the coin is
-     * an output of. `V-47`'s rule is that a derived value and a readable value
-     * must not both exist for the same money: the day the kernel changes a
+     * Deriving the change note's nonce here, while this very line holds the
+     * result the coin is an output of, would leave a derived value and a
+     * readable value for the same money: the day the kernel changes a
      * domain separator, the read still works and the derivation silently does
      * not, on every payment, for a note nobody can then spend.
      *
@@ -1905,11 +1453,10 @@ export class VaultLedger implements PaysFromAVault {
      * `nextZswapLocalState` is compact-js's
      * `decodeZswapLocalState(context.callContext.currentZswapLocalState)`
      * (`compact-js/dist/esm/effect/ContractExecutable.js`). That DECODED form
-     * is not the one the contract tests read, and reading it was the blocker
-     * `S6e` could not have known about: an address is a hex string rather than
-     * `{ bytes }` and `color` is called `type`, so the old `changeCoinOf`
-     * matched nothing and answered *"no change"*. `vault-coins.ts` reads both
-     * spellings now and refuses a third.
+     * is not the one the contract tests read: an address is a hex string rather
+     * than `{ bytes }` and `color` is called `type`, so a reader of the other
+     * spelling matches nothing and answers *"no change"*. `vault-coins.ts` reads
+     * both spellings and refuses a third.
      *
      * `changeCoinOf` throws rather than answering `undefined` when the state
      * cannot be read at all, which is what stops a missing result from
@@ -1921,7 +1468,6 @@ export class VaultLedger implements PaysFromAVault {
      * **AFTER THE TRANSACTION, FOR THE REASON THE DEPOSIT SITE SPELLS OUT, AND
      * `replayVault` IS THE HALF OF THE DESIGN THAT LIVES IN ANOTHER FILE.**
      *
-     *
      * A crash between the call above and this save leaves the chain holding the
      * change note and the pool still holding the note that was spent — the
      * worse of the two states, because the pool now believes it can spend
@@ -1932,12 +1478,10 @@ export class VaultLedger implements PaysFromAVault {
      * note.
      *
      * **Nothing about this ordering is safe on its own.** It is safe because a
-     * recovery exists, and a round that removes the recovery as unused removes
+     * recovery exists, and a change that removes the recovery as unused removes
      * the safety with it without touching this line.
      *
-     * `C200` was the open half — the recovery modelled the vault's PREVIOUS
-     * shape, one chained coin — and `S6d` closed it. **It is RUN, not
-     * asserted**: `contracts/test/vault-recovery.test.ts` drives a vault to
+     * **The recovery is RUN, not asserted**: `contracts/test/vault-recovery.test.ts` drives a vault to
      * this window, recovers, and SPENDS the note it gets back. A recovery path
      * nobody has run does not exist.
      */
@@ -1945,11 +1489,10 @@ export class VaultLedger implements PaysFromAVault {
      * **THE CHANGE IS APPLIED TO WHAT THE POOL HOLDS NOW, NOT TO THE COPY THE
      * CALL WAS MADE FROM.**
      *
-     * A payment's change note was the one place left on this path where money
-     * moved and the pool then failed to record it: the copy this write was built
-     * on was read before a minute of proving, so a deposit or a repair landing in
-     * that minute made this write a refusal — correct, and a refusal AFTER the
-     * money has moved is a report of loss rather than a prevention of it.
+     * The copy this write was built on was read before a minute of proving, so a
+     * deposit or a repair landing in that minute would make this write a refusal
+     * — correct, but a refusal AFTER the money has moved is a report of loss
+     * rather than a prevention of it.
      *
      * A payment is a difference: this note leaves, its change arrives. So it is
      * applied to the pool as it stands, and the other writer's note survives.
@@ -1959,14 +1502,13 @@ export class VaultLedger implements PaysFromAVault {
      * commitment, so a pool without it means this is not the pool this payment
      * belongs to.
      *
-     * **THE INDEX IS STRIPPED, WHICH IS WHAT `call` ALREADY DID.** A spend reads
+     * **THE INDEX IS STRIPPED, AS `call` DOES.** A spend reads
      * a note's place in the commitment tree from the chain at the moment it
      * spends (`indexForSpend`), never from the pool, so a number stored here has
      * no reader that should trust it and is one a later change could hand over by
-     * mistake. `call` kept an index only on the note it spent, and that note
-     * leaves the pool here; a fresh load may hold some from an older write, so
-     * they are dropped here for the same reason and the written shape is
-     * unchanged.
+     * mistake. `call` keeps an index only on the note it spent, and that note
+     * leaves the pool here; a fresh load may hold some from an earlier write, so
+     * they are dropped here for the same reason.
      *
      * **AND THE RECOVERY IS STILL LOAD-BEARING, MORE SO RATHER THAN LESS.** The
      * pool is still written AFTER the money moves, so a crash BETWEEN the call
@@ -1974,7 +1516,7 @@ export class VaultLedger implements PaysFromAVault {
      * never heard of. Re-applying the change removes the case where another
      * writer caused that; it cannot remove the case where this process stops.
      * What rebuilds the pool from the chain and this vault's own history is
-     * `replayVault` in `src/midnight/vault-recovery.ts`, and a round that deletes
+     * `replayVault` in `src/midnight/vault-recovery.ts`, and a change that deletes
      * it as unused makes this ordering the unrecoverable one without touching a
      * line of it.
      */
@@ -2003,12 +1545,10 @@ export class VaultLedger implements PaysFromAVault {
    * **WHAT THE VAULT HOLDS OF ONE TOKEN — RECONCILED AGAINST THE CHAIN, OR NOT
    * ANSWERED AT ALL.**
    *
-   * This used to sum the local pool and return it. It never asked the chain,
-   * `matchesChain` existed with no production caller (it has since been
-   * removed by `S6d` — a caller-supplied blinding is the pre-`C124` shape, and
-   * `commitmentForNote` plus set membership is what replaces it), and so **every decision
+   * A sum of the local pool alone never asks the chain, so **every decision
    * taken from a vault balance — including whether a payroll run can be
-   * afforded — rested on our bookkeeping agreeing with reality by luck.**
+   * afforded — would rest on our bookkeeping agreeing with reality by luck.**
+   * The check is `commitmentForNote` plus membership in the chain's note set.
    *
    * **THREE OUTCOMES, AND THEY MUST BE THREE.**
    *
@@ -2018,28 +1558,24 @@ export class VaultLedger implements PaysFromAVault {
    *     in which direction. There is no best-effort number: a balance that
    *     disagrees with the chain is not a smaller balance, it is an unknown one.
    *   · **could not read the chain** — `VaultChainUnreadable`, saying THAT and
-   *     never a local number with a caveat. `C110` is why this is separate from
-   *     the second: a transaction the node had finalised read as `not found` to
-   *     the indexer 168ms later, so *"we could not check"* and *"the chain says
+   *     never a local number with a caveat. It is separate from the
+   *     second because a transaction the node had finalised can read as `not
+   *     found` to the indexer moments later, so *"we could not check"* and *"the chain says
    *     no"* are different answers with opposite consequences — one is retried,
    *     the other is investigated.
    *
    * **WHAT A CALLER DOES WITH A REFUSAL, decided here rather than left open.**
    * A screen that says *"we cannot confirm this balance"* is correct. A screen
    * that shows a stale number, with or without a caveat beside it, is not —
-   * that is the state this row exists to end. An affordability check treats
+   *    * is the state this refusal exists to prevent. An affordability check treats
    * either refusal as *cannot afford*, because a run started against an
-   * unreconciled pool is `C203`'s and `C205`'s territory: a pool that disagrees
-   * with the chain pays until it stops, mid-run.
+   * unreconciled pool is a risk: a pool that disagrees with the chain pays
+   * until it stops, mid-run.
    *
-   * **AND THE FINDING THAT GOES WITH IT: THERE ARE NO PRODUCTION CALLERS
-   * TODAY.** Nothing in `src/` outside this file calls `balance`; the only
-   * consumers are tests. So no screen had to be changed, and none had to be
-   * softened — which is the good version of `S6c`'s standing instruction that a
-   * caller which cannot handle a refusal is a finding rather than a reason to
-   * widen the return type. **The next caller inherits a function that refuses,
-   * rather than one that has to be retrofitted with a refusal after a screen
-   * has grown used to a number.**
+   * **A caller that cannot handle a refusal is a defect in the caller, not a
+   * reason to widen the return type.** A caller inherits a function that
+   * refuses, rather than one that has to be retrofitted with a refusal after a
+   * screen has grown used to a number.
    *
    * The reconciliation covers the WHOLE pool and not just `token`. A euro note
    * the chain does not hold means the pool and the chain disagree, and a pound
@@ -2053,24 +1589,21 @@ export class VaultLedger implements PaysFromAVault {
   }
 
   /**
-   * **WHAT THE VAULT HOLDS OF ONE PUBLIC TOKEN — THE CHAIN'S OWN NUMBER.**
-   * `C245`, `S6k` §1, and it is a SEPARATE FUNCTION from `balance` above on
-   * purpose.
+   * **WHAT THE VAULT HOLDS OF ONE PUBLIC TOKEN — THE CHAIN'S OWN NUMBER.** It is
+   * a SEPARATE FUNCTION from `balance` above on purpose.
    *
    * ----------------------------------------------------------------------
-   * **WHY NOT THE SAME FUNCTION. THE ROUND ASKED, AND THIS IS THE ANSWER.**
+   * **WHY NOT THE SAME FUNCTION.**
    *
    * The two questions have different TRUTH CONDITIONS, and a function whose
    * answer means different things depending on an argument is how *"could not
-   * read"* becomes *"there is none"* — `C188`'s family, and this round is the
-   * moment it would have been introduced.
+   * read"* becomes *"there is none"*.
    *
    *   · **`balance` is a RECONCILIATION.** It has a local record — the note
    *     pool — and the chain holds commitments. Its job is to say whether the
    *     two agree, and it has THREE outcomes because of that: agrees, return
    *     the sum; disagrees, `VaultPoolDisagreesWithChain` by how much and in
-   *     which direction; could not read, `VaultChainUnreadable` (`C198`,
-   *     `C110`). Its number is only meaningful BECAUSE it was reconciled.
+   *     which direction; could not read, `VaultChainUnreadable`. Its number is only meaningful BECAUSE it was reconciled.
    *   · **`unshieldedBalance` is a READ.** There is no local record to
    *     reconcile against and there never was one: an unshielded balance is
    *     `ContractState.balance`, the ledger's own figure per contract per
@@ -2080,7 +1613,7 @@ export class VaultLedger implements PaysFromAVault {
    *
    * Sharing a body would mean either inventing a disagreement outcome that
    * cannot occur, or collapsing three outcomes into two and losing the
-   * distinction `C110` was measured to establish. Two names, two shapes, and a
+   * distinction between not knowing and knowing there is none. Two names, two shapes, and a
    * caller has to know which of a vault's two treasuries it is asking about —
    * which it does, because it holds the payee whose kind decides.
    *
@@ -2148,7 +1681,7 @@ export class VaultLedger implements PaysFromAVault {
     let state: unknown;
     try {
       /* No block named: the indexer answers the state its latest action left. */
-      state = await ask.call(providers.publicDataProvider, vaultAddress);
+      state = await contractStateAt(providers.publicDataProvider, vaultAddress);
     } catch (cause) {
       throw new VaultChainUnreadable(
         vaultAddress, `the read itself failed: ${(cause as Error)?.message ?? String(cause)}`,
@@ -2177,14 +1710,13 @@ export class VaultLedger implements PaysFromAVault {
    * The pool against the vault's own note set on chain.
    *
    * Returns nothing and throws on any disagreement — there is deliberately no
-   * boolean, because a caller that can read a `false` and carry on is the
-   * failure this replaces.
+   * boolean, because a caller that can read a `false` and carry on would never
+   * see which notes differ.
    *
    * **The commitment is computed by the VAULT CONTRACT'S OWN pure circuits**,
    * `noteBlindingOf` then `heldCommitmentOf`, exactly as `Vault.compact` does
-   * when it inserts a note. That is one implementation and not two: `M-104` is
-   * this project's standing reason never to write a second copy of a rule the
-   * money depends on, and `contracts/test/one-definition.test.ts` is where
+   * when it inserts a note. That is one implementation and not two: a second copy of a
+   * rule the money depends on is a defect, and `contracts/test/one-definition.test.ts` is where
    * copies are policed. So what is checked here is the RECONCILIATION — which
    * notes are on both sides — and not the derivation, which is pinned by tests
    * that spend what they derive.
@@ -2194,8 +1726,7 @@ export class VaultLedger implements PaysFromAVault {
     const { pureCircuits } = await import('../../contracts/managed-vault/contract/index.js');
 
     /*
-     * **THE COMPOSITION IS IMPORTED, NOT SPELLED OUT AGAIN.** `M-104`, and
-     * `S6d` is where the second copy was about to appear: `vault-recovery.ts`
+     * **THE COMPOSITION IS IMPORTED, NOT SPELLED OUT AGAIN.** `vault-recovery.ts`
      * needs exactly `heldCommitmentOf(coin, noteBlindingOf(vault, coin))` to
      * propose a rebuilt note to the chain, and two hand-written spellings of a
      * two-argument composition is two chances to write the arguments the other
@@ -2250,7 +1781,7 @@ export class VaultLedger implements PaysFromAVault {
 
   /**
    * The vault's note set as the chain holds it, or a refusal saying we could
-   * not read it. `C198`, and `C110` is why this refusal is its own.
+   * not read it. This refusal is its own class, apart from a disagreement.
    */
   private async chainNotes(
     vaultAddress: string,
@@ -2259,7 +1790,7 @@ export class VaultLedger implements PaysFromAVault {
 
     let state: any;
     try {
-      state = await providers?.publicDataProvider?.queryContractState(vaultAddress);
+      state = await contractStateAt(providers.publicDataProvider, vaultAddress);
     } catch (cause) {
       throw new VaultChainUnreadable(
         vaultAddress, `the read itself failed: ${(cause as Error)?.message ?? String(cause)}`);
@@ -2300,8 +1831,7 @@ export class VaultLedger implements PaysFromAVault {
     const notes = parsed?.notes;
     if (notes == null || typeof notes.member !== 'function' || typeof notes.size !== 'function') {
       /*
-       * `C188`'s guard, one contract along and by hand: a map the reader did
-       * not hand over is not an empty one, and this is the boundary that keeps
+       * A map the reader did not hand over is not an empty one, and this is the boundary that keeps
        * them apart. `Vault.compact`'s `notes` is a `Set<Bytes<32>>`
        * (`contracts/managed-vault/contract/index.d.ts:117-122`), so `member`
        * and `size` are what it declares and what this needs.

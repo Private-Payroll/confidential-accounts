@@ -8,14 +8,13 @@
  * node, no proof server and no Docker, which is the point: this whole bug class
  * was reachable offline the entire time and nothing was looking.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ShieldedCoinPublicKey } from '@midnightntwrk/wallet-sdk-address-format';
 import { parseCoinPublicKeyToHex } from '@midnight-ntwrk/midnight-js-utils';
-import { getNetworkId, setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { fileURLToPath } from 'node:url';
 import {
-  NETWORKS, ENDPOINTS, applyNetworkId, theNetwork, theNetworkNamed, theNetworkRecord, PAIR_NETWORK,
-  isNetworkName, hasTestkitEnvironment, exportTestkitEnv,
+  NETWORKS, ENDPOINTS, theNetwork, theNetworkNamed, theNetworkRecord, PAIR_NETWORK,
+  isNetworkName, exportTestkitEnv,
 } from './network.js';
 import { NETWORK_IDS, endpointsOf, isNetworkId, networkRecord } from '../core/networks.js';
 
@@ -24,8 +23,6 @@ const addressOn = (network: string) =>
   String(ShieldedCoinPublicKey.codec.encode(network, new ShieldedCoinPublicKey(Buffer.alloc(32, 7))));
 
 describe('network id: the regression that could never have worked', () => {
-  beforeEach(() => setNetworkId('undeployed'));
-
   it('is interpolated verbatim into the address, so its shape is load bearing', () => {
     expect(addressOn('preview')).toMatch(/^mn_shield-cpk_preview1/);
     expect(addressOn('testnet')).toMatch(/^mn_shield-cpk_testnet1/);
@@ -35,7 +32,7 @@ describe('network id: the regression that could never have worked', () => {
   });
 
   it('REGRESSION: the numeric enum that caused this no longer exists in 5.0', async () => {
-    // The original bug was `setNetworkId(ledger.NetworkId[name])`, which passed
+    // The original bug passed the ledger's `NetworkId[name]` as the id, which was
     // a NUMBER because `@midnight-ntwrk/ledger` exported `NetworkId` as a
     // numeric enum. On the 5.0 stack that package is gone entirely — the ledger
     // arrives as `@midnightntwrk/ledger-v9` via midnight-js-protocol — and
@@ -46,7 +43,7 @@ describe('network id: the regression that could never have worked', () => {
     // fails and we look again.
     const ledger: any = await import('@midnightntwrk/ledger-v9');
     expect(ledger.NetworkId).toBeUndefined();
-    const protocol: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const protocol: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     expect(protocol.NetworkId).toBeUndefined();
   });
 
@@ -63,20 +60,12 @@ describe('network id: the regression that could never have worked', () => {
     expect(addressOn('2')).toMatch(/^mn_shield-cpk_21/);
   });
 
-  it('the lowercase name round-trips on every network we support', async () => {
+  it('the lowercase name round-trips on every network we support', () => {
+    // RED WHEN the codec stops taking a network's own name as its address segment.
     for (const name of NETWORKS) {
-      await applyNetworkId(name);
-      expect(getNetworkId()).toBe(name);
-      const hex = parseCoinPublicKeyToHex(addressOn(name), getNetworkId());
+      const hex = parseCoinPublicKeyToHex(addressOn(name), name);
       expect(hex).toBe('07'.repeat(32));
     }
-  });
-
-  it('matches what the Foundation testkit does, which is the authority here', async () => {
-    // testkit-js@4.1.1 getTestEnvironment(): setNetworkId('preview') etc.
-    await applyNetworkId('preview');
-    expect(getNetworkId()).toBe('preview');
-    expect(typeof getNetworkId()).toBe('string');
   });
 });
 
@@ -144,8 +133,8 @@ describe('network selection: the one reader, and what it refuses', () => {
   it('every id is a name the toolchain takes, round-tripped through the real codec', async () => {
     /*
      * **THE PLATFORM PUBLISHES NO LIST OF NETWORK NAMES.**
-     * `@midnight-ntwrk/midnight-js-network-id` declares `NetworkId = string`
-     * and `setNetworkId` takes any string, so there is nothing to ask it for.
+     * The address codec takes any string as the network's segment, so there
+     * is nothing to ask it for.
      * What there is instead is the address codec, which is where a wrong name
      * does its damage, so every id is put through an encode and a decode here.
      *
@@ -153,8 +142,7 @@ describe('network selection: the one reader, and what it refuses', () => {
      * id that would produce addresses nothing can read.
      */
     for (const id of NETWORK_IDS) {
-      await applyNetworkId(id);
-      const hex = parseCoinPublicKeyToHex(addressOn(id), getNetworkId());
+      const hex = parseCoinPublicKeyToHex(addressOn(id), id);
       expect(hex, id).toBe('07'.repeat(32));
       /*
        * RED WHEN a record's id stops being one of the names the two products
@@ -193,8 +181,8 @@ describe('network selection: the one reader, and what it refuses', () => {
 
   it('THE ONE READER WRITES DOWN NO NETWORK NAME OF ITS OWN', async () => {
     /*
-     * RED WHEN a name is typed into the resolver. With the pair on `stagenet`,
-     * `return 'stagenet'` and `return PAIR_NETWORK` behave identically and no
+     * RED WHEN a name is typed into the resolver. With the pair on `preprod`,
+     * `return 'preprod'` and `return PAIR_NETWORK` behave identically and no
      * behavioural test can tell them apart - so this is asked of the text.
      * Everything the resolver knows about networks it reads from the records
      * and from the wallet's own constant.
@@ -204,12 +192,8 @@ describe('network selection: the one reader, and what it refuses', () => {
       fileURLToPath(new URL('./network.ts', import.meta.url)), 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
     for (const id of NETWORK_IDS) {
-      /* The one exception is the list testkit ships a class for, which is a
-       * fact about testkit and not about which network this build is on. */
-      const outsideTestkit = code.replace(/TESTKIT_ENVIRONMENTS[^;]+;/, ' ');
-      expect(outsideTestkit, id).not.toMatch(new RegExp(`['"\`]${id}['"\`]`));
+      expect(code, id).not.toMatch(new RegExp(`['"\`]${id}['"\`]`));
     }
-    expect(code).toContain("TESTKIT_ENVIRONMENTS = ['preview', 'preprod', 'qanet']");
   });
 
   it('the disagreement refusal names both values and both homes', () => {
@@ -224,12 +208,36 @@ describe('network selection: the one reader, and what it refuses', () => {
     expect(said).toContain('midnight-identity/network');
   });
 
-  it('carries the v4 indexer path, not the v1 path we had in .env.example', () => {
-    for (const [name, e] of Object.entries(ENDPOINTS)) {
-      expect(e!.indexerUrl, name).toContain('/api/v4/graphql');
-      expect(e!.indexerWsUrl, name).toContain('/api/v4/graphql/ws');
+  it('carries the v4 indexer path on every network Midnight serves itself', () => {
+    const own = NETWORK_IDS.filter((id) => networkRecord(id).endpoints !== null
+      && networkRecord(id).endpoints!.projectToken === null);
+    expect(own.length).toBeGreaterThan(0);
+    for (const name of own) {
+      expect(ENDPOINTS[name]!.indexerUrl, name).toContain('/api/v4/graphql');
+      expect(ENDPOINTS[name]!.indexerWsUrl, name).toContain('/api/v4/graphql/ws');
     }
     expect(ENDPOINTS.preview!.faucetUrl).toBe('https://faucet.preview.midnight.network/api/drips');
+  });
+
+  it('PREPROD IS REACHED THROUGH BLOCKFROST, WITH THE PROJECT TOKEN READ WHEN THE TABLE IS ASKED', () => {
+    /* RED WHEN preprod's record names hosts other than the ones its network
+     * is now served from, or carries the token itself. */
+    const recorded = networkRecord('preprod').endpoints!;
+    expect(recorded.node).toBe('https://rpc.midnight-preprod.blockfrost.io');
+    expect(recorded.indexer).toBe('https://midnight-preprod.blockfrost.io/api/v0');
+    expect(recorded.indexerWs).toBe('wss://midnight-preprod.blockfrost.io/api/v0/ws');
+    expect(recorded.projectToken).toEqual({ setting: 'BLOCKFROST_PREPROD_PROJECT_ID', parameter: 'project_id' });
+    /* RED WHEN the service's table is built once at load, before the service
+     * has read its environment file, so preprod is reached with no token. */
+    vi.stubEnv('BLOCKFROST_PREPROD_PROJECT_ID', '');
+    expect(() => ENDPOINTS.preprod).toThrow(/BLOCKFROST_PREPROD_PROJECT_ID is not set here/);
+    vi.stubEnv('BLOCKFROST_PREPROD_PROJECT_ID', 'aProjectToken42');
+    const e = ENDPOINTS.preprod!;
+    for (const url of [e.nodeUrl, e.nodeWsUrl, e.indexerUrl, e.indexerWsUrl]) {
+      expect(new URL(url).searchParams.get('project_id'), url).toBe('aProjectToken42');
+    }
+    expect(e.nodeWsUrl.startsWith('wss://rpc.midnight-preprod.blockfrost.io/')).toBe(true);
+    vi.unstubAllEnvs();
   });
 
   it('A NETWORK THAT GIVES NO TEST MONEY AWAY IS NOT GIVEN A FAUCET', () => {
@@ -290,16 +298,7 @@ describe('network selection: the one reader, and what it refuses', () => {
   });
 });
 
-describe('stagenet has no testkit environment class, so it goes through env vars', () => {
-  it('knows which networks testkit ships a class for', () => {
-    // Checked against testkit-js@5.0.0-beta.4's exports: Preview, Preprod,
-    // Qanet, Local, EnvVar. No Stagenet, in 4.1.1 or 5.0.
-    expect(hasTestkitEnvironment('preview')).toBe(true);
-    expect(hasTestkitEnvironment('preprod')).toBe(true);
-    expect(hasTestkitEnvironment('qanet')).toBe(true);
-    expect(hasTestkitEnvironment('stagenet')).toBe(false);
-  });
-
+describe('every network reaches testkit through the variables it reads, filled from the record', () => {
   it('sets exactly the variables EnvVarRemoteTestEnvironment reads', () => {
     const vars = exportTestkitEnv('stagenet');
     // Names taken from the built testkit, not guessed.

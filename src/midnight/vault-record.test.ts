@@ -7,8 +7,8 @@
  *   · a second vault of the same name does not overwrite the first, because
  *     overwriting forgets an address that exists nowhere else;
  *   · an unreadable registry is a refusal and never an empty one;
- *   · **nothing a report prints carries the vault's address — C236;**
- *   · **two vaults' signers are never filed under one id — C275**, which is
+ *   · **nothing a report prints carries the vault's address;**
+ *   · **two vaults' signers are never filed under one id**, which is
  *     the rule that decides whether the key to a funded vault survives the
  *     next vault being created.
  *
@@ -38,7 +38,7 @@ const entry = (name: string, over: Partial<VaultEntry> = {}): VaultEntry => ({
   deployedAt: '2026-08-29T10:00:00.000Z',
   circuits: ['deposit', 'payout', 'retire', 'splitNote'],
   maintenanceAuthority: {
-    kind: 'single-key', committeeSize: 1, threshold: 1, fixedBy: 'the round that replaces it',
+    kind: 'single-key', committeeSize: 1, threshold: 1, fixedBy: 'the authority that replaces it',
   },
   adopted: false,
   deployTx: null,
@@ -62,7 +62,7 @@ describe('a vault is named, not addressed', () => {
 
   it('says why it is a name rather than an address, in the refusal itself', () => {
     // A refusal that does not carry its reason gets "fixed" by widening the rule.
-    expect(() => assertVaultName('..')).toThrow(/C236/);
+    expect(() => assertVaultName('..')).toThrow(/must never reach a screen/);
   });
 
   it('files the authority choice under the NAME, so no address is ever a filename', () => {
@@ -177,7 +177,7 @@ describe('an unreadable registry is not an empty one', () => {
   });
 });
 
-describe('C236: no vault address reaches a screen', () => {
+describe('no vault address reaches a screen', () => {
   const lines = describeVaultForReport(entry('payroll-uk'));
   const rendered = lines.join('\n');
 
@@ -202,8 +202,8 @@ describe('C236: no vault address reaches a screen', () => {
   });
 
   it('says WHY the address is absent, where a reader will ask', () => {
-    // Without this a later round reads the omission as an oversight and fixes it.
-    expect(rendered).toMatch(/C236/);
+    // Without this a later reader takes the omission for an oversight and fixes it.
+    expect(rendered).toMatch(/NEVER WILL BE/);
     expect(rendered).toMatch(/nobody can spend/);
     expect(rendered).toMatch(/deposit CALL/);
   });
@@ -235,7 +235,7 @@ describe('C236: no vault address reaches a screen', () => {
  * **It had already fired twice on disk before it was found.** These tests are
  * what stops a third.
  */
-describe('C275: the ids a vault\'s test signers are filed under', () => {
+describe('the ids a vault\'s test signers are filed under', () => {
   it('carries the vault name, so two vaults cannot be filed under one id', () => {
     expect(mintedSignerIds('payroll-uk', 3, [])).toEqual([
       'payroll-uk-signer-1', 'payroll-uk-signer-2', 'payroll-uk-signer-3',
@@ -261,13 +261,13 @@ describe('C275: the ids a vault\'s test signers are filed under', () => {
     expect(() => mintedSignerIds('payroll-uk', 3, ['payroll-uk-signer-2'])).toThrow();
   });
 
-  it('names C275 and C284 in the refusal, because the reason is not guessable from the symptom', () => {
+  it('says what the key holds in the refusal, because the reason is not guessable from the symptom', () => {
     // A person reading "already exists" alone concludes the file is stale and
     // deletes it. What they are actually holding is the only key to a vault.
     expect(() => mintedSignerIds('payroll-uk', 1, ['payroll-uk-signer-1']))
-      .toThrow(/C275/);
+      .toThrow(/cannot be inverted to recover/);
     expect(() => mintedSignerIds('payroll-uk', 1, ['payroll-uk-signer-1']))
-      .toThrow(/C284/);
+      .toThrow(/only record of a note's nonce/);
     expect(() => mintedSignerIds('payroll-uk', 1, ['payroll-uk-signer-1']))
       .toThrow(/RE-SEAL/);
   });
@@ -848,26 +848,6 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
     ).toEqual([]);
   });
 
-  it('names every door that turns a vault name into a vault, and each one calls theVault', () => {
-    /**
-     * **THE CHECKS ABOVE ARE NEGATIVE, AND A NEGATIVE CHECK CANNOT SEE A DOOR
-     * THAT STOPPED ASKING.** Rewrite any of these to resolve its vault some
-     * other way and both `toEqual([])` stay green, because not indexing the map
-     * is exactly what such a door would do. **So the doors are named here.**
-     */
-    const doors = [
-      'scripts/measure-note-index.ts', 'scripts/read-the-chain.ts',
-    ];
-    for (const door of doors) {
-      const text = readFileSync(join(root, door), 'utf8');
-      expect(
-        /\btheVault\s*\(/.test(text),
-        `RED WHEN: ${door} stops resolving its vault through theVault, and a retired vault is `
-        + 'accepted by that door again with the whole suite still green',
-      ).toBe(true);
-    }
-  });
-
   it('finds no door written in shell reaching for a vault\x27s address', () => {
     /*
      * The pickers a person sees are shell, and they read the record to LIST
@@ -931,9 +911,8 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
      */
     const files = sourceFiles();
     expect(files.length).toBeGreaterThan(100);
-    expect(files.some((f) => f.endsWith('scripts/measure-note-index.ts'))).toBe(true);
     expect(files.some((f) => f.endsWith('src/midnight/vault-record.ts'))).toBe(true);
-    expect(offenders(/theVault\b/, []).length).toBeGreaterThanOrEqual(5);
+    expect(offenders(/theVault\b/, []).length).toBeGreaterThanOrEqual(3);
 
     /*
      * **AND A POSITIVE CONTROL ON EACH REGEX THE TWO CHECKS ABOVE ACTUALLY

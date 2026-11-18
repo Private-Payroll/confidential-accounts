@@ -207,20 +207,25 @@ describe('THE DOORS A RETIRE ACTS THROUGH IN THE WALLET', () => {
     expect(handed).toEqual({ over: true, before: 1 });
     /*
      * RED WHEN: the retire is told this wallet can send a call it holds no proving key for, so it starts what it then
-     * cannot finish; or is told it cannot send one it can. Edit this line on purpose once the keys for the vault's
-     * retire and for taking a token off its list are carried by the wallet.
+     * cannot finish; or is told it cannot send one it can. The wallet carries the keys for the vault's retire and for
+     * taking a token off its list, and none for splitting a note.
      */
-    expect(['retire', 'forgetUnshielded', 'deposit'].map((c) => doors.proves!(c))).toEqual([false, false, true]);
+    expect(['retire', 'forgetUnshielded', 'deposit', 'splitNote'].map((c) => doors.proves!(c))).toEqual([true, true, true, false]);
   });
 
-  it('the real retire, given the wallet\'s own doors, stops before anything is read, raised or sent, in words that say what clears it', async () => {
+  it('the real retire, given the wallet\'s own doors, is not refused for want of a key, and sends nothing before it has read the vault', async () => {
     const real = await vi.importActual<typeof import('../../../../packages/web-shared/src/vault-retire-round.js')>('../../../../packages/web-shared/src/vault-retire-round.js');
     const sentBy: string[] = [];
     t.handOver = { path: 'chain', toChain: async (_tx: string, call: { kind: string }) => { sentBy.push(call.kind); } };
     const handed = { over: false };
     const doors = retireDoorsFor(ctxOf(intent({})).ctx, reachOf() as never, reach() as never, handed);
-    /* RED WHEN: a wallet that holds no key for the vault's retire raises one, spending approvals on a retire it could never carry out. */
-    await expect(real.retireRaisedHere(doors, PAYROLL as never)).rejects.toThrow(/^This wallet cannot retire this vault yet\. It needs an update first\. Nothing was sent\.$/u);
+    /*
+     * The stood-in reach has no network to read the vault from, so the real retire stops at that read. RED WHEN: the
+     * wallet's doors stop saying it proves the retire, so a wallet that carries its keys refuses one as needing an
+     * update; or anything is raised or sent before the vault is read.
+     */
+    const stopped = await real.retireRaisedHere(doors, PAYROLL as never).then(() => null, (e: unknown) => e);
+    expect(String((stopped as Error | null)?.message)).not.toMatch(/needs an update first/u);
     expect([sentBy, handed.over, t.called]).toEqual([[], false, []]);
   });
 

@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import { z } from 'zod';
-import { join } from 'node:path';
 import { FileStore } from '../core/store-file.js';
 import { wiring } from '../wiring/selection.js';
 import { startProduct, holdingsFor } from '../wiring/product.js';
@@ -32,9 +31,8 @@ import {
   type ListVerdict, type Marked,
 } from '../core/provenance.js';
 import { assets as assetRegistry } from '../core/assets.js';
-import { bigintJsonReplacer, type Hex } from '../core/crypto.js';
+import { bigintJsonReplacer } from '../core/crypto.js';
 import { isRole, type Role } from '../core/roles.js';
-import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, isCurrentPayslipPage } from '../core/payslip-page.js';
 import {
   answerCarriesToken, clearedSessionCookie, cookieScopeFor, credentialOf, sessionCookie,
 } from './session-cookie.js';
@@ -46,40 +44,20 @@ import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* Every refusal this service makes is kept, so a person who hits one can be told why. See `wrap` below. */
 import { appendRefusal, refusalLogPath } from './refusal-log.js';
-import {
-  mountVaultRecords, openedOnFirstUse, vaultAccountFromTheIndexer, whyVaultRecordsCannotBeKept,
-  type VaultAccountReader,
-} from './vault-records-authority.js';
-import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
-import { memberOrReaderReading, readersRoutes, withoutReaders } from './readers-route.js';
-import { companyRecordsRoutes, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
-import { invitationRoutes } from './invitations-route.js';
-import { ownsPersonIn, peopleRoutes } from './people-route.js';
-import { closedOnChain } from './proposal-closed-on-chain.js';
-import { proposalRelayRoutes } from './proposal-relays.js';
-import { runRoutes } from './run-routes.js';
-import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
-import { signerRoutes } from './signer-routes.js';
-import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
-import type { CompanyRecordStore, PeopleRecords, WireRecord } from '../midnight/sealed-record-wire.js';
-import { aCompanyCreatedOnTheLedger, accountCreationRoutes } from './account-creation.js';
-import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
-import {
-  directoryChainFromTheContract, directoryOf, filerSeatNow, seatDirectoryRoutes, type AccountHolds, type DirectoryChainRead,
-} from './seat-directory-route.js';
-import { ledger as readAccountLedger, pureCircuits as accountPure } from '../../contracts/managed/contract/index.js';
-import { adoptionRoundOf, firstSecretRunCarriedOf, type AccountStartPure, type VaultStartPure } from '../midnight/vault-start.js';
-import { pureCircuits as vaultPure } from '../../contracts/managed-vault/contract/index.js';
-import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
+import { whyVaultRecordsCannotBeKept } from './vault-records-authority.js';
+import { openCompanyRecords } from '../db/vault-records.js';
+import { memberOrReaderReading, withoutReaders } from './readers-route.js';
+import { MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
+import { ownsPersonIn } from './people-route.js';
+import type { CompanyRecordStore, PeopleRecords } from '../midnight/sealed-record-wire.js';
+import { aCompanyCreatedOnTheLedger } from './account-creation.js';
+import { vaultArtefactPlaces } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
-import {
-  accountCreationExpectationsIn, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith, vaultChainFromTheIndexer,
-  vaultVerifierKeysIn,
-} from './vault-chain.js';
-import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
-import { MidnightCommitments } from '../midnight/commitments.js';
-import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven-submission.js';
 import type {} from './signed-in-request.js';
+import { mountRecordsAndChainRoutes } from './records-and-chain-routes.js';
+import { serviceStorePath } from '../wiring/deployment.js';
+import { refuseAStoreOfAnotherNetwork, stampedFor } from '../db/store-network.js';
+import { payslipRoutes } from './payslip-routes.js';
 
 /**
  * **`.env` IS READ HERE**, because `npm run dev` starts this file and
@@ -119,7 +97,7 @@ const NETWORK = theNetwork();
 
 
 
-const DATA = process.env.DATA_PATH ?? join(process.cwd(), '.data', 'beta.json');
+const DATA = process.env.DATA_PATH ?? serviceStorePath(process.cwd(), NETWORK);
 
 const store = new FileStore(DATA);
 /*
@@ -327,6 +305,12 @@ if (DATABASE_URL) {
     console.error(`\n  ${outOfDate}\n`);
     process.exit(1);
   }
+  /* The database holds one network's store: an empty one is stamped with this network on its first start; any other stamp, or records with no stamp, is refused. */
+  const anotherNetwork = refuseAStoreOfAnotherNetwork(await stampedFor(sql, NETWORK), NETWORK);
+  if (anotherNetwork) {
+    console.error(`\n  ${anotherNetwork}\n`);
+    process.exit(1);
+  }
   sessions = new PostgresSessionStore(sql);
   limiter = new PostgresRateLimiter(sql);
   recordsSql = sql as never;
@@ -441,7 +425,7 @@ const challenges = new MemoryChallengeStore();
 const identity = new IdentityService(store, sessions);
 
 /*
- * SIGNING IN WITH THE WALLET. `docs/scope-payroll-identity.md` §10 step 1.
+ * SIGNING IN WITH THE WALLET.
  *
  * ── WHY THIS IS BUILT AT START-UP AND NOT PER REQUEST ─────────────────────
  *
@@ -508,352 +492,6 @@ const app = express();
  */
 app.set('json replacer', bigintJsonReplacer);
 app.use(cors());
-/*
- * **A VAULT'S SEALED RECORDS: ITS NOTE POOL, ITS TWO JOURNALS AND ITS NONCE
- * SECRET, KEPT HERE AND OPENED ONLY ON A SIGNER'S DEVICE.**
- *
- * Who may read and file them is answered by the chain and the account records:
- * the vault's ledger names the company's account, and the person must be an
- * active signer of the company with that address. Every filing is signed.
- * Without a database the records are kept in this process only, which is for
- * development and says so.
- */
-{
-  /*
-   * Opened at the first request rather than at start, so a database that is not
-   * answering refuses the records it holds and does not stop the server; and
-   * asked about its durability on that first open, as the store requires.
-   */
-  const sqlForRecords = recordsSql;
-  if (!sqlForRecords) {
-    console.warn('     A vault\'s sealed records are in memory too, and a restart loses them.\n');
-  }
-  const records: { of(record: WireRecord): SealedPoolStore } = sqlForRecords
-    ? openedOnFirstUse(() => openVaultRecords(sqlForRecords, {
-      refuseToCreate: refuseVaultsTheOperatorToolsKeep(join(process.cwd(), '.midnight')),
-    }))
-    : (() => {
-      const kept = new Map<WireRecord, SealedPoolStore>();
-      return { of: (record: WireRecord) => kept.get(record) ?? kept.set(record, new MemorySealedPoolStore()).get(record)! };
-    })();
-  const accountOf: VaultAccountReader = startup.started
-    ? vaultAccountFromTheIndexer(await (async () => {
-      const { indexerPublicDataProvider } = await import('@midnight-ntwrk/midnight-js-indexer-public-data-provider');
-      return indexerPublicDataProvider(startup.deployment.indexerUrl, startup.deployment.indexerWsUrl) as never;
-    })())
-    : async () => { throw new Error(startup.refusal); };
-  const refusingChain: VaultChain = {
-    contractState: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
-    serialize: () => { throw new Error('no chain'); },
-    notesOf: () => { throw new Error('no chain'); },
-    startingLedgerOf: () => { throw new Error('no chain'); },
-    everCreated: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
-  };
-  const theChain = startup.started
-    ? await vaultChainFromTheIndexer({ url: startup.deployment.indexerUrl, wsUrl: startup.deployment.indexerWsUrl })
-    : refusingChain;
-  /*
-   * WHAT THE CHAIN SAYS OF A COMPANY'S ACCOUNT NOW, read by this server: its committee, the seats it holds of those
-   * asked about, and its approval threshold. Every seat directory this server believes is replayed against it. A
-   * test that hands in a simulated ledger hands in this read with it (`handInWiring`); nothing shipped can.
-   */
-  const directoryChain: DirectoryChainRead = handed?.directoryChain ?? directoryChainFromTheContract({
-    addressOf: async (accountId) => (await ledger.address(accountId))?.value ?? null,
-    contractState: (address) => theChain.contractState(address as Hex),
-    readLedger: (data) => readAccountLedger(data as never) as unknown as AccountHolds,
-  });
-  const directoryNow = (accountId: string, also?: readonly string[]) => directoryOf(store, directoryChain, accountId, also);
-  /* `authed` is defined further down; it is looked up when a request arrives, by which time it is. */
-  mountVaultRecords(app, {
-    signedIn: (req, res, next) => authed(req, res, next),
-    records, accountOf, companies: () => store.listAccounts(),
-    mayFileUnder: async (companyId, person, filer) =>
-      typeof filerSeatNow(await directoryNow(companyId), person, filer) !== 'string',
-  });
-
-  app.use(companyRecordsRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    records: companyRecordStore,
-    accountOf: (accountId) => store.getAccount(accountId),
-    directoryOf: directoryNow,
-  }));
-  /* A company's readers, kept only when its signers at the seat bar signed them (`readers-route.ts`). */
-  app.use(readersRoutes({ signedIn: (req, res, next) => authed(req, res, next), member: (req, res, next) => member(req, res, next), store, directoryOf: directoryNow }));
-  app.use(invitationRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store, records: () => companyRecordStore,
-    directoryOf: directoryNow,
-    meterOffer: (req, res) => meteredOfferLookup(req, res),
-    recordRefusal: appendRefusal,
-  }));
-  app.use(peopleRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    ownsPerson: (req, res, next) => ownsPerson(req, res, next),
-    store, records: () => companyRecordStore, people: () => companyRecords,
-    directoryOf: directoryNow,
-  }));
-  /* A COMPANY'S SIGNERS: admitted, their vault keys offered, and the roster filed, each from a seat's own device. */
-  app.use(signerRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store, records: () => companyRecordStore, ledger, directoryOf: directoryNow,
-  }));
-  /* A COMPANY'S PAYROLL RUNS: drawn, sealed and signed on a signer's own device, and kept as they are given. */
-  app.use(runRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store, directoryOf: directoryNow, wiring: () => ledger.wiring ?? null,
-  }));
-  /*
-   * A COMPANY'S PROPOSALS: a raise, an approval or a withdrawal a signer's device proved, relayed for a seat that may act,
-   * and where each stands read off the chain. Nothing here holds a key.
-   */
-  app.use(proposalRelayRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    ownsProposal: (req, res, next) => ownsProposal(req, res, next),
-    refuseSigningSecret: (req, res, next) => refuseSigningSecret(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store, ledger, directoryOf: directoryNow, recordRefusal: appendRefusal,
-    wiring: () => ledger.wiring ?? null,
-    /* A proposal's identity is the contract's on every wiring, as the device that raised it made it. */
-    proposalIdOf: (payloadHash, salt, vault) => MidnightCommitments.proposalId(payloadHash as Hex, salt as Hex, vault as Hex | undefined),
-    /* A vault's adoption, as the account's own functions make it, and the vaults its account lists on the chain now. */
-    adoptionOf: (vault, again) => adoptionRoundOf(accountPure as unknown as AccountStartPure, vault, again),
-    /* How the chain closed a proposal, read from the account's own history at this deployment's indexer. */
-    closedOnChain: async (accountId, chainId) => {
-      if (!startup.started) return 'unknown';
-      const address = (await ledger.address(accountId))?.value ?? null;
-      if (address === null) return 'unknown';
-      const [{ indexerContractHistory }, runtime, chainLedger] = await Promise.all([
-        import('../midnight/contract-history.js'), import('@midnight-ntwrk/compact-runtime'), import('@midnightntwrk/ledger-v9'),
-      ]);
-      const history = indexerContractHistory(startup.deployment.indexerUrl, startup.deployment.indexerWsUrl);
-      return closedOnChain({
-        accountPure, accountLedger: (data) => readAccountLedger(data as Parameters<typeof readAccountLedger>[0]), runtimeState: (runtime as { ContractState: unknown }).ContractState, ledger: chainLedger,
-        history: (account) => history.of(account),
-      }, String(address).toLowerCase().replace(/^0x/u, ''), chainId);
-    },
-    /* The chain's own time: the newest block this deployment's indexer names, read with the account, in milliseconds. */
-    chainTimeOf: async (accountId) => {
-      if (!startup.started) throw new Error(startup.refusal);
-      const address = (await ledger.address(accountId))?.value ?? null;
-      if (address === null) throw new Error('this company has no account on the chain');
-      const { accountPresenceAt } = await import('../../packages/web-shared/src/vault-on-chain-here.js');
-      return (await accountPresenceAt(startup.deployment.indexerUrl, String(address).toLowerCase().replace(/^0x/u, ''))).blockTime;
-    },
-    vaultsAdopted: async (accountId) => {
-      const address = (await ledger.address(accountId))?.value ?? null;
-      if (address === null) return null;
-      if (theChain.accountVaults === undefined) return null;
-      try { return await theChain.accountVaults(address as Hex); } catch { return null; }
-    },
-    /* A vault's first secret run made again from its public parts, and the secret a vault holds on the chain now. */
-    firstSecretRunOf: (vault, parts) => firstSecretRunCarriedOf(
-      { vault: vaultPure as unknown as VaultStartPure, account: accountPure as unknown as AccountStartPure }, vault, parts),
-    vaultSecretOf: async (vault) => {
-      try {
-        const state = await theChain.contractState(vault);
-        if (state === null || state === undefined) return { commitment: '00'.repeat(32), started: false };
-        const held = theChain.startingLedgerOf(state);
-        return { commitment: held.nonceCommitment, started: held.started };
-      } catch { return null; }
-    },
-  }));
-
-  /*
-   * A COMPANY'S VAULTS: created, handed to the company's committee and funded
-   * from its signers' own devices. Mounted before the general parser for the
-   * same reason as the records above: a deploy is larger than most bodies.
-   */
-  app.use(vaultArtefactRoutes(vaultArtefactPlaces(process.cwd(), process.env)));
-  /*
-   * A COMPANY'S SEAT DIRECTORY: every filing served whole, each new one checked against this server's own read of
-   * the account on the chain - its committee, the seats it holds now and its approval threshold.
-   */
-  app.use(seatDirectoryRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store,
-    chain: directoryChain,
-  }));
-  /*
-   * A COMPANY'S MANIFEST: an entry for every filing and a header for every batch a seat anchored, each signed by its
-   * seat and served whole, for every device to fold into the anchor the chain holds.
-   */
-  app.use(recordManifestRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store, directoryOf: directoryNow,
-    filedAs: filedAsIn({
-      company: companyRecordStore, vault: records,
-      runs: (company) => store.listRuns(company), proposals: (company) => store.listProposals(company),
-    }),
-  }));
-  /*
-   * A COMPANY'S ACCOUNT, deployed by its founding signer's device held by their own key, and paid for here: read
-   * against what was recorded when the company was made, recorded before it is sent, and finished by its second step.
-   */
-  const creationExpected = accountCreationExpectationsIn(process.cwd());
-  app.use(accountCreationRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store,
-    ledger,
-    contractState: (address) => theChain.contractState(address),
-    register: (accountId, address) => book.record(accountId, address),
-    readers: { proven: readProvenTransaction },
-    expected: creationExpected,
-    records: companyRecordStore,
-    proposalIdOf: (payload, salt) => MidnightCommitments.proposalId(payload, salt),
-  }));
-  app.use(companyVaultRoutes({
-    signedIn: (req, res, next) => authed(req, res, next),
-    member: (req, res, next) => member(req, res, next),
-    store,
-    company: async (accountId) => {
-      const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
-      if (!address || !status) return null;
-      return {
-        address: address.value as Hex,
-        threshold: status.threshold,
-        seats: status.signerCount,
-        vaultThresholds: status.vaultThresholds.map((v) => ({ vault: v.vault as Hex, threshold: v.threshold })),
-      };
-    },
-    ledger,
-    chain: theChain,
-    verifierKeys: vaultVerifierKeysIn(process.cwd()),
-    /* The temporary key this deployment once created accounts under, so a seat it still holds is named as this service's. */
-    account: {
-      circuits: DEPLOYED_CIRCUITS,
-      verifierKeys: accountVerifierKeysIn(process.cwd()),
-      temporaryKey: startup.started ? await accountTemporaryVerifyingKey(writeCapability?.maintenanceAuthority) : undefined,
-    },
-    readers: { proven: readProvenTransaction, finished: readFinishedTransaction },
-    /* A change of the super admins is signed on their own devices; this deployment signs none of it. */
-    committeeChange: startup.started ? committeeChangeWith(NETWORK) : undefined,
-  }));
-}
-
-app.use(express.json({ limit: '1mb' }));
-
-/*
- * Behind a proxy, `req.ip` is the proxy unless Express is told who to trust —
- * and a per-IP limit that sees one address for every request is a limit that
- * locks out the world on the first attacker. `TRUST_PROXY` is deliberately not
- * defaulted to true: trusting `X-Forwarded-For` when nothing sets it lets a
- * client pick its own address and opt out of the limit entirely.
- */
-/*
- * **SAID OUT LOUD AT BOOT, BESIDE THE OTHER ONE.**
- *
- * A company opened by `SimulatedLedger` is handed an address this process
- * invented — thirty-two random bytes in the exact spelling a contract address
- * has. Keys derived from it are keys derived from a number nobody else has ever
- * seen, and every one of them changes on the day a contract is really deployed.
- *
- * This is set by `npm run dev` and by nothing else, so a deployment that has not
- * deliberately asked for it refuses instead, and says why. Printing it matters
- * for the reason `ALLOW_MEMORY_SESSIONS` prints: a posture nobody can see is a
- * posture nobody notices they are still in.
- */
-if (process.env.ALLOW_SIMULATED_COMPANY_ADDRESS === '1') {
-  console.warn(
-    '\n  !! ALLOW_SIMULATED_COMPANY_ADDRESS=1 — companies whose address this server\n' +
-    '     invented can be unlocked with a wallet. Every key derived from one changes\n' +
-    '     the day a contract is deployed. Development only.\n',
-  );
-}
-
-/*
- * **SAID OUT LOUD AT BOOT, FOR THE SAME REASON AS THE TWO ABOVE.**
- *
- * With this set, any page served from this machine can post what it observed —
- * uncaught errors, console messages, failed requests — and this service writes
- * them to a file. **That is a route with no session behind it**, which is
- * correct for the job (the white page it was written for happens before anybody
- * has signed in) and is exactly why it may not exist in a deployment that did
- * not ask for it out loud.
- *
- * Set by `npm run dev` and by nothing else. A posture nobody can see is a
- * posture nobody notices they are still in.
- */
-const WEB_CONSOLE_SINK = process.env.ALLOW_WEB_CONSOLE_SINK === '1';
-if (WEB_CONSOLE_SINK) {
-  console.warn(
-    '\n  !! ALLOW_WEB_CONSOLE_SINK=1 — any page on this machine can write to\n' +
-    `     ${webConsoleLogPath()}\n` +
-    '     No session is required. Development only.\n',
-  );
-}
-
-if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY);
-
-/**
- * **EVERY REFUSAL THIS SERVICE MAKES, AND THE ONE PLACE IT IS SAID OUT LOUD.**
- *
- *
- * This was four lines and answered every thrown error with `400` and a message
- * in a body, **keeping nothing.** The browser sink recorded the status and the
- * path and not the body, so a policy check refusing a second company and a
- * viewing key that could not open a record were the same event in every
- * artefact this project keeps — ten of one and three of the other on 24 Aug,
- * and telling them apart took reading two source files.
- *
- * **THE MESSAGE IS UNCHANGED AND NO NEW REFUSAL IS INVENTED.** The sentences
- * were always here, inside the errors being thrown; they reached the browser
- * and went nowhere else. `appendRefusal` is the somewhere else, and it carries
- * `e.name` with it because `NoCompanyAddress`, `ZodError` and a bare `Error`
- * from a policy check are three different mornings that `400` cannot tell
- * apart.
- *
- * **REDACTED AT THE BOUNDARY IT CROSSES AND NOT HERE**, so each of the sink's
- * two layers is tested on its own.
- * `renderRefusal` redacts on the way to the disk; the page redacts on the way
- * to the wire. Redacting a third time here would mask both, so a mutation that
- * removed either would survive and prove the opposite of what it looked like it
- * proved — the trap the sink's own layer defects were written to avoid.
- *
- * **IT CANNOT THROW.** `appendRefusal` swallows its own filesystem errors, so a
- * disk that is full answers the request and loses the line rather than turning
- * a refusal into a hang. A `500` here would be a service that fails because it
- * could not write down why it refused.
- */
-const wrap = (fn: express.RequestHandler): express.RequestHandler =>
-  async (req, res, next) => {
-    try { await fn(req, res, next); }
-    catch (e: any) {
-      const reason = e?.message ?? 'unknown error';
-      appendRefusal(req.method, req.originalUrl, 400, e?.name ?? 'Error', reason);
-      res.status(400).json({ error: reason });
-    }
-  };
-
-/* ------------------- which ledger wrote what ------------------- */
-
-/**
- * **EVERY LIST OF ACCOUNTS, ROUNDS OR PAYROLL RUNS GOES THROUGH HERE.**
- *
- * A company works out what it has by reading a list, so this is where a record
- * that never reached a chain has to be told apart from one that did. A check at
- * the point of payment would be a check that runs after somebody has already
- * decided, on a screen, that the money is there.
- *
- * The rule itself is not in this file. It is one function with no server in it,
- * so it can be read, tested and reasoned about without starting anything - and
- * so that the other build of this product, which answers these same routes
- * in-process with no server at all, answers them by the same rule rather than
- * by a second copy of it.
- */
-const answerList = <T extends Marked>(res: express.Response, rows: readonly T[]): void => {
-  const verdict: ListVerdict<T> = decideList(chosen.name, rows);
-  if (verdict.listed) { res.json(verdict.rows); return; }
-  res.status(409).json({ error: verdict.message, code: verdict.refusal, counts: verdict.counts });
-};
-
 /* ------------------------- auth ------------------------- */
 
 
@@ -982,6 +620,128 @@ const refuseSigningSecret: express.RequestHandler = (req, res, next) => {
   next();
 };
 
+await mountRecordsAndChainRoutes(app, {
+  recordsSql, startup, handed, ledger, store, book, companyRecords, companyRecordStore, writeCapability, NETWORK,
+  authed, member, ownsPerson, ownsProposal, refuseSigningSecret, meteredOfferLookup,
+});
+
+app.use(express.json({ limit: '1mb' }));
+
+/*
+ * Behind a proxy, `req.ip` is the proxy unless Express is told who to trust —
+ * and a per-IP limit that sees one address for every request is a limit that
+ * locks out the world on the first attacker. `TRUST_PROXY` is deliberately not
+ * defaulted to true: trusting `X-Forwarded-For` when nothing sets it lets a
+ * client pick its own address and opt out of the limit entirely.
+ */
+/*
+ * **SAID OUT LOUD AT BOOT, BESIDE THE OTHER ONE.**
+ *
+ * A company opened by `SimulatedLedger` is handed an address this process
+ * invented — thirty-two random bytes in the exact spelling a contract address
+ * has. Keys derived from it are keys derived from a number nobody else has ever
+ * seen, and every one of them changes on the day a contract is really deployed.
+ *
+ * This is set by `npm run dev` and by nothing else, so a deployment that has not
+ * deliberately asked for it refuses instead, and says why. Printing it matters
+ * for the reason `ALLOW_MEMORY_SESSIONS` prints: a posture nobody can see is a
+ * posture nobody notices they are still in.
+ */
+if (process.env.ALLOW_SIMULATED_COMPANY_ADDRESS === '1') {
+  console.warn(
+    '\n  !! ALLOW_SIMULATED_COMPANY_ADDRESS=1 — companies whose address this server\n' +
+    '     invented can be unlocked with a wallet. Every key derived from one changes\n' +
+    '     the day a contract is deployed. Development only.\n',
+  );
+}
+
+/*
+ * **SAID OUT LOUD AT BOOT, FOR THE SAME REASON AS THE TWO ABOVE.**
+ *
+ * With this set, any page served from this machine can post what it observed —
+ * uncaught errors, console messages, failed requests — and this service writes
+ * them to a file. **That is a route with no session behind it**, which is
+ * correct for the job (the white page it was written for happens before anybody
+ * has signed in) and is exactly why it may not exist in a deployment that did
+ * not ask for it out loud.
+ *
+ * Set by `npm run dev` and by nothing else. A posture nobody can see is a
+ * posture nobody notices they are still in.
+ */
+const WEB_CONSOLE_SINK = process.env.ALLOW_WEB_CONSOLE_SINK === '1';
+if (WEB_CONSOLE_SINK) {
+  console.warn(
+    '\n  !! ALLOW_WEB_CONSOLE_SINK=1 — any page on this machine can write to\n' +
+    `     ${webConsoleLogPath()}\n` +
+    '     No session is required. Development only.\n',
+  );
+}
+
+if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY);
+
+/**
+ * **EVERY REFUSAL THIS SERVICE MAKES, AND THE ONE PLACE IT IS SAID OUT LOUD.**
+ *
+ *
+ * This was four lines and answered every thrown error with `400` and a message
+ * in a body, **keeping nothing.** The browser sink recorded the status and the
+ * path and not the body, so a policy check refusing a second company and a
+ * viewing key that could not open a record were the same event in every
+ * artefact this project keeps — ten of one and three of the other on 24 Aug,
+ * and telling them apart took reading two source files.
+ *
+ * **THE MESSAGE IS UNCHANGED AND NO NEW REFUSAL IS INVENTED.** The sentences
+ * were always here, inside the errors being thrown; they reached the browser
+ * and went nowhere else. `appendRefusal` is the somewhere else, and it carries
+ * `e.name` with it because `NoCompanyAddress`, `ZodError` and a bare `Error`
+ * from a policy check are three different mornings that `400` cannot tell
+ * apart.
+ *
+ * **REDACTED AT THE BOUNDARY IT CROSSES AND NOT HERE**, so each of the sink's
+ * two layers is tested on its own.
+ * `renderRefusal` redacts on the way to the disk; the page redacts on the way
+ * to the wire. Redacting a third time here would mask both, so a mutation that
+ * removed either would survive and prove the opposite of what it looked like it
+ * proved — the trap the sink's own layer defects were written to avoid.
+ *
+ * **IT CANNOT THROW.** `appendRefusal` swallows its own filesystem errors, so a
+ * disk that is full answers the request and loses the line rather than turning
+ * a refusal into a hang. A `500` here would be a service that fails because it
+ * could not write down why it refused.
+ */
+const wrap = (fn: express.RequestHandler): express.RequestHandler =>
+  async (req, res, next) => {
+    try { await fn(req, res, next); }
+    catch (e: any) {
+      const reason = e?.message ?? 'unknown error';
+      appendRefusal(req.method, req.originalUrl, 400, e?.name ?? 'Error', reason);
+      res.status(400).json({ error: reason });
+    }
+  };
+
+/* ------------------- which ledger wrote what ------------------- */
+
+/**
+ * **EVERY LIST OF ACCOUNTS, ROUNDS OR PAYROLL RUNS GOES THROUGH HERE.**
+ *
+ * A company works out what it has by reading a list, so this is where a record
+ * that never reached a chain has to be told apart from one that did. A check at
+ * the point of payment would be a check that runs after somebody has already
+ * decided, on a screen, that the money is there.
+ *
+ * The rule itself is not in this file. It is one function with no server in it,
+ * so it can be read, tested and reasoned about without starting anything - and
+ * so that the other build of this product, which answers these same routes
+ * in-process with no server at all, answers them by the same rule rather than
+ * by a second copy of it.
+ */
+const answerList = <T extends Marked>(res: express.Response, rows: readonly T[]): void => {
+  const verdict: ListVerdict<T> = decideList(chosen.name, rows);
+  if (verdict.listed) { res.json(verdict.rows); return; }
+  res.status(409).json({ error: verdict.message, code: verdict.refusal, counts: verdict.counts });
+};
+
+
 /*
  * **`POST /api/auth/register` IS DELETED WITH THE PASSWORD.**
  *
@@ -1075,7 +835,7 @@ app.post('/api/auth/wallet', wrap(async (req, res) => {
     if (e instanceof WalletSignInError) {
       /*
        * ONE STATUS FOR EVERY WAY OF FAILING, and the code beside it. A refusal
-       * is not an error state to recover from — `docs/NEXT.md` §2 — so there is
+       * is not an error state to recover from, so there is
        * no branch here that leads anywhere but back to the start.
        */
       res.status(401).json({ error: e.message, code: e.code });
@@ -1595,85 +1355,7 @@ app.get('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
  * are opened in the payee's own browser, with the key from their wallet.
  */
 
-/*
- * **A COMPANY'S PAYSLIPS FOR A MONTH, EVERY ONE, TO ANYBODY SIGNED IN.**
- *
- * No route here takes or names a payslip key. A slip is ciphertext wrapped to
- * one payee's key with nothing beside it that says whose it is, so the
- * service hands every slip of the company's month to any signed-in person and
- * the payee's own device tries each with its key. The service learns which
- * signed-in person asked about which company and month, and never which slip
- * opened, or for whom. Anyone signed in can see how many slips a company's
- * runs carry; that count is the number of people the run pays, which the
- * proposal shows on the chain.
- *
- * **WHAT THE SIGN-IN COSTS, SAID RATHER THAN LEFT TO BE FOUND.** Nothing here
- * writes down who asked: no route stores it, and the refusal log records a
- * request's method and address and no session. Which companies pay a person
- * is kept in that person's own saved keys, sealed under the key their wallet
- * releases, and this service cannot read it there.
- */
-/*
- * Metered by where the request comes from, on top of the sign-in. A caller with
- * no address is not counted, as on the offer route.
- */
-const payslipsMetered = async (req: express.Request, res: express.Response): Promise<boolean> => {
-  const from = context(req).ip;
-  if (!from) return true;
-  const decision = await limiter.record('payslips', from);
-  if (decision.allowed) return true;
-  res.setHeader('Retry-After', String(decision.retryAfterSeconds));
-  res.status(429).json({
-    error: `too many payslip requests from here. Try again in ${decision.retryAfterSeconds} seconds.`,
-    retryAfterSeconds: decision.retryAfterSeconds,
-  });
-  return false;
-};
-
-/*
- * **A PAGE OLDER THAN THESE ROUTES IS TOLD TO RELOAD, BEFORE ANYTHING ELSE.**
- * It sends no sign-in, and a bare "not signed in" would send somebody who is
- * signed in back to a sign-in. Checked ahead of the sign-in, and it answers
- * nothing but the refusal, so no route here answers without a sign-in.
- */
-const currentPayslipPage: express.RequestHandler = (req, res, next) => {
-  if (isCurrentPayslipPage(req.headers[PAYSLIP_PAGE_HEADER])) { next(); return; }
-  res.status(409).json({ code: 'payslip-page-out-of-date', error: PAGE_OUT_OF_DATE });
-};
-
-const companyLabel = z.string().regex(/^co_[0-9a-f]{64}$/u, 'a company is named by its label: co_ and 64 lower-case hex');
-
-/*
- * `POST /api/payslips/proof` AND `POST /api/payslips` STOOD HERE AND ARE GONE.
- * They took a payee's payslip key in the clear, proved it, and sent the slips
- * sealed to it, so the service learned whose slips were whose.
- */
-
-app.get('/api/payslips', currentPayslipPage, authed, wrap(async (req, res) => {
-  if (!await payslipsMetered(req, res)) return;
-  const company = companyLabel.parse(String(req.query.company ?? ''));
-  const period = z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/u, 'a month is written YYYY-MM')
-    .parse(String(req.query.period ?? ''));
-  res.json(payroll.payslipsOf(company, period));
-}));
-
-/*
- * `GET /api/payslips/paid` STOOD HERE AND IS GONE. It relayed a company's
- * completed payments, and nothing called it once the payslip page read the
- * company's contract itself, through the indexer the payee's wallet names.
- */
-
-/*
- * **A COMPANY'S LABEL, WITH THE ACCOUNT THAT CARRIES IT NOW.** A payee's wallet
- * is told which account to read the label back from before it gives the key
- * their slips open with. Labels and account addresses are public on the chain,
- * and this answers with nothing else, to a signed-in person only.
- */
-app.get('/api/payslips/addresses', currentPayslipPage, authed, wrap(async (req, res) => {
-  if (!await payslipsMetered(req, res)) return;
-  const company = companyLabel.parse(String(req.query.company ?? ''));
-  res.json({ companies: payroll.payslipAddressesOf(company) });
-}));
+payslipRoutes(app, { limiter, payroll, authed, wrap, context });
 
 /*
  * A company's people are read, and changed, as their signed records: `peopleRoutes`, mounted beside the company's

@@ -52,10 +52,10 @@ const depsWith = (log: string[], unproven: unknown, handed: any[] = []): Governe
   },
   runtimeState: { deserialize: (b: Uint8Array) => ({ state: [...b], data: 'DATA' }) },
   contracts: {
-    createUnprovenCallTxFromInitialStates: async (_zk: unknown, options: any) => {
+    buildCall: async (_zk: unknown, options: any) => {
       log.push(`built ${options.circuitId}`);
       handed.push(options);
-      return { private: { nextPrivateState: options.initialPrivateState, unprovenTx: unproven } };
+      return { private: { nextPrivateState: options.initialPrivateState, unprovenTx: unproven, transaction: unproven } };
     },
   },
   accountCompiled: 'COMPILED',

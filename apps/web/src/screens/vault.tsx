@@ -15,7 +15,7 @@ import { DepositActions, DepositStrip } from '../actions/deposit.js';
 import { PRIVATE_MONEY } from '../adapters/vault-private-money.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
-import { holdsMoney, MONEY, PaidWords, PrivateMoneyUnshown, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
+import { holdsMoney, MONEY, PaidWords, PrivateMoneyUnshown, ReadOf, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
 import { RetireVault } from '../actions/retire-vault.js';
 import { RetiredMayHold, retiredVaultShown, useRetiredVaultOnChain } from '../records/retired-vault.js';
 import { READ } from '../adapters/reads.js';
@@ -91,8 +91,7 @@ function VaultBody({ records, vault, number }: { records: CompanyRecords; vault:
 
 
 /**
- * A vault the company's account holds is retired from here once the wallet can carry a retire out, and until then
- * shows Retire as not built yet; one it retired is adopted again from here while it still
+ * A vault the company's account holds is retired from here; one it retired is adopted again from here while it still
  * holds money, under the newest retire the company's records hold carried out for it. Both are asked of the wallet,
  * which reads the chain itself and refuses a vault still holding money, or a retire the chain does not show carried out.
  */
@@ -100,11 +99,7 @@ function RetireOrAdoptAgain({ records, vault }: { records: CompanyRecords; vault
   const t = useText();
   const { inPanel } = useVaultActions();
   if (vault.adopted === true) {
-    return (
-      WALLET_PROVES_RETIRE
-        ? <Button variant="outline" data-action="retire-vault" onClick={() => inPanel(t('vault.retire'), () => <RetireVault vault={vault.vault} />)}>{t('vault.retire')}</Button>
-        : <UnbuiltAction variant="outline" data-action="retire-vault">{t('vault.retire')}</UnbuiltAction>
-    );
+    return <Button variant="outline" data-action="retire-vault" onClick={() => inPanel(t('vault.retire'), () => <RetireVault vault={vault.vault} />)}>{t('vault.retire')}</Button>;
   }
   const retire = retireOf(records, vault.vault);
   return vault.retired !== true || retire === null ? null : <AdoptAgain company={records.id} vault={vault.vault} retired={retire} />;
@@ -124,14 +119,6 @@ function AdoptAgain({ company, vault, retired }: { company: string; vault: strin
     </>
   );
 }
-
-/**
- * WHETHER THE WALLET CAN CARRY OUT A RETIRE. It holds no proving key for the
- * vault's retire call today, so every press would be refused; until it does,
- * the entry is drawn as an action not built yet and no panel can be opened.
- * Set to true when the wallet's list of vault calls it proves includes retire.
- */
-const WALLET_PROVES_RETIRE: boolean = false;
 
 /** The company's record of the newest retire of `vault` the records hold carried out, by its name; null when there is none. */
 const retireOf = (records: CompanyRecords, vault: string): string | null => {

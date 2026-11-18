@@ -3,7 +3,7 @@
  *
  * ── THE ROW, AND WHY THIS FILE IS THE DELIVERABLE ────────────────────────
  *
- * `C145` closes on one sentence: *"nothing this project keeps on disk ever
+ * The rule it holds is one sentence: *"nothing this project keeps on disk ever
  * contains a seed, proved by a test that greps its own logs."* The redaction is
  * not the deliverable — **this is**, because redaction that nothing greps is
  * redaction that can be removed by a refactor nobody notices.
@@ -12,7 +12,7 @@
  * process, posts through the real route the things an error message actually
  * carries — a seed phrase, the SDK's own seed line, a key, a bearer token, a
  * password typed into the wrong field, an address — and then **opens the file
- * that came out and searches it**, both for the exact secrets it planted and
+ * that came out and searches it**, both for the exact secrets it put there and
  * for anything merely SHAPED like one.
  *
  * ── WHY IT SPAWNS RATHER THAN IMPORTS ────────────────────────────────────
@@ -27,14 +27,14 @@
  */
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
-import { startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
+import { aProjectTokenSettingForTheNetwork, startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
 import { aDatabaseWithEveryMigrationApplied } from './a-database-with-every-migration-applied.test-support.js';
 import { createServer } from 'node:net';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { deploymentRecordPath } from '../wiring/deployment.js';
+import { deploymentRecordPath, storeDir } from '../wiring/deployment.js';
 import { theNetwork } from '../midnight/network.js';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
@@ -50,13 +50,13 @@ beforeAll(async () => {
 });
 afterAll(async () => { await stopDatabase(); });
 
-/* ------------------------------------------------------------------ planted */
+/* ------------------------------------------------------- the secrets put in */
 
 /**
  * WHAT AN ERROR MESSAGE ACTUALLY CARRIES.
  *
  * Every one of these is a real shape from this project: the seed line is quoted
- * verbatim in `C145`, the address is the funded deploy wallet's from the same
+ * verbatim from a real report, the address is the funded deploy wallet's from the same
  * run, and the rest are what a page hands to `console.error` when a request
  * fails with the body attached.
  */
@@ -169,13 +169,13 @@ const start = async (overrides: Record<string, string>): Promise<Running> => {
    * somewhere real. The database is the one that answers one question.
    */
   const network = theNetwork({});
-  mkdirSync(join(dir, '.midnight'), { recursive: true });
+  mkdirSync(storeDir(dir, network), { recursive: true });
   writeFileSync(
     deploymentRecordPath(dir, network),
     JSON.stringify({ network, contractAddress: '0200aabb' }),
   );
   const port = await freePort();
-  const report = join(dir, 'REPORT-WEB-CONSOLE.txt');
+  const report = join(dir, 'web-console-report');
 
   const child = startInItsOwnGroup(TSX, [ENTRY], {
     cwd: dir,
@@ -187,6 +187,7 @@ const start = async (overrides: Record<string, string>): Promise<Running> => {
       WEB_CONSOLE_LOG: report,
       // not-a-secret: a port nothing listens on. Required with no default.
       MIDNIGHT_PROVER_URL: 'http://127.0.0.1:1',
+      ...(await aProjectTokenSettingForTheNetwork()),
       ...overrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -220,7 +221,7 @@ const post = (port: number, body: unknown) =>
 /* ------------------------------------------------------------------ the cases */
 
 describe('the report the browser error sink writes', () => {
-  it('THE ONE C145 ASKS FOR: it walks its own report and finds no seed, key or token',
+  it('THE ONE THIS FILE IS FOR: it walks its own report and finds no seed, key or token',
     { timeout: 60_000 }, async () => {
       const run = await start({ ALLOW_WEB_CONSOLE_SINK: '1' });
       expect(run.out, run.out).toContain('ALLOW_WEB_CONSOLE_SINK=1');
@@ -234,9 +235,9 @@ describe('the report the browser error sink writes', () => {
 
       const written = readFileSync(run.report, 'utf8');
 
-      // 1. Nothing that was planted survived, by name.
+      // 1. Nothing that was put in survived, by name.
       for (const [what, secret] of Object.entries(PLANTED)) {
-        expect(written, `the report still contains the planted ${what}`).not.toContain(secret);
+        expect(written, `the report still contains the ${what} put in`).not.toContain(secret);
       }
 
       // 2. And nothing merely SHAPED like a secret is in it either — which is

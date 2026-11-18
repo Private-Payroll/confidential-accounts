@@ -14,14 +14,14 @@
  *
  * **SO THIS FILE REMOVES THE FIXTURE.** The record here is composed, at the
  * moment the circuit asks for one, out of two sources with two different
- * lifetimes: the signer's own material, which is held in memory for a session
+ * lifetimes: the signer's own material, which is held in memory only
  * and written to nothing, and the account's half, which a store holds. Nothing
  * in the path is a stand-in for a device any more. The device's half IS the
  * device's half.
  *
  * -- AND THE WRITE IS WATCHED, WHICH IS THE HALF WITH NO SYMPTOM -----------
  *
- * Opening a round STAGES four fields into the record before the call is built,
+ * Raising a proposal STAGES four fields into the record before the call is built,
  * and it stages them by reading the record and writing it back. **What it reads
  * back carries the signer's secret key, because composing is what a read here
  * does** - so this is not a model of the hazard, it is the hazard, on the
@@ -60,6 +60,7 @@ import {
 import { neverPersistedFieldsIn } from './what-a-device-may-persist.js';
 
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
+import { perContract, servedBytes, V9_HEAD } from '../testing/served-state.js';
 /** The compiled artefacts: the generated contract, the keys and the ABI. */
 const MANAGED = join(process.cwd(), 'contracts', 'managed');
 
@@ -88,10 +89,8 @@ const bytes32 = (seed: number): Uint8Array => {
 async function aDeviceWithAKeyring(opts: { stageTheAccountHalf?: boolean } = {}) {
   const stageTheAccountHalf = opts.stageTheAccountHalf ?? true;
 
-  const { applyNetworkId } = await import('./network.js');
-  await applyNetworkId('undeployed');
 
-  const ledgerApi: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const ledgerApi: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const witnessModule = await import('../../contracts/src/witnesses.js');
   const CompiledContract: any = await import('@midnight-ntwrk/compact-js/effect/CompiledContract');
   const generated: any = await import('../../contracts/managed/contract/index.js');
@@ -171,10 +170,13 @@ async function aDeviceWithAKeyring(opts: { stageTheAccountHalf?: boolean } = {})
   const provider = derivedPrivateState({ signerMaterial: (id) => held.for(id), accountHalf });
 
   const walletProvider = {
+    supportedEras: ['v9'] as const,
     getCoinPublicKey: () => ledgerApi.sampleCoinPublicKey(),
     getEncryptionPublicKey: () => ledgerApi.sampleEncryptionPublicKey(),
   };
   const zkConfigProvider = new NodeZkConfigProvider(MANAGED);
+  const { transactionSettingsFor } = await import('./providers.js');
+  const config = transactionSettingsFor('undeployed');
 
   /*
    * **THE DEPLOY IS NOT A DEVICE OPERATION AND IS NOT DRIVEN THROUGH THE
@@ -188,10 +190,10 @@ async function aDeviceWithAKeyring(opts: { stageTheAccountHalf?: boolean } = {})
     setContractAddress: () => {}, setSigningKey: async () => {},
   };
   const unprovenDeploy: any = await createUnprovenDeployTx(
-    { zkConfigProvider, privateStateProvider: forTheDeployOnly, walletProvider } as any,
+    { zkConfigProvider, privateStateProvider: perContract(forTheDeployOnly), walletProvider, config } as any,
     { compiledContract: compiled, args: [fromHex(foundingLeaf), new Uint8Array(32).fill(0x4c)] } as any,
   );
-  const deployedState = unprovenDeploy.public.initialContractState;
+  const deployedBytes: Uint8Array = unprovenDeploy.public.initialContractState.serialize();
   const address = String(ledgerApi.sampleContractAddress());
 
   /*
@@ -214,18 +216,16 @@ async function aDeviceWithAKeyring(opts: { stageTheAccountHalf?: boolean } = {})
   written.length = 0;
 
   const providers = {
+    config,
     zkConfigProvider,
     privateStateProvider: provider,
     walletProvider,
-    proofProvider: { proveTx: async () => { throw new TheProofServerWasReached(); } },
-    midnightProvider: { submitTx: async () => { throw new TheChainWasReached(); } },
+    proofProvider: { supportedEras: ['v9'] as const, proveTx: async () => { throw new TheProofServerWasReached(); } },
+    midnightProvider: { supportedEras: ['v9'] as const, submitTx: async () => { throw new TheChainWasReached(); } },
     publicDataProvider: {
-      queryContractState: async () => deployedState,
-      queryZSwapAndContractState: async () => [
-        new ledgerApi.ZswapChainState(),
-        deployedState,
-        ledgerApi.LedgerParameters.initialParameters(),
-      ],
+      queryLatestProtocolVersion: async () => V9_HEAD,
+      queryContractState: async () => servedBytes(deployedBytes),
+      queryZSwapAndContractState: async () => servedBytes(deployedBytes),
       queryBlock: async () => ({ hash: '00'.repeat(32) }),
     },
   };
@@ -329,11 +329,14 @@ describe.skipIf(!KEYS_ON_DISK)('a governed call is built from the keyring and no
   /**
    * **THE WHOLE CIRCUIT EXECUTED, WHICH IS WHAT THE THREE ARE FOR.**
    *
-   * Opening a round proves a Merkle path to the leaf the signer's secret key,
+   * Raising a proposal proves a Merkle path to the leaf the signer's secret key,
    * blinding and scope commit to, and then reads five more fields. Reaching the
    * PROOF SERVER means every one of that happened against the deployed tree.
    * The proof server and the chain throw different errors on purpose, so a
    * change that submitted without proving fails here rather than passing.
+   * Midnight.js wraps a provider's refusal in its own error, naming the
+   * provider method that refused and carrying the refusal, redacted, on
+   * `cause`: both are read.
    *
    * ONE ASSERTION. A wrong blinding or scope produces a different leaf and the
    * path refuses first, so separate field checks could not fail while this one
@@ -347,13 +350,16 @@ describe.skipIf(!KEYS_ON_DISK)('a governed call is built from the keyring and no
    */
   it('proves the signer\'s membership from that material and stops at the proof server', async () => {
     const d = await aDeviceWithAKeyring();
-    await expect(d.raiseARound()).rejects.toThrow(/the proof server was reached/);
+    await expect(d.raiseARound()).rejects.toMatchObject({
+      method: 'proveTx',
+      cause: { message: expect.stringMatching(/the proof server was reached/) },
+    });
   }, 300_000);
 
   /**
    * **THE ONE THAT MATTERS MOST, AND IT IS NOT A MODEL OF THE HAZARD.**
    *
-   * Opening a round reads this device's record and writes it back with four
+   * Raising a proposal reads this device's record and writes it back with four
    * fields staged into it. What it reads back CARRIES THE SIGNER'S SECRET KEY,
    * because composing is what a read here does - so the write below is handed
    * a real signing key, on the product's own path, in this run.
@@ -377,7 +383,7 @@ describe.skipIf(!KEYS_ON_DISK)('a governed call is built from the keyring and no
     const d = await aDeviceWithAKeyring();
     await d.raiseARound().catch(() => undefined);
 
-    expect(d.written.length, 'the round was never staged, so nothing was written and this case '
+    expect(d.written.length, 'the proposal was never staged, so nothing was written and this case '
       + 'asserted about nothing').toBeGreaterThan(0);
     expect(d.written.flatMap((half) => neverPersistedFieldsIn(half))).toEqual([]);
   }, 300_000);
@@ -405,7 +411,7 @@ describe.skipIf(!KEYS_ON_DISK)('a governed call is built from the keyring and no
     const minted = new Set([
       d.keyringEntry.signingSecret, d.keyringEntry.blinding, d.keyringEntry.scope,
     ]);
-    expect(d.written.length, 'the round was never staged, so nothing was written and this case '
+    expect(d.written.length, 'the proposal was never staged, so nothing was written and this case '
       + 'asserted about nothing').toBeGreaterThan(0);
     expect(d.written.flatMap((half) => Object.entries(half)
       .filter(([, value]) => value instanceof Uint8Array && minted.has(d.toHex(value)))
@@ -416,12 +422,12 @@ describe.skipIf(!KEYS_ON_DISK)('a governed call is built from the keyring and no
    * **AND WHAT IT DOES WRITE IS THE THING THE NEXT CALL NEEDS.**
    *
    * A write that kept nothing would satisfy the case above and would lose the
-   * salt four governance circuits recompute a round's identity from. A reverted
-   * salt is not a wrong number; it is a round whose id nobody can reproduce.
+   * salt four governance circuits recompute a proposal's identity from. A reverted
+   * salt is not a wrong number; it is a proposal whose id nobody can reproduce.
    *
    * RED WHEN: the write drops the account's half along with the rest. Watched.
    */
-  it('does write the salt and the change the round is recognised by', async () => {
+  it('does write the salt and the change the proposal is recognised by', async () => {
     const d = await aDeviceWithAKeyring();
     await d.raiseARound().catch(() => undefined);
 

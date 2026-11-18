@@ -1,10 +1,10 @@
 /**
  * WHAT A DEPLOY REPORT OWES, AND THE ONE THING IT MUST NEVER SAY.
  *
- * `scripts/deploy-preview.ts` established what a deploy report is for, and this
+ * The account's deploy script established what a deploy report is for, and this
  * module is the part of it a SECOND deploy needed: the phase clock, the node's
  * own words kept verbatim, the size block, and a timeout that turns silence
- * into an error. Those were written out inside that file when it was the only
+ * into an error. Those were written out inside that script when it was the only
  * deploy there was.
  *
  * **AND ONE THING THAT IS NEW HERE RATHER THAN LIFTED: THE SCREEN GUARD.**

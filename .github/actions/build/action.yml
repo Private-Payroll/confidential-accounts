@@ -19,8 +19,14 @@ runs:
   steps:
     - uses: actions/setup-node@v4
       with:
-        node-version: '22'
+        node-version-file: .nvmrc
         cache: npm
+
+    # THE NPM THAT INSTALLS IS THE ONE package.json NAMES in packageManager,
+    # so a runner's own npm cannot resolve the lockfile differently.
+    - name: use the npm the manifest names
+      shell: bash
+      run: corepack enable npm
 
     # THE COMPILER IS FETCHED ONCE PER MACHINE AND THEN KEPT.
     #

@@ -1,10 +1,9 @@
 /**
  * **NOTHING ON THE PRODUCT PATH REACHES A SIMULATED IMPLEMENTATION DIRECTLY.**
  *
- * This is the round's owed check made standing. A sweeping change is
- * verified by looking for what should be GONE, not by re-running what changed.
- * The change was collapsing four selection sites into `selection.ts`, so the
- * check is a search for a fifth — and a search anybody has to remember to run is
+ * A sweeping change is verified by looking for what should be GONE, not by
+ * re-running what changed. Four selection sites were collapsed into
+ * `selection.ts`, so the check is a search for a fifth — and a search anybody has to remember to run is
  * a check that stops being run.
  *
  * ── WHY THIS ONE READS THE SOURCE, WHERE ITS NEIGHBOURS BUILD ────────────
@@ -94,14 +93,11 @@ const SEAM_DEFINER = 'wiring/handed-in.ts';
  * are a test double: they are still defined, still exercised by the files this
  * walk excludes, and reached by no module the product runs.**
  *
- * **`core/account.ts` USED TO BE A THIRD, AND R3 DELETED THE ENTRY RATHER THAN
- * EMPTYING IT.** It was allowed because `commitments` was a DEFAULT parameter
- * there and the import fed the default; R3 made the argument required, the
- * default's value went with it, and the import went with that. Its only
+ * **`core/account.ts` IS NOT ON THIS LIST.** Its `commitments` is a required
+ * argument with no default, so it has no import that feeds one, and its only
  * remaining mention of a simulated implementation is prose, which `stripped`
  * blanks. An allow-list entry that no longer excuses anything is an entry that
- * will one day excuse something, so there are two names here and there is no
- * empty third.
+ * will one day excuse something, so there is one name here and no empty second.
  */
 const ALLOWED = new Set([
   'core/ledger.ts',
@@ -119,19 +115,11 @@ const ALLOWED = new Set([
  * reading rather than by opening. Every non-newline character becomes a space,
  * so the stripped text is the same shape as the file.
  *
- * **AND THE QUOTE PASS WAS BLIND TO 395 LINES OF THE TREE IT SEARCHES.**
- * `T-280` `P1`, found by `S46`'s test-coverage pass with planted text, re-measured
- * here. The single pattern this replaces —
- * `/(['"`])(?:\\.|(?!\1)[\s\S])*?\1/g` — accepted an apostrophe as an
- * OPENING delimiter with no context at all, and its body matched `\n`. So
- * `company's` in JSX prose opened a string that ran to the next apostrophe
- * ANYWHERE in the file, and — the half that does the damage — every genuine
- * literal after that false close was then mis-paired. **In `web/App.tsx` that
- * blanked 293 lines in 42 runs from `:1377` to `:2733` of a 2,743-line file:
- * the back half of the one file `C175` is half about was not being read at
- * all.** `web/Join.tsx` 57, `web/Auth.tsx` 45. **Measured 363 wholly blanked
- * and 32 partly; the row's filed 338 is low and its per-file breakdown does
- * not sum to itself.**
+ * **NO STRING PASS MAY CROSS A NEWLINE.** A pattern whose quote body could
+ * match `\n` and whose opener accepted an apostrophe with no context would
+ * treat `company's` in JSX prose as the start of a string running to the next
+ * apostrophe ANYWHERE in the file, and every genuine literal after that false
+ * close would then be mis-paired, so a large part of a file would never be read.
  *
  * **THE FIX IS THAT NO STRING PASS MAY CROSS A NEWLINE, AND THE ORDER OF THE
  * TWO IS PART OF IT.** Quotes first, with a body that cannot contain a newline
@@ -139,23 +127,19 @@ const ALLOWED = new Set([
  * no valid string literal begins immediately after one, and every prose
  * apostrophe does. Then backticks, also bounded to one line.
  *
- * **THE FIRST VERSION OF THIS FIX TOOK TEMPLATES FIRST AND LET THEM SPAN
- * LINES, AND `S56`'s OWN test-coverage pass BROKE IT IN THREE WAYS** — a backtick
- * inside a `'…'` string, a backtick in a TRAILING `//` comment (only
+ * **TEMPLATES ARE NOT TAKEN FIRST AND ARE NOT ALLOWED TO SPAN LINES.** A
+ * backtick inside a `'…'` string, a backtick in a TRAILING `//` comment (only
  * whole-line comments are blanked above), and one stray backtick with no
- * partner. Each opened a template span that ran to the next backtick anywhere
- * and hid the code between. **That is `T-280` again on a different delimiter,
- * inside the fix for `T-280`** — which is why the order and the newline
- * exclusion are both load-bearing and why the controls below plant all three.
+ * partner would each open a template span that ran to the next backtick
+ * anywhere and hid the code between. That is the same failure on a different
+ * delimiter, which is why the order and the newline exclusion are both
+ * load-bearing and why the controls below write all three.
  *
  * **THE PRICE, PAID DELIBERATELY: the INTERIOR of a genuine multi-line
- * template is no longer blanked and is READ as code.** That is the safe
- * direction — text this no longer blanks is text the search now sees, so the
- * change can add an offender and cannot hide one, and a mis-opened quote costs
- * its own line rather than the rest of the file. **MEASURED across all 88
- * walked files: zero offenders either way**, and it also removes the reason
- * `db/migrate.ts` and `core/sessions.ts` scored .8475 and .8619 on the ratio
- * control below; both are 1.0000 now.
+ * template is not blanked and is READ as code.** That is the safe direction:
+ * text this does not blank is text the search sees, so it can add an offender
+ * and cannot hide one, and a mis-opened quote costs its own line rather than
+ * the rest of the file.
  */
 const blank = (m: string): string => m.replace(/[^\n]/g, ' ');
 
@@ -170,12 +154,18 @@ const sources = (dir: string): string[] => {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) { out.push(...sources(full)); continue; }
+    if (statSync(full).isDirectory()) {
+      /* A folder named `testing` holds what tests build their worlds from, and no module the product runs reaches it. */
+      if (name !== 'testing') out.push(...sources(full));
+      continue;
+    }
     if (!/\.tsx?$/.test(name)) continue;
     /*
      * Tests are excluded on purpose. A test names its own world out loud —
      * `new SimulatedLedger()` in a test is the test SAYING which implementation
-     * it is exercising, which is the opposite of a hidden second decision.
+     * it is exercising, which is the opposite of a hidden second decision. So
+     * is the helper a test builds its world with, which is why `testing/` is
+     * left out above.
      */
     if (/\.test\.tsx?$/.test(name)) continue;
     out.push(full);
@@ -205,17 +195,17 @@ describe('one wiring point', () => {
    * below with nothing behind it: a check that finds no offenders in a tree
    * that contains none is indistinguishable from a check that cannot read.
    *
-   * So the control moves onto the DETECTOR instead of onto a file. Planted
+   * So the control is on the DETECTOR instead of on a file. Fixed
    * text, through the same `stripped` pass and the same pattern the walk uses,
    * in every place a real one could appear.
    */
   it('the search can see a simulated implementation when there is one to see', () => {
-    const planted = [
+    const written = [
       "import { SimulatedLedger } from '../core/ledger.js';",
       'const l = new SimulatedProofSystem();',
       'export const scheme = SimulatedCommitments;',
     ];
-    for (const line of planted) {
+    for (const line of written) {
       expect(NAMES.test(stripped(line)), `the walk cannot see: ${line}`).toBe(true);
     }
     /*
@@ -245,33 +235,26 @@ describe('one wiring point', () => {
   });
 
   /**
-   * **THE CONTROL `T-280` NEEDED AND DID NOT HAVE, AND IT IS THE POINT OF THE
-   * ROUND THAT WROTE IT.** `S56`, board `2y7g2`.
+   * **A CONTROL THAT READS A FILE WHERE A STRING PASS CAN GO WRONG.**
    *
-   * The search below was green for as long as it has existed while it could not
-   * read 395 lines of the tree it walks — 293 of them in `web/App.tsx`, one of
-   * the four files `C175` exists because of. **Nothing in this repository would
-   * have caught that.** The two controls above assert PRESENCE over
-   * `wiring/selection.ts` — **the one file that could not trip the bug is the
-   * file the controls read.** (It has six prose apostrophes, at
-   * `src/wiring/selection.ts:67`, `:87`, `:88`, `:125`, `:142` and `:177`;
-   * every one is inside a block comment the first pass blanks before the quote
-   * pass runs. An earlier draft of this sentence said it had none — `S56`'s
-   * test-coverage pass counted. Right conclusion, wrong reason, rule 14.)
+   * The search below would stay green while it could not read a large part of
+   * a file it walks, and nothing would say so. The two controls above assert
+   * PRESENCE over `wiring/selection.ts`, and that file cannot trip a
+   * mis-opened quote: its prose apostrophes all sit inside block comments that
+   * the first pass blanks before the quote pass runs.
    *
    * **A DETECTOR WHOSE GREEN IS CHEAP NEEDS A CONTROL THAT COSTS SOMETHING**,
    * and the three below are it: the exact failure on a fixture, the same
    * failure on the real tree, and a negative control that the fix did not buy
    * its sight by blanking less than it must.
    */
-  it('a prose apostrophe does not blind the search — T-280, on a fixture and on the tree', () => {
+  it('a prose apostrophe does not blind the search, on a fixture and on the tree', () => {
     /*
      * **THE EXACT FAILURE, WRITTEN OUT.** Two apostrophes in JSX prose, nine
      * lines apart, with real code between them. The old pattern opened a string
      * at the first, closed it at the second, and blanked everything in between
      * — and then read every genuine literal in the rest of the file with the
-     * quotes paired the wrong way round, which is what turned 8 false matches
-     * into 395 blind lines.
+     * quotes paired the wrong way round.
      */
     const fixture = [
       "      <p>Your company's payroll is ready.</p>",   // opens, under the old pattern
@@ -279,7 +262,7 @@ describe('one wiring point', () => {
       '      {rows.map(r => (',
       '        <Row key={r.id} />',
       '      ))}',
-      '      const planted = new SimulatedLedger(SimulatedCommitments);',
+      '      const found = new SimulatedLedger(SimulatedCommitments);',
       '      <span>Nor should this.</span>',
       '      {done ? <Ok /> : <Wait />}',
       "      <p>and it doesn't close until here.</p>",  // closes, under the old pattern
@@ -319,13 +302,12 @@ describe('one wiring point', () => {
     expect(NAMES.test(stripped('const l = new SimulatedLedger(x);'))).toBe(true);
 
     /*
-     * **AND THE SAME FAILURE ON THE OTHER DELIMITER, WHICH THE FIRST VERSION OF
-     * THIS FIX STILL HAD.** `S56`'s own test-coverage pass planted these three and
-     * showed the guard blind to two of them: a backtick inside a `'…'` string,
-     * a backtick in a TRAILING `//` comment — only whole-line comments are
-     * blanked — and one stray backtick with no partner anywhere. Each opened a
-     * template span that ran to the next backtick and swallowed the code
-     * between. Three plants, one assertion each, on the line that matters.
+     * **AND THE SAME FAILURE ON THE OTHER DELIMITER.** Three cases: a backtick
+     * inside a `'…'` string, a backtick in a TRAILING `//` comment — only
+     * whole-line comments are blanked — and one stray backtick with no partner
+     * anywhere. Each would open a template span that ran to the next backtick
+     * and swallowed the code between. One assertion each, on the line that
+     * matters.
      */
     const cascades = [
       ["  const hint = 'press ` for the console';",
@@ -338,12 +320,10 @@ describe('one wiring point', () => {
         '  const evil = new SimulatedCommitments();',
         '  const c = 3;'],
       /*
-       * **AND ONE PLANT PER DEFENCE, BECAUSE `S56` MEASURED ITS OWN CONTROL AND
-       * FOUND IT WEAKER THAN IT LOOKED.** The stripper's quote pass has two
-       * independent guards — the body may not cross a newline, and the opener
-       * may not follow an identifier character — and with only the plants above,
-       * **removing EITHER ONE ALONE left every case in this file green.** Only
-       * removing both did anything, which means neither was measured.
+       * **AND ONE CASE PER DEFENCE.** The stripper's quote pass has two
+       * independent guards, the body may not cross a newline and the opener
+       * may not follow an identifier character, and the cases above alone would
+       * stay green with either one removed.
        *
        * This one is the NEWLINE BOUND on its own: an odd `"` in prose has no
        * partner on its line, so a line-bounded pass simply does not match and
@@ -380,7 +360,7 @@ describe('one wiring point', () => {
      * string pass may cross a newline, the INTERIOR of a genuine multi-line
      * template is read as code rather than blanked. That is the fail-open
      * direction — it can only add an offender — and this pins it so a later
-     * round meets it as a stated choice.
+     * change meets it as a stated choice.
      */
     const template = ['const q = `', '  SELECT * FROM t', '`;'].join('\n');
     expect(stripped(template).split('\n')[1]).toBe('  SELECT * FROM t');
@@ -469,25 +449,20 @@ describe('one wiring point', () => {
 
   /**
    * **THE LEDGER AND THE SERVICE GET THE SAME SCHEME OBJECT, FROM ONE FIELD.**
-   * `T-209` `P2`.
    *
    * `AccountService` is handed `wiring().commitments`; the ledger is built by
-   * `wiring().createLedger()`. **Before `S46` those were two separate
-   * references to the same name, three lines apart in `selection.ts`** — and
-   * after `S44` a mismatched pair no longer merely disagrees, it raises
-   * governance rounds no ledger will execute (`src/core/ledger.ts:1047-1055`
-   * states the requirement as a comment and only as a comment).
+   * `wiring().createLedger()`. A mismatched pair no longer merely disagrees, it
+   * raises governance rounds no ledger will execute.
    *
    * This reads the source for the same reason the checks above do: the claim
    * is about **where a decision is taken**, which no built artifact can answer.
    *
-   * **AND IT IS DELIBERATELY NARROW.** It pins the PRODUCT path — the one
+   * **AND IT IS DELIBERATELY NARROW.** It pins the PRODUCT path, the one
    * object `wiring()` returns. It says nothing about a caller that constructs
    * the pair by hand with two different schemes, which needs `SimulatedLedger`
-   * itself to read the scheme from the same place or refuse a stranger.
-   * `SimulatedLedger` is `2y7f2b`'s file and not `S46`'s, so that half is
-   * `T-278` and is not claimed here. Rule 27: what enforces it today is that
-   * nobody has written the code that would break it.
+   * itself to read the scheme from the same place or refuse a stranger. What
+   * keeps the product path matched today is that nobody has written the code
+   * that would break it.
    */
   /**
    * **THE IMPORT LIST IS READ FROM THE SOURCE AND NOT FROM THE STRIPPED TEXT,

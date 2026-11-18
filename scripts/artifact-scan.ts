@@ -716,7 +716,9 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
        * not. `contract-info.json`'s `contracts[]` carries the declaration —
        * `contract Acct { recordPayment, retireVault }` — as data.
        */
-      const circuit = topLevelStrings(args)[0] ?? '';
+      /* The callee's circuit is the string literal in the `calleeCircuitId` property of the options object the
+       * compiled call hands the runtime, or the call's first string argument where it is passed positionally. */
+      const circuit = topLevelStrings(args)[0] ?? /\bcalleeCircuitId\s*:\s*'([^'\\]+)'/.exec(args)?.[1] ?? '';
       const declaring = (info.contracts ?? []).find((k) => k.circuits.some((c) => c.name === circuit));
       if (circuit === '' || !declaring) {
         throw new Error(

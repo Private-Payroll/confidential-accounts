@@ -1,0 +1,6 @@
+{
+  "midnight/zswap/spend": "zswap/9/spend",
+  "midnight/zswap/output": "zswap/9/output",
+  "midnight/zswap/sign": "zswap/9/sign",
+  "midnight/dust/spend": "dust/10/spend"
+}

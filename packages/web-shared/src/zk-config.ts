@@ -94,15 +94,46 @@ export type LocationForCircuit = (circuitId: string) => string;
 export const byCircuitName: LocationForCircuit = (circuitId) => circuitId;
 
 /**
+ * The contract runtime version the compiler recorded in a contract's compiled manifest: what Midnight.js reads to
+ * tell which ledger the contract's keys are for. A manifest that names none is refused, so nothing is built for it.
+ */
+export const runtimeVersionOf = (manifest: unknown, whose: string): string => {
+  const version = typeof manifest === 'object' && manifest !== null ? (manifest as { 'runtime-version'?: unknown })['runtime-version'] : undefined;
+  if (typeof version !== 'string' || version === '') {
+    throw new Error(`this copy of the app names no contract runtime for ${whose}, so nothing can be built for it. Reload the page.`);
+  }
+  return version;
+};
+
+/**
+ * A source of verifier keys only, for a builder's calls and deploys: the prover's keys are served by contract
+ * location, never here, so asking it for any other kind is refused naming the contract and circuit.
+ */
+export const verifierOnlySource = (
+  key: (circuit: string) => Promise<Uint8Array>, whose: string,
+): Pick<ArtefactSource, 'artefact'> => ({
+  artefact: async (kind, circuit) => {
+    if (kind !== 'verifier') throw new Error(`this wallet serves no ${kind} for ${whose}'s "${circuit}" to its builder.`);
+    return key(circuit);
+  },
+});
+
+/**
  * Builds the provider a call is assembled with, over an existing source.
  *
  * Returns a plain object rather than extending the package's class, so that
  * nothing here imports that package at run time. The shape is the whole of what
  * it is asked for.
+ *
+ * `runtimeVersion` is the contract runtime version the compiler recorded for the
+ * contract these keys belong to, read from this build's own compiled files.
+ * Midnight.js reads it before every contract operation to tell which ledger the
+ * keys are for, and refuses the operation when a provider cannot say.
  */
 export const zkConfigOver = (
-  source: ArtefactSource,
+  source: Pick<ArtefactSource, 'artefact'>,
   locationFor: LocationForCircuit,
+  runtimeVersion: string,
 ): ZKConfigProvider<string> => {
   /**
    * One request per artefact in flight, however many callers want it.
@@ -132,6 +163,8 @@ export const zkConfigOver = (
     getProverKey: async (circuitId) => (await bytes('prover', circuitId)) as unknown as ProverKey,
     getVerifierKey: async (circuitId) => (await bytes('verifier', circuitId)) as unknown as VerifierKey,
     getZKIR: async (circuitId) => (await bytes('ir', circuitId)) as unknown as ZKIR,
+
+    getArtifactRuntimeVersion: async () => runtimeVersion,
 
     /*
      * Concurrent, because these are the small ones and they are asked for as a

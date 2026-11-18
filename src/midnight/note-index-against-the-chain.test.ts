@@ -60,7 +60,7 @@ const THE_ANSWER = 616n;
  * one this file imagines.
  */
 async function served(): Promise<ServedEvent[]> {
-  const { Event } = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+  const { Event } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   return SERVED_RAW.map((hex) => {
     const event: any = Event.deserialize(Uint8Array.from(Buffer.from(hex, 'hex')));
     return { transactionHash: String(event.source.transactionHash), details: event.content };

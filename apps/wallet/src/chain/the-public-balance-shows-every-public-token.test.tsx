@@ -37,7 +37,7 @@ vi.mock('@midnightntwrk/wallet-sdk', async (original) => {
   return {
     ...real,
     UnshieldedWallet: () => ({
-      startWithPublicKey: () => ({
+      startWithPublicKey: async () => ({
         state: {
           subscribe: ({ next }: { next: (state: unknown) => void }) => {
             next({
@@ -77,10 +77,11 @@ describe('every public token an account holds, from the SDK to the card', () => 
     expect(syncedFromUnshielded({ [TOKEN]: 1n }, 1)).toMatchObject({ night: 0n, others: { [TOKEN]: 1n } });
   });
 
-  it('the engine the app runs reports every public token, not only NIGHT', () => {
+  it('the engine the app runs reports every public token, not only NIGHT', async () => {
     reported = { [NIGHT]: 5_000_000n, [TOKEN]: 700n };
     const seen: BalanceState[] = [];
     const stop = startUnshieldedBalance(identityFromSecret(newSecret()), 0, (s) => seen.push(s));
+    await vi.waitFor(() => expect(seen.some((s) => s.name !== 'connecting')).toBe(true));
     stop();
     const synced = seen.find((s) => s.name === 'synced');
     /* RED WHEN the engine reads NIGHT's key alone: the state then carries no

@@ -6,11 +6,13 @@
  *
  * Over real HTTP, with the company's directory and records as the service keeps them.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode } from 'midnight-identity/profile/join-code';
 import { newWrappingKeypair } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { theNetwork } from '../midnight/network.js';
 import { payeeFor } from '../testing/payees.js';
 import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany, type InvitationSend } from 'vaults-web-shared/invitation-on-device.js';
@@ -37,8 +39,8 @@ const deviceOf = (s: Seat): PeopleDevice => ({
   network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
 });
 
-const PERSON = { name: 'Payee 1', email: 'payee1@acme.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500001n, classification: 'full-time' as const, startDate: '2026-10-01' };
-const VENDOR = { name: 'Vendor 1', email: 'vendor1@vendors.co', startDate: '2026-10-01', terms: { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 90000n }, network: NETWORK };
+const PERSON = { name: 'Payee 1', email: 'payee1@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500001n, classification: 'full-time' as const, startDate: '2026-10-01' };
+const VENDOR = { name: 'Vendor 1', email: 'vendor1@vendors.co', startDate: '2026-10-01', terms: { kind: 'monthly' as const, asset: TEST_NETWORK_COLOUR, amount: 90000n }, network: NETWORK };
 const personOf = async (id: string): Promise<PersonHere> => {
   const read = await readPeopleHere(deviceOf(ADA));
   return [...read.people, ...read.notPayable.map((x) => x.here)].find((p) => p.person.id === id)!;

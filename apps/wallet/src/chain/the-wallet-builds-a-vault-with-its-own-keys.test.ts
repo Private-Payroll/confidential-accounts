@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Worker as ThreadWorker } from 'node:worker_threads';
 import * as L from '@midnightntwrk/ledger-v9';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { identityFromWords, newWords } from 'midnight-identity';
 import { answerVaultAsk } from '../../../../packages/web-shared/src/vault-worker-entry.js';
@@ -95,7 +94,6 @@ const store = () => {
 describe.skipIf(!KEYS_HERE)('THE WALLET BUILDS A VAULT WITH ITS OWN KEYS [needs the compiled vault keys in contracts/managed-vault/keys, the compiled account keys in contracts/managed/keys, and both in the wallet: `npm run compact`, `npm run compact:vault -- --full`, then `npm run vendor-keys:account`, which runs vendor-keys --account]', () => {
   const committee = committeeKeyFor(identityFromWords(newWords()), 'co_' + '7'.repeat(64) as never);
   const ACCOUNT = 'ab'.repeat(32);
-  beforeEach(() => { setNetworkId(NET as never); });
 
   it('a vault born held by the company is built from the wallet\'s pinned keys, and its deploy installs exactly this build\'s', async () => {
     // RED WHEN: the wallet builds a vault from keys it did not pin, or keys not of this build's vault, so the chain holds another vault's circuits

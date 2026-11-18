@@ -9,10 +9,12 @@
  * token, and a run whose payments name more than one token, or more than one
  * form, is refused before anything is built.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { buildRun, buildRetryRun, rootOfPayments, runAssetOf, type PaymentFacts } from './payout-tree.js';
-import { NIGHT, NO_ASSET, TEST_SETTLEMENT_ASSET, assetIdBytes } from '../core/assets.js';
+import { NIGHT, NO_ASSET, assetIdBytes } from '../core/assets.js';
 import { fromHex, toHex, type Hex } from '../core/crypto.js';
 import { payeeFor, unshieldedPayeeFor, payFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
@@ -50,7 +52,7 @@ describe('THE ROOT A PRODUCT-BUILT RUN COMMITS TO IS THE ROOT THE ACCOUNT CHECKS
       /* RED WHEN the account, handed the token the vault moves, would reach a different root from the one approved. */
       expect(accountChecks(args.leaf, args.amount, args.path, args.token)).toBe(run.tree.root);
       /* And a leaf whose token differs from the token actually moved reaches another root, which the account refuses. */
-      expect(accountChecks(args.leaf, args.amount, args.path, TEST_SETTLEMENT_ASSET)).not.toBe(run.tree.root);
+      expect(accountChecks(args.leaf, args.amount, args.path, TEST_NETWORK_COLOUR)).not.toBe(run.tree.root);
     }
     /* The product's own reading of a run's root agrees, over the leaves its records hold. */
     expect(rootOfPayments(run.tree.leaves, run.facts, TEST_TOKEN)).toBe(run.tree.root);
@@ -59,18 +61,18 @@ describe('THE ROOT A PRODUCT-BUILT RUN COMMITS TO IS THE ROOT THE ACCOUNT CHECKS
 
 describe('A RUN MIXING TOKENS OR FORMS IS REFUSED, BY NAME, BEFORE ANYTHING IS BUILT', () => {
   it('REFUSES a run whose payments are in two tokens', () => {
-    const mixed = [...privately(TEST_SETTLEMENT_ASSET).slice(0, 1), ...privately(NIGHT).slice(1)];
+    const mixed = [...privately(TEST_NETWORK_COLOUR).slice(0, 1), ...privately(NIGHT).slice(1)];
     /* RED WHEN a run may hold payments in more than one token. */
-    expect(() => buildRun(seeds, identity, mixed, vaultDetails, payFor(mixed), TEST_SETTLEMENT_ASSET))
+    expect(() => buildRun(seeds, identity, mixed, vaultDetails, payFor(mixed), TEST_NETWORK_COLOUR))
       .toThrow(/^Payment 2 is in NIGHT and this run pays tUSD\. A run pays one token\. Create a separate run for NIGHT\. Nothing was created\.$/);
-    expect(() => rootOfPayments(['00'.repeat(32), '00'.repeat(32), '00'.repeat(32)], mixed, TEST_SETTLEMENT_ASSET))
+    expect(() => rootOfPayments(['00'.repeat(32), '00'.repeat(32), '00'.repeat(32)], mixed, TEST_NETWORK_COLOUR))
       .toThrow(/^Payment 2 is in NIGHT and this run pays tUSD\./);
   });
 
   it('REFUSES a run whose payments are all in a token other than the one it pays', () => {
     const facts = privately(NIGHT);
     /* RED WHEN the run's token is not compared with its payments' token. */
-    expect(() => buildRun(seeds, identity, facts, vaultDetails, payFor(facts), TEST_SETTLEMENT_ASSET))
+    expect(() => buildRun(seeds, identity, facts, vaultDetails, payFor(facts), TEST_NETWORK_COLOUR))
       .toThrow(/^Payment 1 is in NIGHT and this run pays tUSD\./);
   });
 

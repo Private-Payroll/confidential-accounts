@@ -31,12 +31,16 @@
  * particular no method that could move a coin on anybody's instruction but the
  * product's.
  */
+import type { WalletFacade } from '@midnightntwrk/wallet-sdk-facade';
 import { SponsoredCustomerWallet, type BalancingWallet } from '../src/midnight/wallet.js';
-import { WalletFeeSponsor, type FeePayerView, type SponsorWallet } from '../src/midnight/sponsor.js';
-import { dustAppliedOf, dustIndexerWsOf, dustNumbers, dustProgressOf, dustTipAt } from './dust-wallet.js';
+import { WalletFeeSponsor, finalisedHandleFor, type FeePayerView, type SponsorWallet } from '../src/midnight/sponsor.js';
+import { finalisedTransactionOf } from '../src/midnight/finalised-transaction.js';
+import { dustIndexerHttpOf, dustNumbers, dustProgressOf, networkHeightAt } from './dust-wallet.js';
+import { dustViewHeight } from '../src/midnight/sponsor.js';
 import type { SponsoredFeeSink } from '../src/midnight/sponsored-fees.js';
 import type { FeeCeiling } from '../src/midnight/fee-ceiling.js';
 import type { FundedParties } from '../src/wiring/write-capability-for-deployment.js';
+import { NETWORK_IDS, networkRecord } from '../src/core/networks.js';
 
 /**
  * What a bring-up hands over, in the terms this file needs.
@@ -90,8 +94,23 @@ export function paidFeeFrom(
 
 const views = new WeakMap<object, FeePayerView>();
 
-/** The indexer's query address beside its subscription address: the same path, over http, without its `/ws`. */
-export const indexerHttpOf = (wsUrl: string): string => wsUrl.replace(/^ws/u, 'http').replace(/\/ws\/?$/u, '');
+/**
+ * The indexer's query address beside its subscription address, carrying the same query, a network's project
+ * token among it. A subscription address a network record names gives that record's own query address; any
+ * other is the same path over http without its `/ws`.
+ */
+export const indexerHttpOf = (wsUrl: string): string => {
+  const ws = new URL(wsUrl);
+  const recorded = NETWORK_IDS.map((id) => networkRecord(id).endpoints)
+    .find((e) => e !== null && sameAddress(new URL(e.indexerWs), ws));
+  const http = recorded ? new URL(recorded.indexer) : new URL(ws.href.replace(/^ws/u, 'http'));
+  if (!recorded) http.pathname = http.pathname.replace(/\/ws\/?$/u, '');
+  http.search = ws.search;
+  return http.toString();
+};
+
+const sameAddress = (a: URL, b: URL): boolean =>
+  a.protocol === b.protocol && a.host === b.host && a.pathname === b.pathname;
 
 /**
  * The time of the newest block the indexer names, in milliseconds: the time the chain holds a transaction's
@@ -116,13 +135,14 @@ export async function newestBlockTimeAt(httpUrl: string, fetcher: typeof fetch =
  * fee payer per request must still wait for the payment the previous one made.
  * Its facts come from the wallet's own state (how far its view has got, its
  * coins), from the wallet's own history (whether its view shows a payment), and
- * from the indexer the wallet syncs from (how far the network has got). Answers
+ * from the indexer the wallet syncs from (the newest block). How far the view
+ * has got is judged as everywhere (`dustViewHeight`). Answers
  * nothing for an object that is not a running wallet, which then pays without
  * waiting.
  */
 export function feePayerViewOf(
   facade: any,
-  tipAt: (wsUrl: string, from: bigint | null) => Promise<bigint> = (url, from) => dustTipAt(url, from),
+  tipAt: (httpUrl: string) => Promise<bigint> = (url) => networkHeightAt(url),
   note: (line: string) => void = (line) => console.log(`      fee payer: ${line}`),
   blockTimeAt: (httpUrl: string) => Promise<number> = newestBlockTimeAt,
 ): FeePayerView | undefined {
@@ -134,11 +154,11 @@ export function feePayerViewOf(
   let lastTip: bigint | null = null;
   const view: FeePayerView = {
     lastAccepted: null,
-    applied: () => dustAppliedOf(dustProgressOf(latest)),
+    applied: () => dustViewHeight(dustProgressOf(latest)),
     tip: async () => {
-      const ws = dustIndexerWsOf(facade.dust);
-      if (ws === null) throw new Error('the wallet names no indexer to read the network\'s DUST from');
-      lastTip = await tipAt(ws, view.applied());
+      const http = dustIndexerHttpOf(facade.dust);
+      if (http === null) throw new Error('the wallet names no indexer to read the network\'s newest block from');
+      lastTip = await tipAt(http);
       return lastTip;
     },
     shows: async (transactionHash: string) => {
@@ -148,9 +168,9 @@ export function feePayerViewOf(
     numbers: () => dustNumbers(latest, lastTip),
     note,
     chainTime: async () => {
-      const ws = dustIndexerWsOf(facade.dust);
-      if (ws === null) throw new Error('the wallet names no indexer to read the newest block from');
-      return blockTimeAt(indexerHttpOf(ws));
+      const http = dustIndexerHttpOf(facade.dust);
+      if (http === null) throw new Error('the wallet names no indexer to read the newest block from');
+      return blockTimeAt(http);
     },
   };
   views.set(facade, view);
@@ -169,27 +189,17 @@ export function sponsorWalletOver(
   w: LiveWalletParts,
   paidFee: (ref: string) => Promise<bigint | null>,
 ): SponsorWallet {
-  const facade = w.facade;
+  const facade: WalletFacade = w.facade;
   return {
-    shieldedSecretKeys: w.provider.zswapSecretKeys,
-    dustSecretKey: w.provider.dustSecretKey,
+    handleOf: finalisedHandleFor(facade.adoptTransaction.bind(facade)),
+    ledgerTransactionOf: finalisedTransactionOf,
     balanceFinalizedTransaction: facade.balanceFinalizedTransaction.bind(facade),
     finalizeRecipe: facade.finalizeRecipe.bind(facade),
-    submitTransaction: (tx: unknown) => w.provider.submitTx(tx as never),
-    /*
-     * What releases coins the fee payer booked and did not spend. Nothing else
-     * does: the vendor's time-based sweep is a documented no-op and its own
-     * cleanup only acts on transactions the chain answered for.
-     */
-    revert: async (booking: unknown) => { await facade.revert(booking as never); },
-    /*
-     * The whole fee, including the leg the fee payer is about to add. The
-     * cheaper call beside it in the vendor's interface prices the transaction
-     * alone and says so - which for a fee payer is the wrong number rather than
-     * a rough one, because the leg it omits is the only leg being paid for.
-     */
-    estimateFee: (tx: unknown, ttl: Date) =>
-      facade.estimateTransactionFee(tx as never, w.provider.dustSecretKey, { ttl }),
+    submitTransaction: facade.submitTransaction.bind(facade),
+    /* Releases what the fee payer booked and did not spend; nothing else does, by time or otherwise. */
+    revert: facade.revert.bind(facade),
+    /* The whole fee, the leg the fee payer adds included: the cheaper call beside it prices the transaction alone. */
+    estimateFee: (tx, ttl) => facade.estimateTransactionFee(tx, { ttl }),
     paidFee,
     balances: async () => ({ dust: w.dust(), night: w.night() }),
     view: feePayerViewOf(facade),
@@ -207,27 +217,17 @@ export function sponsorWalletOver(
  * than patching.
  */
 export function customerWalletOver(w: LiveWalletParts): SponsoredCustomerWallet {
-  const facade = w.facade;
+  const facade: WalletFacade = w.facade;
   const wallet: BalancingWallet = {
+    adoptTransaction: facade.adoptTransaction.bind(facade),
     balanceUnboundTransaction: facade.balanceUnboundTransaction.bind(facade),
-    balanceFinalizedTransaction: facade.balanceFinalizedTransaction.bind(facade),
     signRecipe: facade.signRecipe.bind(facade),
     finalizeRecipe: facade.finalizeRecipe.bind(facade),
-    submitTransaction: (tx: unknown) => w.provider.submitTx(tx as never),
-    /*
-     * **THE COINS THIS RELEASES ARE THE COMPANY'S.** The fee payer's are ours,
-     * and a booking of ours that is stranded costs us a little of the fee
-     * budget; one of theirs is stranded on a device we do not operate, where
-     * the only repair is a resync somebody has to be asked to perform.
-     */
-    revert: async (booking: unknown) => { await facade.revert(booking as never); },
+    /* The coins this releases are the company's, on a device the service does not operate. */
+    revert: facade.revert.bind(facade),
   };
   return new SponsoredCustomerWallet(
     wallet,
-    {
-      shieldedSecretKeys: w.provider.zswapSecretKeys,
-      dustSecretKey: w.provider.dustSecretKey,
-    },
     (payload) => w.provider.unshieldedKeystore.signDataAsync(payload),
     {
       coinPublicKey: w.provider.getCoinPublicKey(),

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  Event, LedgerState, Transaction, TransactionContext, WellFormedStrictness, ZswapOffer, ZswapOutput,
+  LedgerState, Transaction, TransactionContext, WellFormedStrictness, ZswapOffer, ZswapOutput,
   createShieldedCoinInfo, sampleCoinPublicKey, sampleEncryptionPublicKey, sampleRawTokenType,
-} from '@midnight-ntwrk/midnight-js-protocol/ledger';
+} from '@midnight-ntwrk/midnight-js-protocol/v9';
 
 import {
   NoteIndexRefused, NoteIndexUnaskable, NoteIndexUnreadable, creatingTransactionsAmong, transactionThatCreatedOutput,
@@ -55,8 +55,8 @@ const applyOutputs = (state: LedgerState, values: bigint[]) => {
   const colour = sampleRawTokenType();
   const outputs = values.map((v) => ZswapOutput.new(
     createShieldedCoinInfo(colour, v), 0, sampleCoinPublicKey(), sampleEncryptionPublicKey()));
-  let offer = ZswapOffer.fromOutput(outputs[0], colour, values[0]);
-  for (let i = 1; i < outputs.length; i++) offer = offer.merge(ZswapOffer.fromOutput(outputs[i], colour, values[i]));
+  let offer = ZswapOffer.fromOutput(outputs[0]!, colour, values[0]!);
+  for (let i = 1; i < outputs.length; i++) offer = offer.merge(ZswapOffer.fromOutput(outputs[i]!, colour, values[i]!));
   const now = new Date();
   const verified = Transaction.fromParts(NETWORK, offer).eraseProofs().wellFormed(state, lenient(), now);
   const [next, result] = state.apply(verified, new TransactionContext(state, blockAt(now)));
@@ -86,7 +86,7 @@ const served = (events: Array<{ serialize(): Uint8Array }>, hash: string) => ({
 describe('§1 the events of a real transaction, as the indexer would serve them', () => {
   it('deserialises every served event and keeps the transaction each one says it came from', async () => {
     const { events, outputs } = applyOutputs(LedgerState.blank(NETWORK), [100n, 7n]);
-    const hash = events[0].source.transactionHash;
+    const hash = events[0]!.source.transactionHash;
     const { post, asked } = indexerAnswering(served(events, hash));
 
     const got = await indexerNoteEvents('https://indexer.example/graphql', post).eventsOf({ hash });
@@ -105,30 +105,30 @@ describe('§1 the events of a real transaction, as the indexer would serve them'
   it('reads the index the ledger assigned, which a second transaction shows is not a position', async () => {
     const first = applyOutputs(LedgerState.blank(NETWORK), [100n, 7n]);
     const second = applyOutputs(first.next, [5n]);
-    const hash = second.events[0].source.transactionHash;
+    const hash = second.events[0]!.source.transactionHash;
     const { post } = indexerAnswering(served(second.events, hash));
     const got = await indexerNoteEvents('https://indexer.example/graphql', post).eventsOf({ hash });
 
     /* The only output of the second transaction sits at position 0 and index 2. */
     expect(got).toHaveLength(1);
-    expect(got[0].details.mtIndex).toBe(2n);
-    expect(got[0].details.commitment).toBe(second.outputs[0].commitment);
+    expect(got[0]!.details.mtIndex).toBe(2n);
+    expect(got[0]!.details.commitment).toBe(second.outputs[0]!.commitment);
   });
 
   it('refuses a real output that no contract owns, rather than recording it for a vault', async () => {
     const { events, outputs } = applyOutputs(LedgerState.blank(NETWORK), [100n]);
-    const hash = events[0].source.transactionHash;
+    const hash = events[0]!.source.transactionHash;
     const { post } = indexerAnswering(served(events, hash));
     const got = await indexerNoteEvents('https://indexer.example/graphql', post).eventsOf({ hash });
 
-    expect(() => noteIndexFrom(got, { vault: VAULT, commitment: outputs[0].commitment, transaction: { hash } }))
+    expect(() => noteIndexFrom(got, { vault: VAULT, commitment: outputs[0]!.commitment, transaction: { hash } }))
       .toThrow(/not for a contract/);
   });
 
   it('stops at a served event that does not deserialise, instead of skipping it', async () => {
     const { events } = applyOutputs(LedgerState.blank(NETWORK), [100n]);
-    const hash = events[0].source.transactionHash;
-    const whole = Buffer.from(events[0].serialize()).toString('hex');
+    const hash = events[0]!.source.transactionHash;
+    const whole = Buffer.from(events[0]!.serialize()).toString('hex');
     const cut = { data: { transactions: [{ hash, zswapLedgerEvents: [{ raw: whole }, { raw: whole.slice(0, -10) }] }] } };
     const { post } = indexerAnswering(cut);
     const read = indexerNoteEvents('https://indexer.example/graphql', post).eventsOf({ hash });
@@ -324,7 +324,7 @@ describe('§6 recording which transaction created a note, and never its index', 
     const events = await eventsFor([{ note: NOTE, index: 616n, hash: TX }]);
     expect(await recordCreatingTransaction(pool, VAULT, NOTE.nonce, events, { hash: TX }))
       .toEqual({ index: 616n, createdIn: TX, previously: 'dd'.repeat(32) });
-    expect(box.notes.notes[0].createdIn).toBe(TX);
+    expect(box.notes.notes[0]!.createdIn).toBe(TX);
   });
 
   it('writes against the pool as it is after the read, so a note added meanwhile is kept', async () => {
@@ -408,7 +408,7 @@ describe('§6 recording which transaction created a note, and never its index', 
      * repair door useless and the assertions above vacuous. */
     expect(await recordCreatingTransaction(m.pool, VAULT, LEGACY.nonce, eventsSaying(TX), { identifier: '00'.repeat(33) }))
       .toEqual({ index: 616n, createdIn: TX });
-    expect(m.box.notes.notes[0].createdIn).toBe(TX);
+    expect(m.box.notes.notes[0]!.createdIn).toBe(TX);
     /* An upper-case or 0x-prefixed answer is the same hash and is normalised,
      * not refused: the shape rule is about what the value IS. */
     const upper = memoryPool({ notes: [LEGACY] });

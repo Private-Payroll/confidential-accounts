@@ -1,6 +1,6 @@
 /**
  * **A RETRY IS REFUSED OVER ANYONE THE RUN MARKED NOT TO BE PAID, AND ITS
- * PEOPLE ARE RELEASED WHEN THE ROUND THAT COVERED THEM CAN NO LONGER PAY.**
+ * PEOPLE ARE RELEASED WHEN THE PAYMENT RUN THAT COVERED THEM CAN NO LONGER PAY.**
  *
  * What runs is the payroll service itself, with the simulated ledger under it.
  * **Two pieces are doubles, and they are named here**: the ledger's answer to
@@ -11,6 +11,7 @@
  * chain, with a window that has closed by the time any retry is asked for.
  */
 import { describe, it, expect, afterAll, vi } from 'vitest';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -155,7 +156,7 @@ describe('5. A CLOSED WINDOW RELEASES ITS PEOPLE, AND A WITHDRAWN RETRY COVERS N
       Object.assign(ledger, { proposeRun: propose });
     }
     expect(retriesOf(c).map((r) => r.proposalId)).toEqual([undefined]);
-    /* While its window is open, #2 is refused on another retry: the round may be on chain. */
+    /* While its window is open, #2 is refused on another retry: the run may be on chain. */
     await expect(aRetry(c, [1], LATER)).rejects.toThrow(/whose raise did not answer/u);
     at(EARLY.closesAt - now + 1);
     /* RED WHEN: the untold round counts after its window has closed - its people are then unretryable for ever. */

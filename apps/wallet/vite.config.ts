@@ -1,11 +1,13 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
 import tailwind from '@tailwindcss/vite';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import { embedderFrom, framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
 import { SERVED_TO_THE_WALLET } from './this-builds-account-keys.js';
+import { NETWORK } from '../../packages/identity/src/wallet/network.js';
+import { projectTokenSettings } from './project-token.js';
 
 /*
  * **WHO MAY FRAME THIS WALLET, SENT WITH EVERY DOCUMENT THE DEV AND PREVIEW
@@ -29,7 +31,18 @@ const FRAMING_HEADERS = framingHeadersFor(embedderFrom(process.env['VITE_APP_ORI
  * unreachable from 5181, which is correct behaviour and a baffling way to lose
  * a test account.
  */
-export default defineConfig({
+/**
+ * THE PACKAGES THE WALLET LOADS THAT CARRY WEBASSEMBLY: the ledger, the
+ * earlier ledger the wallet SDK reads and signs with while the chain is before
+ * the ledger-v9 fork, the on-chain runtime, and the two provers: zkir-v3 for
+ * the contracts' own circuits and zkir-v2 for the network's.
+ */
+export const WASM_PACKAGES = [
+  '@midnightntwrk/zkir-v3', '@midnightntwrk/zkir-v2', '@midnightntwrk/ledger-v9', '@midnightntwrk/ledger-v8',
+  '@midnightntwrk/onchain-runtime-v4',
+] as const;
+
+export default defineConfig(({ mode }) => ({
   /*
    * **ABSOLUTE, AND DERIVED FROM THIS FILE RATHER THAN FROM THE WORKING
    * DIRECTORY.** Vite resolves a relative `root` against the process's CWD, not
@@ -175,17 +188,20 @@ export default defineConfig({
    * own imports like any other module. The probe never noticed because a DUST
    * registration has no proof obligations and the worker never spawned.
    *
-   * The prover's circuit checker and the on-chain runtime are left as shipped
-   * for the reason the ledger is: each loader starts its WebAssembly as its own
-   * file is read, and the development server's preparation rewrites the loader
-   * so that it reads the WebAssembly before it exists. The wallet's proving
-   * worker and its account builder load both; prepared, the worker stops before
-   * its first proof. The build is not affected: it bundles them whole.
+   * The packages that carry WebAssembly (`WASM_PACKAGES`) are left as shipped:
+   * each loader starts its WebAssembly as its own file is read, and the
+   * development server's preparation rewrites the loader so that it reads the
+   * WebAssembly before it exists. The wallet's proving worker and its account
+   * builder load them; prepared, the worker stops before its first proof. The
+   * build is not affected: it bundles them whole.
    */
   optimizeDeps: {
-    exclude: [
-      '@midnightntwrk/ledger-v9', '@midnightntwrk/wallet-sdk-prover-client',
-      '@midnight-ntwrk/zkir-v2', '@midnightntwrk/onchain-runtime-v4',
-    ],
+    exclude: [...WASM_PACKAGES, '@midnightntwrk/wallet-sdk-prover-client'],
   },
-});
+  /*
+   * The project token of the network this wallet is built for, where its
+   * record asks for one, read from the build's environment or the
+   * repository's environment file and put into this build alone.
+   */
+  define: projectTokenSettings(NETWORK, (name) => loadEnv(mode, fileURLToPath(new URL('../..', import.meta.url)), name)[name]),
+}));

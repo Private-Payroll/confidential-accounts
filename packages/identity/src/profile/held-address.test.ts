@@ -12,6 +12,7 @@ import { checkShieldedAddress } from '../wallet/address-shape.js';
 import { bech32m } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
 import type { CompanyLabel } from './company-label.js';
+import { NETWORK } from '../wallet/network.js';
 
 /**
  * **THE WALLET SAYS WHICH ADDRESSES IT HOLDS WITHOUT NAMING ONE, AND THE PAGE
@@ -26,16 +27,16 @@ const mine = identityFromWords(TEST_MNEMONIC);
 const theirs = identityFromWords(
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon '
   + 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art');
-const MY_MAIN = addressFor(mine.moneyAt(0).zswap, 'stagenet').bech32;
-const MY_SUB = addressFor(mine.moneyAt(2).zswap, 'stagenet').bech32;
-const COLLEAGUE = addressFor(theirs.moneyAt(0).zswap, 'stagenet').bech32;
+const MY_MAIN = addressFor(mine.moneyAt(0).zswap, NETWORK).bech32;
+const MY_SUB = addressFor(mine.moneyAt(2).zswap, NETWORK).bech32;
+const COLLEAGUE = addressFor(theirs.moneyAt(0).zswap, NETWORK).bech32;
 /** The same coin key with the colleague's encryption key: the same "who may spend", another "who may read". */
 const swapEncryptionKey = (address: string): string => {
-  const mineChecked = checkShieldedAddress(address, 'stagenet');
-  const theirsChecked = checkShieldedAddress(COLLEAGUE, 'stagenet');
+  const mineChecked = checkShieldedAddress(address, NETWORK);
+  const theirsChecked = checkShieldedAddress(COLLEAGUE, NETWORK);
   const bytes = Uint8Array.from(
     (mineChecked.coinPublicKey + theirsChecked.encryptionPublicKey).match(/../gu)!.map((b) => parseInt(b, 16)));
-  return bech32m.encode('mn_shield-addr_stagenet', bech32m.toWords(bytes), false);
+  return bech32m.encode(`mn_shield-addr_${NETWORK}`, bech32m.toWords(bytes), false);
 };
 
 /** The ask a list answers, as the page holds it: its own nonce, its own origin, the company it asked about. */
@@ -74,7 +75,7 @@ describe('ONE DIGEST, OVER THE ADDRESS AND THE ASK\'S NONCE', () => {
     /* RED WHEN the domain is left at `v1` or the label goes in as anything but written. */
     const lp = (b: Uint8Array): Uint8Array => { const o = new Uint8Array(4 + b.length); new DataView(o.buffer).setUint32(0, b.length); o.set(b, 4); return o; };
     const t = (x: string): Uint8Array => lp(new TextEncoder().encode(x));
-    const checked = checkShieldedAddress(MY_MAIN, 'stagenet');
+    const checked = checkShieldedAddress(MY_MAIN, NETWORK);
     const keys = Uint8Array.from((checked.coinPublicKey + checked.encryptionPublicKey).match(/../gu)!.map((b) => parseInt(b, 16)));
     const parts = [new TextEncoder().encode('midnight-identity/held-address/v2'), t('n1'), t(ORIGIN), t(COMPANY), t(checked.network), keys];
     const whole = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -122,7 +123,7 @@ describe('THE WALLET\'S LIST', () => {
 
   it('refuses to answer for more addresses than it has room for', () => {
     const many = Array.from({ length: HELD_ADDRESS_SLOTS + 1 }, (_, i) =>
-      addressFor(mine.moneyAt(i === 1 ? 40 : i).zswap, 'stagenet').bech32);
+      addressFor(mine.moneyAt(i === 1 ? 40 : i).zswap, NETWORK).bech32);
     /* RED WHEN a longer list is sent: its length would say how many accounts there are. */
     expect(() => heldAddressList(S('n1'), many)).toThrow(/at most/u);
   });
@@ -178,7 +179,7 @@ describe('THE RELEASE CARRIES IT, AND THE PAGE TESTS ONLY WHAT IT HAS', () => {
     expect(text.includes('shield-addr')).toBe(false);
     expect(text.includes(MY_MAIN)).toBe(false);
     for (const a of [MY_MAIN, MY_SUB]) {
-      const keys = checkShieldedAddress(a, 'stagenet');
+      const keys = checkShieldedAddress(a, NETWORK);
       expect(text.includes(keys.coinPublicKey)).toBe(false);
       expect(text.includes(keys.encryptionPublicKey)).toBe(false);
     }

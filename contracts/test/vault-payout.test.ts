@@ -40,6 +40,10 @@ import { toHex, fromHex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
 import { TEST_TOKEN } from '../../src/testing/assets.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+
+/* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
+const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW.
@@ -111,24 +115,26 @@ const govChange = (seed: number): Change => change(0n, seed);
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-describe('a vault pays one payee of an approved run', () => {
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault pays one payee of an approved run [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   let sim: AccountSimulator;
   let vault: Vault<VaultPrivate>;
   let vaultAddr: string;
   let vaultState: any;
   let priv: VaultPrivate;
 
-  /** The account's state, as the provider hands it to a cross-contract call. */
-  const provider = () => ({
-    getContractState: async (_block: string, address: unknown) =>
-      String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
-  });
 
   const vaultAddrBytes = () => Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
 
-  const payoutContext = () => createCircuitContext<VaultPrivate>(
-    'payout', vaultAddr as never, BLOCK, vaultState, priv,
-    provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
+  const payoutContext = () => createCircuitContext<VaultPrivate>({
+      circuitId: 'payout',
+      contractAddress: vaultAddr as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: vaultState,
+      privateState: priv,
+      crossContract: sim.crossContract(),
+      time: VAULT_NOW,
+      parentBlockHash: BLOCK,
+    });
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -146,9 +152,16 @@ describe('a vault pays one payee of an approved run', () => {
     await startTheVault({
       sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
       call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
-          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
-          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
+            circuitId: circuit as never,
+            contractAddress: vaultAddr as never,
+            coinPublicKeyOrZswapState: BLOCK,
+            contractState: vaultState,
+            privateState: {} as never,
+            crossContract: sim.crossContract(),
+            time: VAULT_NOW,
+            parentBlockHash: BLOCK,
+          }), ...a);
         vaultState = r.context.callContext.currentQueryContext.state;
         carryTheAccount(sim, r.context);
       },
@@ -158,7 +171,13 @@ describe('a vault pays one payee of an approved run', () => {
     const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
     priv = { coin: { ...coin, mt_index: 0n } };
     const dep = await vault.impureCircuits.deposit(
-      createCircuitContext<VaultPrivate>('deposit', vaultAddr as never, BLOCK, vaultState, priv),
+      createCircuitContext<VaultPrivate>({
+          circuitId: 'deposit',
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState,
+          privateState: priv,
+        }),
       coin);
     vaultState = dep.context.callContext.currentQueryContext.state;
   });
@@ -615,7 +634,13 @@ describe('a vault pays one payee of an approved run', () => {
      * pool: a second deposit is another note, not a merge and not a conflict. */
     const second = { nonce: bytes(0x88), color: TOKEN_BYTES, value: 500n };
     const dep = await vault.impureCircuits.deposit(
-      createCircuitContext<VaultPrivate>('deposit', vaultAddr as never, BLOCK, vaultState, priv),
+      createCircuitContext<VaultPrivate>({
+          circuitId: 'deposit',
+          contractAddress: vaultAddr as never,
+          coinPublicKeyOrZswapState: BLOCK,
+          contractState: vaultState,
+          privateState: priv,
+        }),
       second);
     const pool = vaultLedger(dep.context.callContext.currentQueryContext.state as never).notes;
     expect(pool.size()).toBe(2n);

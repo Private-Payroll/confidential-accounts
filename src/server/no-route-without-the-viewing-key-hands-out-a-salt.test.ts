@@ -33,7 +33,7 @@ import { TEST_TOKEN } from '../testing/assets.js';
 
 const SERVER = join(__dirname);
 /** Every file that declares a route, the fee payer's included. */
-const FILES = ['index.ts', 'company-vaults.ts', 'vault-records-route.ts', 'vault-artefacts.ts', 'proposal-relays.ts', 'signer-routes.ts', 'run-routes.ts', '../fee-payer/service.ts'];
+const FILES = ['index.ts', 'payslip-routes.ts', 'company-vaults.ts', 'vault-records-route.ts', 'vault-artefacts.ts', 'proposal-relays.ts', 'signer-routes.ts', 'run-routes.ts', '../fee-payer/service.ts'];
 
 /**
  * Every function in this service whose answer carries a run's salt or a payee's

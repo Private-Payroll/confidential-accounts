@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { Worker as ThreadWorker } from 'node:worker_threads';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as accountModule from '../../../../contracts/managed/contract/index.js';
 import { witnesses } from '../../../../contracts/src/witnesses.js';
 import { privateStateFor, leafOfDevice, COMPANY_LABEL } from '../../../../contracts/test/simulator.js';
@@ -111,7 +110,6 @@ describe.skipIf(!CAN_PROVE_HERE)('THE WALLET PROVES THE PAY-RECORD KEY\'S CALLS 
   });
 
   beforeEach(async () => {
-    setNetworkId(NET as never);
     chain = new Chain();
     const init = await new (accountModule as any).Contract(witnesses).initialState(
       runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), COMPANY_LABEL);
@@ -169,7 +167,7 @@ describe.skipIf(!CAN_PROVE_HERE)('THE WALLET PROVES THE PAY-RECORD KEY\'S CALLS 
   it('the proposal is withdrawn by a call built and proved in the wallet, and the chain checks its proof and closes it', async () => {
     // RED WHEN: a withdrawal proved in the wallet is not the call the account takes, so a seat cannot withdraw its own proposal from the wallet
     const round = await thePayKeyRound();
-    const unproved = await buildGovernedCall({ ...(await deps()), prove: async (u: any) => u }, {
+    const unproved = await buildGovernedCall({ ...(await deps()), network: NET, prove: async (u: any) => u }, {
       account: company, order: round.propose, material, opened: round.opened,
       chain: { accountState: chain.state.index(company).serialize(), parameters: L.LedgerParameters.initialParameters().serialize() },
     });

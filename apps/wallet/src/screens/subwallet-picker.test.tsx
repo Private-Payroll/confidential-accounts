@@ -13,6 +13,7 @@ import { ORIGINAL_SLOT } from '../accounts/wallets-held.js';
 import { mapAsText } from '../components/piece-map.js';
 import { switchWallet } from '../shell/wallets.js';
 import { Home } from './home.js';
+import { NETWORK } from '../config.js';
 
 /*
  * THE PICKER, HELD TO ITS RULES.
@@ -191,7 +192,7 @@ describe('the slots always exist and are always offered — §2.3', () => {
     const last = rows().find((r) => r.getAttribute('data-account') === '11');
     fireEvent.click(last!);
     expect(barName(container)).toBe('Subwallet 10');
-    expect(shortAddress()).toMatch(/^mn_shield-addr_stagenet1/);
+    expect(shortAddress()).toMatch(new RegExp(`^mn_shield-addr_${NETWORK}1`));
   });
 });
 
@@ -252,7 +253,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
      * reveal — the name decorates, the address is the value. */
     const full = document.querySelector('[data-addr="shielded"] .address-full')?.textContent;
     expect(writeText).toHaveBeenCalledWith(full);
-    expect(full).toMatch(/^mn_shield-addr_stagenet1/);
+    expect(full).toMatch(new RegExp(`^mn_shield-addr_${NETWORK}1`));
 
     /* The unshielded block holds the same rule for ITS string. */
     fireEvent.click(screen.getByText('Copy the unshielded address'));
@@ -260,7 +261,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
       .toBeTruthy();
     const unshielded = document.querySelector('[data-addr="unshielded"] .address-full')?.textContent;
     expect(writeText).toHaveBeenCalledWith(unshielded);
-    expect(unshielded).toMatch(/^mn_addr_stagenet1/);
+    expect(unshielded).toMatch(new RegExp(`^mn_addr_${NETWORK}1`));
   });
 
   it('opens into the last-used wallet next time', () => {

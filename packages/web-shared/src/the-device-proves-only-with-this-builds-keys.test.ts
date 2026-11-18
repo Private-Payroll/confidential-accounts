@@ -104,13 +104,13 @@ describe.skipIf(!HAS_KEYS)('THE ONE SOURCE THE VAULT WORKER PROVES FROM [needs c
   it('a vault deployed from this device carries this build\'s verifying keys, never ones the service changed', async () => {
     /* RED WHEN: the verifying keys a deploy puts on the chain are read by bare circuit name without a check. */
     const s = aService();
-    const zk = zkConfigOver(thisBuildsSources({ fetchImpl: s.fetchImpl, cache: new MemoryArtefactCache() }, BUILD).source, byCircuitName);
+    const zk = zkConfigOver(thisBuildsSources({ fetchImpl: s.fetchImpl, cache: new MemoryArtefactCache() }, BUILD).source, byCircuitName, '0.21.0');
     const keys = await zk.getVerifierKeys([...VAULT_CIRCUITS]);
     expect(keys.map(([c]) => c)).toEqual([...VAULT_CIRCUITS]);
 
     const t = aService();
     t.changed.add('/artefacts/vault/keys/retire.verifier');
-    const zkChanged = zkConfigOver(thisBuildsSources({ fetchImpl: t.fetchImpl, cache: new MemoryArtefactCache() }, BUILD).source, byCircuitName);
+    const zkChanged = zkConfigOver(thisBuildsSources({ fetchImpl: t.fetchImpl, cache: new MemoryArtefactCache() }, BUILD).source, byCircuitName, '0.21.0');
     await refused(zkChanged.getVerifierKeys([...VAULT_CIRCUITS]), 'other-bytes-served');
   });
 

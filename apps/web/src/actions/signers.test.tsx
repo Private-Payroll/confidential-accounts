@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { privateAddressHere } from '../addresses-here.test-support.js';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { VIEWS } from '../pages.js';
@@ -79,7 +80,7 @@ Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return fa
 const EN = ENGLISH;
 const en = (key: string): string => EN[key] ?? key;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
-const PRIVATE = 'mn_shield-addr_stagenet1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyq4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kk6mtdd4kkcvfvr0u';
+const PRIVATE = privateAddressHere(0x11);
 const HEX = (n: number): string => n.toString(16).padStart(2, '0').repeat(32);
 
 const standing = (id: string, name: string, accepted: boolean, seatOnChain: boolean, over: Record<string, unknown> = {}) => ({

@@ -30,6 +30,7 @@ import {
 import { PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions } from '../midnight/vault-journal.js';
 import { newWrappingKeypair } from '../core/crypto.js';
 import { depositNonceKeyFor } from '../midnight/deposit-nonce.js';
+import { NETWORK } from 'midnight-identity/network';
 
 const DB = process.env.TEST_DATABASE_URL;
 const withDb = DB ? describe : describe.skip;
@@ -81,13 +82,13 @@ describe('a vault is filed under a hash of its address, never the address', () =
 });
 
 describe('a vault the operator tools keep in files is not given a second record here', () => {
-  const stateWith = (registry: unknown, name = 'stagenet-vaults.json'): string => {
+  const stateWith = (registry: unknown, name = `${NETWORK}-vaults.json`): string => {
     const d = mkdtempSync(join(tmpdir(), 'vault-records-state-'));
     writeFileSync(join(d, name), typeof registry === 'string' ? registry : JSON.stringify(registry));
     return d;
   };
   const registryNaming = (address: string) => ({
-    network: 'stagenet', savedAt: '2026-09-16T00:00:00.000Z',
+    network: NETWORK, savedAt: '2026-09-16T00:00:00.000Z',
     vaults: {
       'payroll-test-9': {
         name: 'payroll-test-9', contractAddress: address, accountAddress: '00'.repeat(32),
@@ -269,23 +270,25 @@ withDb('against a real database', () => {
       'RED WHEN: a record sealed for one vault is filed under another').rejects.toThrow(/DIFFERENT vault/);
   });
 
-  it('A WRITE THAT RETURNS IS DURABLE: it commits with synchronous_commit on even where the database default is off', async () => {
-    await admin.unsafe(`ALTER DATABASE "${OWN_DB}" SET synchronous_commit = off`);
-    const { default: postgres } = await import('postgres');
-    const lax = postgres(url, { onnotice: () => {} });
-    try {
-      const [d] = await lax`SELECT current_setting('synchronous_commit') AS s`;
-      expect(d?.s, 'the fixture did not take: this connection does not default to off').toBe('off');
-      const v = aVault(); const s = signers();
-      await expect(
-        (await openVaultRecords(lax, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE })).of('payment-journal').put(v, sealPool(v, { attempts: [] } as never, s.list, 1)),
-        'RED WHEN: the write stops setting synchronous_commit for its own transaction, and is refused for committing laxly',
-      ).resolves.toBeUndefined();
-      expect(await (await openVaultRecords(lax, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE })).of('payment-journal').get(v)).not.toBeNull();
-    } finally {
-      await admin.unsafe(`ALTER DATABASE "${OWN_DB}" RESET synchronous_commit`);
-      await lax.end({ timeout: 2 });
-    }
+  it('A WRITE THAT RETURNS IS DURABLE: it commits with synchronous_commit on even where every transaction starts with it off', async () => {
+    /*
+     * The lax default is set inside each transaction, where the write runs, and not on the database. A database
+     * default (ALTER DATABASE ... SET) reaches only a server connection started after it, and a pooled connection
+     * string hands out server connections the pooler opened earlier, so through a pooler that default never takes.
+     */
+    const lax: any = (strings: TemplateStringsArray, ...values: unknown[]) => sql(strings, ...values);
+    lax.begin = (fn: (tx: any) => Promise<unknown>) => sql.begin(async (tx: any) => {
+      await tx`SET LOCAL synchronous_commit TO off`;
+      return fn(tx);
+    });
+    const [d] = await lax.begin((tx: any) => tx`SELECT current_setting('synchronous_commit') AS s`);
+    expect(d?.s, 'the fixture did not take: a transaction on this connection does not start with it off').toBe('off');
+    const v = aVault(); const s = signers();
+    await expect(
+      (await openVaultRecords(lax, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE })).of('payment-journal').put(v, sealPool(v, { attempts: [] } as never, s.list, 1)),
+      'RED WHEN: the write stops setting synchronous_commit for its own transaction, and is refused for committing laxly',
+    ).resolves.toBeUndefined();
+    expect(await records.of('payment-journal').get(v)).not.toBeNull();
   });
 
   it('A WRITE THAT WOULD COMMIT LAXLY IS ROLLED BACK: a connection that loses the setting files nothing', async () => {

@@ -33,9 +33,12 @@ import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
+import { contractCallsOf } from './contract-call-built.js';
+import { transactionSettingsFor } from '../../../src/midnight/providers.js';
+import { accountModuleFor } from '../../../src/midnight/contract-modules.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import { createProofProvider } from '@midnight-ntwrk/midnight-js-types';
+import * as midnightTypes from '@midnight-ntwrk/midnight-js-types';
+import { createLedger9ProofProvider, LedgerTransaction } from '@midnight-ntwrk/midnight-js-types';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
 import { buildPublicDeposit, buildVaultDeploy, readTransaction, whyNotOnlyThisPublicDeposit, type VaultBuilderDeps } from './vault-builder.js';
 import { whyNotTheDepositBuilt } from './vault-operation.js';
@@ -83,11 +86,15 @@ class ThreadOnNode {
   constructor(_url: unknown, _options?: unknown) {
     threads.push(this);
     const entry = JSON.stringify(`file://${join(ROOT, 'packages/web-shared/src/vault-proof-worker-entry.ts')}`);
-    // The entry talks to a worker scope; a node thread has `parentPort`. The scope also carries `crypto`, which the
-    // proving code reads its randomness from, as a browser's worker scope does.
+    // The entry talks to a worker scope; a node thread has `parentPort`. The scope is the thread's own global with
+    // the two worker calls on top, so it carries everything else a browser's worker scope has, and `crypto`, which
+    // the proving code reads its randomness from, is set on it directly: node's own reads only off the global. The entry is TypeScript importing by `.js` names, as the page's
+    // bundler serves it, so the thread loads it through the repository's TypeScript loader first.
     this.worker = new ThreadWorker(`const { parentPort } = require('node:worker_threads');
-globalThis.self = { crypto: globalThis.crypto, postMessage: (m) => parentPort.postMessage(m),
-  addEventListener: (type, l) => { parentPort.on('message', (data) => l({ data })); } };
+require(require.resolve('tsx/esm/api', { paths: [${JSON.stringify(ROOT)}] })).register();
+globalThis.self = Object.create(globalThis, { crypto: { value: globalThis.crypto },
+  postMessage: { value: (m) => parentPort.postMessage(m) },
+  addEventListener: { value: (type, l) => { parentPort.on('message', (data) => l({ data })); } } });
 import(${entry});`, { eval: true });
   }
   postMessage(message: { op?: string }): void { this.told.push(message); this.worker.postMessage(message); }
@@ -105,7 +112,8 @@ describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEV
   const compiled = CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
     CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); }, nonceSecret: () => { throw new Error('a deposit spends no note'); } } as never));
   const baseDeps = (): Omit<VaultBuilderDeps, 'prove'> => ({
-    ledger: L, runtimeState: (runtime as any).ContractState, compiled, zkConfig: zk, network: NET, contracts: contracts as any,
+    ledger: L, runtimeState: (runtime as any).ContractState, compiled, zkConfig: zk, network: NET,
+    contracts: contractCallsOf({ contracts, types: midnightTypes, ledger: L, ContractState: runtime.ContractState, settingsFor: transactionSettingsFor, accountModuleFor }),
   } as never);
   const parameters = L.LedgerParameters.initialParameters().serialize();
 
@@ -118,7 +126,6 @@ describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEV
   let tamper: ((path: string) => Uint8Array | null) | null = null;
 
   beforeAll(async () => {
-    setNetworkId(NET as never);
     const built = await buildVaultDeploy({ ...baseDeps(), prove: async (tx: any) => tx } as VaultBuilderDeps, { account: ACCOUNT });
     vault = built.vault;
     deployTx = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', built.proven);
@@ -282,6 +289,9 @@ describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEV
     return bytes!;
   };
   const fresh = (bytes: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytes) as any;
+  /* A proof provider takes the sealed handle of an unproven transaction and answers the sealed handle of the proven one. */
+  const sealed = (bytes: Uint8Array) => LedgerTransaction.seal('v9', 'Unproven', fresh(bytes));
+  const opened = (handle: { deserialize(as: { v9: typeof L.Transaction }): unknown }) => handle.deserialize({ v9: L.Transaction }) as any;
   const material = () => fileKeyMaterialSource(PLACES.compiled, PLACES.params);
   const spawnNodeThread = () => new ThreadOnNode(undefined) as never;
 
@@ -289,9 +299,9 @@ describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEV
     const unproven = await unprovenDeposit();
     const erased = Buffer.from(fresh(unproven).eraseProofs().serialize());
     const source = await material();
-    const oneThread = await (await wasmProofProvider(source)).proveTx(fresh(unproven), { circuitId: CIRCUIT } as never) as any;
+    const oneThread = opened(await (await wasmProofProvider(source)).proveTx(sealed(unproven)));
     const provider = provingOnWorkers(source, spawnNodeThread);
-    const twoThreads = await (createProofProvider(provider as never) as any).proveTx(fresh(unproven), { circuitId: CIRCUIT }) as any;
+    const twoThreads = opened(await createLedger9ProofProvider(provider).proveTx(sealed(unproven)));
     provider.stop();
     for (const [how, tx] of [['one thread', oneThread], ['two threads', twoThreads]] as const) {
       const again = L.Transaction.deserialize('signature', 'proof', 'pre-binding', tx.serialize()) as any;
@@ -311,12 +321,14 @@ describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEV
         getParams: (k) => real.getParams(k),
         lookupKey: async (location) => { const m = (await real.lookupKey(location))!; return { ...m, verifierKey: bytes(m.verifierKey) }; },
       });
-      return (provider as any).proveTx(fresh(unproven), { circuitId: CIRCUIT });
+      return opened(await provider.proveTx(sealed(unproven)));
     };
     const other = (circuit: string) => Uint8Array.from(readFileSync(placeOf(`keys/${circuit}.verifier`)));
     const honest = await withVerifier((v) => v);
     expect(proofBytesOf(honest).length, 'the honest key proves, so a refusal below is the key\'s').toBeGreaterThan(1000);
-    await expect(withVerifier(() => other('forgetUnshielded')), 'RED WHEN: the prover stops checking its proof against the verifier key it is handed')
+    /* `retire` is proved at the deposit's own size (k=9), so the one parameter file this test fetches serves both
+     * and what refuses is the proof against the key, not a missing file. */
+    await expect(withVerifier(() => other('retire')), 'RED WHEN: the prover stops checking its proof against the verifier key it is handed')
       .rejects.toThrow(/Invalid proof/);
     await expect(withVerifier((v) => { const c = Uint8Array.from(v); c[600] = c[600]! ^ 1; return c; }),
       'RED WHEN: a verifier key altered by one byte is used').rejects.toThrow(/problem reading the verifier key/);

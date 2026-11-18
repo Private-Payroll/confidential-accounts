@@ -49,7 +49,7 @@ describe.skipIf(!HAS_DEPOSIT_CIRCUIT)('THE SIZE EACH SERVED CIRCUIT NEEDS IS REA
    */
   let depositK = 0;
   beforeAll(async () => {
-    const [size] = await sizesFromTheCircuits([DEPOSIT_CIRCUIT]);
+    const [size] = await sizesFromTheCircuits([{ file: DEPOSIT_CIRCUIT, kind: 'contract' }]);
     if (size === undefined || !('k' in size)) throw new Error(`the compiled deposit circuit could not be read: ${size === undefined ? 'no answer' : size.why}`);
     depositK = size.k;
   });
@@ -58,7 +58,7 @@ describe.skipIf(!HAS_DEPOSIT_CIRCUIT)('THE SIZE EACH SERVED CIRCUIT NEEDS IS REA
     /* RED WHEN: k is taken from anywhere but the compiled bytes - a constant, a list, or the file's name - or
      * one unreadable file costs the answers for the others. The two values were read off the circuit library
      * with these exact circuits. */
-    const zkir: any = await import('@midnight-ntwrk/zkir-v2');
+    const zkir: any = await import('@midnightntwrk/zkir-v2');
     const circuit = (n: number): Uint8Array => zkir.jsonIrToBinary(JSON.stringify({
       version: { major: 2, minor: 0 }, do_communications_commitment: false, num_inputs: 1,
       instructions: Array.from({ length: n }, () => ({ op: 'constrain_bits', var: 0, bits: n === 1 ? 8 : 248 })),
@@ -67,7 +67,7 @@ describe.skipIf(!HAS_DEPOSIT_CIRCUIT)('THE SIZE EACH SERVED CIRCUIT NEEDS IS REA
     writeFileSync(join(dir, 'small.bzkir'), circuit(1));
     writeFileSync(join(dir, 'larger.bzkir'), circuit(10));
     writeFileSync(join(dir, 'broken.bzkir'), 'not a circuit');
-    const sizes = await sizesFromTheCircuits([join(dir, 'small.bzkir'), join(dir, 'broken.bzkir'), join(dir, 'larger.bzkir')]);
+    const sizes = await sizesFromTheCircuits(['small.bzkir', 'broken.bzkir', 'larger.bzkir'].map((f) => ({ file: join(dir, f), kind: 'network' as const })));
     expect(sizes[0]).toEqual({ k: 4 });
     expect(sizes[1]).toHaveProperty('why');
     expect(sizes[2]).toEqual({ k: 12 });
@@ -93,8 +93,8 @@ describe.skipIf(!HAS_DEPOSIT_CIRCUIT)('THE SIZE EACH SERVED CIRCUIT NEEDS IS REA
       mkdirSync(dirname(c.ir), { recursive: true });
       writeFileSync(c.ir, name === 'retire' ? 'unreadable' : name);
     }
-    const readSizes: ReadSizes = async (files) => files.map((f) => {
-      const name = readFileSync(f, 'utf8');
+    const readSizes: ReadSizes = async (files) => files.map(({ file }) => {
+      const name = readFileSync(file, 'utf8');
       return name === 'unreadable' ? { why: 'not a circuit' } : { k: sizes[name] ?? unknownK };
     });
     const { needs, unread } = await parametersNeeded(circuits, readSizes);
@@ -113,6 +113,46 @@ describe.skipIf(!HAS_DEPOSIT_CIRCUIT)('THE SIZE EACH SERVED CIRCUIT NEEDS IS REA
  * circuit is missing, so a job that built the keys and lost the circuit would pass having read nothing. The job
  * that builds the keys sets KEYS_MUST_BE_BUILT, and there a missing circuit is a failure naming it.
  */
+const DEPOSIT_SOURCE = fileURLToPath(new URL('../../contracts/managed-vault/zkir/deposit.zkir', import.meta.url));
+
+describe.skipIf(!existsSync(DEPOSIT_SOURCE))('EACH CIRCUIT IS READ IN ITS OWN FORMAT [needs contracts/managed-vault/zkir/deposit.zkir; `npm run compact` then `npm run compact:vault -- --full` build it]', () => {
+  /*
+   * RED WHEN: a contract's circuit is read with the network circuits' reader, or the other way round,
+   * so a served circuit's size cannot be read and its proving parameters are never fetched.
+   */
+  it('reads a contract circuit as a contract\'s and a network circuit as the network\'s, and refuses each read as the other', async () => {
+    const v3: any = await import('@midnightntwrk/zkir-v3');
+    const v2: any = await import('@midnightntwrk/zkir-v2');
+    const dir = mkdtempSync(join(tmpdir(), 'formats-'));
+    const contract = join(dir, 'deposit.bzkir');
+    const network = join(dir, 'network.bzkir');
+    writeFileSync(contract, v3.jsonIrToBinary(readFileSync(DEPOSIT_SOURCE, 'utf8')));
+    writeFileSync(network, v2.jsonIrToBinary(JSON.stringify({
+      version: { major: 2, minor: 0 }, do_communications_commitment: false, num_inputs: 1,
+      instructions: [{ op: 'constrain_bits', var: 0, bits: 8 }],
+    })));
+    const sizes = await sizesFromTheCircuits([
+      { file: contract, kind: 'contract' }, { file: network, kind: 'network' },
+      { file: contract, kind: 'network' }, { file: network, kind: 'contract' },
+    ]);
+    expect(sizes[0]).toHaveProperty('k');
+    expect(sizes[1]).toEqual({ k: 4 });
+    expect(sizes[2]).toHaveProperty('why');
+    expect(sizes[3]).toHaveProperty('why');
+  });
+
+  it('names a circuit of a format it does not know instead of reading it', async () => {
+    const sizes = await sizesFromTheCircuits([{ file: DEPOSIT_SOURCE, kind: 'constructor' as never }]);
+    expect(sizes[0]).toEqual({ why: expect.stringMatching(/format this server does not prove/) });
+  });
+
+  it('marks every served circuit with its format: the vault\'s and the account\'s are contracts\', the shielded ones the network\'s', () => {
+    const circuits = servedCircuits({ compiled: '/c', account: '/a', params: '/p' });
+    for (const c of circuits) expect(c.kind, c.label).toBe(c.label.endsWith('(network)') ? 'network' : 'contract');
+    expect(circuits.some((c) => c.kind === 'network')).toBe(true);
+  });
+});
+
 const KEYS_MUST_BE_BUILT = (process.env.KEYS_MUST_BE_BUILT ?? '') !== '';
 
 describe.skipIf(!KEYS_MUST_BE_BUILT)('where the checks built the keys, the size each served circuit needs is read [needs KEYS_MUST_BE_BUILT, which the job that runs `npm run compact` then `npm run compact:vault -- --full` sets]', () => {
@@ -129,7 +169,7 @@ describe.skipIf(!KEYS_MUST_BE_BUILT)('where the checks built the keys, the size 
  * The digests are those of the stand-in bytes, so a check that passes proves the comparison and not the table.
  */
 const STAND_INS = await (async () => {
-  const zkir: any = await import('@midnight-ntwrk/zkir-v2');
+  const zkir: any = await import('@midnightntwrk/zkir-v2');
   const circuit = (n: number): Uint8Array => zkir.jsonIrToBinary(JSON.stringify({
     version: { major: 2, minor: 0 }, do_communications_commitment: false, num_inputs: 1,
     instructions: Array.from({ length: n }, () => ({ op: 'constrain_bits', var: 0, bits: n === 1 ? 8 : 248 })),
@@ -138,7 +178,7 @@ const STAND_INS = await (async () => {
   const files = [join(dir, 'small.bzkir'), join(dir, 'larger.bzkir')];
   writeFileSync(files[0]!, circuit(1));
   writeFileSync(files[1]!, circuit(10));
-  const [small, larger] = await sizesFromTheCircuits(files);
+  const [small, larger] = await sizesFromTheCircuits(files.map((file) => ({ file, kind: 'network' as const })));
   if (small === undefined || !('k' in small) || larger === undefined || !('k' in larger)) throw new Error('a stand-in circuit could not be read');
   return { small: { bytes: readFileSync(files[0]!), k: small.k }, larger: { bytes: readFileSync(files[1]!), k: larger.k } };
 })();
@@ -148,7 +188,8 @@ const GENUINE_SMALL = Buffer.from(`parameters for circuits of size 2^${STAND_INS
 const GENUINE_DEPOSIT = Buffer.from(`parameters for circuits of size 2^${STAND_INS.larger.k}`);
 const DIGESTS: Record<string, string> = { [SMALL_PARAMETERS]: sha256(GENUINE_SMALL), [DEPOSIT_PARAMETERS]: sha256(GENUINE_DEPOSIT) };
 const published = (name: string): string | undefined => DIGESTS[name];
-const readSizes: ReadSizes = sizesFromTheCircuits;
+/** Every stand-in is written in the network circuits' format, so each is read as one; formats are pinned above. */
+const readSizes: ReadSizes = (files) => sizesFromTheCircuits(files.map((f) => ({ ...f, kind: 'network' })));
 /** The deposit gets the larger stand-in and every other served circuit the small one. */
 const standInFor = (label: string): Buffer => (label.split(' ')[0] === 'deposit' ? STAND_INS.larger.bytes : STAND_INS.small.bytes);
 

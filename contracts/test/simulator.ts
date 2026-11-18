@@ -38,6 +38,9 @@
  */
 import {
   type CircuitContext,
+  type ContractState,
+  type CrossContractInputs,
+  ContractOperation,
   sampleContractAddress,
   createConstructorContext,
   createCircuitContext,
@@ -45,6 +48,7 @@ import {
 import { Contract, type Ledger, ledger, pureCircuits } from '../managed/contract/index.js';
 import * as LedgerV9 from '@midnightntwrk/ledger-v9';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import {
   witnesses,
   type AccountPrivateState,
@@ -57,6 +61,8 @@ import {
   buildPayoutTree, rootOfLeaves, type PayoutLeafInput, type PayoutTree,
 } from '../../src/midnight/payout-tree.js';
 import { toHex } from '../../src/core/crypto.js';
+import { crossContractInputsFor } from '../../src/midnight/contract-modules.js';
+import { accountVerifierKeysIn } from '../../src/server/vault-chain.js';
 import { retryArgsOf, type RetryOfALeg } from '../../src/midnight/spending-policy-record.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
@@ -282,6 +288,9 @@ export const change = (amount: bigint, seed = 9, asset: Uint8Array = TEST_TOKEN_
   salt: bytes(seed + 700),
 });
 
+
+/** This build's account verifier keys, read once from contracts/managed/keys. */
+const ACCOUNT_VERIFIER_KEYS = accountVerifierKeysIn(fileURLToPath(new URL('../..', import.meta.url)));
 export class AccountSimulator {
   readonly contract: Contract<AccountPrivateState>;
   readonly address: string;
@@ -528,17 +537,14 @@ export class AccountSimulator {
 
   /** A context for one call. The circuit id is part of it, so it is per call. */
   private contextFor(circuitId: string): CircuitContext<AccountPrivateState> {
-    return createCircuitContext<AccountPrivateState>(
-      circuitId,
-      this.address as never,
-      this.zswap ?? '0'.repeat(64),
-      this.contractState,
-      this.privateState,
-      undefined,
-      undefined,
-      undefined,
-      this.blockTime,
-    );
+    return createCircuitContext<AccountPrivateState>({
+        circuitId: circuitId,
+        contractAddress: this.address as never,
+        coinPublicKeyOrZswapState: this.zswap ?? '0'.repeat(64),
+        contractState: this.contractState,
+        privateState: this.privateState,
+        time: this.blockTime,
+      });
   }
 
   /**
@@ -571,6 +577,30 @@ export class AccountSimulator {
   get contractStateForCall(): unknown {
     const cs: any = this.initialContractState;
     cs.data = this.contractState.data ?? this.contractState;
+    return cs;
+  }
+
+  /**
+   * What a vault circuit's context needs to call into this account: its compiled module and its current state,
+   * through the one module provider the service uses for that call (`crossContractInputsFor`).
+   */
+  crossContract(): CrossContractInputs {
+    return crossContractInputsFor(this.address, async () => this.keyedForCall(await ACCOUNT_VERIFIER_KEYS()));
+  }
+
+  /**
+   * The state a cross-contract call is bound against, with this build's verifier key on every deployed circuit. A
+   * vault's call into its account binds only to an operation that carries a verifier key, which the chain's copy
+   * gets at deploy and a constructor's state does not; the keys are read from the build on disk, so a build
+   * without keys fails here, naming the missing file, rather than inside the call.
+   */
+  private keyedForCall(keys: ReadonlyMap<string, Uint8Array>): ContractState {
+    const cs = this.contractStateForCall as ContractState;
+    for (const [circuit, key] of keys) {
+      const op = new ContractOperation();
+      op.verifierKey = key;
+      cs.setOperation(circuit, op);
+    }
     return cs;
   }
 

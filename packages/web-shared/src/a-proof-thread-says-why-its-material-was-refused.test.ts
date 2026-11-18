@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 
 /* The stand-in prover: asks for one location's material and the parameters more than once, then proves or fails on its own. */
 const prover = vi.hoisted(() => ({
-  location: 'contract:ab/payout?vk=01',
+  location: 'contract:abababababababababababababababababababababababababababababababab/payout?vk=0101010101010101010101010101010101010101010101010101010101010101',
   failsOnItsOwn: false,
   run: async (material: any): Promise<Uint8Array> => {
     const at = prover.location;
@@ -25,12 +25,17 @@ const prover = vi.hoisted(() => ({
     return new Uint8Array([1]);
   },
 }));
-vi.mock('@midnight-ntwrk/zkir-v2', () => ({
-  prove: async (_p: Uint8Array, material: any) => {
-    try { return await prover.run(material); } catch { throw new Error('RuntimeError: unreachable'); }
-  },
-  check: async () => [],
+const standIn = vi.hoisted(() => ({
+  provingProvider: (material: any) => ({
+    prove: async () => {
+      try { return await prover.run(material); } catch { throw new Error('RuntimeError: unreachable'); }
+    },
+    check: async () => [],
+  }),
+  Zkir: { deserialize: () => ({ getK: () => 9 }) },
 }));
+vi.mock('@midnightntwrk/zkir-v3', () => standIn);
+vi.mock('@midnightntwrk/zkir-v2', () => standIn);
 
 const posted: any[] = [];
 let listener: ((event: { data: any }) => void) | null = null;
@@ -53,7 +58,7 @@ const outcomes: any[] = [];
 
 const aProof = async (): Promise<any> => {
   outcomes.length = 0;
-  listener!({ data: { op: 'prove', preimage: new Uint8Array() } });
+  listener!({ data: { op: 'prove', keyLocation: prover.location, preimage: new Uint8Array() } });
   for (let i = 0; i < 50 && outcomes.length === 0; i += 1) { answerAsks(); await new Promise((r) => setTimeout(r, 0)); }
   return outcomes[0];
 };
@@ -70,7 +75,7 @@ beforeAll(async () => {
 describe('WHAT A PROOF\'S THREAD SAYS AND ASKS', () => {
   it('a refused file fails the proof with the vault worker\'s reason, not the prover\'s words or a word about the connection', async () => {
     /* RED WHEN: the reason the vault worker gave is lost behind the prover's own failure. */
-    prover.location = 'contract:ab/payout?vk=01';
+    prover.location = 'contract:abababababababababababababababababababababababababababababababab/payout?vk=0101010101010101010101010101010101010101010101010101010101010101';
     prover.failsOnItsOwn = false;
     refuse = (m) => m.op === 'lookupKey';
     const outcome = await aProof();
@@ -81,22 +86,34 @@ describe('WHAT A PROOF\'S THREAD SAYS AND ASKS', () => {
 
   it('a refused file is asked for again by the next proof, and a supplied one is asked for once for the thread\'s life', async () => {
     /* RED WHEN: a refusal is kept for good, or every ask the prover makes crosses to the vault worker again. */
-    prover.location = 'contract:ab/merge?vk=02';
+    prover.location = 'contract:abababababababababababababababababababababababababababababababab/merge?vk=0202020202020202020202020202020202020202020202020202020202020202';
     prover.failsOnItsOwn = false;
     refuse = (m) => m.op === 'lookupKey';
     expect((await aProof()).op).toBe('failure');
     refuse = () => false;
     asksSeen.length = 0;
     expect((await aProof()).op).toBe('result');
-    expect(asksSeen, 'a refused file was not asked for again').toContain('key contract:ab/merge?vk=02');
+    expect(asksSeen, 'a refused file was not asked for again').toContain('key contract:abababababababababababababababababababababababababababababababab/merge?vk=0202020202020202020202020202020202020202020202020202020202020202');
     asksSeen.length = 0;
     expect((await aProof()).op).toBe('result');
     expect(asksSeen, 'a second proof on the same thread asked again for what it already holds').toEqual([]);
   });
 
+  it('a contract circuit named without its verifying key is refused, and no material is asked for', async () => {
+    /* RED WHEN: the thread proves a circuit named only by its name, which nothing holds to the contract's verifying key. */
+    prover.location = 'payout';
+    prover.failsOnItsOwn = false;
+    refuse = () => false;
+    asksSeen.length = 0;
+    const outcome = await aProof();
+    expect(outcome.op).toBe('failure');
+    expect(outcome.error).toMatch(/without the verifying key it is proved against/u);
+    expect(asksSeen).toEqual([]);
+  });
+
   it('a proof that fails on its own after an earlier refusal says its own reason, not the earlier one', async () => {
     /* RED WHEN: a refusal's reason is kept past its proof, so a later failure of another kind is reported as that refusal. */
-    prover.location = 'contract:ab/deposit?vk=03';
+    prover.location = 'contract:abababababababababababababababababababababababababababababababab/deposit?vk=0303030303030303030303030303030303030303030303030303030303030303';
     prover.failsOnItsOwn = false;
     refuse = (m) => m.op === 'lookupKey';
     expect((await aProof()).error).toBe(REFUSAL);

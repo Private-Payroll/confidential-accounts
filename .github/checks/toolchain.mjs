@@ -1,29 +1,13 @@
 /**
- * WHICH COMPACT COMPILER THIS REPOSITORY IS WRITTEN AGAINST, AND WHERE TO GET
- * IT.
- *
- * Kept apart from the program that fetches it so the choice can be read, and
- * checked, without downloading anything.
- *
- * -- WHY A CLONE NEEDS THIS AT ALL -------------------------------------------
- *
- * The compiled contracts are build output and are not in this repository. The
- * TypeScript imports them by path, so nothing typechecks and no test runs until
- * they exist, and they cannot exist without a compiler. The compiler is not on
- * anybody's PATH by default and is not on npm: it is published as a release
- * asset, one per machine. So the first thing a clone does is get the right one,
- * and "the right one" is a single version written down here.
- *
- * -- WHY THE VERSION IS PINNED RATHER THAN "THE NEWEST" ----------------------
- *
- * A contract built by one compiler expects the runtime that compiler targets.
- * Build with a different one and everything here still passes: the mismatch is
- * reported by the chain, at a deploy, in a message about a version nobody
- * chose. The refusal below is the alternative, and it costs a second.
+ * The Compact compiler this repository is written against, where to get it, and the proof server image that
+ * goes with it. The compiled contracts are build output and the compiler is a release asset, one per machine,
+ * so a clone needs one written-down version to fetch; a contract built by another compiler expects another
+ * runtime and the chain only says so at a deploy. Kept apart from the program that fetches it so the choice
+ * can be read and checked without downloading anything.
  */
 
 /** The pinned release. */
-export const COMPACTC_VERSION = '0.34.0';
+export const COMPACTC_VERSION = '0.36.1';
 
 /**
  * What the compiler reports when asked. It is not always the release name: a
@@ -31,12 +15,22 @@ export const COMPACTC_VERSION = '0.34.0';
  * the binary calls itself, so the two are written down separately rather than
  * derived from one another and hoped about.
  *
- * They are the same string for this release, and that is a measurement rather
- * than an assumption: the published binary answers `0.34.0` to `--version`.
- * They stay two constants because the day a candidate is pinned again they
- * differ again, and a single constant would have to be split under pressure.
+ * They are the same string for this release. They stay two constants because
+ * the day a candidate is pinned again they differ again, and a single constant
+ * would have to be split under pressure.
  */
-export const COMPACTC_REPORTS = '0.34.0';
+export const COMPACTC_REPORTS = '0.36.1';
+
+/**
+ * The proof server image every script and door starts, and the one the version check compares a running server
+ * against. It is the image the pinned ledger release builds, so it lives here beside the compiler and nowhere else:
+ * a script that needs it asks the maintainer's pin script for `PROOF_SERVER_IMAGE`.
+ *
+ * This server proves with an older ZKIR (3.2.0) than the one the compiler builds circuit keys with (3.2.1). The two
+ * are not guaranteed to agree on every circuit, so a circuit the server cannot prove with its key is only found by
+ * proving each one; the prove-every-circuit check is what confirms the keys and this server agree.
+ */
+export const PROOF_SERVER_IMAGE = 'midnightntwrk/proof-server:9.0.1';
 
 const RELEASE = 'https://github.com/LFDT-Minokawa/compact/releases/download';
 

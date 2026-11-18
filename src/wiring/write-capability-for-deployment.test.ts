@@ -19,6 +19,8 @@ import {
   artifactsIn, deploymentWriteCapability, storagePasswordFrom, type FundedParties,
 } from './write-capability-for-deployment.js';
 import { refusalForCapability } from './write-capability.js';
+import { storeDir } from './deployment.js';
+import { theNetwork } from '../midnight/network.js';
 import { RemoteFeeSponsor } from '../fee-payer/client.js';
 
 /** A funded pair, with the members the write path actually calls. */
@@ -26,7 +28,7 @@ const parties = (): FundedParties => ({
   customer: {
     coinPublicKey: () => 'not-a-secret: a test literal',
     encryptionPublicKey: () => 'not-a-secret: a test literal',
-    balanceOwnLegs: async (tx: unknown) => tx,
+    balanceOwnLegs: async (tx) => tx,
     release: async () => {},
   },
   sponsor: {
@@ -41,9 +43,9 @@ const parties = (): FundedParties => ({
 /** A deployment root OUTSIDE this repository. Nothing here writes into the tree. */
 const deploymentRoot = (): string => {
   const root = mkdtempSync(join(tmpdir(), 'capability-'));
-  mkdirSync(join(root, '.midnight'), { recursive: true });
+  mkdirSync(storeDir(root, theNetwork({})), { recursive: true });
   writeFileSync(
-    join(root, '.midnight', 'maintenance-authority.json'),
+    join(storeDir(root, theNetwork({})), 'maintenance-authority.json'),
     JSON.stringify({ kind: 'unmaintainable' }),
   );
   return root;
@@ -159,6 +161,15 @@ describe('the private state key', () => {
     await expect(key()).resolves.toBe('not-a-secret: a test literal');
   });
 
+  it('refuses, when the deployment starts, a private-state key the store would refuse at its first write', () => {
+    // RED WHEN: a set key is not checked until the store is first opened, so a deployment starts that cannot write.
+    expect(() => storagePasswordFrom({ MIDNIGHT_PRIVATE_STATE_PASSWORD: 'short1A!' }))
+      .toThrow(/would refuse it \(too_short\).*at least 16 characters/);
+    expect(() => storagePasswordFrom({ MIDNIGHT_PRIVATE_STATE_PASSWORD: 'onlylowercaseletters' }))
+      .toThrow(/insufficient_classes/);
+    expect(() => storagePasswordFrom({ MIDNIGHT_PRIVATE_STATE_PASSWORD: 'Usable-Store-Key-2026' })).not.toThrow();
+  });
+
   it('refuses rather than defaulting, because a default is a store anybody can open', async () => {
     // RED WHEN: a fallback value is introduced. What the store holds is the
     // signing material a device proves with.
@@ -210,6 +221,7 @@ describe('a fee payer this deployment\'s settings name', () => {
         intents: new Map([[1, {}]]),
         imbalances: (segment: number) => new Map(segment === 0 ? [[{ tag: 'shielded' }, -1n]] : []),
         bind: () => 'bound',
+        serialize: () => new Uint8Array(),
       };
       await expect(c!.customer.balanceOwnLegs(needsACoin, new Date())).rejects.toThrow(/holds none for any company/);
       const movesNothing = { ...needsACoin, imbalances: () => new Map([[{ tag: 'dust' }, -5n]]) };

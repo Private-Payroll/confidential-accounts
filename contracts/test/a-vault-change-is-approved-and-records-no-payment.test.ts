@@ -112,7 +112,7 @@ describe('an approved change to a vault records no payment', () => {
     const run = await approvedChanges(sim, PAYROLL, leaves, c);
     await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0));
     const fx = sim.lastEffects;
-    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     const changeReceipt = L.rawTokenType(pureCircuits.changeReceiptTag(), hex(PAYROLL));
     /* RED WHEN the step takes the payment receipt's tag, so one mint could stand for both. */
     expect(changeReceipt).not.toBe(L.rawTokenType(pureCircuits.paymentReceiptTag(), hex(PAYROLL)));

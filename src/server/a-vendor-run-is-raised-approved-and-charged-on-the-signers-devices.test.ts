@@ -10,11 +10,13 @@
  * Over real HTTP, with the vendors added, accepted and admitted on devices. The chain is the test's stand-in: it counts
  * approvals by who sent them, takes a charge without counting them, and runs none of the contract's circuits.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
+vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode } from 'midnight-identity/profile/join-code';
 import { newProposalId } from '../core/proposal-filing.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+
 import { canonical, randomBytes, signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
 import { openSealedRun } from '../core/run-legs.js';
 import type { RoundOnThePage } from 'vaults-web-shared/governed-call-on-device.js';
@@ -53,7 +55,7 @@ aCompanyWhoseSignersChange();
 const NOW = BigInt(Math.floor(Date.now() / 1000));
 const NETWORK = theNetwork();
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
-const MONTHLY = { kind: 'monthly' as const, asset: TEST_SETTLEMENT_ASSET, amount: 90000n };
+const MONTHLY = { kind: 'monthly' as const, asset: TEST_NETWORK_COLOUR, amount: 90000n };
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
@@ -143,7 +145,7 @@ let byLink: string;
 
 describe('A VENDOR RUN IS RAISED, APPROVED AND CHARGED THROUGH THE SIGNERS\' OWN DOORS', () => {
   it('drawn on Ada\'s device, raised there, approved on Bo\'s and charged there, paying each vendor their terms, the one added by address with no payslip', async () => {
-    await aPolicyFiledBy(ADA, [ADA, BO, CY], { terms: TWO_APPROVALS, asset: TEST_SETTLEMENT_ASSET });
+    await aPolicyFiledBy(ADA, [ADA, BO, CY], { terms: TWO_APPROVALS, asset: TEST_NETWORK_COLOUR });
     byAddress = await aVendor(85, 'address');
     byLink = await aVendor(86, 'link');
     const from = wire.length;

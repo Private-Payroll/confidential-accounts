@@ -12,30 +12,25 @@
  * the chain for the very call it finished and, finding it absent, hands that same call to the network itself, so
  * one call can land only once. Anything refused before that hand-over is undone, and nothing is paid.
  */
-import type { SignSegment } from '@midnightntwrk/wallet-sdk-facade';
+import type { SignSegment, UnboundTx, WalletFacade } from '@midnightntwrk/wallet-sdk';
 import { ourServiceTookNothing, serviceNotReached, type ChainCall } from '../../../../packages/web-shared/src/hand-over.js';
 import { isVaultCallKind, movesNothing, vaultCallRefusal } from '../../../../src/wiring/vault-call-checks.js';
 import {
-  base64FromBytes, bytesFromBase64, untilItHasReadTheChain, whyThePaymentFailed, type BalanceDoors, type LedgerForBalancing, type WalletPartForBalancing,
+  base64FromBytes, bytesFromBase64, untilItHasReadTheChain, whyThePaymentFailed, type BalanceDoors, type LedgerForBalancing,
 } from './balance-for-page.js';
+import { carriedBy, NOT_ON_THIS_WALLETS_LEDGER, readOnThisWalletsLedger } from './carried.js';
 
-/** The person's own wallet, as it pays a call's fee and sends it: the SDK's own facade, its dust part started. */
-export interface OwnWalletFacade {
-  readonly dust?: WalletPartForBalancing;
-  balanceUnboundTransaction(
-    tx: never, keys: { shieldedSecretKeys: unknown; dustSecretKey: unknown }, options: { ttl: Date; tokenKindsToBalance: 'dust'[] },
-  ): Promise<unknown>;
-  signRecipe(recipe: never, signSegment: SignSegment): Promise<unknown>;
-  finalizeRecipe(recipe: never): Promise<unknown>;
-  submitTransaction(tx: never): Promise<unknown>;
-  revert(recipe: never): Promise<void>;
-}
+/**
+ * The person's own wallet, as it pays a call's fee and sends it: the SDK's own facade, its dust part started, in the
+ * SDK's own types so the type checker holds every call to the facade's real signature.
+ */
+export type OwnWalletFacade = Pick<WalletFacade,
+  'dust' | 'state' | 'adoptTransaction' | 'balanceUnboundTransaction' | 'signRecipe' | 'finalizeRecipe' | 'submitTransaction' | 'revert'>;
 
 /** What paying a call's fee asks of this wallet. */
 export interface OwnWalletDoors {
   readonly ledger: () => Promise<LedgerForBalancing>;
   readonly facade: () => Promise<OwnWalletFacade>;
-  readonly keys: () => { shieldedSecretKeys: unknown; dustSecretKey: unknown };
   readonly signSegment: () => SignSegment;
   readonly stop?: () => Promise<void>;
   /**
@@ -52,10 +47,10 @@ export interface OwnWalletDoors {
  * DUST. Its keys never leave this wallet.
  */
 export const ownWalletFrom = (doors: BalanceDoors): OwnWalletDoors => ({
-  ledger: doors.ledger, keys: doors.keys, signSegment: doors.signSegment, ...(doors.stop === undefined ? {} : { stop: doors.stop }),
+  ledger: doors.ledger, signSegment: doors.signSegment, ...(doors.stop === undefined ? {} : { stop: doors.stop }),
   facade: async () => {
-    const f = (await doors.facade()) as unknown as OwnWalletFacade & { readonly dust: { start(key: unknown): Promise<void> } };
-    await f.dust.start(doors.keys().dustSecretKey);
+    const f = await doors.facade();
+    await f.dust.start(doors.dustKeys());
     return f;
   },
 });
@@ -142,10 +137,10 @@ export function notOneCallRefusal(tx: unknown, account: string, circuit: string,
  * does nothing else - no call, no coin, no public money, no DUST registered.
  */
 export function moreThanTheFeeRefusal(recipe: unknown, call: unknown): string | null {
-  const r = recipe as { readonly baseTransaction?: unknown; readonly balancingTransaction?: TxLike | null } | null;
+  const r = recipe as { readonly baseTransaction?: unknown; readonly balancingTransaction?: unknown } | null;
   if (r === null || typeof r !== 'object') return 'this wallet could not read what it was about to add';
   if (r.baseTransaction !== call) return 'this wallet was about to change the call itself';
-  const fee = r.balancingTransaction;
+  const fee = carriedBy(r.balancingTransaction) as TxLike | null | undefined;
   if (fee === undefined || fee === null) return 'this wallet added nothing to pay the fee';
   if (typeof fee !== 'object' || !readable(fee)) return 'this wallet could not read what it was about to add';
   if (!noShieldedOffer(fee)) return 'this wallet was about to spend or make a coin as well as the fee';
@@ -322,14 +317,12 @@ export async function sentFromTheOwnWallet(
   } catch (e) {
     throw new FeeRefused(`this wallet could not open its DUST to pay the fee (${said(e)}), so it paid nothing and sent nothing`);
   }
+  await dustReadOnThisLedger(facade, stillWanted);
+  let handle: UnboundTx;
+  let recipe: Awaited<ReturnType<OwnWalletFacade['balanceUnboundTransaction']>>;
   try {
-    await untilItHasReadTheChain([facade.dust], { stillWanted });
-  } catch (e) {
-    throw new FeeRefused(`this wallet could not read its DUST up to date (${said(e)}), so it paid nothing and sent nothing`);
-  }
-  let recipe: unknown;
-  try {
-    recipe = await facade.balanceUnboundTransaction(call as never, o.keys(), { ttl: new Date(now() + FEE_TTL_MS), tokenKindsToBalance: ['dust'] });
+    handle = facade.adoptTransaction(bytesFromBase64(tx), 'Unbound');
+    recipe = await facade.balanceUnboundTransaction(handle, { ttl: new Date(now() + FEE_TTL_MS), tokenKindsToBalance: ['dust'] });
   } catch (e) {
     /* Nothing is booked when balancing throws: the wallet's DUST is changed only once a fee is added whole. */
     if (whyThePaymentFailed(e) === 'not-enough') {
@@ -339,20 +332,20 @@ export async function sentFromTheOwnWallet(
     throw new FeeRefused(`this wallet could not add the fee (${said(e)}), so it paid nothing and sent nothing`);
   }
   try {
-    const more = moreThanTheFeeRefusal(recipe, call);
+    const more = moreThanTheFeeRefusal(recipe, handle);
     if (more !== null) throw new FeeRefused(`${more}, so it paid nothing and sent nothing`);
-    const signed = await facade.signRecipe(recipe as never, o.signSegment());
-    const finished = await facade.finalizeRecipe(signed as never);
-    const written = way.submit === undefined ? null : base64FromBytes((finished as { serialize(): Uint8Array }).serialize());
+    const signed = await facade.signRecipe(recipe, o.signSegment());
+    const finished = await facade.finalizeRecipe(signed);
+    const written = way.submit === undefined ? null : base64FromBytes(finished.serialize());
     if (!stillWanted()) throw new FeeRefused('the window was stopped before the call was sent, so this wallet paid nothing and sent nothing');
     handed.over = true;
     way.handedOver?.();
-    if (written !== null) await submittedOrStraight(o, way, written, finished, async () => { await facade.submitTransaction(finished as never); });
-    else await facade.submitTransaction(finished as never);
+    if (written !== null) await submittedOrStraight(o, way, written, finished, async () => { await facade.submitTransaction(finished); });
+    else await facade.submitTransaction(finished);
     if (ownDust) way.ownDustPaid?.();
   } catch (e) {
     if (handed.over) throw e;
-    await facade.revert(recipe as never).catch(() => undefined);
+    await facade.revert(recipe).catch(() => undefined);
     if (e instanceof FeeRefused) throw e;
     throw new FeeRefused(`this wallet could not sign or finish the call (${said(e)}), so it paid nothing and sent nothing`);
   }
@@ -364,8 +357,9 @@ export async function sentFromTheOwnWallet(
  * when the call names no identifier or this wallet cannot read the chain.
  */
 export async function onTheChainAlready(o: Pick<OwnWalletDoors, 'landed'>, finished: unknown): Promise<boolean> {
-  const ids = (finished as { identifiers?: () => readonly unknown[] } | null)?.identifiers;
-  const identifiers = typeof ids === 'function' ? ids.call(finished).map(String) : [];
+  const tx = carriedBy(finished);
+  const ids = (tx as { identifiers?: () => readonly unknown[] } | null)?.identifiers;
+  const identifiers = typeof ids === 'function' ? ids.call(tx).map(String) : [];
   if (identifiers.length === 0) throw new Error('the call names no identifier this wallet can look for on the chain');
   if (o.landed === undefined) throw new Error('this wallet cannot read the chain here');
   return o.landed(identifiers);
@@ -430,7 +424,10 @@ async function sentAsSponsored(
     if (!stillWanted()) throw new FeeRefused('the window was stopped before the call was sent, so nothing was sent');
     handed.over = true;
     way.handedOver?.();
-    await submittedOrStraight(o, way, back, finished, async () => { await (await o.facade()).submitTransaction(finished as never); });
+    await submittedOrStraight(o, way, back, finished, async () => {
+      const f = await o.facade();
+      await f.submitTransaction(f.adoptTransaction(bytesFromBase64(back), 'Finalized'));
+    });
     return;
   }
   let facade: OwnWalletFacade;
@@ -442,7 +439,7 @@ async function sentAsSponsored(
   if (!stillWanted()) throw new FeeRefused('the window was stopped before the call was sent, so nothing was sent');
   handed.over = true;
   way.handedOver?.();
-  await facade.submitTransaction(finished as never);
+  await facade.submitTransaction(facade.adoptTransaction(bytesFromBase64(back), 'Finalized'));
 }
 
 /** Why the call owes or leaves over a token that is not its DUST fee, or null when it does not. */
@@ -487,3 +484,19 @@ export const straightFromTheOwnWallet = (
     await o.stop?.().catch(() => undefined);
   }
 };
+
+/**
+ * The wallet's DUST read up to date on this wallet's ledger, or the fee refused. A part that crossed the fork while it
+ * was read was read at the fork, so it is read again once the facade is on this ledger.
+ */
+async function dustReadOnThisLedger(facade: OwnWalletFacade, stillWanted: (() => boolean) | undefined): Promise<void> {
+  const readUp = async (): Promise<void> => {
+    try {
+      await untilItHasReadTheChain([facade.dust], { stillWanted });
+    } catch (e) {
+      throw new FeeRefused(`this wallet could not read its DUST up to date (${said(e)}), so it paid nothing and sent nothing`);
+    }
+  };
+  await readUp();
+  if (!await readOnThisWalletsLedger(facade, readUp)) throw new FeeRefused(NOT_ON_THIS_WALLETS_LEDGER);
+}

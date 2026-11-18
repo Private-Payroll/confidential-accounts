@@ -64,6 +64,17 @@ describe('warming the public parameters', () => {
   });
 
   /*
+   * RED WHEN: a circuit's size is read without the name it was fetched under, so it cannot be read with the prover
+   * that name says it is for: the contracts' circuits and the network's are in different formats.
+   */
+  it('reads each circuit\'s size with the name the circuit was fetched under', async () => {
+    const r = recordingSource((location) => location.length);
+    const named: string[] = [];
+    await provingWarmed(r.source, (ir, location) => { named.push(location); return sizeFromBytes(ir); });
+    expect([...named].sort()).toEqual([...EVERY_CIRCUIT].sort());
+  });
+
+  /*
    * RED WHEN: a size shared by many circuits is fetched once per circuit, or a
    * size one of them needs is never fetched.
    */
