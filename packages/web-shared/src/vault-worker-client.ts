@@ -95,6 +95,11 @@ export interface VaultBuilderClient {
    */
   vaultOnChain(input: { vault: string; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<VaultOnChainOnTheWire>;
   /**
+   * Every vault named, read as `vaultOnChain` reads one, their states and the account's in one request to the indexer
+   * for each 256; each answer in the order asked. An answer that leaves a vault out, or names another, is refused.
+   */
+  vaultsOnChain(input: { vaults: readonly string[]; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<VaultOnChainOnTheWire[]>;
+  /**
    * **WHAT A STEP OUT OF THE VAULT IS BUILT ON**, read in this worker at the
    * indexer the person's own wallet names: one block, named first, and as of it
    * the vault's state, the commitment tree, the ledger's parameters and the
@@ -441,9 +446,19 @@ const START_MS = 30_000;
  * says it has started it, its code loaded. Every other ask may be a send or a proof and is never cut short.
  */
 export const CHAIN_READS: ReadonlySet<string> = new Set([
-  'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'vault-call-on-chain', 'anchors-on-chain', 'rounds-on-chain',
+  'vault-as-deployed', 'vault-on-chain', 'vaults-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'vault-call-on-chain', 'anchors-on-chain', 'rounds-on-chain',
   'paid-leaves', 'runs-outrun', 'invited-seats', 'account-call-chain', 'account-presence', 'secret-set-at', 'account-committee', 'contract-authority',
 ]);
+
+/** The answers for `asked`, in its order, or a refusal when the worker left a vault out or answered for another. */
+export const everyVaultAnswered = (
+  asked: readonly string[], reads: ReadonlyArray<{ readonly vault: string; readonly read: VaultOnChainOnTheWire }>,
+): VaultOnChainOnTheWire[] => {
+  if (!Array.isArray(reads) || reads.length !== asked.length || reads.some((r, i) => r?.vault !== asked[i])) {
+    throw new Error('the read of the vaults on the chain did not answer for every vault asked, so none of it is used.');
+  }
+  return reads.map((r) => r.read);
+};
 
 /** What the worker says when its code is loaded and it starts on an ask: a read's time limit starts here. */
 export const ASK_STARTED = 'vault-ask-started';
@@ -707,6 +722,7 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
       return answer;
     },
     vaultOnChain: async (input) => (await ask({ ask: 'vault-on-chain', ...input })).read,
+    vaultsOnChain: async (input) => everyVaultAnswered(input.vaults, (await ask({ ask: 'vaults-on-chain', ...input, vaults: [...input.vaults] })).reads),
     chainAtOneBlock: async (input) => (await ask({ ask: 'chain-at-one-block', ...input })).chain,
     eventsOf: async (input) => (await ask({ ask: 'events-of', ...input })).events,
     createdBy: async (input) => (await ask({ ask: 'created-by', ...input })).found,

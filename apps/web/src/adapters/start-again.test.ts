@@ -10,8 +10,8 @@ const kr = vi.hoisted(() => ({
   who: true, being: null as string | null, came: { of: 'dropped' } as unknown, throws: null as Error | null,
   calls: [] as string[], builders: [] as unknown[], changed: [] as (string | null)[],
 }));
-vi.mock('vaults-web-shared/keyring.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   startAnUnfinishedCreationAgain: async (id: string, _origin: string, builder: unknown) => {
     kr.calls.push(`again ${id}`);
     kr.builders.push(builder);
@@ -57,7 +57,7 @@ describe('starting again from the creation steps', () => {
   /* RED WHEN: a company this browser keeps no creation for ends as a failure with a generic message, or as set aside. */
   it('says there is nothing to start again for a company this browser keeps nothing for', async () => {
     const m = await load();
-    const { NoCreationKeptHere } = await import('vaults-web-shared/keyring.js');
+    const { NoCreationKeptHere } = await import('vaults-web-shared/company-creation.js');
     kr.throws = new NoCreationKeptHere('none');
     expect(await m.startAgain('u1', 'c-unknown')).toEqual({ of: 'nothing' });
     expect(kr.changed).toEqual([]);

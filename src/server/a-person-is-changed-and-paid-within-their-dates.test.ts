@@ -26,7 +26,8 @@ import { batchDigestOf, newProposalId, sealPayrollProposal } from '../core/propo
 import { theNetwork } from '../midnight/network.js';
 import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { payeeFor } from '../testing/payees.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { changePersonHere, makeMyselfPayableHere, PersonNotChanged, readPeopleHere, admitHere, setStatusHere, type PeopleDevice, type PersonHere } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
@@ -36,8 +37,8 @@ import { payableFactsOf, periodsPastDraftHere, type CompanyRecordsHere } from 'v
 import { runRoutes } from './run-routes.js';
 import {
   aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, BO, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, personFiledBy, personVersions, sendAs, store,
-  type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver, viewOver } from '../testing/writes-over-a-send.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 /** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
 const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
@@ -53,13 +54,13 @@ const hired = (n: number, startDate = '2026-10-01') => ({
   classification: 'full-time' as const, startDate,
 });
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** A payee invited, accepted with the code their own wallet signed, and admitted. */
 const aPayee = async (n: number, startDate?: string): Promise<string> => {
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: addressOf(n), payslipKey: newWrappingKeypair().publicKey });
-  const made = await inviteHere(ACME, ADA, 'employee', hired(n, startDate), ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'employee', hired(n, startDate), ORIGIN, writesOver(fromAda));
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   await admitHere(peopleOn(ADA), await hereOf(made.person!), accepted.fingerprint);
   return made.person!;
@@ -69,11 +70,11 @@ const hereOf = async (id: string): Promise<PersonHere> => {
   return [...read.people, ...read.notPayable.map((x) => x.here)].find((p) => p.person.id === id)!;
 };
 const drawingOn = (s: Seat): RunDrawDoors => ({
-  api: async (path, init) => {
+  view: viewOver(async (path, init) => {
     const r = await sendAs(s.person)(path, { method: (init?.method ?? 'GET') as never, ...(init?.body === undefined ? {} : { body: String(init.body) }) });
     if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status, body: r.body });
     return r.body;
-  },
+  }, CO),
   accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
   records: {
     people: () => readPeopleHere(peopleOn(s)), runs: async () => store.listRuns(CO), proposals: async () => store.listProposals(CO), directory: acmeDirectory,
@@ -106,7 +107,7 @@ let leaving: string;
 
 describe('A PERSON\'S RECORD CARRIES THEIR DATES, SALARY HISTORY AND CLASSIFICATION HISTORY', () => {
   it('an employee is filed with the first line of each history and their end date, made by the inviting seat at one UTC moment', async () => {
-    const made = await inviteHere(ACME, ADA, 'employee', { ...hired(60), endDate: '2027-12-31' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', { ...hired(60), endDate: '2027-12-31' }, ORIGIN, writesOver(fromAda));
     const person = openPerson((await newestPerson(made.person!))!, KEY);
     /* RED WHEN: the salary at hire is held only as one figure, with nobody named as having set it. */
     expect(person.pay).toEqual([{ amount: 500060n, from: '2026-10-01', madeBy: ADA.statement.signingKey, madeAt: person.madeAt }]);
@@ -312,7 +313,7 @@ describe('A LEAVER IS PAID FOR THE DAYS THEY WORKED, AND LEAVES ON A DAY', () =>
     await expect(setStatusHere(peopleOn(ADA), await hereOf(stays), 'leaver', { leavingDate: '2027-07-31', pastDraft }))
       .rejects.toThrow(/would leave out a month already raised/u);
     /* RED WHEN: somebody waiting to be admitted, never paid, cannot be withdrawn without a leaving date. */
-    const made = await inviteHere(ACME, ADA, 'employee', hired(68), ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', hired(68), ORIGIN, writesOver(fromAda));
     await expect(setStatusHere(peopleOn(ADA), await hereOf(made.person!), 'leaver')).resolves.toMatchObject({ status: 'leaver' });
     /* RED WHEN: a leaver with no leaving date or end date, filed by any seat, is drawn, or paid at the raise, approval or payout. */
     const rec = signCompanyFiling(sealPerson({ ...(await hereOf(stays)).person, status: 'leaver', madeAt: '2027-07-01T00:00:00Z' }, (await hereOf(stays)).version + 1, 0, KEY), ADA.signingSecret);

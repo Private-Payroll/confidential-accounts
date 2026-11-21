@@ -24,6 +24,7 @@ import { moreThanTheFeeRefusal, notOneCallRefusal, recoveryAction, type OwnWalle
 import * as ledger from '@midnightntwrk/ledger-v9';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
+import { stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A RECOVERY OF THE COMPANY'S RECORDS IS RAISED, APPROVED AND CARRIED OUT FROM EACH SIGNER'S OWN WALLET.** The
@@ -192,7 +193,7 @@ const aWallet = async (c: Awaited<ReturnType<typeof aCompany>>, chain: ReturnTyp
   };
   const ctxOf = (intent: ActIntent) => {
     const told: Record<string, string | number> = {};
-    const ctx = {
+    const ctx = stepOverItsCall({
       intent, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
       held: { identity: identityFromSecret(newSecret()), account: 0 }, at: { step: 1, steps: 3 }, signal: new AbortController().signal,
       relay: async () => { log.push('relay asked'); throw new Error('a recovery relays nothing through the page'); },
@@ -201,7 +202,7 @@ const aWallet = async (c: Awaited<ReturnType<typeof aCompany>>, chain: ReturnTyp
       show: () => {},
       sentByTheWallet: () => { log.push('act told of a send'); },
       keyring: { open: () => ({ read: () => ({ accounts: { [COMPANY]: { signerId: 's', signingSecret: who.secret, blinding: who.blinding, scope: SCOPE, wrappingSecret: '02'.repeat(32) } } }) }), keep: async () => {} },
-    } as unknown as StepContext;
+    }) as unknown as StepContext;
     return { ctx, told };
   };
   const run = async (def: ActionDefinition, intent: ActIntent, told: Record<string, string | number> = {}) => {

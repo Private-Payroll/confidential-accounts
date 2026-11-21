@@ -2,7 +2,8 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
-import type { Company, CompanyRecords, PersonRow, ProposalRow, RunLeg, RunRow, VaultRow, VendorRow } from '../adapters/company-records.js';
+import type { Company, CompanyRecords, VendorRow } from '../adapters/company-records.js';
+import type { PersonRow, ProposalRow, RunLeg, RunRow, VaultRow } from '../adapters/company-rows.js';
 import { untilPageShown, untilShown } from '../page-shown.test-support.js';
 import { ENGLISH } from '../english.test-support.js';
 import { proposalsNotRead } from './counts.js';
@@ -26,6 +27,11 @@ const state = vi.hoisted(() => ({
   /* Each press that reached the wallet's acts (the act, then what it was asked), and what the wallet's act came to. */
   payActed: { of: 'done', state: 'paid', paid: 2, owed: 0, unseen: 0 } as unknown, retried: { of: 'done', state: 'raised', approvals: 1, needed: 2 } as unknown, acts: [] as unknown[][], acted: { of: 'done', state: 'approved', approvals: 2, needed: 2 } as unknown,
 }));
+/* The panel is shown without the page's frame, so the view the frame would hand it is handed here. */
+vi.mock('./company-records.js', async (real) => ({
+  ...(await real<typeof import('./company-records.js')>()),
+  useCompanyView: (await import('../adapters/page-view.test-support.js')).useTheViewOfTheTest,
+}));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
   creationOf: async () => { if (state.creationGate !== null) await state.creationGate; return state.creation; },
@@ -35,6 +41,9 @@ vi.mock('../adapters/company-records.js', async (real) => ({
   readCompany: async () => state.company,
   openWithYourAccount: async () => { state.opened += 1; return { of: 'done' }; },
   companyPagesOpen: (id: string) => { state.pagesOpen.push(id); return () => { state.pagesOpen.splice(state.pagesOpen.lastIndexOf(id), 1); }; },
+}));
+vi.mock('../adapters/company-vaults-read.js', async (real) => ({
+  ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
   readVaultPublicMoney: async () => state.publicMoney,
   readVaultName: async (_person: string, _company: string, vault: string) => { state.namesAsked.push(vault); return state.vaultName; },
 }));
@@ -68,7 +77,7 @@ vi.mock('../adapters/session.js', async (real) => ({
 }));
 
 const { PageView } = await import('../app.js');
-const { PAID_STATE } = await import('../adapters/company-records.js');
+const { PAID_STATE } = await import('../adapters/company-rows.js');
 const { Shell } = await import('../shell/shell.js');
 const { SessionProvider } = await import('../session.js');
 const { DEFAULT_PREFERENCES } = await import('../preferences.js');
@@ -626,7 +635,7 @@ describe('proposals', () => {
     expect(inFooter('[data-action=approve]')).not.toBeNull();
     expect(q(document.body, '[data-proposal-panel=pk1] [data-action=approve]')).toBeNull();
     await press('[data-panel] [data-action=approve]');
-    expect(state.acts).toEqual([['approve', 'u1', 'c-1', PAY_KEY, expect.any(Function)]]);
+    expect(state.acts).toEqual([['approve', 'u1', expect.objectContaining({ company: 'c-1' }), PAY_KEY, expect.any(Function)]]);
     expect(q(document.body, '[data-panel] [data-acted]')?.textContent).toContain(EN['proposal.act.approved']);
     expect(inFooter('[data-act-outcome] [data-acted]')).not.toBeNull();
   });
@@ -642,7 +651,7 @@ describe('proposals', () => {
       await act(async () => { fireEvent.click(q(c, `[data-row=${r.id}] td:last-child`)!); });
       await press('[data-panel] [data-action=approve]');
     }
-    expect(state.acts).toEqual(rows.map((r) => ['approve', 'u1', 'c-1', r, expect.any(Function)]));
+    expect(state.acts).toEqual(rows.map((r) => ['approve', 'u1', expect.objectContaining({ company: 'c-1' }), r, expect.any(Function)]));
   });
 
   /*
@@ -660,7 +669,7 @@ describe('proposals', () => {
     /* RED WHEN: in the panel, Withdraw is in the panel's scrolling body instead of its footer. */
     expect(inFooter('[data-action=withdraw]')).not.toBeNull();
     await press('[data-panel] [data-action=withdraw]');
-    expect(state.acts).toEqual([['withdraw', 'u1', 'c-1', add('a1', true), expect.any(Function)]]);
+    expect(state.acts).toEqual([['withdraw', 'u1', expect.objectContaining({ company: 'c-1' }), add('a1', true), expect.any(Function)]]);
     expect(q(document.body, '[data-panel] [data-acted]')?.textContent).toBe(EN['proposals.withdraw.done']);
   });
 
@@ -708,7 +717,7 @@ describe('proposals', () => {
     const c = await draw('home');
     expect(document.body.innerHTML).not.toContain('decline');
     await press('[data-part=proposals-waiting] [data-proposal=pk1] [data-action=approve]');
-    expect(state.acts).toEqual([['approve', 'u1', 'c-1', PAY_KEY, expect.any(Function)]]);
+    expect(state.acts).toEqual([['approve', 'u1', expect.objectContaining({ company: 'c-1' }), PAY_KEY, expect.any(Function)]]);
     await act(async () => { fireEvent.pointerDown(q(c, '[data-action=create-menu]')!, { button: 0, ctrlKey: false }); fireEvent.click(q(c, '[data-action=create-menu]')!); });
     expect(all(document.body, '[data-create-menu] [data-create]').map((e) => [e.dataset.create, e.textContent!.startsWith(EN[`home.create.${{ 'new-run': 'newRun', 'one-off-payment': 'oneOff', 'change-approvals': 'approvals' }[e.dataset.create!]}`]!)]))
       .toEqual([['new-run', true], ['one-off-payment', true], ['change-approvals', true]]);
@@ -819,12 +828,12 @@ describe('payroll and a run', () => {
     await act(async () => { fireEvent.click(q(round, 'button[data-action=approve]')!); await new Promise((r) => setTimeout(r, 5)); });
     expect(state.acts).toEqual([]);
     await act(async () => { fireEvent.click(q(panelOf(), 'button[data-action=approve]')!); await new Promise((r) => setTimeout(r, 20)); });
-    expect(state.acts).toEqual([['approve', 'u1', 'c-1', row, expect.any(Function)]]);
+    expect(state.acts).toEqual([['approve', 'u1', expect.objectContaining({ company: 'c-1' }), row, expect.any(Function)]]);
     expect(q(panelOf(), '[data-acted]')!.textContent).toContain(EN['proposal.act.approved']);
     state.acts = [];
     await act(async () => { fireEvent.click(q(c, '[data-round=privately] button[data-action=withdraw]')!); await new Promise((r) => setTimeout(r, 5)); });
     await act(async () => { fireEvent.click(q(panelOf(), 'button[data-action=withdraw]')!); await new Promise((r) => setTimeout(r, 20)); });
-    expect(state.acts).toEqual([['withdraw', 'u1', 'c-1', row, expect.any(Function)]]);
+    expect(state.acts).toEqual([['withdraw', 'u1', expect.objectContaining({ company: 'c-1' }), row, expect.any(Function)]]);
     expect(q(panelOf(), '[data-acted]')!.textContent).toContain(EN['proposals.withdraw.done']);
   });
 
@@ -883,7 +892,7 @@ describe('payroll and a run', () => {
     expect(q(panelOf(), '[data-action=pay-run-panel] [data-action=pay-run]')).toBeNull();
     await act(async () => { fireEvent.click(q(panelOf(), 'button[data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 20)); });
     expect(inFooter('[data-act-outcome] [data-acted]')).not.toBeNull();
-    expect(state.acts).toEqual([['pay-run', 'u1', 'c-1', expect.objectContaining({ proposal: 'p3', run: 'r1', payees: 1, total: 2_000_000n, vault: VAULT }), expect.any(Function)]]);
+    expect(state.acts).toEqual([['pay-run', 'u1', expect.objectContaining({ company: 'c-1' }), expect.objectContaining({ proposal: 'p3', run: 'r1', payees: 1, total: 2_000_000n, vault: VAULT }), expect.any(Function)]]);
     cleanup();
     /* A leg the chain shows paid in full is not offered, though its proposal is approved. */
     const paid: RunRow = { ...RUN, legs: [{ ...RUN.legs[0]!, paidOnChain: PAID_STATE.all }] };
@@ -960,7 +969,7 @@ describe('payroll and a run', () => {
     expect(state.acts).toEqual([]);
     await act(async () => { fireEvent.click(raise()); await new Promise((r) => setTimeout(r, 20)); });
     expect(inFooter('[data-act-outcome] [data-retry-state=raised]')).not.toBeNull();
-    expect(state.acts).toEqual([['retry-run', 'u1', 'c-1', {
+    expect(state.acts).toEqual([['retry-run', 'u1', expect.objectContaining({ company: 'c-1' }), {
       run: 'r1', period: '2026-10', list: 'employees', vault: VAULT, token: NIGHT_TOKEN, form: 'shielded', indices: [1], total: 2_000_000n,
       opensAt: BigInt(new Date(opens).getTime() / 1000), closesAt: BigInt(new Date(closes).getTime() / 1000),
     }, expect.any(Function)]]);
@@ -1502,7 +1511,7 @@ describe('vaults and a vault', () => {
     expect(q(panel(), '[data-action=change-threshold]')).not.toBeNull();
     await act(async () => { fireEvent.click(q(panel(), '[data-action=threshold-more]')!); await new Promise((r) => setTimeout(r, 5)); });
     await act(async () => { fireEvent.click(q(panel(), '[data-action=raise-threshold]')!); await new Promise((r) => setTimeout(r, 20)); });
-    expect(state.acts).toEqual([['change-threshold', 'u1', 'c-1', 3, { now: 2, seated: 3 }, expect.any(Function), VAULT]]);
+    expect(state.acts).toEqual([['change-threshold', 'u1', expect.objectContaining({ company: 'c-1' }), 3, { now: 2, seated: 3 }, expect.any(Function), VAULT]]);
     expect(q(panel(), '[data-acted]')!.textContent).toContain(EN['changeThreshold.vault.done.carried_other']!.replace('{count}', '3').replace('{vault}', 'Vault 1'));
     cleanup();
     state.company = records({ vaults: { of: 'read', value: [adopted] } });
@@ -1549,7 +1558,7 @@ describe('vaults and a vault', () => {
     expect(q(page, '[data-pay-state]')).toBeNull();
     expect(state.acts).toEqual([]);
     await act(async () => { fireEvent.click(q(panel(), '[data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 20)); });
-    expect(state.acts).toEqual([['pay-run', 'u1', 'c-1', {
+    expect(state.acts).toEqual([['pay-run', 'u1', expect.objectContaining({ company: 'c-1' }), {
       proposal: 'p1', run: 'r1', period: '2026-10', list: 'employees', vault: VAULT, token: NIGHT_TOKEN, form: 'shielded', payees: 2, total: 7_000_000n,
     }, expect.any(Function)]]);
     expect(q(panel(), '[data-pay-state=paid]')!.textContent).toBe(EN['payRun.done.paid_other']!.replace('{count}', '2'));
@@ -1574,7 +1583,7 @@ describe('vaults and a vault', () => {
     expect(await opens(withRetry(PAID_STATE.none), [PROPOSALS[1]!, p3('approved')])).toEqual([['p3', EN['vault.payRetry']]]);
     await act(async () => { fireEvent.click(q(document.body, '[data-part=payouts] [data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 5)); });
     await act(async () => { fireEvent.click(q(document.querySelector('[data-panel]') as HTMLElement, '[data-action=pay-run]')!); await new Promise((r) => setTimeout(r, 20)); });
-    expect(state.acts).toEqual([['pay-run', 'u1', 'c-1', {
+    expect(state.acts).toEqual([['pay-run', 'u1', expect.objectContaining({ company: 'c-1' }), {
       proposal: 'p3', run: 'r1', period: '2026-10', list: 'employees', vault: VAULT, token: NIGHT_TOKEN, form: 'shielded', payees: 1, total: 2_000_000n,
     }, expect.any(Function)]]);
     cleanup();

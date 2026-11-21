@@ -17,13 +17,14 @@ import { identityOfAChange } from 'vaults-web-shared/governed-call-builder.js';
 import type { SealedProposal } from '../core/types.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { theNetwork } from '../midnight/network.js';
-import { inviteHere, openInvitationHere, type KeptSeatInvitation } from 'vaults-web-shared/invitation-on-device.js';
-import {
-  approveSeatInvitationOnDevice, InvitationNotBound, raiseSeatInvitationOnDevice, removeSignerOnDevice, signerByAddressDoorsOf,
-  type SeatInvitationShown,
-} from 'vaults-web-shared/governed-call-on-device.js';
+import { inviteHere, type KeptSeatInvitation } from 'vaults-web-shared/invitation-on-device.js';
+import { openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
+import { InvitationNotBound } from 'vaults-web-shared/company-change-on-device.js';
+import { approveSeatInvitationOnDevice, raiseSeatInvitationOnDevice, signerByAddressDoorsOf, type SeatInvitationShown } from 'vaults-web-shared/seat-invited-on-device.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { seatSignerOnDevice } from 'vaults-web-shared/signer-by-link.js';
 import { ACME, ORIGIN, fromAda, store } from './a-company-of-two-seats.test-support.js';
+import { writesOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, ADA, BO, CO, CY, deviceOf, events, KEY, rosterDoorsOf, sendAs, type Seat,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
@@ -44,7 +45,7 @@ const invitedAt = async (fill: number, threshold: string, role: 'approver' | 'in
   const kept: KeptSeatInvitation[] = [];
   const made = await inviteHere(ACME, ADA, 'signer', {
     name: `w${fill}`, role, person: 'unused', address: addressOf(fill), threshold,
-  }, ORIGIN, fromAda, signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); }));
+  }, ORIGIN, writesOver(fromAda), signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); }));
   const offer = (await openInvitationHere(made.link, sendAs(null))).signed.offer.for as SignerOffer;
   const proposal = (await store.listProposals(CO) as SealedProposal[])
     .find((p) => String(p.chainId).toLowerCase() === offer.invited.terms.proposal!.toLowerCase())!;

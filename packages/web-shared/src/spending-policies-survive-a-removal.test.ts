@@ -20,14 +20,14 @@ import { companyRecordEntry, recordKeyOf } from '../../../src/midnight/record-ma
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { kindAsked } from './vault-page-doors.js';
-import {
-  approveSpendingPolicyOnDevice, bandsInForceHere, refusePolicyChangeHere, removalBoundaryRefusal, sealPoliciesToNewSignersHere, setSpendingPolicyOnDevice,
-  spendingPolicyHere, type PoliciesResealed, type PolicyGovernanceDoors, type PolicySteps,
-} from './spending-policy-here.js';
+import { approveSpendingPolicyOnDevice, bandsInForceHere, refusePolicyChangeHere, removalBoundaryRefusal, sealPoliciesToNewSignersHere, setSpendingPolicyOnDevice, type PoliciesResealed, type PolicyGovernanceDoors, type PolicySteps } from './spending-policy-here.js';
+import { spendingPolicyHere } from './spending-policy-read-here.js';
 import { approverRosterFrom, EVERY_RIGHT, type ApproverRoster } from '../../../src/core/vault-approvers.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import type { OpenedRound } from './governed-call-builder.js';
-import * as onDevice from './governed-call-on-device.js';
+import * as seatsLeaving from './seats-leaving-here.js';
+import * as companyChange from './company-change-on-device.js';
+const onDevice = { ...seatsLeaving, ...companyChange };
 import { noOneOffsHere } from '../../../src/testing/no-one-offs.js';
 import { POLICY_NOT_OPENED_HERE } from './policies-resealed-here.js';
 

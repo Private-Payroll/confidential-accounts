@@ -1,11 +1,15 @@
 import { kindKeyOf } from '../../../src/midnight/records-held.js';
 import { describe, it, expect, vi } from 'vitest';
-import {
-  ApprovalNotOwed, theRoundAsked, approveOnDevice, changeThresholdOnDevice, changeVaultThresholdOnDevice, governOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRetryOnDevice, raiseRunOnDevice,
-  SentAndNotYetSeen, sendRaiseFromDevice, sendRetryFromDevice, withdrawOnDevice, type WithdrawalStop,
-  type GovernanceDoors, type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire,
-  type RetryOrderOnTheWire, type RoundOnThePage,
-} from './governed-call-on-device.js';
+/*
+ * The change to the company is imported first: the real opener of a proposal, which this file stands in for below,
+ * reaches it through its own imports, and loaded first it is not loaded in the middle of them, so every reader it
+ * brings in takes the stand-in.
+ */
+import { changeThresholdOnDevice, changeVaultThresholdOnDevice, governOnDevice, type GovernanceDoors } from './company-change-on-device.js';
+import { theRoundAsked, nothingWasSentBy, SentAndNotYetSeen, type GovernedCallService, type RoundOnThePage } from './governed-call-on-device.js';
+import { raiseRetryOnDevice, raiseRunOnDevice, sendRaiseFromDevice, sendRetryFromDevice, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire } from './payroll-run-on-device.js';
+import { ApprovalNotOwed, approveOnDevice } from './proposal-approved-on-device.js';
+import { withdrawOnDevice, type WithdrawalStop } from './proposal-withdrawn-on-device.js';
 import type { GovernanceOnTheWire, OpenedRound, RoundOnChain } from './governed-call-builder.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
@@ -88,6 +92,9 @@ import { opensAs } from '../../../src/testing/sealed-records.js';
 import { seatBarOf } from 'midnight-identity/profile/records-key';
 import { sealRoster } from '../../../src/core/roster-record.js';
 import { signCompanyFiling } from '../../../src/midnight/sealed-record-wire.js';
+import { governedCallServiceThrough } from './governed-call-through-the-view.js';
+import { viewOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
@@ -474,7 +481,7 @@ describe('APPROVING FROM THIS DEVICE', () => {
       if (path.endsWith('/send')) throw new Error('the node dropped the connection');
       return {};
     };
-    const service = governedCallServiceFor(api);
+    const service = governedCallServiceThrough(viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), 'acc 1'));
     /* RED WHEN: the mark is dropped - a refusal then reads as maybe sent, and a failure at the send as nothing sent. */
     expect(nothingWasSentBy(await service.approve('p 1', { tx: 'T', filer: 'F' }).catch((e) => e))).toBe(true);
     expect(nothingWasSentBy(await service.send('p 1', { tx: 'T', version: DEVICE_RAISE_VERSION, filer: 'F' }).catch((e) => e))).toBe(false);
@@ -655,7 +662,7 @@ describe('THE VAULT\'S MONEY, PRIVATE AND PUBLIC, IS ASKED ON THIS DEVICE BEFORE
   });
 
   it('ASKS THE COMPANY FOR NOTHING A RAISE, A RETRY OR A SEAT IS BUILT FROM: THOSE ARE MADE HERE', () => {
-    const service = governedCallServiceFor(async () => ({})) as unknown as Record<string, unknown>;
+    const service = governedCallServiceThrough(viewOver(async () => ({}), 'acc_1')) as unknown as Record<string, unknown>;
     /* RED WHEN: the page asks the company's service again for a leg's payments, a written-down order, or what carries out a seat. */
     for (const gone of ['legPayments', 'raiseOrder', 'retryPayments', 'retryOrder', 'seatOrder', 'thresholdOrder']) {
       expect(service[gone], gone).toBeUndefined();
@@ -1186,6 +1193,20 @@ describe('A GOVERNANCE PROPOSAL STANDS WHERE THE CHAIN SAYS, NEVER WHERE THE SER
     expect(d.log.filter((l) => /^(build approve|approve|carry)/u.test(l))).toEqual(['carry prp_gov setThreshold']);
   });
 
+  it('a service answer that names an outcome of its own is never taken as where the change stands: the change at its bar is still carried out', async () => {
+    /* The service's answer to where the proposal stands carries a field the device's own outcome is named by, saying it is done. */
+    const said = { approvalCount: 1, ...({ state: 'done' } as Partial<RoundOnThePage>) };
+    const d = aGovernedDevice({
+      held: true, bar: 2, alreadyApproved: true, standing: said,
+      chain: (asked) => ({ held: 'open', approvals: asked > 1 ? 2 : 1, raisedAt: 1 }),
+    });
+    const out = await changeThresholdOnDevice(d.doors, change);
+    /* RED WHEN: a field the service sent decides the outcome, so a change at its bar is reported done and never carried out. */
+    expect(d.log.filter((l) => /^(build approve|approve|carry)/u.test(l))).toEqual(['carry prp_gov setThreshold']);
+    expect(out.state).toBe('done');
+    expect(out.round?.status).toBe('executed');
+  });
+
   it('a seat whose approval the chain already holds approves nothing, and the proposal stands where the chain counts it: too few approvals, and it is left for the others', async () => {
     /* The service says the bar is met; the chain counts one of the two needed. */
     const d = aGovernedDevice({
@@ -1254,7 +1275,7 @@ describe('THE BAR A PROPOSAL IS CARRIED OUT AT IS READ FROM THE PERSON\'S OWN WA
     /* RED WHEN: a device takes the bar a proposal is carried out at from the service's read of the chain rather than its own wallet's. */
     expect(d.log).not.toContain('bars');
     /* RED WHEN: the service's routes still give a device a read of the chain's bars. */
-    expect('bars' in governedCallServiceFor(async () => { throw new Error('no route is asked'); })).toBe(false);
+    expect('bars' in governedCallServiceThrough(viewOver(async () => { throw new Error('no route is asked'); }, 'acc_1'))).toBe(false);
     const blind = aGovernedDevice({ held: true, bar: 2, noSeatBar: true, governance: SEAT_ADDED, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 2, raisedAt: 1 }) });
     /* RED WHEN: a wallet read with no seat bar is taken as a bar met, and a signer is seated short of it. */
     await expect(governOnDevice(blind.doors, seatAdded)).rejects.toThrow(/did not say how many approvals a change of who is seated needs/u);

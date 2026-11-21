@@ -21,13 +21,15 @@ import { anAddress } from '../testing/an-invitee.js';
 import { aJoinersWallet } from '../testing/a-joiners-wallet.js';
 import { seatRoundBound } from '../testing/seat-round-bound.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
-import { InvitationNotBound } from 'vaults-web-shared/governed-call-on-device.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
+import { InvitationNotBound } from 'vaults-web-shared/company-change-on-device.js';
 import { FingerprintsDiffer } from 'vaults-web-shared/seat-request-fingerprint.js';
 import { approveSeatByLeafOnDevice, seatByLeafToConfirmHere, seatSignerOnDevice } from 'vaults-web-shared/signer-by-link.js';
-import { admitSignerHere } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere } from 'vaults-web-shared/roster-filed-here.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
 import { ACME, ORIGIN, fromAda } from './a-company-of-two-seats.test-support.js';
+import { writesOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, ADA, BO, CO, committeeKeyOfLeaf, companyNow, deviceOf, events, KEY, LABEL, rosterDoorsOf, seatsOnTheChain, sendAs, store,
   theInviteeTakesTheSeatHere, type Seat,
@@ -47,7 +49,7 @@ const inviteAddressOf = (c: Hex, salt: Hex) => MidnightCommitments.inviteAddress
 
 describe('A PERSON WHO JOINED BY A LINK IS APPROVED FROM A SECOND SEAT', () => {
   it('Bo approves the proposal Ada raised for Dee at the address Dee\'s wallet signed, and only Dee takes the seat', async () => {
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, writesOver(fromAda));
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
@@ -109,7 +111,7 @@ describe('A PERSON WHO JOINED BY A LINK IS APPROVED FROM A SECOND SEAT', () => {
     /* RED WHEN: a proposal whose invitation names no leaf is approved as one to seat a leaf. */
     await refusedAsFiled({ leaf: undefined }, /no proposal to seat a person who joined by a link or a code under that name/u);
     /* RED WHEN: a wallet whose coin key another proposal still invites is raised a second seat by a link: one wallet, two seats. */
-    const eve = await inviteHere(ACME, ADA, 'signer', { name: 'eve', role: 'approver', person: 'eve' }, ORIGIN, fromAda);
+    const eve = await inviteHere(ACME, ADA, 'signer', { name: 'eve', role: 'approver', person: 'eve' }, ORIGIN, writesOver(fromAda));
     const sameCoin = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new Uint8Array(32).fill(7)), LABEL).value as Hex, 44);
     const keptForEve: PendingSeat[] = [];
     const evesRequest = await acceptAsSignerHere(await openInvitationHere(eve.link, sendAs(null)), MidnightCommitments, {
@@ -145,7 +147,7 @@ describe('A PERSON WHO JOINED BY A LINK IS APPROVED FROM A SECOND SEAT', () => {
   }, 170_000);
 
   it('a joiner whose wallet signs no address for the seat, or another wallet\'s, sends no seat request', async () => {
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'eve', role: 'approver', person: 'eve' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'eve', role: 'approver', person: 'eve' }, ORIGIN, writesOver(fromAda));
     const other = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new Uint8Array(32).fill(6)), LABEL).value as Hex, 46);
     const before = store.getAccount(CO)!.pendingSigners.length;
     /* RED WHEN: a seat request is sent with an address the joiner's own wallet did not sign for it. */
@@ -154,7 +156,7 @@ describe('A PERSON WHO JOINED BY A LINK IS APPROVED FROM A SECOND SEAT', () => {
     }, sendAs('eve'), 'eve', async () => DEE.walletKey, other.seatAddress)).rejects.toThrow(/your wallet did not sign, for this seat, an address made from its own coin key.*invite you by your private address/u);
     /* RED WHEN: a seat request is sent with an address the wallet's coin key does not make under the account's own function. */
     const otherScheme = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new Uint8Array(32).fill(5)), LABEL).value as Hex, 47, SimulatedCommitments);
-    const again = await inviteHere(ACME, ADA, 'signer', { name: 'fay', role: 'approver', person: 'fay' }, ORIGIN, fromAda);
+    const again = await inviteHere(ACME, ADA, 'signer', { name: 'fay', role: 'approver', person: 'fay' }, ORIGIN, writesOver(fromAda));
     await expect(acceptAsSignerHere(await openInvitationHere(again.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
     }, sendAs('fay'), 'fay', async () => otherScheme.walletKey, otherScheme.seatAddress)).rejects.toThrow(/an address made from its own coin key/u);

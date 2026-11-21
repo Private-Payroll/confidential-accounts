@@ -3,8 +3,8 @@ import { AlertDescription, Amount, AMOUNT_KIND, Button, FieldError, FieldLegend,
 import {
   PROPOSAL_ACTED, RAISE_RUN_WHY, paymentWindow, retryRun, WINDOW_OF, WINDOW_PROBLEM, type RaiseRunActed, type RaiseRunWhy, type WindowProblem,
 } from '../adapters/proposal-acts.js';
-import type { RunLeg, RunRow } from '../adapters/company-records.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import type { RunLeg, RunRow } from '../adapters/company-rows.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { useMonth } from '../records/parts.js';
 import { ActDone, ActOutcome, ActStopped, type ActPhase } from '../records/proposal-act.js';
 import { PanelFooter } from '../shell/right-panel.js';
@@ -17,6 +17,7 @@ import { useSession } from '../session.js';
  * them, and raises only on the person's Confirm there. The answer stays on screen when the records are read again.
  */
 export function RetryRun({ run, leg }: { run: RunRow; leg: RunLeg }) {
+  const view = useCompanyView();
   const t = useText();
   const opensId = useId();
   const closesId = useId();
@@ -36,10 +37,10 @@ export function RetryRun({ run, leg }: { run: RunRow; leg: RunLeg }) {
 
   const raise = async (): Promise<void> => {
     const given = paymentWindow(opens, closes, Date.now());
-    if (companyId === null || busy || raised || leg.form === null || given.of !== WINDOW_OF.given) return;
+    if (view === null || busy || raised || leg.form === null || given.of !== WINDOW_OF.given) return;
     setResult(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await retryRun(person.id, companyId, {
+    const ended = await retryRun(person.id, view, {
       run: run.id, period: run.period, list: leg.list, vault: leg.vault, token: leg.asset, form: leg.form, indices: places, total, opensAt: given.opensAt, closesAt: given.closesAt,
     }, (step, steps) => setPhase({ step, steps }));
     setPhase(null);

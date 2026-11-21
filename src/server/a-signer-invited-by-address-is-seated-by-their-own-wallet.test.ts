@@ -25,15 +25,18 @@ import type { PendingSignerPayload } from '../core/types.js';
 import { scopeOfRole } from '../core/seat-rights.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { theNetwork } from '../midnight/network.js';
-import { firstAskRefusal, InvitationNotMade, InvitationRaisedNotFiled, inviteHere, openInvitationHere, type KeptSeatInvitation } from 'vaults-web-shared/invitation-on-device.js';
-import {
-  governOnDevice, raiseSeatInvitationOnDevice, signerByAddressDoorsOf, type SeatInvitationToRaise,
-} from 'vaults-web-shared/governed-call-on-device.js';
+import { firstAskRefusal, InvitationNotMade, InvitationRaisedNotFiled, inviteHere, type KeptSeatInvitation } from 'vaults-web-shared/invitation-on-device.js';
+import { openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
+import { governOnDevice } from 'vaults-web-shared/company-change-on-device.js';
+import { raiseSeatInvitationOnDevice, signerByAddressDoorsOf, type SeatInvitationToRaise } from 'vaults-web-shared/seat-invited-on-device.js';
 import { addressSeatedOrInvitedRefusal } from 'vaults-web-shared/address-seated-or-invited.js';
-import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
-import { admitSignerHere, rosterHere } from 'vaults-web-shared/roster-here.js';
+import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/directory-filed-here.js';
+import { type OwedDirectoryEntry } from 'vaults-web-shared/keyring-blob.js';
+import { rosterHere } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere } from 'vaults-web-shared/roster-filed-here.js';
 import { SEAT_READ_STOP } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
 import { ACME, ORIGIN, acmeReads, fromAda, seatsTakenByInvitation, store } from './a-company-of-two-seats.test-support.js';
+import { writesOver, viewOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, ADA, ADDRESS, api, BO, CO, committeeKeyOfLeaf, companyNow, deviceOf, directoryOf, events, KEY, LABEL,
   rosterDoorsOf, seatsOnTheChain, sendAs, theInviteeTakesTheSeatHere, type Seat,
@@ -73,7 +76,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
   it('Ada raises Dee\'s seat by her address before anybody accepts, Bo approves from the offer, Dee\'s wallet takes it, and every device believes her', async () => {
     const kept: KeptSeatInvitation[] = [];
     const keep = async (k: KeptSeatInvitation) => { expect(events).toEqual([]); kept.push(k); };
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'unused', address: DEES_ADDRESS }, ORIGIN, fromAda,
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'unused', address: DEES_ADDRESS }, ORIGIN, writesOver(fromAda),
       signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, keep));
     /* RED WHEN: the proposal waits for an acceptance, or is not the one the invitation names, under the salt the offer carries. */
     expect(events).toEqual(['chain propose']);
@@ -148,8 +151,8 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
 
     /* Dee's own device files her entry with the invitation her wallet kept. */
     let owed: OwedDirectoryEntry | null = { person: 'dee', company: LABEL, signed: { committeeKey: DEES_KEY as never, entry: statement }, opening: dee.opening as never, invited: offer.invited };
-    const filed = await fileTheOwedDirectoryEntry(api('dee'), CO, { read: () => owed, settle: async () => { owed = null; } },
-      async () => ({ signingSecret: dee.signingSecret, viewingKey: KEY }), async () => ADA.seat);
+    const filed = await fileTheOwedDirectoryEntry(CO, { read: () => owed, settle: async () => { owed = null; } },
+      async () => ({ signingSecret: dee.signingSecret, viewingKey: KEY }), async () => ADA.seat, viewOver(api('dee'), CO));
     expect(filed).toBe('filed');
     for (const s of [ADA, BO]) {
       const here = await directoryOf(s)();
@@ -180,7 +183,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const down: typeof fromAda = async (path, init) => (path.endsWith('/invites') && init?.method === 'POST'
       ? { status: 503, body: { error: 'the service is down' } } : fromAda(path, init));
     const another = addressFor(identityFromSecret(new Uint8Array(32).fill(47)).moneyAt(0).zswap, NETWORK as never).bech32;
-    const refused = await inviteHere(ACME, ADA, 'signer', { name: 'fay', role: 'approver', person: 'unused', address: another }, ORIGIN, down,
+    const refused = await inviteHere(ACME, ADA, 'signer', { name: 'fay', role: 'approver', person: 'unused', address: another }, ORIGIN, writesOver(down),
       signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); })).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(InvitationRaisedNotFiled);
     expect(kept).toHaveLength(1);
@@ -199,7 +202,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
   it('RED WHEN: a wallet already seated on the company is invited to a second seat, and would approve twice', async () => {
     const kept: KeptSeatInvitation[] = [];
     const before = events.length;
-    await expect(inviteHere(ACME, ADA, 'signer', { name: 'dee again', role: 'approver', person: 'unused', address: DEES_ADDRESS }, ORIGIN, fromAda,
+    await expect(inviteHere(ACME, ADA, 'signer', { name: 'dee again', role: 'approver', person: 'unused', address: DEES_ADDRESS }, ORIGIN, writesOver(fromAda),
       signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); })))
       .rejects.toThrow(/that address already has a seat on this company/u);
     expect(kept).toEqual([]);
@@ -216,7 +219,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     };
     const kept: KeptSeatInvitation[] = [];
     const before = events.length;
-    await expect(inviteHere(ACME, ADA, 'signer', { name: 'dee again', role: 'approver', person: 'unused', address: DEES_ADDRESS }, ORIGIN, fromAda,
+    await expect(inviteHere(ACME, ADA, 'signer', { name: 'dee again', role: 'approver', person: 'unused', address: DEES_ADDRESS }, ORIGIN, writesOver(fromAda),
       signerByAddressDoorsOf(hiding as never, KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); })))
       .rejects.toThrow(/withhold|did not give it/u);
     expect(kept).toEqual([]);
@@ -230,28 +233,28 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     const down: typeof fromAda = async (path, init) => (path.endsWith('/invites') && init?.method === 'POST'
       ? { status: 503, body: { error: 'the service is down' } } : fromAda(path, init));
     const doors = () => signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); });
-    const failed = await inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, down, doors(), { token })
+    const failed = await inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, writesOver(down), doors(), { token })
       .catch((e: unknown) => e);
     expect(failed).toBeInstanceOf(InvitationRaisedNotFiled);
     /* RED WHEN: the link is not the one the token given makes, so the page that made the token cannot make it again. */
     expect(kept[0]!.link).toBe(invitationLink(ORIGIN, token));
     const proposes = events.filter((e) => e === 'chain propose').length;
-    await expect(inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, fromAda, doors()))
+    await expect(inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, writesOver(fromAda), doors()))
       .rejects.toThrow(/another invitation for this address is still open on the network/u);
     expect(kept).toHaveLength(1);
     /* RED WHEN: an invitation kept past its expiry is raised again, for an offer nobody can open any more. */
     const stale = { ...kept[0]!, offer: { ...kept[0]!.offer, offer: { ...kept[0]!.offer.offer, expiresAt: Date.now() - 1 } } };
-    await expect(inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, fromAda, doors(),
+    await expect(inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, writesOver(fromAda), doors(),
       { token, resume: stale })).rejects.toThrow(/has expired, so its proposal is not raised again/u);
     expect(events.filter((e) => e === 'chain propose').length).toBe(proposes);
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, fromAda, doors(),
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'gus', role: 'approver', person: 'unused', address: gus }, ORIGIN, writesOver(fromAda), doors(),
       { token, resume: kept[0]! });
     expect(made.link).toBe(kept[0]!.link);
     expect(events.filter((e) => e === 'chain propose').length).toBe(proposes);
     expect(kept).toHaveLength(1);
     expect((await openInvitationHere(made.link, sendAs(null))).signed).toEqual(kept[0]!.offer);
     /* RED WHEN: an invitation kept for another address is taken up again for this one. */
-    await expect(inviteHere(ACME, ADA, 'signer', { name: 'hal', role: 'approver', person: 'unused', address: addressOfWallet(52) }, ORIGIN, fromAda, doors(),
+    await expect(inviteHere(ACME, ADA, 'signer', { name: 'hal', role: 'approver', person: 'unused', address: addressOfWallet(52) }, ORIGIN, writesOver(fromAda), doors(),
       { resume: kept[0]! })).rejects.toThrow(/not a seat offered at this address/u);
   });
 
@@ -263,7 +266,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
       ? { status: 503, body: { error: 'the service is down' } } : fromAda(path, init));
     const doors = () => signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); });
     const asked = { name: 'ned', role: 'approver' as const, person: 'unused', address: ned };
-    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, down, doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
+    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, writesOver(down), doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
     const first = kept[0]!;
     expect(first.offer.offer.inboxPublicKey).toBe(inboxPublicKey(KEY, CO));
     /* The company's key has changed since: the key in force now is the second, and the first is still held. */
@@ -276,7 +279,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
       if (path.endsWith('/invites') && init?.method === 'POST') filings.push((JSON.parse(String(init.body)) as { invitation: { keyEpoch: number } }).invitation);
       return fromAda(path, init);
     };
-    const made = await inviteHere({ ...ACME, keyEpoch: 1, viewingKey: rotated }, ADA, 'signer', asked, ORIGIN, watching, doors(), { token, resume: first });
+    const made = await inviteHere({ ...ACME, keyEpoch: 1, viewingKey: rotated }, ADA, 'signer', asked, ORIGIN, writesOver(watching), doors(), { token, resume: first });
     /* RED WHEN: the invitation is filed with an offer that still names the old key's inbox, so a seat request is sealed to a key a removed seat may hold. */
     const filed = (await openInvitationHere(made.link, sendAs(null))).signed;
     expect(filed.offer.inboxPublicKey).toBe(inboxPublicKey(NEWER, CO));
@@ -303,12 +306,12 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
       ? { status: 503, body: { error: 'the service is down' } } : fromAda(path, init));
     const doors = () => signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); });
     const asked = { name: 'una', role: 'approver' as const, person: 'unused', address };
-    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, down, doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
+    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, writesOver(down), doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
     const NEWER = '7f'.repeat(32) as Hex;
     const rotated = {
       epoch: 1, key: NEWER, newest: 1, keyAt: (e: number) => (e === 0 ? KEY : NEWER), sealing: () => ({ key: NEWER, epoch: 1 }),
     };
-    const made = await inviteHere({ ...ACME, keyEpoch: 1, viewingKey: rotated }, ADA, 'signer', asked, ORIGIN, fromAda, doors(), { token, resume: kept[0]! });
+    const made = await inviteHere({ ...ACME, keyEpoch: 1, viewingKey: rotated }, ADA, 'signer', asked, ORIGIN, writesOver(fromAda), doors(), { token, resume: kept[0]! });
     const opened = await openInvitationHere(made.link, sendAs(null));
     const offer = opened.signed.offer.for as SignerOffer;
     const terms = offer.invited.terms;
@@ -353,10 +356,10 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
       ? { status: 503, body: { error: 'the service is down' } } : fromAda(path, init));
     const doors = () => signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); });
     const asked = { name: 'ivy', role: 'approver' as const, person: 'unused', address: ivy };
-    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, down, doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
+    expect(await inviteHere(ACME, ADA, 'signer', asked, ORIGIN, writesOver(down), doors(), { token }).catch((e: unknown) => e)).toBeInstanceOf(InvitationRaisedNotFiled);
     const before = events.length;
     for (const other of [{ role: 'admin' as const }, { name: 'ivy two' }, { vaults: ['09'.repeat(32) as Hex] }]) {
-      const refused = await inviteHere(ACME, ADA, 'signer', { ...asked, ...other }, ORIGIN, fromAda, doors(), { token, resume: kept[0]! }).catch((e: unknown) => e);
+      const refused = await inviteHere(ACME, ADA, 'signer', { ...asked, ...other }, ORIGIN, writesOver(fromAda), doors(), { token, resume: kept[0]! }).catch((e: unknown) => e);
       expect(refused).toBeInstanceOf(InvitationNotMade);
       expect((refused as Error).message).toMatch(/press again with the same details as the first time, or start a new invitation/u);
     }
@@ -364,7 +367,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     expect(events.slice(before)).toEqual([]);
     expect(kept).toHaveLength(1);
     /* The same details take it up again, at the rights it was kept with. */
-    const made = await inviteHere(ACME, ADA, 'signer', { ...asked }, ORIGIN, fromAda, doors(), { token, resume: kept[0]! });
+    const made = await inviteHere(ACME, ADA, 'signer', { ...asked }, ORIGIN, writesOver(fromAda), doors(), { token, resume: kept[0]! });
     expect(made.link).toBe(kept[0]!.link);
   });
 
@@ -380,7 +383,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
   it('RED WHEN: a wallet whose invitation is written down and not yet on the chain is invited again while that raise may still land', async () => {
     const ivy = addressOfWallet(53);
     const ivysKey = coinKeyAt(ivy);
-    await inviteHere(ACME, ADA, 'signer', { name: 'ivy', role: 'approver', person: 'unused', address: ivy }, ORIGIN, fromAda,
+    await inviteHere(ACME, ADA, 'signer', { name: 'ivy', role: 'approver', person: 'unused', address: ivy }, ORIGIN, writesOver(fromAda),
       signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async () => {}));
     const first = addressesInvitedIn(await store.listProposals(CO), CO, KEY, inviteAddressOf).find((x) => x.coinPublicKey === ivysKey)!;
     const raiseByMs = Number(first.raiseBy) * 1000;
@@ -426,7 +429,7 @@ describe('A SIGNER INVITED BY ADDRESS IS SEATED BY THEIR OWN WALLET, AND BELIEVE
     /* RED WHEN: the invite act's doors do not read the chain's time, so a filed raise never holds its address there. */
     const kept: KeptSeatInvitation[] = [];
     const device = { ...ada, records: notYetOnTheChain };
-    await expect(inviteHere(ACME, ADA, 'signer', { name: 'ivy again', role: 'approver', person: 'unused', address: ivy }, ORIGIN, fromAda,
+    await expect(inviteHere(ACME, ADA, 'signer', { name: 'ivy again', role: 'approver', person: 'unused', address: ivy }, ORIGIN, writesOver(fromAda),
       signerByAddressDoorsOf(device as never, KEY, NETWORK, MidnightCommitments, async (k) => { kept.push(k); }, at(raiseByMs - 1))))
       .rejects.toThrow(/written down but is not on the network yet, and it may still reach the network until/u);
     expect(kept).toEqual([]);

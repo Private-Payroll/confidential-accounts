@@ -25,7 +25,8 @@ import { VaultAskFailed, type VaultBuilderClient } from './vault-worker-client.j
 import { ReadRanOutOfTime } from './read-bound.js';
 import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';
 import { whyNotOnlyThisPublicDeposit } from './vault-builder.js';
-import { vaultServiceFor } from './vault-page-doors.js';
+import { holdersAdopting, vaultServiceOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 import {
   depositFromSource, privateTokenFromTheWallet, publicTokenFromTheWallet, type DepositAsk, type PaidIn,
 } from './deposit-source.js';
@@ -382,7 +383,7 @@ describe('THE PAGE ASKS THE SERVICE FOR A PUBLIC DEPOSIT ON ITS OWN ROUTE', () =
       calls.push({ path, body: init?.body === undefined ? undefined : JSON.parse(init.body) });
       return answer();
     };
-    const service = vaultServiceFor(api as never, 'acc_1', async () => { throw new Error('no roster is read'); });
+    const service = vaultServiceOver(readRoutesOver(api as never, { directory: 'empty', newest: 'none-entered' }), 'acc_1', async () => { throw new Error('no roster is read'); }, holdersAdopting(VAULT));
     await service.depositPublicly!(VAULT, 'FINISHED');
     /* RED WHEN: a public deposit is posted to the private deposit's route, or the service is told its token and amount beside the transaction. */
     expect(calls).toEqual([{ path: `/api/accounts/acc_1/vaults/${VAULT}/public-deposit`, body: { tx: 'FINISHED' } }]);

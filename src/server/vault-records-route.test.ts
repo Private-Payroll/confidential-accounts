@@ -5,16 +5,14 @@
  * over it unchanged: a lost race is retried by name, every filing is signed and
  * checked, and nothing on the server can open what it keeps.
  */
-import { enteredHere } from '../testing/records-entered.js';
 import { vaultRecordEntry } from '../midnight/record-manifest.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { vaultRecordsRoutes, VAULT_RECORD_BODY_LIMIT, type MayTouchVaultRecords } from './vault-records-route.js';
-import {
-  FilingNotBelieved, HttpSealedPoolStore, pageWireSend, type FilingJudge, type FreshJudge, type WireSend,
-} from 'vaults-web-shared/http-sealed-pool-store.js';
+import { FilingNotBelieved, HttpSealedPoolStore, type FilingJudge, type FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { sendOnPage } from 'vaults-web-shared/service-transport.js';
 import { FILING_REFUSAL } from '../midnight/seat-directory.js';
 import {
   MemorySealedPoolStore, SealedNotePool, sealedOf, sealPool, VaultPoolVersionAlreadyFiled, VaultRecordRefused,
@@ -24,6 +22,9 @@ import { DepositJournalInStore, PaymentJournalInStore } from '../midnight/vault-
 import { depositNonceAt, depositNonceKeyFor } from '../midnight/deposit-nonce.js';
 import { signFiling, toWire, type WireRecord } from '../midnight/sealed-record-wire.js';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../core/crypto.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
+import { manifestKept, storeReachOver } from '../testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../testing/service-routes-in-memory.js';
 
 const VAULT = 'ab'.repeat(32);
 const THEIRS = 'cd'.repeat(32);
@@ -44,8 +45,8 @@ const BOB = newSigningKeypair();
  * The directory's own answer is `seat-directory.test.ts`'s; here it is a table of one entry.
  */
 const entryKeyOf: Record<string, Hex> = { ada: ADA.publicKey };
-const mayTouch: MayTouchVaultRecords = async (person, vault, record, act, filer) => {
-  asked.push({ person, vault, record, act, ...(filer === undefined ? {} : { filer }) });
+const mayTouch: MayTouchVaultRecords = async (person, vault, records, act, filer) => {
+  for (const record of records) asked.push({ person, vault, record, act, ...(filer === undefined ? {} : { filer }) });
   return person === 'ada' && vault === VAULT && (act === 'read' || filer === entryKeyOf[person]);
 };
 /* What the device believes: Ada's seat, seated now; any other key is no entry. The device's own check is `seat-directory.ts`'s. */
@@ -54,7 +55,9 @@ const judgeBelieving = (...keys: Hex[]): FreshJudge => async () => ((filer) => {
   return keys.includes(filer) ? null : FILING_REFUSAL['no-entry'];
 }) as FilingJudge;
 const roster = judgeBelieving(ADA.publicKey);
-const pageStore = (record: WireRecord, send: WireSend, key: Hex = ADA.secret) => new HttpSealedPoolStore(record, send, key, roster, enteredHere());
+/* The device's view reads this server's vault records in one request; no manifest or directory route is mounted here: what a store enters is kept beside it, and the company holds no filing. */
+const served = (person: string | null): WireSend => readRoutesOverSend(sendAs(person), { joined: true, directory: 'empty', newest: 'none-entered' });
+const pageStore = (record: WireRecord, send: WireSend, key: Hex = ADA.secret) => new HttpSealedPoolStore(record, storeReachOver(send, 'acc_vaults', manifestKept().manifest), key, roster);
 
 beforeAll(async () => {
   stores = {
@@ -104,9 +107,9 @@ const opener = { id: 'ada', wrappingSecret: signer.secret };
 
 describe('a vault\'s sealed records, from the page to the server and back', () => {
   it('A POOL AND BOTH JOURNALS RUN OVER IT UNCHANGED, every version filed signed by the signer who filed it', async () => {
-    const pool = new SealedNotePool(pageStore('pool', sendAs('ada')), { signerId: 'ada', wrappingSecret: signer.secret }, signers);
+    const pool = new SealedNotePool(pageStore('pool', served('ada')), { signerId: 'ada', wrappingSecret: signer.secret }, signers);
     await pool.create(VAULT, { notes: [] });
-    const journal = new DepositJournalInStore(pageStore('deposit-journal', sendAs('ada')), VAULT, opener, signers, KEY);
+    const journal = new DepositJournalInStore(pageStore('deposit-journal', served('ada')), VAULT, opener, signers, KEY);
     const claimed = await journal.claim(VAULT, { token: GBP, value: 500n }, 1, 't');
     expect(claimed.coin.nonce, 'RED WHEN: the nonce is not derived from the slot the claim was given')
       .toBe(depositNonceAt(KEY, { token: GBP, value: 500n }, 1));
@@ -119,24 +122,24 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     expect((await pool.load(VAULT)).notes.map((n) => n.value)).toEqual([500n]);
     expect((await stores.pool.versions(VAULT)).map((v) => v.version), 'RED WHEN: the server did not file what the page sent').toEqual([1, 2]);
 
-    const listed = await pageStore('pool', sendAs('ada')).versions(VAULT);
+    const listed = await pageStore('pool', served('ada')).versions(VAULT);
     expect(listed.map((v) => v.version)).toEqual([1, 2]);
     expect(listed[1]!.sealed, 'RED WHEN: the bytes read back are not the bytes filed').toEqual((await stores.pool.versions(VAULT))[1]!.sealed);
   });
 
   it('A VERSION ANOTHER WRITER FILED FIRST COMES BACK BY NAME, so the journal files the next one', async () => {
-    const payments = new PaymentJournalInStore(pageStore('payment-journal', sendAs('ada')), VAULT, opener, signers);
+    const payments = new PaymentJournalInStore(pageStore('payment-journal', served('ada')), VAULT, opener, signers);
     loseNext = 1;
     await payments.record(VAULT, { spent: { nonce: '01'.repeat(32), token: GBP, value: 9n }, amount: 1n, attemptedAt: 'x' });
     expect(loseNext).toBe(0);
-    const store = pageStore('deposit-journal', sendAs('ada'));
+    const store = pageStore('deposit-journal', served('ada'));
     const before = (await store.versions(VAULT)).length;
     loseNext = 1;
     const journal = new DepositJournalInStore(store, VAULT, opener, signers, KEY);
     const claimed = await journal.claim(VAULT, { token: GBP, value: 700n }, 4, 'y');
     expect(claimed.coin.nonce).toBe(depositNonceAt(KEY, { token: GBP, value: 700n }, 4));
     expect((await store.versions(VAULT)).length, 'RED WHEN: a 409 is not VaultPoolVersionAlreadyFiled by name, so the claim is not retried at the version after the other writer\'s').toBe(before + 2);
-    const direct = pageStore('deposit-journal', sendAs('ada'));
+    const direct = pageStore('deposit-journal', served('ada'));
     const taken = sealPool(VAULT, { notes: [] }, await signers(), before + 1, 'deposit-journal');
     await expect(direct.put(VAULT, taken), 'RED WHEN: filing a taken version is anything but the named refusal')
       .rejects.toBeInstanceOf(VaultPoolVersionAlreadyFiled);
@@ -163,17 +166,17 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
 
   it('A RECORD SIGNED BY A KEY THAT IS NOT THE FILER\'S OWN SEAT KEY IS REFUSED BY THE SERVER, AND NOT BELIEVED BY THE DEVICE', async () => {
     /* The server reads the seat directory, so it can tell whose key this is: Ada's session, Bob's key. */
-    const bobsDevice = pageStore('nonce-secret', sendAs('ada'), BOB.secret);
+    const bobsDevice = pageStore('nonce-secret', served('ada'), BOB.secret);
     await expect(bobsDevice.put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), 1, 'nonce-secret')),
       'RED WHEN: the server files a record signed by a key that is not the signed-in person\'s own seat key').rejects.toThrow(/refused and not filed \(403/);
     expect((await stores['nonce-secret'].versions(VAULT)), 'RED WHEN: anything of the refused filing is kept').toHaveLength(0);
     /* And a store that holds one anyway - a server that lies - is not believed by the device. */
     await stores['nonce-secret'].put(VAULT, signFiling('nonce-secret', sealPool(VAULT, { notes: [] }, await signers(), 1, 'nonce-secret'), BOB.secret));
-    await expect(pageStore('nonce-secret', sendAs('ada')).get(VAULT),
+    await expect(pageStore('nonce-secret', served('ada')).get(VAULT),
       'RED WHEN: a well-formed record from a key no entry names is believed').rejects.toThrow(/no entry in the company's directory/);
-    await expect(pageStore('nonce-secret', sendAs('ada')).versions(VAULT)).rejects.toThrow(/not believed/);
+    await expect(pageStore('nonce-secret', served('ada')).versions(VAULT)).rejects.toThrow(/not believed/);
     const unsigned: WireSend = async () => ({ status: 200, body: { record: 'pool', filed: toWire('pool', sealPool(VAULT, { notes: [] }, await signers(), 1)) } });
-    await expect(pageStore('pool', unsigned).get(VAULT), 'RED WHEN: an unsigned record a store hands back is believed')
+    await expect(pageStore('pool', readRoutesOverSend(unsigned, { directory: 'empty', newest: 'none-entered' })).get(VAULT), 'RED WHEN: an unsigned record a store hands back is believed')
       .rejects.toThrow(/carries no valid signature/);
   });
 
@@ -181,11 +184,11 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     const signed = signFiling('pool', sealPool(VAULT, { notes: [] }, await signers(), 1), ADA.secret);
     const forged = { ...signed, filedBy: { publicKey: ADA.publicKey, signature: signed.filedBy!.signature.replace(/^./u, (c) => (c === '0' ? '1' : '0')) } };
     const store: WireSend = async () => ({ status: 200, body: { record: 'pool', filed: toWire('pool', forged) } });
-    await expect(pageStore('pool', store).get(VAULT), 'RED WHEN: the device believes the key a record names without checking the signature')
+    await expect(pageStore('pool', readRoutesOverSend(store, { directory: 'empty', newest: 'none-entered' })).get(VAULT), 'RED WHEN: the device believes the key a record names without checking the signature')
       .rejects.toThrow(/carries no valid signature/);
     const moved = { ...signed, version: 1, sealed: sealPool(VAULT, { notes: [] }, await signers(), 1).sealed };
     const swapped: WireSend = async () => ({ status: 200, body: { record: 'pool', versions: [toWire('pool', moved)] } });
-    await expect(pageStore('pool', swapped).versions(VAULT), 'RED WHEN: a signature is believed over a body it does not cover')
+    await expect(pageStore('pool', readRoutesOverSend(swapped, { directory: 'empty', newest: 'none-entered' })).versions(VAULT), 'RED WHEN: a signature is believed over a body it does not cover')
       .rejects.toThrow(/carries no valid signature/);
   });
 
@@ -208,8 +211,8 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     /* Bo has left: his seat is not seated now and no quorum has retired him, so the device's check says so. */
     const boLeft: FreshJudge = async () => ((filer) => (filer === ADA.publicKey ? null
       : filer === BOB.publicKey ? FILING_REFUSAL['seat-not-seated'] : FILING_REFUSAL['no-entry'])) as FilingJudge;
-    const bos = new HttpSealedPoolStore('pool', direct, BOB.secret, bothSeated, enteredHere());
-    const adas = new HttpSealedPoolStore('pool', direct, ADA.secret, boLeft, enteredHere());
+    const bos = new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(direct, { directory: 'empty', newest: 'none-entered' }), 'acc_vaults', manifestKept().manifest), BOB.secret, bothSeated);
+    const adas = new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(direct, { directory: 'empty', newest: 'none-entered' }), 'acc_vaults', manifestKept().manifest), ADA.secret, boLeft);
     const pool = (store: HttpSealedPoolStore) => new SealedNotePool(store, { signerId: 'ada', wrappingSecret: signer.secret }, signers);
     await pool(bos).create(vault, { notes: [] });
     /* RED WHEN: a version signed by a seat the account no longer holds is believed with no retirement naming it. */
@@ -222,8 +225,8 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
   });
 
   it('A VERSION FILED FROM THE PAGE IS ENTERED IN ITS COMPANY\'S RECORDS ONCE THE STORE HAS IT, AND ONE REFUSED IS NOT', async () => {
-    const entered = enteredHere();
-    const store = new HttpSealedPoolStore('payment-journal', sendAs('ada'), ADA.secret, roster, entered);
+    const entered = manifestKept();
+    const store = new HttpSealedPoolStore('payment-journal', storeReachOver(served('ada'), 'acc_vaults', entered.manifest), ADA.secret, roster);
     const next = (await store.versions(VAULT)).length + 1;
     await store.put(VAULT, sealPool(VAULT, { attempts: [] } as never, await signers(), next, 'payment-journal'));
     const filed = sealedOf((await store.versions(VAULT)).at(-1)!);
@@ -235,7 +238,7 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
   });
 
   it('A JOURNAL PAST A MEGABYTE IS STILL FILED: a fifty-person payroll passes that in under two years', async () => {
-    const store = pageStore('payment-journal', sendAs('ada'));
+    const store = pageStore('payment-journal', served('ada'));
     const next = (await store.versions(VAULT)).length + 1;
     const attempts = Array.from({ length: 2_500 }, (_, i) => ({
       spent: { nonce: i.toString(16).padStart(64, '0'), token: GBP, value: 1_000_000n + BigInt(i) }, amount: 250_000n, attemptedAt: '2026-09-16T00:00:00.000Z',
@@ -248,7 +251,7 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
   it('A STORE\'S DEFINITE REFUSAL IS ANSWERED AS ONE, not as a write that may have happened', async () => {
     const before = (await stores.pool.versions(VAULT)).length;
     refuseNext = 'the operator tools keep this vault\'s records in files';
-    const refused = await pageStore('pool', sendAs('ada')).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), before + 1))
+    const refused = await pageStore('pool', served('ada')).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), before + 1))
       .then(() => null, (e: unknown) => e as Error);
     expect(refused?.name, 'RED WHEN: a refusal that will not change is reported as not confirmed, so the device waits and tries again').toBe('VaultRecordRefused');
     expect(refused?.message).toMatch(/operator tools keep/);
@@ -260,7 +263,7 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     expect(nobody.status, 'RED WHEN: a vault\'s records are served to nobody').toBe(401);
     const stranger = await sendAs('bob')(`/api/vaults/${VAULT}/records/pool`, { method: 'GET' });
     expect(stranger.status, 'RED WHEN: the answer to who may read is not asked, or not obeyed').toBe(403);
-    await expect(pageStore('pool', sendAs('bob')).get(VAULT)).rejects.toThrow(/403: this person may not read/);
+    await expect(pageStore('pool', served('bob')).get(VAULT)).rejects.toThrow(/this person may not read/);
     const filing = await sendAs('bob')(`/api/vaults/${VAULT}/records/pool/9`, {
       method: 'PUT', body: JSON.stringify(toWire('pool', signFiling('pool', sealPool(VAULT, { notes: [] }, await signers(), 9), BOB.secret))),
     });
@@ -283,8 +286,8 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     expect((await stores.pool.versions(VAULT)).length).toBe(before);
   });
 
-  it('A FILING SENT TWICE IS THE PAGE\'S OWN, NOT A LOST RACE: the page reads back that one version, and tries the read again before giving up', async () => {
-    const store = pageStore('payment-journal', sendAs('ada'));
+  it('A FILING SENT TWICE IS THE PAGE\'S OWN, NOT A LOST RACE: the page reads back the versions filed, and one it cannot read back is not confirmed', async () => {
+    const store = pageStore('payment-journal', served('ada'));
     const next = (await store.versions(VAULT)).length + 1;
     const rec = sealPool(VAULT, { notes: [] }, await signers(), next, 'payment-journal');
     let sends = 0;
@@ -294,22 +297,15 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
       else reads.push(path);
       return sendAs('ada')(path, init);
     };
-    await expect(pageStore('payment-journal', twice).put(VAULT, rec),
+    await expect(pageStore('payment-journal', readRoutesOverSend(twice, { directory: 'empty', newest: 'none-entered' })).put(VAULT, rec),
       'RED WHEN: the device\'s own filing, answered 409 on a repeat, is reported as another writer\'s').resolves.toBeUndefined();
     expect(sends).toBe(1);
-    expect(reads, 'RED WHEN: a lost race reads back every version rather than the one it lost').toEqual([`/api/vaults/${VAULT}/records/payment-journal/${next}`]);
+    expect(reads, 'RED WHEN: a lost race is settled without reading back the versions filed').toEqual([`/api/vaults/${VAULT}/records/payment-journal/versions`]);
     const other = sealPool(VAULT, { notes: [] }, await signers(), next, 'payment-journal');
     await expect(store.put(VAULT, other), 'RED WHEN: another writer\'s version is taken for this device\'s own')
       .rejects.toBeInstanceOf(VaultPoolVersionAlreadyFiled);
-    let failures = 2;
-    const flaky: WireSend = async (path, init) => {
-      if (init.method === 'GET' && failures > 0) { failures -= 1; throw new Error('the read was cut off'); }
-      return sendAs('ada')(path, init);
-    };
-    await expect(pageStore('payment-journal', flaky).put(VAULT, rec),
-      'RED WHEN: a read-back that fails once is reported as not confirmed instead of being tried again').resolves.toBeUndefined();
     const blind: WireSend = async (path, init) => (init.method === 'PUT' ? sendAs('ada')(path, init) : { status: 502, body: {} });
-    await expect(pageStore('payment-journal', blind).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), next, 'payment-journal')),
+    await expect(pageStore('payment-journal', readRoutesOverSend(blind, { directory: 'empty', newest: 'none-entered' })).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), next, 'payment-journal')),
       'RED WHEN: a taken version whose owner cannot be read back is reported as settled either way').rejects.toThrow(/not confirmed filed/);
   });
 
@@ -327,17 +323,17 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
 
   it('A REPLY ABOUT ANOTHER VERSION IS NOT A FILING: the page says it is not confirmed', async () => {
     const liar: WireSend = async () => ({ status: 201, body: { filed: true, record: 'pool', version: 99, digest: 'x' } });
-    await expect(pageStore('pool', liar).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), 1)),
+    await expect(pageStore('pool', readRoutesOverSend(liar, { directory: 'empty', newest: 'none-entered' })).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), 1)),
       'RED WHEN: a 201 about another version is believed').rejects.toThrow(/not confirmed filed/);
     const cut: WireSend = async () => { throw new Error('connection reset'); };
-    await expect(pageStore('pool', cut).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), 1)),
+    await expect(pageStore('pool', readRoutesOverSend(cut, { directory: 'empty', newest: 'none-entered' })).put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), 1)),
       'RED WHEN: a write whose answer never came is reported as not filed').rejects.toThrow(/It may have been filed/);
     const short: WireSend = async () => ({ status: 200, body: { record: 'pool', versions: [toWire('pool', signFiling('pool', sealPool(VAULT, { notes: [] }, await signers(), 2), ADA.secret))] } });
-    await expect(pageStore('pool', short).versions(VAULT), 'RED WHEN: a list missing version 1 is believed')
+    await expect(pageStore('pool', readRoutesOverSend(short, { directory: 'empty', newest: 'none-entered' })).versions(VAULT), 'RED WHEN: a list missing version 1 is believed')
       .rejects.toThrow(/not every version, in order/);
     const absent: WireSend = async () => ({ status: 404, body: { error: 'gone' } });
-    await expect(pageStore('pool', absent).get(VAULT), 'RED WHEN: a failed read is answered as no record')
-      .rejects.toThrow(/not a record holding nothing/);
+    await expect(pageStore('pool', readRoutesOverSend(absent, { directory: 'empty', newest: 'none-entered' })).get(VAULT), 'RED WHEN: a failed read is answered as no record')
+      .rejects.toThrow(/gone/);
   });
 
   it('the route cannot be built without an answer to who may touch which vault, and nothing in it can open a record', () => {
@@ -348,7 +344,7 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
   });
 
   it('the page\'s store cannot be made without a signing key to file with', () => {
-    expect(() => new HttpSealedPoolStore('pool', sendAs('ada'), '' as Hex, roster, enteredHere()), 'RED WHEN: a store that would file unsigned records can be built').toThrow(/no signing key/);
+    expect(() => new HttpSealedPoolStore('pool', storeReachOver(served('ada'), 'acc_vaults'), '' as Hex, roster), 'RED WHEN: a store that would file unsigned records can be built').toThrow(/no signing key/);
   });
 
   it('the page sends only to its own server, with its cookie and the person it was prepared for', async () => {
@@ -357,11 +353,11 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
       sent.push({ url, init });
       return new Response(JSON.stringify({ ok: 1 }), { status: 200 });
     }) as unknown as typeof fetch;
-    const r = await pageWireSend(() => 'ada', fake)('/api/vaults/x', { method: 'GET' });
+    const r = await sendOnPage(() => 'ada', fake)('/api/vaults/x', { method: 'GET' });
     expect(r).toEqual({ status: 200, body: { ok: 1 } });
     expect(sent[0]!.init.credentials).toBe('same-origin');
     expect((sent[0]!.init.headers as Record<string, string>)['x-signed-in-as']).toBe('ada');
-    await expect(pageWireSend(() => 'ada', fake)('https://elsewhere.example/api', { method: 'GET' }),
-      'RED WHEN: a sealed record can be sent anywhere but this product\'s own server').rejects.toThrow(/nowhere else/);
+    await expect(sendOnPage(() => 'ada', fake)('https://elsewhere.example/api', { method: 'GET' }),
+      'RED WHEN: a request can be sent anywhere but this product\'s own server').rejects.toThrow(/nowhere else/);
   });
 });

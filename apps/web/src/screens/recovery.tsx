@@ -7,7 +7,7 @@ import {
 } from '../adapters/recovery.js';
 import { READ, type Read } from '../adapters/reads.js';
 import { useMoment } from '../records/parts.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { ActDone, ActOutcome, ActStopped, type ActStep } from '../records/proposal-act.js';
 import { useSession } from '../session.js';
 import { RecoveryWindowSection } from '../actions/recovery-window.js';
@@ -51,6 +51,7 @@ type Phase = (ActStep & { readonly act: RecoveryAct }) | null;
  * opened, and where the network holds it is read from the chain each time it is shown, never from the file.
  */
 export function Recovery() {
+  const view = useCompanyView();
   const t = useText();
   const { person, company } = useSession();
   const { reload } = useCompanyRecords();
@@ -69,19 +70,19 @@ export function Recovery() {
   const busy = phase !== null;
 
   useEffect(() => {
-    if (held === null || company === null) { setStanding(null); return undefined; }
+    if (held === null || view === null) { setStanding(null); return undefined; }
     let current = true;
     setStanding(null);
-    void recoveryStanding(company, held).then((read) => { if (current) setStanding(read); });
+    void recoveryStanding(view, held).then((read) => { if (current) setStanding(read); });
     return () => { current = false; };
-  }, [held, company, reads]);
+  }, [held, view, reads]);
 
   useEffect(() => {
-    if (company === null) return undefined;
+    if (view === null) return undefined;
     let current = true;
-    void readRecordsStates(person.id, company).then((read) => { if (current) setRecords(read); });
+    void readRecordsStates(person.id, view).then((read) => { if (current) setRecords(read); });
     return () => { current = false; };
-  }, [person.id, company, reads]);
+  }, [person.id, view, reads]);
 
   const press = async (act: RecoveryAct, ask: (onStep: (step: number, steps: number) => void) => Promise<RecoveryActed>): Promise<void> => {
     if (company === null || busy) return;
@@ -98,9 +99,9 @@ export function Recovery() {
   };
 
   const open = async (file: File | undefined): Promise<void> => {
-    if (file === undefined || company === null || busy) return;
+    if (file === undefined || view === null || busy) return;
     setResult(null);
-    const opened = await openRecoveryFile(company, await file.text());
+    const opened = await openRecoveryFile(view, await file.text());
     if (opened.of === 'refused') { setRefusedFile(opened.why); return; }
     setRefusedFile(null);
     setHeld(opened.held);
@@ -111,7 +112,7 @@ export function Recovery() {
       <p className="text-muted-foreground" data-recovery-intro>{t('recovery.intro')}</p>
       <RecordsStandingSays read={records} />
       <Section title={t('recovery.raise.heading')} list={false}>
-        <form className="flex flex-col gap-4" data-recovery-raise onSubmit={(e) => { e.preventDefault(); if (company !== null) void press(RECOVERY_ACT.raise, (onStep) => raiseRecovery(person.id, company, chosen, onStep)); }}>
+        <form className="flex flex-col gap-4" data-recovery-raise onSubmit={(e) => { e.preventDefault(); if (view !== null) void press(RECOVERY_ACT.raise, (onStep) => raiseRecovery(person.id, view, chosen, onStep)); }}>
           <FieldSet disabled={busy}>
             <FieldLegend variant="label">{t('recovery.raise.within')}</FieldLegend>
             <div className="flex flex-wrap gap-2" role="group" aria-label={t('recovery.raise.within')}>
@@ -131,8 +132,8 @@ export function Recovery() {
         {held === null ? <EmptyState icon={FileSecurityIcon}>{t('recovery.held.nothing')}</EmptyState> : (
           <HeldRecovery
             held={held} standing={standing} busy={busy}
-            approve={() => { if (company !== null) void press(RECOVERY_ACT.approve, (onStep) => approveRecovery(person.id, company, held, onStep)); }}
-            carry={() => { if (company !== null) void press(RECOVERY_ACT.carry, (onStep) => carryOutRecovery(person.id, company, held, onStep)); }}
+            approve={() => { if (view !== null) void press(RECOVERY_ACT.approve, (onStep) => approveRecovery(person.id, view, held, onStep)); }}
+            carry={() => { if (view !== null) void press(RECOVERY_ACT.carry, (onStep) => carryOutRecovery(person.id, view, held, onStep)); }}
           />
         )}
         <div className="flex flex-col items-start gap-2">

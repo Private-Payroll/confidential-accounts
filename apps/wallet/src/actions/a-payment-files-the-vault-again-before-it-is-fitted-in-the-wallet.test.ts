@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
+import { NO_VIEW_OPENED } from './step-views.test-support.js';
 
 /*
  * **A ONE-OFF PAYMENT IN THE WALLET FILES THE VAULT'S POOL AGAIN BEFORE IT IS FITTED.** The raise reads the vault's
@@ -33,7 +34,7 @@ const r = {
   api: async () => null, send: async () => ({ status: 200, body: null }),
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] } }), filingJudgeFor: () => async () => null, leavesFor: () => async () => [] },
   roster: async () => ({ id: 'acc_1', signers: [] }), companyKeys: { epoch: 0 }, holders: async () => ({ seats: [] }),
-  builder: { isTheWalletsBuilder: true }, chain: { indexer: {} },
+  builder: { isTheWalletsBuilder: true }, chain: { indexer: {} }, stepView: NO_VIEW_OPENED,
 } as never;
 const reach = {
   chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, secrets: () => ({}) as never,

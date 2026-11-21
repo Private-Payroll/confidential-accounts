@@ -1,10 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
-import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountFigureOnly, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, useLanguage, useText, type AmountKind, type TokenAmount } from 'vaults-ui';
+import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountFigureOnly, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, StatTiles, useLanguage, useText, type AmountKind, type TokenAmount } from 'vaults-ui';
 import { proposalsNotRead } from './counts.js';
 import { isPending, PendingPill, useStandingSays, VaultName } from './vault-pending.js';
-import { ADMIT_BY, companyPagesOpen, INVITED, OPENED, PAID, PAID_STATE, READ, readVaultPublicMoney, STANDING, visibilityKnown, type AdmitBy, type CompanyRecords, type InvitationRow, type Paid, type PersonRow, type PersonStanding, type ProposalRow, type Read, type RunRow, type VaultRow, type VendorRow } from '../adapters/company-records.js';
-import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, watchPrivateMoneyReadable, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
+import { companyPagesOpen, INVITED, OPENED, READ, visibilityKnown, type CompanyRecords, type InvitationRow, type Read, type VendorRow } from '../adapters/company-records.js';
+import { ADMIT_BY, PAID, PAID_STATE, STANDING, type AdmitBy, type Paid, type PersonRow, type PersonStanding, type ProposalRow, type RunRow, type VaultRow } from '../adapters/company-rows.js';
+import { declareVaultNamesIn, readVaultPublicMoney } from '../adapters/company-vaults-read.js';
+import { vaultReadAgainIn } from '../adapters/filing-judge.js';
+import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import { PERSON_KIND, type PersonKind } from '../adapters/person-acts.js';
 import { ACT_REFUSAL, type ActRefusal } from '../adapters/refusals.js';
@@ -14,7 +17,7 @@ import { PAGE } from '../pages.js';
 import { PageLink } from '../router.js';
 import { useSession } from '../session.js';
 import { usePanel } from '../shell/right-panel.js';
-import { useCompanyRecords } from './company-records.js';
+import { useCompanyRecords, useCompanyView } from './company-records.js';
 import { RetiredMayHold, retiredVaultShown, useRetiredVaultOnChain } from './retired-vault.js';
 
 /*
@@ -436,10 +439,11 @@ export interface VaultMoney {
 }
 
 /**
- * WHAT A VAULT HOLDS, READ WHEN IT IS SHOWN, EACH TIME `asked` CHANGES, AND
- * EACH TIME THE PERSON'S WALLET RELEASES THE COMPANY'S KEY TO THIS TAB (which
- * the private side needs): privately on this device, with this signer's own
- * keys, and publicly from the company's service. Each side is read on its own, and one that could not
+ * WHAT A VAULT HOLDS, READ THROUGH THE PAGE'S VIEW OF THE COMPANY WHEN IT IS
+ * SHOWN, EACH TIME `asked` CHANGES, AND EACH TIME THE PAGE OPENS A NEW VIEW
+ * (as it does when the person's wallet releases the company's key to this
+ * tab, which the private side needs): privately on this device, with this
+ * signer's own keys, and publicly from the chain. Each side is read on its own, and one that could not
  * be read is said as that, never as nothing held. The private side keeps
  * what it found: amounts, nothing held yet, a record not believed, or why it
  * could not be read.
@@ -451,16 +455,25 @@ export const holdsMoney = (m: VaultMoney): boolean =>
 
 export function useVaultMoney(company: string, vault: string, asked = 0): VaultMoney {
   const { person } = useSession();
+  const view = useCompanyView();
   const [money, setMoney] = useState<VaultMoney>({ private: MONEY.reading, public: MONEY.reading });
-  const [released, setReleased] = useState(0);
-  useEffect(() => watchPrivateMoneyReadable(company, () => setReleased((n) => n + 1)), [company]);
+  /* Each change of `asked` after this draw is a press to read again: the view hands out its round, so a screen drawn again never reuses one. */
+  const [again, setAgain] = useState<{ readonly view: typeof view; readonly round: number }>({ view: null, round: 0 });
+  const pressed = useRef(asked);
+  useEffect(() => {
+    if (asked === pressed.current) return;
+    pressed.current = asked;
+    if (view !== null) setAgain({ view, round: vaultReadAgainIn(view) });
+  }, [asked, view]);
+  const round = again.view === view ? again.round : 0;
   useEffect(() => {
     let alive = true;
     setMoney({ private: MONEY.reading, public: MONEY.reading });
-    void readVaultPrivateMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, private: h })); });
-    void readVaultPublicMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, public: h ?? MONEY.unreadable })); });
+    if (view === null || view.company !== company) return undefined;
+    void readVaultPrivateMoney(person.id, view, vault, { round }).then((h) => { if (alive) setMoney((m) => ({ ...m, private: h })); });
+    void readVaultPublicMoney(person.id, view, vault, round).then((h) => { if (alive) setMoney((m) => ({ ...m, public: h ?? MONEY.unreadable })); });
     return () => { alive = false; };
-  }, [person.id, company, vault, asked, released]);
+  }, [person.id, company, view, vault, round]);
   return money;
 }
 
@@ -528,18 +541,29 @@ function VaultMoneyLines({ money }: { money: VaultMoney }) {
 }
 
 /**
+ * THE COMPANY'S VAULTS AS TILES: the record of every adopted vault's name is named to the page's view before the tiles
+ * read them (a layout effect runs before any tile's own effect), so one held read proves every name drawn, however many
+ * vaults there are.
+ */
+export function VaultTiles({ company, rows }: { company: string; rows: readonly VaultRow[] }) {
+  const view = useCompanyView();
+  useLayoutEffect(() => { if (view !== null && view.company === company) declareVaultNamesIn(view, rows); }, [view, company, rows]);
+  return <StatTiles>{rows.map((v, i) => <VaultTile key={v.vault} company={company} vault={v} index={i} />)}</StatTiles>;
+}
+
+/**
  * A VAULT'S TILE, the kit's stat tile, linking to the vault's page: its name,
  * with the Pending pill when it waits on something, where it stands when it
  * does not, when it was created, and each token it holds on a line with
  * its Private or Public pill. No change badge is shown: nothing here has an
  * amount to compare with.
  */
-export function VaultTile({ company, vault, index }: { company: string; vault: VaultRow; index: number }) {
+function VaultTile({ company, vault, index }: { company: string; vault: VaultRow; index: number }) {
   const t = useText();
   const day = useDay();
   const says = useStandingSays();
   const money = useVaultMoney(company, vault.vault);
-  const onChain = useRetiredVaultOnChain(company, vault.vault, vault.retired === true);
+  const onChain = useRetiredVaultOnChain(vault.vault, vault.retired === true);
   /* A retired vault is listed only while it holds money, which only adopting it again can pay out. */
   if (vault.retired === true && !holdsMoney(money) && !retiredVaultShown(onChain)) return null;
   return (

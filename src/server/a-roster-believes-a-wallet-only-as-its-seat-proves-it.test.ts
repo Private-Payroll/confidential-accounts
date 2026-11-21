@@ -20,6 +20,7 @@
  * test's. Bo is retired by the last roster case, so it runs after every case
  * that needs him.
  */
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
@@ -35,14 +36,13 @@ import type { Account, PendingSignerPayload, SealedAccount, Signer } from '../co
 import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { directoryChangeMessage, directoryEntryMade, type DirectoryChange } from '../midnight/seat-directory.js';
-import {
-  admitSignerHere, foldOffersHere, offerVaultKeysHere, ROSTER_CHECK, rosterBelievedHere, rosterHere, RosterNotBelieved, type RosterDoors, type RosterReads,
-} from 'vaults-web-shared/roster-here.js';
+import { ROSTER_CHECK, rosterBelievedHere, rosterHere, RosterNotBelieved, type RosterDoors, type RosterReads } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere, foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-filed-here.js';
 import { NoIndexerToReadTheChain, SEAT_READ_STOP, SeatingRefusedOnTheChain, TWO_SEATINGS } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
 import { seatRequestFingerprint } from 'vaults-web-shared/seat-request-fingerprint.js';
-import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { directoryWithItsRecordsHere } from 'vaults-web-shared/vault-page-doors.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
 import { anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { signerRoutes } from './signer-routes.js';
 import {
@@ -51,18 +51,19 @@ import {
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
 import { scopeOfRole } from '../core/seat-rights.js';
+import { viewOver, foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 /** Ada's device anchors every filing not yet anchored, as it does on its way in. */
-const adaAnchors = () => anchorTheRecordsHere({
+const adaAnchors = () => anchorTheRecordsHere(throughAView({
   accountId: CO,
   material: { signingSecret: ADA.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-  manifest: manifestServiceFor(apiAs('ada')),
-  tree: treeServiceFor(apiAs('ada')),
+  manifest: manifestServiceOf(serviceSource(apiAs('ada'), CO)),
+  tree: treeServiceOf(serviceSource(apiAs('ada'), CO)),
   directory: () => acmeDirectoryWithItsFold({}, [ADA]),
   directoryFilings: async () => store.directoryFilingsOf(CO),
   onChain: acmeChain.onChain,
   service: {
-    foundingRecords: anchorServiceFor(apiAs('ada')).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs('ada'), CO),
     sealedProposals: async (company) => store.listProposals(company),
     callState: async () => ({ account: ADDRESS }) as never,
     sendProven: async (_company, tx) => {
@@ -71,7 +72,7 @@ const adaAnchors = () => anchorTheRecordsHere({
     },
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
-});
+}));
 
 aCompanyOfTwoSeats((app, deps) => {
   app.get('/api/accounts/:id', deps.signedIn, deps.member, (req, res) => {
@@ -120,7 +121,7 @@ const readOn = async (s: Seat, reads: RosterReads = acmeReads) => rosterBelieved
 });
 /** One seat's device, as it reads the roster to change it. */
 const doorsOf = (s: Seat): RosterDoors => ({
-  api: apiAs(s.person), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
+  view: viewOver(apiAs(s.person), CO), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
   reads: acmeReads, entered: s.entered,
 });
 /** Ada's device files the roster's next version as `next` says, through the service's own roster route, and enters it. */
@@ -248,11 +249,11 @@ describe('A ROSTER ENTRY\'S WALLET IS THE ONE ITS SEAT\'S OWN OPENING PROVES', (
     expect(read.refused).toEqual([{ signerId: 'sgn_twin', name: 'twin', why: 'seat-named-twice' }]);
     expect(read.account.signers.filter((x) => x.leafCommitment === DEE.seat).map((x) => x.id)).toEqual(['sgn_dee']);
     /* Bo gives his vault keys again, and Ada's device folds them in: the one filing a fold makes. */
-    await offerVaultKeysHere(apiAs('bo'), CO, {
+    await offerVaultKeysHere(CO, {
       signerId: 'sgn_bo', signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, viewingKey: KEY as Hex,
       companyKey: toHex(new Uint8Array(32).fill(BO.n + 100)) as Hex, entry: BO.statement,
       recordsKey: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(BO.n)), LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), BO.seat),
-    });
+    }, viewOver(apiAs('bo'), CO));
     expect((await foldOffersHere(doorsOf(ADA))).folded).toEqual([BO.seat]);
     const filed = store.newestRoster(CO)!;
     const ids = openAccount({ ...store.getAccount(CO)!, roster: filed } as never, KEY, filed).signers.map((x) => x.id);

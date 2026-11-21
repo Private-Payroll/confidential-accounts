@@ -12,6 +12,7 @@
  *
  * The one to read first is "A PERSON'S EARLIER VERSION".
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import type { RecordsAsked } from '../midnight/records-held.js';
 import { describe, expect, it, vi } from 'vitest';
 import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
@@ -26,9 +27,8 @@ import { signCompanyFiling, signFiling, toCompanyWire, toWire, type SealedCompan
 import type { SealedRun } from '../core/types.js';
 import { companyRecordEntry, entryIdOf, vaultRecordEntry } from '../midnight/record-manifest.js';
 import { anchoredOver, anchorFunctions, heldEntering, anchorSentInATest } from '../testing/record-tree-double.js';
-import { enteredHere } from '../testing/records-entered.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import { anchorServiceFor, anchorTheRecordsHere, type AnchorDoors, type Anchored } from 'vaults-web-shared/records-anchored-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { anchorTheRecordsHere, type Anchored } from 'vaults-web-shared/records-anchored-here.js';
 import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
@@ -36,12 +36,14 @@ import {
   believedProposalIdsOnChainHere, believedRunsHere, keptRunHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere,
 } from 'vaults-web-shared/run-rebuilt-here.js';
 import { openTheRoundHere } from 'vaults-web-shared/round-opened-here.js';
-import { FilingNotBelieved, HttpCompanyRecordStore, HttpSealedPoolStore, RecordWithheld, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { FilingNotBelieved, HttpCompanyRecordStore, HttpSealedPoolStore, RecordWithheld } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { directoryHere, directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeDirectory, acmeDirectoryDeps, ACME, ADA, ADDRESS, BO, apiAs, CO, fromAda, KEY, ORIGIN, peopleRecords, personVersions, sendAs,
-  store, vaultRecords, type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  store, vaultRecords, type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver, foundingRecordsOver, storeReachOver } from '../testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../testing/service-routes-in-memory.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
 /** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
 const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
@@ -50,8 +52,8 @@ aCompanyOfTwoSeats();
 const NETWORK = theNetwork();
 /** Ada's device anchoring what is waiting, on the test's chain: the head the readers fold to. */
 const anchoredByAda = async (): Promise<Anchored> => {
-  const doors: AnchorDoors = {
-    accountId: CO, manifest: manifestServiceFor(apiAs('ada')), tree: treeServiceFor(apiAs('ada')),
+  const doors: AnchorDoorsBare = {
+    accountId: CO, manifest: manifestServiceOf(serviceSource(apiAs('ada'), CO)), tree: treeServiceOf(serviceSource(apiAs('ada'), CO)),
     material: { signingSecret: ADA.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
     directory: () => acmeDirectoryWithItsFold(), directoryFilings: async () => store.directoryFilingsOf(CO),
     onChain: acmeChain.onChain,
@@ -62,20 +64,21 @@ const anchoredByAda = async (): Promise<Anchored> => {
         acmeChain.move(previous, batch, held, tag);
       },
       sealedProposals: async (c) => store.listProposals(c),
-      foundingRecords: anchorServiceFor(apiAs('ada')).foundingRecords,
+      foundingRecords: foundingRecordsOver(apiAs('ada'), CO),
     },
     builder: { ...anchorFunctions, anchor: anchorSentInATest },
   };
-  return anchorTheRecordsHere(doors);
+  return anchorTheRecordsHere(throughAView(doors));
 };
 /** Ada's device reading the company's people, over what `serve` makes of what the service sends. */
 const peopleOn = (s: Seat, serve: (body: unknown) => unknown = (b) => b): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
+  writes: writesOver(sendAs(s.person)),
   directory: acmeDirectory,
-  send: async (path, init) => {
+  view: listsOver(async (path, init) => {
     const r = await sendAs(s.person)(path, init);
     return path.endsWith('/people') && init.method === 'GET' ? { ...r, body: serve(r.body) } : r;
-  },
+  }, ACME.id),
 });
 /** What the service sends, with `id`'s record replaced by `version` of it. */
 const serving = (id: string, version: SealedCompanyRecord) => (body: unknown) => ({
@@ -87,7 +90,7 @@ const pay = { name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_
 describe('THE COMPANY\'S PEOPLE, READ THROUGH THE ANCHOR', () => {
   let pat = '';
   it('A PERSON\'S EARLIER VERSION, SERVED AFTER A NEWER ONE IS ANCHORED, IS NOT BELIEVED, AND THE ANCHORED ONE IS', async () => {
-    pat = (await inviteHere(ACME, ADA, 'employee', pay, ORIGIN, fromAda)).person!;
+    pat = (await inviteHere(ACME, ADA, 'employee', pay, ORIGIN, writesOver(fromAda))).person!;
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === pat)!;
     await setStatusHere(peopleOn(ADA), here, 'leaver', LEFT);
     await anchoredByAda();
@@ -142,7 +145,7 @@ describe('THE COMPANY\'S PEOPLE, READ THROUGH THE ANCHOR', () => {
     /* RED WHEN: a person nothing names is read as withheld - every list would be refused. */
     expect((await readPeopleHere(peopleOn(ADA))).notBelieved).not.toContain(pat);
     /* A person invited and entered, and not yet anchored, left out of the list. */
-    const sam = (await inviteHere(ACME, ADA, 'employee', { ...pay, name: 'Sam', email: 'sam@acme.co' }, ORIGIN, fromAda)).person!;
+    const sam = (await inviteHere(ACME, ADA, 'employee', { ...pay, name: 'Sam', email: 'sam@acme.co' }, ORIGIN, writesOver(fromAda))).person!;
     const samLeftOut = (body: unknown) => ({
       ...(body as object), people: (body as { people: Array<{ filed: { id: string } }> }).people.filter((row) => row.filed.id !== sam),
     });
@@ -237,7 +240,7 @@ describe('A VAULT\'S RECORDS, READ THROUGH THE ANCHOR', () => {
     const send: WireSend = async (path) => (path.endsWith('/versions')
       ? { status: 200, body: { record: 'pool', versions: served.map((r) => toWire('pool', r)) } }
       : { status: 200, body: { record: 'pool', filed: served.length === 0 ? null : toWire('pool', served.at(-1)!) } });
-    return new HttpSealedPoolStore('pool', send, ADA.signingSecret as Hex, directoryJudge(acmeDirectoryDeps()), enteredHere());
+    return new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), CO), ADA.signingSecret as Hex, directoryJudge(acmeDirectoryDeps()));
   };
 
   it('AN OLDER POOL SERVED AS THE NEWEST, OR A LIST OF VERSIONS CUT SHORT, IS NOT BELIEVED', async () => {
@@ -278,7 +281,7 @@ describe('A VAULT\'S RECORDS, READ THROUGH THE ANCHOR', () => {
     const judge = directoryJudge({ ...acmeDirectoryDeps(), anchored: anchoredOver(withholding, CO, acmeChain.read) });
     const send: WireSend = async () => ({ status: 200, body: { record: 'pool', filed: null } });
     /* RED WHEN: a record no opened batch names is read as absent while a batch the device cannot open may name it. */
-    await expect(new HttpSealedPoolStore('pool', send, ADA.signingSecret as Hex, judge, enteredHere()).get('ce'.repeat(32)))
+    await expect(new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), CO), ADA.signingSecret as Hex, judge).get('ce'.repeat(32)))
       .rejects.toThrow(/cannot be read past a batch this device cannot open/u);
   });
 
@@ -310,7 +313,7 @@ describe('A VAULT\'S RECORDS, READ THROUGH THE ANCHOR', () => {
 
 describe('THE DIRECTORY A DEVICE BELIEVES IS NEVER OLDER THAN THE ONE ANCHORED', () => {
   it('A DIRECTORY SERVED WITHOUT ITS NEWEST ANCHORED VERSION IS REFUSED', async () => {
-    const q = (await inviteHere(ACME, ADA, 'employee', { ...pay, name: 'Quinn', email: 'quinn@acme.co', baseAmount: 500_102n }, ORIGIN, fromAda)).person!;
+    const q = (await inviteHere(ACME, ADA, 'employee', { ...pay, name: 'Quinn', email: 'quinn@acme.co', baseAmount: 500_102n }, ORIGIN, writesOver(fromAda))).person!;
     await anchoredByAda();
     /* RED WHEN: a directory served older than the one anchored is believed - a seat's role or retirement could be hidden from a device. */
     const served = store.directoryFilingsOf(CO);
@@ -339,7 +342,7 @@ describe('A COMPANY RECORD\'S VERSIONS, ONE OF THEM NEVER ENTERED', () => {
     await filedByAda(ID);
     await ADA.entered.enter([await filedByAda(ID)]);
     await anchoredByAda();
-    const device = new HttpCompanyRecordStore(CO, (path, init) => sendAs('ada')(path, init as never), ADA.signingSecret as Hex, directoryJudge(acmeDirectoryDeps()));
+    const device = new HttpCompanyRecordStore(CO, storeReachOver((path, init) => sendAs('ada')(path, init as never), CO), ADA.signingSecret as Hex, directoryJudge(acmeDirectoryDeps()));
     /* RED WHEN: the company record's list throws on the version passed over (a freeze), skips it silently, or gives its bytes. */
     const listed = await device.versions('proposal', ID);
     expect(listed.map((v) => [v.version, 'neverEntered' in v])).toEqual([[1, false], [2, true], [3, false]]);

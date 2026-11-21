@@ -17,6 +17,9 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   currentUser: () => kr.who,
   forgetLocally: () => { kr.forgot += 1; kr.who = null; },
   resumeSession: async () => { kr.resumed += 1; kr.who = { id: 'u1' }; return kr.who; },
+}));
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   startCompanyHeldFromTheStart: async (spec: unknown, _origin: string, ...rest: unknown[]) => {
     kr.calls.push('start'); kr.specs.push(spec); kr.builders.push(...rest); return kr.started();
   },
@@ -28,8 +31,10 @@ async function load(origin = 'http://wallet.localhost:5180') {
   vi.stubEnv('VITE_WALLET_ORIGIN', origin);
   const m = await import('./create-company.js');
   const keyring = await import('vaults-web-shared/keyring.js');
+  const creation = await import('vaults-web-shared/company-creation.js');
+  const transport = await import('vaults-web-shared/service-transport.js');
   const wallet = await import('vaults-web-shared/wallet-sign-in.js');
-  return { m, keyring, wallet };
+  return { m, keyring, creation, transport, wallet };
 }
 
 beforeEach(() => {
@@ -76,14 +81,14 @@ describe('creating a company on this device', () => {
 
   /* RED WHEN: a refusal is handed on in the keyring's words, or two different refusals are said as one. */
   it('hands back a reason by the refusal\'s kind, never its words', async () => {
-    const { m, keyring, wallet } = await load();
+    const { m, keyring, creation, transport, wallet } = await load();
     kr.who = { id: 'u1' };
     const cases: [unknown, string][] = [
-      [new keyring.FirstKeysNeedTheSignIn('x'), 'sign-in-again'],
+      [new creation.FirstKeysNeedTheSignIn('x'), 'sign-in-again'],
       [new keyring.SavedKeysDidNotOpen('x'), 'keys-did-not-open'],
       [new keyring.SavedKeysWentBack('x'), 'keys-went-back'],
-      [new keyring.AnotherPersonError('x'), 'another-person'],
-      [new keyring.AuthError('x'), 'not-signed-in'],
+      [new transport.AnotherPersonError('x'), 'another-person'],
+      [new transport.AuthError('x'), 'not-signed-in'],
       [new wallet.WalletClosed({ of: 'declined' }, 'x'), 'declined'],
       [new TypeError('x'), 'unreachable'],
       [new Error('the service said something'), 'did-not-finish'],

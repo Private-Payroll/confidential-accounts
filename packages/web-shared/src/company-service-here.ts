@@ -4,7 +4,8 @@
  * counted only while its filer is seated; a choice that cannot be read whole is said as unread, never taken as ours.
  */
 import { canonical, unwrapKey, type Hex } from '../../../src/core/crypto.js';
-import { companyWirePaths, fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import type { CompanyRecordAsked } from './records-source.js';
 import {
   COMPANY_SERVICE_RECORD, openCompanyService, openedWithTheCompanyKey, serviceInForce, type CompanyService, type ServiceInForce,
   type ServiceOpener, type ServiceVersion,
@@ -20,7 +21,8 @@ type DirectoryHereFor = ReturnType<typeof companyJudges>['directoryHereFor'];
 /** What a read of the company's choice of service is handed: the wallet's company reach, or the page's own doors. */
 export interface ServiceReach {
   readonly accountId: string;
-  readonly api: (path: string, init?: RequestInit) => Promise<unknown>;
+  /** The company's records, read through its view: every version of a record asked with `every`. */
+  readonly records: (asked: readonly CompanyRecordAsked[]) => Promise<readonly unknown[]>;
   readonly judges: { readonly directoryHereFor: DirectoryHereFor };
   readonly label: Parameters<DirectoryHereFor>[1];
   readonly account: Parameters<DirectoryHereFor>[2];
@@ -61,10 +63,7 @@ const whyOf = (e: unknown): string => String((e as Error)?.message ?? e).replace
 export async function companyServiceFiledHere(r: ServiceReach): Promise<ServiceFiled | ServiceUnread> {
   const { kind, id } = COMPANY_SERVICE_RECORD;
   try {
-    const b = await r.api(companyWirePaths.versions(r.accountId, kind, id)).catch((e: unknown) => {
-      if ((e as { status?: unknown } | null)?.status === 404) return null;
-      throw e;
-    }) as { versions?: unknown } | null;
+    const [b] = await r.records([{ kind, id, every: true }]) as readonly ({ versions?: unknown } | null | undefined)[];
     const served = Array.isArray(b?.versions)
       ? b!.versions.map((m) => fromCompanyWire(m, { company: r.accountId, kind, id }).sealed) : [];
     const here = await r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)({ records: [{ store: 'company', kind, id }] }) as DirectoryHere;

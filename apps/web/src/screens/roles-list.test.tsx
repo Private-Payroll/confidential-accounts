@@ -28,6 +28,12 @@ vi.mock('../adapters/grants-here.js', async (real) => ({
   ...(await real<typeof import('../adapters/grants-here.js')>()),
   readGrants: async () => st.readers,
 }));
+/* The page's view of the company, stood in for: the list is drawn here outside the frame that opens one. */
+const VIEW = vi.hoisted(() => ({ company: 'c-1', ended: null }));
+vi.mock('../records/company-records.js', async (real) => ({
+  ...(await real<typeof import('../records/company-records.js')>()),
+  useCompanyView: () => VIEW,
+}));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
   companyNamesFor: async () => new Map(),
@@ -180,7 +186,7 @@ describe('changing a signer\'s role', () => {
     await choose(3, 'approver');
     await press('[data-action="change-role"]');
     expect(st.changes).toHaveLength(1);
-    expect(st.changes[0]!.slice(0, 3)).toEqual(['u1', 'c-1', { leaf: leaf(3), current: 'initiator', role: 'approver', address: PRIVATE, name: 'Name 3' }]);
+    expect(st.changes[0]!.slice(0, 3)).toEqual(['u1', expect.objectContaining({ company: 'c-1' }), { leaf: leaf(3), current: 'initiator', role: 'approver', address: PRIVATE, name: 'Name 3' }]);
   });
 
   /* RED WHEN: a seat that is being removed is offered for a change, or only signer roles are not the roles offered. */
@@ -297,7 +303,7 @@ describe('a change begun on this visit', () => {
     await draw();
     expect(q('[data-begun]')!.textContent).toContain(words('roles.continue.says', { name: 'Name 3', role: EN['invite.role.approver']! }));
     await press('[data-action="continue-role"]');
-    expect(st.continues[0]!.slice(0, 3)).toEqual(['u1', 'c-1', leaf(3)]);
+    expect(st.continues[0]!.slice(0, 3)).toEqual(['u1', expect.objectContaining({ company: 'c-1' }), leaf(3)]);
     expect(q('[data-change-done="invite"]')).not.toBeNull();
   });
 
@@ -309,7 +315,7 @@ describe('a change begun on this visit', () => {
     expect(q('[data-drop-says]')!.textContent).toBe(EN['roles.drop.says']);
     const reads = st.reads;
     await press('[data-action="drop-role-change"]');
-    expect(st.drops[0]!.slice(0, 3)).toEqual(['u1', 'c-1', leaf(3)]);
+    expect(st.drops[0]!.slice(0, 3)).toEqual(['u1', expect.objectContaining({ company: 'c-1' }), leaf(3)]);
     expect(q('[data-change-dropped="dropped"]')!.textContent).toBe(words('roles.drop.done.dropped', { name: 'Name 3' }));
     expect(st.reads).toBeGreaterThan(reads);
     cleanup();

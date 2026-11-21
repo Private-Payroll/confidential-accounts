@@ -1,20 +1,17 @@
 /**
  * **AN ACT THAT DOES NOT LIST EVERY READ OF THE COMPANY'S CHOICE OF SERVICE GETS OUR SERVICE WITHOUT READING THE
  * CHOICE (`companyServiceHere`), SO EACH ACT THAT MISSES A READ IS NAMED HERE WITH ITS REASON.** Every intent is
- * held to `SERVICE_READS` as `companyServiceHere` holds it; a miss not named below, or a name that no longer misses,
+ * held to `SERVICE_CHOICE_READS` as `companyServiceHere` holds it; a miss not named below, or a name that no longer misses,
  * fails, so a new act cannot lose the company's choice without a line saying why.
  */
 import { describe, it, expect } from 'vitest';
-import { ACT_INTENTS, routeOf } from 'midnight-identity/profile/act-intents';
+import { ACT_INTENTS, listsRoute, SERVICE_CHOICE_READS } from 'midnight-identity/profile/act-intents';
 import { intentShapeOf } from 'midnight-identity/profile/act-shape';
-import { SERVICE_READS } from './company-service-read.js';
-
-const ACCOUNT = 'acc_reads';
 
 const missesOf = (name: string): readonly string[] => {
   const shape = intentShapeOf(name);
   if (shape === undefined) return ['no shape'];
-  return SERVICE_READS(ACCOUNT).filter(([method, path]) => routeOf(shape, method, path) === null).map(([method, path]) => `${method} ${path}`);
+  return SERVICE_CHOICE_READS.filter((route) => !listsRoute(shape, route)).map((route) => `${route.method} ${route.path}`);
 };
 
 /** Acts that miss at least one read, each with why a call through our service is right for it. */
@@ -31,7 +28,7 @@ const NOT_READING: Readonly<Record<string, string>> = {
 describe('an act that does not list the reads of the company\'s choice of service is named with its reason', () => {
   it('every act lists the reads or is named below', () => {
     const missing = Object.keys(ACT_INTENTS).filter((name) => missesOf(name).length > 0 && NOT_READING[name] === undefined);
-    expect(missing.map((n) => `${n}: ${missesOf(n).length} of ${SERVICE_READS(ACCOUNT).length} reads missing`)).toEqual([]);
+    expect(missing.map((n) => `${n}: ${missesOf(n).length} of ${SERVICE_CHOICE_READS.length} reads missing`)).toEqual([]);
   });
 
   it('an act named below still misses a read, with a reason of some length', () => {

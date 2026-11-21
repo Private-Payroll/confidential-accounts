@@ -6,6 +6,7 @@ import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profil
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
 import { StepRefused, type StepContext, type Words } from './definition.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
+import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A SPENDING POLICY, AND THE APPROVALS ANY POLICY CHANGE NEEDS, ARE RAISED FROM THE WALLET.** The page names the
@@ -26,8 +27,8 @@ const t = vi.hoisted(() => ({
   raised: 'waiting-for-approvals',
 }));
 const CHAIN_ID = 'dd'.repeat(32);
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/seats-leaving-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/seats-leaving-here.js')>()),
   seatsUnderARaisedRemovalHere: async () => new Set<string>(),
 }));
 vi.mock('../../../../packages/web-shared/src/may-file-here.js', async (real) => ({
@@ -96,7 +97,7 @@ const intent = (name: string, fields: Record<string, string>): ActIntent => ({ n
 let company: { approvals: number; policyBar: number | null; seatBar: number };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: SIGNING, wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: 'cc'.repeat(32) },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
   api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({
@@ -119,7 +120,7 @@ const reachOf = () => ({
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a policy change is sent through its calls, never a bare relay'); },
@@ -127,8 +128,10 @@ const ctxOf = (i: ActIntent) => {
     tell: (x: Record<string, unknown>) => { told.push(x); },
     show: () => {},
     confirm: async () => { throw new Error('raising a policy asks for no second Confirm'); },
+    /* Carrying the change out is its approval's, whose word on what it moves is pinned beside that approval. */
+    movesWhoHolds: () => {},
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const reach = () => ({ chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, reachFor: async () => reachOf() as never, assets: registryWithTestPrivateForms() });

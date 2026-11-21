@@ -27,7 +27,8 @@ import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { theNetwork } from '../midnight/network.js';
 import { payeeFor } from '../testing/payees.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { admitHere, readPeopleHere, type PeopleDevice, type PersonHere } from 'vaults-web-shared/people-on-device.js';
 import { admitVendorHere, changeVendorHere, readVendorsHere, type VendorHere } from 'vaults-web-shared/vendors-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
@@ -36,8 +37,8 @@ import { payableFactsOf, payeesHere, periodsPastDraftHere, type CompanyRecordsHe
 import { factsHere } from 'vaults-web-shared/raise-checks-here.js';
 import { runRoutes } from './run-routes.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, CO, fromAda, KEY, LABEL, ORIGIN, sendAs, store, type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, CO, fromAda, KEY, LABEL, ORIGIN, sendAs, store, type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver, viewOver } from '../testing/writes-over-a-send.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
 aCompanyOfTwoSeats((app, deps) => {
@@ -49,7 +50,7 @@ const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat
 const SLIP = 'cd'.repeat(32);
 const MONTHLY = { kind: 'monthly' as const, asset: TEST_NETWORK_COLOUR, amount: 90000n };
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 const recordsOf = (s: Seat) => ({
@@ -58,11 +59,11 @@ const recordsOf = (s: Seat) => ({
   roundIdentity: pureCircuits, roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(ids.map((id) => [id.toLowerCase(), { held: 'never' as const, approvals: 0 }])),
 });
 const drawingOn = (s: Seat): RunDrawDoors => ({
-  api: async (path, init) => {
+  view: viewOver(async (path, init) => {
     const r = await sendAs(s.person)(path, { method: (init?.method ?? 'GET') as never, ...(init?.body === undefined ? {} : { body: String(init.body) }) });
     if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status, body: r.body });
     return r.body;
-  },
+  }, CO),
   accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
   records: recordsOf(s) as never, by: s.person, entered: s.entered,
 });
@@ -72,7 +73,7 @@ const anEmployee = async (n: number): Promise<string> => {
   const made = await inviteHere(ACME, ADA, 'employee', {
     name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500000n + BigInt(n),
     classification: 'full-time' as const, startDate: '2026-10-01',
-  }, ORIGIN, fromAda);
+  }, ORIGIN, writesOver(fromAda));
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const read = await readPeopleHere(peopleOn(ADA));
   const here = [...read.people, ...read.notPayable.map((x) => x.here)].find((p: PersonHere) => p.person.id === made.person)!;
@@ -84,7 +85,7 @@ const aVendor = async (n: number, how: 'address' | 'link', terms: VendorRecord['
   const made = await inviteHere(ACME, ADA, 'vendor', {
     name: `Vendor ${n}`, email: `vendor${n}@vendors.co`, startDate: '2026-10-01', terms, network: NETWORK,
     ...(how === 'address' ? { address: addressOf(n) } : {}), ...(endDate === undefined ? {} : { endDate }),
-  }, ORIGIN, fromAda, { vendors: () => readVendorsHere(peopleOn(ADA)) });
+  }, ORIGIN, writesOver(fromAda), { vendors: () => readVendorsHere(peopleOn(ADA)) });
   if (how === 'link') {
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, made.person!, { kind: 'payee', address: addressOf(n), payslipKey: SLIP });
     const { fingerprint } = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_v${n}`));
@@ -264,7 +265,7 @@ describe('A VENDOR PAID MONTHLY IS PAID BY A RUN OVER THE VENDOR LIST', () => {
     /* A second entry at the same address, added by a device that read the vendors before the first was filed. */
     const twice = (await inviteHere(ACME, ADA, 'vendor', {
       name: 'Vendor 80 again', email: 'vendor80b@vendors.co', startDate: '2026-10-01', terms: MONTHLY, network: NETWORK, address: addressOf(80),
-    }, ORIGIN, fromAda, { vendors: async () => ({ vendors: [], notPayable: [] }) })).person!;
+    }, ORIGIN, writesOver(fromAda), { vendors: async () => ({ vendors: [], notPayable: [] }) })).person!;
     await expect(drawRunHere(drawingOn(ADA), { period: '2027-06', list: 'vendors' }))
       .rejects.toThrow(/Vendor 80 and Vendor 80 again are two vendor entries paid at one address/u);
     const vendors = await payeesHere(recordsOf(ADA) as unknown as CompanyRecordsHere, 'vendors');

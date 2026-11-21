@@ -11,14 +11,16 @@ import { openRoster } from '../../../../src/core/roster-record.js';
 import type { PayrollRun, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
 import type { SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { api, NotOnTheService } from 'vaults-web-shared/keyring.js';
+import { NotOnTheService } from 'vaults-web-shared/service-transport.js';
+import { accountOnPage, indexerOnPage } from 'vaults-web-shared/company-view-on-page.js';
 import { purposeKeysAt, type PurposeWrapsHeld } from 'vaults-web-shared/purpose-wraps.js';
-import { readerDirectoryHereFor } from './filing-judge.js';
-import {
-  proposalRow, proposalsHere, runRow, runsPaidFromTheChain, SERVICE, type ProposalRow, type RunRow, type SignerRow,
-} from './company-records.js';
+import { readerDirectoryIn, readThroughAReaderView, type ReaderView } from './reader-judge.js';
+import { proposalRow, runRow } from './company-records.js';
+import { type ProposalRow, type RunRow, type SignerRow } from './company-rows.js';
+import { proposalsHere, runsPaidFromTheChain, type ChainReadAt } from './company-proposals.js';
 import { openRun } from './runs-and-proposals-opened.js';
 import { READ, type Read } from './reads.js';
+import { LIST } from './view-asks.js';
 
 /** The company a reader opens: its id on the service and the label and contract address its link named. */
 export interface ReaderLink {
@@ -42,7 +44,8 @@ export type ReaderCompany =
 type SealedWithRoster = SealedAccount & { readonly roster?: SealedCompanyRecord | null };
 type Signers = readonly (SignerRow & { readonly signingPublicKey?: string })[];
 
-const ask = async (path: string): Promise<unknown> => reviveBigints(await api(path));
+/** One of the company's lists as the reader's view read it, with its whole numbers read back as whole numbers. */
+const listed = async (view: ReaderView, kind: typeof LIST.runs | typeof LIST.proposals): Promise<unknown> => reviveBigints(await view.list(kind));
 
 /** One read on its own: a failure is handed on as unreadable, and a "not found" as outside this reader's access. */
 async function readerRead<T>(read: () => Promise<T>): Promise<ReaderRead<T>> {
@@ -76,8 +79,8 @@ interface ReaderRunUnread {
 }
 
 /** The runs the reader's payroll key opens, each opened on its own so one sealed at an epoch the grant never wrapped is listed, not fatal. */
-async function readReaderRuns(held: PurposeWrapsHeld, id: string): Promise<RunsOpened> {
-  const served = await ask(SERVICE.company + id + SERVICE.runs) as SealedRun[];
+async function readReaderRuns(held: PurposeWrapsHeld, view: ReaderView): Promise<RunsOpened> {
+  const served = await listed(view, LIST.runs) as SealedRun[];
   const opened: PayrollRun[] = [];
   const unreadable: ReaderRunUnread[] = [];
   for (const r of served) {
@@ -92,33 +95,39 @@ interface ReaderRuns {
   readonly unreadable: readonly ReaderRunUnread[];
 }
 
+/** The chain as a reader's page reads it for the company of `view`: at the indexer the reader's own wallet named when the view asked it who holds the company. */
+const chainAt = (view: ReaderView): ChainReadAt => ({ company: view.company, indexer: () => indexerOnPage(view) });
+
 /** The proposals, as the chain holds them and as the roster's signers filed them, each opened with the proposals key of its epoch. */
 async function readReaderProposals(
-  held: PurposeWrapsHeld, link: ReaderLink, sealed: SealedWithRoster, runs: readonly PayrollRun[],
+  held: PurposeWrapsHeld, view: ReaderView, link: ReaderLink, sealed: SealedWithRoster, runs: readonly PayrollRun[],
 ): Promise<readonly ProposalRow[]> {
-  const served = await ask(SERVICE.company + link.id + SERVICE.proposals) as SealedProposal[];
-  const directory = readerDirectoryHereFor(link.id, link.label, link.account)(held);
-  const here = await proposalsHere(link.id, sealed, served, directory, held);
+  const served = await listed(view, LIST.proposals) as SealedProposal[];
+  const here = await proposalsHere(chainAt(view), sealed, served, readerDirectoryIn(view, link, held), held);
   const signers = signersOf(held, sealed);
   return [...here.believed.map((p) => proposalRow(p.opened, p.standing, signers, runs)), ...here.unreadable];
 }
 
 /** Reads the company a reader's link names, refusing a link whose label or address is not the one the service holds for that company. */
-export async function readReaderCompany(held: PurposeWrapsHeld, link: ReaderLink): Promise<ReaderCompany> {
+export const readReaderCompany = (held: PurposeWrapsHeld, link: ReaderLink): Promise<ReaderCompany> =>
+  readThroughAReaderView(link, held, (view) => readThrough(held, link, view));
+
+/** The company as one opening of the reader's page reads it through `view`. */
+async function readThrough(held: PurposeWrapsHeld, link: ReaderLink, view: ReaderView): Promise<ReaderCompany> {
   let sealed: SealedWithRoster;
   try {
-    sealed = await ask(SERVICE.company + link.id) as SealedWithRoster;
+    sealed = reviveBigints(await accountOnPage(view)) as SealedWithRoster;
   } catch {
     return { of: READER_OF.refused, why: READER_REFUSED.unreached };
   }
   if (held.accountId !== link.id || sealed.companyLabel !== link.label || sealed.contractAddress?.toLowerCase() !== link.account.toLowerCase()) {
     return { of: READER_OF.refused, why: READER_REFUSED.notTheCompanys };
   }
-  const opened = await readerRead(() => readReaderRuns(held, link.id));
+  const opened = await readerRead(() => readReaderRuns(held, view));
   const runs: ReaderRead<ReaderRuns> = opened.of !== READ.read ? opened : await readerRead(async () => ({
-    rows: await runsPaidFromTheChain(sealed, opened.value.opened.map((r) => runRow(r)).sort((a, b) => b.period.localeCompare(a.period))),
+    rows: await runsPaidFromTheChain(chainAt(view), sealed, opened.value.opened.map((r) => runRow(r)).sort((a, b) => b.period.localeCompare(a.period))),
     unreadable: opened.value.unreadable,
   }));
-  const proposals = await readerRead(() => readReaderProposals(held, link, sealed, opened.of === READ.read ? opened.value.opened : []));
+  const proposals = await readerRead(() => readReaderProposals(held, view, link, sealed, opened.of === READ.read ? opened.value.opened : []));
   return { of: READER_OF.open, id: link.id, label: link.label, runs, proposals };
 }

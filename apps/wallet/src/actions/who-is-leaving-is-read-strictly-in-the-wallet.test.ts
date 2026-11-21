@@ -25,6 +25,11 @@ vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real)
   },
 }));
 
+/*
+ * The change to the company is loaded first: the opener stood in for above reaches it through its own imports, and
+ * loaded first it is not loaded in the middle of them, so who is leaving is read through the stand-in.
+ */
+await import('../../../../packages/web-shared/src/company-change-on-device.js');
 const { rotationDoorsIn } = await import('./upkeep.js');
 
 const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
@@ -35,19 +40,19 @@ const reach = () => ({
     keysFoundFor: async () => KEYS,
     directoryHereFor: () => async () => ({ dir: { seats: [] }, holders: { seats: [] }, records: { history: new Map(), notYetAnchored: [] } }),
     leavesFor: () => async () => [],
-    anchorsOnChainFor: () => async () => ({ landed: [] }),
     vouchingFor: () => ({}),
     tagSeatsFor: () => async () => new Map(),
   },
   roster: async () => null,
+  /* The step's view lists the company's proposals: one open removal this wallet cannot open. */
+  stepView: { current: () => ({ company: 'acc_1', list: async () => [{ id: 'prp_9', accountId: 'acc_1', status: 'open' }] }) },
   builder: { roundsOnChain: async () => ({}) },
   chain: { indexer: {} },
 }) as never;
-const api = async (path: string) => (path === '/api/accounts/acc_1/proposals' ? [{ id: 'prp_9', accountId: 'acc_1', status: 'open' }] : null);
 
 describe('A REMOVAL THIS WALLET CANNOT OPEN STOPS THE READ OF WHO IS LEAVING', () => {
   it('an open proposal this wallet cannot open stops the read, never read as nobody leaving; one that opens as another kind is passed over', async () => {
-    const doors = await rotationDoorsIn(reach(), api as never);
+    const doors = await rotationDoorsIn(reach());
     /* RED WHEN: a removal this wallet cannot open is read as nobody leaving, so a new key or vault secret is sealed to the seat leaving. */
     await expect(doors.leaving()).rejects.toThrow(/did not open on this device/);
     /* RED WHEN: the stop does not name the proposal that holds it up, or does not say only the signer who raised it can withdraw it. */

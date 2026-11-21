@@ -5,6 +5,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { MidnightCommitments } from '../../../../src/midnight/commitments.js';
 import { StepRefused, type Held, type StepContext, type Words } from './definition.js';
+import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A SIGNER WHO JOINED BY A LINK IS APPROVED IN THE WALLET, ON THE FINGERPRINT THE PERSON CONFIRMED.** A proposal the
@@ -38,7 +39,7 @@ vi.mock('./upkeep.js', async (real) => {
 });
 
 const { approveProposalAction } = await import('./approve-proposal.js');
-const { InvitationNotBound } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
+const { InvitationNotBound } = await import('../../../../packages/web-shared/src/company-change-on-device.js');
 
 const secret = newSecret();
 const identity = identityFromSecret(secret);
@@ -64,7 +65,7 @@ const filedAs = (terms: Record<string, unknown> = {}) => async () => ({
 });
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '33'.repeat(32) },
-  leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
   api: async () => [], send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: ['aa'.repeat(32)], committee: [], threshold: 1, approvals: 1, seatBar: 2, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
   judges: {
@@ -86,14 +87,14 @@ const reach = () => ({
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
   const confirmed: Array<readonly Words[]> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 1, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('an approval is sent through its calls, never a bare relay'); },
     call: async () => ({ status: 404, body: {} }), tell: (x: Record<string, unknown>) => { told.push(x); },
     confirm: async (lines: readonly Words[]) => { t.calls.push('confirm'); confirmed.push(lines); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told, confirmed };
 };
 const run = async (i: ActIntent, ctx: StepContext): Promise<void> => {

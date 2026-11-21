@@ -10,20 +10,21 @@ import { toHex, type Hex } from '../core/crypto.js';
 import { sealAccount } from '../core/account.js';
 import type { Account } from '../core/types.js';
 import { openRoster } from '../core/roster-record.js';
-import { offerVaultKeysHere } from 'vaults-web-shared/roster-here.js';
+import { offerVaultKeysHere } from 'vaults-web-shared/roster-filed-here.js';
 import { rosterFollowed } from 'vaults-web-shared/vault-keys-given.js';
 import { signerRoutes } from './signer-routes.js';
 import { aCompanyOfTwoSeats, acmeReads, ADA, ADDRESS, apiAs, BO, CO, KEY, LABEL, store, type Seat } from './a-company-of-two-seats.test-support.js';
+import { viewOver } from '../testing/writes-over-a-send.js';
 
 const KEYS = { epoch: 0, newest: 0, key: KEY as Hex, keyAt: () => KEY as Hex, sealing: () => ({ key: KEY as Hex, epoch: 0 }) };
 let followed: Awaited<ReturnType<typeof rosterFollowed>> | Error | null = null;
 
-const offerFrom = (seat: Seat, signerId: string) => offerVaultKeysHere(apiAs(seat.person), CO, {
+const offerFrom = (seat: Seat, signerId: string) => offerVaultKeysHere(CO, {
   signerId, signingSecret: seat.signingSecret as Hex, committeeKey: seat.committeeKey as never,
   companyKey: toHex(new Uint8Array(32).fill(seat.n + 100)) as Hex,
   recordsKey: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(seat.n)), LABEL, ADDRESS, new Uint8Array(32).fill(seat.n + 100), seat.seat),
   entry: seat.statement, viewingKey: KEY as Hex,
-});
+}, viewOver(apiAs(seat.person), CO));
 
 aCompanyOfTwoSeats((app, deps) => {
   app.get('/api/accounts/:id', deps.signedIn, deps.member, (req, res) => {
@@ -46,7 +47,7 @@ aCompanyOfTwoSeats((app, deps) => {
     await offerFrom(ADA, 'sig_ada');
     await offerFrom(BO, 'sig_bo');
     followed = await rosterFollowed({
-      api: apiAs('ada'), accountId: CO, label: LABEL, account: ADDRESS, signingSecret: ADA.signingSecret as Hex,
+      view: viewOver(apiAs('ada'), CO), accountId: CO, label: LABEL, account: ADDRESS, signingSecret: ADA.signingSecret as Hex,
       companyKeys: KEYS, reads: acmeReads, entered: ADA.entered,
     }).catch((e: unknown) => e as Error);
   },

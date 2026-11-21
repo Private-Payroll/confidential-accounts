@@ -17,10 +17,11 @@ import { acmeDirectoryDeps } from './a-company-of-two-seats.test-support.js';
 import {
   ADA, BO, CO, companyKeyDoorsOf, CY, deviceOf, directoryOf, grantsKept, recordsSecretOf, sendAs, type Seat,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
+import { storeReachOver } from '../testing/writes-over-a-send.js';
 
 /** One version filed by `s`'s device through the service and entered under its key. */
 const filedBy = async (s: Seat, rec: SealedCompanyRecord): Promise<void> => {
-  await new HttpCompanyRecordStore(CO, sendAs(s.person), s.signingSecret as Hex, async () => judgeIn(await directoryOf(s)())).put(rec);
+  await new HttpCompanyRecordStore(CO, storeReachOver(sendAs(s.person), CO), s.signingSecret as Hex, async () => judgeIn(await directoryOf(s)())).put(rec);
   await s.entered.enter([companyRecordEntry(rec)]);
 };
 

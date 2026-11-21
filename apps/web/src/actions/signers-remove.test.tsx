@@ -19,18 +19,25 @@ const kr = vi.hoisted(() => ({
   /** Which vaults the page's read on load finds owing a new secret, and those it could not read. */
   owed: { of: 'read', owed: [], unread: [] } as unknown, owedReads: 0,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
   actOnACompanyInTheWallet: async (intent: Record<string, string>, _origin: string, opts?: { onStep?: (at: { step: number; steps: number }) => void }) => {
     kr.acts.push(intent);
     for (const at of kr.steps) opts?.onStep?.(at);
     if (kr.hold !== null) await kr.hold;
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
 }));
 vi.mock('../records/company-records.js', async (real) => {
   const actual = await real<typeof import('../records/company-records.js')>();

@@ -31,9 +31,8 @@ import { mayFileHere } from '../../../../packages/web-shared/src/may-file-here.j
 import { readersIn, type DirectoryHere } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { CompanyKeyBeingChanged } from '../../../../packages/web-shared/src/company-key-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import {
-  companyReachFor, companyServiceFiledHere, enteredFor, keptReach, type CompanyChain, type CompanyReach, type ServiceFiled, type ServiceUnread,
-} from './company-reach.js';
+import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyServiceFiledHere, type ServiceFiled, type ServiceUnread } from './company-service-read.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';

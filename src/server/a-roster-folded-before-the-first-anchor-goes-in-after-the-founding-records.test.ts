@@ -12,16 +12,18 @@ import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import { toHex, type Hex } from '../core/crypto.js';
 import { sealAccount } from '../core/account.js';
 import type { Account } from '../core/types.js';
-import { foldOffersHere, offerVaultKeysHere, type Folded, type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { foldOffersHere, offerVaultKeysHere, type Folded } from 'vaults-web-shared/roster-filed-here.js';
 import { signerRoutes } from './signer-routes.js';
 import { aCompanyOfTwoSeats, acmeReads, ADA, ADDRESS, apiAs, chains, CO, KEY, LABEL, store } from './a-company-of-two-seats.test-support.js';
+import { viewOver } from '../testing/writes-over-a-send.js';
 
 /** What the manifest held, and what the fold came to, just before the first anchor. */
 let before: { readonly entries: readonly string[]; readonly folded: Folded | Error } | null = null;
 let outcome: { readonly anchored: number } | Error | null = null;
 
 const adasDevice: RosterDoors = {
-  api: apiAs('ada'), accountId: CO, viewingKey: KEY, signingSecret: ADA.signingSecret as Hex, label: LABEL, account: ADDRESS,
+  view: viewOver(apiAs('ada'), CO), accountId: CO, viewingKey: KEY, signingSecret: ADA.signingSecret as Hex, label: LABEL, account: ADDRESS,
   reads: acmeReads, entered: ADA.entered,
 };
 
@@ -43,12 +45,12 @@ aCompanyOfTwoSeats((app, deps) => {
       recovery: { signerIds: [], threshold: 1 }, contractAddress: ADDRESS, companyLabel: LABEL,
     } as unknown as Account;
     store.putAccount({ ...sealAccount(account, KEY, [], 0), memberUserIds: ['ada', 'bo'] });
-    await offerVaultKeysHere(apiAs('ada'), CO, {
+    await offerVaultKeysHere(CO, {
       signerId: 'sig_ada', signingSecret: ADA.signingSecret as Hex, committeeKey: ADA.committeeKey as never,
       companyKey: toHex(new Uint8Array(32).fill(ADA.n + 100)) as Hex,
       recordsKey: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(ADA.n)), LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), ADA.seat),
       entry: ADA.statement, viewingKey: KEY as Hex,
-    });
+    }, viewOver(apiAs('ada'), CO));
     const folded = await foldOffersHere(adasDevice).catch((e: unknown) => e as Error);
     before = { entries: store.manifestOf(CO).entries.map((e) => `${e.kind}@${e.version}`), folded };
   },

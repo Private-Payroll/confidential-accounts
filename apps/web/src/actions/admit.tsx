@@ -1,9 +1,9 @@
 import { useId, useState } from 'react';
 import { Alert, AlertDescription, Button, Field, FieldDescription, FieldLabel, Input, useText } from 'vaults-ui';
-import { ADMIT_BY, STANDING, type AdmitBy, type PersonStanding } from '../adapters/company-records.js';
+import { ADMIT_BY, STANDING, type AdmitBy, type PersonStanding } from '../adapters/company-rows.js';
 import { admitPerson, PERSON_ACT, PERSON_ACTED, PROBLEM, WHY, type PersonAct, type PersonActed, type PersonKind, type PersonProblem, type PersonWhy } from '../adapters/person-acts.js';
 import { ActRefused } from '../act-refused.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { useSession } from '../session.js';
 
 /** What the wallet's stops come to in the page's words, one for each code the adapter gives. */
@@ -97,9 +97,10 @@ export function AdmitPerson({ person, onDone, lockedWhy = null }: {
   /** Why the control does not apply (`useLockedSays`): it is then shown disabled with the reason, and nothing can be sent. */
   lockedWhy?: string | null;
 }) {
+  const view = useCompanyView();
   const t = useText();
   const field = useId();
-  const { person: me, company } = useSession();
+  const { person: me } = useSession();
   const { reload } = useCompanyRecords();
   const [fingerprint, setFingerprint] = useState('');
   const [phase, setPhase] = useState<{ step: number; steps: number } | null>(null);
@@ -108,10 +109,10 @@ export function AdmitPerson({ person, onDone, lockedWhy = null }: {
   const admitted = acted?.of === PERSON_ACTED.done;
 
   const admit = async (): Promise<void> => {
-    if (company === null || busy || admitted) return;
+    if (view === null || busy || admitted) return;
     setActed(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await admitPerson(me.id, company, { id: person.id, name: person.name, ...(person.kind === undefined ? {} : { kind: person.kind }), admitBy: person.admitBy, fingerprint }, (step, steps) => setPhase({ step, steps }));
+    const ended = await admitPerson(me.id, view, { id: person.id, name: person.name, ...(person.kind === undefined ? {} : { kind: person.kind }), admitBy: person.admitBy, fingerprint }, (step, steps) => setPhase({ step, steps }));
     setPhase(null);
     setActed(ended);
     if (changesRecords(ended)) reload();

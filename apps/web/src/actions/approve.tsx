@@ -1,5 +1,5 @@
 import { Button, useText } from 'vaults-ui';
-import type { ProposalRow } from '../adapters/company-records.js';
+import type { ProposalRow } from '../adapters/company-rows.js';
 import { approveProposal, canApprove, PROPOSAL_ACTED } from '../adapters/proposal-acts.js';
 import { ActedSays, useProposalAct } from '../records/proposal-act.js';
 import { PanelFooter } from '../shell/right-panel.js';

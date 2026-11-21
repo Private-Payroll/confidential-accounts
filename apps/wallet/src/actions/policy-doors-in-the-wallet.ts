@@ -8,17 +8,20 @@
 import type { Hex } from '../../../../src/core/crypto.js';
 import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js';
 import type { SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
-import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import { HttpCompanyRecordStore, readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import type { CompanyRecordsHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
 import { spendingPoliciesFor } from '../../../../packages/web-shared/src/spending-policies-reach.js';
 import { enteredFor, type CompanyReach } from './company-reach.js';
 import { StepRefused } from './definition.js';
 
-/** Files one version of a policy's sealed record signed with this wallet's seat, judged as every company record it files is, and enters it. */
+/**
+ * Files one version of a policy's sealed record through the step's view, signed with this wallet's seat and judged as
+ * every company record it files is, and enters it.
+ */
 const policyFiledBy = (r: CompanyReach) => async (rec: SealedCompanyRecord): Promise<void> => {
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const secret = r.seat.signingSecret as Hex;
-  await new HttpCompanyRecordStore(r.accountId, r.send, secret, judge).put(rec);
+  await new HttpCompanyRecordStore(r.accountId, readsJoinedIn(r.stepView), secret, judge).put(rec);
   await enteredFor(r).enter([companyRecordEntry(rec)]);
 };
 
@@ -28,7 +31,7 @@ const policyFiledBy = (r: CompanyReach) => async (rec: SealedCompanyRecord): Pro
  */
 export const policiesInTheWallet = (r: CompanyReach, o: { readonly files?: true } = {}): NonNullable<CompanyRecordsHere['spendingPolicies']> =>
   spendingPoliciesFor({
-    accountId: r.accountId, leaf: r.leaf, companyKey: r.companyKey, api: (path) => r.api(path),
+    accountId: r.accountId, leaf: r.leaf, companyKey: r.companyKey, records: r.records,
     keys: (input) => r.builder.spendingPolicyKeys(input),
     roles: async (asked) => {
       if (r.chain.roles === undefined) throw new Error('this wallet cannot read the account\'s entries.');

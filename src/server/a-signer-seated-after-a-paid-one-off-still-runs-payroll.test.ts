@@ -1,3 +1,4 @@
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect, vi } from 'vitest';
 import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
 vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
@@ -23,7 +24,9 @@ import { HttpCompanyRecordStore } from 'vaults-web-shared/http-sealed-pool-store
 import { raiseOneOffHere } from 'vaults-web-shared/one-off-raised-here.js';
 import { checkedAgainstTheRecordsAndTheWallet, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { RAISE_CHECKS } from 'vaults-web-shared/raise-checks-here.js';
-import { approveOnDevice, governedCallServiceFor, raiseRunOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
+import { raiseRunOnDevice } from 'vaults-web-shared/payroll-run-on-device.js';
+import { approveOnDevice } from 'vaults-web-shared/proposal-approved-on-device.js';
 import type { LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
 import { legToPayHere } from 'vaults-web-shared/payments-made-here.js';
@@ -32,10 +35,12 @@ import { inFlightInMemory, sealedOnThisDevice } from 'vaults-web-shared/in-fligh
 import { checkedHeadsInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { directoryHere, judgeIn } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { ACME, acmeDirectory, acmeDirectoryDeps, fromAda, ORIGIN } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver, viewOver, storeReachOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, acmeChain, ADA, ADDRESS, BO, anchorDoorsOf, aPolicyFiledBy, api, apiAs, attestedByTheRoster, chargedOnChain, CO, CY,
   deviceOf, directoryOf, KEY, LABEL, oneOffRaiseDoorsOf, oneOffRecordsOf, paidOnChain, recordsSecretOf, sendAs, store, VAULT, type Seat,
@@ -81,7 +86,7 @@ const aOneOffPaidBeforeCyWasSeated = async (asset: AssetId, reason: string) => {
 
 const NETWORK = theNetwork();
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
+  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** A payee invited by Ada, who accepts and is admitted: paid in the test's settlement currency, as payroll pays. */
@@ -90,7 +95,7 @@ const aPayee = async (n: number): Promise<void> => {
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address, payslipKey: newWrappingKeypair().publicKey });
   const made = await inviteHere(ACME, ADA, 'employee', {
     name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01',
-  }, ORIGIN, fromAda);
+  }, ORIGIN, writesOver(fromAda));
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
   await admitHere(peopleOn(ADA), here, accepted.fingerprint);
@@ -126,7 +131,7 @@ const raisingOn = (s: Seat): LegRaiseDoors => {
       retrySaltOf: pureCircuits.retrySaltOf, buildRun, buildRetryRun, rootOfPayments,
     },
     waitMs: 50, everyMs: 10, sleep: async () => undefined,
-    recorded: { entered: s.entered, anchor: () => anchorTheRecordsHere(anchorDoorsOf(s)) },
+    recorded: { entered: s.entered, anchor: () => anchorTheRecordsHere(throughAView(anchorDoorsOf(s))) },
   };
 };
 /** What a device builds a charge of a run with: the contract's own circuits, and nobody yet recorded paid. */
@@ -153,7 +158,7 @@ const chargingOn = (s: Seat, records: CompanyRecordsHere) => ({
     periodTotal: async () => { throw new Error('no period total is read in this test'); },
     runCharged: async (input: { proposal: string }) => (chargedOnChain.has(String(input.proposal).toLowerCase()) ? 'charged' : 'open'),
   },
-  charge: (id: string, body: { tx: string; filer: string }) => governedCallServiceFor(api(s.person)).charge!(id, body),
+  charge: (id: string, body: { tx: string; filer: string }) => governedCallServiceThrough(viewOver(api(s.person), CO)).charge!(id, body),
   filer: signingPublicKeyOf(s.signingSecret as Hex) as Hex,
   chargesInFlight: sealedOnThisDevice<ChargeInFlight>(inFlightInMemory(), { signerId: s.seat, wrappingSecret: recordsSecretOf(s) as never }, 'charge'),
   sleep: async () => undefined, waitMs: 40, everyMs: 1,
@@ -176,11 +181,11 @@ const aSecondVersionPutBy = async (by: Seat, id: string, first: { readonly oneOf
     company: CO, kind: ONE_OFF_KIND, id, version: 2, keyEpoch: 0, wrapped: [],
     sealed: seal(text + ' '.repeat(ONE_OFF_SEALED_BYTES - new TextEncoder().encode(text).length), purposeKey(KEY, CO, ONE_OFF_PURPOSE)),
   };
-  await new HttpCompanyRecordStore(CO, (path, init) => sendAs(by.person)(path, init as never), by.signingSecret as Hex,
+  await new HttpCompanyRecordStore(CO, storeReachOver((path, init) => sendAs(by.person)(path, init as never), CO), by.signingSecret as Hex,
     async (asked) => judgeIn(await directoryOf(by)(asked))).put(rec);
   const signed = signCompanyFiling(rec, by.signingSecret as Hex);
   await by.entered.enter([companyRecordEntry(signed)]);
-  await anchorTheRecordsHere(anchorDoorsOf(by));
+  await anchorTheRecordsHere(throughAView(anchorDoorsOf(by)));
   return signed;
 };
 
@@ -220,7 +225,7 @@ describe('A SIGNER SEATED AFTER A ONE-OFF WAS PAID STILL RAISES, APPROVES AND CH
     await aPayee(61);
     await aPayee(62);
     const runId = (await drawRunHere({
-      api: api(ADA.person), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: ADA.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
+      view: viewOver(api(ADA.person), CO), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: ADA.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
       records: payrollRecordsOf(ADA) as never, by: ADA.person, entered: ADA.entered,
     }, { period: '2031-01' })).id;
     const round = await raiseRunOnDevice(raisingOn(ADA), {
@@ -265,7 +270,7 @@ describe('A SIGNER SEATED AFTER A ONE-OFF WAS PAID STILL RAISES, APPROVES AND CH
 
     await aPayee(63);
     const runId = (await drawRunHere({
-      api: api(ADA.person), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: ADA.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
+      view: viewOver(api(ADA.person), CO), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: ADA.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
       records: payrollRecordsOf(ADA) as never, by: ADA.person, entered: ADA.entered,
     }, { period: '2031-02' })).id;
     /* RED WHEN: the paid version 1's two entries are unaccounted once a version 2 is put, and every payroll raise from the vault is refused. */

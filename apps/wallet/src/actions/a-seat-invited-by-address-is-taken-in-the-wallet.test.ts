@@ -29,6 +29,7 @@ import { ServiceNotReached } from '../../../../packages/web-shared/src/hand-over
 import { rightsOfRole, scopeOfRole } from '../../../../src/core/seat-rights.js';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
+import { viewsOfTheStep, stepOverItsCall } from './step-views.test-support.js';
 
 /* A signer invited by address takes the seat from their own wallet: it opens the offer with the link's token, checks
  * the address is its own, proves the seat with its own seat and the address's coin key, and asks to be admitted. The
@@ -98,8 +99,9 @@ interface ChainNow {
 interface Seen {
   relayed: Array<Record<string, unknown>>; asked: Array<Record<string, unknown>>; built: InvitedSeatOnTheWire[];
   order: string[]; rolesAsked: string[][]; kept: any; namedAsked: Array<Record<string, unknown>>;
+  moves: Array<{ seat: boolean; chain: boolean; left: { seats: readonly string[]; approvals: number } }>;
 }
-const newSeen = (): Seen => ({ relayed: [], asked: [], built: [], order: [], rolesAsked: [], kept: { accounts: {} }, namedAsked: [] });
+const newSeen = (): Seen => ({ relayed: [], asked: [], built: [], order: [], rolesAsked: [], kept: { accounts: {} }, namedAsked: [], moves: [] });
 interface Opts {
   held?: any; keyring?: false; acceptAnswers?: Array<{ status: number; body: unknown }>; into?: Seen;
   /* The service has closed the offer and answers 410: as used (true), or as the reason named. */
@@ -175,7 +177,7 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
   if (opts.held !== undefined) seen.kept = opts.held;
   live = { o, chain, seen };
   const answers = [...(opts.acceptAnswers ?? [])];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: { name: 'seat-invited', fields: { company: LABEL, account: ACCOUNT, record: COMPANY, token: o.token } } as unknown as ActIntent,
     asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: opts.person === undefined ? 'dee' : opts.person,
     held: { identity: dee, secret: newSecret(), account: 0 }, at: { step: 1, steps: 2 }, signal: new AbortController().signal,
@@ -205,11 +207,18 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
       return answers.shift() ?? { status: 201, body: { id: 'sgn_dee' } };
     },
     tell: () => {},
+    /* What the step said its send moves: whether it names this invitation's seat, through the service or straight to the chain, and the holders it leaves. */
+    movesWhoHolds: (sends: readonly object[], move: (h: { seats: readonly string[]; approvals: number }) => { seats: readonly string[]; approvals: number }) => {
+      const invitation = invitationIdOf(o.token);
+      seen.moves.push({ seat: sends.some((s) => (s as { path?: string }).path === `/api/invites/${invitation}/seat`), chain: sends.some((s) => (s as { circuit?: string }).circuit === 'seatInvited'), left: move({ seats: ['a1'.repeat(32)], approvals: 1 }) });
+    },
+    /* The runner's door for a seat this wallet sends itself, with no read of the company to check here. */
+    sendStraight: viewsOfTheStep(async () => { throw new Error('a seat taken by address reads nothing of the company here'); }).sendStraight,
     keyring: opts.keyring === false ? null : {
       open: () => ({ read: () => seen.kept }),
       keep: async (f: (k: any) => any) => { order.push('keep'); seen.kept = f(seen.kept); },
     },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   const action = opts.action ?? seatInvitedAction(reachNow() as never);
   for (const s of action.steps(ctx.intent)) await s.run(ctx);
   return seen;
@@ -277,6 +286,14 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     expect((await run(anOffer(undefined, undefined, undefined, { threshold: '2' }), { seats: [one] })).built[0]!.newThreshold).toBe('2');
     /* RED WHEN: an invitation that sets no threshold is proved with one. */
     expect((await run(anOffer(), { seats: [one] })).built[0]!.newThreshold).toBe('0');
+  });
+
+  it('the seat\'s send is said to seat its own leaf, at the threshold the invitation sets, whichever way it goes', async () => {
+    for (const threshold of ['2', undefined]) {
+      const seen = await run(anOffer(undefined, undefined, undefined, threshold === undefined ? {} : { threshold }), { seats: ['a1'.repeat(32)] });
+      /* RED WHEN: the seat's send is taken for another signer's change, or says another leaf than the one it asks to be admitted with, or another threshold. */
+      expect(seen.moves, String(threshold)).toEqual([{ seat: true, chain: true, left: { seats: ['a1'.repeat(32), seen.asked[0]!['leaf']], approvals: threshold === undefined ? 1 : 2 } }]);
+    }
   });
 
   it('RED WHEN: a threshold above the seats held once this one is taken is proved and relayed, which the chain refuses', async () => {

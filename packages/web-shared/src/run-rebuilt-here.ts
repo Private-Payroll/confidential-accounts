@@ -41,7 +41,7 @@ import {
   CREATED_BEFORE_SIGNED_STATE, FOUNDING_KEY_EPOCH, foundingStateRefusal, openStateRecord, stateRecordId,
 } from '../../../src/core/founding-state.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import type { SpendingPoliciesHere } from './spending-policy-here.js';
+import type { SpendingPoliciesHere } from './spending-policy-read-here.js';
 import type { RoundOnChain } from './governed-call-builder.js';
 import {
   FOUNDING_ASKED, foundingRecordRefusalHere, judgeIn, kindAsked, listedHere, refusedForItsKey, withLeftOut, type DirectoryRead, type Listed,

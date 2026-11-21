@@ -8,8 +8,9 @@ import {
   changeRole, CHANGE_ACTED, continueRoleChange, dropRoleChange, readRoles, roleChangeCosts, ROLE_PROBLEM, ROLE_TABLE, ROLE_WHY, ROLES_READ, SIGNER_ROLES, startedRoleChanges,
   type ChangeActed, type ChangeHolders, type RolesRead, type RoleRow, type RoleWhy, type SeatHeld,
 } from '../adapters/roles-here.js';
-import { watchPrivateMoneyReadable } from '../adapters/vault-private-money.js';
 import { useSession } from '../session.js';
+import type { PageView } from '../adapters/filing-judge.js';
+import { useCompanyView } from './company-records.js';
 import { ActOutcome, ActDone, ActStopped, type ActPhase } from './proposal-act.js';
 
 type Words = ReturnType<typeof useText>;
@@ -49,15 +50,16 @@ const problemSays = (t: Words, problem: string): string => {
 };
 
 /** One change at a time: the steps it has reached, and how it ended; the seats are read again once it changed or may have changed them. */
-function useRoleAct(onChanged: () => void): { readonly phase: ActPhase; readonly shown: Shown | null; readonly start: (named: { name: string; role: string }, run: (p: string, c: string, onStep: (step: number, steps: number) => void) => Promise<ChangeActed>) => void } {
-  const { person, company } = useSession();
+function useRoleAct(onChanged: () => void): { readonly phase: ActPhase; readonly shown: Shown | null; readonly start: (named: { name: string; role: string }, run: (p: string, c: PageView, onStep: (step: number, steps: number) => void) => Promise<ChangeActed>) => void } {
+  const { person } = useSession();
+  const view = useCompanyView();
   const [phase, setPhase] = useState<ActPhase>(null);
   const [shown, setShown] = useState<Shown | null>(null);
-  const start = (named: { name: string; role: string }, run: (p: string, c: string, onStep: (step: number, steps: number) => void) => Promise<ChangeActed>): void => {
-    if (company === null || phase !== null) return;
+  const start = (named: { name: string; role: string }, run: (p: string, c: PageView, onStep: (step: number, steps: number) => void) => Promise<ChangeActed>): void => {
+    if (view === null || phase !== null) return;
     setShown(null);
     setPhase({ step: 0, steps: 0 });
-    void run(person.id, company, (step, steps) => setPhase({ step, steps })).then((acted) => {
+    void run(person.id, view, (step, steps) => setPhase({ step, steps })).then((acted) => {
       setPhase(null);
       setShown({ acted, ...named });
       if (acted.of === CHANGE_ACTED.done || acted.of === CHANGE_ACTED.dropped || (acted.of === CHANGE_ACTED.stopped && (acted.partial || acted.handedOver))) onChanged();
@@ -207,6 +209,7 @@ function ChangeForm({ seats, holders, busy, onChange }: { seats: readonly SeatHe
 export function RolesList() {
   const t = useText();
   const { person, company } = useSession();
+  const view = useCompanyView();
   const [roles, setRoles] = useState<RolesRead | null>(null);
   const [readers, setReaders] = useState<readonly ReaderHeld[] | null>(null);
   const [reads, setReads] = useState(0);
@@ -214,14 +217,13 @@ export function RolesList() {
   const act = useRoleAct(again);
   const busy = act.phase !== null;
 
-  useEffect(() => (company === null ? undefined : watchPrivateMoneyReadable(company, again)), [company]);
   useEffect(() => {
-    if (company === null) return undefined;
+    if (view === null) return undefined;
     let alive = true;
-    void readRoles(person.id, company).then((r) => { if (alive) setRoles(r); });
-    void readGrants(person.id, company).then((g) => { if (alive) setReaders(g.of === GRANTS_READ.read ? g.readers : null); });
+    void readRoles(person.id, view).then((r) => { if (alive) setRoles(r); });
+    void readGrants(person.id, view).then((g) => { if (alive) setReaders(g.of === GRANTS_READ.read ? g.readers : null); });
     return () => { alive = false; };
-  }, [person.id, company, reads]);
+  }, [person.id, view, reads]);
 
   const held = roles?.of === ROLES_READ.read ? roles : null;
   const begun = company === null ? [] : startedRoleChanges(company);

@@ -2,7 +2,7 @@ import { useId, useState } from 'react';
 import { AlertDescription, Button, Field, FieldError, FieldLabel, FieldLegend, FieldSet, Input, RadioGroup, RadioGroupItem, useText } from 'vaults-ui';
 import { PROPOSAL_ACTED, RAISE_RUN_WHY, paymentWindow, raiseRun, RUN_FORM, RUN_LIST, runCurrencies, WINDOW_OF, WINDOW_PROBLEM, type RaiseRunActed, type RaiseRunWhy, type RunForm, type RunList, type WindowProblem } from '../adapters/proposal-acts.js';
 import { OPENED, READ } from '../adapters/reads.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { ActDone, ActOutcome, ActStopped, type ActPhase } from '../records/proposal-act.js';
 import { PanelFooter } from '../shell/right-panel.js';
 import { useSession } from '../session.js';
@@ -16,6 +16,7 @@ const thisMonth = (): string => new Date().toISOString().slice(0, 7);
  * shows afterwards is what the wallet answered, kept while the company's records are read again.
  */
 export function RaiseRun() {
+  const view = useCompanyView();
   const t = useText();
   const id = useId();
   const formId = useId();
@@ -42,10 +43,10 @@ export function RaiseRun() {
 
   const raise = async (): Promise<void> => {
     const given = paymentWindow(opens, closes, Date.now());
-    if (companyId === null || busy || raised || vault === '' || token === '' || given.of !== WINDOW_OF.given) return;
+    if (view === null || busy || raised || vault === '' || token === '' || given.of !== WINDOW_OF.given) return;
     setResult(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await raiseRun(person.id, companyId, { period: month, list, vault, token, form, opensAt: given.opensAt, closesAt: given.closesAt }, (step, steps) => setPhase({ step, steps }));
+    const ended = await raiseRun(person.id, view, { period: month, list, vault, token, form, opensAt: given.opensAt, closesAt: given.closesAt }, (step, steps) => setPhase({ step, steps }));
     setPhase(null);
     setResult(ended);
     if (ended.of === PROPOSAL_ACTED.done || (ended.of === PROPOSAL_ACTED.stopped && ended.handedOver)) reload();

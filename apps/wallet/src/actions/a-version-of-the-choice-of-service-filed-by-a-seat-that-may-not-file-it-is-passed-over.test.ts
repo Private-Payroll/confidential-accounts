@@ -10,7 +10,7 @@ import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secre
 import { OUR_SERVICE, openedWithTheCompanyKey, sealCompanyService, type CompanyService } from '../../../../src/midnight/company-service-record.js';
 import { FILING_REFUSAL } from '../../../../src/midnight/seat-directory.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
-import { serviceFromVersions, serviceVersionsFrom } from './company-reach.js';
+import { serviceFromVersions, serviceVersionsFrom } from './company-service-read.js';
 
 const COMPANY = 'acc_choice';
 const LEAF = 'ae'.repeat(32) as Hex;

@@ -9,6 +9,7 @@
  * Over real HTTP with the company's record tree and directory as the service
  * keeps them; the chain is the test's.
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { describe, expect, it } from 'vitest';
 import { fromHex, toHex, type Hex } from '../core/crypto.js';
 import { batchDigestOf, sealPayrollProposal, signProposalFiling } from '../core/proposal-filing.js';
@@ -18,12 +19,12 @@ import { vouchedRunIdentityOf } from 'vaults-web-shared/governed-call-builder.js
 import { vouchedRunsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { proposalEntry, signManifestEntry } from '../midnight/record-manifest.js';
 import type { RecordsAsked } from '../midnight/records-held.js';
-import { manifestServiceFor, treeServiceFor, type TreeService } from 'vaults-web-shared/record-entered-here.js';
-import {
-  anchorServiceFor, anchorTheRecordsHere, heldFor, recordsHeldHere, type AnchorDoors,
-} from 'vaults-web-shared/records-anchored-here.js';
+import { type TreeService } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { heldFor, recordsHeldHere } from 'vaults-web-shared/records-held-here.js';
 import { checkedHeadsInMemory, treeKeptInMemory, type CheckedHeads, type CheckedHeadsStore, type HeadersKeptStore } from 'vaults-web-shared/tree-kept-here.js';
-import { nextTreeHeader, recoveredSaid, signTreeHeader, transitionStopSaid, treeBatchOf, vouchedFreshOf, type TreeHeader, headStepOf } from '../midnight/record-tree.js';
+import { HEADERS_AT_ONCE, nextTreeHeader, recoveredSaid, signTreeHeader, transitionStopSaid, treeBatchOf, vouchedFreshOf, type TreeHeader, headStepOf } from '../midnight/record-tree.js';
 import { directoryHere, directoryJudge, foundingSeatHere, namedHere, type DirectoryHereDeps } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { companyRecordKey } from '../midnight/seat-directory.js';
@@ -31,6 +32,7 @@ import {
   aCompanyOfTwoSeats, acmeChain, acmeClock, acmeDirectoryDeps, acmeDirectoryWithItsFold, ADA, ADDRESS, BO, apiAs, aRecordFiledBy, CO, heldByMoreThanOneKey, KEY,
   peopleRecords, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
@@ -38,8 +40,8 @@ aCompanyOfTwoSeats();
 const counting = (tree: TreeService, asked: number[]): TreeService => ({
   ...tree, headersAfter: async (c, seq, limit) => { asked.push(seq); return tree.headersAfter(c, seq, limit); },
 });
-const doorsOf = (s: Seat, tree: TreeService = treeServiceFor(apiAs(s.person)), checked?: CheckedHeadsStore, headers?: HeadersKeptStore): AnchorDoors => ({
-  accountId: CO, manifest: manifestServiceFor(apiAs(s.person)), tree, ...(checked === undefined ? {} : { checked }), ...(headers === undefined ? {} : { headers }),
+const doorsOf = (s: Seat, tree: TreeService = treeServiceOf(serviceSource(apiAs(s.person), CO)), checked?: CheckedHeadsStore, headers?: HeadersKeptStore): AnchorDoorsBare => ({
+  accountId: CO, manifest: manifestServiceOf(serviceSource(apiAs(s.person), CO)), tree, ...(checked === undefined ? {} : { checked }), ...(headers === undefined ? {} : { headers }),
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
   directory: () => acmeDirectoryWithItsFold(), directoryFilings: async () => store.directoryFilingsOf(CO),
   onChain: acmeChain.onChain,
@@ -50,7 +52,7 @@ const doorsOf = (s: Seat, tree: TreeService = treeServiceFor(apiAs(s.person)), c
       acmeChain.move(previous, batch, held, tag);
     },
     sealedProposals: async (c) => store.listProposals(c),
-    foundingRecords: anchorServiceFor(apiAs(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs(s.person), CO),
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
 });
@@ -65,7 +67,7 @@ describe('A READ CHECKS EVERY HEADER SINCE THE LAST HEAD THIS DEVICE KEPT, AND N
   it('a second read checks nothing it checked before; one after a new anchor reads only the headers since; and the directory is held as anchored', async () => {
     const kept = checkedHeadsInMemory();
     const asked: number[] = [];
-    const tree = counting(treeServiceFor(apiAs('ada')), asked);
+    const tree = counting(treeServiceOf(serviceSource(apiAs('ada'), CO)), asked);
     const first = await directoryHere(directoryDepsOver(tree, kept));
     expect(asked[0]).toBe(-1);
     asked.length = 0;
@@ -73,7 +75,7 @@ describe('A READ CHECKS EVERY HEADER SINCE THE LAST HEAD THIS DEVICE KEPT, AND N
     await directoryHere(directoryDepsOver(tree, kept));
     expect(asked).toEqual([]);
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_since_k1')]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const again = await directoryHere(directoryDepsOver(tree, kept), policy('pol_since_k1'));
     /* RED WHEN: a read after a new anchor starts again from the first header rather than the last head it kept. */
     expect(asked[0]).toBe(first.records.reached.seq);
@@ -86,7 +88,7 @@ describe('A READ CHECKS EVERY HEADER SINCE THE LAST HEAD THIS DEVICE KEPT, AND N
     /* Acme held by more than one key, whose runs vouch for nothing: a device new to it checks from the first header. */
     await heldByMoreThanOneKey(async () => {
       const asked: number[] = [];
-      const tree = counting(treeServiceFor(apiAs('ada')), asked);
+      const tree = counting(treeServiceOf(serviceSource(apiAs('ada'), CO)), asked);
       const kept = checkedHeadsInMemory();
       const real = await recordsHeldHere(doorsOf(ADA, tree, kept), {});
       await kept.write(CO, { latest: real.records.reached, fromZero: null, heads: [real.records.reached.head] });
@@ -102,8 +104,8 @@ describe('WHAT THE SERVICE SAYS WAITS, AND WHAT IT PROVES, ARE HELD TO THE ROOT'
   it('an entry the service lists as waiting that a leaf already holds is not held as not yet anchored', async () => {
     const e = await aRecordFiledBy(ADA, 'pol_waits_w1');
     await ADA.entered.enter([e]);
-    await anchorTheRecordsHere(doorsOf(ADA));
-    const all = treeServiceFor(apiAs('ada'));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     /* Version 1 again, with other bytes, signed by its filer: only its leaf says version 1 is anchored already. */
     const entered = signManifestEntry(CO, { ...e, digest: 'ab'.repeat(32) as Hex }, ADA.signingSecret as Hex);
     const listing: TreeService = { ...all, pending: async (c, root) => [...((await all.pending(c, root)) ?? []), entered] };
@@ -114,7 +116,7 @@ describe('WHAT THE SERVICE SAYS WAITS, AND WHAT IT PROVES, ARE HELD TO THE ROOT'
   });
 
   it('a leaf the service changes does not prove into the root, and the read is refused', async () => {
-    const all = treeServiceFor(apiAs('ada'));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     const changing: TreeService = {
       ...all,
       proofs: async (c, ask) => {
@@ -136,7 +138,7 @@ describe('WHAT THE SERVICE SAYS WAITS, AND WHAT IT PROVES, ARE HELD TO THE ROOT'
   });
 
   it('a list of a kind the service gives short of one leaf does not prove into the root, and the read is refused', async () => {
-    const all = treeServiceFor(apiAs('ada'));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     const short: TreeService = {
       ...all,
       proofs: async (c, ask) => {
@@ -151,7 +153,7 @@ describe('WHAT THE SERVICE SAYS WAITS, AND WHAT IT PROVES, ARE HELD TO THE ROOT'
   });
 
   it('the company\'s first header is believed only as the head the chain took from the empty one', async () => {
-    const all = treeServiceFor(apiAs('ada'));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     const first = store.keptTreeOf(CO).headers[0]!;
     /* The service serves its first header with another time in it: its seat's signature no longer covers it. */
     const forging: TreeService = {
@@ -195,16 +197,16 @@ describe('WHAT THE SERVICE SAYS WAITS, AND WHAT IT PROVES, ARE HELD TO THE ROOT'
   it('a chain at the wallet\'s indexer behind a head this device checked is said, and nothing is read or blamed', async () => {
     const kept = checkedHeadsInMemory();
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_behind_k1')]);
-    await anchorTheRecordsHere(doorsOf(ADA));
-    await recordsHeldHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), kept), {});
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
+    await recordsHeldHere(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), kept), {});
     const behind = async () => { const now = await acmeChain.onChain(); return { ...now, landed: now.landed.slice(0, -1) }; };
     /* RED WHEN: an indexer serving an older chain reads as the service withholding a header, or the read goes on from it. */
-    await expect(recordsHeldHere({ ...doorsOf(ADA, treeServiceFor(apiAs('ada')), kept), onChain: behind }, {}))
+    await expect(recordsHeldHere({ ...doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), kept), onChain: behind }, {}))
       .rejects.toThrow(/behind what this device has already checked/u);
   });
 
   it('an anchoring read with more waiting records than one proofs request holds asks in parts, each proven', async () => {
-    const all = treeServiceFor(apiAs('ada'));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     const sizes: number[] = [];
     const waiting = Array.from({ length: 300 }, (_, i) => signManifestEntry(CO, {
       store: 'company', kind: 'policy', id: `pol_many_${i}`, version: 1, digest: (i + 1).toString(16).padStart(64, '0') as Hex,
@@ -227,7 +229,7 @@ describe('A RECORD A READ DID NOT ASK FOR IS REFUSED', () => {
     const asked = await aRecordFiledBy(ADA, 'pol_asked_a1');
     const unasked = await aRecordFiledBy(ADA, 'pol_unasked_a2');
     await ADA.entered.enter([asked, unasked]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const judge = await directoryJudge(acmeDirectoryDeps())(policy('pol_asked_a1'));
     const by = ADA.statement.signingKey as Hex;
     /* RED WHEN: a record no proof covered is judged - a read believes what it never had proven. */
@@ -259,13 +261,13 @@ describe('A HEADER THE SERVICE NO LONGER GIVES IS FILED AGAIN FROM A DEVICE THAT
   it('BY THE DEVICE THAT SIGNED IT: A DEVICE NEW TO THE COMPANY STOPS AT IT AS NOT GIVEN, AND READS ON ONCE THE SIGNER\'S DEVICE HAS READ', async () => {
     const adas = treeKeptInMemory();
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_lost_k1')]);
-    await anchorTheRecordsHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), adas.checked, adas.headers));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), adas.checked, adas.headers)));
     const lostHeader = store.keptTreeOf(CO).headers.at(-1)!;
     /* RED WHEN: the anchoring device does not keep the header it signed, with the entries its changes name. */
     const kept = await adas.headers.at(CO, lostHeader.seq);
     expect(kept.map((k) => treeBatchOf(k.header))).toContain(treeBatchOf(lostHeader));
     expect(kept[0]!.entries.map((e) => e.id)).toContain('pol_lost_k1');
-    const tree = losing(treeServiceFor(apiAs('ada')), () => lostHeader);
+    const tree = losing(treeServiceOf(serviceSource(apiAs('ada'), CO)), () => lostHeader);
     /* A device new to the company, keeping nothing, stops where the service withholds a header the chain holds. */
     expect((await recordsHeldHere(doorsOf(ADA, tree), {})).records.stopped).toMatchObject({ stop: 'not-given', seq: lostHeader.seq });
     /* RED WHEN: the head nobody gave a header for is not put down to the seat whose tag the account wrote beside it. */
@@ -294,14 +296,14 @@ describe('A HEADER THE SERVICE NO LONGER GIVES IS FILED AGAIN FROM A DEVICE THAT
 
   it('BY ANY DEVICE THAT CHECKED IT LAST: IT KEEPS THAT HEADER, AND FILES IT AGAIN WHEN THE SERVICE DOES NOT GIVE IT', async () => {
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_lost_k2')]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const lastHeader = store.keptTreeOf(CO).headers.at(-1)!;
     /* A reader that did not sign it checks it, and keeps it as the last header it checked. */
     const readers = treeKeptInMemory();
-    await recordsHeldHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), checkedHeadsInMemory(), readers.headers), {});
+    await recordsHeldHere(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), checkedHeadsInMemory(), readers.headers), {});
     /* RED WHEN: a device does not keep the last header it checked. */
     expect((await readers.headers.at(CO, lastHeader.seq)).map((k) => treeBatchOf(k.header))).toEqual([treeBatchOf(lastHeader)]);
-    const tree = losing(treeServiceFor(apiAs('ada')), () => lastHeader);
+    const tree = losing(treeServiceOf(serviceSource(apiAs('ada'), CO)), () => lastHeader);
     expect((await recordsHeldHere(doorsOf(ADA, tree), {})).records.stopped).toMatchObject({ stop: 'not-given' });
     /* RED WHEN: a device that checked the header last does not file it again where the service withholds it. */
     expect((await recordsHeldHere(doorsOf(ADA, tree, checkedHeadsInMemory(), readers.headers), {})).records.stopped).toBeNull();
@@ -310,7 +312,7 @@ describe('A HEADER THE SERVICE NO LONGER GIVES IS FILED AGAIN FROM A DEVICE THAT
   it('WITH ITS ENTRIES, WHEN THE SERVICE LOST THE ENTRY AND THE RECORD\'S BYTES TOO: THE HEADER IS KEPT AGAIN AND ONLY THAT RECORD IS WITHHELD', async () => {
     const adas = treeKeptInMemory();
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_lost_k3')]);
-    await anchorTheRecordsHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), adas.checked, adas.headers));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), adas.checked, adas.headers)));
     const lostHeader = store.keptTreeOf(CO).headers.at(-1)!;
     /* The service loses the header, the entry and the record's bytes: what a lost write or a restore from an older copy leaves. */
     const data = (store as any).data;
@@ -326,7 +328,7 @@ describe('A HEADER THE SERVICE NO LONGER GIVES IS FILED AGAIN FROM A DEVICE THAT
     try {
       expect((await recordsHeldHere(doorsOf(ADA), {})).records.stopped).toMatchObject({ stop: 'not-given', seq: lostHeader.seq });
       /* RED WHEN: a header filed again needs its entries entered first, which the service refuses for want of the record's bytes - every device stopped for good. */
-      const signer = await recordsHeldHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), checkedHeadsInMemory(), adas.headers), policy('pol_lost_k3'));
+      const signer = await recordsHeldHere(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), checkedHeadsInMemory(), adas.headers), policy('pol_lost_k3'));
       expect(signer.records.stopped).toBeNull();
       /* RED WHEN: the record is believed with no bytes, or said as anything but named and withheld by the service. */
       expect(signer.records.history.get('company:policy:pol_lost_k3')?.at(-1)?.version).toBe(1);
@@ -371,31 +373,31 @@ const vouchingHere = {
 };
 
 /**
- * Every page of headers a tree service is asked for by the seq it reads after - not a single seq's headers, which a
- * device new to the company reads only to find which head a batch before its start left.
+ * Every whole page of headers a tree service is asked for by the seq it reads after - not the shorter pages a device new
+ * to the company reads only to find which head a batch before its start left, which never reach past its start.
  */
 const pagesOf = (tree: TreeService, asked: number[]): TreeService => ({
-  ...tree, headersAfter: async (c, seq, limit) => { if (limit > 1) asked.push(seq); return tree.headersAfter(c, seq, limit); },
+  ...tree, headersAfter: async (c, seq, limit) => { if (limit >= HEADERS_AT_ONCE) asked.push(seq); return tree.headersAfter(c, seq, limit); },
 });
 
 describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\'S APPROVERS VOUCHED FOR', () => {
   it('held by more than one key: from the vouched head, the directory before it held as anchored; past a run that does not vouch, or with none, from the first header', () => heldByMoreThanOneKey(async () => {
     try {
       await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_vouch_v1')]);
-      await anchorTheRecordsHere(doorsOf(ADA));
+      await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
       const vouchedHead = acmeChain.head();
       const vouchedSeq = acmeChain.landed.length - 1;
       const run = await aRunRaisedOver('prp_vouches_aaaa', vouchedHead, '2b'.repeat(32) as Hex);
       await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_vouch_v2')]);
-      await anchorTheRecordsHere(doorsOf(ADA));
+      await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
       /* The account's history shows the run paid with its threshold of approvals. */
       acmeChain.vouching.push({ chainId: run, height: 7, at: 1_800_000_123_000 });
-      const fromTheFirst = await recordsHeldHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), checkedHeadsInMemory()), {});
+      const fromTheFirst = await recordsHeldHere(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), checkedHeadsInMemory()), {});
       expect(fromTheFirst.records.checkedFrom).toBeUndefined();
 
       const asked: number[] = [];
       const kept = checkedHeadsInMemory();
-      const read = await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceFor(apiAs('ada')), asked), kept), vouching: vouchingHere }, policy('pol_vouch_v2'));
+      const read = await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceOf(serviceSource(apiAs('ada'), CO)), asked), kept), vouching: vouchingHere }, policy('pol_vouch_v2'));
       /* RED WHEN: a device new to a company of more than one key checks from the first header though a run vouches for a later head. */
       expect(asked).not.toContain(-1);
       expect(read.records.checkedFrom).toEqual({ by: 'vouched', seq: vouchedSeq, head: vouchedHead, run, at: 1_800_000_123_000 });
@@ -404,8 +406,8 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
       expect(read.records.history.get('company:policy:pol_vouch_v2')?.at(-1)?.version).toBe(1);
       expect(read.records.reached.head).toBe(acmeChain.head());
       /* RED WHEN: the directory anchored before the start loses who held the account as it was anchored - every seat unbelieved. */
-      const dirFromTheFirst = await directoryHere(directoryDepsOver(treeServiceFor(apiAs('ada')), checkedHeadsInMemory()));
-      const dirVouched = await directoryHere({ ...acmeDirectoryDeps(), anchored: heldFor({ accountId: CO, tree: treeServiceFor(apiAs('ada')), onChain: acmeChain.onChain, builder: anchorFunctions, checked: checkedHeadsInMemory(), vouching: vouchingHere }) });
+      const dirFromTheFirst = await directoryHere(directoryDepsOver(treeServiceOf(serviceSource(apiAs('ada'), CO)), checkedHeadsInMemory()));
+      const dirVouched = await directoryHere({ ...acmeDirectoryDeps(), anchored: heldFor({ accountId: CO, tree: treeServiceOf(serviceSource(apiAs('ada'), CO)), onChain: acmeChain.onChain, builder: anchorFunctions, checked: checkedHeadsInMemory(), vouching: vouchingHere }) });
       expect(dirVouched.records.checkedFrom?.by).toBe('vouched');
       expect(dirVouched.dir.seats.map((x) => [x.seat, x.role])).toEqual(dirFromTheFirst.dir.seats.map((x) => [x.seat, x.role]));
 
@@ -414,7 +416,7 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
       const forged = await aRunRaisedOver('prp_vouches_bbbb', vouchedHead, '2c'.repeat(32) as Hex, { madeWith: '2d'.repeat(32) as Hex });
       acmeChain.vouching.push({ chainId: forged, height: 8, at: 1 });
       asked.length = 0;
-      const notVouched = await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceFor(apiAs('ada')), asked), checkedHeadsInMemory()), vouching: vouchingHere }, {});
+      const notVouched = await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceOf(serviceSource(apiAs('ada'), CO)), asked), checkedHeadsInMemory()), vouching: vouchingHere }, {});
       expect([asked[0], notVouched.records.checkedFrom]).toEqual([-1, undefined]);
 
       /* RED WHEN: a run whose proposal the company's records do not hold is taken to vouch: its approvers' head is passed over. */
@@ -425,7 +427,7 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
       const store_ = checkedHeadsInMemory();
       const written: CheckedHeads[] = [];
       const recorded: CheckedHeadsStore = { read: store_.read, write: async (c, h) => { written.push(h); await store_.write(c, h); } };
-      const unheld = await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceFor(apiAs('ada')), asked), recorded), vouching: vouchingHere }, {});
+      const unheld = await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceOf(serviceSource(apiAs('ada'), CO)), asked), recorded), vouching: vouchingHere }, {});
       expect([asked.includes(-1), unheld.records.checkedFrom]).toEqual([true, undefined]);
       /* RED WHEN: a start is kept on the device before its run's proposal proves into the root reached from it - a start later passed over. */
       expect(written.length).toBeGreaterThan(0);
@@ -434,7 +436,7 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
       /* RED WHEN: a company of more than one key whose runs vouch for nothing is read from anywhere but its first header (A starts by itself). */
       acmeChain.vouching.length = 0;
       asked.length = 0;
-      await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceFor(apiAs('ada')), asked), checkedHeadsInMemory()), vouching: vouchingHere }, {});
+      await recordsHeldHere({ ...doorsOf(ADA, pagesOf(treeServiceOf(serviceSource(apiAs('ada'), CO)), asked), checkedHeadsInMemory()), vouching: vouchingHere }, {});
       expect(asked[0]).toBe(-1);
     } finally {
       acmeChain.vouching.length = 0;
@@ -454,13 +456,93 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
   it('held by one key: from the header before the latest, so the latest is checked against it, and never from the first', async () => {
     const asked: number[] = [];
     const kept = checkedHeadsInMemory();
-    const read = await recordsHeldHere(doorsOf(ADA, pagesOf(treeServiceFor(apiAs('ada')), asked), kept), {});
+    const read = await recordsHeldHere(doorsOf(ADA, pagesOf(treeServiceOf(serviceSource(apiAs('ada'), CO)), asked), kept), {});
     const latest = acmeChain.landed.length - 1;
     /* RED WHEN: a device new to a company one key holds checks from its first header, or trusts the latest header without checking it against the one before. */
     expect(asked).not.toContain(-1);
     expect(read.records.checkedFrom).toEqual({ by: 'latest', seq: latest - 1, head: acmeChain.landed[latest - 1]!.head });
     expect(await kept.read(CO)).toMatchObject({ base: latest - 1, heads: [acmeChain.landed[latest - 1]!.head, acmeChain.head()] });
     expect(read.records.reached.head).toBe(acmeChain.head());
+  });
+
+  it('a device that started from a later head keeps the heads before its start it found, believes them on its next read while the head each is tied to holds, and reads them again otherwise', async () => {
+    const short: number[] = [];
+    /* The pages a read asks only to find the heads batches before its start left: shorter than a whole page, never past the start. */
+    const counting = (): TreeService => {
+      const tree = treeServiceOf(serviceSource(apiAs('ada'), CO));
+      return { ...tree, headersAfter: async (c, seq, limit) => { if (limit < HEADERS_AT_ONCE) short.push(seq); return tree.headersAfter(c, seq, limit); } };
+    };
+    /* Who held the account as each directory version was anchored, as a read holds it. */
+    const heldOf = (r: Awaited<ReturnType<typeof recordsHeldHere>>) => [...r.records.directory.keys()].map((v) => r.records.held?.(v));
+    const kept = checkedHeadsInMemory();
+    const first = await recordsHeldHere(doorsOf(ADA, counting(), kept), {});
+    const stored = (await kept.read(CO))!;
+    expect(stored.from?.by).toBe('latest');
+    expect(heldOf(first).some((h) => h !== null && h !== undefined)).toBe(true);
+    /* RED WHEN: the heads before the start a read found are not kept, so every later read reads their headers again. */
+    expect(short.length).toBeGreaterThan(0);
+    expect(stored.before?.length).toBeGreaterThan(0);
+    for (const r of stored.before!) expect(acmeChain.landed.some((l) => l.head.toLowerCase() === r.tied.head) || r.tied.head === stored.heads[0]).toBe(true);
+
+    short.length = 0;
+    const again = await recordsHeldHere(doorsOf(ADA, counting(), kept), {});
+    /* RED WHEN: a read believes none of the heads before its start it kept, and reads their headers again. */
+    expect(short).toEqual([]);
+    expect(heldOf(again)).toEqual(heldOf(first));
+
+    /* RED WHEN: a read that checks a new batch forward no longer keeps the heads before its start it had kept. */
+    await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_before_kept_k1')]);
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
+    short.length = 0;
+    await recordsHeldHere(doorsOf(ADA, counting(), kept), {});
+    expect(short).toEqual([]);
+    const moved = (await kept.read(CO))!;
+    expect([moved.latest.head, moved.before]).toEqual([acmeChain.head(), stored.before]);
+
+    /* RED WHEN: a kept run tied to a head the account's history does not show is believed over a fresh read. */
+    await kept.write(CO, { ...moved, before: stored.before!.map((r) => ({ ...r, tied: { ...r.tied, head: 'ab'.repeat(32) as Hex } })) });
+    short.length = 0;
+    const untied = await recordsHeldHere(doorsOf(ADA, counting(), kept), {});
+    expect(short.length).toBeGreaterThan(0);
+    expect(heldOf(untied)).toEqual(heldOf(first));
+    expect((await kept.read(CO))!.before).toEqual(stored.before);
+
+    /* RED WHEN: a device that kept none reads otherwise than every device read before any was kept. */
+    const { before: _none, ...keptNone } = moved;
+    const keptWithNone = checkedHeadsInMemory();
+    await keptWithNone.write(CO, keptNone);
+    short.length = 0;
+    const none = await recordsHeldHere(doorsOf(ADA, counting(), keptWithNone), {});
+    expect(short.length).toBeGreaterThan(0);
+    expect(heldOf(none)).toEqual(heldOf(first));
+  });
+
+  it('a read that began before another read on the same device checked a newer head never writes the older head back, and the heads before the start stay kept', async () => {
+    const kept = checkedHeadsInMemory();
+    await recordsHeldHere(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), kept), {});
+    const atN = (await kept.read(CO))!;
+    expect(atN.before?.length).toBeGreaterThan(0);
+    /* A second read begins at the head the device checked last, before a newer anchor, with no heads before its start kept yet. */
+    const { before: _notYet, ...begunAt } = atN;
+    const chainAtN = await acmeChain.onChain();
+    await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_interleaved_k1')]);
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
+    /* The first read checks the newer head and keeps it. */
+    await recordsHeldHere(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), kept), {});
+    expect((await kept.read(CO))!.latest.head).toBe(acmeChain.head());
+    /* The second read, which read the store before that, checks nothing forward, finds the heads before its start, and writes. */
+    const begun: CheckedHeadsStore = { read: async () => begunAt, write: (c, h) => kept.write(c, h) };
+    await recordsHeldHere({ ...doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), begun), onChain: async () => chainAtN }, {});
+    const after = (await kept.read(CO))!;
+    /* RED WHEN: a read that began earlier writes its older latest head back over the newer one another read checked. */
+    expect(after.latest.head).toBe(acmeChain.head());
+    expect(after.heads.at(-1)).toBe(acmeChain.head());
+    /* RED WHEN: the heads before the start either read found are lost in the other's write. */
+    expect(after.before).toEqual(atN.before);
+    /* RED WHEN: a read whose store held no heads before its start, checking forward, writes over those another read kept. */
+    const { before: _none, ...noRuns } = after;
+    await kept.write(CO, noRuns);
+    expect((await kept.read(CO))!.before).toEqual(atN.before);
   });
 
   it('A DEVICE THAT STARTED PAST AN OLDER HEAD ANSWERS NONE FOR IT: THE NEWEST HEAD LANDED BY A TIME IS ONE IT CHECKED, OR OLDER THAN WHERE IT STARTED', async () => {
@@ -472,9 +554,9 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
       for (const [i, t] of [X, X + HOUR, X + 2 * HOUR, X + 3 * HOUR].entries()) {
         await ADA.entered.enter([await aRecordFiledBy(ADA, `pol_landed_from_s${i}`)]);
         acmeClock.now = () => t;
-        await anchorTheRecordsHere(doorsOf(ADA));
+        await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
       }
-      const read = await recordsHeldHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), checkedHeadsInMemory()), {});
+      const read = await recordsHeldHere(doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), checkedHeadsInMemory()), {});
       /*
        * Held by one key, a device new to the company starts at the header before the latest, the batch landed at X plus
        * two hours, and checks from there; the batch landed at X plus an hour is older than where it started, and not
@@ -495,7 +577,7 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
     /* The account's first two anchors landed in one block: its history at the wallet's indexer shows only the head the second left. */
     const oneBlock = async () => { const r = await acmeChain.onChain(); return { ...r, landed: r.landed.slice(1) }; };
     expect(acmeChain.landed.length).toBeGreaterThan(3);
-    const read = await recordsHeldHere({ ...doorsOf(ADA, treeServiceFor(apiAs('ada')), checkedHeadsInMemory()), onChain: oneBlock }, { founding: true });
+    const read = await recordsHeldHere({ ...doorsOf(ADA, treeServiceOf(serviceSource(apiAs('ada'), CO)), checkedHeadsInMemory()), onChain: oneBlock }, { founding: true });
     expect(read.records.checkedFrom?.by).toBe('latest');
     /* RED WHEN: the first header is looked for only by the first head the history shows - two anchors in the first block hide it for good. */
     const zeros = store.keptTreeOf(CO).headers.filter((h) => h.seq === 0);
@@ -510,11 +592,11 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
 describe('A RECOVERY RESUMING FROM A HEAD THIS DEVICE CHECKED BEFORE ITS LAST', () => {
   it('THE DEVICE FOLLOWS THE QUORUM FROM THAT HEAD, SAYS IT WAS THE QUORUM THAT GAVE THE BATCHES UP, AND WHAT THEY HELD WAITS TO BE ANCHORED AGAIN', async () => {
     const xs = treeKeptInMemory();
-    const tree = () => treeServiceFor(apiAs('ada'));
+    const tree = () => treeServiceOf(serviceSource(apiAs('ada'), CO));
     /* This device checks the company's records to Ada's latest batch, then the next one, holding a record filed for it. */
     const before = (await recordsHeldHere(doorsOf(ADA, tree(), xs.checked), {})).records.reached;
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_new_4')]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const givenUp = store.keptTreeOf(CO).headers.at(-1)!;
     expect((await recordsHeldHere(doorsOf(ADA, tree(), xs.checked), policy('pol_new_4'))).records.reached.seq).toBe(givenUp.seq);
     /* The quorum, whose devices could not check that batch, recovers from the head before it: Ada's device carries it out. */
@@ -550,10 +632,10 @@ describe('A RECOVERY RESUMING FROM A HEAD THIS DEVICE CHECKED BEFORE ITS LAST', 
 describe('A RECOVERY RESUMING FROM FURTHER BACK THAN THE HEADS A DEVICE KEEPS WHOLE', () => {
   it('THE DEVICE CANNOT FOLLOW IT FROM WHAT IT KEPT, AND SAYS THE QUORUM GAVE THE BATCHES UP IF IT RESUMED FROM FURTHER BACK, AND THE WAY ON EITHER WAY', async () => {
     const xs = treeKeptInMemory();
-    const tree = () => treeServiceFor(apiAs('ada'));
+    const tree = () => treeServiceOf(serviceSource(apiAs('ada'), CO));
     const before = (await recordsHeldHere(doorsOf(ADA, tree(), xs.checked), {})).records.reached;
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_f101')]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const givenUp = store.keptTreeOf(CO).headers.at(-1)!;
     expect((await recordsHeldHere(doorsOf(ADA, tree(), xs.checked), policy('pol_f101'))).records.reached.seq).toBe(givenUp.seq);
     /* This device keeps whole only heads after the one the recovery resumes from: as one that checked more batches past it than it keeps. */
@@ -588,7 +670,7 @@ describe('A RECOVERY RESUMING FROM FURTHER BACK THAN THE HEADS A DEVICE KEEPS WH
 describe('A DEVICE\'S READ JUDGES EACH HEADER\'S TAG AGAINST THE SEAT ITS KEY HOLDS', () => {
   it('A HEADER WHOSE ANCHORING KEY IS ONE SEAT\'S AND WHOSE TAG IS MAPPED TO ANOTHER STOPS EVERY READ AS DISHONEST; MAPPED TO ITS OWN SEAT, THE READ GOES ON', async () => {
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_tag_k1')]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const anchored = store.keptTreeOf(CO).headers.at(-1)!;
     const adasTag = await anchorFunctions.anchorTag({ account: ADDRESS, material: doorsOf(ADA).material });
     /* The tag the account wrote beside Ada's head, mapped to her seat as her own opening maps it: the read reaches the head. */

@@ -217,7 +217,7 @@ describe('the wallet page asks nobody anything when it opens', () => {
      * A SECOND FILE HERE IS A NEW PARTY THIS WALLET TALKS TO, and whoever
      * added it has to come past this test. */
     const offenders = sources()
-      .filter(([file]) => !/\.test\.tsx?$|\.fixtures\.ts$/u.test(file) && file !== SELF)
+      .filter(([file]) => !/\.test(?:-support)?\.tsx?$|\.fixtures\.ts$/u.test(file) && file !== SELF)
       .filter(([, code]) => /["'`](?:https?|wss?):\/\//u.test(code))
       .map(([file]) => file).sort();
     /* RED WHEN a wallet file writes an address of its own, a party the network's record does not name. */

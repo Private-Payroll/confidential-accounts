@@ -10,6 +10,7 @@ import { liveLeafReader } from '../chain/seat-leaf.js';
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **GIVING THE VAULT KEYS IN THE WALLET SIGNS ONLY FOR THE SEAT ITS OWN KEYS MAKE, AND KEEPS WHAT IT OWES BEFORE IT
@@ -37,15 +38,15 @@ vi.mock('../../../../src/core/vault-keys.js', async (real) => ({
   rosterVaultKeys: (account: { signers: Array<{ id: string; vaultKeys?: { recordsKey: string } }> }) =>
     account.signers.map((x) => ({ signerId: x.id, userId: null, name: x.id, filingKey: '00', keys: x.vaultKeys === undefined ? null : { recordsKey: x.vaultKeys.recordsKey } })),
 }));
-vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>()),
-  fileTheOwedDirectoryEntry: async (_api: unknown, _id: string, owed: { read(): unknown }) => {
+vi.mock('../../../../packages/web-shared/src/directory-filed-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/directory-filed-here.js')>()),
+  fileTheOwedDirectoryEntry: async (_id: string, owed: { read(): unknown }) => {
     t.order.push(owed.read() === null ? 'filed with nothing owed' : 'filed what was kept');
     return t.filed;
   },
 }));
-vi.mock('../../../../packages/web-shared/src/roster-here.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/roster-here.js')>()),
+vi.mock('../../../../packages/web-shared/src/roster-filed-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/roster-filed-here.js')>()),
   offerVaultKeysHere: async () => { t.order.push('offered'); },
   foldOffersHere: async () => { t.order.push('folded'); return { folded: [], refused: [] }; },
 }));
@@ -67,7 +68,7 @@ const intent = (fields: Record<string, string> = {}): ActIntent =>
 const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, unknown> } = {}) => {
   const calls: string[] = [];
   let keys = { accounts: { acc_1: SEAT }, counter: 1 } as Record<string, unknown>;
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, wallet: { drewTheLabel: () => true, pinnedFor: () => ({ account: ACCOUNT, created: true }), pin: async () => {} } },
     at: { step: 1, steps: 3 }, signal: new AbortController().signal,
@@ -83,7 +84,7 @@ const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, unknown
       keep: async (change: (k: never) => never) => { keys = change(structuredClone(keys) as never); t.order.push('kept'); },
     },
     ...over,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, calls, keysNow: () => keys };
 };
 const chainWith = (seats: string[] | { key: string }) => ({
@@ -97,8 +98,8 @@ const builder = { ownSeat: async () => LEAF } as never;
 
 const reach = (over: Record<string, unknown> = {}) => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: LEAF, companyKey: '11'.repeat(32),
-  /* A read kept for a later step is handed to it; this one reaches no page, so there is nothing to hand over. */
-  stepTo: () => {},
+  /* The step's view of the company: this stand-in reads nothing through one. */
+  stepView: NO_VIEW_OPENED,
   api: async () => { throw new Error('no call expected'); }, send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: [LEAF, 'bb'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null }), filingJudgeFor: () => async () => null, rosterReadsFor: () => ({}) },

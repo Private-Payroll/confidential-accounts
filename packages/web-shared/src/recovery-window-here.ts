@@ -15,7 +15,7 @@ import {
   openRecoveryWindow, RECOVERY_WINDOW_RECORD, recoveryWindowInForceOf, windowMessage, windowOpenedWithTheCompanyKey,
   type WindowChange, type WindowVersion,
 } from '../../../src/midnight/recovery-window-record.js';
-import { companyWirePaths, fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
 import { barReadable, quorumOf } from '../../../src/midnight/seat-quorum.js';
 import type { CompanyKeyHere } from './company-key-here.js';
@@ -67,7 +67,7 @@ interface WindowUnread extends Partial<WindowNamed> {
 }
 
 /** The doors: the service reach the wallet and the page already build, whose opener's seat copy opens a version. */
-export type WindowReach = Pick<ServiceReach, 'accountId' | 'api' | 'judges' | 'label' | 'account' | 'roster' | 'opener'>
+export type WindowReach = Pick<ServiceReach, 'accountId' | 'records' | 'judges' | 'label' | 'account' | 'roster' | 'opener'>
   & { readonly companyKeys: CompanyKeyHere };
 
 const MISSING = (version: number): string => `the company's records name version ${version} of the recovery window and the service did not give it. `
@@ -100,10 +100,7 @@ export async function recoveryWindowHere(r: WindowReach, o: { readonly anchoredO
   }
   const named = namedIn(here);
   try {
-    const b = await r.api(companyWirePaths.versions(r.accountId, kind, id)).catch((e: unknown) => {
-      if ((e as { status?: unknown } | null)?.status === 404) return null;
-      throw e;
-    }) as { versions?: unknown } | null;
+    const [b] = await r.records([{ kind, id, every: true }]) as readonly ({ versions?: unknown } | null | undefined)[];
     const given = b?.versions;
     const served: SealedCompanyRecord[] = Array.isArray(given) ? given.map((m) => fromCompanyWire(m, { company: r.accountId, kind, id }).sealed) : [];
     const read = windowFromVersions(r.accountId, served, here, windowOpenerOf(r.accountId, r.opener, r.companyKeys), r.companyKeys, o.anchoredOnly === true);

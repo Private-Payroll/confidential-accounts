@@ -14,35 +14,39 @@ import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import { peopleServed } from '../../../../src/core/person-record.js';
 import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors, type SealedAnswer } from '../../../../packages/web-shared/src/company-key-here.js';
-import { grantsServedBy, revokedAtHere } from '../../../../packages/web-shared/src/purpose-wraps.js';
+import { grantsReadWith, revokedAtHere } from '../../../../packages/web-shared/src/purpose-wraps.js';
 import { grantsWrappedAgainHere } from '../../../../packages/web-shared/src/grants-filed-here.js';
 import { grantsFilingDoorsIn } from './grant-read.js';
-import { governedCallServiceFor, seatsLeavingHere, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import {
-  anchoredOnTheWayIn, anchorServiceFor, anchorTheRecordsHere, directoryChangeFiledHere, type AnchorDoors,
-} from '../../../../packages/web-shared/src/records-anchored-here.js';
-import { manifestServiceFor, treeServiceFor } from '../../../../packages/web-shared/src/record-entered-here.js';
+import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { anchorServiceThrough } from '../../../../packages/web-shared/src/anchored-through-the-view.js';
+import { seatsLeavingHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
+import { anchorTheRecordsHere, type AnchorDoors } from '../../../../packages/web-shared/src/records-anchored-here.js';
+import { anchoredOnTheWayIn, directoryChangeFiledHere } from '../../../../packages/web-shared/src/anchored-on-the-way-in.js';
 import { sealPoliciesToNewSignersHere } from '../../../../packages/web-shared/src/policies-resealed-here.js';
 import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here.js';
 import { keepRecoveryWindowHere, recoveryWindowHere } from '../../../../packages/web-shared/src/recovery-window-here.js';
 import { ownEntryFiled, rosterFollowed } from '../../../../packages/web-shared/src/vault-keys-given.js';
 import { withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
-import {
-  deviceRecordsFor, deviceSignerFrom, directoryFilingsFrom, fileDirectoryFiling, readersIn,
-  type DirectoryHere, type DirectoryRead,
-} from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { deviceRecordsFor, deviceSignerFrom, readersIn, type DirectoryHere, type DirectoryRead } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import type { CompanyView } from '../../../../packages/web-shared/src/company-view.js';
+import { serviceSource, type RecordWrite } from '../../../../packages/web-shared/src/records-source.js';
+import { stopsFor } from './leaving-read-in-the-wallet.js';
 import { giveEachVaultSecretHere } from '../../../../packages/web-shared/src/vault-secret-given.js';
-import { seatHereIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-notes-here.js';
+import { seatHereIn, unnamedKeptIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import { intentShapeOf, routeOf, sendsIn } from 'midnight-identity/profile/request';
-import { apiOver, enteredFor, governanceRecordsFor, sendOver, type CompanyReach, type Handed } from './company-reach.js';
+import { enteredFor, governanceRecordsFor, rosterOrNone, type CompanyReach } from './company-reach.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { leavingForTheAnchor } from './leaving-read-in-the-wallet.js';
 import { policiesInTheWallet } from './policy-doors-in-the-wallet.js';
 import { StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { mayFile } from '../../../../src/midnight/seat-directory.js';
+import { WIRE_RECORDS } from '../../../../src/midnight/sealed-record-wire.js';
 import { vaultSecretsKeptFor } from './vault-secret-kept.js';
 import type { VaultDoorsReach } from './vault-doors-here.js';
 import { stillOwed, vaultSecretsChangedHere } from './vault-secrets-changed-here.js';
@@ -85,82 +89,94 @@ const vaultSecretsInTheWallet = (): VaultDoorsReach | undefined =>
   ((globalThis as { localStorage?: Storage }).localStorage === undefined ? undefined
     : { secrets: (person) => vaultSecretsKeptFor(person), pause: pauseUntil, indexerHttp: '' });
 
+/** The method, path and body a write goes out with, as the company's source sends it. */
+const sentAs = async (company: string, w: RecordWrite): Promise<{ readonly method: string; readonly path: string; readonly body: string | undefined }> => {
+  let out = { method: 'GET', path: '', body: undefined as string | undefined };
+  await serviceSource(async (path, init) => {
+    out = { method: init?.method ?? 'GET', path, body: typeof init?.body === 'string' ? init.body : undefined };
+    return {};
+  }, company).write(w);
+  return out;
+};
+
 /**
- * The step's own calls, watched: a stop reaching any of them is kept so that code which swallows errors cannot swallow
- * it, and a call that sends a transaction answered other than with success is counted as not confirmed.
+ * The step's view of the company, watched: a stop reaching any read or write through it is kept so that code which
+ * swallows errors cannot swallow it, and a write that sends a transaction answered other than with success is counted
+ * as not confirmed.
  */
-function watchedCalls(ctx: StepContext) {
+function watchedSteps(ctx: StepContext) {
   const shape = intentShapeOf(ctx.intent.name);
   const seen = { stopped: null as ActionStopped | null, unconfirmed: 0 };
-  const watched: Pick<StepContext, 'call'> = {
-    call: async (method, path, body) => {
-      let answer: Awaited<ReturnType<StepContext['call']>>;
-      try {
-        answer = await ctx.call(method, path, body);
-      } catch (e) {
-        if (e instanceof ActionStopped) seen.stopped ??= e;
-        throw e;
-      }
-      const route = shape === undefined ? null : routeOf(shape, method, path);
-      if (route !== null && sendsIn(route, body) && (answer.status < 200 || answer.status >= 300)) seen.unconfirmed += 1;
-      return answer;
-    },
+  const sends = (method: string, path: string, body: string | undefined): boolean => {
+    const route = shape === undefined ? null : routeOf(shape, method, path);
+    return route !== null && sendsIn(route, body);
   };
-  const api = apiOver(watched);
-  const send = sendOver(watched);
   const rethrow = (): void => {
     if (seen.stopped !== null) throw seen.stopped;
     if (ctx.signal.aborted) throw new ActionStopped('stopped');
   };
-  return { api, send, seen, rethrow };
+  /*
+   * A write the service answered other than with success, counted when that write itself sends a transaction. A refusal
+   * the view's check made before anything of the batch left (`thisSendNotSent`) sent nothing, and is not counted.
+   */
+  const unsent = async (company: string, e: unknown): Promise<void> => {
+    const failed = e as { status?: unknown; thisSendNotSent?: unknown; failedWrite?: RecordWrite } | null;
+    if (typeof failed?.status !== 'number' || failed.thisSendNotSent === true || failed.failedWrite === undefined) return;
+    const out = await sentAs(company, failed.failedWrite);
+    if (sends(out.method, out.path, out.body)) seen.unconfirmed += 1;
+  };
+  const caught = (e: unknown): void => { if (e instanceof ActionStopped) seen.stopped ??= e; };
+  const watchedView = <H>(view: CompanyView<H>): CompanyView<H> => new Proxy(view, {
+    get: (v, name) => {
+      const got: unknown = Reflect.get(v, name);
+      if (typeof got !== 'function') return got;
+      return (...args: unknown[]): unknown => {
+        const out: unknown = (got as (...a: unknown[]) => unknown).apply(v, args);
+        if (!(out instanceof Promise)) return out;
+        return out.catch(async (e: unknown) => {
+          caught(e);
+          if (name === 'write') await unsent(v.company, e);
+          throw e;
+        });
+      };
+    },
+  });
+  /* `r` with its view of the company watched: every door the step hands that view to is watched with it. */
+  const watching = (r: CompanyReach): CompanyReach => {
+    const held = r.stepView;
+    return { ...r, stepView: { current: () => watchedView(held.current()), again: (why) => watchedView(held.again(why)) } };
+  };
+  return { seen, rethrow, watching };
 }
 
-type Api = ReturnType<typeof apiOver>;
-const accountPath = (accountId: string): string => `/api/accounts/${encodeURIComponent(accountId)}`;
-
-/** The roster this device believes, or none, for a read that believes the directory without it. */
-const rosterOrNone = (r: CompanyReach) => async () => {
-  try {
-    return await r.roster();
-  } catch {
-    return { signers: [] };
-  }
-};
-
 /**
- * The anchor's doors, every one on this wallet's own reads: the chain's anchors and the account's call state through its
- * own indexer, the directory as its judges believe it, and the seat from the saved keys. The service is asked only for
- * the records and headers the anchor then checks, and to send the proven transaction unless the act sends its calls
- * straight to the chain (`handOverFor`). Who is leaving is read on the same reads (`leavingForTheAnchor`); when it cannot
+ * The anchor's doors, every one through the step's view of the company (`r.stepView`) or this wallet's own reads: the
+ * chain's anchors and the account's call state, the proposals, the founding records and the records and headers the
+ * anchor then checks all through the view, the directory as its judges believe it, and the seat from the saved keys.
+ * The proven transaction is sent through the view's write unless the act sends its calls straight to the chain
+ * (`handOverFor`). Who is leaving is read on the same reads (`leavingForTheAnchor`); when it cannot
  * be read, or a proposal this wallet cannot open was passed over in reading it, the anchor binds only what it read and
  * retirements already anchored, and `unread` is told why so the act says it was left partial.
  */
-export async function anchorDoorsIn(r: CompanyReach, api: Api, unread?: (why: string) => void): Promise<AnchorDoors> {
+export async function anchorDoorsIn(r: CompanyReach, unread?: (why: string) => void): Promise<AnchorDoors> {
   const found = await r.judges.keysFoundFor(r.accountId, r.sealed);
-  const service = anchorServiceFor(api);
   return {
     accountId: r.accountId,
     material: signerMaterialOf(r.seat),
-    manifest: manifestServiceFor(api),
-    tree: treeServiceFor(api),
+    manifest: r.stepView.current().manifest,
+    tree: r.stepView.current().tree,
     ...treeKeptHere(),
-    directory: () => r.judges.directoryWithItsRecordsFor(r.accountId, r.label, r.account, found, rosterOrNone(r))(),
-    directoryFilings: () => directoryFilingsFrom(api, r.accountId),
-    fileDirectory: (filing) => fileDirectoryFiling(api, r.accountId, filing),
-    onChain: r.judges.anchorsOnChainFor(r.label, r.account),
+    directory: () => r.stepView.current().directory(),
+    directoryFilings: () => r.stepView.current().filings(),
+    fileDirectory: async (filing) => { await r.stepView.current().write([{ to: 'directory', filing }]); },
+    onChain: () => r.stepView.current().doors.onChain(),
     vouching: r.judges.vouchingFor(r.accountId),
     tagSeats: r.judges.tagSeatsFor(r.account),
-    leaving: leavingForTheAnchor(r, api, found, unread),
-    service: {
-      ...service,
-      callState: async () => {
-        const chain = await r.chain.callState(r.account);
-        if (chain === null) throw new Error('this wallet could not read the company\'s account at one block, so nothing was anchored.');
-        return { ...chain, account: r.account };
-      },
-    },
+    leaving: leavingForTheAnchor(r, found, unread),
+    service: anchorServiceThrough(r.stepView),
     builder: r.builder,
     ...(r.handOver === undefined ? {} : { handOver: r.handOver }),
+    view: r.stepView,
   };
 }
 
@@ -170,7 +186,7 @@ export async function anchorDoorsIn(r: CompanyReach, api: Api, unread?: (why: st
  */
 export const anchorDirectoryDoorIn = (r: CompanyReach, handed: Handed) => async (): Promise<unknown> => {
   handed.over = true;
-  return anchorTheRecordsHere(await anchorDoorsIn(r, r.api));
+  return anchorTheRecordsHere(await anchorDoorsIn(r));
 };
 
 /**
@@ -178,40 +194,37 @@ export const anchorDirectoryDoorIn = (r: CompanyReach, handed: Handed) => async 
  * them, the key this seat was given opened with the seat's own wrapping secret, the company key this wallet derives, and
  * the answers waiting to be carried across. The new key and every seat's copy of it are made inside the change, here.
  */
-export async function rotationDoorsIn(r: CompanyReach, api: Api): Promise<RotationDoors> {
+export async function rotationDoorsIn(r: CompanyReach): Promise<RotationDoors> {
   const found = await r.judges.keysFoundFor(r.accountId, r.sealed);
   const records = {
-    directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, found, rosterOrNone(r)),
+    directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, found, rosterOrNone(r.roster)),
     roundsOnChain: async (chainIds: readonly string[]) => r.builder.roundsOnChain({
       account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret,
     }),
   };
-  const anchor = await anchorDoorsIn(r, api);
+  const anchor = await anchorDoorsIn(r);
   return {
     accountId: r.accountId,
     material: { signingSecret: r.seat.signingSecret },
     records,
-    filings: () => directoryFilingsFrom(api, r.accountId),
+    filings: () => r.stepView.current().filings(),
     served: async () => r.served(),
     released: () => r.companyKey,
     askTheWallet: async () => r.companyKey,
     waiting: async () => {
-      const now = await api(accountPath(r.accountId)) as SealedAccount;
+      const view = r.stepView.current();
+      const now = await view.account() as SealedAccount;
       /* A person whose record does not read as one is passed over alone: what waits for them is not folded, and everybody else's is. */
-      const people = peopleServed(await api(`${accountPath(r.accountId)}/people`), r.accountId).people;
-      const handovers: SealedAnswer[] = [];
-      for (const { rec: person, handedOver } of people) {
-        if (!handedOver) continue;
-        const box = ((await api(`/api/employees/${encodeURIComponent(person.id)}/handover`)) as { inbox?: SealedAnswer } | null)?.inbox;
-        if (box !== undefined && box !== null) handovers.push(box);
-      }
+      const handedOver = peopleServed(await view.list('people'), r.accountId).people.filter((p) => p.handedOver).map((p) => p.rec.id);
+      const boxes = handedOver.length === 0 ? [] : await view.handovers(handedOver);
+      const handovers = boxes.map((b) => (b as { inbox?: SealedAnswer | null } | null)?.inbox).filter((b): b is SealedAnswer => b !== undefined && b !== null);
       return [...(now.pendingSigners ?? []).map((p) => p.sealed as SealedAnswer), ...handovers];
     },
-    leaving: () => seatsLeavingHere({ service: governedCallServiceFor(api), accountId: r.accountId, records, leaves: r.judges.leavesFor(r.account) }, found, true),
-    admitted: async () => r.judges.seatsAdmittedOn(await api(accountPath(r.accountId)) as SealedAccount),
+    leaving: () => seatsLeavingHere({ service: governedCallServiceThrough(r.stepView), accountId: r.accountId, records, leaves: r.judges.leavesFor(r.account) }, found, true),
+    admitted: async () => r.judges.seatsAdmittedOn(await r.stepView.current().account() as SealedAccount),
     file: (change, signedFor) => directoryChangeFiledHere(anchor, change, signedFor),
     revoked: () => revokedAtHere({
-      accountId: r.accountId, versions: grantsServedBy(api, r.accountId), directory: records.directory,
+      accountId: r.accountId, versions: grantsReadWith((asked) => r.stepView.current().records(asked), r.accountId), directory: records.directory,
       signingPublicKey: signingPublicKeyOf(r.seat.signingSecret as Hex), released: async () => r.companyKey,
     }),
   };
@@ -221,10 +234,8 @@ export async function rotationDoorsIn(r: CompanyReach, api: Api): Promise<Rotati
  * What one vault's records are filed again from: this seat, the directory's signers, and the coins this wallet kept.
  * A caller that has already read the directory in this step hands that read in, so it is read once.
  */
-export function rebuildDoorsIn(
-  ctx: StepContext, r: CompanyReach, api: Api, send: ReturnType<typeof sendOver>, reach: UpkeepReach, read?: DirectoryRead,
-): RebuildDoors {
-  const person = ctx.person ?? (() => { throw new StepRefused(why('no-person')); })();
+export function rebuildDoorsIn(ctx: StepContext, r: CompanyReach, reach: UpkeepReach, read?: DirectoryRead): RebuildDoors {
+  if (ctx.person === null) throw new StepRefused(why('no-person'));
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   const directory = read ?? r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
@@ -233,11 +244,13 @@ export function rebuildDoorsIn(
     account: r.account,
     builder: r.builder,
     indexer: async () => r.chain.indexer,
+    vaultsHere: r.vaultsHere,
     onChain: async () => ({ holders: await r.holders() }),
     me,
-    records: deviceRecordsFor(r.seat.signingSecret, judge, () => person, enteredFor(r, api), send),
+    records: deviceRecordsFor(r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))),
     signers: readersIn(directory).signers,
     seatHere: () => seatHereIn(directory, r.seat.signingSecret),
+    ...unnamedKeptIn(r.stepView.current()),
     ...(kept === undefined ? {} : { kept }),
   };
 }
@@ -268,7 +281,7 @@ export async function anchoredAtTheEnd(doors: AnchorDoors): Promise<{ readonly a
  * caught by the watched calls after each vault.
  */
 async function vaultSecretsGiven(
-  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedCalls>, reach: UpkeepReach,
+  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, reach: UpkeepReach,
   vaults: readonly string[], seats: readonly string[], left: () => void,
 ): Promise<void> {
   const others = [...new Set(seats.map((x) => x.toLowerCase()))].filter((x) => x !== r.leaf.toLowerCase());
@@ -279,7 +292,7 @@ async function vaultSecretsGiven(
   let doors: RebuildDoors;
   let mine: { readonly role: Parameters<typeof mayFile>[0]['role'] } | null = null;
   try {
-    doors = rebuildDoorsIn(ctx, r, w.api, w.send, reach, directory);
+    doors = rebuildDoorsIn(ctx, r, reach, directory);
     mine = (await doors.seatHere?.()) ?? null;
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
@@ -310,14 +323,13 @@ async function vaultSecretsGiven(
  * nothing: a vault still owed a change leaves the upkeep partial, and a signer who stays changes it by a press.
  */
 async function vaultSecretsFinished(
-  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedCalls>, reach: UpkeepReach, vaults: readonly string[], left: () => void,
+  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, reach: UpkeepReach, vaults: readonly string[], left: () => void,
 ): Promise<void> {
   if (vaults.length === 0) return;
   const kept = reach.vaultSecrets ?? vaultSecretsInTheWallet();
   if (kept === undefined) { left(); return; }
   try {
-    const here = { ...r, api: w.api, send: w.send };
-    if (stillOwed(await vaultSecretsChangedHere(ctx, here, kept, await rotationDoorsIn(here, w.api), 'finish'))) left();
+    if (stillOwed(await vaultSecretsChangedHere(ctx, r, kept, await rotationDoorsIn(r), 'finish'))) left();
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     left();
@@ -333,13 +345,12 @@ async function vaultSecretsFinished(
  * could not seal again, or a read that failed, is said. Either leaves the upkeep partial for the next seat action that
  * runs the upkeep. What it left alone because nothing was owed is not said.
  */
-async function policiesSealedAgain(ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedCalls>, left: () => void): Promise<void> {
+async function policiesSealedAgain(ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, left: () => void): Promise<void> {
   let notSealed: readonly string[];
   let owed: readonly string[] = [];
   try {
-    const here = { ...r, api: w.api, send: w.send };
     const done = await sealPoliciesToNewSignersHere(withCompanyKeys({
-      records: { ...governanceRecordsFor(here), spendingPolicies: policiesInTheWallet(here, { files: true }) },
+      records: { ...governanceRecordsFor(r), spendingPolicies: policiesInTheWallet(r, { files: true }) },
       accountId: r.accountId, keyEpoch: r.companyKeys.epoch, filingKey: signingPublicKeyOf(r.seat.signingSecret as Hex),
     }, r.companyKeys));
     notSealed = done.refused.map((x) => `${x.id}: ${x.why}`);
@@ -353,6 +364,24 @@ async function policiesSealedAgain(ctx: StepContext, r: CompanyReach, w: ReturnT
   if (notSealed.length > 0) ctx.show({ key: 'act.upkeep.left.policies-not-sealed', values: { policies: notSealed.join('; ') } });
   if (owed.length > 0) ctx.show({ key: 'act.upkeep.left.policies-owed', values: { policies: owed.join(', ') } });
 }
+
+/**
+ * Every adopted vault's records named to the step's view and read in one request, so the vaults' stores read them from
+ * the view's one answer, and its one held read proves them all, however many vaults the company holds.
+ */
+const vaultRecordsDeclared = async (r: CompanyReach, vaults: readonly string[]): Promise<void> => {
+  if (vaults.length === 0) return;
+  r.vaultsHere.declare(vaults);
+  const asked = vaults.flatMap((v) => WIRE_RECORDS.map((record) => ({ vault: v.toLowerCase(), record })));
+  try {
+    const view = r.stepView.current();
+    view.declare({ records: asked.map((a) => ({ store: 'vault' as const, kind: a.record, id: a.vault })) });
+    await view.vaultRecords(asked);
+  } catch (e) {
+    if (e instanceof ActionStopped) throw e;
+    /* Nothing is kept from a read that failed: each vault's own read below reads its records again and says what it could not. */
+  }
+};
 
 const ROTATED: ReadonlySet<KeyRotated['state']> = new Set(['rotated', 'rotated-elsewhere']);
 const NOT_YET_ANCHORED = /not yet anchored/u;
@@ -385,17 +414,17 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
   const first: ActionStep = {
     title: { key: 'act.upkeep.step.first' },
     run: async (ctx) => {
-      const w = watchedCalls(ctx);
-      let r = await company.reach(ctx);
+      const w = watchedSteps(ctx);
+      let r = w.watching(await company.reach(ctx));
       let changed = false;
       if (o.ownEntry === true && ctx.keyring !== null) {
         try {
           const kept = ctx.keyring.open().read().directoryEntriesOwed?.[r.accountId] ?? null;
           if (kept !== null) {
-            const filed = await ownEntryFiled(w.api, r.accountId, {
+            const filed = await ownEntryFiled(r.accountId, {
               read: () => ctx.keyring!.open().read().directoryEntriesOwed?.[r.accountId] ?? null,
               settle: () => ctx.keyring!.keep((k) => withoutOwedEntry(k, r.accountId)),
-            }, { signingSecret: r.seat.signingSecret as Hex, companyKeys: r.companyKeys }, async () => (await r.holders()).founding ?? null);
+            }, { signingSecret: r.seat.signingSecret as Hex, companyKeys: r.companyKeys }, async () => (await r.holders()).founding ?? null, r.stepView);
             if (typeof filed === 'object') left();
             if (filed === 'filed') changed = true;
           }
@@ -407,7 +436,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       }
       const rotate = async (): Promise<KeyRotated | null> => {
         try {
-          return await rotateTheCompanyKeyHere(await rotationDoorsIn(r, w.api));
+          return await rotateTheCompanyKeyHere(await rotationDoorsIn(r));
         } catch (e) {
           if (e instanceof ActionStopped) throw e;
           return null;
@@ -417,7 +446,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       w.rethrow();
       if (rotated !== null && (rotated.state === 'filed-not-anchored' || (rotated.state === 'waits' && NOT_YET_ANCHORED.test(rotated.why)))) {
         changed = true;
-        const anchored = await anchoredAtTheEnd(await anchorDoorsIn(r, w.api, leavingUnread(ctx))).catch((e: unknown) => {
+        const anchored = await anchoredAtTheEnd(await anchorDoorsIn(r, leavingUnread(ctx))).catch((e: unknown) => {
           if (e instanceof ActionStopped) throw e;
           return { notAnchored: String(e) };
         });
@@ -430,10 +459,10 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       if (rotated === null || rotated.state === 'filed-not-anchored') changed = true;
       if (rotated !== null && ROTATED.has(rotated.state)) {
         company.renew();
-        r = await company.reach(ctx);
+        r = w.watching(await company.reach(ctx));
       }
       /* The read grants in force, wrapped again to the company's newest key and sealed to every seat, when owed. */
-      const rewrapped = await grantsWrappedAgainHere(grantsFilingDoorsIn(r, w.api, w.send)).catch((e: unknown) => {
+      const rewrapped = await grantsWrappedAgainHere(grantsFilingDoorsIn(r)).catch((e: unknown) => {
         if (e instanceof ActionStopped) throw e;
         return { state: 'not-wrapped' as const, why: String(e) };
       });
@@ -443,9 +472,9 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       try {
         const companyKeys = await r.judges.companyKeysFor(r.accountId, r.sealed, r.seat);
         const followed = await rosterFollowed({
-          api: w.api, accountId: r.accountId, companyKeys, signingSecret: r.seat.signingSecret as Hex, label: r.label, account: r.account,
+          accountId: r.accountId, companyKeys, signingSecret: r.seat.signingSecret as Hex, label: r.label, account: r.account,
           reads: r.judges.rosterReadsFor(r.accountId, r.label, r.account),
-          entered: enteredFor(r, w.api),
+          entered: enteredFor(r), view: r.stepView,
         });
         if (followed.changed) changed = true;
         for (const offer of followed.refused) left(`seat ${offer.seat}: ${offer.why}`);
@@ -468,8 +497,8 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
   const last: ActionStep = {
     title: { key: 'act.upkeep.step.last' },
     run: async (ctx) => {
-      const w = watchedCalls(ctx);
-      const r = await company.reach(ctx);
+      const w = watchedSteps(ctx);
+      const r = w.watching(await company.reach(ctx));
       let vaults: readonly string[] = [];
       let seats: readonly string[] = [];
       try {
@@ -480,8 +509,9 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         if (e instanceof ActionStopped) throw e;
         left();
       }
+      await vaultRecordsDeclared(r, vaults);
       for (const vault of vaults) {
-        const notes = await vaultNotesHere(rebuildDoorsIn(ctx, r, w.api, w.send, reach), vault.toLowerCase() as Hex);
+        const notes = await vaultNotesHere(rebuildDoorsIn(ctx, r, reach), vault.toLowerCase() as Hex);
         w.rethrow();
         if ((notes.of !== 'as-filed' && notes.of !== 'filed') || (notes.unsealed ?? []).length > 0) left();
       }
@@ -490,14 +520,14 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       await policiesSealedAgain(ctx, r, w, left);
       let anchored = 0;
       try {
-        const done = await anchoredAtTheEnd(await anchorDoorsIn(r, w.api, leavingUnread(ctx)));
+        const done = await anchoredAtTheEnd(await anchorDoorsIn(r, leavingUnread(ctx)));
         if ('notAnchored' in done) left(); else anchored = done.anchored;
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         left();
       }
       w.rethrow();
-      const window = await keepRecoveryWindowHere(r.accountId, () => recoveryWindowHere({ ...r, api: w.api }, { anchoredOnly: true }), treeKeptHere()).catch((e: unknown) => {
+      const window = await keepRecoveryWindowHere(r.accountId, () => recoveryWindowHere(r, { anchoredOnly: true }), treeKeptHere()).catch((e: unknown) => {
         if (e instanceof ActionStopped) throw e;
         return null;
       });

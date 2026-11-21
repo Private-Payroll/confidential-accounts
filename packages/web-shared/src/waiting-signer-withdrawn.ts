@@ -14,9 +14,8 @@ import type { KeysHeld } from '../../../src/core/company-key.js';
 import { kindAsked, listedHere } from './vault-page-doors.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { raisesStillHolding, sittingSigningKeysIn } from './filed-raise-still-holds.js';
-import {
-  answered, refuseASeatThatMayNotInvite, SeatMayNotInvite, type InvitationSend, type InvitingSeat,
-} from './invitation-on-device.js';
+import { refuseASeatThatMayNotInvite, SeatMayNotInvite, writtenOrRefused, type InvitingSeat } from './invitation-on-device.js';
+import type { CompanyWrites } from './records-source.js';
 
 /** What this device reads to withdraw a seat request: the company's inbox and proposals, and the chain's seats now. */
 export interface WaitingReads {
@@ -46,7 +45,7 @@ export interface WaitingReads {
  */
 export async function withdrawWaitingSignerHere(
   company: { readonly id: string; readonly companyKeys: KeysHeld }, seat: Pick<InvitingSeat, 'signingSecret' | 'held' | 'statement'>, signerId: string,
-  reads: WaitingReads, send: InvitationSend, named: string,
+  reads: WaitingReads, writes: CompanyWrites, named: string,
 ): Promise<void> {
   refuseASeatThatMayNotInvite(seat);
   if (!reads.onTheChain.some((x) => x.toLowerCase() === seat.statement.seat.toLowerCase())) {
@@ -70,9 +69,7 @@ export async function withdrawWaitingSignerHere(
   }
   /* The leaf travels with it, so the service can tell a request for a seat the chain already holds from one filed late, and lets only the late one go. */
   const withdrawal = signWithdrawal({ company: company.id, signerId, invitation, leaf: waiting.leafCommitment }, seat.signingSecret);
-  answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/signers/${encodeURIComponent(signerId)}/withdraw`, {
-    method: 'POST', body: JSON.stringify({ withdrawal }),
-  }), 200);
+  await writtenOrRefused(writes, company.id, { to: 'signer-withdrawn', signer: signerId, body: { withdrawal } });
 }
 
 /**

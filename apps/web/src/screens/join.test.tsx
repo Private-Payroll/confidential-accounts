@@ -15,6 +15,10 @@ import { ENGLISH } from '../english.test-support.js';
 const wallet = vi.hoisted(() => ({
   signedIn: true, act: vi.fn(), joinByCode: vi.fn(), signIn: vi.fn(),
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
   ACCOUNT_ORIGIN: 'https://wallet.example',

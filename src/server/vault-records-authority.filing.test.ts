@@ -28,25 +28,25 @@ describe('A FILING IS FROM THE KEY ITS FILER\'S OWN SEAT ENTRY NAMES', () => {
 
   it('files under the key the person\'s entry names, in any spelling, and asks about the company, the person and the key - never the record\'s kind', async () => {
     asked.length = 0;
-    expect(await may('ada', VAULT, 'pool', 'file', MINE)).toBe(true);
-    expect(await may('ada', VAULT, 'pool', 'file', MINE.toUpperCase() as never)).toBe(true);
+    expect(await may('ada', VAULT, ['pool'], 'file', MINE)).toBe(true);
+    expect(await may('ada', VAULT, ['pool'], 'file', MINE.toUpperCase() as never)).toBe(true);
     /* RED WHEN: the record's kind is handed on, so the server could judge which kinds a seat's role may file. */
     expect(asked).toEqual([['acc_1', 'ada', MINE], ['acc_1', 'ada', MINE]]);
   });
 
   it('REFUSES a filing signed with another member\'s key, or with a key nobody gave', async () => {
-    expect(await may('ada', VAULT, 'pool', 'file', THEIRS)).toBe(false);
-    expect(await may('ada', VAULT, 'nonce-secret', 'file', '33'.repeat(32))).toBe(false);
+    expect(await may('ada', VAULT, ['pool'], 'file', THEIRS)).toBe(false);
+    expect(await may('ada', VAULT, ['nonce-secret'], 'file', '33'.repeat(32))).toBe(false);
   });
 
   it('REFUSES a member with no entry at all, and still lets them read', async () => {
     const none = signersOfTheVaultsCompany({ accountOf, companies, mayFileUnder: () => false });
-    expect(await none('ada', VAULT, 'pool', 'file', MINE)).toBe(false);
-    expect(await none('ada', VAULT, 'pool', 'read')).toBe(true);
+    expect(await none('ada', VAULT, ['pool'], 'file', MINE)).toBe(false);
+    expect(await none('ada', VAULT, ['pool'], 'read')).toBe(true);
   });
 
   it('a non-member is refused whatever key they sign with', async () => {
-    expect(await may('carol', VAULT, 'pool', 'file', MINE)).toBe(false);
+    expect(await may('carol', VAULT, ['pool'], 'file', MINE)).toBe(false);
   });
 });
 
@@ -87,11 +87,11 @@ describe('A CONTRACT THAT IS NOT A VAULT IS REFUSED, NOT LEFT UNDECIDED', () => 
       () => { throw new Error('not this layout'); });
     await expect(notAVault(VAULT)).rejects.toBeInstanceOf(NotAVaultsState);
     const may = signersOfTheVaultsCompany({ accountOf: notAVault, companies, mayFileUnder: () => true });
-    expect(await may('ada', VAULT, 'pool', 'read')).toBe(false);
+    expect(await may('ada', VAULT, ['pool'], 'read')).toBe(false);
   });
 
   it('and a chain that fails for any other reason is still undecided', async () => {
     const down = signersOfTheVaultsCompany({ accountOf: async () => { throw new Error('indexer down'); }, companies, mayFileUnder: () => true });
-    await expect(down('ada', VAULT, 'pool', 'read')).rejects.toThrow(/indexer down/);
+    await expect(down('ada', VAULT, ['pool'], 'read')).rejects.toThrow(/indexer down/);
   });
 });

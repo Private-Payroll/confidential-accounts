@@ -7,7 +7,7 @@ import { CreateVault } from '../actions/create-vault.js';
 import { InvitePeople } from '../actions/invite.js';
 import { Signers } from '../actions/signers.js';
 import type { CompanyCreation } from '../adapters/creation-standing.js';
-import type { VaultRow } from '../adapters/company-records.js';
+import type { VaultRow } from '../adapters/company-rows.js';
 import { wasHandedOver } from '../adapters/vault-rows.js';
 import type { PageId, Text } from '../pages.js';
 import { STEP, type StepId, type StepProps } from './step-ids.js';

@@ -6,10 +6,12 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { newSigningKeypair, toHex } from '../../../src/core/crypto.js';
 import { openVaultKeysOffer, vaultKeysAreTheSigners, vaultKeysOfferRefusal, type OpenedVaultKeysOffer, type VaultKeysOffer } from '../../../src/core/vault-keys.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
-import { offerVaultKeysHere } from './roster-here.js';
+import { offerVaultKeysHere } from './roster-filed-here.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
+import { viewOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 
 /*
  * A signer's vault keys are offered to the company with their wallet's own
@@ -38,10 +40,10 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
     const { sent, api } = giving();
     const statement = signRecordsKey(me, CO, 'c0'.repeat(32) as never, companyKey, SEAT);
     const viewingKey = '5e'.repeat(32) as never;
-    await offerVaultKeysHere(api, 'acc_1', {
+    await offerVaultKeysHere('acc_1', {
       committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
       recordsKey: statement, entry: ENTRY, viewingKey,
-    });
+    }, viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), 'acc_1'));
     expect(sent.map((x) => `${x.method} ${x.path}`)).toEqual(['PUT /api/accounts/acc_1/vault-keys']);
     const kept = sent[0]!.body.offer;
     /* RED WHEN: the offer carries the wallet key, or anything only the wallet key checks, where the service can read it. */
@@ -67,10 +69,10 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
     const { sent, api } = giving();
     const forAnother = signRecordsKey(me, CO, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x22), SEAT);
     /* RED WHEN: a statement for a key other than the one the company key opens is offered as this signer's. */
-    await expect(offerVaultKeysHere(api, 'acc_1', {
+    await expect(offerVaultKeysHere('acc_1', {
       committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
       recordsKey: forAnother, entry: ENTRY, viewingKey: '5e'.repeat(32) as never,
-    })).rejects.toThrow(/not the one your company key gives/);
+    }, viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), 'acc_1'))).rejects.toThrow(/not the one your company key gives/);
     expect(sent).toEqual([]);
   });
 });

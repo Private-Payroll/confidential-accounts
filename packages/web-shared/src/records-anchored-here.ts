@@ -7,8 +7,8 @@
  * anchor call that landed on the account from the account's own history, at
  * the indexer the person's own wallet names - never from the company's service
  * - and checks every header of the company's record tree from the last head
- * it checked to the head the last of them left (`recordsHeldHere`, through
- * `checkForward`), proving the leaves a read asks against that head's root. It
+ * it checked to the head the last of them left (`recordsHeldHere`, in
+ * `records-held-here.ts`, through `checkForward`), proving the leaves a read asks against that head's root. It
  * anchors what is not yet anchored: it makes the next header
  * (`treeHeaderHere`) and files it first, so the batch can never be lost to a
  * device that stops half way, then proves the account's `anchor` call from
@@ -49,36 +49,28 @@ import type { SealedProposal } from '../../../src/core/types.js';
 import { proposalFilingRefusal } from '../../../src/core/proposal-filing.js';
 import { FOUNDING_KEY_EPOCH, foundingStateRefusal, stateRecordId } from '../../../src/core/founding-state.js';
 import { foundingRosterRefusal, ROSTER_ID } from '../../../src/core/roster-record.js';
-import { companyWirePaths, fromCompanyWire, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import {
-  boundaryKeyOfEntry, companyRecordEntry, directoryEntry, EMPTY_HEAD, ENTRIES_AT_ONCE, entryIdOf, filedKindOfEntry, manifestEntryRefusal,
-  proposalEntry, recordKeyOf, signManifestEntry, supersededSaid, WITNESSED_AS,
-  type BatchHolders, type DirectoryAsAnchored, type ManifestEntry, type ManifestEntryBody,
+  companyRecordEntry, directoryEntry, EMPTY_HEAD, ENTRIES_AT_ONCE, entryIdOf, proposalEntry, recordKeyOf, signManifestEntry,
+  supersededSaid, type BatchHolders, type ManifestEntry,
 } from '../../../src/midnight/record-manifest.js';
-import { filingRefusalOf, mayFile, mayFileTheRecord, type AccountHeld, type DirectoryFiling, type QuorumChange, type SignedChange } from '../../../src/midnight/seat-directory.js';
-import {
-  directoryNotYetAnchored, pastTheRaisedBoundary, type DirectoryBelieved, type HeldAsAnchored, type LeavingBoundaries, type RecordsHeldHere,
-} from './vault-page-doors.js';
-import type { AnchorLanded, AnchorsOnChain, VouchedRunOnTheWire } from './governed-call-builder.js';
+import type { DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import type { DirectoryBelieved, LeavingBoundaries } from './vault-page-doors.js';
+import type { AnchorsOnChain, VouchedRunOnTheWire } from './governed-call-builder.js';
 import { enteredOnThisPage, letGoOfEntered, type ManifestService, type TreeService } from './record-entered-here.js';
+import { inParts } from './company-view-batch.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 import type { SignerMaterial } from './private-state.js';
-import { governedCallServiceFor } from './governed-call-on-device.js';
-import { provenPathOf } from './proving-runner.js';
-import {
-  keptWith, RECENT_KEPT, type CheckedHeads, type CheckedHeadsStore, type DirectoryChangesKeptStore, type HeadersKeptStore, type KeptDirectoryChange, type StartedFrom,
-} from './tree-kept-here.js';
+import { keptWith, type CheckedHeadsStore, type DirectoryChangesKeptStore, type HeadersKeptStore } from './tree-kept-here.js';
 import type { VouchedRunHere } from './run-rebuilt-here.js';
 import {
-  checkedAfter, checkForward, GENESIS, headStepOf, HEADERS_AT_ONCE, leafHashOf, nextTreeHeader, PROVEN_AT_ONCE, provenRefusal, transitionRefusal, transitionStopSaid, treeBatchOf, treeHeaderReadable,
-  treeKeyOf, treeLeafRefusal, type CheckedHead, type HeadStep, type KindAsked, type RecordName, type TransitionInput, type TransitionStop, type TreeHeader, type TreeLeaf,
+  checkForward, GENESIS, headStepOf, leafHashOf, nextTreeHeader, provenRefusal, transitionStopSaid, treeBatchOf, treeKeyOf, type CheckedHead,
+  type HeadStep, type TransitionInput, type TransitionStop, type TreeHeader, type TreeLeaf,
 } from '../../../src/midnight/record-tree.js';
-import {
-  DIRECTORY, directoryVersionsOf, kindKeyOf, newestAnchored, recordsProvenFor, versionsOf,
-  type DirectoryVersionHeld, type HeldVersion, type RecordsAsked,
-} from '../../../src/midnight/records-held.js';
-
-type Api = (path: string, init?: RequestInit) => Promise<any>;
+import { DIRECTORY, newestAnchored } from '../../../src/midnight/records-held.js';
+import { chainAfterARace, chainNowOf, freshViewAfter, heldHere, throughTheView } from './anchored-through-the-view.js';
+import type { ViewHeld } from './company-view.js';
+import { AnchorNotMade, headOn, keptAfter, type ReadHere } from './records-as-anchored.js';
 
 /** What anchoring the company's records asks of this device. */
 export interface AnchorDoors {
@@ -164,6 +156,13 @@ export interface AnchorDoors {
    * `ANCHOR_SEND_WATCH_MS` on the page's own clock.
    */
   readonly watch?: { readonly everyMs: number; readonly sleep: (ms: number) => Promise<void> };
+  /**
+   * **THE STEP'S ONE READ OF THE COMPANY.** Every door above that reads or writes the company - the manifest,
+   * the tree, the directory and its filings, the account's anchors, the stores, the proposals and founding records,
+   * the send through the service - is the current view's (`throughTheView`), every write probed first; an attempt after
+   * a race reads from a fresh view.
+   */
+  readonly view: ViewHeld<unknown>;
 }
 
 /** How often, while an anchor's send has not answered, the account's history is read again for where its head went. */
@@ -213,21 +212,6 @@ export const anchorsOnChainAt = async (
   return builder.anchorsOnChain({ account, indexer });
 };
 
-/** The service's routes an anchor goes through, over this page's own sign-in. */
-export const anchorServiceFor = (api: Api): AnchorDoors['service'] => ({
-  callState: (accountId) => governedCallServiceFor(api).callState(accountId),
-  sendProven: (accountId, tx) => api(provenPathOf(accountId), { method: 'POST', body: JSON.stringify({ tx }) }),
-  sealedProposals: (accountId) => governedCallServiceFor(api).sealedProposals!(accountId),
-  foundingRecords: async (accountId) => {
-    const first = async (kind: 'state' | 'roster', id: string): Promise<SealedCompanyRecord | null> => {
-      const b = await api(companyWirePaths.one(accountId, kind, id, 1));
-      return b?.filed == null ? null : fromCompanyWire(b.filed, { company: accountId, kind, id, version: 1 }).sealed;
-    };
-    const [state, roster] = await Promise.all([first('state', stateRecordId(FOUNDING_KEY_EPOCH)), first('roster', ROSTER_ID)]);
-    return { state, roster };
-  },
-});
-
 /** What anchoring did: how many entries its header holds, and the head the chain holds after it. */
 export interface Anchored {
   readonly anchored: number;
@@ -236,628 +220,10 @@ export interface Anchored {
   readonly superseded?: readonly string[];
 }
 
-/** Thrown when this device anchored nothing; the reason, and what resolves it, are in the message. */
-export class AnchorNotMade extends Error {
-  constructor(why: string, options?: { cause?: unknown }) {
-    super(`the company's records were not anchored: ${why}.`, options);
-    this.name = 'AnchorNotMade';
-  }
-}
+export { AnchorNotMade, headOn, keptAfter, seatAsAnchoredHere, type ReadHere } from './records-as-anchored.js';
 
 /** How many times this device reads the head again after another device anchored first, before it says so. */
 const ANCHOR_ATTEMPTS = 3;
-
-/**
- * **WHICH SEAT SIGNED A BATCH ALREADY ANCHORED, OR AN ENTRY IN IT, BY THE
- * DIRECTORY AS IT WAS ANCHORED WITH THAT BATCH.** The directory this device
- * was served is replayed up to the version anchored with the batch, and every
- * version of it must be the bytes the anchor holds for that version. The seat
- * holding the key is then judged by the role it held and whether it had
- * retired, at that version: what a seat may file is `mayFileTheRecord`'s. The chain's
- * own check when the batch landed is only that a signer sent the call; nothing
- * on chain ties the header's filing key to that signer. Each version of that
- * directory is counted against who held the account as the batch that first
- * anchored it named them and its call checked them (`held`). Nothing of who
- * holds the account now, or of the seat's role now, enters into it.
- */
-export const seatAsAnchoredHere = (
-  here: DirectoryBelieved, asAnchored: DirectoryAsAnchored, publicKey: Hex, entry?: ManifestEntryBody, held?: HeldAsAnchored,
-): string | null => {
-  const then = here.at(asAnchored.version, held);
-  if (then === null) return null;
-  for (const [version, digest] of asAnchored.digests) {
-    if (version <= asAnchored.version && then.digests[version - 1] !== digest) return null;
-  }
-  const seat = then.dir.seats.find((x) => x.signingKey === publicKey.toLowerCase());
-  if (seat === undefined) return null;
-  const may = mayFile(seat);
-  if (entry === undefined) return seat.retired === null && may.includes(WITNESSED_AS) ? seat.seat : null;
-  if (!mayFileTheRecord(seat, filedKindOfEntry(entry), boundaryKeyOfEntry(entry))) return null;
-  if (seat.retired === null) return seat.seat;
-  const last = seat.retired[boundaryKeyOfEntry(entry)];
-  return last !== undefined && entry.version <= last ? seat.seat : null;
-};
-
-/**
- * **WHICH SEAT THIS DEVICE BELIEVES SIGNED, AS IT BELIEVES EVERY FILING.** In a
- * batch already anchored, by the directory as it was anchored with the batch
- * (`seatAsAnchoredHere`). An entry not yet anchored: the seat holding the key,
- * if it may file that record at that version now (`filingRefusalOf`). Whether that
- * seat's own wallet attested its records key is asked of the record when it is
- * read, by the reader that knows which statements it holds.
- */
-const seatOfHere = (here: DirectoryBelieved, held: HeldAsAnchored) => {
-  /* The directory now, each version anchored counted against who held the account as it was anchored. */
-  const now = here.at(here.dir.version, held)?.dir ?? here.dir;
-  return (publicKey: Hex, entry?: ManifestEntryBody, asAnchored?: DirectoryAsAnchored): string | null => {
-    if (asAnchored !== undefined) return seatAsAnchoredHere(here, asAnchored, publicKey, entry, held);
-    const seat = now.seats.find((x) => x.signingKey === publicKey.toLowerCase());
-    if (seat === undefined || entry === undefined) return null;
-    return filingRefusalOf(now, here.holders, publicKey, filedKindOfEntry(entry), boundaryKeyOfEntry(entry), entry.version) === null
-      ? seat.seat : null;
-  };
-};
-
-/** What one read gave: every anchor call that landed and who holds the account now, and the company's records as the head the last of them left holds them. */
-interface ReadHere {
-  readonly landed: readonly AnchorLanded[];
-  readonly now: AnchorsOnChain;
-  /** The directory this read believed, and who holds the account as the person's own wallet read it. */
-  readonly here: DirectoryBelieved;
-  readonly records: RecordsHeldHere;
-  /** Every entry the service gave as not yet anchored at the root checked, well formed, by id. */
-  readonly pending: ReadonlySet<Hex>;
-}
-
-/** The head the account holds, as its history read here holds it: the head the last anchor call left, or the empty head. */
-const headOn = (landed: readonly AnchorLanded[]): Hex => (landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head.toLowerCase() as Hex);
-
-/** What reading the company's records asks of this device. */
-type HeldDoors = Pick<AnchorDoors, 'accountId' | 'directory' | 'builder' | 'onChain' | 'tree' | 'checked' | 'headers'> & Partial<Pick<AnchorDoors, 'manifest' | 'vouching' | 'tagSeats' | 'leaving'>>;
-
-/** A holders list as one key, so the seats it names are read once. */
-const heldKey = (h: BatchHolders): string => `${h.approvals}|${h.signerRoot}|${h.signers.join(',')}`;
-
-/** What this device keeps once a header is checked: the head, and every head before it from the first when it checked from there. */
-const keptAfter = (kept: CheckedHeads | null, c: CheckedHead, fromZero: boolean): CheckedHeads => {
-  const heads = kept?.heads.includes(c.head) ? kept.heads : [...(kept?.heads ?? []), c.head];
-  /* The heads checked last, whole, oldest first: a recovery resuming from one before the latest gives up what came after it. */
-  const recent = [...(kept?.recent ?? []).filter((r) => r.seq < c.seq), c].slice(-RECENT_KEPT);
-  return {
-    ...(kept?.base === undefined ? {} : { base: kept.base }), ...(kept?.from === undefined ? {} : { from: kept.from }),
-    latest: kept !== null && kept.latest.seq > c.seq ? kept.latest : c, fromZero: fromZero ? c : (kept?.fromZero ?? null), heads, recent,
-  };
-};
-
-/** **WHERE A DEVICE NEW TO THE COMPANY STARTS CHECKING**, and, for a vouched head, the record the run's approvers vouched with: it must prove into the root reached. */
-interface StartHere {
-  readonly from: CheckedHead;
-  readonly said: StartedFrom;
-  readonly holds?: { readonly name: RecordName; readonly digest: Hex };
-}
-
-/** What a device keeps from the moment it starts at `start`: that head alone, its seq the first of its heads. */
-const keptAt = (start: StartHere): CheckedHeads =>
-  ({ latest: start.from, fromZero: null, heads: [start.from.head], base: start.from.seq, from: start.said });
-
-/** A start a device passed over: the record its run vouched with does not prove into the root reached from it. */
-class PassedOver extends Error {}
-
-/** How many pages of headers a device reads looking for the header at a head it starts from, before it gives that head up. */
-const START_PAGES_AT_MOST = 16;
-
-/**
- * **THE HEADER WHOSE HEAD IS `head`**, among the headers the service keeps from
- * the seq after `after`: believed only as the account's own functions make
- * `head` from it and the head it names before it, so it is the one the chain
- * took. Null when none of the pages read holds it.
- */
-const headerAtHead = async (doors: HeldDoors, head: Hex, after: number): Promise<TreeHeader | null> => {
-  let seq = Math.max(-1, after);
-  for (let pages = 0; pages < START_PAGES_AT_MOST; pages += 1) {
-    const page = await doors.tree.headersAfter(doors.accountId, seq, HEADERS_AT_ONCE);
-    const given = (page.headers ?? []).filter((h): h is TreeHeader => treeHeaderReadable(h) && h.seq > seq);
-    if (given.length === 0) return null;
-    const a = await doors.builder.anchorHeads({ after: given.map(headStepOf) });
-    const i = given.findIndex((_, k) => String(a?.after?.[k] ?? '').toLowerCase() === head);
-    if (i >= 0) return given[i]!;
-    seq = Math.max(...given.map((h) => h.seq));
-  }
-  return null;
-};
-
-/**
- * **WHERE A DEVICE NEW TO THE COMPANY MAY START, NEWEST FIRST**, never from what
- * the service says alone:
- *   - a company whose account requires one approval (its threshold 1), so that
- *     one key is a whole quorum: from the header before the
- *     latest, so the latest is checked against it - one key is the whole
- *     quorum, so the company trusts its latest header;
- *   - otherwise: each head a payroll run vouches for, newest on the chain
- *     first - a run the account's history shows paid or charged with its
- *     threshold of approvals (`AnchorsOnChain.vouching`), whose sealed proposal
- *     makes its identity again with the head it seals - from the header whose
- *     head that is. A head the account's history does not show is passed over.
- * Nothing - a company of more than one key whose runs vouch for nothing, or
- * none of whose vouched heads can be reached - means checking from its first
- * header.
- */
-async function* startsHere(doors: HeldDoors, now: AnchorsOnChain): AsyncGenerator<StartHere> {
-  const landed = now.landed.map((l) => l.head.toLowerCase() as Hex);
-  if (landed.length === 0) return;
-  if (now.now.approvals <= 1) {
-    const latest = await headerAtHead(doors, landed[landed.length - 1]!, landed.length - 2);
-    if (latest === null || latest.seq === 0) return;
-    const before = await headerAtHead(doors, latest.previous, latest.seq - 2);
-    if (before === null || before.seq !== latest.seq - 1) return;
-    const from = checkedAfter(before, latest.previous);
-    yield { from, said: { by: 'latest', seq: from.seq, head: from.head } };
-    return;
-  }
-  if (doors.vouching === undefined || (now.vouching ?? []).length === 0) return;
-  const at = new Map(now.vouching.map((v) => [v.chainId.toLowerCase(), v.at]));
-  const order = new Map(landed.map((h, i) => [h, i]));
-  const claims = (await doors.vouching.runs([...at.keys()]))
-    .filter((c) => at.has(c.chainId) && order.has(c.run.vouched.head))
-    .sort((a, b) => order.get(b.run.vouched.head)! - order.get(a.run.vouched.head)!);
-  for (const c of claims) {
-    const { run } = c;
-    const id = await doors.vouching.identity({
-      root: run.root, payees: String(run.payees), opensAt: String(run.opensAt), closesAt: String(run.closesAt), required: String(run.required),
-      vault: run.vault, head: run.vouched.head, r: run.vouched.r,
-    });
-    if (id === null || id.toLowerCase() !== c.chainId) continue;
-    const header = await headerAtHead(doors, run.vouched.head, order.get(run.vouched.head)! - 1);
-    if (header === null) continue;
-    const from = checkedAfter(header, run.vouched.head);
-    yield {
-      from, said: { by: 'vouched', seq: from.seq, head: from.head, run: c.chainId, ...(at.get(c.chainId) === undefined ? {} : { at: at.get(c.chainId)! }) },
-      holds: { name: { store: 'proposal', kind: 'proposal', id: c.proposal }, digest: c.entryDigest },
-    };
-  }
-}
-
-/**
- * **THE COMPANY'S RECORDS AS THE HEAD ON CHAIN HOLDS THEM, FOR WHAT ONE READ
- * ASKED, READ HERE NOW.** The head is the one the account's history holds at
- * the indexer the person's own wallet names. Every header from the last head
- * this device checked (kept in its own storage; from the company's first
- * header when it kept none) up to that head is checked against the one before
- * it (`checkForward`): a header's filings and its anchoring seat are judged by
- * the company's directory as anchored with it, each version of which is
- * counted against who held the account as the batch that first anchored it
- * named them - the approvals and the seats its signer tree's leaves name,
- * which the call checked; a claim is believed by its own opening, never by the
- * committee. Then, in one request each, the
- * entries not yet anchored at the root reached, and the leaves of every record
- * and kind asked - with the directory always, and the founding records when
- * founding is asked - proven against that root, each with every older version.
- */
-export async function recordsHeldHere(doors: HeldDoors, asked: RecordsAsked): Promise<ReadHere> {
-  const [now, here] = await Promise.all([doors.onChain(), doors.directory()]);
-  let kept = (await doors.checked?.read(doors.accountId)) ?? null;
-  /* Only heads checked from the company's first header, or from a start this device chose, say which head each batch left. */
-  if (kept !== null && kept.fromZero === null && kept.from === undefined) kept = null;
-  if (kept !== null) return heldFrom(doors, asked, now, here, kept, null);
-  /*
-   * **A DEVICE NEW TO THE COMPANY** starts where `startsHere` says, newest
-   * first, and keeps nothing until the read from that start holds what it must;
-   * with no start, it checks from the company's first header.
-   */
-  for await (const start of startsHere(doors, now)) {
-    try {
-      return await heldFrom(doors, asked, now, here, keptAt(start), start);
-    } catch (e) {
-      if (!(e instanceof PassedOver)) throw e;
-    }
-  }
-  return heldFrom(doors, asked, now, here, null, null);
-}
-
-/** **THE READ ITSELF**, from what this device kept (`kept`), or from a start it chose (`start`), or from the company's first header. */
-async function heldFrom(
-  doors: HeldDoors, asked: RecordsAsked, now: AnchorsOnChain, here: DirectoryBelieved, keptBefore: CheckedHeads | null, chosen: StartHere | null,
-): Promise<ReadHere> {
-  const company = doors.accountId;
-  const { landed } = now;
-  const head = headOn(landed);
-  const landedBy = new Map(landed.map((l) => [l.head.toLowerCase(), l]));
-  let kept = keptBefore;
-  const from: CheckedHead = kept?.latest ?? GENESIS;
-  /* Every head this device checked, by the seq of the batch that left it. */
-  const base = kept?.base ?? 0;
-  const headsBySeq = new Map<number, Hex>((kept?.heads ?? []).map((h, i) => [base + i, h.toLowerCase() as Hex]));
-  /* The chain as the wallet's indexer shows it, behind a head this device already checked: nobody's doing yet, and nothing is read. */
-  if (from.seq >= 0 && head !== from.head && (head === EMPTY_HEAD || [...headsBySeq].some(([seq, h]) => h === head && seq < from.seq))) {
-    throw new AnchorNotMade(INDEXER_BEHIND);
-  }
-
-  /* The company's directory as anchored, version by version: what each header's seats are judged by. */
-  const dirAt = new Map<number, DirectoryVersionHeld>();
-  const seatsByHeld = new Map<string, readonly string[] | null>();
-  const readSeats = async (helds: readonly BatchHolders[]): Promise<void> => {
-    const missing = [...new Map(helds.filter((h) => !seatsByHeld.has(heldKey(h))).map((h) => [heldKey(h), h])).values()];
-    if (missing.length === 0) return;
-    const a = await doors.builder.anchorHeads({ after: [], holders: missing });
-    if (!Array.isArray(a?.holderSeats) || a.holderSeats.length !== missing.length) {
-      throw new AnchorNotMade('this device could not read which seats the company\'s headers name. Reload the page');
-    }
-    missing.forEach((h, i) => seatsByHeld.set(heldKey(h), a.holderSeats[i] ?? null));
-  };
-  /**
-   * The first head the account's history shows from the batch on: the block the batch's anchor landed in. Null for a
-   * batch whose header no landed head follows, which was never anchored as shown.
-   */
-  const landedFrom = (batch: number): AnchorLanded | null => {
-    for (let k = batch; headsBySeq.has(k); k += 1) {
-      const l = landedBy.get(headsBySeq.get(k)!);
-      if (l !== undefined) return l;
-    }
-    return null;
-  };
-  /*
-   * Who held the account as a version was anchored: the approvals and seats its batch's header names, which the anchor
-   * call checked, and the seat bar of the state the block that call landed in left. A bar that was not read is refused.
-   */
-  const accountHeldOf = (d: Pick<DirectoryVersionHeld, 'held' | 'batch'>): AccountHeld | null => {
-    const seats = seatsByHeld.get(heldKey(d.held));
-    const landedIn = landedFrom(d.batch);
-    if (seats === undefined || seats === null || landedIn === null) return null;
-    if (!Number.isSafeInteger(landedIn.seatBar) || landedIn.seatBar < 1) {
-      throw new AnchorNotMade('this device could not read the approvals a change of who is seated needed as the company\'s records '
-        + 'were anchored. Reload the page');
-    }
-    return { approvals: d.held.approvals, seats, seatBar: landedIn.seatBar };
-  };
-  const directoryOfLeaf = async (root: Hex): Promise<void> => {
-    const given = await doors.tree.proofs(company, { root, records: [DIRECTORY], kinds: [] });
-    if (given === null) throw new AnchorNotMade(ROOT_NOT_KEPT);
-    const leaf = given.records[0] ?? null;
-    if (provenRefusal(root, { records: [{ name: DIRECTORY, leaf }] }, given.proof) !== null) throw new AnchorNotMade(NOT_PROVEN);
-    const versions = leaf === null ? new Map<number, DirectoryVersionHeld>() : directoryVersionsOf(leaf, olderOf(given.older));
-    if (versions === null) throw new AnchorNotMade(NOT_PROVEN);
-    for (const [v, d] of versions) dirAt.set(v, d);
-    await readSeats([...versions.values()].map((d) => d.held));
-  };
-  /*
-   * **THE HEAD EACH BATCH BEFORE THIS DEVICE'S START LEFT**, for a directory
-   * version one of them anchored: the committee after its block is read from the
-   * account's history at that head. A header is taken only as the account's own
-   * functions make a head the history shows from it, or the one this device
-   * started from, through the headers after it.
-   */
-  const headsBefore = async (batches: readonly number[]): Promise<void> => {
-    for (const b of [...new Set(batches)].sort((x, y) => x - y)) {
-      if (b >= base || headsBySeq.has(b)) continue;
-      const previousOf = new Map<number, Map<Hex, Hex>>();
-      let heads = new Set<Hex>();
-      for (let k = b; k <= base; k += 1) {
-        const page = await doors.tree.headersAfter(company, k - 1, 1);
-        const at = (page.headers ?? []).filter((h): h is TreeHeader => treeHeaderReadable(h) && h.seq === k && (k === b || heads.has(h.previous)));
-        if (at.length === 0) break;
-        const a = await doors.builder.anchorHeads({ after: at.map(headStepOf) });
-        const made = new Map<Hex, Hex>(at.map((h, i) => [String(a?.after?.[i] ?? '').toLowerCase() as Hex, h.previous]));
-        previousOf.set(k, made);
-        const shown = [...made.keys()].find((h) => landedBy.has(h) || h === headsBySeq.get(k));
-        if (shown !== undefined) {
-          let h: Hex | undefined = shown;
-          for (let j = k; j >= b && h !== undefined; j -= 1) { if (j < base) headsBySeq.set(j, h); h = previousOf.get(j)?.get(h); }
-          break;
-        }
-        heads = new Set(made.keys());
-      }
-    }
-  };
-  if (from.head !== head && from.dirVersion > 0) {
-    await directoryOfLeaf(from.root);
-    await headsBefore([...dirAt.values()].map((d) => d.batch));
-  }
-
-  /** The first directory version a header on the chain's path anchors that the service did not serve, or served as other bytes. */
-  let servedShort: { readonly version: number; readonly without: boolean } | undefined;
-  /** Which seat held a key, by the directory as anchored at `dirVersion` - each version counted against who held the account as it was anchored. */
-  const seatOf = (publicKey: Hex, entry: ManifestEntryBody | undefined, dirVersion: number, header: TreeHeader): string | null | undefined => {
-    const inHeader = new Map(header.changes.filter((c) => c.leaf.store === 'directory').map((c) => [c.leaf.version, c.leaf]));
-    /* Every version anchored up to `dirVersion` is in `dirAt` or this header; one in neither was passed over, never entered. */
-    const digests = new Map<number, Hex>();
-    for (let v = 1; v <= dirVersion; v += 1) {
-      const d = dirAt.get(v)?.digest ?? inHeader.get(v)?.digest;
-      if (d !== undefined) digests.set(v, d);
-    }
-    const asAnchoredHere: HeldAsAnchored = (v) => {
-      const d = dirAt.get(v) ?? (inHeader.has(v) ? { held: header.held, batch: header.seq } : undefined);
-      if (d !== undefined) return accountHeldOf(d);
-      /* A version the anchor passed over was never entered: its change is not applied. */
-      return v <= dirVersion ? null : undefined;
-    };
-    const then = here.at(dirVersion, asAnchoredHere);
-    if (then === null) {
-      /* The first version not served: the directory served is replayed to one version per filing, so it is the one after its own. */
-      servedShort ??= { version: here.dir.version + 1, without: true };
-      return undefined;
-    }
-    const other = [...digests].find(([v, d]) => then.digests[v - 1] !== d);
-    if (other !== undefined) {
-      servedShort ??= { version: other[0], without: false };
-      return undefined;
-    }
-    return seatAsAnchoredHere(here, { version: dirVersion, digests }, publicKey, entry, asAnchoredHere);
-  };
-  let first: TreeHeader | undefined;
-  let fromZero = kept === null;
-  /* What the pages gave beside their headers: what the last header checked is kept with. */
-  const givenEntries = new Map<Hex, ManifestEntry>();
-  const givenLeaves = new Map<Hex, TreeLeaf>();
-  let lastChecked: TreeHeader | undefined;
-  /*
-   * Which seat each tag is, read only when the chain holds a head to map: a
-   * seat whose entry this device did not believe leaves its tag unmapped, and
-   * the check goes on without it.
-   */
-  const tagged = doors.tagSeats === undefined || landed.length === 0 ? undefined : await doors.tagSeats(here).catch(() => undefined);
-  /* A head this device checked before the one it checks from, whole: what a recovery the quorum approved may resume from. */
-  const earlier = (h: Hex): CheckedHead | undefined => kept?.recent?.find((r) => r.head === h.toLowerCase());
-  const forwardFrom = (start: CheckedHead) => checkForward({
-    company, from: start, landed: new Set(landed.map((l) => l.head.toLowerCase() as Hex)), chainHead: head,
-    ...(kept?.recent === undefined || kept.recent.length === 0 ? {} : { earlier, earliestSeq: kept.recent[0]!.seq }),
-    ...(tagged === undefined ? {} : { tagSeat: (t: Hex) => tagged.get(t.toLowerCase()) }),
-    headersAfter: async (seq, limit) => {
-      const page = await doors.tree.headersAfter(company, seq, limit);
-      for (const e of page.entries ?? []) if (manifestEntryRefusal(company, e) === null) givenEntries.set(entryIdOf(e as ManifestEntry), e as ManifestEntry);
-      for (const l of page.leaves ?? []) if (treeLeafRefusal(l) === null) givenLeaves.set(leafHashOf(l as TreeLeaf), l as TreeLeaf);
-      return page;
-    },
-    headsOf: async (steps) => {
-      const a = await doors.builder.anchorHeads({ after: steps });
-      if (!Array.isArray(a?.after) || a.after.length !== steps.length) {
-        throw new AnchorNotMade('this device could not read the anchor\'s heads. Reload the page');
-      }
-      if (a.after.some((h) => typeof h !== 'string')) throw new AnchorNotMade('the anchor\'s heads were not read for every batch. Reload the page');
-      return a.after as Hex[];
-    },
-    seatOf,
-    confirmed: async (path) => {
-      for (const s of path) headsBySeq.set(s.header.seq, s.head);
-      await readSeats(path.map((s) => s.header.held));
-    },
-    keep: async (c, header) => {
-      for (const ch of header.changes) {
-        if (ch.leaf.store === 'directory') dirAt.set(ch.leaf.version, { digest: ch.leaf.digest, batch: header.seq, held: header.held });
-      }
-      if (header.seq === 0) first = header;
-      for (const ch of header.changes) if (ch.prior !== null) givenLeaves.set(leafHashOf(ch.prior), ch.prior);
-      lastChecked = header;
-      kept = keptAfter(kept, c, fromZero);
-      /* From a start this device chose, nothing is kept until the read holds what it must (below). */
-      if (chosen === null) await doors.checked?.write(company, kept);
-    },
-  });
-  let forward = await forwardFrom(from);
-  /*
-   * **A HEADER THE SERVICE DID NOT GIVE, FILED AGAIN FROM THIS DEVICE**: where the
-   * check stops `not-given` at a batch this device kept a header of - one it
-   * signed, or the last it checked - it files that header again with its entries
-   * in one request, the header judged by its own signature and each entry by the
-   * header naming it - so an entry whose record's bytes the service lost is kept
-   * again and that record read as withheld, never a header every device stops
-   * at - and checks on from where it stopped. Whether it is the one the chain
-   * holds is the check's, as for any header.
-   */
-  if (forward.stop?.stop === 'not-given' && doors.headers !== undefined) {
-    const keptAt = await doors.headers.at(company, forward.stop.seq);
-    for (const k of keptAt) {
-      try { await doors.tree.fileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE)); } catch { /* the service would not keep it: the check says */ }
-    }
-    if (keptAt.length > 0) forward = await forwardFrom(forward.reached);
-  }
-  fromZero = false;
-  const { reached } = forward;
-  /*
-   * A head no header was given for is said as the quorum's recovery where one moved the anchor on after the head reached
-   * - the batches this device cannot follow were given up, not withheld - and otherwise with the seat that moved the
-   * anchor past it, where its tag maps to one: the block's last anchoring seat, said so where the block held several.
-   */
-  const stop = forward.stop?.stop !== 'not-given' ? forward.stop : (() => {
-    const after = landed.slice(landed.findIndex((l) => l.head.toLowerCase() === reached.head) + 1);
-    if (after.some((l) => l.recovered === true)) return { ...forward.stop, recovery: true as const };
-    const next = after[0];
-    const by = next?.tag === undefined ? undefined : tagged?.get(next.tag.toLowerCase());
-    if (by === undefined) return forward.stop;
-    return { ...forward.stop, movedBy: by, ...((next!.anchorsInBlock ?? 1) > 1 ? { anchorsInBlock: next!.anchorsInBlock } : {}) };
-  })();
-  /* The last header this device checked, kept with what checking it needs, so this device can file it again. */
-  if (lastChecked !== undefined) {
-    await doors.headers?.checked(company, keptWith(lastChecked, (id) => givenEntries.get(id), (h) => givenLeaves.get(h)));
-  }
-
-  /* The entries not yet anchored at the root reached, then every leaf this read needs, proven against that root. */
-  const pendingGiven = await doors.tree.pending(company, reached.root);
-  if (pendingGiven === null) throw new AnchorNotMade(ROOT_NOT_KEPT);
-  const pending = pendingGiven.filter((e) => manifestEntryRefusal(company, e) === null) as ManifestEntry[];
-  const names = recordsProvenFor(asked);
-  /* From a vouched head: the proposal its run's approvers approved, which must prove into the root reached. */
-  if (chosen?.holds !== undefined && !names.some((n) => recordKeyOf(n) === recordKeyOf(chosen.holds!.name))) names.push(chosen.holds.name);
-  const wanted = new Set(names.map(recordKeyOf));
-  const kinds = asked.kinds ?? [];
-  const kindKeys = new Set(kinds.map(kindKeyOf));
-  const ofAsked = (e: ManifestEntryBody) => asked.everyPending === true || wanted.has(recordKeyOf(e)) || kindKeys.has(kindKeyOf(e));
-  for (const e of pending) {
-    if (asked.everyPending === true && !wanted.has(recordKeyOf(e))) { wanted.add(recordKeyOf(e)); names.push({ store: e.store, kind: e.kind, id: e.id }); }
-  }
-  /*
-   * One request for what the read asked; an anchoring read asking every
-   * pending entry's record asks in parts of what one request may hold, each
-   * part proven against the same root.
-   */
-  const leaves: { readonly name: RecordName; readonly leaf: TreeLeaf | null }[] = [];
-  let kindLeaves: { readonly kind: KindAsked; readonly leaves: TreeLeaf[] }[] = [];
-  const olderGiven: unknown[] = [];
-  for (let i = 0; i === 0 || i < names.length; i += PROVEN_AT_ONCE) {
-    const part = names.slice(i, i + PROVEN_AT_ONCE);
-    const partKinds = i === 0 ? kinds : [];
-    const given = await doors.tree.proofs(company, { root: reached.root, records: part, kinds: partKinds });
-    if (given === null) throw new AnchorNotMade(ROOT_NOT_KEPT);
-    const partLeaves = part.map((name, k) => ({ name, leaf: given.records[k] ?? null }));
-    const partKindLeaves = partKinds.map((kind, k) => ({ kind, leaves: [...(given.kinds[k] ?? [])] }));
-    if (provenRefusal(reached.root, { records: partLeaves, kinds: partKindLeaves }, given.proof) !== null) throw new AnchorNotMade(NOT_PROVEN);
-    leaves.push(...partLeaves);
-    if (i === 0) kindLeaves = partKindLeaves;
-    olderGiven.push(...given.older);
-  }
-  const older = olderOf(olderGiven);
-  const history = new Map<string, readonly HeldVersion[]>();
-  for (const l of [...leaves.map((x) => x.leaf), ...kindLeaves.flatMap((k) => k.leaves)]) {
-    if (l === null) continue;
-    const versions = versionsOf(l, older);
-    if (versions === null) throw new AnchorNotMade(NOT_PROVEN);
-    history.set(recordKeyOf(l), versions);
-  }
-  if (chosen?.holds !== undefined && !(history.get(recordKeyOf(chosen.holds.name)) ?? []).some((v) => v.digest === chosen.holds!.digest)) {
-    throw new PassedOver();
-  }
-  const dirLeaf = leaves.find((x) => recordKeyOf(x.name) === recordKeyOf(DIRECTORY))!.leaf;
-  const directory = dirLeaf === null ? new Map<number, DirectoryVersionHeld>() : directoryVersionsOf(dirLeaf, older);
-  if (directory === null) throw new AnchorNotMade(NOT_PROVEN);
-  for (const [v, d] of directory) dirAt.set(v, d);
-  await readSeats([...directory.values()].map((d) => d.held));
-  await headsBefore([...directory.values()].map((d) => d.batch));
-  const maxAnchored = Math.max(0, ...directory.keys());
-  const held: HeldAsAnchored = (version) => {
-    const d = directory.get(version);
-    if (d !== undefined) return accountHeldOf(d);
-    /* A version below the newest anchored that no leaf holds was passed over, never entered: its change is never applied. */
-    if (version < maxAnchored) return null;
-    /* Past a header this device could not check, a version may be anchored by a batch whose holders are not known. */
-    return stop !== null && version > maxAnchored ? null : undefined;
-  };
-
-  const leaving = await doors.leaving?.();
-  const notYetAnchored = waitingAmong(pending, history, ofAsked, seatOfHere(here, held), leaving);
-
-  /* Who founded the company: the first header, checked against the empty tree and folded to the first head this device checked. */
-  let founding: { first?: TreeHeader | null; firstSeats?: readonly string[] | null } = {};
-  if (asked.founding === true) {
-    if (reached.seq < 0) {
-      founding = { first: null };
-    } else {
-      const h0 = first ?? await firstHeaderHere(doors, seatOf, headsBySeq.get(0) ?? (landed[0]?.head.toLowerCase() as Hex | undefined));
-      await readSeats([h0.held]);
-      founding = { first: h0, firstSeats: seatsByHeld.get(heldKey(h0.held)) ?? null };
-    }
-  }
-  /* A start this device chose is kept only now, the read from it holding what it must. */
-  if (chosen !== null && kept !== null) await doors.checked?.write(company, kept);
-  const records: RecordsHeldHere = {
-    ...(kept?.from === undefined ? {} : { checkedFrom: kept.from }),
-    ...(forward.recovered === undefined ? {} : { recovered: forward.recovered }),
-    head, reached, stopped: stop,
-    asked: { records: wanted, kinds: kindKeys },
-    history, notYetAnchored, directory, held, deployed: now.deployed ?? null, ...founding,
-    ...(leaving === undefined ? {} : { leaving }),
-    seqOfHead: (h: string) => {
-      const asked = h.toLowerCase();
-      if (asked === EMPTY_HEAD) return -1;
-      for (const [seq, checked] of headsBySeq) if (checked === asked) return seq;
-      return null;
-    },
-    newestLandedBy: (cutoff: number) => {
-      let at = -1;
-      for (let i = landed.length - 1; i >= 0 && at < 0; i -= 1) {
-        const t = landed[i]!.at;
-        if (Number.isSafeInteger(t) && t > 0 && t <= cutoff) at = i;
-      }
-      if (at < 0) return 'none';
-      const wanted = landed[at]!.head.toLowerCase();
-      for (const [seq, checked] of headsBySeq) if (checked === wanted) return { seq };
-      /*
-       * Not checked here. This device checked every head from where it started (`base`) to the one it reached, so a head
-       * that landed before the start is older than any head a raise it can judge names; any other is past its check.
-       */
-      const started = landedFrom(base);
-      return started !== null && at < landed.indexOf(started) ? 'none' : 'unread';
-    },
-    ...(stop !== null && servedShort !== undefined ? { directoryServed: servedShort } : {}),
-  };
-  return { landed, now, here, records, pending: new Set(pending.map(entryIdOf)) };
-}
-
-/**
- * **WHAT IS NOT YET ANCHORED**, of the entries a service lists as waiting: each
- * of a record the read asked, newer than its leaf (`history`), entered by a seat
- * `seatNow` says may file it now, naming no older version's bytes - the first
- * at each version. An entry a seat under an approved removal filed past the
- * boundary the raise names (`leaving`) is never one: no device anchors it. A
- * directory version is judged by its own replay, never by a boundary.
- */
-const waitingAmong = (
-  pending: readonly ManifestEntry[], history: ReadonlyMap<string, readonly HeldVersion[]>,
-  ofAsked: (e: ManifestEntryBody) => boolean, seatNow: (publicKey: Hex, entry: ManifestEntryBody) => string | null,
-  leaving?: LeavingBoundaries,
-): ManifestEntry[] => {
-  const out: ManifestEntry[] = [];
-  const named = new Set<string>();
-  const seen = new Map<string, Hex[]>([...history].map(([k, v]) => [k, v.map((x) => x.digest)]));
-  for (const e of pending) {
-    const key = recordKeyOf(e);
-    const at = history.get(key);
-    const anchored = at === undefined || at.length === 0 ? 0 : at[at.length - 1]!.version;
-    if (!ofAsked(e) || anchored >= e.version || named.has(`${key}@${e.version}`)) continue;
-    if (seatNow(e.filedBy.publicKey, e) === null || (seen.get(key) ?? []).includes(e.digest)) continue;
-    if (e.store !== 'directory' && pastTheRaisedBoundary(leaving, e.filedBy.publicKey, boundaryKeyOfEntry(e), e.version)) continue;
-    named.add(`${key}@${e.version}`);
-    seen.set(key, [...(seen.get(key) ?? []), e.digest]);
-    out.push(e);
-  }
-  return out;
-};
-
-const INDEXER_BEHIND = 'the account\'s history at your wallet\'s indexer is behind what this device has already checked, so nothing is '
-  + 'read from it now. Wait a minute and reload the page; if it stays behind, your wallet\'s indexer is serving an older chain';
-const ROOT_NOT_KEPT = 'the service keeps no header that makes the root this device checked, so nothing can be read against it. Reload '
-  + 'the page; if it happens again, the service is withholding the company\'s records';
-const NOT_PROVEN = 'the leaves the service gave do not prove into the root the anchor on chain holds, or an older version of one was '
-  + 'not given. Reload the page; if it happens again, the service is changing the company\'s records';
-
-/** The older leaves a service gave, by their hash. */
-const olderOf = (given: readonly unknown[]): ((hash: Hex) => TreeLeaf | undefined) => {
-  const by = new Map<Hex, TreeLeaf>();
-  for (const l of given) if (treeLeafRefusal(l) === null) by.set(leafHashOf(l as TreeLeaf), l as TreeLeaf);
-  return (hash) => by.get(hash);
-};
-
-/**
- * **THE COMPANY'S FIRST HEADER**, asked of the service and believed only once it
- * is an honest first step from the empty tree and the head after it is the
- * first head this device checked.
- */
-async function firstHeaderHere(doors: HeldDoors, seatOf: TransitionInput['seatOf'], firstHead: Hex | undefined): Promise<TreeHeader> {
-  const company = doors.accountId;
-  const page = await doors.tree.headersAfter(company, -1, 1);
-  /* Every first header the service keeps - one filed before a call the chain refused among them - and the one whose head the chain took. */
-  const candidates = (page.headers ?? []).filter((h) => treeHeaderReadable(h) && h.seq === 0 && h.previous === EMPTY_HEAD) as TreeHeader[];
-  const heads = candidates.length === 0 || firstHead === undefined ? []
-    : (await doors.builder.anchorHeads({ after: candidates.map(headStepOf) })).after;
-  const h0 = candidates.find((_, i) => String(heads[i] ?? '').toLowerCase() === firstHead);
-  const entries = new Map((page.entries ?? []).filter((e) => manifestEntryRefusal(company, e) === null).map((e) => [entryIdOf(e as ManifestEntry), e]));
-  const refused = h0 === undefined ? null
-    : transitionRefusal({ company, before: GENESIS, header: h0, entry: (id) => entries.get(id), priorChain: () => undefined, seatOf });
-  if (h0 === undefined || refused !== null) {
-    throw new AnchorNotMade('the service did not give the company\'s first header as the chain holds it, so who founded the company '
-      + 'cannot be said. Reload the page; if it happens again, the service is withholding it');
-  }
-  return h0;
-}
-
-/**
- * **THE ONE WAY A DEVICE'S READS BELIEVE THE COMPANY'S RECORDS**: for a
- * directory just believed and what a read asked, the records as the head on
- * chain holds them, read now. What every reader is handed with the directory
- * (`DirectoryHereDeps.anchored`).
- */
-export const heldFor = (
-  doors: Omit<HeldDoors, 'directory'>,
-) => async (directory: DirectoryBelieved, asked: RecordsAsked): Promise<RecordsHeldHere> =>
-  (await recordsHeldHere({ ...doors, directory: async () => directory }, asked)).records;
 
 /** Every directory version the manifest does not name yet, entered by this seat as their witness. */
 async function directoryWitnessed(doors: AnchorDoors): Promise<void> {
@@ -968,7 +334,8 @@ const eachRecordInVersionOrder = (entries: readonly ManifestEntry[]): ManifestEn
  * ENTERED AGAIN.** One behind a newer version of the same record was
  * superseded: it is let go of and said, never entered again. Whether the
  * service then gives the rest is asked of the very read the header is made
- * from (`ownFilingsLeftOut`), never of another. The superseded, said.
+ * from (`ownFilingsLeftOut`), never of another. The newest versions are asked
+ * in parts of `READ_AT_ONCE` records, one request for each. The superseded, said.
  */
 async function ownFilingsEntered(doors: AnchorDoors): Promise<string[]> {
   const company = doors.accountId;
@@ -976,7 +343,7 @@ async function ownFilingsEntered(doors: AnchorDoors): Promise<string[]> {
   const own = enteredOnThisPage(company).filter((e) => e.filedBy.publicKey.toLowerCase() === mine);
   if (own.length === 0) return [];
   const names = [...new Map(own.map((e) => [recordKeyOf(e), { store: e.store, kind: e.kind, id: e.id }])).values()];
-  const versions = await doors.manifest.newest(company, names);
+  const versions = await inParts(names, (part) => doors.manifest.newest(company, part));
   const newest = new Map(names.map((r, i) => [recordKeyOf(r), versions[i] ?? 0] as const));
   const superseded = own.filter((e) => (newest.get(recordKeyOf(e)) ?? 0) > e.version)
     .map((e) => supersededSaid(e, newest.get(recordKeyOf(e))!));
@@ -1008,6 +375,9 @@ const ownFilingsLeftOut = (doors: AnchorDoors, read: ReadHere): string | null =>
     + 'sent. Reload the page; if it happens again, the service is withholding it';
 };
 
+/** What one attempt came to: what it anchored, nothing to anchor, or raced - another device anchored first or the holders moved. */
+type Attempted = Anchored | 'raced';
+
 /**
  * **EVERY FILING NOT YET ANCHORED, ANCHORED FROM THIS DEVICE**, at most a
  * header's worth at a time. Nothing to anchor is an answer, not a refusal.
@@ -1015,262 +385,109 @@ const ownFilingsLeftOut = (doors: AnchorDoors, read: ReadHere): string | null =>
  * head the chain holds, and when other devices kept moving the head on first.
  */
 export async function anchorTheRecordsHere(doors: AnchorDoors): Promise<Anchored> {
+  for (let attempt = 0; attempt < ANCHOR_ATTEMPTS; attempt += 1) {
+    const done = await anchorAttempt(throughTheView(doors), attempt + 1 < ANCHOR_ATTEMPTS);
+    if (done !== 'raced') return done;
+  }
+  throw new AnchorNotMade(`other devices anchored the company's records first, or who holds the company's account changed, ${ANCHOR_ATTEMPTS} times running. `
+    + 'What was anchored is believed; reload the page to anchor what is left');
+}
+
+/** One attempt: what this device owes entered, the records read, and the batch made, kept, filed and sent. `mayRetry` while attempts are left. */
+async function anchorAttempt(doors: AnchorDoors, mayRetry: boolean): Promise<Attempted> {
+  const company = doors.accountId;
+  await directoryWitnessed(doors);
+  if ((await doors.onChain()).landed.length === 0) await foundingRecordsEntered(doors);
+  await ownProposalsEntered(doors);
+  const superseded = await ownFilingsEntered(doors);
+  const told = superseded.length === 0 ? {} : { superseded };
+  const own = enteredOnThisPage(company).map((e) => ({ store: e.store, kind: e.kind, id: e.id }));
+  const read = await heldHere(doors, { everyPending: true, records: own });
+  const { records } = read;
+  /* What this page entered is let go of once the anchor holds it, and not before. */
+  letGoOfEntered(company, (e) => newestAnchored(records, e) >= e.version);
+  if (records.stopped !== null) throw new AnchorNotMade(transitionStopSaid(records.stopped));
+  const leftOut = ownFilingsLeftOut(doors, read);
+  if (leftOut !== null) throw new AnchorNotMade(leftOut);
+  if (records.notYetAnchored.length === 0) return { anchored: 0, head: records.head, ...told };
+  const first = firstAnchorRefusal(doors, records.head, records.notYetAnchored.map((e) => ({ ...e, filer: e.filedBy.publicKey })));
+  if (first !== null) throw new AnchorNotMade(first);
+  /* Who holds the account as this device judges the batch: what the history shows now, which must be what the wallet read. */
+  const judged = read.now.now;
+  const wallet = new Set(read.here.holders.seats.map((x) => x.toLowerCase()));
+  if (judged.approvals !== read.here.holders.approvals || read.now.seatsNow.length !== wallet.size
+    || read.now.seatsNow.some((x) => !wallet.has(x.toLowerCase()))) {
+    if (mayRetry) { freshViewAfter(doors, 'who holds the company was read otherwise by the wallet and the account\'s history'); return 'raced'; }
+    throw new AnchorNotMade('who holds the company\'s account, as your wallet read it, is not what the account\'s history at its '
+      + 'indexer shows yet. Nothing was sent. Wait for your wallet to catch up, then reload the page and anchor again');
+  }
+  const made = await batchMadeHere(doors, read, judged);
+  if (made === null) return { anchored: 0, head: records.head, ...told };
+  return anchorSent(doors, records.head, made.header, made.batch, judged, told);
+}
+
+/** **THE BATCH THIS ATTEMPT ANCHORS**: its header made from the read, kept on this device and filed before anything is sent. */
+async function batchMadeHere(
+  doors: AnchorDoors, read: ReadHere, judged: BatchHolders,
+): Promise<{ readonly header: TreeHeader; readonly batch: ReturnType<typeof treeBatchOf> } | null> {
   const company = doors.accountId;
   const secret = doors.material.signingSecret as Hex;
-  let raced = false;
-  for (let attempt = 0; attempt < ANCHOR_ATTEMPTS; attempt += 1) {
-    await directoryWitnessed(doors);
-    if ((await doors.onChain()).landed.length === 0) await foundingRecordsEntered(doors);
-    await ownProposalsEntered(doors);
-    const superseded = await ownFilingsEntered(doors);
-    const told = superseded.length === 0 ? {} : { superseded };
-    const own = enteredOnThisPage(company).map((e) => ({ store: e.store, kind: e.kind, id: e.id }));
-    const read = await recordsHeldHere(doors, { everyPending: true, records: own });
-    const { records } = read;
-    /* What this page entered is let go of once the anchor holds it, and not before. */
-    letGoOfEntered(company, (e) => newestAnchored(records, e) >= e.version);
-    if (records.stopped !== null) throw new AnchorNotMade(transitionStopSaid(records.stopped));
-    const leftOut = ownFilingsLeftOut(doors, read);
-    if (leftOut !== null) throw new AnchorNotMade(leftOut);
-    if (records.notYetAnchored.length === 0) return { anchored: 0, head: records.head, ...told };
-    const first = firstAnchorRefusal(doors, records.head, records.notYetAnchored.map((e) => ({ ...e, filer: e.filedBy.publicKey })));
-    if (first !== null) throw new AnchorNotMade(first);
-    /* Who holds the account as this device judges the batch: what the history shows now, which must be what the wallet read. */
-    const judged = read.now.now;
-    const wallet = new Set(read.here.holders.seats.map((x) => x.toLowerCase()));
-    if (judged.approvals !== read.here.holders.approvals || read.now.seatsNow.length !== wallet.size
-      || read.now.seatsNow.some((x) => !wallet.has(x.toLowerCase()))) {
-      if (attempt + 1 < ANCHOR_ATTEMPTS) { raced = true; continue; }
-      throw new AnchorNotMade('who holds the company\'s account, as your wallet read it, is not what the account\'s history at its '
-        + 'indexer shows yet. Nothing was sent. Wait for your wallet to catch up, then reload the page and anchor again');
-    }
-    /* The tag this seat anchors under, as the account's call will work it out: the header names it, and the head binds it. */
-    const tag = await doors.builder.anchorTag({ account: String(read.here.holders.account), material: doors.material }) as Hex;
-    const made = await treeHeaderHere({
-      accountId: company, tree: doors.tree, signingSecret: secret, held: judged, tag, at: (doors.now ?? (() => new Date()))(),
-    }, records.reached, foundingFirstWhileNothingIsAnchored(doors, records.head, eachRecordInVersionOrder(records.notYetAnchored)).slice(0, ENTRIES_AT_ONCE));
-    if (made === null) return { anchored: 0, head: records.head, ...told };
-    const { header } = made;
-    const firstBatch = firstAnchorRefusal(doors, records.head, header.changes.map((c) => ({ ...c.leaf, filer: c.leaf.filedBy })));
-    if (firstBatch !== null) throw new AnchorNotMade(firstBatch);
-    const batch = treeBatchOf(header);
-    /* Kept on this device first, with what checking it needs, so a header the service loses is filed again from here. */
-    const olderGiven = new Map(made.older.map((l) => [leafHashOf(l), l] as const));
-    await doors.headers?.signed(company, keptWith(header, (id) => records.notYetAnchored.find((e) => entryIdOf(e) === id), (h) => olderGiven.get(h)));
-    /* Kept before the call is sent, so a header the chain takes is never one no device was given. */
-    await doors.tree.fileHeader(company, header);
-    const held = { approvals: header.held.approvals, signerRoot: header.held.signerRoot };
-    try {
-      const chain = await doors.service.callState(company);
-      const { tx } = await doors.builder.anchor({ account: chain.account, material: doors.material, chain, previous: records.head, batch, held });
-      const after = await doors.builder.anchorHeads({ after: [headStepOf(header)] });
-      const ours = after.after[0]! as Hex;
-      /* The send's answer, or where the head went while it gave none: a call the head moved past is not waited on. */
-      const settled = { done: false };
-      const went = await Promise.race([
-        handedOver(doors.handOver, {
-          tx, call: { kind: 'account-call', contract: chain.account, circuit: 'anchor' },
-          viaService: () => doors.service.sendProven(company, tx),
-          after: async () => undefined,
-        }).then(() => 'answered' as const),
-        whereTheSendWent(doors, records.head, ours, settled),
-      ]).finally(() => { settled.done = true; });
-      if (went === 'superseded') throw new Error('the head moved on while this anchor was being sent: another anchor of its head landed, or this one did and another after it');
-      const sent = new Set(header.changes.map((c) => c.leaf.entryId));
-      letGoOfEntered(company, (e) => sent.has(entryIdOf(e)));
-      return { anchored: header.changes.length, head: ours, ...told };
-    } catch (e) {
-      /*
-       * Read again: the head moved on by another device, or the account's approvals or signers changed since this
-       * device judged the batch - either way the account refused the call with no change, and this device reads again
-       * and anchors again. Neither moved: the refusal is something else, and it is said.
-       */
-      const again = await doors.onChain();
-      const moved = headOn(again.landed) !== records.head || again.now.approvals !== judged.approvals
-        || again.now.signerRoot !== judged.signerRoot;
-      if (!moved) throw new AnchorNotMade(`the anchor was not sent (${(e as Error)?.message ?? String(e)}). Reload the page and anchor again`, { cause: e });
-      raced = true;
-    }
-  }
-  throw new AnchorNotMade(raced
-    ? `other devices anchored the company's records first, or who holds the company's account changed, ${ANCHOR_ATTEMPTS} times running. `
-      + 'What was anchored is believed; reload the page to anchor what is left'
-    : 'nothing was anchored. Reload the page and anchor again');
+  const { records } = read;
+  /* The tag this seat anchors under, as the account's call will work it out: the header names it, and the head binds it. */
+  const tag = await doors.builder.anchorTag({ account: String(read.here.holders.account), material: doors.material }) as Hex;
+  const made = await treeHeaderHere({
+    accountId: company, tree: doors.tree, signingSecret: secret, held: judged, tag, at: (doors.now ?? (() => new Date()))(),
+  }, records.reached, foundingFirstWhileNothingIsAnchored(doors, records.head, eachRecordInVersionOrder(records.notYetAnchored)).slice(0, ENTRIES_AT_ONCE));
+  if (made === null) return null;
+  const { header } = made;
+  const firstBatch = firstAnchorRefusal(doors, records.head, header.changes.map((c) => ({ ...c.leaf, filer: c.leaf.filedBy })));
+  if (firstBatch !== null) throw new AnchorNotMade(firstBatch);
+  const batch = treeBatchOf(header);
+  /* Kept on this device first, with what checking it needs, so a header the service loses is filed again from here. */
+  const olderGiven = new Map(made.older.map((l) => [leafHashOf(l), l] as const));
+  await doors.headers?.signed(company, keptWith(header, (id) => records.notYetAnchored.find((e) => entryIdOf(e) === id), (h) => olderGiven.get(h)));
+  /* Kept before the call is sent, so a header the chain takes is never one no device was given. */
+  await doors.tree.fileHeader(company, header);
+  return { header, batch };
 }
 
-/** How long a company's records may wait, with nothing of the directory waiting, before the anchor at a seat action's end anchors them unasked. */
-export const ANCHORED_AT_LEAST_EVERY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * What the anchor at a seat action's end did: anchored now (none when nothing
- * was waiting), left for later and why, or not anchored and why - in words
- * that say what resolves it. Never thrown: the action it ends is never undone
- * by it, and a filing left waiting is anchored by the next.
- */
-type OnTheWayIn =
-  | (Anchored & FiledAgainOnTheWayIn)
-  | { readonly waits: 'anchored-within-a-day' | 'this-seat-does-not-anchor' }
-  | ({ readonly notAnchored: string } & FiledAgainOnTheWayIn);
-
-/** What the anchor filed again before it anchored at once: this seat's own entry, or signed changes passed over. */
-interface FiledAgainOnTheWayIn { readonly filedAgain?: 'own-entry' | 'directory-changes' }
-
-/**
- * **THIS SEAT'S OWN DIRECTORY ENTRY, PASSED OVER BY THE COMPANY'S RECORDS, FILED
- * AGAIN AS A NEW VERSION**: its entry was filed and never entered while a later
- * version was anchored, so no device applies it and this seat is not believed.
- * Its wallet's statement does not name a version, so the same entry is filed as
- * the directory's next version and is anchored like any other. Only an entry
- * whose statement names this seat's own signing key, and only while the
- * directory this device believes holds no seat for that key. True when filed.
- */
-async function ownEntryFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): Promise<boolean> {
-  const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
-  if (doors.fileDirectory === undefined || here.dir.seats.some((x) => x.signingKey === mine)) return false;
-  const own = (here.passedOver ?? []).filter((f) => f.change.kind === 'claim' && f.change.entry.statement.signingKey.toLowerCase() === mine);
-  if (own.length === 0) return false;
-  const filings = await doors.directoryFilings();
-  await doors.fileDirectory({ company: doors.accountId, version: filings.length + 1, change: own[own.length - 1]!.change });
-  return true;
-}
-
-/**
- * **A SIGNED CHANGE TO THE COMPANY'S DIRECTORY, FILED FROM THIS DEVICE AND
- * ANCHORED AT ONCE** - a quorum's retirement, or one seat's change of
- * the company's key - carrying its signatures over `signedFor`, the version it
- * was signed for. A quorum's change is kept in this device's database before it is
- * filed, and let go of only once a version carrying it is anchored, so a
- * change the service drops, passes over or stops serving is filed again from
- * here by a later anchor (`quorumChangesFiledAgain`) without being signed
- * again. A change of key is never kept: one lost or passed over is made again
- * on the key the directory holds. Refused, with nothing filed or kept, when the directory already holds
- * that version: the signatures bind it, so the change is signed again as the
- * directory stands. The anchor is said, not thrown: a change filed and not yet
- * anchored is anchored by the next anchor, and a quorum's is kept until it is.
- */
-export async function directoryChangeFiledHere(
-  doors: AnchorDoors, change: SignedChange, signedFor: number,
-): Promise<{ readonly version: number; readonly anchor: Anchored | { readonly notAnchored: string } }> {
-  if (doors.fileDirectory === undefined) {
-    throw new AnchorNotMade('this page cannot file a change to the company\'s directory. Nothing was filed. Reload the page to get the '
-      + 'current version');
-  }
-  const filings = await doors.directoryFilings();
-  if (filings.length + 1 !== signedFor) {
-    throw new AnchorNotMade(`the change was signed for version ${signedFor} of the company's directory, and the directory holds `
-      + `${filings.length} version${filings.length === 1 ? '' : 's'} now, so its signatures do not fit the next one. Nothing was filed. `
-      + 'Have it signed again as the directory stands now');
-  }
-  /* A quorum's change is kept before it is filed, so a filing that fails, or that the service later drops, is filed again from here. */
-  if (change.kind !== 'rotate') await doors.changes?.keep(doors.accountId, { signedAt: signedFor, change });
-  await doors.fileDirectory({ company: doors.accountId, version: signedFor, change });
+/** **THE ANCHOR CALL PROVEN AND SENT** from the head read, and where the head went: anchored, or raced when the head or the holders moved. */
+async function anchorSent(
+  doors: AnchorDoors, head: Hex, header: TreeHeader, batch: ReturnType<typeof treeBatchOf>, judged: BatchHolders, told: Pick<Anchored, 'superseded'>,
+): Promise<Attempted> {
+  const company = doors.accountId;
+  const held = { approvals: header.held.approvals, signerRoot: header.held.signerRoot };
   try {
-    return { version: signedFor, anchor: await anchorTheRecordsHere(doors) };
+    const chain = await doors.service.callState(company);
+    const { tx } = await doors.builder.anchor({ account: chain.account, material: doors.material, chain, previous: head, batch, held });
+    const after = await doors.builder.anchorHeads({ after: [headStepOf(header)] });
+    const ours = after.after[0]! as Hex;
+    /* The send's answer, or where the head went while it gave none: a call the head moved past is not waited on. */
+    const settled = { done: false };
+    const went = await Promise.race([
+      handedOver(doors.handOver, {
+        tx, call: { kind: 'account-call', contract: chain.account, circuit: 'anchor' },
+        viaService: () => doors.service.sendProven(company, tx),
+        after: async () => undefined,
+      }).then(() => 'answered' as const),
+      whereTheSendWent({ ...doors, onChain: chainNowOf(doors) }, head, ours, settled),
+    ]).finally(() => { settled.done = true; });
+    if (went === 'superseded') throw new Error('the head moved on while this anchor was being sent: another anchor of its head landed, or this one did and another after it');
+    const sent = new Set(header.changes.map((c) => c.leaf.entryId));
+    letGoOfEntered(company, (e) => sent.has(entryIdOf(e)));
+    return { anchored: header.changes.length, head: ours, ...told };
   } catch (e) {
-    if (!(e instanceof AnchorNotMade)) throw e;
-    return { version: signedFor, anchor: { notAnchored: e.message } };
+    /*
+     * Read again: the head moved on by another device, or the account's approvals or signers changed since this
+     * device judged the batch - either way the account refused the call with no change, and this device reads again
+     * and anchors again. Neither moved: the refusal is something else, and it is said.
+     */
+    const again = await chainAfterARace(doors, 'the anchor was not sent as it was made, so it is judged again from a fresh read');
+    const moved = headOn(again.landed) !== head || again.now.approvals !== judged.approvals
+      || again.now.signerRoot !== judged.signerRoot;
+    if (!moved) throw new AnchorNotMade(`the anchor was not sent (${(e as Error)?.message ?? String(e)}). Reload the page and anchor again`, { cause: e });
+    return 'raced';
   }
-}
-
-/**
- * **EVERY QUORUM'S CHANGE TO THE DIRECTORY NOT APPLIED, FILED AGAIN UNDER
- * ITS OWN SIGNATURES**, by a device whose seat may anchor: each change the company's
- * records passed over - or that rests on a seat one passed over - and each this
- * device kept from filing it again before, oldest version signed for first, as
- * the directory's next versions, each only when the replay would believe it
- * there (`refiledRefusalOf`). Each is kept in this device's database before it
- * is filed, and let go of once a version carrying it is anchored, so a change
- * the service passes over again or stops serving is filed again by a later
- * anchor. What the replay refuses is said by `passedOverSaid`. How many it filed.
- */
-async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): Promise<number> {
-  if (doors.fileDirectory === undefined || here.refiled === undefined) return 0;
-  /* Only a quorum's change is filed again: a change of key a store hands back is never a candidate. */
-  const all = (await doors.changes?.all(doors.accountId) ?? [])
-    .filter((k): k is { readonly signedAt: number; readonly change: QuorumChange } => k.change.kind === 'retire');
-  for (const k of all) if (here.anchoredAgain?.has(k.signedAt) === true) await doors.changes!.letGo(doors.accountId, k.signedAt);
-  const kept = all.filter((k) => here.anchoredAgain?.has(k.signedAt) !== true);
-  /* One kept before its first filing reached the service: its version is still the next, so it is filed as that version. */
-  const next = kept.find((k) => k.signedAt === here.dir.version + 1);
-  if (next !== undefined) {
-    try { await doors.fileDirectory({ company: doors.accountId, version: next.signedAt, change: next.change }); } catch { return 0; }
-    return 1;
-  }
-  const waiting = new Map<number, { readonly signedAt: number; readonly change: QuorumChange }>((here.notApplied ?? []).map((n) => [n.signedAt, n]));
-  /* A change this device kept is a candidate too - one the service no longer serves included; the replay refuses one already applied. */
-  for (const k of kept) if (!waiting.has(k.signedAt)) waiting.set(k.signedAt, k);
-  const { filed } = here.refiled([...waiting.values()].sort((a, b) => a.signedAt - b.signedAt));
-  let n = 0;
-  for (const f of filed) {
-    await doors.changes?.keep(doors.accountId, { signedAt: f.signedAt!, change: f.change as KeptDirectoryChange['change'] });
-    /* One the service refuses, or another filing raced, stays kept for a later anchor; this one is not held back by it. */
-    try { await doors.fileDirectory(f); } catch { break; }
-    n += 1;
-  }
-  return n;
-}
-
-/** Anchors what was just filed again, saying what it filed; a refusal is said, never thrown. */
-async function anchoredAtOnce(doors: AnchorDoors, filedAgain: NonNullable<FiledAgainOnTheWayIn['filedAgain']>): Promise<OnTheWayIn> {
-  try {
-    return { ...(await anchorTheRecordsHere(doors)), filedAgain };
-  } catch (e) {
-    return { notAnchored: (e as Error)?.message ?? String(e), filedAgain };
-  }
-}
-
-/* One such anchor at a time per company on this device: a second asked for while one runs waits on it. */
-const onTheWayIn = new Map<string, Promise<OnTheWayIn>>();
-
-/**
- * **THE ANCHOR A SEAT ACTION ASKS FOR, AFTER WHAT IT OWES IS FILED AGAIN.** A
- * seat whose role may anchor files again its own entry or a quorum's change the
- * company's records passed over, then anchors every filing not yet anchored when
- * the account's last anchor call landed a day ago or more - or never - and at
- * once whenever a directory version is applied and not yet anchored, since a rise
- * of the account's threshold waits for it (`directoryNotYetAnchored`). When it
- * landed is the time the author of its block set, as the account's history at
- * the indexer the person's own wallet names holds it, never a time a seat
- * wrote; a time ahead of this device's clock holds nothing off. A directory version
- * no entry names yet is witnessed then, as every anchor witnesses it, so a
- * change of seats waits no longer than a filing. Nothing waiting sends nothing.
- * Within the day it waits: a seat action that must anchor its own filings
- * anchors them itself (`anchorTheRecordsHere`) when this waits.
- */
-export function anchoredOnTheWayIn(doors: AnchorDoors): Promise<OnTheWayIn> {
-  const running = onTheWayIn.get(doors.accountId);
-  if (running !== undefined) return running;
-  const now = doors.now ?? (() => new Date());
-  const attempt = (async (): Promise<OnTheWayIn> => {
-    try {
-      const here = await doors.directory();
-      /* A change filed is anchored at once by the device that filed it, so a later change of who holds the account cannot leave it unanchored under a threshold it was not signed at. */
-      if (await ownEntryFiledAgain(doors, here)) return await anchoredAtOnce(doors, 'own-entry');
-      const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
-      const seat = here.dir.seats.find((x) => x.signingKey === mine);
-      if (seat === undefined || seat.retired !== null || !mayFile(seat).includes(WITNESSED_AS)) {
-        return { waits: 'this-seat-does-not-anchor' };
-      }
-      /*
-       * Filing changes again holds nothing back: this goes on to anchor when one is due, with the directory read
-       * again, so a service that passes a change over again and again cannot put the company's anchor off with it.
-       */
-      if (await quorumChangesFiledAgain(doors, here) > 0) return await anchoredAtOnce(doors, 'directory-changes');
-      const { landed, records } = await recordsHeldHere({ ...doors, directory: async () => here }, {});
-      /* When the account's last anchor call landed: the time its block's author set, as the account's history holds it. */
-      const last = landed.length === 0 ? Number.NaN : landed[landed.length - 1]!.at;
-      const since = now().getTime() - last;
-      if (records.stopped === null && Number.isFinite(since) && since >= 0 && since < ANCHORED_AT_LEAST_EVERY_MS
-        && directoryNotYetAnchored({ dir: here.dir, records, refusedAt: here.refusedAt }).length === 0) {
-        return { waits: 'anchored-within-a-day' };
-      }
-      return await anchorTheRecordsHere(doors);
-    } catch (e) {
-      return { notAnchored: (e as Error)?.message ?? String(e) };
-    }
-  })().finally(() => { onTheWayIn.delete(doors.accountId); });
-  onTheWayIn.set(doors.accountId, attempt);
-  return attempt;
 }
 
 /* ------------------------------------------------------------------ the full check */

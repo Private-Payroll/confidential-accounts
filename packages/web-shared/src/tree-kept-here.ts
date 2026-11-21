@@ -17,6 +17,11 @@
  *
  * Replays of a company's directory are kept too, in this page's memory only and
  * never in the database (`directoryReplaysInMemory`).
+ *
+ * Also kept here: the heads of batches before a start this device found
+ * (`before`, so a later read does not read those headers again), the recovery
+ * window the wallet read, the signed directory changes this device filed, and
+ * the chain notes no record named (`TreeKept`).
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { manifestEntryRefusal, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
@@ -25,11 +30,15 @@ import {
   leafHashOf, treeHeaderReadable, treeLeafRefusal, ZERO, type CheckedHead, type TreeHeader, type TreeLeaf,
 } from '../../../src/midnight/record-tree.js';
 
+/** What a head is written as: 64 lowercase hex digits. */
+const HEAD_HEX = /^[0-9a-f]{64}$/u;
+
 /**
- * **WHAT THIS DEVICE KEEPS OF A COMPANY'S RECORD TREE**: every head it checked,
- * the last one, and the last one checked from the company's first batch. Kept
- * in this device's own storage, never the service's, so the service cannot
- * serve it back older.
+ * **THE HEADS THIS DEVICE CHECKED OF A COMPANY'S RECORD TREE**: every one, the
+ * last, the last checked from the company's first batch, the last few whole
+ * (`recent`), where it started when not from the first batch, and the heads
+ * it found before that start (`before`). Kept in this device's own storage,
+ * never the service's, so the service cannot serve it back older.
  */
 export interface CheckedHeads {
   readonly latest: CheckedHead;
@@ -47,7 +56,28 @@ export interface CheckedHeads {
    * resuming from a head before the latest is followed from.
    */
   readonly recent?: readonly CheckedHead[];
+  /**
+   * The heads of batches before `base` this device found, each run as one walk through the headers tied it to a head:
+   * kept so a later read believes them without reading those headers again, while the head each run is tied to is
+   * still one the account's history shows or the head this device started from (`headsHere`). None for a device that
+   * found none, which reads as every device did before any was kept.
+   */
+  readonly before?: readonly HeadsBeforeStart[];
 }
+
+/**
+ * **HEADS OF BATCHES BEFORE A DEVICE'S START, AS ONE WALK FOUND THEM**: the head each batch from `from` on left, in
+ * order, followed through the headers to `tied`, the first head on the way that the account's history showed or that
+ * this device started from.
+ */
+export interface HeadsBeforeStart {
+  readonly from: number;
+  readonly heads: readonly Hex[];
+  readonly tied: { readonly seq: number; readonly head: Hex };
+}
+
+/** How many runs of heads before its start a device keeps for one company: the newest, past that. */
+export const BEFORE_KEPT = 256;
 
 /** How many of the heads it checked last a device keeps whole, for a recovery resuming from one of them. */
 export const RECENT_KEPT = 64;
@@ -140,6 +170,20 @@ export interface RecoveryWindowsKeptStore {
   write(company: string, kept: KeptRecoveryWindow): Promise<void>;
 }
 
+/**
+ * **THE CHAIN NOTES OF A VAULT THAT NO RECORD THIS DEVICE COULD READ NAMED**, one row for each note (named by its
+ * reader, the vault and the note) holding what it was last looked for in, as its reader writes it (the signer and the
+ * newest versions of the vault's pool, journals and nonce secrets), so the same note is not looked for again in the same
+ * records: a new filing, a newly given secret or another signer differs from what is kept, and it is looked for again,
+ * and the row is overwritten. Kept only to spare work: a note kept here is still named the moment a record names it.
+ * Each call reads or writes every note given in one go.
+ */
+export interface UnnamedNotesKeptStore {
+  /** What each of `notes` was last looked for in, or null for a note not kept. */
+  lookedIn(company: string, notes: readonly string[]): Promise<readonly (string | null)[]>;
+  keep(company: string, notes: readonly string[], lookedIn: string): Promise<void>;
+}
+
 /** A kept window as read back: believed in its shape only, else read as nothing kept. */
 const keptWindowOf = (x: unknown): KeptRecoveryWindow | null => {
   const k = x as Partial<KeptRecoveryWindow> | null;
@@ -161,7 +205,46 @@ const keptChangeOf = (x: unknown): KeptDirectoryChange | null => {
 };
 const inOrder = (all: readonly KeptDirectoryChange[]) => [...all].sort((a, b) => a.signedAt - b.signedAt);
 
-const HEAD_HEX = /^[0-9a-f]{64}$/u;
+/** A run of heads before a device's start, whole: a first batch, at least one head, and the head it is tied to at or after its last. */
+const isHeadsBeforeStart = (x: unknown): x is HeadsBeforeStart => {
+  const r = x as Partial<HeadsBeforeStart> | null;
+  return r !== null && typeof r === 'object' && Number.isSafeInteger(r.from) && (r.from as number) >= 0
+    && Array.isArray(r.heads) && r.heads.length > 0 && r.heads.every((h) => typeof h === 'string' && HEAD_HEX.test(h))
+    && r.tied !== null && typeof r.tied === 'object' && Number.isSafeInteger(r.tied.seq) && typeof r.tied.head === 'string'
+    && HEAD_HEX.test(r.tied.head) && r.tied.seq >= (r.from as number) + r.heads.length - 1;
+};
+
+/** What a write is weighed against: the store as it stands, without its heads. */
+type KeptNow = Pick<CheckedHeads, 'latest' | 'fromZero' | 'base' | 'from' | 'before'>;
+/** Where a store's heads start: the seq of its first head and the start it names. */
+const startOf = (h: Pick<CheckedHeads, 'base' | 'from'>): string => JSON.stringify([h.base ?? 0, h.from ?? null]);
+/** The runs `was` kept for batches `now` has no run starting at, followed by every run `now` names; at most the newest `BEFORE_KEPT`. */
+const runsMerged = (was: KeptNow['before'], now: KeptNow['before']): readonly HeadsBeforeStart[] | undefined => {
+  const all = [...(was ?? []).filter((r) => !(now ?? []).some((n) => n.from === r.from)), ...(now ?? [])];
+  return all.length === 0 ? undefined : all.slice(-BEFORE_KEPT);
+};
+/** `h` holding `before` as its heads before the start, or none. */
+const withRuns = <T extends object>(h: T, before: KeptNow['before']): T => {
+  const { before: _left, ...rest } = h as T & Pick<CheckedHeads, 'before'>;
+  return (before === undefined ? rest : { ...rest, before }) as T;
+};
+
+/**
+ * **WHAT A WRITE OF CHECKED HEADS LEAVES KEPT**, weighed against the store as it stands in the same write: never a start
+ * in place of a check from the company's first batch (`'nothing'`), and for the same start never an older latest head
+ * than the one kept, which another read on this device checked meanwhile - then only the heads before the start the
+ * write found are added (`runs`). Otherwise the write is kept whole, with the heads before the start both kept for the
+ * same start (`whole`).
+ */
+const keptOver = (was: KeptNow | null, h: CheckedHeads):
+  'nothing' | { readonly runs: readonly HeadsBeforeStart[] | undefined } | { readonly whole: CheckedHeads } => {
+  if (was === null) return { whole: h };
+  const fromTheFirst = (x: Pick<CheckedHeads, 'base' | 'from'>) => x.from === undefined && (x.base ?? 0) === 0;
+  if (fromTheFirst(was) && was.fromZero !== null && !fromTheFirst(h)) return 'nothing';
+  if (startOf(was) !== startOf(h)) return { whole: h };
+  const runs = runsMerged(was.before, h.before);
+  return was.latest.seq > h.latest.seq ? { runs } : { whole: withRuns(h, runs) };
+};
 const isCheckedHead = (x: unknown): x is CheckedHead => {
   const c = x as Partial<CheckedHead> | null;
   return c !== null && typeof c === 'object' && Number.isSafeInteger(c.seq) && (c.seq as number) >= -1
@@ -187,7 +270,12 @@ export const treeKeptInMemory = (): TreeKept => {
   const last = new Map<string, KeptHeader>();
   const changes = new Map<string, KeptDirectoryChange[]>();
   const windows = new Map<string, KeptRecoveryWindow>();
+  const unnamed = new Map<string, string>();
   return {
+    unnamed: {
+      lookedIn: async (company, notes) => notes.map((note) => unnamed.get(`${company}|${note}`) ?? null),
+      keep: async (company, notes, lookedIn) => { for (const note of notes) unnamed.set(`${company}|${note}`, lookedIn); },
+    },
     windows: {
       read: async (company) => windows.get(company) ?? null,
       write: async (company, k) => { windows.set(company, k); },
@@ -199,7 +287,11 @@ export const treeKeptInMemory = (): TreeKept => {
     },
     checked: {
       read: async (company) => heads.get(company) ?? null,
-      write: async (company, h) => { heads.set(company, h); },
+      write: async (company, h) => {
+        const was = heads.get(company) ?? null;
+        const kept = keptOver(was, h);
+        if (kept !== 'nothing') heads.set(company, 'whole' in kept ? kept.whole : withRuns(was!, kept.runs));
+      },
     },
     headers: {
       signed: async (company, k) => { signed.set(company, [...(signed.get(company) ?? []), k]); },
@@ -215,6 +307,7 @@ export interface TreeKept {
   readonly headers: HeadersKeptStore;
   readonly changes: DirectoryChangesKeptStore;
   readonly windows: RecoveryWindowsKeptStore;
+  readonly unnamed: UnnamedNotesKeptStore;
 }
 
 const DATABASE = 'record-tree-kept';
@@ -223,6 +316,7 @@ const LATEST = 'checked-latest';
 const HEADERS = 'kept-headers';
 const CHANGES = 'kept-directory-changes';
 const WINDOWS = 'kept-recovery-windows';
+const UNNAMED = 'kept-unnamed-notes';
 const pad = (n: number) => String(n).padStart(12, '0');
 
 /**
@@ -238,9 +332,9 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
   const open = () => new Promise<IDBDatabase>((resolve, reject) => {
     const f = where();
     if (f === null) { reject(new Error('this browser keeps no database')); return; }
-    const req = f.open(DATABASE, 3);
+    const req = f.open(DATABASE, 4);
     req.onupgradeneeded = () => {
-      for (const s of [HEADS, LATEST, HEADERS, CHANGES, WINDOWS]) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s);
+      for (const s of [HEADS, LATEST, HEADERS, CHANGES, WINDOWS, UNNAMED]) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error('this browser would not open its record of the company\'s records'));
@@ -261,7 +355,7 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
       db.close();
     }
   };
-  /** Heads are kept a chunk to a row, so a row's size is bounded and only the last chunk is ever written again. */
+  /** Heads are kept a chunk to a row, so a row's size is bounded and only the chunks holding new heads are written again. */
   const CHUNK = 1024;
   const chunkKey = (company: string, i: number) => `${company}|${pad(i)}`;
   const checked: CheckedHeadsStore = {
@@ -270,7 +364,7 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
         return await step<CheckedHeads | null>([HEADS, LATEST], 'readonly', (tx, done) => {
           const latest = tx.objectStore(LATEST).get(company);
           latest.onsuccess = () => {
-            const l = latest.result as { latest?: unknown; fromZero?: unknown; count?: unknown; base?: unknown; from?: unknown; recent?: unknown } | undefined;
+            const l = latest.result as { latest?: unknown; fromZero?: unknown; count?: unknown; base?: unknown; from?: unknown; recent?: unknown; before?: unknown } | undefined;
             if (l === undefined || !isCheckedHead(l.latest) || !(l.fromZero === null || isCheckedHead(l.fromZero)) || !Number.isSafeInteger(l.count)
               || !(l.base === undefined || (Number.isSafeInteger(l.base) && (l.base as number) >= 0)) || !(l.from === undefined || isStartedFrom(l.from))) {
               done(null);
@@ -278,9 +372,11 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
             }
             /* Heads kept whole that are not each a head checked are dropped, never believed: the read then follows no recovery from them. */
             const recent = Array.isArray(l.recent) && l.recent.length <= RECENT_KEPT && l.recent.every(isCheckedHead) ? l.recent as CheckedHead[] : undefined;
+            /* Heads before the start kept otherwise than whole are dropped, never believed: the read then finds them again. */
+            const before = Array.isArray(l.before) && l.before.length <= BEFORE_KEPT && l.before.every(isHeadsBeforeStart) ? l.before as HeadsBeforeStart[] : undefined;
             const started = {
               ...(l.base === undefined ? {} : { base: l.base as number }), ...(l.from === undefined ? {} : { from: l.from as StartedFrom }),
-              ...(recent === undefined ? {} : { recent }),
+              ...(recent === undefined ? {} : { recent }), ...(before === undefined ? {} : { before }),
             };
             const count = l.count as number;
             const n = Math.ceil(count / CHUNK);
@@ -299,25 +395,35 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
         });
       } catch { return null; }
     },
-    write: async (company, h) => {
+    write: async (company, given) => {
       try {
         await step<void>([HEADS, LATEST], 'readwrite', (tx, done) => {
           const was = tx.objectStore(LATEST).get(company);
           was.onsuccess = () => {
-            const count = Number.isSafeInteger((was.result as { count?: unknown } | undefined)?.count) ? (was.result as { count: number }).count : 0;
+            /* Weighed against the store as it stands in this transaction, so a read that began before another wrote cannot write it back. */
+            const row = was.result as (Partial<KeptNow> & { count?: unknown }) | undefined;
+            const now: KeptNow | null = row === undefined || !isCheckedHead(row.latest) ? null : {
+              latest: row.latest, fromZero: isCheckedHead(row.fromZero) ? row.fromZero : null,
+              ...(Number.isSafeInteger(row.base) ? { base: row.base as number } : {}), ...(row.from === undefined ? {} : { from: row.from }),
+              ...(Array.isArray(row.before) && row.before.every(isHeadsBeforeStart) ? { before: row.before } : {}),
+            };
+            const kept = keptOver(now, given);
+            if (kept === 'nothing') { done(undefined); return; }
+            if (!('whole' in kept)) { tx.objectStore(LATEST).put(withRuns(row!, kept.runs), company); done(undefined); return; }
+            const h = kept.whole;
+            const count = Number.isSafeInteger(row?.count) ? row!.count as number : 0;
             /*
              * Only the chunks holding heads not kept yet are written; every chunk before them is kept as it is - unless the
              * heads now start from another seq (a check from the first batch in place of one from a later head), when all are.
              */
-            const wasBase = (was.result as { base?: unknown } | undefined)?.base;
-            const sameStart = (Number.isSafeInteger(wasBase) ? wasBase as number : 0) === (h.base ?? 0);
+            const sameStart = (Number.isSafeInteger(row?.base) ? row!.base as number : 0) === (h.base ?? 0);
             for (let i = sameStart ? Math.floor(Math.min(count, h.heads.length) / CHUNK) : 0; i * CHUNK < h.heads.length; i += 1) {
               tx.objectStore(HEADS).put(h.heads.slice(i * CHUNK, (i + 1) * CHUNK), chunkKey(company, i));
             }
             tx.objectStore(LATEST).put({
               latest: h.latest, fromZero: h.fromZero, count: h.heads.length,
               ...(h.base === undefined ? {} : { base: h.base }), ...(h.from === undefined ? {} : { from: h.from }),
-              ...(h.recent === undefined ? {} : { recent: h.recent }),
+              ...(h.recent === undefined ? {} : { recent: h.recent }), ...(h.before === undefined ? {} : { before: h.before }),
             }, company);
             done(undefined);
           };
@@ -395,7 +501,29 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
       } catch { /* not kept: the window kept before stays, and a recovery from another head holds the longest window the range allows */ }
     },
   };
-  return { checked, headers, changes, windows };
+  const unnamed: UnnamedNotesKeptStore = {
+    lookedIn: async (company, notes) => {
+      try {
+        return await step<readonly (string | null)[]>([UNNAMED], 'readonly', (tx, done) => {
+          const found: (string | null)[] = notes.map(() => null);
+          notes.forEach((note, i) => {
+            const r = tx.objectStore(UNNAMED).get(`${company}|${note}`);
+            r.onsuccess = () => { found[i] = typeof r.result === 'string' ? r.result : null; };
+          });
+          done(found);
+        });
+      } catch { return notes.map(() => null); /* nothing read is nothing kept: every note is looked for again */ }
+    },
+    keep: async (company, notes, lookedIn) => {
+      try {
+        await step<void>([UNNAMED], 'readwrite', (tx, done) => {
+          for (const note of notes) tx.objectStore(UNNAMED).put(lookedIn, `${company}|${note}`);
+          done(undefined);
+        });
+      } catch { /* not kept: the notes are looked for again at the next read */ }
+    },
+  };
+  return { checked, headers, changes, windows, unnamed };
 };
 
 /**

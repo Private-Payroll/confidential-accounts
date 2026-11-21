@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { describe, expect, it, vi } from 'vitest';
 import { EVERY_RIGHT } from '../../../../src/core/vault-approvers.js';
 import { invitedSeatRightsOf, scopeOfRole } from '../../../../src/core/seat-rights.js';
@@ -27,17 +28,21 @@ vi.mock('../../../../src/core/vault-approvers.js', async (real) => {
     },
   };
 });
-vi.mock('vaults-web-shared/keyring.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
+}));
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   holdersFromTheWallet: async () => {
     if (read.holdersFail) throw new Error('the wallet did not answer');
-    return { holders: { seats: read.seats, approvals: read.approvals, vaultThresholds: [], adoptedVaults: read.adopted }, indexer: null };
+    return { holders: { seats: read.seats, approvals: read.approvals, vaultThresholds: [], adoptedVaults: read.adopted, threshold: 1, committee: [], policyBar: null }, indexer: null };
   },
 }));
 vi.mock('./keyring-person.js', () => ({ keysOnTheWayIn: async () => read.keys }));
 vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ companyWide: async () => WIDE }) }));
-vi.mock('./filing-judge.js', () => ({
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
   openedQuietly: async () => ({
     id: 'acc_1', name: 'Acme', notBelieved: read.notBelieved,
     signers: SEATS.map((leaf, i) => ({ id: `s${i}`, status: 'active', leafCommitment: leaf })),
@@ -64,7 +69,7 @@ describe('an invitation\'s threshold is checked on the page as the wallet checks
   it('refuses a threshold an initiator cannot meet, naming each vault it leaves short', async () => {
     reset();
     const m = await load();
-    const said = await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 });
+    const said = await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 });
     expect(said).toMatch(/^This change would leave vaults unable to pay: /u);
     for (const vault of [PAYROLL, TREASURY, WIDE]) expect(said).toContain(vault);
     expect(said).toMatch(/\(its runs need 3 approvals and 2 signers could give them\)/u);
@@ -74,9 +79,9 @@ describe('an invitation\'s threshold is checked on the page as the wallet checks
   it('counts the new seat on the vaults its role reaches: an approver meets the threshold an initiator cannot', async () => {
     reset();
     const m = await load();
-    expect(await m.seatThresholdRefusedOnThePage('acc_1', { role: 'approver', threshold: 3 })).toBeNull();
-    expect(await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 2 })).toBeNull();
-    expect(await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 })).not.toBeNull();
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'approver', threshold: 3 })).toBeNull();
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 2 })).toBeNull();
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).not.toBeNull();
   });
 
   /* RED WHEN: each seat's rights are not read from the directory the page believes, so a seat scoped to one vault is counted on all. */
@@ -84,7 +89,7 @@ describe('an invitation\'s threshold is checked on the page as the wallet checks
     reset();
     believe(EVERY_RIGHT, invitedSeatRightsOf({ role: 'approver', vaults: [PAYROLL as never] }, scopeOfRole('approver', [PAYROLL as never])));
     const m = await load();
-    const said = (await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 }))!;
+    const said = (await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 }))!;
     expect(said).toContain(`${PAYROLL} (its runs need 3 approvals and 2 signers could give them)`);
     expect(said).toContain(`${TREASURY} (its runs need 3 approvals and 1 signer could give them)`);
   });
@@ -94,25 +99,25 @@ describe('an invitation\'s threshold is checked on the page as the wallet checks
     reset();
     believe(EVERY_RIGHT, undefined);
     const m = await load();
-    expect(await m.seatThresholdRefusedOnThePage('acc_1', { role: 'approver', threshold: 3 })).toMatch(/\(its runs need 3 approvals and 2 signers could give them\)/u);
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'approver', threshold: 3 })).toMatch(/\(its runs need 3 approvals and 2 signers could give them\)/u);
   });
 
   /* RED WHEN: a page that cannot read what the count needs refuses the invitation on a guess, or stops with an error instead of leaving it to the wallet. */
   it('refuses nothing when it cannot read the keys, the roster, the chain or a seat\'s name, and leaves it to the wallet', async () => {
     const m = await load();
     reset(); read.keys = null;
-    expect(await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 })).toBeNull();
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).toBeNull();
     reset(); read.notBelieved = ['x'];
-    expect(await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 })).toBeNull();
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).toBeNull();
     reset(); read.holdersFail = true;
-    expect(await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 })).toBeNull();
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).toBeNull();
   });
 
   /* RED WHEN: a fault in the page's own check is passed over as a read it could not make, so the page silently refuses nothing. */
   it('lets a fault in the check itself surface: only the reads are passed over', async () => {
     reset(); read.checkFault = true;
     const m = await load();
-    await expect(m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 })).rejects.toThrow(/a fault in the check/u);
+    await expect(m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).rejects.toThrow(/a fault in the check/u);
   });
 
   /* RED WHEN: the page and the wallet, given the same roster, directory and chain, refuse an invitation in different sentences. */
@@ -120,7 +125,7 @@ describe('an invitation\'s threshold is checked on the page as the wallet checks
     reset();
     believe(EVERY_RIGHT, invitedSeatRightsOf({ role: 'approver', vaults: [PAYROLL as never] }, scopeOfRole('approver', [PAYROLL as never])));
     const m = await load();
-    const page = await m.seatThresholdRefusedOnThePage('acc_1', { role: 'initiator', threshold: 3 });
+    const page = await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 });
     /* The wallet's own check, from the wallet's source: named by a path the page's typecheck does not follow, since it builds the page alone. */
     const walletCheck = '../../../wallet/src/actions/invite.js';
     const { refuseASeatThresholdInTheWallet } = await import(/* @vite-ignore */ walletCheck) as {

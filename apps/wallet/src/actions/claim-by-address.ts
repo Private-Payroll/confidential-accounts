@@ -74,7 +74,7 @@ async function openedOffer(ctx: StepContext): Promise<Opened> {
   const account = readAccountAddress(f['account']);
   const token = (f['token'] ?? '') as Hex;
   if (label === null || account === null || !/^[0-9a-f]{64}$/u.test(token)) return refuse('not-a-company');
-  const got = await ctx.call('GET', `/api/invites/${invitationIdOf(token)}/offer`);
+  const got = await ctx.invitations.offer(invitationIdOf(token));
   if (got.status === 410 && (got.body as { refused?: unknown } | null)?.refused === 'used') return refuse('used');
   const sealed = (got.body as { offer?: Sealed } | null)?.offer;
   if (got.status !== 200 || sealed === undefined) return refuse('no-offer');
@@ -142,8 +142,8 @@ export function claimByAddressAction(reach: ClaimReach): ActionDefinition {
          * the person joined and their wallet not knowing the company pays them, with nothing to run again. */
         if (!(saved.open().read().paidBy ?? []).includes(company)) await saved.keep((k) => withPaidBy(k, company));
         const handover = sealToInbox({ schema: CLAIMED_HANDOVER_SCHEMA, code, claim }, o.inbox);
-        const answer = await ctx.call('POST', `/api/invites/${invitationIdOf(o.token)}/accept-payee`,
-          JSON.stringify({ acceptance: acceptanceProofOf(o.token), handover, kind: o.payee }));
+        const answer = await ctx.invitations.acceptPayee(invitationIdOf(o.token),
+          { acceptance: acceptanceProofOf(o.token), handover, kind: o.payee });
         if (answer.status !== 201) {
           const said = (answer.body as { error?: unknown } | null)?.error;
           refuse('not-taken', { says: typeof said === 'string' ? said : `the service answered ${answer.status}` });

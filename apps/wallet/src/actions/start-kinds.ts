@@ -15,17 +15,20 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { readCompanyLabel, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../../src/core/crypto.js';
-import {
-  ApprovalNotOwed, nothingWasSentBy, refuseARunALeaverRaisedHere,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import { refuseARunALeaverRaisedHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { approveStartRoundHere, carryStartRoundHere, finishedSecretRunHere, StartRoundRefused, startRoundOpenedHere, type StartRoundKind, type StartRoundNamed } from '../../../../packages/web-shared/src/vault-start-round.js';
 import { SAID, START_STOP, VaultStartOwed } from '../../../../packages/web-shared/src/vault-start-stops.js';
 import { type CreateVaultDoors } from '../../../../packages/web-shared/src/vault-doors.js';
-import { approversHere, governanceDoorsFor, handOverMarked, runsOutrunHere, type CompanyChain, type CompanyReach, type Handed } from './company-reach.js';
+import { approversHere, runsOutrunHere } from './approvers-here.js';
+import { governanceDoorsFor, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { handOverMarked, type Handed } from './hand-over-in-the-wallet.js';
 import { vaultDoorsFor, type CreateVaultReach } from './create-vault.js';
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
 import { oneOffNeeded } from './one-off-payment.js';
 import { carryStep, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
+import { adopted } from './holders-moved-here.js';
 import { ActionStopped } from './run.js';
 
 /** What approving a round of a vault's start needs beyond the company: the vault secrets this wallet keeps, its indexer, and how to wait. */
@@ -180,6 +183,7 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
       },
     }),
     carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.approve-start.step.carry' }, carryOut)],
+    ...(round === 'adoption' ? { carries: (intent: ActIntent) => ({ kind: 'adopt-vault' as const, move: adopted(vaultOf(intent)!) }) } : {}),
     why: kindWhy,
   };
   return kind;

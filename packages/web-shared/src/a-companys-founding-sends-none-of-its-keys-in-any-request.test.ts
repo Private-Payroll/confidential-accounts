@@ -8,6 +8,7 @@ import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey 
 import { unwrapKey, unseal, parseCanonical, toHex } from '../../../src/core/crypto.js';
 import { purposeKey, PURPOSES } from '../../../src/core/sealed-records.js';
 import * as keyring from './keyring.js';
+import * as creation from './company-creation.js';
 import type { Openable } from './wallet-sign-in.js';
 
 /**
@@ -95,7 +96,7 @@ describe('A COMPANY\'S FOUNDING SENDS THE SERVICE NONE OF ITS KEYS', () => {
   it('NO ADDRESS, HEADER OR BODY OF THE FOUNDING CARRIES THE COMPANY\'S KEY, A KEY MADE FROM IT, THE SEAT\'S SECRETS OR THE FIRST STATE\'S SECRETS', async () => {
     const sent = recordingService();
     keyring.signedInByAnotherScreen({ user: A, address: ADDRESS, created: true, session: {} });
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
+    await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
     const made = JSON.parse(sent.find((s) => s.route === 'POST /api/accounts')!.body) as { founding: any };
     const id = made.founding.account.id as string;
     /* The seat as the saved keys the wallet sealed hold it, opened here with the wallet's key: this page never holds it. */

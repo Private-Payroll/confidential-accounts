@@ -7,6 +7,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { createTranslator } from '../../../../packages/ui/src/i18n/provider.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { callOf, viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A DEPOSIT THE COMPANY'S FEE PAYER COULD NOT PAY FOR IS SENT BY THE WALLET, WITH THE FEE FROM THE PERSON'S OWN
@@ -23,7 +24,7 @@ vi.mock('../../../../packages/web-shared/src/vault-private-deposit.js', async (r
 
 const { privateDepositAction, depositDoorsFor } = await import('./private-deposit.js');
 const { depositWalletFor } = await import('./deposit-sent-by-the-wallet.js');
-const { apiOver } = await import('./company-reach.js');
+const { serviceCallOver } = await import('./step-views.js');
 const op = await import('../../../../packages/web-shared/src/vault-private-deposit.js');
 const { timeShown } = await import('../../../../packages/web-shared/src/vault-step-reads.js');
 
@@ -65,38 +66,49 @@ const walletDoors = (did: string[]) => () => {
   } as never;
 };
 
-const ctxWith = (answer: { status: number; body: unknown }, yes: boolean | null, did: string[]) => {
+const ctxWith = (answer: { status: number; body: unknown }, yes: boolean | null, did: string[], refuseAt?: number) => {
+  let checked = 0;
   const asked: unknown[] = [];
   const told: Record<string, unknown> = {};
   const shown: unknown[] = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 4 }, signal: new AbortController().signal,
     call: async (method: string, path: string) => { did.push(`${method} ${path}`); return answer; },
     tell: (o: Record<string, unknown>) => { Object.assign(told, o); },
     show: (w: unknown) => { shown.push(w); },
-    sentByTheWallet: () => { did.push('counted as handed over'); },
+    /* The runner's door for a send this wallet makes itself; `refuseAt` names the check that finds the company changed. */
+    sendStraight: async (send: (door: unknown) => Promise<unknown>, into?: { readonly vault: string }) => {
+      const check = async () => {
+        checked += 1;
+        did.push(`checked ${into?.vault === VAULT ? 'the vault' : 'no vault'}`);
+        if (checked === refuseAt) throw Object.assign(new Error('another signer changed the company'), { thisSendNotSent: true });
+      };
+      await check();
+      return send({ ready: check, handedOver: () => { did.push('counted as handed over'); } });
+    },
     ...(yes === null ? {} : { confirmFee: async (lines: unknown) => { asked.push(lines); did.push('fee asked'); return yes; } }),
     keyring: null,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, asked, told, shown };
 };
 
-const reachOf = (ctx: StepContext) => ({
+const reachOf = (ctx: StepContext) => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
   seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) },
-  stepTo: () => {}, api: apiOver(ctx), send: async () => ({ status: 404, body: {} }), holders: async () => ({ seats: [] }),
+  api: serviceCallOver(callOf(ctx)), send: async () => ({ status: 404, body: {} }), holders: async () => ({ seats: [], adoptedVaults: [VAULT] }),
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null }), filingJudgeFor: () => async () => null },
   sealed: {}, companyKeys: {}, roster: async () => ({ id: 'acc_1', signers: [] }), builder: {},
   chain: { indexer: { indexerUri: 'https://i.example', indexerWsUri: 'wss://i.example' } },
-}) as never;
+} as never) as never;
 
+const CHECKED = 'checked the vault';
 const FEE_NOT_PAID = { status: 422, body: { nothingWasSent: true, error: 'the fee payer could not pay', code: 'fee-not-paid' } };
 const NETWORK_REFUSED = { status: 422, body: { nothingWasSent: true, error: 'the node refused it', code: 'network-refused' } };
 
-const sendWith = (answer: { status: number; body: unknown }, yes: boolean | null) => {
+const sendWith = (answer: { status: number; body: unknown }, yes: boolean | null, refuseAt?: number) => {
   const did: string[] = [];
-  const { ctx, asked, shown } = ctxWith(answer, yes, did);
+  const { ctx, asked, shown } = ctxWith(answer, yes, did, refuseAt);
   const reach = { chain: () => ({}) as never, builder: () => ({}) as never, now: () => NOW, pause: async () => {}, balance: walletDoors(did), kept: () => ({ inFlight: {} }) as never };
   const wallet = depositWalletFor(reach.balance, identity, 0, reach.now);
   const doors = depositDoorsFor(ctx, reachOf(ctx), reach, VAULT as never, { token: TOKEN as never, value: 1_500_000n }, wallet);
@@ -108,7 +120,8 @@ describe('the fee payer could not pay: the wallet pays from the person\'s own DU
     const { did, asked, shown, send } = sendWith(FEE_NOT_PAID, true);
     /* RED WHEN: the deposit is sent with the person's DUST without asking, or the send is not counted as handed over. */
     expect(await send()).toEqual({ txRef: 'sub-1', transactionHash: null });
-    expect(did).toEqual([SEND, 'own DUST opened', 'fee asked', 'fee balanced', 'counted as handed over', 'sent by the wallet']);
+    /* RED WHEN: the deposit leaves this wallet without the company read again as the runner's door opens and again once the fee is confirmed, or is not counted as handed over. */
+    expect(did).toEqual([SEND, CHECKED, 'own DUST opened', 'fee asked', CHECKED, 'fee balanced', 'counted as handed over', 'sent by the wallet']);
     expect(asked).toEqual([[
       { key: 'act.private-deposit.fee.service' },
       { key: 'act.private-deposit.fee.own', values: { fee: expect.any(String), specks: expect.stringMatching(/^300 SPECKs$/u) } },
@@ -124,6 +137,14 @@ describe('the fee payer could not pay: the wallet pays from the person\'s own DU
     expect(did).not.toContain('sent by the wallet');
     expect((failed as { nothingWasSent?: unknown }).nothingWasSent).not.toBe(true);
     expect(wallet.unsent()?.why).toBe('declined');
+  });
+
+  it('the company changed while the fee was being confirmed: nothing is sent from the person\'s DUST, and nothing was sent', async () => {
+    const { did, send } = sendWith(FEE_NOT_PAID, true, 2);
+    const failed = await send().catch((e: unknown) => e);
+    /* RED WHEN: a deposit leaves from the person's own DUST after another signer changed the company during the fee's confirmation. */
+    expect(did).toEqual([SEND, CHECKED, 'own DUST opened', 'fee asked', CHECKED]);
+    expect((failed as { thisSendNotSent?: unknown }).thisSendNotSent).toBe(true);
   });
 
   it('a window that cannot ask pays nothing', async () => {

@@ -11,8 +11,8 @@ import type { Hex } from '../../../src/core/crypto.js';
 import { carriedEntryRefusal } from '../../../src/midnight/carried-entry.js';
 import { companyRecordEntry, EMPTY_HEAD, recordKeyOf, signedWithItsEntry, signManifestEntry, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
 import { FOUNDING_RECORDS, type RecordsHeld } from '../../../src/midnight/records-held.js';
-import { signCompanyFiling, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import { carriedEntriesEntered, readAfterEntering } from './carried-entries-entered.js';
+import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { carriedEntriesEntered, readAfterEntering, recordEnteredHere } from './carried-entries-entered.js';
 
 const CO = 'acc_lost';
 const ADA = '01'.repeat(32) as Hex;
@@ -111,5 +111,47 @@ describe('THE SWEEP', () => {
     await expect(readAfterEntering(read, () => true, async () => ({ entered: 0, refused: null }))).rejects.toThrow('unentered');
     reads = 0;
     await expect(readAfterEntering(read, () => false, async () => ({ entered: 1, refused: null }))).rejects.toThrow('unentered');
+  });
+});
+
+describe('THE SWEEP OF ONE RECORD, THROUGH THE STEP\'S READ OF THE COMPANY', () => {
+  /** A read of the company serving `vlt_1`'s versions and its records as held, and every ask made of it, in order. */
+  const viewServing = (served: readonly SealedCompanyRecord[], company = CO) => {
+    const asked: unknown[] = [];
+    const posted: ManifestEntry[][] = [];
+    return {
+      asked, posted,
+      view: {
+        company,
+        declare: (d: unknown) => { asked.push(['declared', d]); },
+        records: async (r: readonly unknown[]) => { asked.push(['records', r]); return [{ kind: 'vault-info', id: 'vlt_1', versions: served.map(toCompanyWire) }]; },
+        directory: async () => { asked.push(['directory']); return {} as never; },
+        held: async (r: unknown) => { asked.push(['held', r]); return { records: heldWith() } as never; },
+        manifest: { newest: async () => [], enter: async (_c: string, e: readonly ManifestEntry[]) => { posted.push([...e]); } },
+      },
+    };
+  };
+
+  it('reads every version, the directory and held through the view and enters through it, never over its own paths', async () => {
+    const v = viewServing([versionOf(1), versionOf(2)]);
+    const out = await recordEnteredHere({ accountId: CO, view: v.view }, 'vault-info', 'vlt_1');
+    expect(out).toEqual({ entered: 2, refused: null });
+    /* RED WHEN: the versions, the directory or what the records hold are read around the view, or held is read before the directory is. */
+    expect(v.asked).toEqual([
+      ['declared', { records: [NAMED] }],
+      ['records', [{ kind: 'vault-info', id: 'vlt_1', every: true }]],
+      ['directory'],
+      ['held', { records: [NAMED] }],
+    ]);
+    /* RED WHEN: the entries are posted over the manifest's own path, around the view. */
+    expect(v.posted).toEqual([[versionOf(1).entry, versionOf(2).entry]]);
+  });
+
+  it('refuses a read of another company handed in for this one, and enters nothing', async () => {
+    const v = viewServing([versionOf(2)], 'acc_other');
+    /* RED WHEN: a view of one company is used to enter another company's entries. */
+    await expect(recordEnteredHere({ accountId: CO, view: v.view }, 'vault-info', 'vlt_1'))
+      .rejects.toThrow(/acc_other was handed in for company acc_lost/u);
+    expect(v.posted).toEqual([]);
   });
 });

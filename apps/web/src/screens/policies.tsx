@@ -5,13 +5,12 @@ import {
   policyCurrencies, POLICIES_READ, POLICY_ACTED, POLICY_HELD, POLICY_PERIODS, POLICY_WHY, raisePolicy, raisePolicyBar, readHolders, readPolicies, whatAChangeCosts,
   type ChangeHolders, type PoliciesRead, type PolicyActed, type PolicyHeld, type PolicyTermsHeld, type PolicyWhy,
 } from '../adapters/policy-acts.js';
-import type { VaultRow } from '../adapters/company-records.js';
+import type { VaultRow } from '../adapters/company-rows.js';
 import { READ, type Read } from '../adapters/reads.js';
 import { ACT_REFUSAL } from '../adapters/refusals.js';
-import { watchPrivateMoneyReadable } from '../adapters/vault-private-money.js';
 import { ActRefused } from '../act-refused.js';
 import { AmountInput } from '../fields/form-fields.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { ActDone, ActOutcome, ActStopped, type ActPhase } from '../records/proposal-act.js';
 import { ReadOf, WithRecords } from '../records/parts.js';
 import { useSession } from '../session.js';
@@ -41,13 +40,14 @@ export function Policies() {
   return (
     <div className="flex flex-col gap-6" data-screen="policies">
       <PageHeader title={t('page.policies.name')} description={t('policies.intro')} />
-      <WithRecords>{(records) => <PoliciesOf vaults={records.vaults} company={records.id} />}</WithRecords>
+      <WithRecords>{(records) => <PoliciesOf vaults={records.vaults} />}</WithRecords>
     </div>
   );
 }
 
 
-function PoliciesOf({ vaults, company }: { vaults: Read<readonly VaultRow[]>; company: string }) {
+function PoliciesOf({ vaults }: { vaults: Read<readonly VaultRow[]> }) {
+  const view = useCompanyView();
   const t = useText();
   const { person } = useSession();
   const { openKeys } = useCompanyRecords();
@@ -58,22 +58,21 @@ function PoliciesOf({ vaults, company }: { vaults: Read<readonly VaultRow[]>; co
   const adopted = useMemo(() => (vaults.of === READ.read ? vaults.value.filter((v) => v.adopted === true) : null), [vaults]);
   const all = vaults.of === READ.read ? vaults.value : [];
 
-  useEffect(() => watchPrivateMoneyReadable(company, () => setReads((n) => n + 1)), [company]);
-
   useEffect(() => {
-    if (adopted === null || adopted.length === 0) { setPolicies(null); return undefined; }
+    if (view === null || adopted === null || adopted.length === 0) { setPolicies(null); return undefined; }
     let alive = true;
     setPolicies(null);
-    void readPolicies(person.id, company, adopted.map((v) => v.vault)).then((read) => { if (alive) setPolicies(read); });
+    void readPolicies(person.id, view, adopted.map((v) => v.vault)).then((read) => { if (alive) setPolicies(read); });
     return () => { alive = false; };
-  }, [person.id, company, adopted, reads]);
+  }, [person.id, view, adopted, reads]);
 
   useEffect(() => {
-    let alive = true;
     setHolders(null);
-    void readHolders(person.id, company).then((read) => { if (alive) setHolders(read); });
+    if (view === null) return undefined;
+    let alive = true;
+    void readHolders(person.id, view).then((read) => { if (alive) setHolders(read); });
     return () => { alive = false; };
-  }, [person.id, company, reads]);
+  }, [person.id, view, reads]);
 
   const done = (): void => setReads((n) => n + 1);
   const open = async (): Promise<void> => { setOpening(true); await openKeys(); setOpening(false); setReads((n) => n + 1); };
@@ -200,9 +199,10 @@ function PolicyForm({ vault, editing, holders, currencies, vaultCalled, onClose,
   vault: string; editing: Editing; holders: ChangeHolders | null; currencies: ReturnType<typeof policyCurrencies>;
   vaultCalled: (vault: string) => string | null; onClose: () => void; onChanged: () => void;
 }) {
+  const view = useCompanyView();
   const t = useText();
   const said = usePeriodSaid();
-  const { person, company } = useSession();
+  const { person } = useSession();
   const limitId = useId();
   const [token, setToken] = useState(editing.token);
   const [bands, setBands] = useState(() => (editing.current === null ? FIRST_BANDS : editing.current.bands.map((b) => ({ ceiling: b.ceilingText, approvals: b.approvals }))));
@@ -218,10 +218,10 @@ function PolicyForm({ vault, editing, holders, currencies, vaultCalled, onClose,
   const cost = holders === null ? null : whatAChangeCosts(holders, { kind: CHANGE_ASKED.spendingPolicy, vault, bands: bands.map((b) => ({ approvals: b.approvals })) });
 
   const save = async (): Promise<void> => {
-    if (company === null || busy) return;
+    if (view === null || busy) return;
     setResult(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await raisePolicy(person.id, company, { vault, token, limit, periodLength: period, bands, current: editing.current }, (step, steps) => setPhase({ step, steps }));
+    const ended = await raisePolicy(person.id, view, { vault, token, limit, periodLength: period, bands, current: editing.current }, (step, steps) => setPhase({ step, steps }));
     setPhase(null);
     setResult(ended);
     if (worked(ended)) onChanged();
@@ -292,8 +292,9 @@ function BandField({ n, ceiling, approvals, options, busy, onCeiling, onApproval
 function PolicyBar({ holders, unread, vaultCalled, onDone }: {
   holders: ChangeHolders | null; unread: boolean; vaultCalled: (vault: string) => string | null; onDone: () => void;
 }) {
+  const view = useCompanyView();
   const t = useText();
-  const { person, company } = useSession();
+  const { person } = useSession();
   const [chosen, setChosen] = useState<number | null>(null);
   const [phase, setPhase] = useState<ActPhase>(null);
   const [result, setResult] = useState<PolicyActed | null>(null);
@@ -304,10 +305,10 @@ function PolicyBar({ holders, unread, vaultCalled, onDone }: {
   const change = (to: number | null): void => { setChosen(to); setResult(null); };
 
   const save = async (): Promise<void> => {
-    if (company === null || busy || chosen === null || holders === null) return;
+    if (view === null || busy || chosen === null || holders === null) return;
     setResult(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await raisePolicyBar(person.id, company, chosen, { policyBar: holders.policyBar, seated: holders.seated }, (step, steps) => setPhase({ step, steps }));
+    const ended = await raisePolicyBar(person.id, view, chosen, { policyBar: holders.policyBar, seated: holders.seated }, (step, steps) => setPhase({ step, steps }));
     setPhase(null);
     setResult(ended);
     if (worked(ended)) onDone();

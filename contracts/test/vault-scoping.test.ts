@@ -18,7 +18,8 @@ import {
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
-import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { contractSourceText } from '../../scripts/contract-sources.mjs';
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -279,8 +280,8 @@ describe('the reserved signer scope', () => {
    * reads the source, so a new reader of the scope is noticed where it appears.
    */
   it('the scope is read where a seat is opened and where an invitee takes one, into the leaf, and compared only where a run asks for a right', () => {
-    const source = readFileSync(
-      new URL('../src/ConfidentialAccount.compact', import.meta.url), 'utf8');
+    const source = contractSourceText(
+      fileURLToPath(new URL('../..', import.meta.url)), 'contracts/src/ConfidentialAccount.compact');
     /* Comments stripped first, so prose explaining the rule is not read as code. */
     const code = source
       .replace(/\/\*[\s\S]*?\*\//g, ' ')

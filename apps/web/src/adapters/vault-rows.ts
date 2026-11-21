@@ -1,8 +1,8 @@
-import { api } from 'vaults-web-shared/keyring.js';
-import type { SealedAccount } from '../../../../src/core/types.js';
-import { VAULT, vaultListOf, type VaultRow, type VaultStanding } from './company-records.js';
+import type { PageView } from './filing-judge.js';
+import { VAULT, type VaultRow, type VaultStanding } from './company-rows.js';
+import { vaultListOf } from './company-vaults-read.js';
 import { wasRead } from './reads.js';
-import { companyRoute } from './handover-state.js';
+import { sealedIn } from './filing-judge.js';
 import { keyringFor } from './keyring-person.js';
 
 /*
@@ -25,11 +25,11 @@ const HANDED_OVER: ReadonlySet<VaultStanding> = new Set([VAULT.held, VAULT.notFu
 /** Whether `vault` was handed over when it was created. */
 export const wasHandedOver = (vault: Pick<VaultRow, 'standing'>): boolean => HANDED_OVER.has(vault.standing);
 
-/** The company `companyId`'s vaults, for the person `personId`, or null when they could not be read. */
-export async function readVaultRows(personId: string, companyId: string): Promise<readonly VaultRow[] | null> {
+/** The company `companyId`'s vaults, for the person `personId`, read through the view this page has open of it, or null when they could not be read. */
+export async function readVaultRows(personId: string, view: PageView): Promise<readonly VaultRow[] | null> {
   try {
     if (!(await keyringFor(personId))) return null;
-    const list = await vaultListOf(companyId, await api(companyRoute(companyId)) as SealedAccount);
+    const list = await vaultListOf(view, await sealedIn(view));
     return wasRead(list) ? list.value : null;
   } catch {
     return null;

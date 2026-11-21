@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as keyring from './keyring.js';
+import * as transport from './service-transport.js';
 
 /**
  * **A 401 SIGNS THE PERSON OUT; A 503 `could-not-check` AND A NETWORK FAILURE NEVER DO.**
@@ -39,21 +40,21 @@ describe('api', () => {
   it('a 503 could-not-check throws CouldNotCheckError, which is not an AuthError, and forgets nothing', async () => {
     await signedIn();
     answers = [couldNotCheck];
-    const caught = await keyring.api('/api/accounts').catch((e: unknown) => e);
-    expect(caught).toBeInstanceOf(keyring.CouldNotCheckError);
-    expect(caught).not.toBeInstanceOf(keyring.AuthError);
+    const caught = await transport.api('/api/accounts').catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(transport.CouldNotCheckError);
+    expect(caught).not.toBeInstanceOf(transport.AuthError);
     expect(keyring.currentUser()?.id).toBe('u1');
   });
 
   it('a 401 still signs the person out', async () => {
     await signedIn();
     answers = [reply(401, { error: 'not signed in' })];
-    await expect(keyring.api('/api/accounts')).rejects.toBeInstanceOf(keyring.AuthError);
+    await expect(transport.api('/api/accounts')).rejects.toBeInstanceOf(transport.AuthError);
     expect(keyring.currentUser()).toBeNull();
   });
 });
 
-describe('resuming a session', () => {
+describe('resuming a sign-in', () => {
   it('asks again after 0.6, 1.5 and 4 seconds, takes the good answer, and is signed in', async () => {
     answers = [couldNotCheck, couldNotCheck, ME];
     const waited: number[] = [];
@@ -66,7 +67,7 @@ describe('resuming a session', () => {
     await signedIn();
     answers = [couldNotCheck];
     const waited: number[] = [];
-    await expect(keyring.resumeSession(null, async (ms) => { waited.push(ms); })).rejects.toBeInstanceOf(keyring.CouldNotCheckError);
+    await expect(keyring.resumeSession(null, async (ms) => { waited.push(ms); })).rejects.toBeInstanceOf(transport.CouldNotCheckError);
     expect(waited).toEqual([...keyring.RESUME_BACKOFF_MS]);
     expect(asked).toBe(4);
     expect(keyring.currentUser()?.id).toBe('u1');

@@ -8,8 +8,10 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { newSigningKeypair, toHex, type Hex } from '../../../src/core/crypto.js';
 import type { CompanyKeys } from '../../../src/core/company-key.js';
 import type { VaultKeysOffer } from '../../../src/core/vault-keys.js';
-import { offerVaultKeysHere } from './roster-here.js';
+import { offerVaultKeysHere } from './roster-filed-here.js';
 import { vaultKeysOfferOpened } from './vault-keys-offer-opened.js';
+import { viewOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 
 /*
  * The one step that opens a kept vault-keys offer and holds it to the company it names. The fold of the roster and the
@@ -30,10 +32,10 @@ const NEW = '6f'.repeat(32) as Hex;
 const offerSealedUnder = async (viewingKey: Hex): Promise<VaultKeysOffer> => {
   let kept: VaultKeysOffer | null = null;
   const statement = signRecordsKey(me, CO, 'c0'.repeat(32) as never, companyKey, SEAT);
-  await offerVaultKeysHere(async (_p, init) => { kept = { ...JSON.parse(String(init?.body)).offer, person: 'p' }; return {}; }, 'acc_1', {
+  await offerVaultKeysHere('acc_1', {
     committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
     recordsKey: statement, entry: ENTRY, viewingKey,
-  });
+  }, viewOver(readRoutesOver(async (_p, init) => { kept = { ...JSON.parse(String(init?.body)).offer, person: 'p' }; return {}; }, { directory: 'empty', newest: 'none-entered' }), 'acc_1'));
   return kept!;
 };
 const keysAt = (epoch: number, key: Hex, older: Hex): CompanyKeys => ({
@@ -66,7 +68,7 @@ describe('A KEPT VAULT-KEYS OFFER, OPENED AND CHECKED ONCE FOR EVERY CALLER', ()
 
 describe('NO CALLER OPENS AN OFFER BY ITS OWN STEPS', () => {
   it('NEITHER THE ROSTER FOLD NOR THE PAGE\'S READINESS NAMES THE OPENING OR THE REFUSAL CHECK: BOTH CALL `vaultKeysOfferOpened`', () => {
-    const files = ['packages/web-shared/src/roster-here.ts', 'apps/web/src/adapters/vault-keys.ts'];
+    const files = ['packages/web-shared/src/roster-filed-here.ts', 'apps/web/src/adapters/vault-keys.ts'];
     for (const f of files) {
       const code = readFileSync(join(process.cwd(), f), 'utf8').split('\n').filter((l) => !/^\s*(\*|\/\/|\/\*)/u.test(l));
       /* RED WHEN: a second copy of the open-and-check is written beside the shared step. */

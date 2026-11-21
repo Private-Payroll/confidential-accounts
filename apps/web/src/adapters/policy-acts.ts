@@ -1,23 +1,21 @@
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { privateAmount, type PrivateAmount } from 'vaults-ui';
 import { assets, formatAmount, parseAmount, type Asset, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { changeHoldersOf, whatAChangeCosts, type ChangeCost, type ChangeHolders, type GovernanceChangeAsked, type PublicFact } from '../../../../src/core/change-costs.js';
-import { companyWirePaths, fromCompanyWire } from '../../../../src/midnight/sealed-record-wire.js';
 import { POLICY_BANDS, POLICY_PERIODS, policyPeriodNamed, type PolicyPeriodId } from '../../../../src/midnight/spending-policy-record.js';
-import { api, holdersFromTheWallet } from 'vaults-web-shared/keyring.js';
+import { HttpCompanyRecordStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import {
   countOf, PROPOSAL_ACTED, proposalOutcomeOf, setPolicyBarInTheWallet, setSpendingPolicyInTheWallet, thresholdProblem, type ThresholdProblem,
 } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { spendingPoliciesFor } from 'vaults-web-shared/spending-policies-reach.js';
-import { spendingPolicyHere, type SpendingPolicyDoors } from 'vaults-web-shared/spending-policy-here.js';
+import { spendingPolicyHere, type SpendingPolicyDoors } from 'vaults-web-shared/spending-policy-read-here.js';
 import { Fault, FAULT } from '../faults.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
-import { namedFor } from './create-vault.js';
-import { keyringFor } from './keyring-person.js';
 import { READ, type Read } from './reads.js';
-import { ACT_REFUSAL, refusalOf, SEAT_REFUSALS, type ActRefusal } from './refusals.js';
+import { namedBefore } from './named-before.js';
+import { storeReachIn, type PageView } from './filing-judge.js';
+import { refusalOf, SEAT_REFUSALS, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { seatAndRecordsHere, type SeatAndRecordsHere } from './vault-private-money.js';
 
@@ -111,22 +109,18 @@ const notRead = (): never => { throw new Fault(FAULT.policyReadReadsNothingElse)
  */
 function recordsForPolicies(here: SeatAndRecordsHere, companyId: string): CompanyRecordsHere {
   const policies = spendingPoliciesFor({
-    accountId: companyId, leaf: here.leaf, companyKey: here.companyKey, api: (path) => api(path),
+    accountId: companyId, leaf: here.leaf, companyKey: here.companyKey, records: (asked) => here.view.records(asked),
     keys: (input) => here.builder.spendingPolicyKeys(input),
-    roles: async (asked) => {
-      const read = await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: here.company, account: here.account, roles: asked });
-      return { roles: read.roles };
-    },
+    /* The account's roles as the person's own wallet reads them off the chain, asked through the view: once for each set asked. */
+    roles: (asked) => here.view.roles(asked),
     directory: here.directory,
   });
   return {
     directory: here.directory,
     people: notRead,
     runs: notRead,
-    state: async (id) => {
-      const body = await api(companyWirePaths.one(companyId, STATE_RECORD.kind, id, STATE_RECORD.version)) as { filed?: unknown } | null;
-      return body?.filed == null ? null : fromCompanyWire(body.filed, { company: companyId, kind: STATE_RECORD.kind, id, version: STATE_RECORD.version }).sealed;
-    },
+    /* The company's signed state at the version a policy's keys are made from, read through the view and believed only as a seat the directory names filed it. */
+    state: (id) => new HttpCompanyRecordStore(companyId, storeReachIn(here.view), null, here.judge).at(STATE_RECORD.kind, id, STATE_RECORD.version),
     payments: { paidOnceOf: notRead, paidMovementOf: notRead, read: notRead },
     roundIdentity: { runPayload: notRead, proposalIdOf: notRead },
     policy: notRead,
@@ -161,14 +155,14 @@ async function heldOf(doors: SpendingPolicyDoors, vault: string, asset: Asset): 
  * released the company key for this tab and refuses with no keys here until then; it never asks the wallet to release it itself.
  */
 export async function readPolicies(
-  personId: string, companyId: string, vaults: readonly string[], registry: AssetRegistry = assets,
+  personId: string, view: PageView, vaults: readonly string[], registry: AssetRegistry = assets,
 ): Promise<PoliciesRead> {
   try {
-    const here = await seatAndRecordsHere(personId, companyId);
+    const here = await seatAndRecordsHere(personId, view);
     if (typeof here === 'string') return { of: POLICIES_READ.refused, why: here };
     /* The company's keys as this device believes them, which `seatAndRecordsHere` made with `companyKeysFor`, handed on typed as such. */
     const viewingKey: CompanyKeyHere = here.viewingKey;
-    const doors: SpendingPolicyDoors = { records: recordsForPolicies(here, companyId), accountId: companyId, viewingKey };
+    const doors: SpendingPolicyDoors = { records: recordsForPolicies(here, view.company), accountId: view.company, viewingKey };
     const held: PolicyHeld[] = [];
     for (const vault of vaults) {
       for (const asset of registry.all()) held.push(await heldOf(doors, vault.toLowerCase(), asset));
@@ -180,12 +174,12 @@ export async function readPolicies(
 }
 
 
-/** What the account holds now, as the person's own wallet reads it off the chain, with the signers seated counted: what a change is costed from. */
-export async function readHolders(personId: string, companyId: string): Promise<Read<ChangeHolders>> {
+/** What the account holds now, as the person's own wallet read it off the chain for this opening's view, with the signers seated counted: what a change is costed from. */
+export async function readHolders(personId: string, view: PageView): Promise<Read<ChangeHolders>> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return { of: READ.unreadable };
-    const { holders } = await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: named.company, account: named.account });
+    const holders = await view.holders();
     return {
       of: READ.read,
       value: changeHoldersOf(holders),
@@ -214,12 +208,6 @@ export type PolicyActed =
 
 const refused = (why: ActRefusal): PolicyActed => ({ of: POLICY_ACTED.refused, why });
 
-async function namedBefore(personId: string, companyId: string): Promise<{ record: string; company: CompanyLabel; account: AccountAddress } | ActRefusal> {
-  if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
-  if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
-  const named = await namedFor(companyId);
-  return named === null ? ACT_REFUSAL.didNotFinish : { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
-}
 
 function actedOf(ended: ActOutcome): PolicyActed {
   if (ended.of === POLICY_ACTED.done) {
@@ -239,13 +227,13 @@ const onStepOf = (onStep?: (step: number, steps: number) => void) => (onStep ===
  * judges the rest.
  */
 export async function raisePolicyBar(
-  personId: string, companyId: string, bar: number, known: { readonly policyBar: number | null; readonly seated: number | null },
+  personId: string, view: PageView, bar: number, known: { readonly policyBar: number | null; readonly seated: number | null },
   onStep?: (step: number, steps: number) => void,
 ): Promise<PolicyActed> {
   const wrong = thresholdProblem(bar, { now: known.seated === null ? null : known.policyBar ?? 0, seated: known.seated });
   if (wrong !== null) return { of: POLICY_ACTED.problem, ...wrong };
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     return actedOf(await setPolicyBarInTheWallet({ ...named, bar }, ACCOUNT_ORIGIN, onStepOf(onStep)));
   } catch (e) {
@@ -291,13 +279,13 @@ export const policyCurrencies = (registry: AssetRegistry = assets): readonly { r
  * seat may set it, and whether the vault is adopted, are the wallet's to say.
  */
 export async function raisePolicy(
-  personId: string, companyId: string, asked: PolicyAsked, onStep?: (step: number, steps: number) => void, now: () => number = Date.now,
+  personId: string, view: PageView, asked: PolicyAsked, onStep?: (step: number, steps: number) => void, now: () => number = Date.now,
   registry: AssetRegistry = assets,
 ): Promise<PolicyActed> {
   const terms = termsOf(asked, registry);
   if (terms === null) return { of: POLICY_ACTED.problem, problem: NOT_A_POLICY };
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     return actedOf(await setSpendingPolicyInTheWallet({
       ...named, vault: asked.vault.toLowerCase(), token: asked.token, periodLimit: terms.periodLimit,

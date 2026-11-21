@@ -25,7 +25,8 @@
  * after `startJobWorker` returns, which is after `serveJobs` has registered.
  */
 import { startJobWorker } from './prover-worker.js';
-import { provenPathOf, provingRunner, type ProvingCapability, type SendProven } from './proving-runner.js';
+import { provingRunner, type ProvingCapability, type SendProven } from './proving-runner.js';
+import { provenHandedOver } from './records-source.js';
 import { httpKeyMaterialSource, IndexedDbArtefactCache } from './key-material.js';
 import { configFromWorkerName } from './proving-session.js';
 import { NothingWasSent, type Job, type JobRunner } from '../../../src/core/jobs.js';
@@ -108,23 +109,30 @@ const base64Of = (bytes: Uint8Array): string => {
  * Same origin, for the reason the preimage is: the sign-in is this
  * application's, and the path is relative.
  */
-export const sendOver = (fetchImpl: typeof fetch): SendProven => async (job, proven) => {
-  const res = await fetchImpl(provenPathOf(job.accountId), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ tx: base64Of(proven) }),
+export const sendOver = (fetchImpl: typeof fetch): SendProven => {
+  const handOver = provenHandedOver(async (method, path, sent) => {
+    const res = await fetchImpl(path, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      ...(sent === undefined ? {} : { body: sent }),
+    });
+    let answer: unknown = {};
+    try { answer = await res.json(); } catch { /* an answer that is not ours */ }
+    return { status: res.status, body: answer };
   });
-  let body: { txRef?: unknown; error?: unknown; nothingWasSent?: unknown } = {};
-  try { body = await res.json(); } catch { /* an answer that is not ours */ }
-  if (res.ok && typeof body.txRef === 'string') return { txRef: body.txRef };
-  const why = typeof body.error === 'string'
-    ? body.error
-    : `the service answered ${res.status} to this approval`;
-  if (body.nothingWasSent === true) throw new NothingWasSent(why);
-  if (body.nothingWasSent !== false && res.status >= 400 && res.status < 500) {
-    throw new NothingWasSent(why);
-  }
-  throw new Error(why);
+  return async (job, proven) => {
+    const { status, body: answer } = await handOver(job.accountId, base64Of(proven));
+    const body = answer as { txRef?: unknown; error?: unknown; nothingWasSent?: unknown };
+    if (status >= 200 && status < 300 && typeof body.txRef === 'string') return { txRef: body.txRef };
+    const why = typeof body.error === 'string'
+      ? body.error
+      : `the service answered ${status} to this approval`;
+    if (body.nothingWasSent === true) throw new NothingWasSent(why);
+    if (body.nothingWasSent !== false && status >= 400 && status < 500) {
+      throw new NothingWasSent(why);
+    }
+    throw new Error(why);
+  };
 };
 
 /**

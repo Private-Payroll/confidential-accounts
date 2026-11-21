@@ -9,14 +9,15 @@ import { type VaultService } from '../../../../packages/web-shared/src/vault-ser
 import { browserDepositsInFlight, browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import { VaultSecretBeingChanged } from '../../../../packages/web-shared/src/deposit-on-device.js';
 import { DepositLineNotEnded } from '../../../../packages/web-shared/src/deposit-line-ended.js';
-import {
-  deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,
-} from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { deviceRecordsFor, deviceSignerFrom, readersIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import { stopsFor } from './leaving-read-in-the-wallet.js';
+import { vaultServiceThrough } from '../../../../packages/web-shared/src/vault-service-through-the-view.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { payForThePage, readWhatThePageAsks } from '../chain/balance-for-page.js';
-import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
@@ -91,13 +92,13 @@ export function depositDoorsFor(
   /* Opened only by `pay`, which refuses first when no account was chosen. */
   wallet: DepositWallet = depositWalletFor(reach.balance, ctx.held.identity, ctx.held.account ?? 0, reach.now),
 ): DepositDoors {
-  const person = ctx.person ?? (() => { throw new StepRefused(why('no-person')); })();
+  if (ctx.person === null) throw new StepRefused(why('no-person'));
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   const opener = { signerId: me.signerId, wrappingSecret: me.wrappingSecret };
   const kept = (reach.kept ?? keptInTheWallet)(opener);
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
-  const base = vaultServiceFor(r.api, r.accountId, r.roster);
+  const base = vaultServiceThrough(r.stepView);
   const service: VaultService = {
     ...base,
     keys: async () => { throw new Error('a private deposit reads no readers from the service.'); },
@@ -116,7 +117,7 @@ export function depositDoorsFor(
     me,
     myRecordsKey: recordsKeypairFrom(fromHex(r.companyKey)).publicKey as Hex,
     signers: readersIn(directory).signers,
-    records: deviceRecordsFor(r.seat.signingSecret, judge, () => person, enteredFor(r), r.send),
+    records: deviceRecordsFor(r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))),
     inFlight: kept.inFlight,
     ...(kept.coins === undefined ? {} : { kept: kept.coins }),
     pay: async (ask) => {

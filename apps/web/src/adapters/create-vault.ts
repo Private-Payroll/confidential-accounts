@@ -4,19 +4,20 @@ import { rosterEntryRefusal, type RosterWitnesses } from '../../../../src/core/r
 import type { OpenedVaultKeysOffer } from '../../../../src/core/vault-keys.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { READER_REFUSAL, rosterRefusalOf } from '../../../../src/midnight/secret-readers.js';
-import { actOnACompanyInTheWallet, api, canOpenCompanies, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
+import { actOnACompanyInTheWallet, canOpenCompanies, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { SAID, START_STOP, type SaidCode, type StartStopCode } from 'vaults-web-shared/vault-start-stops.js';
 import { type VaultInfoGiven } from 'vaults-web-shared/vault-created-and-started.js';
 import { readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { Fault, FAULT } from '../faults.js';
-import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
+import { namedIn } from './filing-judge.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
-import { companyKeysFor, directoryHereFor, openedHere } from './filing-judge.js';
+import { companyKeysFor, directoryHereFor, openedHere, sealedIn, type PageView } from './filing-judge.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { offersOpenHere } from './vault-keys.js';
+import { LIST } from './view-asks.js';
 
 /*
  * CREATING A COMPANY'S VAULT, AS ONE ACTION IN THE PERSON'S WALLET.
@@ -135,10 +136,9 @@ export const READY = {
 export type Ready = (typeof READY)[keyof typeof READY];
 export type Readiness = { of: Ready } | { of: typeof ACTED.refused; why: ActRefusal };
 
-/** The service's addresses and the words of its answers, compared and never shown. */
-const SERVICE = { vaultKeys: '/vault-keys', offers: '/offers', authority: '/authority' } as const;
-
 type Opened = {
+  /** The page's view of the company, which everything here was read through. */
+  view: PageView;
   sealed: SealedAccount; keys: NonNullable<Awaited<ReturnType<typeof keysOnTheWayIn>>>; roster: () => Promise<BelievedAccount>;
   /** The company's keys as this device believes them (`companyKeysFor`). */
   companyKeys: CompanyKeyHere;
@@ -155,23 +155,23 @@ const LOCKED = READY.locked;
  * it, and says the keys are not open yet rather than that they are on another
  * device.
  */
-async function opened(personId: string, companyId: string, open: boolean): Promise<Opened | ActRefusal | typeof LOCKED> {
+async function opened(personId: string, view: PageView, open: boolean): Promise<Opened | ActRefusal | typeof LOCKED> {
   if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
   if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
-  if (!canOpenCompanies(companyId)) {
+  if (!canOpenCompanies(view.company)) {
     if (!open) return LOCKED;
     await openKeysWithWallet(ACCOUNT_ORIGIN);
   }
-  const sealed = await api(companyRoute(companyId)) as SealedAccount;
-  const keys = await keysOnTheWayIn(companyId);
+  const sealed = await sealedIn(view);
+  const keys = await keysOnTheWayIn(view.company);
   if (keys === null) return ACT_REFUSAL.noKeysHere;
   const roster = async () => {
-    const account = await openedHere(await api(companyRoute(companyId)) as SealedAccount);
+    const account = await openedHere(view, sealed);
     /* The keys for this company were found just above, so it opens; a company that does not is a fault in this code. */
     if (account === null) throw new Fault(FAULT.vaultCompanyDidNotOpen);
     return account;
   };
-  return { sealed, keys, roster, companyKeys: await companyKeysFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey }) };
+  return { view, sealed, keys, roster, companyKeys: await companyKeysFor(view, sealed, { signingPublicKey: keys.signingPublicKey }) };
 }
 
 /**
@@ -189,17 +189,17 @@ async function opened(personId: string, companyId: string, open: boolean): Promi
  * another's (`othersMissing`, which is also said while that check refuses).
  * Nothing is asked of the wallet.
  */
-export async function readVaultReadiness(personId: string, companyId: string): Promise<Readiness> {
+export async function readVaultReadiness(personId: string, view: PageView): Promise<Readiness> {
   try {
-    const o = await opened(personId, companyId, false);
+    const o = await opened(personId, view, false);
     if (o === LOCKED) return { of: READY.locked };
     if (typeof o === 'string') return { of: ACTED.refused, why: o };
     const label = o.sealed.companyLabel, account = o.sealed.contractAddress;
-    const authority = await api(companyRoute(companyId, SERVICE.authority)) as { company?: unknown } | null;
+    const authority = await view.authority() as { company?: unknown } | null;
     if (authority?.company === null || typeof label !== 'string' || typeof account !== 'string') return { of: READY.notOnChain };
-    const [named, served] = await Promise.all([o.roster(), api(companyRoute(companyId, SERVICE.vaultKeys + SERVICE.offers))]);
+    const [named, served] = await Promise.all([o.roster(), o.view.list(LIST.vaultKeyOffers)]);
     const [companyLabel, accountAddress] = [label as CompanyLabel, account as AccountAddress];
-    const offers = offersOpenHere(companyId, served, o.companyKeys, companyLabel, accountAddress);
+    const offers = offersOpenHere(view.company, served, o.companyKeys, companyLabel, accountAddress);
     /*
      * The roster as pressing Create would fold it: a signer with no keys in the roster takes the keys of their own open
      * offer, on their own seat, and only an offer the fold would take (`rosterEntryRefusal`, against the seats and entries
@@ -212,10 +212,10 @@ export async function readVaultReadiness(personId: string, companyId: string): P
         return offer === undefined || !taken(s, offer) ? s : { ...s, vaultKeys: offer.keys };
       }),
     });
-    const readFor = (roster: typeof named) => directoryHereFor(companyId, companyLabel, accountAddress, o.companyKeys, async () => roster)();
+    const readFor = (roster: typeof named) => directoryHereFor(o.view, companyLabel, accountAddress, o.companyKeys, async () => roster)();
     const before = await readFor(withOffers(() => true));
     const witnesses: RosterWitnesses = {
-      accountId: companyId, label: companyLabel, account: accountAddress, seatsOnTheChain: before.holders.seats,
+      accountId: view.company, label: companyLabel, account: accountAddress, seatsOnTheChain: before.holders.seats,
       directory: provedSeatsOf(before.dir.seats), own: null, retired: before.dir.seats.filter((x) => x.retired !== null).map((x) => x.seat),
     };
     let dropped = false;
@@ -255,17 +255,6 @@ const STOPPED_CODES = new Set<string>(Object.keys(STOPPED_BY));
 const SAID_CODES = new Set<string>(Object.values(SAID));
 
 /**
- * The company as the service names it in public: its record, label and
- * account, which the wallet checks on the chain itself before it acts. Null
- * for a company with no account on the chain yet.
- */
-export const namedFor = async (companyId: string): Promise<{ record: string; company: string; account: string } | null> => {
-  const sealed = await api(companyRoute(companyId)) as SealedAccount;
-  const company = sealed?.companyLabel, account = sealed?.contractAddress;
-  return typeof company === 'string' && typeof account === 'string' ? { record: companyId, company, account } : null;
-};
-
-/**
  * CREATE A VAULT for the company `companyId`, born held by its committee, or,
  * with `resume`, carry on starting the vault named: one action in the person's
  * wallet, which gives their own vault keys first, then builds, proves and signs
@@ -274,12 +263,12 @@ export const namedFor = async (companyId: string): Promise<{ record: string; com
  * action got to.
  */
 async function run(
-  personId: string, companyId: string, onStage: (stage: Creating) => void, resume?: string, info?: VaultInfoGiven, retired?: string,
+  personId: string, view: PageView, onStage: (stage: Creating) => void, resume?: string, info?: VaultInfoGiven, retired?: string,
 ): Promise<VaultCreated> {
   try {
     if (ACCOUNT_ORIGIN === '') return { of: ACTED.refused, why: ACT_REFUSAL.notSetUp };
     if (!(await keyringFor(personId))) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
-    const named = await namedFor(companyId);
+    const named = await namedIn(view);
     if (named === null) return { of: ACTED.refused, why: ACT_REFUSAL.didNotFinish };
     onStage(CREATING.checking);
     const ended = await actOnACompanyInTheWallet({
@@ -333,8 +322,8 @@ export async function openYourKeys(personId: string): Promise<{ of: typeof ACTED
  * CREATE A VAULT for the company, held by the company's committee from its deploy, as one action in the person's
  * wallet. `info`, when given, is the vault's name and description, filed in the company's records right after the deploy.
  */
-export const createVault = (personId: string, companyId: string, onStage: (stage: Creating) => void, info?: VaultInfoGiven): Promise<VaultCreated> =>
-  run(personId, companyId, onStage, undefined, info);
+export const createVault = (personId: string, view: PageView, onStage: (stage: Creating) => void, info?: VaultInfoGiven): Promise<VaultCreated> =>
+  run(personId, view, onStage, undefined, info);
 
 /**
  * CARRY ON SETTING UP the vault `vault`, which the committee has held since it was sent and which is not started: from
@@ -343,8 +332,8 @@ export const createVault = (personId: string, companyId: string, onStage: (stage
  * carries on, for a vault none was filed for; one filed already is kept and said.
  */
 export const finishStarting = (
-  personId: string, companyId: string, vault: string, onStage: (stage: Creating) => void, info?: VaultInfoGiven,
-): Promise<VaultCreated> => run(personId, companyId, onStage, vault, info);
+  personId: string, view: PageView, vault: string, onStage: (stage: Creating) => void, info?: VaultInfoGiven,
+): Promise<VaultCreated> => run(personId, view, onStage, vault, info);
 
 /**
  * ADOPT AGAIN the vault `vault`, which the company retired under its record `retired` and which still holds money: the
@@ -352,19 +341,19 @@ export const finishStarting = (
  * every way of paying out of the vault opens again.
  */
 export const adoptAgain = (
-  personId: string, companyId: string, vault: string, retired: string, onStage: (stage: Creating) => void,
-): Promise<VaultCreated> => run(personId, companyId, onStage, vault, undefined, retired);
+  personId: string, view: PageView, vault: string, retired: string, onStage: (stage: Creating) => void,
+): Promise<VaultCreated> => run(personId, view, onStage, vault, undefined, retired);
 
 /**
  * GIVE YOUR VAULT KEYS to the company `companyId`, on their own: one action in
  * the person's wallet, which signs their records key and directory entry,
  * files the entry and offers the company their seat's vault keys itself.
  */
-export async function giveYourVaultKeys(personId: string, companyId: string): Promise<{ of: typeof ACTED.done } | { of: typeof ACTED.refused; why: ActRefusal }> {
+export async function giveYourVaultKeys(personId: string, view: PageView): Promise<{ of: typeof ACTED.done } | { of: typeof ACTED.refused; why: ActRefusal }> {
   try {
     if (ACCOUNT_ORIGIN === '') return { of: ACTED.refused, why: ACT_REFUSAL.notSetUp };
     if (!(await keyringFor(personId))) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
-    const named = await namedFor(companyId);
+    const named = await namedIn(view);
     if (named === null) return { of: ACTED.refused, why: ACT_REFUSAL.didNotFinish };
     const ended = await actOnACompanyInTheWallet({ name: WALLET.giveVaultKeys, ...named }, ACCOUNT_ORIGIN);
     return ended.of === 'done' ? { of: ACTED.done } : { of: ACTED.refused, why: ACT_REFUSAL.didNotFinish };

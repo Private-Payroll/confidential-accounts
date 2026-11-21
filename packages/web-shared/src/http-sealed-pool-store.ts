@@ -1,11 +1,15 @@
 /**
- * **THE PAGE'S SEALED STORE: THE PRODUCT'S DATABASE, REACHED OVER HTTP, AND
- * NEVER HANDED ANYTHING IT COULD OPEN.**
+ * **THE PAGE'S SEALED STORES FOR A VAULT'S RECORDS AND FOR THE COMPANY'S OWN:
+ * READ AND FILED THROUGH THE COMPANY'S VIEW (`ThroughTheView`), NEVER HANDED
+ * ANYTHING THEY COULD OPEN.**
  *
  * A vault's pool and journals are opened here, on the person's device, with
- * their own key. What this sends is the sealed record and nothing else, and
- * what it believes back is only what `sealed-record-wire.ts` has checked: the
- * record it asked for, the version it asked for, the bytes the digest names.
+ * their own key. A read is one of the view's joined reads; a filing is signed
+ * here and sent through the view's one write, which checks that nothing moved
+ * first. What comes back is believed only as `sealed-record-wire.ts` has
+ * checked it: the record asked for, the version asked for, the bytes the
+ * digest names. The class names keep the word `Http` from when these stores
+ * sent their own requests.
  *
  * It keeps the promises every `SealedPoolStore` keeps. A version another writer
  * filed first is `VaultPoolVersionAlreadyFiled`, by name, so the pool and the
@@ -24,20 +28,22 @@
  * is never what makes a version believed.
  */
 import { companyRecordEntry, signedWithItsEntry, vaultRecordEntry, type RecordRead } from '../../../src/midnight/record-manifest.js';
-import type { RecordsEntered } from './record-entered-here.js';
+import { manifestFollowing, recordsEnteredFor, type ManifestService, type RecordsEntered } from './record-entered-here.js';
 import type { RecordsAsked } from '../../../src/midnight/records-held.js';
 import {
   VaultPoolVersionAlreadyFiled, VaultRecordRefused, whyThisIsNotASealedPool,
   type FiledPoolVersion, type PassedOverVersion, type SealedPool, type SealedPoolStore,
 } from '../../../src/midnight/vault-pool.js';
 import {
-  assertWireVault, fromWire, signFiling, toWire, verifiedFiler, wirePaths, type WireRecord,
+  assertWireVault, fromWire, signFiling, toWire, verifiedFiler, type WireRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { ServiceNotReached } from './hand-over.js';
+import { ViewEnded, type CompanyView } from './company-view.js';
+import type { CompanyRecordAsked, RecordWrite, VaultRecordAsked } from './records-source.js';
+import { CompanyChangedMeanwhile } from './company-view-probe.js';
 import { companyRecordKey, vaultRecordKey, type FiledKind } from '../../../src/midnight/seat-directory.js';
 import {
-  companyWirePaths, fromCompanyWire, toCompanyWire, verifiedCompanyFiler,
+  fromCompanyWire, toCompanyWire, verifiedCompanyFiler,
   SEALED_UNDER_PURPOSE, type CompanyRecordKind, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
 
@@ -74,26 +80,101 @@ export type FilingJudge = ((filer: Hex | null, kind: FiledKind, recordKey: strin
 };
 
 /**
- * **A JUDGE MADE FRESH FOR ONE READ, FOR WHAT THAT READ WILL JUDGE**: the
- * company's directory read again, the chain read again by the person's own
- * wallet, and the records and kinds `asked` proven against the head on chain in
- * one request, so no read rests on what an earlier one saw. A record the read
- * did not ask for is refused, never believed.
+ * **A JUDGE MADE FOR ONE READ, FOR WHAT THAT READ WILL JUDGE**: the company's
+ * directory, the chain as the person's own wallet reads it, and the records and
+ * kinds `asked` proven against the head on chain in one request. Each is read
+ * again for the read, or, when the company's view is open, read once for the
+ * whole step or screen and shared by every read in it. A record the read did
+ * not ask for is refused, never believed.
  */
 export type FreshJudge = (asked?: RecordsAsked) => Promise<FilingJudge>;
 
-/** How many times a write told its version is taken reads that version back before saying it is not confirmed. */
-export const READ_BACK_ATTEMPTS = 3;
+/**
+ * A store's reads and filings through the company's view: its record's newest version and every version, read with
+ * the company's other reads and answered as the record's own read answers them; each filing sent through the view's
+ * one write, after its check that nothing moved, and entered in the company's records through the view's manifest.
+ */
+export interface ThroughTheView {
+  readonly vaultRecord: (asked: VaultRecordAsked) => Promise<unknown>;
+  readonly companyRecord: (asked: CompanyRecordAsked) => Promise<unknown>;
+  readonly file: (w: RecordWrite) => Promise<unknown>;
+  /** The view's manifest and company, which a filing is entered through, and why this seat files nothing more. */
+  readonly manifest: ManifestService;
+  readonly company: string;
+  readonly stops?: () => Promise<string | null>;
+}
 
-/** One request to this product's own server, and its answer. */
-export type WireSend = (
-  path: string,
-  init: { readonly method: 'GET' | 'PUT'; readonly body?: string },
-) => Promise<{ readonly status: number; readonly body: unknown }>;
+/** A store's reads through a view, with no way to file through it: all a store that only reads is given. */
+export type ReadsThroughTheView = Pick<ThroughTheView, 'vaultRecord' | 'companyRecord' | 'company'>;
 
+/** Whether `reach` can file, as well as read. */
+export const filesThrough = (reach: ThroughTheView | ReadsThroughTheView): reach is ThroughTheView =>
+  typeof (reach as Partial<ThroughTheView>).file === 'function';
+
+/**
+ * A store's reads and filings through the step's or screen's view (`held`), each through whichever view it holds at
+ * the time. A store that files is given a step's view, which a refused filing ends and which is opened again for the
+ * next read (`viewHeldOver`), so a version told taken is read back and entered through a live view. `stops` says why
+ * this seat files nothing more, as the entering of a filing asks it (`recordsEnteredFor`).
+ */
+export const readsJoinedIn = (
+  held: { current(): Pick<CompanyView<unknown>, 'company' | 'records' | 'vaultRecords' | 'write' | 'manifest'> }, stops?: () => Promise<string | null>,
+): ThroughTheView => Object.freeze({
+  vaultRecord: async (asked: VaultRecordAsked) => (await held.current().vaultRecords([asked]))[0],
+  companyRecord: async (asked: CompanyRecordAsked) => (await held.current().records([asked]))[0],
+  file: async (w: RecordWrite) => (await held.current().write([w]))[0],
+  manifest: manifestFollowing(held),
+  company: held.current().company,
+  ...(stops === undefined ? {} : { stops }),
+});
+
+/** What the service said when it refused a filing sent through the view, when the refusal carries its answer. */
+const refusalOf = (cause: unknown): Record<string, unknown> | null => {
+  const body = (cause as { readonly body?: unknown } | null)?.body;
+  return body !== null && typeof body === 'object' ? body as Record<string, unknown> : null;
+};
+
+/** Whether a filing through the view was stopped before anything was sent: the company changed, or the view had ended. */
+const stoppedBeforeSending = (cause: unknown): boolean => cause instanceof CompanyChangedMeanwhile || cause instanceof ViewEnded;
+
+/** The status a read through the view stands for: the record's own read, answered. */
+const ANSWERED = 200;
+
+/** The reason a refusal's answer gives, or that it gave none. */
 const said = (body: unknown): string => {
   const e = (body as { error?: unknown } | null)?.error;
   return typeof e === 'string' ? e : 'no reason given';
+};
+
+/**
+ * **HOW A FILING SENT THROUGH THE VIEW FAILED**, as the service's answer says it: refused and not filed when nothing
+ * was sent or the service refused it with a 4xx, with the status (null when nothing was sent) and the reason; otherwise,
+ * a 5xx, no status or no answer, not confirmed, since it may have been filed. Both stores word their own message from it.
+ */
+const filingFailureOf = (cause: unknown):
+  { readonly refused: true; readonly status: number | null; readonly why: string } | { readonly refused: false } => {
+  const told = cause as { readonly status?: unknown; readonly thisSendNotSent?: unknown; readonly message?: unknown } | null;
+  const status = typeof told?.status === 'number' ? told.status : null;
+  if (told?.thisSendNotSent !== true && !(status !== null && status >= 400 && status < 500)) return { refused: false };
+  const body = refusalOf(cause);
+  return { refused: true, status, why: body === null ? String(told?.message ?? 'no reason given') : said(body) };
+};
+
+/**
+ * **WHETHER THE VERSION THE SERVICE TOLD TAKEN HOLDS THESE BYTES**, read through the view from every version of the
+ * record: true, false, or undefined when it could not be read (a view the refused filing ended reads nothing more).
+ * `takenIn` finds the version in what the view answered; `digestOf` is the digest of that one.
+ */
+const takenVersionHolds = async (
+  every: () => Promise<unknown>, takenIn: (answer: unknown) => unknown, digestOf: (taken: unknown) => string, digest: string,
+): Promise<boolean | undefined> => {
+  try {
+    const taken = takenIn(await every());
+    return taken === undefined ? undefined : digestOf(taken) === digest;
+  } catch {
+    /* A read that failed, or a view the refused filing ended, is no reading: whose version it is stays unknown. */
+    return undefined;
+  }
 };
 
 /** A version a store that only reads was asked to file. Nothing was sent. */
@@ -139,9 +220,13 @@ export async function versionsAsFiledOf(
 }
 
 export class HttpSealedPoolStore implements SealedPoolStore, ListsBelieved {
+  /* A store given a view it cannot file through is given no signing secret either: it only reads. */
+  constructor(record: WireRecord, joined: ThroughTheView, signWith: Hex | null, judge: FreshJudge);
+  constructor(record: WireRecord, joined: ReadsThroughTheView, signWith: null, judge: FreshJudge);
   constructor(
     private readonly record: WireRecord,
-    private readonly send: WireSend,
+    /** The company's view the newest version and every version are read through, and every filing is sent through. */
+    private readonly joined: ThroughTheView | ReadsThroughTheView,
     /**
      * The signing secret of the signer this device files as. It is used here and sent nowhere. Null makes a store that
      * only reads (`recordsReadHere`): every read is the same, and `put` refuses before anything is sent.
@@ -149,8 +234,6 @@ export class HttpSealedPoolStore implements SealedPoolStore, ListsBelieved {
     private readonly signWith: Hex | null,
     /** Who this device believes filed a version, asked afresh for each read. */
     private readonly judge: FreshJudge,
-    /** The one filing call, bound to the vault's company and this seat: a version filed here is entered in the company's records. */
-    private readonly entered: RecordsEntered,
   ) {
     if (signWith !== null && (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith))) {
       throw new Error('a sealed record is filed signed, and this device was given no signing key to sign it with.');
@@ -166,10 +249,8 @@ export class HttpSealedPoolStore implements SealedPoolStore, ListsBelieved {
 
   async get(vault: string): Promise<SealedPool | null> {
     assertWireVault(vault);
-    const r = await this.send(wirePaths.newest(vault, this.record), { method: 'GET' });
-    if (r.status !== 200) this.refuse('read', r.status, r.body);
-    const b = r.body as { record?: unknown; filed?: unknown } | null;
-    if (b?.record !== this.record || !('filed' in (b ?? {}))) this.refuse('read', r.status, { error: 'the answer is not about this record' });
+    const b = await this.read(vault, false) as { record?: unknown; filed?: unknown } | null;
+    if (b?.record !== this.record || !('filed' in (b ?? {}))) this.refuse('read', ANSWERED, { error: 'the answer is not about this record' });
     const judge = await this.judge(this.asked(vault));
     if (b!.filed === null) return this.absent(vault, judge);
     const newest = fromWire(b!.filed, { vault, record: this.record }).sealed;
@@ -279,18 +360,21 @@ export class HttpSealedPoolStore implements SealedPoolStore, ListsBelieved {
     return versions;
   }
 
+  /** One read of this record, its newest version or every version: joined with the company's other reads, or sent alone. */
+  private read(vault: string, every: boolean): Promise<unknown> {
+    return this.joined.vaultRecord(every ? { vault, record: this.record, every } : { vault, record: this.record });
+  }
+
   private async listed(vault: string) {
     assertWireVault(vault);
-    const r = await this.send(wirePaths.versions(vault, this.record), { method: 'GET' });
-    if (r.status !== 200) this.refuse('listed', r.status, r.body);
-    const b = r.body as { record?: unknown; versions?: unknown } | null;
+    const b = await this.read(vault, true) as { record?: unknown; versions?: unknown } | null;
     if (b?.record !== this.record || !Array.isArray(b.versions)) {
-      this.refuse('listed', r.status, { error: 'the answer is not a list of this record\x27s versions' });
+      this.refuse('listed', ANSWERED, { error: 'the answer is not a list of this record\'s versions' });
     }
     const filed = (b!.versions as unknown[]).map((m) => fromWire(m, { vault, record: this.record }));
     filed.forEach((f, i) => {
       if (f.wire.version !== i + 1) {
-        this.refuse('listed', r.status, {
+        this.refuse('listed', ANSWERED, {
           error: `the list names version ${f.wire.version} where version ${i + 1} belongs, so it is not every version, in order`,
         });
       }
@@ -302,72 +386,60 @@ export class HttpSealedPoolStore implements SealedPoolStore, ListsBelieved {
     assertWireVault(vault);
     const unusable = whyThisIsNotASealedPool(rec, vault);
     if (unusable !== null) throw new Error(`this is not a sealed record for this vault (${unusable}), so nothing is filed.`);
-    if (this.signWith === null) throw new ReadFilesNothing(this.record, rec.version);
+    const joined = this.joined;
+    if (this.signWith === null || !filesThrough(joined)) throw new ReadFilesNothing(this.record, rec.version);
     const signed = signFiling(this.record, rec, this.signWith);
     const wire = toWire(this.record, signed);
-    let r: { status: number; body: unknown };
-    try {
-      r = await this.send(wirePaths.file(vault, this.record, rec.version), { method: 'PUT', body: JSON.stringify(wire) });
-    } catch (cause) {
-      throw this.notConfirmed(rec.version, (cause as Error)?.message ?? String(cause), cause);
-    }
-    const b = r.body as Record<string, unknown> | null;
-    if (r.status === 201) {
-      if (b?.filed !== true || b.record !== this.record || b.version !== rec.version || b.digest !== wire.digest) {
-        throw this.notConfirmed(rec.version, 'the server\x27s answer names a different record, version or body than the one sent');
-      }
-      await this.entered.enter([vaultRecordEntry(this.record, signed)]);
-      return;
-    }
-    if (r.status === 409 && b?.refused === 'version-already-filed' && b.version === rec.version) {
-      /*
-       * **WHOSE VERSION IT IS, ASKED RATHER THAN ASSUMED.** A request sent twice
-       * (a retry somewhere between here and the store) finds the version it
-       * filed itself already there. Reported as another writer's, a pool write
-       * made after money moved would be re-applied to a pool that already holds
-       * it, and refused as though the money were unrecorded.
-       */
-      const mine = await this.whoseVersion(vault, rec.version, wire.digest);
-      if (mine === true) {
-        /* Its own version, filed by a request sent twice: entered again, which the company's records answer as entered already. */
-        await this.entered.enter([vaultRecordEntry(this.record, signed)]);
-        return;
-      }
-      if (mine === undefined) {
-        throw this.notConfirmed(rec.version, 'the store says the version is taken, and whose it is could not be read back');
-      }
-      throw new VaultPoolVersionAlreadyFiled(vault, rec.version);
-    }
-    if (r.status === 422 && b?.refused === 'not-the-next-version' && b.version === rec.version) {
-      throw new Error(`version ${rec.version} of this vault's ${this.record} was not filed: ${String(b.why)}`);
-    }
-    if (r.status === 422 && b?.refused === 'not-filed' && b.version === rec.version) {
-      throw new VaultRecordRefused(`version ${rec.version} of this vault's ${this.record} was refused and not filed: ${String(b.why)}`);
-    }
-    if (r.status >= 400 && r.status < 500) {
-      throw new Error(
-        `version ${rec.version} of this vault's ${this.record} was refused and not filed (${r.status}: ${said(b)}).`);
-    }
-    throw this.notConfirmed(rec.version, `the server answered ${r.status}: ${said(b)}`);
+    const { manifest, company, stops } = joined;
+    return this.filedThroughTheView(joined, vault, signed, wire, recordsEnteredFor(manifest, company, this.signWith, stops));
   }
 
   /**
-   * **WHETHER THE TAKEN VERSION HOLDS THESE BYTES**: true, false, or undefined
-   * when it could not be read back after `READ_BACK_ATTEMPTS` tries. Only that
-   * one version is read.
+   * Files `signed` through the company's view, after its check that nothing moved, and enters it with `entered`, over the view's manifest. Stopped by the
+   * check, nothing was sent; refused, it was not filed; told the version is taken, the version is read back, and another
+   * writer's is a lost race (`VaultPoolVersionAlreadyFiled`); any other failure may have filed it, and is said so.
    */
-  private async whoseVersion(vault: string, version: number, digest: string): Promise<boolean | undefined> {
-    for (let i = 0; i < READ_BACK_ATTEMPTS; i += 1) {
-      try {
-        const r = await this.send(wirePaths.one(vault, this.record, version), { method: 'GET' });
-        const b = r.body as { record?: unknown; version?: unknown; filed?: unknown } | null;
-        if (r.status !== 200 || b?.record !== this.record || b.version !== version || !b.filed) continue;
-        return fromWire(b.filed, { vault, record: this.record, version }).wire.digest === digest;
-      } catch {
-        /* a read that failed or came back malformed is tried again */
+  private async filedThroughTheView(
+    joined: ThroughTheView, vault: string, signed: SealedPool, wire: ReturnType<typeof toWire>, entered: RecordsEntered,
+  ): Promise<void> {
+    const { version } = signed;
+    let b: Record<string, unknown> | null;
+    try {
+      b = await joined.file({ to: 'vault-record', vault, record: this.record, version, body: wire }) as Record<string, unknown> | null;
+    } catch (cause) {
+      if (stoppedBeforeSending(cause)) throw cause;
+      const refused = refusalOf(cause);
+      if (refused?.['refused'] === 'not-the-next-version' && refused['version'] === version) {
+        throw new Error(`version ${version} of this vault's ${this.record} was not filed: ${String(refused['why'])}`);
       }
+      if (refused?.['refused'] === 'not-filed' && refused['version'] === version) {
+        throw new VaultRecordRefused(`version ${version} of this vault's ${this.record} was refused and not filed: ${String(refused['why'])}`);
+      }
+      if (refused?.['refused'] === 'version-already-filed' && refused['version'] === version) {
+        /* Whose version it is, read back through the step's view as it is opened again after the refusal, rather than assumed. */
+        const mine = await takenVersionHolds(
+          () => joined.vaultRecord({ vault, record: this.record, every: true }),
+          (every) => {
+            const a = every as { record?: unknown; versions?: unknown } | null;
+            return a?.record === this.record && Array.isArray(a.versions) ? a.versions[version - 1] : undefined;
+          },
+          (taken) => fromWire(taken, { vault, record: this.record, version }).wire.digest, wire.digest);
+        if (mine === false) throw new VaultPoolVersionAlreadyFiled(vault, version);
+        if (mine === true) {
+          await entered.enter([vaultRecordEntry(this.record, signed)]);
+          return;
+        }
+        throw this.notConfirmed(version, (cause as Error)?.message ?? String(cause), cause);
+      }
+      const failure = filingFailureOf(cause);
+      if (!failure.refused) throw this.notConfirmed(version, (cause as Error)?.message ?? String(cause), cause);
+      throw Object.assign(new VaultRecordRefused(
+        `version ${version} of this vault's ${this.record} was refused and not filed (${failure.status ?? 'nothing sent'}: ${failure.why}).`), { cause });
     }
-    return undefined;
+    if (b?.['filed'] !== true || b['record'] !== this.record || b['version'] !== version || b['digest'] !== wire.digest) {
+      throw this.notConfirmed(version, 'the server\'s answer names a different record, version or body than the one sent');
+    }
+    await entered.enter([vaultRecordEntry(this.record, signed)]);
   }
 
   private notConfirmed(version: number, why: string, cause?: unknown): Error {
@@ -377,34 +449,6 @@ export class HttpSealedPoolStore implements SealedPoolStore, ListsBelieved {
       + 'the assumption that it was not.', cause === undefined ? undefined : { cause });
   }
 }
-
-/**
- * **HOW THE PAGE SENDS ONE REQUEST**: to its own origin only, with the sign-in
- * cookie, and saying which person this tab was prepared for, so a sign-in
- * changed in another tab is refused rather than written under. A request that
- * got no answer at all is `ServiceNotReached`, never an answer: the browser
- * cannot tell whether what it carried arrived, so whoever sent it decides.
- */
-export const pageWireSend = (
-  signedInAs: () => string | null,
-  doFetch: typeof fetch = fetch,
-): WireSend => async (path, init) => {
-  if (!path.startsWith('/api/')) throw new Error('a sealed record is sent to this product\x27s own server and nowhere else');
-  const who = signedInAs();
-  let r: Response;
-  try {
-    r = await doFetch(path, {
-      method: init.method,
-      ...(init.body === undefined ? {} : { body: init.body }),
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', ...(who ? { 'x-signed-in-as': who } : {}) },
-    });
-  } catch (e) {
-    throw new ServiceNotReached(`the company's service could not be reached (${String((e as Error)?.message ?? e).replace(/\.\s*$/u, '')})`, false);
-  }
-  const body = await r.json().catch(() => ({}));
-  return { status: r.status, body };
-};
 
 /** A record the company's records name and the service did not give at all, by name, with the reason. Nothing is built as if it were absent. */
 export class RecordWithheld extends Error {
@@ -445,15 +489,24 @@ interface CompanyVersionPassedOver {
  * holds no seat secret reads.
  */
 export class HttpCompanyRecordStore {
+  /* A store given a view it cannot file through is given no signing secret either: it only reads. */
+  constructor(company: string, joined: ThroughTheView, signWith: Hex | null, judge: FreshJudge);
+  constructor(company: string, joined: ReadsThroughTheView, signWith: null, judge: FreshJudge);
   constructor(
     private readonly company: string,
-    private readonly send: WireSend,
+    /** The company's view every read goes through, and every filing is sent through. */
+    private readonly joined: ThroughTheView | ReadsThroughTheView,
     private readonly signWith: Hex | null,
     private readonly judge: FreshJudge,
   ) {
     if (signWith !== null && (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith))) {
       throw new Error('a company record is filed signed, and this device was given no signing key to sign it with.');
     }
+  }
+
+  /** One read of a record, its newest version or every version, joined with the company's other reads. */
+  private read(asked: CompanyRecordAsked): Promise<unknown> {
+    return this.joined.companyRecord(asked);
   }
 
   private believed(rec: SealedCompanyRecord, judge: FilingJudge, newest: boolean): SealedCompanyRecord {
@@ -472,10 +525,9 @@ export class HttpCompanyRecordStore {
   }
 
   async get(kind: CompanyRecordKind, id: string): Promise<SealedCompanyRecord | null> {
-    const r = await this.send(companyWirePaths.newest(this.company, kind, id), { method: 'GET' });
-    const b = r.body as { kind?: unknown; id?: unknown; filed?: unknown } | null;
-    if (r.status !== 200 || b?.kind !== kind || b?.id !== id || !('filed' in (b ?? {}))) {
-      throw new Error(`this company's ${kind} record could not be read (the server answered ${r.status}: ${said(r.body)}). That is not a record holding nothing.`);
+    const b = await this.read({ kind, id }) as { kind?: unknown; id?: unknown; filed?: unknown } | null;
+    if (b?.kind !== kind || b?.id !== id || !('filed' in (b ?? {}))) {
+      throw new Error(`this company's ${kind} record could not be read (the server answered ${ANSWERED}: ${said(b)}). That is not a record holding nothing.`);
     }
     const judge = await this.judge({ records: [{ store: 'company', kind, id }] });
     if (b!.filed === null) return this.absent(kind, id, judge);
@@ -487,23 +539,30 @@ export class HttpCompanyRecordStore {
    * what is read of a record filed once (a one-off), whatever later version anyone put over it.
    */
   async at(kind: CompanyRecordKind, id: string, version: number): Promise<SealedCompanyRecord | null> {
-    const r = await this.send(companyWirePaths.one(this.company, kind, id, version), { method: 'GET' });
-    const b = r.body as { kind?: unknown; id?: unknown; version?: unknown; filed?: unknown } | null;
-    if (r.status !== 200 || b?.kind !== kind || b?.id !== id || b?.version !== version || !('filed' in (b ?? {}))) {
-      throw new Error(`version ${version} of this company's ${kind} record could not be read (the server answered ${r.status}: ${said(r.body)}). That is not a record holding nothing.`);
-    }
+    const filed = await this.oneOfEvery(kind, id, version);
     const judge = await this.judge({ records: [{ store: 'company', kind, id }] });
-    if (b!.filed === null) return this.absent(kind, id, judge);
-    const rec = fromCompanyWire(b!.filed, { company: this.company, kind, id }).sealed;
+    if (filed === null) return this.absent(kind, id, judge);
+    const rec = fromCompanyWire(filed, { company: this.company, kind, id }).sealed;
     if (rec.version !== version) throw new Error(`the service gave version ${rec.version} of this company's ${kind} record where version ${version} was asked.`);
     return this.believed(rec, judge, false);
   }
 
+  /**
+   * One version of a record, found among every version the company's view read of it with the company's other reads:
+   * what was filed at it, or null when none was. Which record and version it is, is checked where it is opened.
+   */
+  private async oneOfEvery(kind: CompanyRecordKind, id: string, version: number): Promise<unknown> {
+    const every = (await this.read({ kind, id, every: true })) as { readonly versions?: unknown } | null;
+    if (!Array.isArray(every?.versions)) {
+      throw new Error(`version ${version} of this company's ${kind} record could not be read (the service did not answer with its versions). That is not a record holding nothing.`);
+    }
+    return (every.versions as readonly { readonly version?: unknown }[]).find((w) => w?.version === version) ?? null;
+  }
+
   async versions(kind: CompanyRecordKind, id: string): Promise<readonly (SealedCompanyRecord | CompanyVersionPassedOver)[]> {
-    const r = await this.send(companyWirePaths.versions(this.company, kind, id), { method: 'GET' });
-    const b = r.body as { versions?: unknown } | null;
-    if (r.status !== 200 || !Array.isArray(b?.versions)) {
-      throw new Error(`this company's ${kind} record could not be listed (the server answered ${r.status}: ${said(r.body)}).`);
+    const b = await this.read({ kind, id, every: true }) as { versions?: unknown } | null;
+    if (!Array.isArray(b?.versions)) {
+      throw new Error(`this company's ${kind} record could not be listed (the server answered ${ANSWERED}: ${said(b)}).`);
     }
     const filed = (b!.versions as unknown[]).map((m) => fromCompanyWire(m, { company: this.company, kind, id }).sealed);
     filed.forEach((f, i) => {
@@ -519,17 +578,45 @@ export class HttpCompanyRecordStore {
 
   async put(rec: SealedCompanyRecord): Promise<void> {
     if (rec.company !== this.company) throw new Error('that record is another company\'s, so nothing is filed.');
-    if (this.signWith === null) throw new ReadFilesNothing(rec.kind, rec.version);
+    const joined = this.joined;
+    if (this.signWith === null || !filesThrough(joined)) throw new ReadFilesNothing(rec.kind, rec.version);
     const wire = toCompanyWire(signedWithItsEntry(rec, this.signWith));
-    let r: { status: number; body: unknown };
+    return this.filedThroughTheView(joined, rec, wire);
+  }
+
+  /**
+   * Files `wire` through the company's view, after its check that nothing moved. Stopped by the check, nothing was sent.
+   * Told the version is taken, the version is read back: these bytes are this filing delivered twice, and filed;
+   * another writer's is a lost race (`VaultPoolVersionAlreadyFiled`); unread, it is not confirmed. A refusal the service
+   * gave (another 4xx), or one the check made before anything left, is said as refused and not filed; an answer that
+   * never came, or a 5xx, as not confirmed.
+   */
+  private async filedThroughTheView(joined: ThroughTheView, rec: SealedCompanyRecord, wire: ReturnType<typeof toCompanyWire>): Promise<void> {
+    let b: Record<string, unknown> | null;
     try {
-      r = await this.send(companyWirePaths.one(this.company, rec.kind, rec.id, rec.version), { method: 'PUT', body: JSON.stringify(wire) });
+      b = await joined.file({ to: 'record', kind: rec.kind, id: rec.id, version: rec.version, body: wire }) as Record<string, unknown> | null;
     } catch (cause) {
+      if (stoppedBeforeSending(cause)) throw cause;
+      if (refusalOf(cause)?.['refused'] === 'version-already-filed') {
+        /* Whose version it is, read back through the view as it is opened again after the refusal, rather than assumed. */
+        const mine = await takenVersionHolds(
+          () => joined.companyRecord({ kind: rec.kind, id: rec.id, every: true }),
+          (every) => {
+            const a = every as { versions?: unknown } | null;
+            return Array.isArray(a?.versions) ? (a.versions as readonly { readonly version?: unknown }[]).find((w) => w?.version === rec.version) : undefined;
+          },
+          (taken) => fromCompanyWire(taken, { company: this.company, kind: rec.kind, id: rec.id, version: rec.version }).wire.digest, wire.digest);
+        if (mine === true) return;
+        if (mine === false) throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
+        throw new Error(`version ${rec.version} of this company's ${rec.kind} record was told taken, and whose it is could not be read. It may have been filed: read it again before deciding anything.`, { cause });
+      }
+      const failure = filingFailureOf(cause);
+      if (failure.refused) {
+        throw new Error(`version ${rec.version} of this company's ${rec.kind} record was refused and not filed (${failure.status ?? 'nothing sent'}: ${failure.why}).`, { cause });
+      }
       throw new Error(`version ${rec.version} of this company's ${rec.kind} record was not confirmed filed. It may have been filed: read it again before deciding anything.`, { cause });
     }
-    const b = r.body as Record<string, unknown> | null;
-    if (r.status === 201 && b?.filed === true && b.version === rec.version && b.digest === wire.digest) return;
-    if (r.status === 409 && b?.refused === 'version-already-filed') throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
-    throw new Error(`version ${rec.version} of this company's ${rec.kind} record was refused and not filed (${r.status}: ${said(b)}).`);
+    if (b?.['filed'] === true && b['version'] === rec.version && b['digest'] === wire.digest) return;
+    throw new Error(`version ${rec.version} of this company's ${rec.kind} record was not confirmed filed. It may have been filed: read it again before deciding anything.`);
   }
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Alert, AlertDescription, Badge, Button, ComingSoon, Progress, SectionLoading, Tabs, TabsContent, TabsList, TabsTrigger, useText } from 'vaults-ui';
 import { readVaultRows } from '../adapters/vault-rows.js';
-import { CompanyRecordsProvider } from '../records/company-records.js';
+import { CompanyRecordsProvider, useCompanyView } from '../records/company-records.js';
 import { SessionProvider, useSession } from '../session.js';
 import { STEP, type StepId } from '../setup/step-ids.js';
 import { blockedBy, firstOpen, isDoneForGood, nextAfter, skippedFor, skipStep, STANDING, standingOf, useCreationFact, useInvitedFact } from '../setup/standing.js';
@@ -43,7 +43,7 @@ export function Setup() {
 }
 
 function SetupSteps() {
-  const t = useText();
+  const t = useText(), view = useCompanyView();
   const session = useSession();
   const { person } = session;
   const [asked] = useState(() => takeAsked());
@@ -72,10 +72,9 @@ function SetupSteps() {
   const continueWhyId = useId();
 
   const read = useCallback(async () => {
-    const v = company === null ? null : await readVaultRows(person.id, company);
     /* Vaults that could not be read are read as none created: the step stays open, and is never shown done on a guess. */
-    setVaults(company === null ? null : v ?? []);
-  }, [person.id, company]);
+    setVaults(view === null ? null : await readVaultRows(person.id, view) ?? []);
+  }, [person.id, view]);
   useEffect(() => { void read(); }, [read]);
 
   /*

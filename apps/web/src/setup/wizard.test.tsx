@@ -61,6 +61,12 @@ const state = vi.hoisted(() => ({
   /** What the service then lists for the company, as the one read of its records says it, once an invitation is filed. */
   afterInvite: null as unknown,
 }));
+
+/* A panel shown here without the page's frame is handed the view the frame would hand it. */
+vi.mock('../records/company-records.js', async (real) => ({
+  ...(await real<typeof import('../records/company-records.js')>()),
+  useCompanyView: (await import('../adapters/page-view.test-support.js')).useTheViewOfTheTest,
+}));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
   creationOf: vi.fn(async (company: string | null) => {
@@ -97,24 +103,27 @@ vi.mock('../adapters/session.js', async (real) => ({
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
-  readVaultName: vi.fn(async (_p: string, _c: string, _v: string, unread?: unknown) => (state.vaultName === 'unread' ? unread ?? null : state.vaultName)),
   readCompany: vi.fn(async () => state.records),
+}));
+vi.mock('../adapters/company-vaults-read.js', async (real) => ({
+  ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
+  readVaultName: vi.fn(async (_p: string, _c: string, _v: string, unread?: unknown) => (state.vaultName === 'unread' ? unread ?? null : state.vaultName)),
 }));
 vi.mock('../adapters/create-vault.js', async (real) => ({
   ...(await real<typeof import('../adapters/create-vault.js')>()),
   readVaultReadiness: vi.fn(async () => state.ready),
   openYourKeys: vi.fn(async (person: string) => { state.opened.push(person); state.ready = { of: 'ready' }; return { of: 'done' }; }),
-  createVault: vi.fn(async (person: string, company: string, onStage: (s: string) => void) => {
+  createVault: vi.fn(async (person: string, company: { company: string }, onStage: (s: string) => void) => {
     onStage('building');
-    state.acted.push(JSON.stringify(['create-vault', person, company]));
+    state.acted.push(JSON.stringify(['create-vault', person, company.company]));
     return state.vaultCreated;
   }),
-  finishStarting: vi.fn(async (person: string, company: string, vault: string, _stage: unknown, info?: unknown) => {
-    state.acted.push(JSON.stringify(['finish-vault', person, company, vault, ...(info === undefined ? [] : [info])]));
+  finishStarting: vi.fn(async (person: string, company: { company: string }, vault: string, _stage: unknown, info?: unknown) => {
+    state.acted.push(JSON.stringify(['finish-vault', person, company.company, vault, ...(info === undefined ? [] : [info])]));
     return state.vaultCreated;
   }),
-  giveYourVaultKeys: vi.fn(async (person: string, company: string) => {
-    state.acted.push(JSON.stringify(['give-vault-keys', person, company]));
+  giveYourVaultKeys: vi.fn(async (person: string, company: { company: string }) => {
+    state.acted.push(JSON.stringify(['give-vault-keys', person, company.company]));
     state.ready = { of: 'others-missing' };
     return state.gaveKeys;
   }),
@@ -726,6 +735,8 @@ describe('skipping', () => {
     cleanup();
     /* A reload: the modules start again, and read only what the tab kept. */
     vi.resetModules();
+    /* The wizard is drawn whole here, inside its own frame, so the frame's own code is loaded afresh with the rest. */
+    vi.doUnmock('../records/company-records.js');
     const fresh = await import('./standing.js');
     expect([...fresh.skippedFor('c-1')]).toEqual([STEP.signers]);
     expect([...fresh.skippedFor(null)]).toEqual([]);
@@ -963,7 +974,7 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     /* Neither can be changed under the confirm step. */
     expect(name.disabled).toBe(true);
     await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
-    expect(vi.mocked(createVault).mock.calls.at(-1)!.slice(0, 2)).toEqual(['u1', 'c-1']);
+    expect(vi.mocked(createVault).mock.calls.at(-1)!.slice(0, 2)).toEqual(['u1', expect.objectContaining({ company: 'c-1' })]);
     expect(vi.mocked(createVault).mock.calls.at(-1)![3]).toEqual({ name: 'Payroll UK', description: 'Pays the London team.' });
   });
 

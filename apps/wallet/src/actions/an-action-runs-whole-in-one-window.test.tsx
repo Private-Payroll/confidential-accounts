@@ -41,7 +41,7 @@ vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => ({
     'read-then-sign': { fields: { vault: 'vault' } },
     'read-fails': { fields: { vault: 'vault' } },
     'confirm-after-a-send': { fields: { vault: 'vault' } },
-    'confirm-after-a-write': { fields: { vault: 'vault' }, calls: [{ method: 'PUT', path: '/api/notes/:note' }] },
+    'confirm-after-a-write': { fields: { vault: 'vault' }, calls: [{ method: 'POST', path: '/api/invites/:invitation/accept-signer' }] },
     'confirms-twice': { fields: { vault: 'vault' } },
     'fee-after-a-send': { fields: { vault: 'vault' } },
   }),
@@ -73,14 +73,14 @@ vi.mock('./registry.js', async () => {
     check: async () => null,
     steps: () => [step(1), step(2), step(3)],
   };
-  type Ctx = { relay(tx: string): Promise<void>; confirm(lines: readonly unknown[]): Promise<void>; confirmFee(lines: readonly unknown[]): Promise<boolean>; call(m: string, p: string, b?: string): Promise<unknown> };
+  type Ctx = { relay(tx: string): Promise<void>; confirm(lines: readonly unknown[]): Promise<void>; confirmFee(lines: readonly unknown[]): Promise<boolean>; invitations: { acceptSigner(invitation: string, body: unknown): Promise<unknown> } };
   const READ = [{ key: 'ask.balance.vault', values: { vault: 'read with the seat keys' } }];
   /* Reads with the seat's keys, asks for the Confirm, and only then hands its transaction over. */
   const reads = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { gate.built.push(0); await c.confirm(READ); gate.built.push(1); await c.relay('dHg1'); } };
   const fails = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async () => { throw new StepRefused({ key: 'ask.act.unread' }); } };
   const late = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.relay('dHg1'); await c.confirm(READ); gate.built.push(1); } };
   /* Writes to the service, sending nothing to the chain, and only then asks for the Confirm. */
-  const wrote = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.call('PUT', '/api/notes/1', '{}'); await c.confirm(READ); gate.built.push(1); } };
+  const wrote = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.invitations.acceptSigner('1', {}); await c.confirm(READ); gate.built.push(1); } };
   const twice = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.confirm(READ); gate.built.push(1); await c.confirm(READ); gate.built.push(2); } };
   /* Hands its transaction over, then asks whether to pay a fee from the person's own DUST. */
   const fee = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.relay('dHg1'); if (await c.confirmFee(READ)) gate.built.push(1); } };
@@ -394,7 +394,7 @@ describe('an action runs whole in one window, on one passkey', () => {
   it('a Confirm asked after a write that sends nothing to the chain stops the action too', async () => {
     await runFromTheWindow('confirm-after-a-write');
     await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
-    expect(of(ACT_CALL_SCHEMA).map((m) => [m['method'], m['path']])).toEqual([['PUT', '/api/notes/1']]);
+    expect(of(ACT_CALL_SCHEMA).map((m) => [m['method'], m['path']])).toEqual([['POST', '/api/invites/1/accept-signer']]);
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
     expect(gate.built).toEqual([]);
     expect(document.querySelector('[data-act-confirm]')).toBeNull();
@@ -599,6 +599,8 @@ describe('a framed wallet\'s Confirm is held like its Approve, from the moment i
     render(<SessionProvider><Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => Date.now()} embedder={ASKER} /></SessionProvider>);
     ask({ ...actAsk(), intent: { name: 'read-then-sign', vault: VAULT } });
     await settled();
+    /* The wallet was open when the ask came, so the account that pays any fee is picked here first. */
+    fireEvent.click(document.querySelector('[data-pay-from-open]') as HTMLElement);
     await pause(DWELL_MS + 100);
     fireEvent.click(document.querySelector('[data-approve]') as HTMLElement);
     await until(() => expect(document.querySelector('[data-act-confirm-button]')).not.toBeNull());

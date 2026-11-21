@@ -1,13 +1,12 @@
 import { tidyFingerprint } from 'midnight-identity/profile/fingerprint';
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { admitPersonInTheWallet, changePersonInTheWallet } from 'vaults-web-shared/person-in-the-wallet.js';
 import { assets, type AssetId } from '../../../../src/core/assets.js';
 import { EMPLOYEE_CLASSIFICATIONS, type EmployeeClassification } from '../../../../src/core/invitation.js';
-import { ADMIT_BY, type AdmitBy } from './company-records.js';
-import { namedFor } from './create-vault.js';
+import { ADMIT_BY, type AdmitBy } from './company-rows.js';
 import { MADE, PROBLEM as AMOUNT_PROBLEM, TERMS, unitsOf } from './invite.js';
-import { keyringFor } from './keyring-person.js';
-import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
+import { namedBefore } from './named-before.js';
+import type { PageView } from './filing-judge.js';
+import { refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 
 /** The two acts a person's or a vendor's record goes through in the wallet. */
@@ -97,13 +96,6 @@ function actedOf(act: PersonAct, ended: Ended): PersonActed {
   return { of: PERSON_ACTED.stopped, act, why, partial: PARTLY.has(why), handedOver: ended.relayed > 0 || ended.unconfirmed > 0 };
 }
 
-/** The company's record, label and account, and the person signed in, or the refusal that stops the press before the wallet is asked. */
-async function namedBefore(personId: string, companyId: string): Promise<{ record: string; company: CompanyLabel; account: AccountAddress } | ActRefusal> {
-  if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
-  if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
-  const named = await namedFor(companyId);
-  return named === null ? ACT_REFUSAL.didNotFinish : { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
-}
 
 const steps = (onStep?: (step: number, steps: number) => void) => (onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) });
 
@@ -114,7 +106,7 @@ const steps = (onStep?: (step: number, steps: number) => void) => (onStep === un
  * check against nothing.
  */
 export async function admitPerson(
-  personId: string, companyId: string, who: { readonly id: string; readonly name: string; readonly kind?: PersonKind; readonly admitBy: AdmitBy; readonly fingerprint?: string },
+  personId: string, view: PageView, who: { readonly id: string; readonly name: string; readonly kind?: PersonKind; readonly admitBy: AdmitBy; readonly fingerprint?: string },
   onStep?: (step: number, steps: number) => void,
 ): Promise<PersonActed> {
   try {
@@ -125,7 +117,7 @@ export async function admitPerson(
       if (tidy === null) return problem(PROBLEM.badFingerprint);
       fingerprint = tidy;
     }
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await admitPersonInTheWallet({ ...named, kind: who.kind ?? PERSON_KIND.employee, person: who.id, name: who.name, ...(fingerprint === undefined ? {} : { fingerprint }) }, ACCOUNT_ORIGIN, steps(onStep));
     return actedOf(PERSON_ACT.admit, ended);
@@ -161,7 +153,7 @@ const AMOUNT_PROBLEMS: Readonly<Record<string, PersonProblem>> = {
  * with a leaving date only when one was typed. The wallet checks the months already raised.
  */
 export async function changePerson(
-  personId: string, companyId: string, person: { readonly id: string; readonly name: string; readonly asset: string }, change: PersonChange,
+  personId: string, view: PageView, person: { readonly id: string; readonly name: string; readonly asset: string }, change: PersonChange,
   onStep?: (step: number, steps: number) => void,
 ): Promise<PersonActed> {
   try {
@@ -189,7 +181,7 @@ export async function changePerson(
       if (wrong !== null) return problem(wrong);
       asked = { [change.kind]: change.day };
     }
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await changePersonInTheWallet({ ...named, kind: PERSON_KIND.employee, person: person.id, name: person.name, change: asked }, ACCOUNT_ORIGIN, steps(onStep));
     return actedOf(PERSON_ACT.change, ended);
@@ -211,7 +203,7 @@ export type VendorChange =
  * The wallet refuses terms once any month is raised, and an end date in or before a raised month.
  */
 export async function changeVendor(
-  personId: string, companyId: string, vendor: { readonly id: string; readonly name: string }, change: VendorChange,
+  personId: string, view: PageView, vendor: { readonly id: string; readonly name: string }, change: VendorChange,
   onStep?: (step: number, steps: number) => void,
 ): Promise<PersonActed> {
   try {
@@ -229,7 +221,7 @@ export async function changeVendor(
       if (got.of !== MADE.units) return problem(AMOUNT_PROBLEMS[got.problem] ?? PROBLEM.badAmount);
       asked = { terms: { kind: TERMS.monthly, asset: asset.code, amount: got.units } };
     }
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await changePersonInTheWallet({ ...named, kind: PERSON_KIND.vendor, person: vendor.id, name: vendor.name, change: asked }, ACCOUNT_ORIGIN, steps(onStep));
     return actedOf(PERSON_ACT.change, ended);

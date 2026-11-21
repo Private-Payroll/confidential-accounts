@@ -15,7 +15,7 @@ import { openAccount } from '../../../src/core/account.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
 import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
-import type { PendingSignerPayload, SealedAccount } from '../../../src/core/types.js';
+import type { PendingSignerPayload, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import type { StateChange } from '../../../src/core/ledger.js';
 import { paysCommitmentOf, proposalFilingRefusal, raiseByOf, VAULT_START_KINDS, type RetirementTerms } from '../../../src/core/proposal-filing.js';
 import { companyRecordKey, FILING_REFUSAL, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
@@ -304,6 +304,138 @@ async function addSignerOpenedHere(
   return seatByAddressChangeOf(invited.terms.invite!);
 }
 
+/** A proposal's envelope as this device opened it. */
+type Envelope = { kind: string; summary: string; vault: string; sealedPayload: Sealed };
+
+/** A proposal's sealed body as this device opened it: what each kind of proposal carries. */
+type ProposalBody = {
+  signerId?: unknown; newThreshold?: unknown; vault?: unknown; assetKey?: unknown; commitment?: unknown; newPolicyBar?: unknown;
+  leaf?: unknown; retirement?: unknown; oneOff?: unknown; invite?: unknown; invited?: unknown;
+  __change?: StateChange;
+};
+
+/**
+ * What a change to who is seated, to the approvals the company or a vault needs, or to a spending policy carries, read
+ * from the proposal's opened body; a proposal of another kind carries none.
+ */
+async function governanceOpenedHere(
+  service: GovernedCallService, accountId: string, viewingKey: KeysHeld, rec: SealedProposal, envelope: Envelope, change: StateChange,
+  body: ProposalBody, records: RecordsForTheRound | undefined, leaves: SeatingReads['leaves'] | undefined,
+): Promise<{ readonly governance: GovernanceOnTheWire | undefined; readonly retirement: RetirementTerms | undefined }> {
+  let governance: GovernanceOnTheWire | undefined;
+  let retirement: RetirementTerms | undefined;
+  if (envelope.kind === 'remove-signer') {
+    /* The leaf is the proposal's own, sealed inside it; who it is and whether to remove it is judged where the removal is made. */
+    if (typeof body.leaf !== 'string' || !HEX64.test(body.leaf.toLowerCase())) {
+      throw new NotOpenedOnThisDevice('This proposal does not say which signer it removes. Withdraw it and raise the removal again.');
+    }
+    if (body.retirement !== undefined) {
+      const terms = retirementTermsOf(body.retirement);
+      if (terms === null) {
+        throw new NotOpenedOnThisDevice('This proposal\'s retirement of the leaving signer is not in its shape, so this device '
+          + 'cannot sign it. Withdraw it and raise the removal again.');
+      }
+      retirement = terms;
+    }
+    /* The threshold the company is left at, sealed beside the leaf: none or 0 keeps the one in force. */
+    const t = body.newThreshold;
+    if (t !== undefined && (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 0)) {
+      throw new NotOpenedOnThisDevice('This proposal does not say which threshold it leaves the company at once the signer is removed. '
+        + 'Withdraw it and raise the removal again.');
+    }
+    governance = { kind: 'remove-signer', leaf: body.leaf.toLowerCase(), ...(t === undefined || t === 0 ? {} : { threshold: String(t) }) };
+  } else if (envelope.kind === 'add-signer') {
+    governance = await addSignerOpenedHere(service, accountId, viewingKey, rec, body, change.salt, records, leaves);
+  } else if (envelope.kind === 'set-threshold') {
+    if (!wholeThreshold(body.newThreshold)) {
+      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '
+        + 'change again.');
+    }
+    governance = { kind: 'threshold', threshold: String(body.newThreshold) };
+  } else if (envelope.kind === 'set-vault-threshold') {
+    if (!wholeThreshold(body.newThreshold) || typeof body.vault !== 'string' || !HEX64.test(body.vault)) {
+      throw new NotOpenedOnThisDevice('This proposal does not say which vault it is for, or how many approvals that vault '
+        + 'would need. Withdraw it and make the change again.');
+    }
+    governance = { kind: 'vault-threshold', vault: body.vault, threshold: String(body.newThreshold) };
+  } else if (envelope.kind === 'set-spending-policy') {
+    if (![body.vault, body.assetKey, body.commitment].every((v) => typeof v === 'string' && HEX64.test(v))) {
+      throw new NotOpenedOnThisDevice('This proposal does not say which vault and currency its spending policy is for, or '
+        + 'which policy. Withdraw it and set the policy again.');
+    }
+    governance = { kind: 'spending-policy', vault: body.vault as string, assetKey: body.assetKey as string, commitment: body.commitment as string };
+  } else if (envelope.kind === 'set-policy-bar') {
+    if (typeof body.newPolicyBar !== 'number' || !Number.isInteger(body.newPolicyBar) || body.newPolicyBar < 1) {
+      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals a change to a spending policy would '
+        + 'need. Withdraw it and make the change again.');
+    }
+    governance = { kind: 'policy-bar', bar: String(body.newPolicyBar) };
+  }
+  return { governance, retirement };
+}
+
+/** A payroll run or a one-off payment as this device makes it again from the company's records; other kinds make none. */
+async function madeOpenedHere(
+  records: RecordsForTheRound | undefined, accountId: string, viewingKey: KeysHeld, rec: SealedProposal, envelope: Envelope,
+  change: StateChange, body: ProposalBody, filedBy: string | null, forARaise: boolean,
+): Promise<OpenedRound['made']> {
+  let made: OpenedRound['made'];
+  if (envelope.kind === 'payroll') {
+    if (records === undefined || !wholeRecords(records)) {
+      throw new NotOpenedOnThisDevice('This page cannot read the company\'s records a payroll run is checked against, so it '
+        + `cannot ${forARaise ? 'raise' : 'approve'} one. Reload the page to get the current version.`);
+    }
+    const rebuilt = await runRebuiltHere(records, accountId, rec.id, viewingKey);
+    made = rebuilt.made;
+    /*
+     * **WHAT THE FILING SAID IT PAYS IS WHAT THIS DEVICE WOULD PAY**: the
+     * commitment its filer signed, keyed with the proposal's salt and the
+     * company's asset blinding, is to the vault the proposal names and to the
+     * payments of the run as built again here from the company's sealed records.
+     */
+    if (rec.filedBy !== undefined) {
+      const paying = rebuilt.made.retry === undefined ? rebuilt.made.facts : rebuilt.made.retry.map((i) => rebuilt.made.facts[i]!);
+      const { assetBlinding } = await signedStateHere(records, accountId, viewingKey);
+      const pays = paysCommitmentOf({ vault: envelope.vault, asset: String(change.asset), payments: paying.map(paymentChecked) }, change.salt, assetBlinding);
+      if (String(rec.pays ?? '').toLowerCase() !== pays) {
+        throw new NotOpenedOnThisDevice('What the company\'s record of this proposal says it pays is not what this device '
+          + 'builds the run to pay, from the vault it names. Do not act on it.');
+      }
+    }
+    /*
+     * **AND EVERY CHECK THE RAISING DEVICE RAN, RUN AGAIN HERE** on what this
+     * device reads now, by its own clock, for a send and an approval alike: the
+     * one list of raise checks, judged for the seat that filed the proposal, and
+     * never refusing the proposal for being itself. A withdrawal never reaches
+     * here (`withdrawalOpenedHere`).
+     */
+    try {
+      await refuseWhatNoRoundMay(records, accountId, viewingKey, {
+        run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '', proposal: rec.id,
+        vault: envelope.vault,
+      });
+    } catch (e) {
+      if (!(e instanceof RoundRefusedHere)) throw e;
+      throw new NotOpenedOnThisDevice(`${e.message}. Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who `
+        + 'raised it.', { cause: e });
+    }
+  } else if (envelope.kind === 'transfer') {
+    /* A one-off payment: made again from the record it names, which must name this proposal, its vault, its currency and its filer. */
+    if (records === undefined || filedBy === null) {
+      throw new NotOpenedOnThisDevice('This page cannot check who raised this one-off payment against the company\'s records, so it '
+        + `cannot ${forARaise ? 'raise' : 'approve'} it. Reload the page to get the current version.`);
+    }
+    try {
+      made = await oneOffMadeHere(records as Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'payments' | 'vendors'>, accountId,
+        { id: rec.id, chainId: rec.chainId, filedBy }, { vault: envelope.vault, named: body.oneOff, asset: String(change.asset) });
+    } catch (e) {
+      if (!(e instanceof OneOffRefused)) throw e;
+      throw new NotOpenedOnThisDevice(`${e.message} Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who raised it.`, { cause: e });
+    }
+  }
+  return made;
+}
+
 /**
  * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS.**
  *
@@ -369,12 +501,8 @@ export async function openTheRoundHere(
     throw new NotOpenedOnThisDevice('This company\'s records hold no proposal by that name. It may have been withdrawn. '
       + 'Reload the page to see where it stands.');
   }
-  let envelope: { kind: string; summary: string; vault: string; sealedPayload: Sealed };
-  let body: {
-    signerId?: unknown; newThreshold?: unknown; vault?: unknown; assetKey?: unknown; commitment?: unknown; newPolicyBar?: unknown;
-    leaf?: unknown; retirement?: unknown; oneOff?: unknown; invite?: unknown; invited?: unknown;
-    __change?: StateChange;
-  };
+  let envelope: Envelope;
+  let body: ProposalBody;
   let key: Hex;
   try {
     key = keyOf(viewingKey, rec.keyEpoch);
@@ -411,55 +539,7 @@ export async function openTheRoundHere(
   if (envelope.kind === 'payroll' && String(change.asset).toLowerCase() === NO_ASSET) {
     throw new NotOpenedOnThisDevice(`This proposal pays nothing: ${VAULT_START_HERE_NOT.replace(/^This proposal /u, 'it ')}`, { kind: envelope.kind });
   }
-  let governance: GovernanceOnTheWire | undefined;
-  let retirement: RetirementTerms | undefined;
-  if (envelope.kind === 'remove-signer') {
-    /* The leaf is the proposal's own, sealed inside it; who it is and whether to remove it is judged where the removal is made. */
-    if (typeof body.leaf !== 'string' || !HEX64.test(body.leaf.toLowerCase())) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which signer it removes. Withdraw it and raise the removal again.');
-    }
-    if (body.retirement !== undefined) {
-      const terms = retirementTermsOf(body.retirement);
-      if (terms === null) {
-        throw new NotOpenedOnThisDevice('This proposal\'s retirement of the leaving signer is not in its shape, so this device '
-          + 'cannot sign it. Withdraw it and raise the removal again.');
-      }
-      retirement = terms;
-    }
-    /* The threshold the company is left at, sealed beside the leaf: none or 0 keeps the one in force. */
-    const t = body.newThreshold;
-    if (t !== undefined && (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 0)) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which threshold it leaves the company at once the signer is removed. '
-        + 'Withdraw it and raise the removal again.');
-    }
-    governance = { kind: 'remove-signer', leaf: body.leaf.toLowerCase(), ...(t === undefined || t === 0 ? {} : { threshold: String(t) }) };
-  } else if (envelope.kind === 'add-signer') {
-    governance = await addSignerOpenedHere(service, accountId, viewingKey, rec, body, change.salt, records, leaves);
-  } else if (envelope.kind === 'set-threshold') {
-    if (!wholeThreshold(body.newThreshold)) {
-      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '
-        + 'change again.');
-    }
-    governance = { kind: 'threshold', threshold: String(body.newThreshold) };
-  } else if (envelope.kind === 'set-vault-threshold') {
-    if (!wholeThreshold(body.newThreshold) || typeof body.vault !== 'string' || !HEX64.test(body.vault)) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which vault it is for, or how many approvals that vault '
-        + 'would need. Withdraw it and make the change again.');
-    }
-    governance = { kind: 'vault-threshold', vault: body.vault, threshold: String(body.newThreshold) };
-  } else if (envelope.kind === 'set-spending-policy') {
-    if (![body.vault, body.assetKey, body.commitment].every((v) => typeof v === 'string' && HEX64.test(v))) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which vault and currency its spending policy is for, or '
-        + 'which policy. Withdraw it and set the policy again.');
-    }
-    governance = { kind: 'spending-policy', vault: body.vault as string, assetKey: body.assetKey as string, commitment: body.commitment as string };
-  } else if (envelope.kind === 'set-policy-bar') {
-    if (typeof body.newPolicyBar !== 'number' || !Number.isInteger(body.newPolicyBar) || body.newPolicyBar < 1) {
-      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals a change to a spending policy would '
-        + 'need. Withdraw it and make the change again.');
-    }
-    governance = { kind: 'policy-bar', bar: String(body.newPolicyBar) };
-  }
+  const { governance, retirement } = await governanceOpenedHere(service, accountId, viewingKey, rec, envelope, change, body, records, leaves);
   /*
    * **A PROPOSAL A SEAT'S DEVICE WROTE DOWN IS BELIEVED ONLY AS THAT SEAT FILED
    * IT**: its filing signed by a key this device's own read of the company's
@@ -481,60 +561,7 @@ export async function openTheRoundHere(
    * READS IT FROM THE COMPANY'S RECORDS**, and made again from them where the
    * approval is built.
    */
-  let made: OpenedRound['made'];
-  if (envelope.kind === 'payroll') {
-    if (records === undefined || !wholeRecords(records)) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s records a payroll run is checked against, so it '
-        + `cannot ${forARaise ? 'raise' : 'approve'} one. Reload the page to get the current version.`);
-    }
-    const rebuilt = await runRebuiltHere(records, accountId, rec.id, viewingKey);
-    made = rebuilt.made;
-    /*
-     * **WHAT THE FILING SAID IT PAYS IS WHAT THIS DEVICE WOULD PAY**: the
-     * commitment its filer signed, keyed with the proposal's salt and the
-     * company's asset blinding, is to the vault the proposal names and to the
-     * payments of the run as built again here from the company's sealed records.
-     */
-    if (rec.filedBy !== undefined) {
-      const paying = rebuilt.made.retry === undefined ? rebuilt.made.facts : rebuilt.made.retry.map((i) => rebuilt.made.facts[i]!);
-      const { assetBlinding } = await signedStateHere(records, accountId, viewingKey);
-      const pays = paysCommitmentOf({ vault: envelope.vault, asset: String(change.asset), payments: paying.map(paymentChecked) }, change.salt, assetBlinding);
-      if (String(rec.pays ?? '').toLowerCase() !== pays) {
-        throw new NotOpenedOnThisDevice('What the company\'s record of this proposal says it pays is not what this device '
-          + 'builds the run to pay, from the vault it names. Do not act on it.');
-      }
-    }
-    /*
-     * **AND EVERY CHECK THE RAISING DEVICE RAN, RUN AGAIN HERE** on what this
-     * device reads now, by its own clock, for a send and an approval alike: the
-     * one list of raise checks, judged for the seat that filed the proposal, and
-     * never refusing the proposal for being itself. A withdrawal never reaches
-     * here (`withdrawalOpenedHere`).
-     */
-    try {
-      await refuseWhatNoRoundMay(records, accountId, viewingKey, {
-        run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '', proposal: rec.id,
-        vault: envelope.vault,
-      });
-    } catch (e) {
-      if (!(e instanceof RoundRefusedHere)) throw e;
-      throw new NotOpenedOnThisDevice(`${e.message}. Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who `
-        + 'raised it.', { cause: e });
-    }
-  } else if (envelope.kind === 'transfer') {
-    /* A one-off payment: made again from the record it names, which must name this proposal, its vault, its currency and its filer. */
-    if (records === undefined || filedBy === null) {
-      throw new NotOpenedOnThisDevice('This page cannot check who raised this one-off payment against the company\'s records, so it '
-        + `cannot ${forARaise ? 'raise' : 'approve'} it. Reload the page to get the current version.`);
-    }
-    try {
-      made = await oneOffMadeHere(records as Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'payments' | 'vendors'>, accountId,
-        { id: rec.id, chainId: rec.chainId, filedBy }, { vault: envelope.vault, named: body.oneOff, asset: String(change.asset) });
-    } catch (e) {
-      if (!(e instanceof OneOffRefused)) throw e;
-      throw new NotOpenedOnThisDevice(`${e.message} Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who raised it.`, { cause: e });
-    }
-  }
+  const made = await madeOpenedHere(records, accountId, viewingKey, rec, envelope, change, body, filedBy, forARaise);
   /*
    * **WHAT A PAYROLL RUN'S SALT WAS MADE FROM**, as its proposal seals it, and
    * whether this device checked that head itself: its own database of the heads

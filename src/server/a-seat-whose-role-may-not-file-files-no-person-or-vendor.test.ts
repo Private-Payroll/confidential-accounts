@@ -15,7 +15,8 @@ import { newWrappingKeypair } from '../core/crypto.js';
 
 import { theNetwork } from '../midnight/network.js';
 import { payeeFor } from '../testing/payees.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany, type InvitationSend } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany, type InvitationSend } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import {
   admitHere, changePersonHere, PersonNotChanged, readPeopleHere, setStatusHere, type PeopleDevice, type PersonHere,
 } from 'vaults-web-shared/people-on-device.js';
@@ -28,6 +29,7 @@ import type { RosterEmployee } from '../core/types.js';
 import { companyRecordEntry, signedWithItsEntry } from '../midnight/record-manifest.js';
 import { toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, BO, fromAda, LABEL, ORIGIN, sendAs, type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, onlyReads, writesOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
@@ -35,7 +37,7 @@ const NETWORK = theNetwork();
 const sent: string[] = [];
 const counted = (send: InvitationSend): InvitationSend => async (path, init) => { sent.push(`${init?.method ?? 'GET'} ${path}`); return send(path, init); };
 const deviceOf = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: counted(sendAs(s.person)), directory: acmeDirectory,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(counted(sendAs(s.person)), ACME.id), writes: writesOver(counted(sendAs(s.person))), directory: acmeDirectory,
   network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
 });
 
@@ -49,7 +51,7 @@ const vendorOf = async (id: string): Promise<VendorHere> => (await readVendorsHe
 
 describe('A SEAT WHOSE ROLE MAY NOT FILE A PERSON OR A VENDOR FILES NEITHER', () => {
   it('an approver\'s person filing is refused on the device, naming the role that may file, and nothing is sent', async () => {
-    const made = await inviteHere(ACME, ADA, 'employee', PERSON, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', PERSON, ORIGIN, writesOver(fromAda));
     const here = await personOf(made.person!);
     sent.length = 0;
     const bo = deviceOf(BO);
@@ -65,18 +67,18 @@ describe('A SEAT WHOSE ROLE MAY NOT FILE A PERSON OR A VENDOR FILES NEITHER', ()
   });
 
   it('an approver\'s admission of a person is refused, and nothing is filed', async () => {
-    const made = await inviteHere(ACME, ADA, 'employee', { ...PERSON, name: 'Payee 3', email: 'payee3@acme.co' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', { ...PERSON, name: 'Payee 3', email: 'payee3@acme.co' }, ORIGIN, writesOver(fromAda));
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(33)), LABEL, 'usr_33', { kind: 'payee', address: payeeFor('21'.repeat(32), NETWORK).bech32, payslipKey: newWrappingKeypair().publicKey });
     const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs('usr_33'));
     const here = await personOf(made.person!);
     sent.length = 0;
     /* RED WHEN: an approver's admission of a person is filed, to be refused by every reader. */
     await expect(admitHere(deviceOf(BO), here, accepted.fingerprint)).rejects.toThrow(/role, approver, may not file person records\. A seat whose role may file them \(admin\) must make this change\./u);
-    expect(sent.filter((s) => s.startsWith('POST') || s.startsWith('PUT'))).toEqual([]);
+    expect(sent.filter((s) => !onlyReads(s))).toEqual([]);
   });
 
   it('an approver\'s vendor filing is refused on the device, and nothing is sent', async () => {
-    const made = await inviteHere(ACME, ADA, 'vendor', VENDOR, ORIGIN, fromAda, { vendors: () => readVendorsHere(deviceOf(ADA)) });
+    const made = await inviteHere(ACME, ADA, 'vendor', VENDOR, ORIGIN, writesOver(fromAda), { vendors: () => readVendorsHere(deviceOf(ADA)) });
     const here = await vendorOf(made.person!);
     sent.length = 0;
     const bo = deviceOf(BO);
@@ -87,11 +89,11 @@ describe('A SEAT WHOSE ROLE MAY NOT FILE A PERSON OR A VENDOR FILES NEITHER', ()
     const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs('usr_34'));
     sent.length = 0;
     await expect(admitVendorHere(bo, here, accepted.fingerprint)).rejects.toThrow(VendorNotChanged);
-    expect(sent.filter((x) => x.startsWith('POST') || x.startsWith('PUT'))).toEqual([]);
+    expect(sent.filter((x) => !onlyReads(x))).toEqual([]);
   });
 
   it('a person version an approver sends straight to the service is believed by no reader, and pays nobody by it', async () => {
-    const made = await inviteHere(ACME, ADA, 'employee', { ...PERSON, name: 'Payee 4', email: 'payee4@acme.co' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', { ...PERSON, name: 'Payee 4', email: 'payee4@acme.co' }, ORIGIN, writesOver(fromAda));
     const here = await personOf(made.person!);
     /* Bo's own device would refuse this; a page that skips the check sends it, and the service judges no role. */
     const sealing = sealingWith(ACME.viewingKey, ACME.keyEpoch);
@@ -107,7 +109,7 @@ describe('A SEAT WHOSE ROLE MAY NOT FILE A PERSON OR A VENDOR FILES NEITHER', ()
   });
 
   it('a seat whose role may file a person\'s record still files it', async () => {
-    const made = await inviteHere(ACME, ADA, 'employee', { ...PERSON, name: 'Payee 2', email: 'payee2@acme.co' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', { ...PERSON, name: 'Payee 2', email: 'payee2@acme.co' }, ORIGIN, writesOver(fromAda));
     const here = await personOf(made.person!);
     sent.length = 0;
     /* RED WHEN: an approver's person filing is sent. */

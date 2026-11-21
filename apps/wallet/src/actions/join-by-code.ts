@@ -18,7 +18,7 @@ import { typedAddressIsShielded } from 'midnight-identity/profile/address-claim'
 import type { JoinCodeRequest } from 'midnight-identity/profile/request';
 import { acceptanceProofOf, invitationIdOf, offerExpiredRefusal, openOffer } from '../../../../src/core/invitation.js';
 import type { Hex, Sealed } from '../../../../src/core/crypto.js';
-import { payeeHandoverOf } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import { payeeHandoverOf } from '../../../../packages/web-shared/src/invitation-taken-on-device.js';
 import { withPaidBy, withPayeeJoinKept, type PayeeJoinKept } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
 import { payslipKeyOfThisWallet } from '../screens/join-code-payslip-key.js';
@@ -62,7 +62,7 @@ async function openedOffer(ctx: StepContext): Promise<Opened | 'used'> {
   const account = readAccountAddress(f['account']);
   const token = (f['token'] ?? '') as Hex;
   if (label === null || account === null || !/^[0-9a-f]{64}$/u.test(token)) return refuse('not-a-company');
-  const got = await ctx.call('GET', `/api/invites/${invitationIdOf(token)}/offer`);
+  const got = await ctx.invitations.offer(invitationIdOf(token));
   if (got.status === 410 && (got.body as { refused?: unknown } | null)?.refused === 'used') return 'used';
   const sealed = (got.body as { offer?: Sealed } | null)?.offer;
   if (got.status !== 200 || sealed === undefined) return refuse('no-offer');
@@ -172,8 +172,8 @@ export function joinByCodeAction(reach: JoinReach): ActionDefinition {
         if (!(now.paidBy ?? []).includes(company) || now.payeeJoinsKept?.[invitation] === undefined) {
           await saved.keep((k) => withPaidBy(withPayeeJoinKept(k, invitation, { company, address }), company));
         }
-        const answer = await ctx.call('POST', `/api/invites/${invitationIdOf(o.token)}/accept-payee`,
-          JSON.stringify({ acceptance: acceptanceProofOf(o.token), handover: payeeHandoverOf(code, o.inbox), kind: o.payee }));
+        const answer = await ctx.invitations.acceptPayee(invitationIdOf(o.token),
+          { acceptance: acceptanceProofOf(o.token), handover: payeeHandoverOf(code, o.inbox), kind: o.payee });
         if (answer.status !== 201) {
           const said = (answer.body as { error?: unknown } | null)?.error;
           refuse('not-taken', { says: typeof said === 'string' ? said : `the service answered ${answer.status}`, fingerprint, address });

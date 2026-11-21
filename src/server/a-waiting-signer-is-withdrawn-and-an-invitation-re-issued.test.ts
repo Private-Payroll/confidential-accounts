@@ -30,20 +30,20 @@ import { openFromInbox } from '../core/sealed-records.js';
 import { NO_ASSET } from '../core/assets.js';
 import type { PendingSignerPayload, SealedProposal } from '../core/types.js';
 import { whyTheInvitationDoesNotNameIt } from 'midnight-identity/profile/records-key';
-import {
-  acceptAsSignerHere, inviteHere, openInvitationHere, reissueInvitationHere, SeatMayNotInvite, takeTheReissueHere,
-  withdrawWaitingSignerHere, type InvitationSend,
-} from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, reissueInvitationHere, SeatMayNotInvite, withdrawWaitingSignerHere, type InvitationSend } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, openInvitationHere, takeTheReissueHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { withdrawalReadsHere, WITHDRAWAL_ROUND_NOT_READ, WITHDRAWAL_TIME_NOT_READ } from 'vaults-web-shared/waiting-signer-withdrawn.js';
 import { kindKeyOf } from '../midnight/records-held.js';
 import { signingPublicKeyOf } from '../core/crypto.js';
-import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
+import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/directory-filed-here.js';
+import { type OwedDirectoryEntry } from 'vaults-web-shared/keyring-blob.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
 import { invitedAsRaised, proposalMadeByHere } from '../testing/invitation-approved.js';
 import {
-  aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chainRead, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chainRead, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat } from './a-company-of-two-seats.test-support.js';
+import { writesOver, viewOver } from '../testing/writes-over-a-send.js';
+import { readRoutesOver } from '../testing/service-routes-in-memory.js';
 import { aJoinersWallet, aWalletSecret } from '../testing/a-joiners-wallet.js';
 
 aCompanyOfTwoSeats();
@@ -58,7 +58,7 @@ const asInviter = (s: Seat): Inviter => ({ committeeKey: s.committeeKey, stateme
 
 /** `person` invited from Ada's device, accepting on their own: their seat request, and the invitation it answered. */
 const waitingFor = async (person: string) => {
-  const made = await inviteHere(ACME, ADA, 'signer', { name: person, role: 'approver', person }, ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'signer', { name: person, role: 'approver', person }, ORIGIN, writesOver(fromAda));
   const opened = await openInvitationHere(made.link, sendAs(null));
   const seat = await acceptAsSignerHere(opened, SimulatedCommitments, {
     newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
@@ -91,12 +91,12 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
   it('the same person accepts a new invitation once their waiting request is withdrawn, and their old link reads as withdrawn', async () => {
     const kit = await waitingFor('kit');
     /* While Kit waits, a new invitation is not Kit's to accept. */
-    const again = await inviteHere(ACME, ADA, 'signer', { name: 'kit', role: 'approver', person: 'kit' }, ORIGIN, fromAda);
+    const again = await inviteHere(ACME, ADA, 'signer', { name: 'kit', role: 'approver', person: 'kit' }, ORIGIN, writesOver(fromAda));
     const reopened = await openInvitationHere(again.link, sendAs(null));
     const acceptAgain = () => acceptAsSignerHere(reopened, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {}, promote: async () => {} },
       sendAs('kit'), 'kit', async () => WALLET_KEY, WALLET.seatAddress);
     await expect(acceptAgain()).rejects.toMatchObject({ refused: 'already-on-this-account' });
-    await withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, ADA, kit.signerId, adasReads(), fromAda, 'kit');
+    await withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, ADA, kit.signerId, adasReads(), writesOver(fromAda), 'kit');
     /* RED WHEN: a withdrawal is answered and the request is kept, so the person stays locked out. */
     expect(isWaiting(kit.signerId)).toBe(false);
     /* RED WHEN: the link a withdrawn request answered still reads as used rather than withdrawn. */
@@ -110,7 +110,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     const lin = await waitingFor('lin');
     const key1 = newSymmetricKey() as Hex;
     const after = { epoch: 1, key: key1, newest: 1, keyAt: (e: number) => (e === 0 ? KEY : key1), sealing: () => ({ key: key1, epoch: 1 }), answered: new Map() };
-    await withdrawWaitingSignerHere({ id: CO, companyKeys: after as never }, ADA, lin.signerId, adasReads(), fromAda, 'lin');
+    await withdrawWaitingSignerHere({ id: CO, companyKeys: after as never }, ADA, lin.signerId, adasReads(), writesOver(fromAda), 'lin');
     /* RED WHEN: a request no change of key named, sealed to the old inbox, cannot be withdrawn, so its person stays locked out. */
     expect(isWaiting(lin.signerId)).toBe(false);
   });
@@ -173,7 +173,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
   it('a device whose seat may not withdraw anybody, or whose request could still be seated, signs and sends nothing', async () => {
     const ned = await waitingFor('ned');
     const sent = wire.length;
-    const withdraw = (seat: Seat, reads = adasReads(), named = 'ned') => withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, seat, ned.signerId, reads, fromAda, named);
+    const withdraw = (seat: Seat, reads = adasReads(), named = 'ned') => withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, seat, ned.signerId, reads, writesOver(fromAda), named);
     /* RED WHEN: a limited seat's seat, or a retired one, withdraws somebody. */
     await expect(withdraw({ ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
     await expect(withdraw({ ...ADA, held: { role: 'admin', retired: true, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
@@ -199,7 +199,7 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     const leaf = leafOf(ned.signerId);
     const was = chains.get(CO)!;
     chains.set(CO, { ...was, seats: { ...was.seats, seats: [...was.seats.seats, leaf] } });
-    const withdraw = () => withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, ADA, ned.signerId, adasReads(), fromAda, 'ned');
+    const withdraw = () => withdrawWaitingSignerHere({ id: CO, companyKeys: KEY }, ADA, ned.signerId, adasReads(), writesOver(fromAda), 'ned');
     try {
       /* RED WHEN: the test chain's read answers seats nobody asked about, as the service's own read never does, so a route that forgets to ask about the seat it decides on still sees it. */
       expect([(await chainRead(CO, []))?.seats.seats, (await chainRead(CO, [leaf.toUpperCase()]))?.seats.seats]).toEqual([[], [leaf]]);
@@ -230,11 +230,11 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
   it('a seat whose role may not file a proposal invites nobody', async () => {
     const sent = wire.length;
     /* RED WHEN: a limited seat's device signs an invitation, which every member's device would refuse anyway. */
-    await expect(inviteHere(ACME, { ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } }, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda))
+    await expect(inviteHere(ACME, { ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } }, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, writesOver(fromAda)))
       .rejects.toThrow(SeatMayNotInvite);
     /* RED WHEN: a device that has not read its own seat's role from the directory invites somebody all the same. */
     const { held: _unread, ...unread } = ADA;
-    await expect(inviteHere(ACME, unread, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, fromAda)).rejects.toThrow(SeatMayNotInvite);
+    await expect(inviteHere(ACME, unread, 'signer', { name: 'oz', role: 'approver', person: 'oz' }, ORIGIN, writesOver(fromAda))).rejects.toThrow(SeatMayNotInvite);
     expect(wire.length).toBe(sent);
   });
 
@@ -341,7 +341,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   it('re-issued by a seat that holds one now, it is kept on the person\'s device with that seat as their inviter, and their wallet keeps the account', async () => {
     /* RED WHEN: an inviter who has left is accepted by the person's wallet: it would keep an account on a seat nobody holds. */
     expect(leesWallet(asInviter(BO))).toBe('inviter-not-on-account');
-    const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, fromAda);
+    const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, writesOver(fromAda));
     const opened = await openInvitationHere(made.link, sendAs('lee'));
     const kept: Array<{ inviter: Inviter; invited: SignedSeatInvitation }> = [];
     await leeTakes(opened, kept);
@@ -362,7 +362,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   it('a re-issue is refused for a seat that may not invite, a seat the chain does not hold, or an invitation for no seat, and nothing is sent', async () => {
     const sent = wire.length;
     const reissue = (seat: Seat, inv: SignedSeatInvitation = original, chain: readonly string[] = leesChain, also: readonly SealedProposal[] = []) =>
-      reissueInvitationHere(ACME, seat, { leaf: LEE.seat as Hex, proposals: [anAddSigner({ signerId: 'sgn_lee', invited: inv }, '0e'.repeat(32) as Hex), ...also], onTheChain: chain }, ORIGIN, fromAda);
+      reissueInvitationHere(ACME, seat, { leaf: LEE.seat as Hex, proposals: [anAddSigner({ signerId: 'sgn_lee', invited: inv }, '0e'.repeat(32) as Hex), ...also], onTheChain: chain }, ORIGIN, writesOver(fromAda));
     /* RED WHEN: a limited seat's seat or a retired one re-issues an invitation. */
     await expect(reissue({ ...ADA, held: { role: 'limited', retired: false, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
     await expect(reissue({ ...ADA, held: { role: 'admin', retired: true, rights: { every: true as const } } })).rejects.toThrow(SeatMayNotInvite);
@@ -387,7 +387,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   });
 
   it('a re-issue from a seat the account no longer holds is not kept, so the person asks a signer who sits to send it again', async () => {
-    const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, fromAda);
+    const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, writesOver(fromAda));
     const opened = await openInvitationHere(made.link, sendAs('lee'));
     const kept: unknown[] = [];
     /* RED WHEN: a re-issue is kept with an inviter whose seat left between sending it and taking it. */
@@ -396,7 +396,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   });
 
   it('a re-issue is kept only for the person signed in and the seat this device holds, and only under its own link', async () => {
-    const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, fromAda);
+    const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, writesOver(fromAda));
     const opened = await openInvitationHere(made.link, sendAs('lee'));
     const kept: unknown[] = [];
     const take = (mine: { accountId: string; person: string; seat: string }) => leeTakes(opened, kept, seatedLee, mine);
@@ -443,8 +443,8 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     });
     const fileWith = (invited: SignedSeatInvitation) => {
       let owed: OwedDirectoryEntry | null = owedWith(invited);
-      return fileTheOwedDirectoryEntry(api, CO, { read: () => owed, settle: async () => { owed = null; } },
-        async () => ({ signingSecret: LEE.signingSecret, viewingKey: KEY }), async () => ADA.seat);
+      return fileTheOwedDirectoryEntry(CO, { read: () => owed, settle: async () => { owed = null; } },
+        async () => ({ signingSecret: LEE.signingSecret, viewingKey: KEY }), async () => ADA.seat, viewOver(readRoutesOver(api, { directory: true, newest: 'none-entered' }), CO));
     };
     /* The entry already filed, carrying the invitation it was filed with, is left alone. */
     const filedWith = openSeatProof(CO, LEE.entry.proof, KEY)!.invited!;

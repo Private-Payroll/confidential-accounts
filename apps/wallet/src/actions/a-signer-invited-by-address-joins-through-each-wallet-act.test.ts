@@ -42,7 +42,7 @@ import {
 } from '../../../../src/server/a-company-whose-signers-change-on-the-chain.test-support.js';
 import type { CompanyChain } from './company-reach.js';
 import { companyKeyOf, companyReachFor, keptReach } from './company-reach.js';
-import { StepRefused, type ActionDefinition, type StepContext } from './definition.js';
+import { StepRefused, type ActionDefinition, type StepContext, type Words } from './definition.js';
 import { inviteAction } from './invite.js';
 import { approveProposalAction } from './approve-proposal.js';
 /* No removal is carried out in these tests: the hook that changes the vault secrets after one is never reached. */
@@ -52,6 +52,7 @@ import { admitSignerAction } from './admit-signer.js';
 import { giveVaultKeysAction } from './give-vault-keys.js';
 import { rebuildDoorsIn, upkeepSteps } from './upkeep.js';
 import { rightsOfRole, scopeOfRole } from '../../../../src/core/seat-rights.js';
+import { stepOverItsCall } from './step-views.test-support.js';
 
 aCompanyWhoseSignersChange();
 
@@ -195,7 +196,8 @@ const callAs = (person: string) => async (method: 'GET' | 'PUT' | 'POST', path: 
     events.push('anchored');
     return { status: 200, body: {} };
   }
-  if (path.startsWith('/api/vaults/')) {
+  /* The vault records, one by one or many in one read, are the vault service's. */
+  if (path.startsWith('/api/vaults/') || /^\/api\/accounts\/[^/]+\/vault-records\/read$/u.test(path)) {
     const r = await fetch(vaultBase + path, {
       method, ...(body === undefined ? {} : { body }), headers: { 'content-type': 'application/json', 'x-test-person': person },
     });
@@ -218,7 +220,7 @@ const inItsOwnBrowser = (w: Wallet): void => {
 const linksShown: string[] = [];
 /** The token of the last link a wallet showed: what the invitee's wallet is handed when they open the link sent to them. */
 const tokenShown = (): string => tokenOfLink(linksShown.at(-1) ?? '') ?? '';
-const ctxOf = (w: Wallet, intent: ActIntent, step: number, steps: number, told: Record<string, string | number>): StepContext => (inItsOwnBrowser(w), {
+const ctxOf = (w: Wallet, intent: ActIntent, step: number, steps: number, told: Record<string, string | number>): StepContext => (inItsOwnBrowser(w), stepOverItsCall({
   intent, asker: { origin: ORIGIN, name: 'Payroll', rdns: 'example.payroll' }, person: w.person,
   held: {
     identity: w.identity, secret: w.secret, account: 0,
@@ -231,14 +233,14 @@ const ctxOf = (w: Wallet, intent: ActIntent, step: number, steps: number, told: 
   at: { step, steps } as never, signal: new AbortController().signal,
   relay: async () => { throw new Error('nothing in joining a signer is relayed by the page'); },
   call: callAs(w.person),
-  tell: (o) => { Object.assign(told, o); },
-  show: (words) => { const link = words.values?.['link']; if (typeof link === 'string') linksShown.push(link); },
+  tell: (o: Readonly<Record<string, string | number>>) => { Object.assign(told, o); },
+  show: (words: Words) => { const link = words.values?.['link']; if (typeof link === 'string') linksShown.push(link); },
   confirm: async () => { throw new Error('nothing in joining a signer waits on a Confirm in the window'); },
   releaseReadKeys: () => { throw new Error('nothing in joining a signer hands a page read keys'); },
   /* What the wallet sends itself, and finds on the chain, is counted by the run for the window's end; these acts end in the test. */
   sentByTheWallet: () => {}, seenOnTheChain: () => {},
-  keyring: { open: () => ({ read: () => w.kept }) as never, keep: async (change) => { w.kept = change(w.kept); } },
-}) as StepContext;
+  keyring: { open: () => ({ read: () => w.kept }) as never, keep: async (change: (k: Keyring) => Keyring) => { w.kept = change(w.kept); } },
+}) as unknown as StepContext);
 
 /* Runs every step of the act as the wallet runs it, one after the other, and gives back what the act told the page. */
 const run = async (def: ActionDefinition, w: Wallet, name: string, fields: Record<string, string>): Promise<Record<string, string | number>> => {
@@ -296,7 +298,7 @@ beforeAll(async () => {
   const intent = { name: 'invite', fields: companyFields } as unknown as ActIntent;
   const ctx = ctxOf(ada, intent, 1, 1, {});
   const r = await keptReach((c) => companyReachFor(c, chain, builderOf(ADA), why)).at(ctx);
-  const doors = rebuildDoorsIn(ctx, r, r.api, r.send, {});
+  const doors = rebuildDoorsIn(ctx, r, {});
   for (const v of VAULTS) await doors.records('nonce-secret').put(v, startNonceSecret(v, [recordsReaderOf(fromHex(companyKeyHeldBy(ada)))]));
 }, 120_000);
 afterAll(() => new Promise<void>((resolve) => {

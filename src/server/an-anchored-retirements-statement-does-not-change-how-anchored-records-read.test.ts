@@ -1,5 +1,6 @@
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect } from 'vitest';
-import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { judgeIn, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import type { Hex } from '../core/crypto.js';
@@ -25,7 +26,7 @@ const POLICY = 'pol_filed_by_cy';
 describe('A RETIREMENT\'S RECORDS-KEY STATEMENT IS READ FOR VERSIONS NOT YET ANCHORED, AND FOR NO ANCHORED ONE', () => {
   it('A SIGNER RETIRED WITH NO STATEMENT HAS THEIR ANCHORED RECORD READ AS BEFORE, WHILE THE SAME VERSION TAKEN AS NOT YET ANCHORED IS REFUSED FOR THE MISSING STATEMENT', async () => {
     await CY.entered.enter([await aRecordFiledBy(CY, POLICY)]);
-    expect((await anchorTheRecordsHere(anchorDoorsOf(CY))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(anchorDoorsOf(CY)))).anchored).toBeGreaterThan(0);
     expect(await aPolicyFiledBy(CY, [ADA, BO, CY])).toBe(1);
     const filedButNotAnchored = (await directoryOf(BO)(ASKED)).records.notYetAnchored.find((e) => e.kind === 'spending-policy')!;
     expect(filedButNotAnchored.filedBy.publicKey.toLowerCase()).toBe(CY.statement.signingKey.toLowerCase());

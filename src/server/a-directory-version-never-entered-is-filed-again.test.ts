@@ -12,13 +12,13 @@
  * (version 3) are filed before anything anchors them; Ada's device anchors a
  * later version while the service keeps both out of what it hands her.
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { describe, expect, it } from 'vitest';
 import { sign, type Hex } from '../core/crypto.js';
 import { directoryChangeMessage, type DirectoryChange, type DirectoryFiling } from '../midnight/seat-directory.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import {
-  anchoredOnTheWayIn, anchorServiceFor, anchorTheRecordsHere, type AnchorDoors,
-} from 'vaults-web-shared/records-anchored-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { anchoredOnTheWayIn } from 'vaults-web-shared/anchored-on-the-way-in.js';
 import { passedOverSaid } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
@@ -26,16 +26,17 @@ import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectory, chains, acmeDirectoryWithItsFold, ADA, ADDRESS, apiAs, aRecordFiledBy, BO, CO, LABEL, seatOf, sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
 /** A seat's device anchoring, the service handing it the directory's filings as `filings` makes them. */
-const doorsOf = (s: Seat, filings: (all: readonly DirectoryFiling[]) => readonly DirectoryFiling[] = (all) => all, kept = treeKeptInMemory()): AnchorDoors => ({
+const doorsOf = (s: Seat, filings: (all: readonly DirectoryFiling[]) => readonly DirectoryFiling[] = (all) => all, kept = treeKeptInMemory()): AnchorDoorsBare => ({
   accountId: CO,
   changes: kept.changes,
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-  manifest: manifestServiceFor(apiAs(s.person)),
-  tree: treeServiceFor(apiAs(s.person)),
+  manifest: manifestServiceOf(serviceSource(apiAs(s.person), CO)),
+  tree: treeServiceOf(serviceSource(apiAs(s.person), CO)),
   directory: () => acmeDirectoryWithItsFold(),
   directoryFilings: async () => filings(store.directoryFilingsOf(CO)),
   fileDirectory: async (filing) => {
@@ -50,7 +51,7 @@ const doorsOf = (s: Seat, filings: (all: readonly DirectoryFiling[]) => readonly
       acmeChain.move(previous, batch, held, tag);
     },
     sealedProposals: async (c) => store.listProposals(c),
-    foundingRecords: anchorServiceFor(apiAs(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs(s.person), CO),
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
 });
@@ -92,7 +93,7 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     await retiredBy(BO);
     const four = await adaAgain();
     /* Ada's device is handed every filing but Bo's entry and retirement, so it witnesses only version 4, and anchors past 2 and 3. */
-    await anchorTheRecordsHere(doorsOf(ADA, (all) => all.filter((f) => f.version !== 2 && f.version !== 3)));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, (all) => all.filter((f) => f.version !== 2 && f.version !== 3))));
     const here = await acmeDirectory();
     expect([...here.records.directory.keys()].sort()).toEqual([1, four]);
     /* RED WHEN: a directory version the anchor passed over is applied - an entry nothing anchored believed. */
@@ -109,18 +110,18 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     const before = store.directoryFilingsOf(CO).length;
     /* RED WHEN: the seat's device does not file its own passed-over entry again, or the service refuses it as a seat taken. */
     /* RED WHEN: the entry filed again waits for a later anchor, so a change of who holds the account can lose it first. */
-    expect(await anchoredOnTheWayIn(doorsOf(BO))).toMatchObject({ filedAgain: 'own-entry', anchored: 1 });
+    expect(await anchoredOnTheWayIn(throughAView(doorsOf(BO)))).toMatchObject({ filedAgain: 'own-entry', anchored: 1 });
     const again = store.directoryFilingsOf(CO);
     expect(again.length).toBe(before + 1);
     expect(again.at(-1)!.change).toEqual(again[1]!.change);
     /* Anchored by the next anchor, like any other version. */
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const here = await acmeDirectory();
     /* RED WHEN: the entry filed again is never anchored, so the seat stays unbelieved for good. */
     expect(here.dir.seats.map((x) => x.seat)).toContain(BO.seat);
     /* Filed again once: a second way in files nothing. */
     /* The service hands Bo's anchor every filing but the change his device files again, so that change is left unanchored. */
-    expect(await anchoredOnTheWayIn(doorsOf(BO, (all) => all.filter((f) => f.signedAt === undefined), bos))).toMatchObject({ filedAgain: 'directory-changes' });
+    expect(await anchoredOnTheWayIn(throughAView(doorsOf(BO, (all) => all.filter((f) => f.signedAt === undefined), bos)))).toMatchObject({ filedAgain: 'directory-changes' });
   });
 
   it('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES BY A DEVICE THAT MAY ANCHOR, KEPT THERE UNTIL ANCHORED, AND APPLIED', async () => {
@@ -133,9 +134,9 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     /* RED WHEN: the device filing it keeps nothing, so a change the service passes over again is lost with the service. */
     expect(await bos.changes.all(CO)).toEqual([{ signedAt: 3, change: filings[2]!.change }]);
     /* The service passes it over again: the next anchors are handed every filing but it. */
-    await anchorTheRecordsHere(doorsOf(ADA, (all) => all.filter((f) => f.version !== at)));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, (all) => all.filter((f) => f.version !== at))));
     await adaAgain();
-    await anchorTheRecordsHere(doorsOf(ADA, (all) => all.filter((f) => f.version !== at)));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, (all) => all.filter((f) => f.version !== at))));
     expect((await acmeDirectory()).passedOver?.map((f) => f.version)).toContain(at);
     /* Bo is not retired until the change is applied. */
     expect((await acmeDirectory()).dir.seats.find((x) => x.seat === BO.seat)?.retired).toBeNull();
@@ -152,23 +153,23 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     /* RED WHEN: a change is filed before it is kept, so one whose filing fails is kept nowhere; a filing that fails holds the way in back. */
     const fresh = treeKeptInMemory();
     const failing = { ...doorsOf(BO, (all) => all, fresh), fileDirectory: async () => { throw new Error('the service is away'); } };
-    expect(await anchoredOnTheWayIn(failing)).not.toHaveProperty('notAnchored');
+    expect(await anchoredOnTheWayIn(throughAView(failing))).not.toHaveProperty('notAnchored');
     expect((await fresh.changes.all(CO)).map((k) => k.signedAt)).toEqual([3]);
     const servedNone = { ...doorsOf(BO, (all) => all.filter((f) => f.signedAt === undefined), bos), directory: async () => ({ ...(await acmeDirectoryWithItsFold()), notApplied: [] }) };
     /* RED WHEN: a change filed again from what the device kept is not anchored at once by that device. */
-    expect(await anchoredOnTheWayIn(servedNone)).toMatchObject({ filedAgain: 'directory-changes' });
+    expect(await anchoredOnTheWayIn(throughAView(servedNone))).toMatchObject({ filedAgain: 'directory-changes' });
     expect(store.directoryFilingsOf(CO).at(-1)).toMatchObject({ change: filings[2]!.change, signedAt: 3 });
     /* Not yet anchored, Bo's seat leaves the chain: a retirement filed again is believed with its seat on the chain or off it. */
     /* RED WHEN: a retirement filed again is refused once the chain has removed its seat, which it may do before or after the retirement is filed. */
     expect((await withoutBo(() => acmeDirectory())).refiledRefused).toEqual([]);
     /* RED WHEN: a change passed over again after it was filed again is said as if nothing were wrong: the service may be withholding it. */
     expect(passedOverSaid(await acmeDirectory())).toMatch(/the change signed for version 3 was passed over again after it was filed again: if it keeps happening, the service is withholding it from the devices that anchor/u);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* RED WHEN: the change filed again and anchored is not applied. */
     expect((await acmeDirectory()).dir.seats.find((x) => x.seat === BO.seat)?.retired).toEqual({});
     /* RED WHEN: a change anchored at last is kept and filed again for ever. Bo, retired now, anchors nothing; a way in that may anchor lets it go. */
-    expect(await anchoredOnTheWayIn(doorsOf(BO, (all) => all, bos))).not.toHaveProperty('filedAgain');
-    expect(await anchoredOnTheWayIn(doorsOf(ADA, (all) => all, bos))).not.toHaveProperty('filedAgain');
+    expect(await anchoredOnTheWayIn(throughAView(doorsOf(BO, (all) => all, bos)))).not.toHaveProperty('filedAgain');
+    expect(await anchoredOnTheWayIn(throughAView(doorsOf(ADA, (all) => all, bos)))).not.toHaveProperty('filedAgain');
     expect(await bos.changes.all(CO)).toEqual([]);
     /*
      * Anchored, it is counted against who held the account as it was anchored, like any version: RED WHEN Bo's seat leaving the
@@ -179,28 +180,28 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     expect(anchored.dir.seats.find((x) => x.seat === BO.seat)?.retired).toEqual({});
     /* Cy is seated and retired, passed over; a day on, Ada's way in files it again and anchors it at once. */
     const CY = await seatedNow('cy', 3);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const cyOut = await retiredBy(CY);
     await adaAgain();
-    await anchorTheRecordsHere(doorsOf(ADA, (all) => all.filter((f) => f.version !== cyOut)));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, (all) => all.filter((f) => f.version !== cyOut))));
     const dayOn = { ...doorsOf(ADA), now: () => new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) };
     /* RED WHEN: filing a change again holds the way in back from the anchor that is due - a service passing changes over could put it off for ever. */
-    expect(await anchoredOnTheWayIn(dayOn)).not.toHaveProperty('waits');
+    expect(await anchoredOnTheWayIn(throughAView(dayOn))).not.toHaveProperty('waits');
     expect((await acmeDirectory()).dir.seats.find((x) => x.seat === CY.seat)?.retired).toEqual({});
   });
 
   it('A CHANGE FILED AGAIN THAT WOULD UNDO A LATER CHANGE IS NOT FILED, REFUSED BY THE SERVICE, AND SAID WITH WHY', async () => {
     /* Dee seated; her retirement keeping one version, passed over; then her retirement keeping two, anchored. */
     const DEE = await seatedNow('dee', 4);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const first = await retiredBy(DEE, 1);
     await adaAgain();
-    await anchorTheRecordsHere(doorsOf(ADA, (all) => all.filter((f) => f.version !== first)));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, (all) => all.filter((f) => f.version !== first))));
     await retiredBy(DEE, 2);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const filings = store.directoryFilingsOf(CO);
     /* RED WHEN: a device files again a change that would reverse a later one. */
-    expect(await anchoredOnTheWayIn(doorsOf(ADA))).not.toHaveProperty('filedAgain');
+    expect(await anchoredOnTheWayIn(throughAView(doorsOf(ADA)))).not.toHaveProperty('filedAgain');
     expect(store.directoryFilingsOf(CO).length).toBe(filings.length);
     /* RED WHEN: the service files it anyway: one rule for the service and every device. */
     const r = await sendAs('ada')(`/api/accounts/${CO}/directory/${filings.length + 1}`, {
@@ -218,9 +219,9 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
 describe('A HEADER FILED AGAIN IS JUDGED BY WHO ITS SEAT WAS WHEN IT WAS SIGNED', () => {
   it('A HEADER FAY ANCHORED WHILE SEATED IS KEPT WHEN ADA HANDS IT IN AFTER FAY IS RETIRED', async () => {
     const FAY = await seatedNow('fay', 5);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     await aRecordFiledBy(FAY, 'pol_then_k1').then((e) => FAY.entered.enter([e]));
-    await anchorTheRecordsHere(doorsOf(FAY));
+    await anchorTheRecordsHere(throughAView(doorsOf(FAY)));
     const hers = store.keptTreeOf(CO).headers.at(-1)!;
     expect(hers.anchoredBy.publicKey).toBe(FAY.statement.signingKey);
     await retiredBy(FAY);

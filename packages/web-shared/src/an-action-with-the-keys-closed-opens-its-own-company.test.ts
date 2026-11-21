@@ -11,6 +11,7 @@ import { inboxPublicKey } from '../../../src/core/sealed-records.js';
 import { invitationIdOf, invitationLink } from '../../../src/core/invitation.js';
 import { keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
 import * as keyring from './keyring.js';
+import * as creation from './company-creation.js';
 import { inviteInTheWallet, type InviteAsk } from './invite-in-the-wallet.js';
 import { admitSignerInTheWallet, approveSignerInTheWallet } from './signer-in-the-wallet.js';
 import { joinByCodeInTheWallet } from './join-in-the-wallet.js';
@@ -18,6 +19,7 @@ import { admitPersonInTheWallet, changePersonInTheWallet } from './person-in-the
 import { withCompanyKeys } from './governed-call-on-device.js';
 import { metadataOf, openKeyring, sealKeyring, seatsOf, servedKeysOpenedFrom } from './keyring-blob.js';
 import type { Openable } from './wallet-sign-in.js';
+import { STALE, watchReadsStale, type ReadsStale } from './company-reads-stale.js';
 
 /*
  * **A CREATE VAULT OR A FINISH PRESSED WITH THE KEYS CLOSED LEAVES THE PAGE ITS OWN COMPANY OPEN.** The tab hands the
@@ -102,7 +104,7 @@ const aService = (inboxOf: (id: string) => string = (id) => inboxPublicKey(VIEWI
 const signIn = () => keyring.signedInByAnotherScreen({ user: A, address: ADDRESS, created: true, session: {} });
 const createVault = (wallet: Wallet) => keyring.actOnACompanyInTheWallet(
   { name: 'create-vault', record: OWN, company: LABEL, account: ACCOUNT }, WALLET, {}, wallet);
-const finish = (wallet: Wallet) => keyring.finishCompanyInTheWallet(OWN, WALLET, {}, wallet, US);
+const finish = (wallet: Wallet) => creation.finishCompanyInTheWallet(OWN, WALLET, {}, wallet, US);
 
 /** What opening the company and reading its vault turn on in this tab: its seat, its viewing key, and that it may open it. */
 const ownCompanyOpens = (): void => {
@@ -323,4 +325,56 @@ describe('A COMPANY KEY RELEASED TO THIS TAB IS TOLD TO WHAT WAITS FOR IT', () =
     await keyring.companyKeysForVaults(OWN, WALLET, new Wallet(), US);
     expect(told).toEqual([OWN]);
   });
+});
+
+/*
+ * **WHAT A PAGE READ OF A COMPANY IS STALE ONCE THE SIGN-IN OR THE COMPANY CHANGES UNDER IT.** A screen holds one
+ * view of its company and lets it go when it is told here: the tab forgot its sign-in, somebody signed in, or an
+ * action in the wallet ran on the company, whether it ended well or not.
+ */
+describe('WHOEVER HOLDS A READ OF A COMPANY IS TOLD WHEN IT IS STALE', () => {
+  const told: ReadsStale[] = [];
+  let stop = (): void => {};
+  afterEach(() => { stop(); told.length = 0; });
+  const watch = (): void => { told.length = 0; stop(); stop = watchReadsStale((stale) => { told.push(stale); }); };
+
+  it('tells every company\'s holder that the sign-in ended, with nobody signed in to read again as', () => {
+    signIn();
+    watch();
+    keyring.forgetLocally();
+    /* RED WHEN: a 401 or a sign-out leaves a view open, with the company's keys and roster it opened, or has the screen open another with nobody signed in. */
+    expect(told).toEqual([{ company: null, why: STALE.signInEnded, signedIn: false }]);
+  });
+
+  it('tells every company\'s holder when somebody signs in, so nothing is read as whoever was signed in before', () => {
+    watch();
+    signIn();
+    /* RED WHEN: a new sign-in is handed the view the person before it opened. */
+    expect(told).toEqual([{ company: null, why: STALE.signedIn, signedIn: true }]);
+  });
+
+  for (const [name, run] of [['Create vault', createVault], ['Finish', finish]] as const) {
+    it(`tells the holder of the company a ${name} ran on, and of no other, once it has ended`, async () => {
+      aService();
+      signIn();
+      const wallet = new Wallet();
+      watch();
+      await run(wallet);
+      /* RED WHEN: the page keeps reading the company through what it read before the action changed it, or another company's view is ended with it. */
+      expect(told).toEqual([{ company: OWN, why: STALE.actedInTheWallet, signedIn: true }]);
+    });
+
+    it(`tells the holder when a ${name} threw before it ended, as it may have sent part of its work`, async () => {
+      aService();
+      signIn();
+      /* The saved keys cannot be fetched, so the action throws after its window has opened. */
+      const served = globalThis.fetch;
+      globalThis.fetch = (async (url: string, init?: RequestInit) => (url === '/api/me/keys'
+        ? { ok: false, status: 500, json: async () => ({ error: 'not now' }) } as Response : served(url, init))) as typeof fetch;
+      watch();
+      await expect(run(new Wallet())).rejects.toThrow();
+      /* RED WHEN: only an action that ended well ends the view, so one that stopped part way leaves the page reading what it may have changed. */
+      expect(told).toEqual([{ company: OWN, why: STALE.actedInTheWallet, signedIn: true }]);
+    });
+  }
 });

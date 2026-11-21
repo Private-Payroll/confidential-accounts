@@ -6,16 +6,14 @@
  * for the anchor.
  */
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
-import {
-  governedCallServiceFor, leavingBoundariesHere, LeavingNotRead, type LeavingReads,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { leavingBoundariesHere, LeavingNotRead, type LeavingReads } from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import { RosterNotBelieved } from '../../../../packages/web-shared/src/roster-here.js';
 import type { LeavingBoundaries } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { CompanyReach } from './company-reach.js';
 import { ActionStopped } from './run.js';
 
-type Api = CompanyReach['api'];
 type KeysHeld = Parameters<typeof leavingBoundariesHere>[1];
 
 /**
@@ -39,10 +37,10 @@ const rosterOrNoneFor = (r: CompanyReach) => async (): Promise<{ readonly signer
  * count of approvals at the seat bar. So a roster this device does not believe, which attests nobody, never hides an
  * approved removal; every other check on the filing still holds.
  */
-export const leavingReadsOf = (r: CompanyReach, api: Api = r.api): LeavingReads => {
+export const leavingReadsOf = (r: CompanyReach): LeavingReads => {
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, rosterOrNoneFor(r));
   return {
-    service: governedCallServiceFor(api),
+    service: governedCallServiceThrough(r.stepView),
     accountId: r.accountId,
     records: {
       directory: async (asked) => ({ ...await directory(asked), another: new Set<string>() }),
@@ -119,10 +117,10 @@ export const stopsFor = (r: CompanyReach) => async (): Promise<string | null> =>
  * up by a proposal this wallet cannot read, and never reads as complete over one.
  */
 export const leavingForTheAnchor = (
-  r: CompanyReach, api: Api, companyKeys: KeysHeld, unread?: (why: string) => void,
+  r: CompanyReach, companyKeys: KeysHeld, unread?: (why: string) => void,
 ) => async (): Promise<LeavingBoundaries> => {
   try {
-    const read = await leavingBoundariesRead(leavingReadsOf(r, api), companyKeys);
+    const read = await leavingBoundariesRead(leavingReadsOf(r), companyKeys);
     if (read.passedOver !== null) unread?.(read.passedOver);
     return read.boundaries;
   } catch (e) {

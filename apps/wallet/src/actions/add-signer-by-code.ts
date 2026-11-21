@@ -3,12 +3,12 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import type { SeatOpening } from '../../../../src/core/seat-opening.js';
 import { isSignerRole } from '../../../../src/core/roles.js';
 import type { Role } from '../../../../src/core/types.js';
-import { InvitationNotMade, InvitationRefused, SeatMayNotInvite, type InvitationSend, type InvitingCompany } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import { InvitationNotMade, InvitationRefused, SeatMayNotInvite, type InvitingCompany } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { addSignerFromCodeHere, CodeNotTaken } from '../../../../packages/web-shared/src/invitation-by-code.js';
 import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { liveLeafReader, type LeafReader } from '../chain/seat-leaf.js';
-import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, keptReach, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { invitingSeatOf } from './invite.js';
 import { ActionStopped } from './run.js';
@@ -92,12 +92,11 @@ export function addSignerByCodeAction(reach: AddSignerByCodeReach): ActionDefini
             /* A leaf not read is no leaf: the code is then refused as not shown to be made for its wallet. */
             return null;
           })));
-          const send: InvitationSend = (path, init) => ctx.call(init.method, path, init.body);
           let added: { readonly id: string; readonly fingerprint: string };
           try {
             added = await addSignerFromCodeHere(company, inviting, intent.fields['code']!.trim(), {
               name: intent.fields['personName']!, role: intent.fields['role'] as Role,
-            }, send, leaves, (c, salt) => commitments.inviteAddressOf(c, salt));
+            }, { writes: writesOfTheStep(r), invitations: ctx.invitations }, leaves, (c, salt) => commitments.inviteAddressOf(c, salt));
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof CodeNotTaken) throw new StepRefused(why('not-taken', { says: said(e) }), codeOfError(e));

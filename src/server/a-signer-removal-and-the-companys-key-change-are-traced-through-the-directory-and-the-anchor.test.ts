@@ -1,5 +1,8 @@
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect, vi } from 'vitest';
-import { changeThresholdOnDevice, removeSignerOnDevice, seatsLeavingHere } from 'vaults-web-shared/governed-call-on-device.js';
+import { changeThresholdOnDevice } from 'vaults-web-shared/company-change-on-device.js';
+import { seatsLeavingHere } from 'vaults-web-shared/seats-leaving-here.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { companyKeyHere, rotateTheCompanyKeyHere, CompanyKeyBeingChanged } from 'vaults-web-shared/company-key-here.js';
 import { judgeIn } from 'vaults-web-shared/vault-page-doors.js';
@@ -64,7 +67,7 @@ const foundIn = (texts: readonly string[], secrets: ReadonlyMap<string, string>)
 describe('A SIGNER REMOVED AND THE COMPANY\'S KEY CHANGED, TRACED FROM THE SIGNERS\' DEVICES THROUGH THE DIRECTORY AND THE ANCHOR', () => {
   it('CY IS RETIRED AND TAKEN OFF THE CHAIN, BO\'S DEVICE CHANGES THE KEY AND ANCHORS IT, CY SEALS AND OPENS NOTHING AFTER IT, AND ADA AND BO READ, RAISE AND APPROVE UNDER THE NEW KEY', async () => {
     await CY.entered.enter([await aRecordFiledBy(CY, 'pol_filed_by_cy')]);
-    expect((await anchorTheRecordsHere(anchorDoorsOf(CY))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(anchorDoorsOf(CY)))).anchored).toBeGreaterThan(0);
     expect(await aPolicyFiledBy(CY, [ADA, BO, CY])).toBe(1);
     events.length = 0;
     const remove = { viewingKey: KEY, leaf: CY.seat, name: 'cy' };
@@ -152,7 +155,7 @@ describe('A SIGNER REMOVED AND THE COMPANY\'S KEY CHANGED, TRACED FROM THE SIGNE
 
     /* A policy filed after the change opens on the other signer who stays. It is filed by the test support, so which seats it is sealed to and at which epoch are chosen here, and are pinned where the product's own filer is driven. */
     expect(await aPolicyFiledBy(BO, [ADA, BO])).toBe(2);
-    expect((await anchorTheRecordsHere(anchorDoorsOf(BO))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(anchorDoorsOf(BO)))).anchored).toBeGreaterThan(0);
     /* RED WHEN: a policy filed after the change of the key and sealed to the seats that stay does not open on a signer who stays. */
     expect(await policyReadBy(ADA, staying.get('ada')!).catch((e: unknown) => e)).toMatchObject({ state: 'set', version: 2 });
 

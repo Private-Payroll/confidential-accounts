@@ -7,6 +7,7 @@ import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profil
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
 import { formatAmount } from '../../../../src/core/assets.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * Admitting a person or a vendor and changing their record, in the wallet. The wallet reads the company with its own
@@ -21,6 +22,8 @@ const t = vi.hoisted(() => ({
   vendors: null as null | (() => Promise<unknown>),
   asked: [] as any[][],
   pastDraft: [] as any[][],
+  /* Whether the months-raised reader reads the runs and the proposals while the step runs, as the shared code does. */
+  readsPastDraft: false,
   /* The seat each read of where proposals stand was asked with. */
   chainSeats: [] as Array<string | undefined>,
   admit: null as null | ((...a: any[]) => Promise<unknown>),
@@ -65,7 +68,11 @@ vi.mock('../../../../packages/web-shared/src/vendors-on-device.js', async (real)
 }));
 vi.mock('../../../../packages/web-shared/src/run-rebuilt-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/run-rebuilt-here.js')>()),
-  periodsPastDraftHere: async (...a: any[]) => { t.pastDraft.push(a); return t.raised; },
+  periodsPastDraftHere: async (...a: any[]) => {
+    t.pastDraft.push(a);
+    if (t.readsPastDraft) await Promise.all([a[0].runs(), a[0].proposals()]);
+    return t.raised;
+  },
 }));
 vi.mock('./upkeep.js', async (real) => {
   const actual = await real<typeof import('./upkeep.js')>();
@@ -80,7 +87,7 @@ vi.mock('./upkeep.js', async (real) => {
 
 const { admitPersonAction, ADMIT_PERSON_STATE } = await import('./admit-person.js');
 const { changePersonAction } = await import('./change-person.js');
-const { PersonNotChanged } = await import('../../../../packages/web-shared/src/people-on-device.js');
+const { AdmissionNotRead, PersonNotChanged } = await import('../../../../packages/web-shared/src/people-on-device.js');
 
 const NET = 'undeployed' as const;
 const identity = identityFromSecret(newSecret());
@@ -109,9 +116,9 @@ const vendorsWith = (o: { vendors?: unknown[]; notPayable?: unknown[]; notBeliev
 });
 
 const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
-const reachOf = () => ({
+const reachOf = () => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: 'ab'.repeat(32) },
-  leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
   api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
   send: async () => ({ status: 404, body: {} }),
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null, records: { history: new Map() } }) },
@@ -122,13 +129,13 @@ const reachOf = () => ({
 });
 const ctxOf = (i: ActIntent, person: string | null = 'usr_a') => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person,
     held: { identity, account: 0 }, at: { step: 3, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a person is admitted and changed through calls, never a relay'); },
     call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 404, body: {} }; }, tell: (x: Record<string, unknown>) => { told.push(x); },
     show: () => {}, keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const IDENTITY = { runPayload: () => new Uint8Array(32), proposalIdOf: () => new Uint8Array(32) };
@@ -277,6 +284,18 @@ describe('A PERSON OR A VENDOR IS ADMITTED IN THE WALLET, ON THE FINGERPRINT THE
     const e = await run(admitPersonAction(admitReach()), intent('admit-person', ADMIT_ADA), ctx).then(() => null, (x: unknown) => x);
     expect((e as StepRefused).words).toMatchObject({ key: 'act.admit-person.why.not-admitted' });
     expect(String((e as StepRefused).words.values?.['says'])).toMatch(/fingerprint/u);
+    expect(told).toEqual([]);
+  });
+
+  it('a read the admission rests on that the service did not give is said as that read, with nothing filed, never as a filing refused', async () => {
+    t.admit = async () => { throw new AdmissionNotRead('what Ada handed over', Object.assign(new Error('the company\'s service answered 503'), { status: 503 })); };
+    const { ctx, told } = ctxOf(intent('admit-person', ADMIT_ADA));
+    const e = await run(admitPersonAction(admitReach()), intent('admit-person', ADMIT_ADA), ctx).then(() => null, (x: unknown) => x);
+    /* RED WHEN: a hand-over or invitations read that failed is told as the service refusing a filing, or without saying which read failed. */
+    expect((e as StepRefused).words).toEqual({
+      key: 'act.admit-person.why.not-admitted',
+      values: { says: 'what Ada handed over could not be read, so nothing was filed (the company\'s service answered 503)' },
+    });
     expect(told).toEqual([]);
   });
 });
@@ -472,12 +491,10 @@ describe('EACH ACTION CALLS ONLY THE ROUTES ITS INTENT LISTS, AND HAS ITS WORDS'
       t.called.length = 0;
       t.pastDraft.length = 0;
   t.chainSeats.length = 0;
+      /* The months-raised reader the change hands the shared code is the action's own: it reads the runs and the proposals itself, in the step. */
+      t.readsPastDraft = true;
       await run(a, i, ctxOf(i).ctx);
-      /* The months-raised reader the change hands the shared code is the action's own: it reads the runs and the proposals itself. */
-      if (t.pastDraft.length > 0) {
-        await t.pastDraft[0]![0].runs();
-        await t.pastDraft[0]![0].proposals();
-      }
+      t.readsPastDraft = false;
       return t.called.slice().map((c) => { expect(routeOf(shape, c.split(' ')[0]!, c.split(' ')[1]!), c).not.toBeNull(); return c; });
     };
     await routesOf(admit, admitPersonAction(admitReach()), intent('admit-person', ADMIT_ADA));

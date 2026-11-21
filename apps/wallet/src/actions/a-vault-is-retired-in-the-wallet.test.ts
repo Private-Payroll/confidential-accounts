@@ -9,6 +9,7 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 const t = vi.hoisted(() => ({
   shared: [] as Array<{ act: string; doors: any; named: any }>,
@@ -57,7 +58,8 @@ vi.mock('./upkeep.js', async (real) => {
 });
 
 const { approveProposalAction } = await import('./approve-proposal.js');
-const { retireDoorsFor, retireVaultAction } = await import('./retire-vault.js');
+const { retireDoorsFor, retireVaultAction, retireVaultKind } = await import('./retire-vault.js');
+const { carriedCall } = await import('./holders-moved-here.js');
 const { RetireRefused } = await import('../../../../packages/web-shared/src/vault-retire-round.js');
 const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
 
@@ -75,7 +77,7 @@ const intent = (fields: Record<string, string>): ActIntent => ({ name: 'approve-
 let company: { approvals: number; vaultThresholds: Array<{ vault: string; threshold: number }> };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
   api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({
@@ -99,15 +101,20 @@ const reachOf = () => ({
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  /* What the step said its send moves: the chain calls named, and the vaults left adopted from this one. */
+  const moves: Array<{ chain: unknown[]; vaults: readonly string[] }> = [];
+  const ctx = stepOverItsCall({
+    movesWhoHolds: (sends: readonly object[], move: (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] }) => {
+      moves.push({ chain: sends.map((s) => `${(s as { circuit?: string }).circuit} ${(s as { contract?: string }).contract}`), vaults: move({ adoptedVaults: [PAYROLL, 'cd'.repeat(32)] }).adoptedVaults });
+    },
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a round of a vault\'s start is sent through its calls, never a bare relay'); },
     call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 200, body: {} }; },
     tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
-  return { ctx, told };
+  }) as unknown as StepContext;
+  return { ctx, told, moves };
 };
 const reach = (over: Record<string, unknown> = {}) => ({
   chain: () => ({ holders: async () => ({ seats: SEATS }) }) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0,
@@ -137,10 +144,17 @@ beforeEach(() => {
 describe('A VAULT\'S RETIRE IN THE WALLET', () => {
   it('another signer\'s retire is approved through the one approval and carried out by a step of its own at the company\'s threshold', async () => {
     const i = intent({ kind: 'retire-vault' });
-    const { ctx, told } = ctxOf(i);
+    const { ctx, told, moves } = ctxOf(i);
     await run(i, ctx);
     /* RED WHEN: a retire cannot be approved from the wallet, or nothing carries it out once the chain counts the company's threshold. */
     expect(acts()).toEqual(['opened', 'approve', 'carry']);
+    /* A retire goes straight to the chain, never written through the view: the carry step declares nothing before it is sent. */
+    expect(moves).toEqual([]);
+    /* RED WHEN: carrying the retire out is not said to take the vault, and only it, out of the vaults the account adopts, on the retire's own chain call. */
+    const carries = retireVaultKind(reach() as never).carries!(i, { id: 'prp_1', chainId: CHAIN_ID });
+    expect(carriedCall(carries, 'c0')).toEqual({ circuit: 'retire', contract: PAYROLL });
+    const leaves = carries.move as unknown as (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] };
+    expect(leaves({ adoptedVaults: [PAYROLL, 'cd'.repeat(32)] }).adoptedVaults).toEqual(['cd'.repeat(32)]);
     /* RED WHEN: the retire approved or carried out is not the one the window showed. */
     for (const c of t.shared) expect(c.named).toEqual({ vault: PAYROLL, proposal: 'prp_1' });
     expect(told).toContainEqual({ state: 'carried-out', approvals: 2, needed: 2 });

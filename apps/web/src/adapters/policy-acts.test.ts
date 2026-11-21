@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { Asset, AssetRegistry } from '../../../../src/core/assets.js';
 import { ACT_REFUSAL } from './refusals.js';
@@ -17,13 +18,23 @@ const kr = vi.hoisted(() => ({
   seat: null as unknown, seatAsked: [] as unknown[][], reach: null as Record<string, unknown> | null,
   held: new Map<string, unknown>(), holders: null as unknown, holdersAsked: [] as Record<string, unknown>[], holdersFail: null as Error | null,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => { kr.calls += 1; kr.acts.push(intent); return kr.ended; },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : kr.named),
+}));
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   holdersFromTheWallet: async (_origin: string, ask: Record<string, unknown>) => {
     kr.holdersAsked.push(ask);
     if (kr.holdersFail !== null) throw kr.holdersFail;
@@ -32,13 +43,13 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 }));
 vi.mock('./vault-private-money.js', async (real) => ({
   ...(await real<typeof import('./vault-private-money.js')>()),
-  seatAndRecordsHere: async (...asked: unknown[]) => { kr.seatAsked.push(asked); return kr.seat; },
+  seatAndRecordsHere: async (person: string, view: { company: string }) => { kr.seatAsked.push([person, view.company]); return typeof kr.seat === 'string' ? kr.seat : { ...kr.seat as object, view }; },
 }));
 vi.mock('vaults-web-shared/spending-policies-reach.js', () => ({
   spendingPoliciesFor: (reach: Record<string, unknown>) => { kr.reach = reach; return { stoodIn: true }; },
 }));
-vi.mock('vaults-web-shared/spending-policy-here.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/spending-policy-here.js')>()),
+vi.mock('vaults-web-shared/spending-policy-read-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/spending-policy-read-here.js')>()),
   spendingPolicyHere: async (_doors: unknown, input: { vault: string; asset: string }) => {
     const found = kr.held.get(input.asset);
     if (found instanceof Error) throw found;
@@ -65,7 +76,7 @@ const HERE = {
   builder: { spendingPolicyKeys: async () => ({}) }, directory: async () => ({}), records: () => ({}),
 };
 const TERMS = { bands: [{ ceiling: 100n, approvals: 1n }, { ceiling: 1000n, approvals: 2n }, { ceiling: 5000n, approvals: 3n }, { ceiling: 99999n, approvals: 4n }], periodLimit: 20_000n, periodStart: 5n, periodLength: 604_800n };
-const HOLDERS = { approvals: 2, vaultThresholds: [], policyBar: 3, seatBar: 3, seats: ['s1', 's2', 's3', 's4'] };
+const HOLDERS = { approvals: 2, vaultThresholds: [], policyBar: 3, seatBar: 3, seats: ['s1', 's2', 's3', 's4'], committee: [], threshold: 1, adoptedVaults: [] };
 const stopped = (refused?: string) => ({ of: 'stopped', step: 3, steps: 4, relayed: 0, unconfirmed: 0, why: refused === undefined ? 'relay-refused' : 'check-failed', ...(refused === undefined ? {} : { refused }) });
 const NEW_POLICY = {
   vault: VAULT, token: A1.code, limit: '0.02', periodLength: 604_800n,
@@ -78,20 +89,21 @@ describe('reading the company\'s spending policies', () => {
   it('refuses with no keys here before the company key is released, and never asks the wallet to release it', async () => {
     const m = await load();
     kr.seat = ACT_REFUSAL.noKeysHere; kr.seatAsked = [];
-    expect(await m.readPolicies('u1', 'acc_Company00001', [VAULT], REGISTRY)).toEqual({ of: m.POLICIES_READ.refused, why: ACT_REFUSAL.noKeysHere });
+    expect(await m.readPolicies('u1', aViewOf('acc_Company00001'), [VAULT], REGISTRY)).toEqual({ of: m.POLICIES_READ.refused, why: ACT_REFUSAL.noKeysHere });
     expect(kr.seatAsked).toEqual([['u1', 'acc_Company00001']]);
   });
 
   /* RED WHEN: the page reads a policy with a file door (so a read could file a record), or with another seat, key or company than the wallet released for this signer. */
   it('reads each vault and currency through the shared reader with this seat and key, and no file door', async () => {
     const m = await load();
-    kr.seat = HERE; kr.holdersAsked = [];
+    kr.seat = HERE; kr.holdersAsked = []; kr.holders = HOLDERS; kr.holdersFail = null; kr.named = { companyLabel: 'label-1', contractAddress: ACCOUNT };
     kr.held = new Map<string, unknown>([
       [A1.code, { state: 'set', policy: { terms: TERMS, blinding: new Uint8Array(32) }, version: 3 }],
       [A2.code, { state: 'not-for-this-currency' }],
       [A3.code, new Error('not opened here')],
     ]);
-    const read = await m.readPolicies('u1', 'acc_Company00001', [VAULT], REGISTRY);
+    const view = aViewOf('acc_Company00001');
+    const read = await m.readPolicies('u1', view, [VAULT], REGISTRY);
     if (read.of !== m.POLICIES_READ.read) throw new Error('the policies were not read');
     expect(read.held.map((h) => [h.vault, h.token, h.of])).toEqual([[VAULT, A1.code, 'set'], [VAULT, A2.code, 'not-for-this-currency'], [VAULT, A3.code, 'unread']]);
     const set = read.held[0]!;
@@ -103,17 +115,21 @@ describe('reading the company\'s spending policies', () => {
     expect([reach['accountId'], reach['leaf'], reach['companyKey']]).toEqual(['acc_Company00001', HERE.leaf, HERE.companyKey]);
     expect(Object.keys(reach)).not.toContain('file');
     /* RED WHEN: the entries of the chain a policy read asks about are asked of anything but the person's own wallet, for this company. */
-    expect(await (reach['roles'] as (r: string[]) => Promise<unknown>)(['aa'])).toEqual({ roles: [{ key: 'aa', value: null }] });
-    expect(kr.holdersAsked).toEqual([{ company: 'label-1', account: ACCOUNT, roles: ['aa'] }]);
+    /* RED WHEN: the roles are read past the opening's view, or asked of the wallet again for a set the view already read. */
+    const roles = reach['roles'] as (r: string[]) => Promise<unknown>;
+    expect(await roles(['aa'])).toEqual({ roles: [{ key: 'aa', value: null }] });
+    expect(await roles(['aa'])).toEqual({ roles: [{ key: 'aa', value: null }] });
+    expect(kr.holdersAsked.filter((a) => 'roles' in a)).toEqual([{ company: 'label-1', account: ACCOUNT, roles: ['aa'] }]);
+    expect(view.counts()['roles']).toBe(1);
   });
 
   /* RED WHEN: a wallet that cannot be asked who holds the company is shown as holders that were read, or the seated count is taken from anything but the seats the account holds now. */
   it('gives what the account holds as what a change is costed from, with the seats it has now counted', async () => {
     const m = await load();
     kr.holders = HOLDERS; kr.holdersFail = null;
-    expect(await m.readHolders('u1', 'acc_Company00001')).toEqual({ of: 'read', value: { approvals: 2, vaultThresholds: [], policyBar: 3, seatBar: 3, seated: 4 } });
+    expect(await m.readHolders('u1', aViewOf('acc_Company00001'))).toEqual({ of: 'read', value: { approvals: 2, vaultThresholds: [], policyBar: 3, seatBar: 3, seated: 4 } });
     kr.holdersFail = new Error('closed');
-    expect(await m.readHolders('u1', 'acc_Company00001')).toEqual({ of: 'unreadable' });
+    expect(await m.readHolders('u1', aViewOf('acc_Company00001'))).toEqual({ of: 'unreadable' });
     kr.holdersFail = null;
   });
 });
@@ -140,17 +156,17 @@ describe('what the wallet\'s refusals come to on the page', () => {
     kr.named = { companyLabel: 'label-1', contractAddress: ACCOUNT };
     for (const [code, why, partial] of CODES) {
       kr.ended = stopped(code);
-      expect(await m.raisePolicyBar('u1', 'acc_Company00001', 3, { policyBar: 2, seated: 4 }), code).toEqual({ of: 'stopped', why, partial, handedOver: false });
+      expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 3, { policyBar: 2, seated: 4 }), code).toEqual({ of: 'stopped', why, partial, handedOver: false });
     }
     kr.ended = stopped(undefined);
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 3, { policyBar: 2, seated: 4 })).toMatchObject({ why: 'stopped' });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 3, { policyBar: 2, seated: 4 })).toMatchObject({ why: 'stopped' });
     kr.ended = stopped('act.set-policy-bar.why.something-new');
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 3, { policyBar: 2, seated: 4 })).toMatchObject({ why: 'other' });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 3, { policyBar: 2, seated: 4 })).toMatchObject({ why: 'other' });
     /* RED WHEN: a code of another act is taken for one of the policy acts' reasons. */
     kr.ended = stopped('act.invite.why.may-not-set');
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 3, { policyBar: 2, seated: 4 })).toMatchObject({ why: 'other' });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 3, { policyBar: 2, seated: 4 })).toMatchObject({ why: 'other' });
     kr.ended = { of: 'stopped', step: 3, steps: 4, relayed: 1, unconfirmed: 0, why: 'went-quiet' };
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 3, { policyBar: 2, seated: 4 })).toMatchObject({ handedOver: true });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 3, { policyBar: 2, seated: 4 })).toMatchObject({ handedOver: true });
   });
 
   /* RED WHEN: a reason the page can show has no words of its own, or the refusal of a seat that may not set policies says anything but that the wallet will not, or names a role. */
@@ -171,10 +187,10 @@ describe('a change of the approvals a policy change needs', () => {
   it('refuses on the page a bar above the seated count, a number that is not whole, or the same bar, and asks the wallet nothing', async () => {
     const m = await load();
     kr.calls = 0;
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 5, { policyBar: 3, seated: 4 })).toEqual({ of: 'problem', problem: 'too-high', most: 4 });
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 0, { policyBar: 3, seated: 4 })).toEqual({ of: 'problem', problem: 'not-whole' });
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 3, { policyBar: 3, seated: 4 })).toEqual({ of: 'problem', problem: 'same' });
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 2, { policyBar: 3, seated: null })).toEqual({ of: 'problem', problem: 'unread' });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 5, { policyBar: 3, seated: 4 })).toEqual({ of: 'problem', problem: 'too-high', most: 4 });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 0, { policyBar: 3, seated: 4 })).toEqual({ of: 'problem', problem: 'not-whole' });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 3, { policyBar: 3, seated: 4 })).toEqual({ of: 'problem', problem: 'same' });
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 2, { policyBar: 3, seated: null })).toEqual({ of: 'problem', problem: 'unread' });
     expect(kr.calls).toBe(0);
   });
 
@@ -183,7 +199,7 @@ describe('a change of the approvals a policy change needs', () => {
     const m = await load();
     kr.acts = [];
     kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'waiting-for-approvals', proposal: 'prop_0001', approvals: 1, needed: 3 } };
-    expect(await m.raisePolicyBar('u1', 'acc_Company00001', 4, { policyBar: null, seated: 4 })).toEqual({
+    expect(await m.raisePolicyBar('u1', aViewOf('acc_Company00001'), 4, { policyBar: null, seated: 4 })).toEqual({
       of: 'done', state: 'waiting-for-approvals', proposal: 'prop_0001', approvals: 1, needed: 3,
     });
     expect(kr.acts).toEqual([{ name: 'set-policy-bar', record: 'acc_Company00001', company: 'label-1', account: ACCOUNT, bar: '4' }]);
@@ -197,8 +213,8 @@ describe('raising a spending policy', () => {
     const now = () => 1_700_000_000_999;
     kr.acts = [];
     kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'ready-to-carry', proposal: 'prop_0002' } };
-    await m.raisePolicy('u1', 'acc_Company00001', { ...NEW_POLICY, current: null }, undefined, now, REGISTRY);
-    await m.raisePolicy('u1', 'acc_Company00001', { ...NEW_POLICY, current: EDITED }, undefined, now, REGISTRY);
+    await m.raisePolicy('u1', aViewOf('acc_Company00001'), { ...NEW_POLICY, current: null }, undefined, now, REGISTRY);
+    await m.raisePolicy('u1', aViewOf('acc_Company00001'), { ...NEW_POLICY, current: EDITED }, undefined, now, REGISTRY);
     expect(kr.acts.map((a) => a['periodStart'])).toEqual(['1700000000', '5']);
   });
 
@@ -207,7 +223,7 @@ describe('raising a spending policy', () => {
     const m = await load();
     kr.acts = [];
     kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'waiting-for-approvals', proposal: 'prop_0003', approvals: 1, needed: 2 } };
-    expect(await m.raisePolicy('u1', 'acc_Company00001', { ...NEW_POLICY, current: null }, undefined, () => 1_700_000_000_000, REGISTRY)).toMatchObject({ of: 'done', proposal: 'prop_0003' });
+    expect(await m.raisePolicy('u1', aViewOf('acc_Company00001'), { ...NEW_POLICY, current: null }, undefined, () => 1_700_000_000_000, REGISTRY)).toMatchObject({ of: 'done', proposal: 'prop_0003' });
     expect(kr.acts).toEqual([{
       name: 'set-spending-policy', record: 'acc_Company00001', company: 'label-1', account: ACCOUNT, vault: VAULT, token: A1.code,
       periodLimit: '20000', periodStart: '1700000000', periodLength: '604800', bands: '100:1,1000:2,5000:3,99999:4',
@@ -227,7 +243,7 @@ describe('raising a spending policy', () => {
       { ...NEW_POLICY, limit: '-5' }, { ...NEW_POLICY, periodLength: 0n }, { ...NEW_POLICY, token: 'f0'.repeat(32) },
     ];
     for (const p of bad) {
-      expect(await m.raisePolicy('u1', 'acc_Company00001', { ...p, current: null }, undefined, undefined, REGISTRY), JSON.stringify(p, (_k, v) => (typeof v === 'bigint' ? 'big' : v)))
+      expect(await m.raisePolicy('u1', aViewOf('acc_Company00001'), { ...p, current: null }, undefined, undefined, REGISTRY), JSON.stringify(p, (_k, v) => (typeof v === 'bigint' ? 'big' : v)))
         .toEqual({ of: 'problem', problem: 'not-a-policy' });
     }
     expect(kr.calls).toBe(0);
@@ -238,10 +254,10 @@ describe('raising a spending policy', () => {
     const m = await load();
     kr.calls = 0;
     kr.user = { id: 'u2' };
-    expect(await m.raisePolicy('u1', 'acc_Company00001', { ...NEW_POLICY, current: null }, undefined, undefined, REGISTRY)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.raisePolicy('u1', aViewOf('acc_Company00001'), { ...NEW_POLICY, current: null }, undefined, undefined, REGISTRY)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' };
     kr.named = { companyLabel: 'label-1' };
-    expect(await m.raisePolicy('u1', 'acc_Company00001', { ...NEW_POLICY, current: null }, undefined, undefined, REGISTRY)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.raisePolicy('u1', aViewOf('acc_Company00001'), { ...NEW_POLICY, current: null }, undefined, undefined, REGISTRY)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
   });
 });

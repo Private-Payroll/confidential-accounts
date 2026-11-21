@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { describe, expect, it, vi } from 'vitest';
 import { ACT_REFUSAL } from './refusals.js';
 import type { SignerActed } from './signer-acts.js';
@@ -10,13 +11,20 @@ import type { SignerActed } from './signer-acts.js';
 const kr = vi.hoisted(() => ({
   acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown, user: { id: 'u1' } as { id: string } | null,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => { kr.acts.push(intent); return kr.ended; },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
 }));
 
 async function load() {
@@ -32,8 +40,8 @@ describe('removing a signer', () => {
   it('asks the wallet to remove exactly the seat pressed, with the number of approvals only when one was given', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-approvals' } };
-    await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF });
-    await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF, threshold: 2 });
+    await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF });
+    await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF, threshold: 2 });
     const base = { name: m.SIGNER_ACT.remove, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), leaf: LEAF };
     expect(kr.acts).toEqual([base, { ...base, threshold: '2' }]);
     expect(m.SIGNER_ACT.remove).toBe('remove-signer');
@@ -45,7 +53,7 @@ describe('removing a signer', () => {
     kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: {
       state: 'carried-out', approvals: 2, needed: 2, rotation: 'rotated', vaultsRotated: 1, vaultsAwaiting: 2, vaultsOwed: 0, vaultsWaiting: 3, vaultsNotChanged: 4,
     } };
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toEqual({
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toEqual({
       of: 'done', state: 'carried-out',
       removal: {
         approvals: 2, needed: 2, rotation: 'rotated', vaultSecrets: null, vaultSecretsWhy: null, vaults: { rotated: 1, awaiting: 2, owed: 0, waiting: 3, notChanged: 4 },
@@ -53,12 +61,12 @@ describe('removing a signer', () => {
       },
     } satisfies SignerActed);
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-approvals', approvals: 1, rotation: 'not-tried', vaultSecrets: 'not-started', vaultsRotated: 1 } };
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toEqual({
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toEqual({
       of: 'done', state: 'waiting-for-approvals', removal: { approvals: 1, needed: null, rotation: 'not-tried', vaultSecrets: 'not-started', vaultSecretsWhy: null, vaults: null, retirementSigned: null, retirementNeeded: null },
     } satisfies SignerActed);
     /* RED WHEN: what stopped the vault secrets' change, as the wallet told it, is lost on the way to the page. */
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'carried-out', rotation: 'rotated', vaultSecrets: 'not-started', vaultSecretsWhy: 'vault-records-not-read' } };
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toMatchObject({ removal: { vaultSecrets: 'not-started', vaultSecretsWhy: 'vault-records-not-read' } });
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toMatchObject({ removal: { vaultSecrets: 'not-started', vaultSecretsWhy: 'vault-records-not-read' } });
   });
 
   /* RED WHEN: a reason the wallet gives for stopping a removal is told as one the page does not know, a stop that may have gone part way is offered as nothing done, or another act's reason is taken for a removal's. */
@@ -70,39 +78,39 @@ describe('removing a signer', () => {
       ['carried-out', false], ['already-counted', false], ['outrun', false], ['no-seat', false], ['roster-not-opened', false],
     ] as const) {
       kr.ended = stopped(`act.remove-signer.why.${code}`);
-      expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF }), code)
+      expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF }), code)
         .toEqual({ of: 'stopped', act: m.SIGNER_ACT.remove, why: code, partial, handedOver: false } satisfies SignerActed);
     }
     kr.ended = stopped('act.rotate-vault-secrets.why.not-a-vault');
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toMatchObject({ why: m.WHY.other, partial: true });
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toMatchObject({ why: m.WHY.other, partial: true });
   });
 
   /* RED WHEN: the signatures on the leaving seat's retirement and the number it needs, as the wallet told them, are lost on the way to the page, or a count the wallet did not tell is made up. */
   it('tells how many signatures the retirement has and needs while the removal waits on it, and none it did not tell', async () => {
     const m = await load();
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-the-retirement', retirementSigned: 1, retirementNeeded: 3 } };
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toMatchObject({ state: 'waiting-for-the-retirement', removal: { retirementSigned: 1, retirementNeeded: 3 } });
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toMatchObject({ state: 'waiting-for-the-retirement', removal: { retirementSigned: 1, retirementNeeded: 3 } });
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-the-retirement', retirementSigned: 'many' } };
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toMatchObject({ removal: { retirementSigned: null, retirementNeeded: null } });
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toMatchObject({ removal: { retirementSigned: null, retirementNeeded: null } });
   });
 
   /* RED WHEN: the code the wallet gives for a removal with no retirement to record is lost, so the page cannot say nothing was sent, or a stop without a code is given one. */
   it('keeps the wallet\'s code on a stop, and gives none when it gave none', async () => {
     const m = await load();
     kr.ended = stopped('act.remove-signer.why.not-carried', { code: 'no-retirement-to-file' });
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toEqual({
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toEqual({
       of: 'stopped', act: m.SIGNER_ACT.remove, why: 'not-carried', partial: true, handedOver: false, code: m.NO_RETIREMENT_TO_FILE,
     } satisfies SignerActed);
     kr.ended = stopped('act.remove-signer.why.not-carried');
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).not.toHaveProperty('code');
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).not.toHaveProperty('code');
   });
 
   /* RED WHEN: a removal is asked of the wallet with nobody signed in. */
   it('asks the wallet for nothing when nobody is signed in', async () => {
     const m = await load();
     kr.acts.length = 0; kr.user = null;
-    expect(await m.removeSigner('u1', 'acc_Company00001', { leaf: LEAF })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
-    expect(await m.changeVaultSecrets('u1', 'acc_Company00001')).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.removeSigner('u1', aViewOf('acc_Company00001'), { leaf: LEAF })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.changeVaultSecrets('u1', aViewOf('acc_Company00001'))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     expect(kr.acts).toEqual([]);
     kr.user = { id: 'u1' };
   });
@@ -114,7 +122,7 @@ describe('changing the vault secrets after a signer left', () => {
     const m = await load();
     kr.acts.length = 0;
     kr.ended = { of: 'done', steps: 3, relayed: 1, outcome: { state: 'partial', vaultsRotated: 1, vaultsAwaiting: 0, vaultsOwed: 2, vaultsWaiting: 0, vaultsNotChanged: 0 } };
-    expect(await m.changeVaultSecrets('u1', 'acc_Company00001')).toEqual({
+    expect(await m.changeVaultSecrets('u1', aViewOf('acc_Company00001'))).toEqual({
       of: 'done', state: 'partial', vaults: { vaults: { rotated: 1, awaiting: 0, owed: 2, waiting: 0, notChanged: 0 } },
     } satisfies SignerActed);
     expect(kr.acts).toEqual([{ name: m.SIGNER_ACT.rotate, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32) }]);
@@ -126,10 +134,10 @@ describe('changing the vault secrets after a signer left', () => {
     const m = await load();
     for (const [code, why, partial] of [['not-a-vault', 'not-a-vault', false], ['no-person', 'no-person', false], ['no-seat', 'no-seat', false], ['nonsense', m.WHY.other, true]] as const) {
       kr.ended = stopped(`act.rotate-vault-secrets.why.${code}`);
-      expect(await m.changeVaultSecrets('u1', 'acc_Company00001'), code).toEqual({ of: 'stopped', act: m.SIGNER_ACT.rotate, why, partial, handedOver: false } satisfies SignerActed);
+      expect(await m.changeVaultSecrets('u1', aViewOf('acc_Company00001')), code).toEqual({ of: 'stopped', act: m.SIGNER_ACT.rotate, why, partial, handedOver: false } satisfies SignerActed);
     }
     kr.ended = stopped(undefined, { relayed: 1 });
-    expect(await m.changeVaultSecrets('u1', 'acc_Company00001')).toMatchObject({ why: m.WHY.stopped, partial: true, handedOver: true });
+    expect(await m.changeVaultSecrets('u1', aViewOf('acc_Company00001'))).toMatchObject({ why: m.WHY.stopped, partial: true, handedOver: true });
   });
 });
 
@@ -140,11 +148,11 @@ describe('repairing the company key', () => {
     const m = await load();
     kr.acts.length = 0; kr.user = { id: 'u1' };
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'rotated', epoch: 4, upkeep: 'partial', anchored: 2 } };
-    expect(await m.repairCompanyKey('u1', 'acc_Company00001')).toEqual({ of: 'done', state: 'rotated', repair: { epoch: 4, upkeep: 'partial' } } satisfies SignerActed);
+    expect(await m.repairCompanyKey('u1', aViewOf('acc_Company00001'))).toEqual({ of: 'done', state: 'rotated', repair: { epoch: 4, upkeep: 'partial' } } satisfies SignerActed);
     expect(kr.acts).toEqual([{ name: m.SIGNER_ACT.repair, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32) }]);
     expect(m.SIGNER_ACT.repair).toBe('repair-company-key');
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'rotated-elsewhere' } };
-    expect(await m.repairCompanyKey('u1', 'acc_Company00001')).toEqual({ of: 'done', state: 'rotated-elsewhere', repair: { epoch: null, upkeep: null } } satisfies SignerActed);
+    expect(await m.repairCompanyKey('u1', aViewOf('acc_Company00001'))).toEqual({ of: 'done', state: 'rotated-elsewhere', repair: { epoch: null, upkeep: null } } satisfies SignerActed);
   });
 
   /* RED WHEN: a reason the wallet gives for refusing the repair is told as one the page does not know, or a stop that sent nothing is offered as part done. */
@@ -152,10 +160,10 @@ describe('repairing the company key', () => {
     const m = await load();
     for (const [code, partial] of [['not-rotated', false], ['waits', false], ['not-this-seat', false], ['not-needed', false], ['not-repaired', true], ['no-seat', false]] as const) {
       kr.ended = stopped(`act.repair-company-key.why.${code}`);
-      expect(await m.repairCompanyKey('u1', 'acc_Company00001'), code).toEqual({ of: 'stopped', act: m.SIGNER_ACT.repair, why: code, partial, handedOver: false } satisfies SignerActed);
+      expect(await m.repairCompanyKey('u1', aViewOf('acc_Company00001')), code).toEqual({ of: 'stopped', act: m.SIGNER_ACT.repair, why: code, partial, handedOver: false } satisfies SignerActed);
     }
     kr.user = null;
-    expect(await m.repairCompanyKey('u1', 'acc_Company00001')).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.repairCompanyKey('u1', aViewOf('acc_Company00001'))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' };
   });
 });

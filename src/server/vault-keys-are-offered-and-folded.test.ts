@@ -22,7 +22,8 @@ import { openVaultKeysOffer, rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } f
 import type { Account, SealedAccount } from '../core/types.js';
 import type { VaultKeysOffer } from '../core/vault-keys.js';
 import { directoryEntryMade, type ChainHolders } from '../midnight/seat-directory.js';
-import { foldOffersHere, offerVaultKeysHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-filed-here.js';
 import { vaultKeysOfferOpened } from 'vaults-web-shared/vault-keys-offer-opened.js';
 import { sealRoster, signedFoundingRoster } from '../core/roster-record.js';
 import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
@@ -31,6 +32,8 @@ import { signerRoutes } from './signer-routes.js';
 import {
   aCompanyOfTwoSeats, acmeReads, ADA, ADDRESS, BO, chains, CO, KEY, LABEL, seatOf, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { viewOver } from '../testing/writes-over-a-send.js';
+import { readRoutesOver } from '../testing/service-routes-in-memory.js';
 
 const CY = seatOf('cy', 3);
 const ID: Record<string, string> = { ada: 'sgn_ada', bo: 'sgn_bo', cy: 'sgn_cy' };
@@ -92,7 +95,7 @@ const api = (person: string) => async (path: string, init?: RequestInit) => {
 };
 /** One seat's device, reading and filing the roster under the filing key its entry names. */
 const deviceOf = (s: Seat): RosterDoors => ({
-  api: api(s.person), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
+  view: viewOver(api(s.person), CO), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
   reads: acmeReads, entered: s.entered,
 });
 /** What a seat's wallet released for this company, and the statement it signed over the records key. */
@@ -100,10 +103,10 @@ const walletOf = (s: Seat) => ({
   companyKey: toHex(new Uint8Array(32).fill(s.n + 100)),
   recordsKey: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(s.n)), LABEL, ADDRESS, new Uint8Array(32).fill(s.n + 100), s.seat),
 });
-const offer = (s: Seat, o: { signingSecret?: Hex; signerId?: string } = {}) => offerVaultKeysHere(api(s.person), CO, {
+const offer = (s: Seat, o: { signingSecret?: Hex; signerId?: string } = {}) => offerVaultKeysHere(CO, {
   signerId: o.signerId ?? ID[s.person]!, signingSecret: o.signingSecret ?? s.signingSecret as Hex, committeeKey: s.committeeKey as never,
   ...walletOf(s), companyKey: walletOf(s).companyKey as Hex, entry: s.statement, viewingKey: KEY as Hex,
-});
+}, viewOver(api(s.person), CO));
 const offers = async () => ((await api('ada')(`/api/accounts/${CO}/vault-keys/offers`)) as { offers: Array<{ seat: string; person: string }> }).offers;
 const rosterNow = async () => {
   const rec = await api('ada')(`/api/accounts/${CO}`) as SealedAccount & { roster?: { version: number } | null };
@@ -143,10 +146,10 @@ describe('A NEW SIGNER\'S VAULT KEYS, OFFERED', () => {
   it('ONE OFFER IS KEPT PER SEAT, A NEW ONE REPLACING THE OLD, AND IT IS NOT READ AS THE ROSTER', async () => {
     /* An offer carrying a field beside the ones an offer has: checked, and kept without it. */
     const extra = { ...walletOf(BO) };
-    await offerVaultKeysHere(async (path, init) => {
+    await offerVaultKeysHere(CO, { signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, entry: BO.statement, ...extra, companyKey: extra.companyKey as Hex, viewingKey: KEY as Hex }, viewOver(readRoutesOver(async (path, init) => {
       const body = JSON.parse(String(init?.body)) as { offer: Record<string, unknown> };
       return api('bo')(path, { ...init, body: JSON.stringify({ offer: { ...body.offer, note: 'a secret a page should never send' } }) });
-    }, CO, { signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, entry: BO.statement, ...extra, companyKey: extra.companyKey as Hex, viewingKey: KEY as Hex });
+    }, { directory: 'empty', newest: 'none-entered' }), CO));
     /* RED WHEN: whatever else a client sends with an offer is kept and handed to every member. */
     expect(JSON.stringify(await offers())).not.toContain('a secret a page should never send');
     await offer(BO);
@@ -211,19 +214,19 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     /* Ada's own wallet and filing key, with an entry naming Bo's seat: the service keeps no offer for a seat that is not hers. */
     const identity = identityFromSecret(new Uint8Array(32).fill(ADA.n));
     const elsewhere = signDirectoryEntry(identity, LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), ADA.statement.signingKey, BO.seat);
-    const notHers = await offerVaultKeysHere(api('ada'), CO, {
+    const notHers = await offerVaultKeysHere(CO, {
       signerId: ID.ada!, signingSecret: ADA.signingSecret as Hex, committeeKey: ADA.committeeKey as never, entry: elsewhere,
       companyKey: walletOf(ADA).companyKey as Hex, viewingKey: KEY as Hex,
       recordsKey: signRecordsKey(identity, LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), BO.seat),
-    }).catch((e) => e);
+    }, viewOver(api('ada'), CO)).catch((e) => e);
     /* RED WHEN: one member's offer is kept for a seat the directory names only as another member's. */
     expect([notHers.status, notHers.body?.refused]).toEqual([403, 'not-your-seat']);
     /* Ada's own wallet signs an entry for her own seat naming Bo's filing key, and the keys are signed with it: the service holds them to that entry and keeps them. */
     const lent = signDirectoryEntry(identity, LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), BO.statement.signingKey, ADA.seat);
-    await offerVaultKeysHere(api('ada'), CO, {
+    await offerVaultKeysHere(CO, {
       signerId: ID.ada!, signingSecret: BO.signingSecret as Hex, committeeKey: ADA.committeeKey as never, entry: lent,
       companyKey: walletOf(ADA).companyKey as Hex, recordsKey: walletOf(ADA).recordsKey, viewingKey: KEY as Hex,
-    });
+    }, viewOver(api('ada'), CO));
     /* RED WHEN: a device folds keys not signed by the signing key the roster keeps for that signer, or an entry for another seat. */
     const both = await foldOffersHere(deviceOf(ADA));
     expect(both.folded).toEqual([]);
@@ -243,11 +246,11 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     /* Ada's own wallet signs an entry for Bo's seat under her own filing key: the directory names Bo there. */
     const identity = identityFromSecret(new Uint8Array(32).fill(ADA.n));
     const forBosSeat = signDirectoryEntry(identity, LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), ADA.statement.signingKey, BO.seat);
-    const squat = await offerVaultKeysHere(api('ada'), CO, {
+    const squat = await offerVaultKeysHere(CO, {
       signerId: ID.bo!, signingSecret: ADA.signingSecret as Hex, committeeKey: ADA.committeeKey as never, entry: forBosSeat,
       companyKey: walletOf(ADA).companyKey as Hex, viewingKey: KEY as Hex,
       recordsKey: signRecordsKey(identity, LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), BO.seat),
-    }).catch((e) => e);
+    }, viewOver(api('ada'), CO)).catch((e) => e);
     /* RED WHEN: a member is kept an offer for a seat the directory names as another person's, with no open offer in the way. */
     expect([squat.status, squat.body?.refused]).toEqual([403, 'not-your-seat']);
     expect(await offers()).toEqual([]);
@@ -295,13 +298,13 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
       signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, entry: forAda,
       companyKey: walletOf(BO).companyKey as Hex, recordsKey: walletOf(BO).recordsKey, viewingKey: KEY as Hex,
     };
-    const refused = await offerVaultKeysHere(api('bo'), CO, ask).catch((e) => e);
+    const refused = await offerVaultKeysHere(CO, ask, viewOver(api('bo'), CO)).catch((e) => e);
     /* RED WHEN: the service keeps an offer for a seat its directory names as another person's. */
     expect([refused.status, refused.body?.refused]).toEqual([403, 'not-your-seat']);
     expect(await offers()).toEqual([]);
     /* A service that kept it anyway: the device that folds holds it to the roster, which the service cannot change. */
     let sent: { offer: VaultKeysOffer } | null = null;
-    await offerVaultKeysHere(async (_path, init) => { sent = JSON.parse(String(init?.body)); return {}; }, CO, ask);
+    await offerVaultKeysHere(CO, ask, viewOver(readRoutesOver(async (_path, init) => { sent = JSON.parse(String(init?.body)); return {}; }, { directory: 'empty', newest: 'none-entered' }), CO));
     store.putVaultKeysOffer(CO, { ...sent!.offer, person: 'bo' });
     /* RED WHEN: a device folds an offer whose own entry is not for the seat the roster holds for that signer, and keeps that entry as theirs. */
     expect((await foldOffersHere(deviceOf(ADA))).refused.map((r) => r.seat)).toEqual([ADA.seat]);
@@ -311,10 +314,10 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
   });
 
   it('AN OFFER NO KEY THIS DEVICE HOLDS OPENS IS REFUSED FOR THE REASON THE SHARED OPENING STEP GIVES, AND STAYS OPEN', async () => {
-    await offerVaultKeysHere(api('bo'), CO, {
+    await offerVaultKeysHere(CO, {
       signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, ...walletOf(BO),
       companyKey: walletOf(BO).companyKey as Hex, entry: BO.statement, viewingKey: 'd4'.repeat(32) as Hex,
-    });
+    }, viewOver(api('bo'), CO));
     const kept = store.vaultKeysOffersOf(CO).find((o) => o.seat === BO.seat)! as VaultKeysOffer;
     const why = vaultKeysOfferOpened(CO, kept, KEY as Hex, LABEL, ADDRESS);
     expect(typeof why).toBe('string');
@@ -373,11 +376,11 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
       const bos = identityFromSecret(new Uint8Array(32).fill(BO.n));
       const entry = signDirectoryEntry(bos, LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), DEE.statement.signingKey, DEE.seat);
       let sent: { offer: VaultKeysOffer } | null = null;
-      await offerVaultKeysHere(async (_path, init) => { sent = JSON.parse(String(init?.body)); return {}; }, CO, {
+      await offerVaultKeysHere(CO, {
         signerId: 'sgn_dee', signingSecret: DEE.signingSecret as Hex, committeeKey: BO.committeeKey as never, entry,
         companyKey: walletOf(BO).companyKey as Hex, recordsKey: signRecordsKey(bos, LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), DEE.seat),
         viewingKey: KEY as Hex,
-      });
+      }, viewOver(readRoutesOver(async (_path, init) => { sent = JSON.parse(String(init?.body)); return {}; }, { directory: 'empty', newest: 'none-entered' }), CO));
       store.putVaultKeysOffer(CO, { ...sent!.offer, person: 'dee' });
       const folded = await foldOffersHere(deviceOf(ADA));
       /* RED WHEN: a fold makes an entry the device itself would refuse - a wallet no opening proves for her seat - and files it. */
@@ -411,11 +414,11 @@ describe('VAULT KEYS ARE KEPT FOR ANY ENTRY THE PERSON FILED FOR THE SEAT, NEVER
       expect((await file('bo', bosForDees)).status).toBe(201);
       expect((await file('dee', DEE.entry)).status).toBe(201);
       /* Bo offers keys for Dee's seat first, under the entry he filed on it. */
-      await offerVaultKeysHere(api('bo'), CO, {
+      await offerVaultKeysHere(CO, {
         signerId: 'sgn_dee', signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, viewingKey: KEY as Hex,
         entry: signDirectoryEntry(bosWallet, LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), BO.statement.signingKey, DEE.seat),
         companyKey: walletOf(BO).companyKey as Hex, recordsKey: signRecordsKey(bosWallet, LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), DEE.seat),
-      });
+      }, viewOver(api('bo'), CO));
       /* RED WHEN: the service takes the first entry, or the first offer, for the seat as its holder, so the squatter keeps Dee's keys out. */
       await offer(DEE, { signerId: 'sgn_dee' });
       /* RED WHEN: a person who filed an entry on another seat is refused keys for their own, by person alone. */
@@ -439,10 +442,10 @@ describe('AN OFFER ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
     await offer(BO);
     const kept = JSON.stringify(store.vaultKeysOffersOf(CO));
     /* RED WHEN: an offer is sealed without asking whether sealing is paused, so the signer who left reads it. */
-    await expect(offerVaultKeysHere(api('bo'), CO, {
+    await expect(offerVaultKeysHere(CO, {
       signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, ...walletOf(BO),
       companyKey: walletOf(BO).companyKey as Hex, entry: BO.statement, viewingKey: paused,
-    })).rejects.toThrow(CompanyKeyBeingChanged);
+    }, viewOver(api('bo'), CO))).rejects.toThrow(CompanyKeyBeingChanged);
     expect(JSON.stringify(store.vaultKeysOffersOf(CO))).toBe(kept);
     const version = store.newestRoster(CO)!.version;
     /* RED WHEN: a fold files the roster's next version while sealing is paused. */
@@ -464,10 +467,10 @@ describe('AN OFFER ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
     expect((await foldOffersHere({ ...deviceOf(ADA), viewingKey: after })).folded).toEqual([BO.seat]);
     /* RED WHEN: the roster version a fold files after the change is sealed at the epoch of a key the signer who left holds. */
     expect(store.newestRoster(CO)!.keyEpoch).toBe(1);
-    await offerVaultKeysHere(api('bo'), CO, {
+    await offerVaultKeysHere(CO, {
       signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, ...walletOf(BO),
       companyKey: walletOf(BO).companyKey as Hex, entry: BO.statement, viewingKey: after,
-    });
+    }, viewOver(api('bo'), CO));
     const kept = store.vaultKeysOffersOf(CO).find((o) => o.seat === BO.seat)! as VaultKeysOffer;
     /* RED WHEN: an offer made after the change is sealed under the founding key, which the signer who left still holds. */
     expect(typeof openVaultKeysOffer(CO, kept, key1)).toBe('object');

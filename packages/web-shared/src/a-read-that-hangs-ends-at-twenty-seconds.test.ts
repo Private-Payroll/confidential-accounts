@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as keyring from './keyring.js';
-import { manifestServiceFor, treeServiceFor } from './record-entered-here.js';
+import * as transport from './service-transport.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from './records-source.js';
 import { accountPresenceAt } from './vault-on-chain-here.js';
 import { ASK_STARTED, vaultBuilderOver } from './vault-worker-client.js';
 import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
@@ -48,8 +49,8 @@ async function endsAtTheBound(start: () => Promise<unknown>, what: RegExp) {
 }
 
 describe('reads of the service', () => {
-  const tree = treeServiceFor(keyring.api);
-  const manifest = manifestServiceFor(keyring.api);
+  const tree = treeServiceOf(serviceSource(transport.api, 'acc1'));
+  const manifest = manifestServiceOf(serviceSource(transport.api, 'acc1'));
 
   it('the entries not yet anchored (manifest/tree/pending) end at twenty seconds and the request is aborted', async () => {
     await endsAtTheBound(() => tree.pending('acc1', 'aa' as never), /manifest\/tree\/pending/);
@@ -63,7 +64,7 @@ describe('reads of the service', () => {
   });
 
   it('the proofs (manifest/tree/proofs), a POST that only reads, end at twenty seconds and the request is aborted', async () => {
-    await endsAtTheBound(() => tree.proofs('acc1', {} as never), /manifest\/tree\/proofs/);
+    await endsAtTheBound(() => tree.proofs('acc1', { records: [] } as never), /manifest\/tree\/proofs/);
     expect(signals[0]?.aborted).toBe(true);
   });
 
@@ -73,15 +74,15 @@ describe('reads of the service', () => {
   });
 
   it('the creation standing, the call state and the company itself end at twenty seconds and are aborted', async () => {
-    await endsAtTheBound(() => keyring.api('/api/accounts/acc1/creation'), /creation/);
-    await endsAtTheBound(() => keyring.api('/api/accounts/acc1/call-state'), /call-state/);
-    await endsAtTheBound(() => keyring.api('/api/accounts/acc1'), /acc1/);
+    await endsAtTheBound(() => transport.api('/api/accounts/acc1/creation'), /creation/);
+    await endsAtTheBound(() => transport.api('/api/accounts/acc1/call-state'), /call-state/);
+    await endsAtTheBound(() => transport.api('/api/accounts/acc1'), /acc1/);
     expect(signals.every((s) => s?.aborted === true)).toBe(true);
   });
 
   it('a read that answers in time is not cut and its timer is let go', async () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => new Response('{"ok":true}', { status: 200 }));
-    await expect(keyring.api('/api/accounts/acc1/creation')).resolves.toEqual({ ok: true });
+    await expect(transport.api('/api/accounts/acc1/creation')).resolves.toEqual({ ok: true });
     expect(vi.getTimerCount()).toBe(0);
   });
 });
@@ -134,7 +135,7 @@ describe('reads of the network', () => {
 
 describe('sends', () => {
   it('a send to the service is not aborted and does not end at twenty seconds', async () => {
-    const state = settle(keyring.api('/api/accounts/acc1/creation/pay-key', { method: 'POST', body: '{}' }));
+    const state = settle(transport.api('/api/accounts/acc1/creation/pay-key', { method: 'POST', body: '{}' }));
     await vi.advanceTimersByTimeAsync(SERVICE_READ_BOUND_MS * 5);
     expect(state.done).toBe(false);
     expect(signals).toEqual([undefined]);

@@ -5,9 +5,8 @@ import {
   SERVICE_CHOICE, type ServiceActed, type ServiceFiler, type ServiceHeld, type ServiceWhy,
 } from '../adapters/service-acts.js';
 import { ACT_REFUSAL } from '../adapters/refusals.js';
-import { watchPrivateMoneyReadable } from '../adapters/vault-private-money.js';
 import { ActRefused } from '../act-refused.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { ActDone, ActOutcome, ActStopped, type ActPhase } from '../records/proposal-act.js';
 import { useListSaid } from '../records/list-said.js';
 import { useSession } from '../session.js';
@@ -130,8 +129,9 @@ function Outcome({ phase, acted }: { phase: ActPhase; acted: ServiceActed | null
 
 /** The Service tab of Settings: the company's choice of service as the company's records say it, who has filed it, filing it, and the providers to come. */
 export function Service() {
+  const view = useCompanyView();
   const t = useText();
-  const { person, company } = useSession();
+  const { person } = useSession();
   const { openKeys } = useCompanyRecords();
   const [read, setRead] = useState<ServiceHeld | null>(null);
   const [reads, setReads] = useState(0);
@@ -141,20 +141,19 @@ export function Service() {
   const again = (): void => setReads((n) => n + 1);
   const busy = phase !== null;
 
-  useEffect(() => (company === null ? undefined : watchPrivateMoneyReadable(company, again)), [company]);
   useEffect(() => {
-    if (company === null) return undefined;
+    if (view === null) return undefined;
     let alive = true;
-    void readService(person.id, company).then((r) => { if (alive) setRead(r); });
+    void readService(person.id, view).then((r) => { if (alive) setRead(r); });
     return () => { alive = false; };
-  }, [person.id, company, reads]);
+  }, [person.id, view, reads]);
 
   const open = async (): Promise<void> => { setOpening(true); await openKeys(); setOpening(false); again(); };
   const file = (choice: Choice, at: string): void => {
-    if (company === null || busy) return;
+    if (view === null || busy) return;
     setActed(null);
     setPhase({ step: 0, steps: 0 });
-    void chooseService(person.id, company, choice === SERVICE_CHOICE.own ? { service: SERVICE_CHOICE.own, at } : { service: choice }, (step, steps) => setPhase({ step, steps })).then((ended) => {
+    void chooseService(person.id, view, choice === SERVICE_CHOICE.own ? { service: SERVICE_CHOICE.own, at } : { service: choice }, (step, steps) => setPhase({ step, steps })).then((ended) => {
       setPhase(null);
       setActed(ended);
       if (ended.of === SERVICE_ACTED.done || (ended.of === SERVICE_ACTED.stopped && (ended.partial || ended.handedOver))) again();

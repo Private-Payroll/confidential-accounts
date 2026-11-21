@@ -21,18 +21,20 @@ import { companyRecordEntry, runEntry, signedWithItsEntry, signManifestEntry } f
 import { carriedEntryRefusal } from '../midnight/carried-entry.js';
 import { toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { recordEnteredHere } from 'vaults-web-shared/carried-entries-entered.js';
+import { manifestServiceOf, serviceSource } from 'vaults-web-shared/records-source.js';
 import { payeeFor } from '../testing/payees.js';
 import { FiledNotEntered } from 'vaults-web-shared/record-entered-here.js';
 import { enteredHere } from '../testing/records-entered.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
 import { runRoutes } from './run-routes.js';
 import {
   aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, apiAs, aRecordFiledBy, BO, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, sendAs, store,
-  type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver, viewOver } from '../testing/writes-over-a-send.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 /** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
 const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
@@ -43,7 +45,7 @@ aCompanyOfTwoSeats((app, deps) => {
 
 const NETWORK = theNetwork();
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory,
   network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
 });
 /** What the company's manifest holds for one record, without who signed it. */
@@ -54,7 +56,7 @@ describe('THE ONE FILING CALL', () => {
   it('a person invited, admitted and made a leaver on a device is entered at each version, as the version the service keeps', async () => {
     const made = await inviteHere(ACME, ADA, 'employee', {
       name: 'Pat', email: 'pat@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_001n, classification: 'full-time' as const, startDate: '2026-10-01',
-    }, ORIGIN, fromAda);
+    }, ORIGIN, writesOver(fromAda));
     const id = made.person!;
     /* RED WHEN: a person invited from a device is not entered, or is entered as other bytes than the record the service kept. */
     expect(enteredFor('company', id)).toEqual([{ ...companyRecordEntry((await newestPerson(id))!), by: ADA.statement.signingKey }]);
@@ -81,14 +83,14 @@ describe('THE ONE FILING CALL', () => {
     /* Somebody active to pay: invited, accepted and admitted on devices. */
     const made = await inviteHere(ACME, ADA, 'employee', {
       name: 'Ro', email: 'ro@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_002n, classification: 'full-time' as const, startDate: '2026-10-01',
-    }, ORIGIN, fromAda);
+    }, ORIGIN, writesOver(fromAda));
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(62)), LABEL, 'usr_62', {
       kind: 'payee', address: payeeFor('3e'.repeat(32), NETWORK).bech32, payslipKey: newWrappingKeypair().publicKey,
     });
     const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs('usr_62'));
     await admitHere(peopleOn(ADA), (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!, accepted.fingerprint);
     const run = await drawRunHere({
-      api: apiAs('ada'), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: ADA.signingSecret as never,
+      view: viewOver(apiAs('ada'), CO), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: ADA.signingSecret as never,
       company: { account: ADDRESS, label: LABEL }, by: 'ada', entered: ADA.entered,
       records: {
         people: () => readPeopleHere(peopleOn(ADA)), runs: async () => store.listRuns(CO), proposals: async () => store.listProposals(CO), directory: acmeDirectory,
@@ -113,14 +115,14 @@ describe('THE ONE FILING CALL', () => {
   it('a filing the service refuses is never entered: neither a person invited nor a change of where a person stands', async () => {
     const made = await inviteHere(ACME, ADA, 'employee', {
       name: 'Sam', email: 'sam@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_003n, classification: 'full-time' as const, startDate: '2026-10-01',
-    }, ORIGIN, fromAda);
+    }, ORIGIN, writesOver(fromAda));
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
     const watched = enteredHere();
     const refusing = async () => ({ status: 409, body: { error: 'the service kept another version of this record' } });
     await expect(inviteHere(ACME, { ...ADA, entered: watched }, 'employee', {
       name: 'Kim', email: 'kim@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_004n, classification: 'full-time' as const, startDate: '2026-10-01',
-    }, ORIGIN, refusing as never)).rejects.toThrow(/the service kept another version of this record/u);
-    await expect(setStatusHere({ ...peopleOn(ADA), send: refusing as never, entered: watched }, here, 'leaver', LEFT)).rejects.toThrow();
+    }, ORIGIN, writesOver(refusing))).rejects.toThrow(/the service kept another version of this record/u);
+    await expect(setStatusHere({ ...peopleOn(ADA), view: listsOver(refusing, ACME.id), writes: writesOver(refusing), entered: watched }, here, 'leaver', LEFT)).rejects.toThrow();
     /* RED WHEN: a person's filing is entered before the service keeps it, so a record the service refused is anchored as the newest. */
     expect(watched.filed).toEqual([]);
   });
@@ -142,7 +144,7 @@ describe('EVERY FILING CARRIES THE ENTRY ITS FILER SIGNED', () => {
   it('a person admitted whose entry was lost is entered from another seat\'s device and then believed there', async () => {
     const made = await inviteHere(ACME, ADA, 'employee', {
       name: 'Lee', email: 'lee@acme.co', title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500_005n, classification: 'full-time' as const, startDate: '2026-10-01',
-    }, ORIGIN, fromAda);
+    }, ORIGIN, writesOver(fromAda));
     const id = made.person!;
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(65)), LABEL, 'usr_65', {
       kind: 'payee', address: payeeFor('3e'.repeat(32), NETWORK).bech32, payslipKey: newWrappingKeypair().publicKey,
@@ -152,7 +154,13 @@ describe('EVERY FILING CARRIES THE ENTRY ITS FILER SIGNED', () => {
     const lost = { enter: async () => { throw new FiledNotEntered('the service did not keep it'); } };
     await expect(admitHere({ ...peopleOn(ADA), entered: lost }, here, accepted.fingerprint)).rejects.toBeInstanceOf(FiledNotEntered);
     expect((await readPeopleHere(peopleOn(BO))).notBelieved).toContain(id);
-    const swept = await recordEnteredHere({ accountId: CO, api: apiAs('bo'), directory: acmeDirectory }, 'person', id);
+    const source = serviceSource(apiAs('bo'), CO);
+    /* Bo's step's view, as a stand-in: the record's versions and entries through the company's source, the records held as the directory reads them. */
+    const view: Parameters<typeof recordEnteredHere>[0]['view'] = {
+      company: CO, declare: () => undefined, records: (asked) => source.records(asked), manifest: manifestServiceOf(source),
+      directory: () => acmeDirectory(), held: (asked) => acmeDirectory(asked),
+    };
+    const swept = await recordEnteredHere({ accountId: CO, view }, 'person', id);
     /* RED WHEN: only the seat that admitted a person can enter the admission again, so every other device refuses them until it acts. */
     expect(swept).toEqual({ entered: 1, refused: null });
     expect((await readPeopleHere(peopleOn(BO))).people.find((p) => p.person.id === id)?.person.status).toBe('active');

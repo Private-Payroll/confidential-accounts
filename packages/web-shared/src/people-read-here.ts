@@ -15,7 +15,8 @@ import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import { judgeIn, kindAsked, namedHere, type DirectoryRead } from './vault-page-doors.js';
 import { keysByPurpose } from './keys-by-purpose.js';
-import { InvitationRefused, type InvitationSend, type InvitingCompany } from './invitation-on-device.js';
+import type { InvitingCompany } from './invitation-on-device.js';
+import type { CompanyView } from './company-view.js';
 import {
   readAddressClaim, typedAddressIsShielded, type AddressClaimFor, type UnshieldedAddressClaim,
 } from 'midnight-identity/profile/address-claim';
@@ -28,18 +29,24 @@ import {
  */
 export type ClaimRefusal = (claim: UnshieldedAddressClaim, f: AddressClaimFor) => Promise<string | null>;
 
+/** The company's view as a read of its people or its vendors asks it: its lists, its records by name, and what its people and vendors handed over. */
+export type ListsView = Pick<CompanyView<unknown>, 'list' | 'records' | 'handovers' | 'vendorHandovers'>;
+
+/** How the people and vendors are reached: through the company's view, which reads the list and the versions of every record named in one request. */
+export type ListsReach = { readonly view: ListsView };
+
 /**
- * What reading the company's people needs of a device, and no more: its keys (never a seat secret), the one GET door to the
- * service, the directory this device believes, the network, and where a signed claim of an address is checked. A seat's
- * device (`PeopleDevice`) is one; a page that holds only the company's keys passes this.
+ * What reading the company's people needs of a device, and no more: its keys (never a seat secret), the way it reaches
+ * the service (`ListsReach`), the directory this device believes, the network, and where a signed claim of an address
+ * is checked. A seat's device (`PeopleDevice`) is one; a page that holds only the company's keys passes this.
  */
-export interface PeopleReader {
+interface PeopleReadWith {
   readonly company: Pick<InvitingCompany, 'id' | 'label' | 'viewingKey'>;
-  readonly send: InvitationSend;
   readonly directory: DirectoryRead;
   readonly network: NetworkName;
   readonly claimRefusal: ClaimRefusal;
 }
+export type PeopleReader = PeopleReadWith & ListsReach;
 
 /** What a claim of the address a person or vendor was added by answers: their company, their record, their payslip key and that address. */
 export const claimFor = (
@@ -96,9 +103,9 @@ async function addedByAddressRefusal(
 
 /** Version 1 of a person's record, as the service holds it, or null when it holds none. Believed only once judged. */
 async function firstVersionOf(d: PeopleReader, id: string): Promise<SealedCompanyRecord | null> {
-  const b = answered(await d.send(at(d, `/records/person/${encodeURIComponent(id)}/1`), { method: 'GET' }), 200);
-  if (b.filed === null || b.filed === undefined) return null;
-  return fromCompanyWire(b.filed as never, { company: d.company.id, kind: 'person', id }).sealed;
+  const { versions } = await everyVersionAsked(d, 'person', id);
+  const first = Array.isArray(versions) && versions.length > 0 ? fromCompanyWire(versions[0], { company: d.company.id, kind: 'person', id }).sealed : null;
+  return first !== null && first.version === 1 ? first : null;
 }
 
 /** A person as this device read them: the whole entry, the version it is, and whether something waits to be admitted. */
@@ -108,17 +115,24 @@ export interface PersonHere {
   readonly handedOver: boolean;
 }
 
-/** The service's answer as a body, or the refusal it gave when it did not answer `ok`. */
-export const answered = (r: { status: number; body: unknown }, ok: number): Record<string, unknown> => {
-  const b = (r.body ?? {}) as Record<string, unknown>;
-  if (r.status !== ok) {
-    throw new InvitationRefused(r.status, typeof b.refused === 'string' ? b.refused : null,
-      typeof b.error === 'string' ? b.error : `the service answered ${r.status} and said nothing, so nothing is known to have been filed.`);
-  }
-  return b;
+type VersionsReader = Pick<PeopleReadWith, 'company'> & ListsReach;
+
+/**
+ * Every version of one of the company's people or vendors, as the service answers them: through the company's view,
+ * joined with every other record asked in the same turn.
+ */
+export const everyVersionAsked = async (d: VersionsReader, kind: 'person' | 'vendor', id: string): Promise<Record<string, unknown>> => {
+  return ((await d.view.records([{ kind, id, every: true }]))[0] ?? {}) as Record<string, unknown>;
 };
-/** A path under the company on the service. */
-export const at = (d: Pick<PeopleReader, 'company'>, path: string) => `/api/accounts/${encodeURIComponent(d.company.id)}${path}`;
+
+/**
+ * Asks the view, in one request, for every version of each record named, and waits for its answer, so the reads of
+ * them one by one that follow are answered from it. A failure is left to the read of each record, which says why.
+ */
+export const versionsAskedTogether = async (d: VersionsReader, kind: 'person' | 'vendor', ids: readonly string[]): Promise<void> => {
+  if (ids.length === 0) return;
+  await Promise.allSettled([d.view.records(ids.map((id) => ({ kind, id, every: true })))]);
+};
 
 /** The people as this device read them: those it believes and would pay, those no seat it believes filed, and those active with nothing their own wallet signed for where they are paid. */
 export interface PeopleHere {
@@ -159,7 +173,7 @@ const personOpened = (d: Pick<PeopleReader, 'company'>, rec: SealedCompanyRecord
  * else is still read.
  */
 export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
-  const answer = answered(await d.send(at(d, '/people'), { method: 'GET' }), 200);
+  const answer = (await d.view.list('people') ?? {}) as Record<string, unknown>;
   const here = await d.directory(kindAsked('company', 'person'));
   const judge = judgeIn(here);
   const people: PersonHere[] = [];
@@ -170,6 +184,7 @@ export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
   for (const { id } of refused) notBelieved.push(id);
   /* A person the company's records name and the service did not give is not believed, never left out unseen. */
   const given = new Set([...served.map(({ rec }) => rec.id), ...refused.map(({ id }) => id)]);
+  await versionsAskedTogether(d, 'person', served.flatMap(({ rec }) => (rec.version > 1 ? [rec.id] : [])));
   for (const id of namedHere(here, 'company', 'person')) if (!given.has(id)) notBelieved.push(id);
   for (const { rec, handedOver } of served) {
     if (judge(verifiedCompanyFiler(rec), 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), true, rec.keyEpoch) !== null) {
@@ -203,7 +218,7 @@ export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
 async function historyKeptHere(d: PeopleReader, newest: SealedCompanyRecord, judge: ReturnType<typeof judgeIn>): Promise<boolean> {
   let recs: SealedCompanyRecord[];
   try {
-    const b = answered(await d.send(at(d, `/records/person/${encodeURIComponent(newest.id)}/versions`), { method: 'GET' }), 200);
+    const b = await everyVersionAsked(d, 'person', newest.id);
     if (!Array.isArray(b.versions)) return false;
     recs = b.versions.map((w) => fromCompanyWire(w, { company: d.company.id, kind: 'person', id: newest.id }).sealed);
   } catch {

@@ -29,7 +29,6 @@
  * tree. Nothing here reaches a real chain, a real indexer or a browser.
  */
 import { served } from '../../src/testing/served-state.js';
-import { enteredHere } from '../../src/testing/records-entered.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -66,7 +65,7 @@ import {
   openNewestNonceSecrets, depositNonceKeysOf, rotateNonceSecret, newNonceSecret, admitToNonceSecret, recordsKeypairFrom,
 } from '../../src/midnight/company-nonce-secret.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpSealedPoolStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import {
   depositCoinOnThisDevice, startVaultNonceSecretOnThisDevice, recordsReaderOf, type DeviceSigner,
 } from 'vaults-web-shared/deposit-on-device.js';
@@ -77,6 +76,9 @@ import {
 } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
+import { manifestKept, storeReachOpenedEachTime } from '../../src/testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../../src/testing/service-routes-in-memory.js';
 
 /* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
 const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
@@ -247,7 +249,9 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a deposit whose record is made on the de
    */
   const judge = async () => (filer: string | null) =>
     (filer !== null && [ada, bo, carol].some((p) => p.signing.publicKey === filer) ? null : 'it is signed by nobody of this company');
-  const recordsOf = (p: Person) => (record: WireRecord) => new HttpSealedPoolStore(record, sendAs(p), p.signing.secret, judge, enteredHere());
+  /* A device's stores live across its steps, so each read and filing opens the company's view anew. */
+  const recordsOf = (p: Person) => (record: WireRecord) =>
+    new HttpSealedPoolStore(record, storeReachOpenedEachTime(readRoutesOverSend(sendAs(p), { joined: true, directory: 'empty' }), 'acc_company', manifestKept().manifest), p.signing.secret, judge);
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -428,7 +432,7 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a deposit whose record is made on the de
     members = ['ada', 'carol'];
     poolReaders = ['ada', 'bo', 'carol'];
     await secrets.put(vaultAddr, admitToNonceSecret(rotated, vaultAddr, adasKey, [recordsReaderOf(carol.device.companyKey)]));
-    await expect(bos.deposit(10n), 'RED WHEN: a signer who has left can still file for the vault').rejects.toThrow(/403/);
+    await expect(bos.deposit(10n), 'RED WHEN: a signer who has left can still file for the vault').rejects.toThrow(/403|may not read/);
 
     /* A deposit is made only under the secret the vault holds: until the vault takes the new epoch, none is made under it. */
     await expect(adas.deposit(600n), 'RED WHEN: a deposit is made under a secret the vault does not hold').rejects.toThrow(/not the one the vault holds on the chain/);
@@ -520,7 +524,7 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a deposit whose record is made on the de
     expect(() => openNewestNonceSecrets(filed, vaultAddr, recordsKeypairFrom(stranger.device.companyKey)),
       'RED WHEN: somebody the secret was never wrapped to opens it').toThrow(/no version filed for this vault has a copy/);
     await expect(deviceOf(stranger).records('pool').get(vaultAddr), 'RED WHEN: a person who is not a signer of the vault\'s company reads its records')
-      .rejects.toThrow(/403/);
+      .rejects.toThrow(/403|may not read/);
     await expect(startVaultNonceSecretOnThisDevice(vaultAddr, ada.device, [], adas.records, new Set()),
       'RED WHEN: a second secret can be started for a vault that has one').rejects.toThrow(/already has a nonce secret/);
     /* A large body is read only after the sign-in, and one from a signer is read whole, past the API's general limit. */
@@ -533,6 +537,6 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a deposit whose record is made on the de
     expect(fromAda.status, 'RED WHEN: the general body limit refuses a vault record before the route reads it').toBe(400);
     expect(bodyReadBeforeSignIn, 'RED WHEN: a body is read before the sign-in has decided who is asking').toBe(false);
     const elsewhere = sampleContractAddress() as never as Hex;
-    await expect(adas.records('pool').get(elsewhere), 'RED WHEN: a vault the chain does not know is served to anybody').rejects.toThrow(/403/);
+    await expect(adas.records('pool').get(elsewhere), 'RED WHEN: a vault the chain does not know is served to anybody').rejects.toThrow(/403|may not read/);
   });
 });

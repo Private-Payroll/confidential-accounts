@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { describe, expect, it, vi } from 'vitest';
 import { ACT_REFUSAL } from './refusals.js';
 import type { SignerAct, SignerActed, SignerWhy } from './signer-acts.js';
@@ -11,18 +12,25 @@ const kr = vi.hoisted(() => ({
   user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
   named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, calls: 0, throws: null as Error | null,
 }));
+/* The page's own judges and view, kept as one module across each load of the adapter, so a view a test opens is the one the adapter reads. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     kr.calls += 1;
     kr.acts.push(intent);
     if (kr.throws !== null) throw kr.throws;
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => kr.named,
 }));
 
 async function load() {
@@ -41,7 +49,7 @@ describe('approving a signer invited by address', () => {
   it('asks the wallet to approve exactly the proposal pressed, with what it invites', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { [m.OUTCOME.state]: 'approved' } };
-    expect(await m.approveSigner('u1', 'acc_Company00001', INVITED)).toEqual({ of: m.SIGNER_ACTED.done, state: 'approved' } satisfies SignerActed);
+    expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), INVITED)).toEqual({ of: m.SIGNER_ACTED.done, state: 'approved' } satisfies SignerActed);
     expect(kr.acts).toEqual([{
       name: m.SIGNER_ACT.approve, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_0001', kind: 'add-signer',
       personName: 'Sam', role: 'approver', address: 'ab'.repeat(32), scope: 'cd'.repeat(32), coinKey: 'ef'.repeat(32),
@@ -52,7 +60,7 @@ describe('approving a signer invited by address', () => {
   it('asks the wallet for nothing when the proposal carries no coin key', async () => {
     const m = await load();
     kr.calls = 0;
-    expect(await m.approveSigner('u1', 'acc_Company00001', { ...INVITED, coinKey: null })).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), { ...INVITED, coinKey: null })).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
   });
 
@@ -66,7 +74,7 @@ describe('approving a signer invited by address', () => {
       [undefined, m.WHY.stopped, true], ['act.approve-proposal.why.nobody-knows', m.WHY.other, true], ['act.admit-signer.why.no-seat', m.WHY.other, true],
     ] as readonly (readonly [string | undefined, SignerWhy, boolean])[]) {
       kr.ended = stopped(refused);
-      expect(await m.approveSigner('u1', 'acc_Company00001', INVITED), why).toEqual({ of: m.SIGNER_ACTED.stopped, act, why, partial, handedOver: false } satisfies SignerActed);
+      expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), INVITED), why).toEqual({ of: m.SIGNER_ACTED.stopped, act, why, partial, handedOver: false } satisfies SignerActed);
     }
   });
 });
@@ -76,7 +84,7 @@ describe('finishing the addition of a signer', () => {
   it('asks the wallet to admit exactly the signer pressed', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'admitted' } };
-    expect(await m.admitSigner('u1', 'acc_Company00001', { id: 'sgn_2', name: 'Sam' })).toEqual({ of: 'done', state: 'admitted' });
+    expect(await m.admitSigner('u1', aViewOf('acc_Company00001'), { id: 'sgn_2', name: 'Sam' })).toEqual({ of: 'done', state: 'admitted' });
     expect(kr.acts).toEqual([{ name: m.SIGNER_ACT.admit, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), signer: 'sgn_2', personName: 'Sam' }]);
   });
 
@@ -84,7 +92,7 @@ describe('finishing the addition of a signer', () => {
   it('tells an addition already finished, and a part-way stop that a second press finishes', async () => {
     const m = await load();
     kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: 'already-admitted' } };
-    expect(await m.admitSigner('u1', 'acc_Company00001', { id: 'sgn_2', name: 'Sam' })).toMatchObject({ of: 'done', state: 'already-admitted' });
+    expect(await m.admitSigner('u1', aViewOf('acc_Company00001'), { id: 'sgn_2', name: 'Sam' })).toMatchObject({ of: 'done', state: 'already-admitted' });
     for (const [refused, why, partial] of [
       ['act.admit-signer.why.filed-not-entered', 'filed-not-entered', true], ['act.admit-signer.why.not-the-invited', 'not-the-invited', false],
       ['act.admit-signer.why.not-admitted', 'not-admitted', false], ['act.approve-proposal.why.no-seat', m.WHY.other, true],
@@ -92,7 +100,7 @@ describe('finishing the addition of a signer', () => {
       ['act.admit-signer.why.id-taken', 'id-taken', false], ['act.admit-signer.why.chain-unread', 'chain-unread', false],
     ] as readonly (readonly [string | undefined, SignerWhy, boolean])[]) {
       kr.ended = stopped(refused);
-      expect(await m.admitSigner('u1', 'acc_Company00001', { id: 'sgn_2', name: 'Sam' }), why).toEqual({ of: m.SIGNER_ACTED.stopped, act: m.SIGNER_ACT.admit, why, partial, handedOver: false } satisfies SignerActed);
+      expect(await m.admitSigner('u1', aViewOf('acc_Company00001'), { id: 'sgn_2', name: 'Sam' }), why).toEqual({ of: m.SIGNER_ACTED.stopped, act: m.SIGNER_ACT.admit, why, partial, handedOver: false } satisfies SignerActed);
     }
   });
 });
@@ -103,15 +111,15 @@ describe('before either act reaches the wallet', () => {
     const m = await load();
     kr.calls = 0; kr.throws = null;
     kr.user = null;
-    expect(await m.approveSigner('u1', 'acc_Company00001', INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
-    expect(await m.admitSigner('u1', 'acc_Company00001', { id: 's', name: 'S' })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.admitSigner('u1', aViewOf('acc_Company00001'), { id: 's', name: 'S' })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' }; kr.named = {};
-    expect(await m.approveSigner('u1', 'acc_Company00001', INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
-    expect(await m.admitSigner('u1', 'acc_Company00001', { id: 's', name: 'S' })).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.admitSigner('u1', aViewOf('acc_Company00001'), { id: 's', name: 'S' })).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
     kr.named = { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) };
     kr.throws = new TypeError('fetch failed');
-    expect(await m.approveSigner('u1', 'acc_Company00001', INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
+    expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
     kr.throws = null;
   });
 
@@ -122,8 +130,8 @@ describe('before either act reaches the wallet', () => {
     vi.doMock('./session.js', async (real) => ({ ...(await real<typeof import('./session.js')>()), ACCOUNT_ORIGIN: '' }));
     kr.calls = 0;
     const m = await import('./signer-acts.js');
-    expect(await m.approveSigner('u1', 'acc_Company00001', INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
-    expect(await m.admitSigner('u1', 'acc_Company00001', { id: 's', name: 'S' })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
+    expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), INVITED)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
+    expect(await m.admitSigner('u1', aViewOf('acc_Company00001'), { id: 's', name: 'S' })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
     expect(kr.calls).toBe(0);
     vi.doUnmock('./session.js');
   });
@@ -135,10 +143,10 @@ describe('a stop after the wallet handed over transactions', () => {
     const m = await load();
     for (const [relayed, unconfirmed, handedOver] of [[0, 0, false], [1, 0, true], [0, 1, true], [2, 1, true]] as const) {
       kr.ended = { ...stopped('act.approve-proposal.why.not-approved'), relayed, unconfirmed };
-      expect(await m.approveSigner('u1', 'acc_Company00001', INVITED), `approve ${relayed}/${unconfirmed}`)
+      expect(await m.approveSigner('u1', aViewOf('acc_Company00001'), INVITED), `approve ${relayed}/${unconfirmed}`)
         .toEqual({ of: m.SIGNER_ACTED.stopped, act: m.SIGNER_ACT.approve, why: 'not-approved', partial: false, handedOver } satisfies SignerActed);
       kr.ended = { ...stopped('act.admit-signer.why.not-admitted'), relayed, unconfirmed };
-      expect(await m.admitSigner('u1', 'acc_Company00001', { id: 'sgn_2', name: 'Sam' }), `admit ${relayed}/${unconfirmed}`)
+      expect(await m.admitSigner('u1', aViewOf('acc_Company00001'), { id: 'sgn_2', name: 'Sam' }), `admit ${relayed}/${unconfirmed}`)
         .toEqual({ of: m.SIGNER_ACTED.stopped, act: m.SIGNER_ACT.admit, why: 'not-admitted', partial: false, handedOver } satisfies SignerActed);
     }
   });

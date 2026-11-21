@@ -1,5 +1,6 @@
 import type { Identity } from 'midnight-identity/keys/derivation';
 import { DEPOSIT_CLOCKS_MAY_DIFFER_MS, DEPOSIT_TIME_TO_LIVE_MS } from '../../../../packages/web-shared/src/vault-private-deposit.js';
+import { CompanyChangedMeanwhile } from '../../../../packages/web-shared/src/company-view-probe.js';
 import type { VaultService } from '../../../../packages/web-shared/src/vault-service.js';
 import { timeShown } from '../../../../packages/web-shared/src/vault-step-reads.js';
 import type { BalanceDoors } from '../chain/balance-for-page.js';
@@ -83,39 +84,50 @@ export const feeLines = (fee: bigint, until: number): readonly Words[] => [
 ];
 
 /**
- * The deposit's send: through the company's service; when its fee payer refused with nothing sent, by this wallet with
- * the fee from the person's own DUST, once they confirm it. Every failure reads as "it may still be sent".
+ * The deposit's send: through the company's service, written through the step's view; when its fee payer refused with
+ * nothing sent, by this wallet with the fee from the person's own DUST, once they confirm it, checked against the
+ * reading taken before the refused write. Every failure reads as "it may still be sent", but the view's own refusal
+ * before anything left: another signer's change, or a vault the account no longer adopts.
  */
 export function depositSentFor(
-  ctx: Pick<StepContext, 'signal' | 'show' | 'sentByTheWallet'> & Partial<Pick<StepContext, 'confirmFee'>>,
-  r: Pick<CompanyReach, 'api' | 'accountId'>, wallet: DepositWallet, now: () => number,
+  ctx: Pick<StepContext, 'signal' | 'show' | 'sendStraight'> & Partial<Pick<StepContext, 'confirmFee'>>,
+  r: Pick<CompanyReach, 'stepView'>, wallet: DepositWallet, now: () => number,
 ): VaultService['deposit'] {
-  const byTheWallet = async (tx: string, refused: unknown): Promise<{ txRef: string; transactionHash: string | null }> => {
+  const byTheWallet = async (vault: string, tx: string, refused: unknown): Promise<{ txRef: string; transactionHash: string | null }> => {
     const doors = wallet.doors();
     if (doors.ownFee === undefined) {
       wallet.sentNothing('not-paid', 'this wallet cannot pay a fee from its DUST here');
       throw mayStillBeSent(refused);
     }
     try {
-      const id = await finishedSentWithOwnDust({ facade: doors.ownFee, signSegment: doors.signSegment }, tx, {
+      const id = await ctx.sendStraight((door) => finishedSentWithOwnDust({ facade: doors.ownFee!, signSegment: doors.signSegment }, tx, {
         now, stillWanted: () => !ctx.signal.aborted,
-        confirm: async (fee) => (await ctx.confirmFee?.(feeLines(fee, wallet.freesAt()))) === true,
-        handedOver: () => ctx.sentByTheWallet(),
-      });
+        confirm: async (fee) => {
+          if ((await ctx.confirmFee?.(feeLines(fee, wallet.freesAt()))) !== true) return false;
+          /* The fee confirmed, maybe minutes after the company was read: it is read again before the deposit leaves. */
+          await door.ready();
+          return true;
+        },
+        handedOver: door.handedOver,
+      }), { vault });
       ctx.show({ key: 'act.fell-back.own-dust' });
       return { txRef: PLAIN_REF.test(id) ? id : '', transactionHash: null };
     } catch (e) {
       if (e instanceof FeeRefused) wallet.sentNothing(e instanceof OwnFeeNotPaid ? e.why : 'not-paid', said(e));
+      else if ((e as { thisSendNotSent?: unknown } | null)?.thisSendNotSent === true) throw e;
       throw mayStillBeSent(e);
     }
   };
   return async (v, tx) => {
     let answer: { txRef?: unknown; transactionHash?: unknown } | null;
     try {
-      answer = await r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/vaults/${v}/deposit`, { method: 'POST', body: JSON.stringify({ tx }) });
+      answer = (await r.stepView.current().write([{ to: 'vault-send', act: 'deposit', vault: v, tx }]))[0] as typeof answer;
     } catch (e) {
+      if (e instanceof CompanyChangedMeanwhile || (e as { thisSendNotSent?: unknown } | null)?.thisSendNotSent === true) {
+        throw Object.assign(e as Error, { nothingWasSent: true });
+      }
       const code = refusedFor(e);
-      if (code === 'fee-not-paid') return byTheWallet(tx, e);
+      if (code === 'fee-not-paid') return byTheWallet(v, tx, e);
       if (code === 'network-refused') wallet.sentNothing('network-refused', said(e));
       throw mayStillBeSent(e);
     }

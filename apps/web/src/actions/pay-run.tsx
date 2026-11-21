@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { AlertDescription, Button, useText } from 'vaults-ui';
 import { PAY_RUN_WHY, payRun, PROPOSAL_ACTED, WHY, type PayRunActed, type PayRunWhy } from '../adapters/proposal-acts.js';
-import type { RunLeg, RunRow } from '../adapters/company-records.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import type { RunLeg, RunRow } from '../adapters/company-rows.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { useMonth } from '../records/parts.js';
 import { ActDone, ActOutcome, ActStopped, type ActPhase } from '../records/proposal-act.js';
 import { PublicFacts } from '../records/public-facts.js';
@@ -17,6 +17,7 @@ import { useSession } from '../session.js';
  * would take the result with them.
  */
 export function PayRun({ run, leg, vaultName }: { run: RunRow; leg: RunLeg; vaultName: string }) {
+  const view = useCompanyView();
   const t = useText();
   const month = useMonth();
   const { person, company } = useSession();
@@ -28,10 +29,10 @@ export function PayRun({ run, leg, vaultName }: { run: RunRow; leg: RunLeg; vaul
   const nothingLeft = result?.of === PROPOSAL_ACTED.done && (result.state === 'paid' || result.state === 'already-paid');
 
   const pay = async (): Promise<void> => {
-    if (company === null || busy || leg.proposal === null) return;
+    if (view === null || busy || leg.proposal === null) return;
     setResult(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await payRun(person.id, company, {
+    const ended = await payRun(person.id, view, {
       proposal: leg.proposal, run: run.id, period: run.period, list: leg.list, vault: leg.vault, token: leg.asset, form: leg.form, payees: leg.people, total: leg.total,
     }, (step, steps) => setPhase({ step, steps }));
     setPhase(null);

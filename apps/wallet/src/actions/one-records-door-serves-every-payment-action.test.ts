@@ -18,14 +18,23 @@ vi.mock('../../../../packages/web-shared/src/people-read-here.js', async (real) 
   readPeopleHere: async (d: unknown) => { t.readers.push(d); return { people: [], notBelieved: [], notPayable: [] }; },
 }));
 
-const { companyRecordsFor, paidAmongFor } = await import('./company-reach.js');
+const { companyRecordsFor, paidAmongFor } = await import('./company-records-in-the-wallet.js');
 
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 const SEAT = { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) };
 const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
 
+/* The step's view, as the people and vendors are read through it: only its reads, each logged. */
+const viewOf = (log: string[]) => ({
+  company: 'acc_1',
+  list: async (kind: string) => { log.push(`view list ${kind}`); return {}; },
+  records: async (asked: readonly unknown[]) => { log.push(`view records ${asked.length}`); return asked.map(() => ({})); },
+  vendorHandovers: async (vendors: readonly string[]) => vendors.map(() => ({ inbox: null })),
+});
+
 const reachOf = (log: string[]) => ({
+  stepView: { current: () => VIEW_OF.get(log) },
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
   api: async (path: string, init?: RequestInit) => { log.push(`api ${init?.method ?? 'GET'} ${path}`); return []; },
   send: async (path: string, init: { method: string }) => { log.push(`send ${init.method} ${path}`); return { status: 200, body: {} }; },
@@ -44,6 +53,7 @@ const reachOf = (log: string[]) => ({
     roles: async () => [],
   },
 });
+const VIEW_OF = new Map<string[], ReturnType<typeof viewOf>>();
 const PURE = { account: { paidMovementOf: (b: Uint8Array) => b.map((x) => x ^ 1), paidOnceOf: (b: Uint8Array) => b }, details: {} } as never;
 const code = (file: string): string => readFileSync(new URL(file, import.meta.url), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//gu, '').replace(/^\s*\/\/.*$/gmu, '');
@@ -51,6 +61,7 @@ const code = (file: string): string => readFileSync(new URL(file, import.meta.ur
 describe('ONE RECORDS DOOR SERVES EVERY PAYMENT ACTION, FROM THIS WALLET\'S OWN READS', () => {
   it('reads the people, the ceilings, the checked heads, the payments and where proposals stand where this wallet reads them', async () => {
     const log: string[] = [];
+    VIEW_OF.set(log, viewOf(log));
     const r = reachOf(log);
     const tree = treeKeptInMemory();
     const heads = { latest: { seq: 3, head: 'ab'.repeat(32) }, fromZero: null, heads: ['ab'.repeat(32)], count: 1 };
@@ -58,12 +69,12 @@ describe('ONE RECORDS DOOR SERVES EVERY PAYMENT ACTION, FROM THIS WALLET\'S OWN 
     const records = companyRecordsFor(r as never, { treeKept: () => tree }, PURE);
     /* RED WHEN: a run is drawn or raised over people this wallet did not read and judge itself, with the company's own keys. */
     await records.people();
-    const reader = t.readers[0] as { company: { id: string } & Record<string, unknown>; directory: unknown; send: (p: string, i: { method: string }) => Promise<unknown> };
+    const reader = t.readers[0] as { company: { id: string } & Record<string, unknown>; directory: unknown; view?: ReturnType<typeof viewOf>; send?: unknown };
     expect(reader.company.id).toBe('acc_1');
     expect(reader.company[VIEWING_KEY_FIELD]).toBe(KEYS);
-    await reader.send('/api/accounts/acc_1/people', { method: 'GET' });
-    /* RED WHEN: reading the company's people can write anything to the service. */
-    await expect(reader.send('/api/accounts/acc_1/people', { method: 'POST' })).rejects.toThrow(/writes nothing/u);
+    /* RED WHEN: the people are read around the step's view, by a request of the reader's own, or through anything that can write. */
+    expect(reader.send).toBeUndefined();
+    expect(reader.view).toBe(VIEW_OF.get(log));
     /* RED WHEN: the company's ceilings come from anything but the roster this wallet opens. */
     expect(await records.policy()).toEqual({ threshold: 2, limitsByRole: { admin: {} } });
     /* RED WHEN: the head a raise vouches for is not one this wallet checked itself. */
@@ -73,10 +84,13 @@ describe('ONE RECORDS DOOR SERVES EVERY PAYMENT ACTION, FROM THIS WALLET\'S OWN 
     expect(paid).toEqual({ known: true, paid: ['02'.repeat(32)] });
     await records.roundsOnChain!(['ab'.repeat(32)]);
     expect(log).toEqual([
-      'send GET /api/accounts/acc_1/people',
       `payments ${'01'.repeat(32)},${'03'.repeat(32)}`,
       `rounds seat=${SEAT.signingSecret} ${JSON.stringify(r.chain.indexer)}`,
     ]);
+    /* RED WHEN: a one-off's record is read around the step's view, by a request of the store's own. */
+    log.length = 0;
+    await expect(records.oneOffs.at('one-off' as never, 'o1', 1)).rejects.toThrow(/could not be read/u);
+    expect(log).toEqual(['view records 1']);
     /* RED WHEN: a payment can file a spending policy through the records it reads. */
     await expect(records.spendingPolicies!.file({} as never)).rejects.toThrow(/files no spending policy/u);
   });

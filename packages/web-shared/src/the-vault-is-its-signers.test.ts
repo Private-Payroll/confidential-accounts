@@ -10,7 +10,7 @@ import { theVaultAsItsSignersHoldIt } from './vault-read-here.js';
 import { VaultNotTheCompanys } from './vault-start-stops.js';
 import { type VaultAsTheWalletRead } from './vault-doors.js';
 import { fileTheChainsSecretAsTheNewest, fileThePoolTheChainHolds } from './deposit-on-device.js';
-import { FilingNotBelieved, HttpSealedPoolStore, type WireSend } from './http-sealed-pool-store.js';
+import { FilingNotBelieved, HttpSealedPoolStore } from './http-sealed-pool-store.js';
 import { directoryJudge } from './vault-page-doors.js';
 import { MemorySealedPoolStore, SealedNotePool, sealPool, VaultRecordPassedOverAbove, type SealedPool } from '../../../src/midnight/vault-pool.js';
 import { attemptsFromJournalVersions, PaymentJournalInStore } from '../../../src/midnight/vault-journal.js';
@@ -22,6 +22,9 @@ import { openNonceSecrets, recordsKeypairFrom, startNonceSecret, startNonceSecre
 import { directoryChangeMessage, directoryEntryMade, vaultRecordKey, type DirectoryChange, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
 import { invitationIdOf, newInvitationToken } from '../../../src/core/invitation.js';
 import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../../../src/testing/invitation-approved.js';
+import type { InvitationSend as WireSend } from './invitation-on-device.js';
+import { manifestInto, storeReachOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../../../src/testing/service-routes-in-memory.js';
 
 /*
  * A VAULT IS ONE ITS COMPANY'S SIGNERS HOLD AS THE CHAIN SHOWS IT, AND WHAT A
@@ -111,11 +114,14 @@ const everySeatAttested: Attested[] = [attestedBy(ADA, 1), attestedBy(BO, 2)];
 /** The company's records beside each set of stores: every version filed entered by its filer. */
 const booksOf = new WeakMap<Map<WireRecord, MemorySealedPoolStore>, ReturnType<typeof aCompanysRecords>>();
 const bookOf = (kept: Map<WireRecord, MemorySealedPoolStore>) => booksOf.get(kept) ?? booksOf.set(kept, aCompanysRecords(CO)).get(kept)!;
-const deviceOf = (who: Signer, kept: Map<WireRecord, MemorySealedPoolStore>, seated: () => AccountHoldersRead, reads: { n: number }, attested: Attested[] = everySeatAttested, served: readonly DirectoryFiling[] = filings) =>
-  (record: WireRecord) => new HttpSealedPoolStore(record, routeOver(kept), who.signing.secret, directoryJudge({
+const deviceOf = (who: Signer, kept: Map<WireRecord, MemorySealedPoolStore>, seated: () => AccountHoldersRead, reads: { n: number }, attested: Attested[] = everySeatAttested, served: readonly DirectoryFiling[] = filings) => {
+  /* One view of the company for the whole device, as a step holds it: every store it opens reads and writes through it. */
+  const reach = storeReachOver(readRoutesOverSend(routeOver(kept), { directory: 'empty', newest: 'none-entered' }), CO, manifestInto(bookOf(kept).enteredBy(who.signing.secret)));
+  return (record: WireRecord) => new HttpSealedPoolStore(record, reach, who.signing.secret, directoryJudge({
     accountId: CO, label: LABEL, viewingKey: VIEWING, filings: async () => served, attested: async () => attested, anchored: bookOf(kept).anchored, leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
     holders: async () => { reads.n += 1; return seated(); },
-  }), bookOf(kept).enteredBy(who.signing.secret));
+  }));
+};
 const recordsReader = (s: Signer) => ({ publicKey: recordsKeypairFrom(s.companyKey).publicKey });
 const newestSecret = (rec: SealedPool, s: Signer) => {
   const o = openNonceSecrets(rec, VAULT, recordsKeypairFrom(s.companyKey));

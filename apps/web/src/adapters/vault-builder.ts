@@ -1,5 +1,5 @@
 import { NETWORK } from 'midnight-identity/network';
-import type { AccountCreationBuilder } from 'vaults-web-shared/keyring.js';
+import type { AccountCreationBuilder } from 'vaults-web-shared/company-creation.js';
 import { startVaultBuilder, type VaultBuilderClient } from 'vaults-web-shared/vault-worker-client.js';
 import { builderIsUp } from './proofs-running.js';
 

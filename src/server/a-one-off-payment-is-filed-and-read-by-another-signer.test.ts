@@ -1,3 +1,4 @@
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect } from 'vitest';
 import { newSigningKeypair, newSymmetricKey, type Hex } from '../core/crypto.js';
 import type { CompanyKeys } from '../core/company-key.js';
@@ -6,7 +7,7 @@ import { recordKeyOf } from '../midnight/record-manifest.js';
 import { newOneOffId, newOneOffSeed, ONE_OFF_KIND, openOneOff, type OneOffGiven } from '../midnight/one-off-record.js';
 import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
-import { HttpCompanyRecordStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpCompanyRecordStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { judgeIn } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { oneOffHere } from 'vaults-web-shared/one-off-here.js';
@@ -15,6 +16,8 @@ import {
   aCompanyWhoseSignersChange, anchorDoorsOf, ADA, BO, CO, CY, directoryOf, KEY, sendAs,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
 import { peopleRecords } from './a-company-of-two-seats.test-support.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
+import { storeReachOver } from '../testing/writes-over-a-send.js';
 
 /**
  * A one-off payment's record, filed from one signer's device through the
@@ -40,7 +43,7 @@ const doorsOf = (who: Who): OneOffFilingDoors & { readonly open: typeof openOneO
   open: openOneOff,
   directory: directoryOf(who),
   records: (() => {
-    const store = new HttpCompanyRecordStore(CO, sendOf(who), who.signingSecret as Hex, async (asked) => judgeIn(await directoryOf(who)(asked)));
+    const store = new HttpCompanyRecordStore(CO, storeReachOver(sendOf(who), CO), who.signingSecret as Hex, async (asked) => judgeIn(await directoryOf(who)(asked)));
     return { at: (k, id, v) => store.at(k, id, v), put: (rec) => store.put(rec), served: async () => null };
   })(),
   keys: KEY,
@@ -70,7 +73,7 @@ describe('A ONE-OFF PAYMENT\'S RECORD IS FILED ON ONE SIGNER\'S DEVICE AND READ 
     const entered = (await directoryOf(BO)({ records: [{ store: 'company', kind: ONE_OFF_KIND, id }] })).records.notYetAnchored
       .filter((e) => e.kind === ONE_OFF_KIND && e.id === id);
     expect(entered.length).toBe(1);
-    expect((await anchorTheRecordsHere(anchorDoorsOf(CY))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(anchorDoorsOf(CY)))).anchored).toBeGreaterThan(0);
     const anchored = (await directoryOf(BO)({ records: [{ store: 'company', kind: ONE_OFF_KIND, id }] })).records.history
       .get(recordKeyOf({ store: 'company', kind: ONE_OFF_KIND, id }));
     expect(anchored?.map((v) => v.version)).toEqual([1]);

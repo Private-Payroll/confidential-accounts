@@ -1,12 +1,12 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { api } from 'vaults-web-shared/keyring.js';
 import { serviceOpenerOfSigner } from 'vaults-web-shared/company-service-here.js';
 import { recoveryWindowHere, type WindowReach } from 'vaults-web-shared/recovery-window-here.js';
 import { setRecoveryWindowInTheWallet, windowOutcomeOf, WINDOW_STATE } from 'vaults-web-shared/recovery-in-the-wallet.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
-import { namedFor } from './create-vault.js';
 import { keyringFor } from './keyring-person.js';
+import { namedIn } from './filing-judge.js';
+import type { PageView } from './filing-judge.js';
 import { ACT_REFUSAL, refusalOf, SEAT_REFUSALS, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { seatAndRecordsHere } from './vault-private-money.js';
@@ -33,14 +33,14 @@ type WindowRead = Awaited<ReturnType<typeof recoveryWindowHere>>;
 const wasUnread = (got: WindowRead): got is Extract<WindowRead, { readonly unread: string }> => typeof (got as { readonly unread?: unknown }).unread === 'string';
 
 /** Reads the window with the company's key this visit's wallet released. */
-export async function readRecoveryWindow(personId: string, companyId: string): Promise<WindowHeld> {
+export async function readRecoveryWindow(personId: string, view: PageView): Promise<WindowHeld> {
   try {
-    const here = await seatAndRecordsHere(personId, companyId);
+    const here = await seatAndRecordsHere(personId, view);
     if (typeof here === 'string') return { of: WINDOW_READ.refused, why: here };
     const companyKeys: CompanyKeyHere = here.viewingKey;
     const reach: WindowReach = {
-      accountId: companyId, api: (path) => api(path), judges: { directoryHereFor: () => here.directory }, label: here.company, account: here.account,
-      companyKeys, roster: async () => here.opened, opener: serviceOpenerOfSigner(companyId, here.mine, companyKeys),
+      accountId: view.company, records: (asked) => view.records(asked), judges: { directoryHereFor: () => here.directory }, label: here.company, account: here.account,
+      companyKeys, roster: async () => here.opened, opener: serviceOpenerOfSigner(view.company, here.mine, companyKeys),
     };
     const got = await recoveryWindowHere(reach);
     if (wasUnread(got)) return { of: WINDOW_READ.unread, why: got.unread };
@@ -85,12 +85,12 @@ const actedOf = (ended: ActOutcome): WindowActed =>
 
 /** Sets the window to `seconds`, or signs a change to that length, in the wallet. */
 export async function setRecoveryWindow(
-  personId: string, companyId: string, seconds: number, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, seconds: number, onStep?: (step: number, steps: number) => void,
 ): Promise<WindowActed> {
   try {
     if (ACCOUNT_ORIGIN === '') return { of: WINDOW_ACTED.refused, why: ACT_REFUSAL.notSetUp };
     if (!(await keyringFor(personId))) return { of: WINDOW_ACTED.refused, why: ACT_REFUSAL.notSignedIn };
-    const named = await namedFor(companyId);
+    const named = await namedIn(view);
     if (named === null) return { of: WINDOW_ACTED.refused, why: ACT_REFUSAL.didNotFinish };
     const step = onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) };
     return actedOf(await setRecoveryWindowInTheWallet({

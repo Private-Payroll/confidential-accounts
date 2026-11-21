@@ -16,19 +16,18 @@ import type { AccountGovernance } from 'midnight-identity/profile/records-key';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { thresholdCarryBar, thresholdChangeRefusal, type ThresholdChange } from '../../../../src/core/vault-approvers.js';
 import type { GovernanceOnTheWire } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import {
-  ApprovalNotOwed, changeThresholdOnDevice, changeVaultThresholdOnDevice, nothingWasSentBy, withCompanyKeys, WithdrawnWhileSent,
-  type GovernanceDoors, type GovernedOutcome, type ThresholdChangeSteps,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { changeThresholdOnDevice, changeVaultThresholdOnDevice, type GovernanceDoors, type GovernedOutcome, type ThresholdChangeSteps } from '../../../../packages/web-shared/src/company-change-on-device.js';
+import { ApprovalNotOwed, WithdrawnWhileSent } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { openTheRoundHere } from '../../../../packages/web-shared/src/round-opened-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import {
-  approversHere, companyReachFor, governanceDoorsFor, keptReach, runsOutrunHere,
-  type CompanyChain, type CompanyReach, type Handed,
-} from './company-reach.js';
+import { approversHere, runsOutrunHere } from './approvers-here.js';
+import { companyReachFor, governanceDoorsFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { approving, carryStep, onTheChain, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
+import { thresholdSet, vaultThresholdSet } from './holders-moved-here.js';
 import { anchorDirectoryDoorIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
 /** What the wallet reads: the company's chain and builder, its pause, and how long it waits for the chain. */
@@ -205,6 +204,11 @@ export function thresholdKind(reach: Pick<ChangeThresholdReach, 'pause' | 'waitM
     },
     stateAt: (atItsBar) => (atItsBar ? CHANGE_THRESHOLD_STATE.atItsBar : CHANGE_THRESHOLD_STATE.waiting),
     carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.change-threshold.step.carry' }, carryOutFor(reach, which))],
+    carries: (intent) => {
+      const a = askedOf(intent, which);
+      if ('key' in a) throw new StepRefused(a);
+      return a.kind === 'threshold' ? { kind: 'threshold', move: thresholdSet(a.threshold) } : { kind: 'vault-threshold', move: vaultThresholdSet(a.vault, a.threshold) };
+    },
     why: kindWhy,
   };
   return kind;

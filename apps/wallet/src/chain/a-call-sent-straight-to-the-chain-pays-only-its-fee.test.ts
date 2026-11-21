@@ -8,11 +8,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { straightFromTheOwnWallet, type FeeAndSubmit, type OwnWalletDoors } from './sent-straight-to-the-chain.js';
-import { handOverFor, handOverMarked } from '../actions/company-reach.js';
+import { handOverFor, handOverMarked } from '../actions/hand-over-in-the-wallet.js';
 import { handedOver, NotHandedOver } from '../../../../packages/web-shared/src/hand-over.js';
 import type { StepContext } from '../actions/definition.js';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
+import { viewsOfTheStep } from '../actions/step-views.test-support.js';
 
 const ACCOUNT = 'ac'.repeat(32);
 const VAULT = 'fa'.repeat(32);
@@ -73,7 +74,9 @@ const aWallet = (log: string[], made?: ReadonlyMap<string, unknown>): OwnWalletD
 const anAct = (fields: Record<string, string>, account: number | null = 0) => ({
   intent: { name: 'approve-proposal', fields }, held: { identity: {} as never, ...(account === null ? {} : { account }) },
   signal: new AbortController().signal,
-}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal'>;
+  /* The runner's door for a call this wallet sends itself, with no read of the company to check here. */
+  sendStraight: viewsOfTheStep(async () => { throw new Error('a hand-over reads nothing of the company here'); }).sendStraight,
+}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'sendStraight'>;
 
 describe('A CALL SENT STRAIGHT TO THE CHAIN', () => {
   it('one call to the contract the step names is paid for in DUST alone and sent, and the wallet is stopped after it', async () => {

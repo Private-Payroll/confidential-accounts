@@ -455,7 +455,12 @@ describe('§3 — THE KEY IS IN NO LOG, NO URL AND NO STORED FIELD', () => {
     sourceOf(p).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   it('nothing on the unlock path writes to a log or to browser storage', () => {
-    for (const file of ['../../packages/web-shared/src/wallet-unlock.ts', '../../packages/web-shared/src/keyring.ts', './wallet-unlock.ts']) {
+    for (const file of [
+      '../../packages/web-shared/src/wallet-unlock.ts', '../../packages/web-shared/src/keyring.ts', './wallet-unlock.ts',
+      '../../packages/web-shared/src/company-creation.ts', '../../packages/web-shared/src/wallet-asks.ts', '../../packages/web-shared/src/service-transport.ts',
+      '../../packages/web-shared/src/asks-on-page.ts', '../../packages/web-shared/src/records-source.ts',
+      '../../packages/web-shared/src/person-asks.ts', '../../packages/web-shared/src/person-on-page.ts',
+    ]) {
       const code = codeOf(file);
       expect(code, file).not.toMatch(/console\.(log|info|warn|error|debug)/);
       expect(code, file).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/);
@@ -474,10 +479,13 @@ describe('§3 — THE KEY IS IN NO LOG, NO URL AND NO STORED FIELD', () => {
 
   it('and the key is not put in the URL, because the URL is built from an account id', () => {
     const keyring = sourceOf('../../packages/web-shared/src/keyring.ts');
-    /* The one request the unlock path adds. Its path carries an account id and
-     * its body is not sent at all. */
-    expect(keyring).toContain('await api(`/api/accounts/${accountId}/unlock`');
-    expect(keyring).not.toMatch(/api\(`[^`]*\$\{ek\}/);
+    const asks = sourceOf('../../packages/web-shared/src/person-asks.ts');
+    /* The one request the unlock path adds, asked by the account id alone. Its
+     * path carries that id and its body is not sent at all. */
+    expect(keyring).toContain('await personOnPage.companyNamed(accountId)');
+    expect(asks).toContain('companyNamed: (company) => call(`/api/accounts/${company}/unlock`, posted())');
+    expect(keyring).not.toMatch(/\$\{ek\}/);
+    expect(asks).not.toMatch(/\$\{ek\}/);
   });
 });
 

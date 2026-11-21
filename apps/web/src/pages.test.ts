@@ -169,7 +169,7 @@ describe('every entry is a page, and every page is an entry', () => {
     const shown = new Set([...screens, ...already].map((x) => x.screen));
     const walk = (dir: string): string[] => readdirSync(SRC + dir, { withFileTypes: true })
       .flatMap((d) => (d.isDirectory() ? walk(`${dir}/${d.name}`) : [`${dir}/${d.name}`.slice('screens/'.length)]));
-    const files = walk('screens').filter((n) => /\.tsx?$/.test(n) && !/\.test\./.test(n));
+    const files = walk('screens').filter((n) => /\.tsx?$/.test(n) && !/\.test(-support)?\./.test(n));
     expect(files.length).toBeGreaterThan(0);
     const unlisted: string[] = [];
     for (const f of files) {
@@ -312,8 +312,8 @@ describe('no two pages share an address or a shortcut', () => {
    * another page or a command already has.
    */
   it('gives every shortcut its own keys, and every page shortcut is in the table and its own', () => {
-    const byKey = (c: Chord) => [c.key, c.command === true, c.shift === true].map(String).join(' ');
-    const byPlace = (c: Chord) => [c.code, c.command === true, c.shift === true].map(String).join(' ');
+    const byKey = ({ key, command, shift }: Chord) => [key, command === true, shift === true].map(String).join(' ');
+    const byPlace = ({ code, command, shift }: Chord) => [code, command === true, shift === true].map(String).join(' ');
     for (const way of [byKey, byPlace]) {
       const all = EVERY_SHORTCUT.flatMap((s) => s.chords.map(way));
       expect(all.filter((c, i) => all.indexOf(c) !== i)).toEqual([]);
@@ -393,7 +393,7 @@ describe('no page opens for a person who may not see it', () => {
 
 describe('the menu, the command bar, the shortcuts and the router read the list and nothing else', () => {
   const files = (dir: string): string[] => readdirSync(SRC + dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? files(`${dir}${d.name}/`) : [`${dir}${d.name}`]))
-    .filter((p) => /\.tsx?$/.test(p) && !/\.test\./.test(p));
+    .filter((p) => /\.tsx?$/.test(p) && !/\.test(-support)?\./.test(p));
   const own = files('');
 
   /*

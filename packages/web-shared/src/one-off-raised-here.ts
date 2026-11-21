@@ -17,7 +17,7 @@
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import { sealingWith } from '../../../src/core/company-key.js';
 import { keysByPurpose } from './keys-by-purpose.js';
-import { assetIdBytes, assetIdHex, assets as theAssets, type AssetId } from '../../../src/core/assets.js';
+import { assetIdBytes, assetIdHex, assets as theAssets, type AssetId, type AssetRegistry } from '../../../src/core/assets.js';
 import { canonical, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import type { Privacy } from '../../../src/core/movement.js';
 import type { PaymentsAmong } from '../../../src/core/ledger.js';
@@ -34,7 +34,8 @@ import { companyRecordEntry, proposalEntry } from '../../../src/midnight/record-
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { oneOffSaltOf } from '../../../src/midnight/run-keys.js';
 import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
-import { theRoundAsked, type RaiseDoors, type RoundOnThePage } from './governed-call-on-device.js';
+import { theRoundAsked, type RoundOnThePage } from './governed-call-on-device.js';
+import type { RaiseDoors } from './payroll-run-on-device.js';
 import {
   oneOffBuiltHere, oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere, type OneOffBelieved, type OneOffReadDoors, type OneOffRecords, type OneOffsHere,
 } from './one-off-here.js';
@@ -175,25 +176,16 @@ const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const SUMMARY = 'One-off payment from a vault';
 
 /**
- * **RAISES A ONE-OFF PAYMENT FROM THIS DEVICE**, as the module says, and answers
- * where it stands. Refused before anything is filed or sent when the one-off is
- * not one its record can hold, it names a vendor entry whose own address and
- * keys it does not pay (`refuseAOneOffToAnotherVendorHere`), its window is past
- * or names no vault, the vault's policy would not charge it, or the vault
- * cannot pay it.
+ * The checks a one-off passes before anything is filed or sent: its record can hold it, it pays the vendor entry it
+ * names, its window names a vault, the vault's policy would charge it and the vault can pay it. Each refusal is a
+ * `LegNotRaisedHere` with the reason.
  */
-export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAsked & { readonly viewingKey: KeysHeld }): Promise<RoundOnThePage> {
-  const { records, accountId, service } = doors;
-  if (!service.file) throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
-  const registry = doors.assets ?? records.oneOffs.registry ?? records.registry ?? theAssets;
+async function checkedBeforeAnythingIsFiled(
+  doors: OneOffRaiseDoors, input: OneOffAsked & { readonly viewingKey: KeysHeld }, registry: AssetRegistry, vault: Hex,
+  draft: (chainId: Hex, required: bigint) => Parameters<typeof oneOffTidied>[0],
+) {
+  const { records } = doors;
   const key = input.viewingKey;
-  const vault = String(input.vault).toLowerCase() as Hex;
-  const seed = newOneOffSeed();
-  const proposalId = doors.filing.newId();
-  const draft = (chainId: Hex, required: bigint) => ({
-    vault, asset: input.asset, amount: input.amount, form: input.form, payee: input.payee, reason: input.reason,
-    proposal: { id: proposalId, chainId }, run: { opensAt: input.opensAt, closesAt: input.closesAt, required }, seed,
-  });
   let tidied: ReturnType<typeof oneOffTidied>;
   try {
     tidied = oneOffTidied(draft('00'.repeat(32) as Hex, 0n), registry);
@@ -227,6 +219,30 @@ export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAske
     vault, asset: registry.require(tidied.asset), total: tidied.amount, payees: 1n,
     payments: [{ payee: { kind: tidied.paidTo.kind }, token: tidied.token, amount: tidied.amount }],
   }, ['shielded', 'unshielded']);
+  return { tidied, secrets, root, window, now, required };
+}
+
+/**
+ * **RAISES A ONE-OFF PAYMENT FROM THIS DEVICE**, as the module says, and answers
+ * where it stands. Refused before anything is filed or sent when the one-off is
+ * not one its record can hold, it names a vendor entry whose own address and
+ * keys it does not pay (`refuseAOneOffToAnotherVendorHere`), its window is past
+ * or names no vault, the vault's policy would not charge it, or the vault
+ * cannot pay it.
+ */
+export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAsked & { readonly viewingKey: KeysHeld }): Promise<RoundOnThePage> {
+  const { records, accountId, service } = doors;
+  if (!service.file) throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
+  const registry = doors.assets ?? records.oneOffs.registry ?? records.registry ?? theAssets;
+  const key = input.viewingKey;
+  const vault = String(input.vault).toLowerCase() as Hex;
+  const seed = newOneOffSeed();
+  const proposalId = doors.filing.newId();
+  const draft = (chainId: Hex, required: bigint) => ({
+    vault, asset: input.asset, amount: input.amount, form: input.form, payee: input.payee, reason: input.reason,
+    proposal: { id: proposalId, chainId }, run: { opensAt: input.opensAt, closesAt: input.closesAt, required }, seed,
+  });
+  const { tidied, secrets, root, window, now, required } = await checkedBeforeAnythingIsFiled(doors, input, registry, vault, draft);
 
   const salt = oneOffSaltOf(secrets, doors.runs.retrySaltOf);
   const digest = hex(doors.runs.runPayload(bytes(root), 1n, window.opensAt, window.closesAt, BigInt(required)));

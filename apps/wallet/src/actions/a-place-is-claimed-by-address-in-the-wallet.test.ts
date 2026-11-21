@@ -20,6 +20,7 @@ import { addressOfVerifyingKey } from 'midnight-identity/profile/disclosure';
 import { claimByAddressAction, heldAt } from './claim-by-address.js';
 import type { StepContext } from './definition.js';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { stepOverItsCall } from './step-views.test-support.js';
 
 /* A person added by an unshielded address claims their place from their own wallet: the wallet opens the offer the
  * inviter signed with the link's token, takes the record and the company's inbox key from it, goes on only for an
@@ -79,7 +80,7 @@ const run = async (
   const posted: Array<{ path: string; body: Record<string, unknown> }> = [];
   const asked: string[] = [];
   let saved: Keyring = opts.keyring ?? { accounts: {} };
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 1, steps: 1 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a claim sends no transaction'); },
@@ -95,7 +96,7 @@ const run = async (
       open: () => ({ read: () => structuredClone(saved) }),
       keep: async (change: (k: Keyring) => Keyring) => { saved = change(saved); asked.push('kept'); },
     },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   const action = claimByAddressAction({ network: NET });
   for (const s of action.steps(i)) await s.run(ctx);
   return { posted, asked, action, saved: () => saved };

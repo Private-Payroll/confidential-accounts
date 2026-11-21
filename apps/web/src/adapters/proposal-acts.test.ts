@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { describe, expect, it, vi } from 'vitest';
 import { privateAddressHere, publicAddressElsewhere, publicAddressHere } from '../addresses-here.test-support.js';
-import type { ProposalRow } from './company-records.js';
+import type { ProposalRow } from './company-rows.js';
 
 type Row = ProposalRow;
 import { thresholdProblem } from 'vaults-web-shared/proposal-in-the-wallet.js';
@@ -16,18 +17,25 @@ const kr = vi.hoisted(() => ({
   user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
   named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, calls: 0, throws: null as Error | null,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     kr.calls += 1;
     kr.acts.push(intent);
     if (kr.throws !== null) throw kr.throws;
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => kr.named,
 }));
 
 async function load() {
@@ -90,7 +98,7 @@ describe('approving a proposal from the list', () => {
   it('asks the wallet to approve exactly the proposal pressed, by its id and kind', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'approved', approvals: 2, needed: 2 } };
-    expect(await m.approveProposal('u1', 'acc_Company00001', row())).toEqual({ of: m.PROPOSAL_ACTED.done, state: 'approved', approvals: 2, needed: 2 } satisfies ProposalActed);
+    expect(await m.approveProposal('u1', aViewOf('acc_Company00001'), row())).toEqual({ of: m.PROPOSAL_ACTED.done, state: 'approved', approvals: 2, needed: 2 } satisfies ProposalActed);
     expect(kr.acts).toEqual([{ name: m.PROPOSAL_ACT.approve, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_0001', kind: 'pay-key' }]);
   });
 
@@ -98,7 +106,7 @@ describe('approving a proposal from the list', () => {
   it('hands the wallet a count and an amount as whole numbers in decimal, and no field over the proposal or its kind', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'approved', approvals: 1, needed: 2 } };
-    await m.approveProposal('u1', 'acc_Company00001', row({ kind: 'payroll', asks: { run: 'r9', payees: 2, total: 12_000_000_000_000_000_000n, proposal: 'other', name: 'x' } }));
+    await m.approveProposal('u1', aViewOf('acc_Company00001'), row({ kind: 'payroll', asks: { run: 'r9', payees: 2, total: 12_000_000_000_000_000_000n, proposal: 'other', name: 'x' } }));
     expect(kr.acts).toEqual([{
       name: m.PROPOSAL_ACT.approve, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_0001', kind: 'payroll',
       run: 'r9', payees: '2', total: '12000000000000000000',
@@ -115,7 +123,7 @@ describe('approving a proposal from the list', () => {
       ['set-spending-policy', 'spending-policy'], ['set-policy-bar', 'policy-bar'],
     ] as const) {
       kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'approved', approvals: 1, needed: 2 } };
-      await m.approveProposal('u1', 'acc_Company00001', row({ kind, asks }));
+      await m.approveProposal('u1', aViewOf('acc_Company00001'), row({ kind, asks }));
       expect(kr.acts, kind).toEqual([{ name: m.PROPOSAL_ACT.approve, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_0001', kind: wallet, ...asks }]);
     }
   });
@@ -129,7 +137,7 @@ describe('approving a proposal from the list', () => {
       row(), row({ status: 'approved' }), row({ status: 'executed' }), row({ status: 'cancelled' }), row({ kind: 'unreadable', status: 'unreadable' }),
       row({ kind: 'payroll' }), row({ kind: 'payroll', asks }), row({ kind: 'set-spending-policy', asks }), row({ kind: 'set-policy-bar', asks: { bar: 2 } }), row({ kind: 'set-policy-bar' }),
     ].map(m.canApprove)).toEqual([true, false, false, false, false, false, true, true, true, false]);
-    expect(await m.approveProposal('u1', 'acc_Company00001', row({ kind: 'payroll' }))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.approveProposal('u1', aViewOf('acc_Company00001'), row({ kind: 'payroll' }))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
   });
 
@@ -152,7 +160,7 @@ describe('approving a proposal from the list', () => {
       ['act.one-off-payment.why.charge-may-be-sent', 'may-be-sent', true], ['act.one-off-payment.why.nobody-knows', 'other', false],
     ] as const) {
       kr.ended = stopped(refused);
-      expect(await m.approveProposal('u1', 'acc_Company00001', row()), why).toEqual({ of: m.PROPOSAL_ACTED.stopped, act: m.PROPOSAL_ACT.approve, why, partial, handedOver: false } satisfies ProposalActed);
+      expect(await m.approveProposal('u1', aViewOf('acc_Company00001'), row()), why).toEqual({ of: m.PROPOSAL_ACTED.stopped, act: m.PROPOSAL_ACT.approve, why, partial, handedOver: false } satisfies ProposalActed);
     }
   });
 });
@@ -163,7 +171,7 @@ describe('withdrawing a proposal from the list', () => {
     const m = await load();
     for (const [kind, wallet] of [['add-signer', 'add-signer'], ['remove-signer', 'removal'], ['set-threshold', 'threshold'], ['set-vault-threshold', 'vault-threshold'], ['payroll', 'payroll'], ['transfer', 'one-off'], ['set-spending-policy', 'spending-policy'], ['set-policy-bar', 'policy-bar']] as const) {
       kr.acts.length = 0; kr.ended = { of: 'done', steps: 3, relayed: 1, outcome: { state: 'withdrawn', proposal: 'prop_0001' } };
-      expect(await m.withdrawProposal('u1', 'acc_Company00001', row({ kind })), kind).toMatchObject({ of: m.PROPOSAL_ACTED.done, state: 'withdrawn' });
+      expect(await m.withdrawProposal('u1', aViewOf('acc_Company00001'), row({ kind })), kind).toMatchObject({ of: m.PROPOSAL_ACTED.done, state: 'withdrawn' });
       expect(kr.acts, kind).toEqual([{ name: m.PROPOSAL_ACT.withdraw, record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), proposal: 'prop_0001', kind: wallet }]);
     }
   });
@@ -200,7 +208,7 @@ describe('withdrawing a proposal from the list', () => {
       ['act.withdraw-proposal.why.not-as-shown', 'not-as-shown', false], ['act.approve-proposal.why.not-approved', 'other', false],
     ] as const) {
       kr.ended = stopped(refused);
-      expect(await m.withdrawProposal('u1', 'acc_Company00001', row({ kind: 'payroll' })), why).toEqual({ of: m.PROPOSAL_ACTED.stopped, act: m.PROPOSAL_ACT.withdraw, why, partial, handedOver: false } satisfies ProposalActed);
+      expect(await m.withdrawProposal('u1', aViewOf('acc_Company00001'), row({ kind: 'payroll' })), why).toEqual({ of: m.PROPOSAL_ACTED.stopped, act: m.PROPOSAL_ACT.withdraw, why, partial, handedOver: false } satisfies ProposalActed);
     }
   });
 });
@@ -210,14 +218,14 @@ describe('before either act reaches the wallet', () => {
   it('asks the wallet for nothing when nobody is signed in or the company cannot be read', async () => {
     const m = await load();
     kr.calls = 0; kr.throws = null; kr.user = null;
-    expect(await m.approveProposal('u1', 'acc_Company00001', row())).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
-    expect(await m.withdrawProposal('u1', 'acc_Company00001', row({ kind: 'payroll' }))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.approveProposal('u1', aViewOf('acc_Company00001'), row())).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.withdrawProposal('u1', aViewOf('acc_Company00001'), row({ kind: 'payroll' }))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' }; kr.named = {};
-    expect(await m.withdrawProposal('u1', 'acc_Company00001', row({ kind: 'payroll' }))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.withdrawProposal('u1', aViewOf('acc_Company00001'), row({ kind: 'payroll' }))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
     kr.named = { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) };
     kr.throws = new TypeError('fetch failed');
-    expect(await m.approveProposal('u1', 'acc_Company00001', row())).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
+    expect(await m.approveProposal('u1', aViewOf('acc_Company00001'), row())).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
     kr.throws = null;
   });
 
@@ -226,7 +234,7 @@ describe('before either act reaches the wallet', () => {
     const m = await load();
     for (const [relayed, unconfirmed, handedOver] of [[0, 0, false], [1, 0, true], [0, 1, true]] as const) {
       kr.ended = { ...stopped('act.approve-proposal.why.not-approved'), relayed, unconfirmed };
-      expect(await m.approveProposal('u1', 'acc_Company00001', row()), `${relayed}/${unconfirmed}`)
+      expect(await m.approveProposal('u1', aViewOf('acc_Company00001'), row()), `${relayed}/${unconfirmed}`)
         .toEqual({ of: m.PROPOSAL_ACTED.stopped, act: m.PROPOSAL_ACT.approve, why: 'not-approved', partial: false, handedOver } satisfies ProposalActed);
     }
   });
@@ -240,7 +248,7 @@ describe('changing the approvals the company needs', () => {
   it('asks the wallet to change the company\'s approvals to exactly the number chosen, as a whole number in decimal', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'carried-out', approvals: 2, needed: 2 } };
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, known)).toEqual({ of: m.PROPOSAL_ACTED.done, state: 'carried-out', approvals: 2, needed: 2 } satisfies ProposalActed);
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, known)).toEqual({ of: m.PROPOSAL_ACTED.done, state: 'carried-out', approvals: 2, needed: 2 } satisfies ProposalActed);
     expect(kr.acts).toEqual([{ ...wallet, threshold: '3' }]);
   });
 
@@ -249,13 +257,13 @@ describe('changing the approvals the company needs', () => {
     const m = await load();
     const vault = 'ab'.repeat(32);
     kr.acts.length = 0; kr.calls = 0; kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'carried-out', approvals: 2, needed: 2 } };
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, { now: 2, seated: 4 }, undefined, vault)).toEqual({ of: m.PROPOSAL_ACTED.done, state: 'carried-out', approvals: 2, needed: 2 } satisfies ProposalActed);
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, { now: 2, seated: 4 }, undefined, vault)).toEqual({ of: m.PROPOSAL_ACTED.done, state: 'carried-out', approvals: 2, needed: 2 } satisfies ProposalActed);
     expect(kr.acts).toEqual([{ ...wallet, threshold: '3', vault }]);
     kr.acts.length = 0; kr.calls = 0;
     const P = m.THRESHOLD_PROBLEM;
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, { now: 3, seated: 4 }, undefined, vault)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.same });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 5, { now: 3, seated: 4 }, undefined, vault)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.tooHigh, most: 4 });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 0, { now: 3, seated: 4 }, undefined, vault)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, { now: 3, seated: 4 }, undefined, vault)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.same });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 5, { now: 3, seated: 4 }, undefined, vault)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.tooHigh, most: 4 });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 0, { now: 3, seated: 4 }, undefined, vault)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
     expect(kr.calls).toBe(0);
     expect(kr.acts).toEqual([]);
   });
@@ -265,14 +273,14 @@ describe('changing the approvals the company needs', () => {
     const m = await load();
     kr.calls = 0;
     const P = m.THRESHOLD_PROBLEM;
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 0, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', -1, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 2.5, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', Number.NaN, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 5, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.tooHigh, most: 4 });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 2, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.same });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, { now: 2, seated: null })).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.unread });
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, { now: null, seated: 4 })).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.unread });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 0, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), -1, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 2.5, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), Number.NaN, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.notWhole });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 5, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.tooHigh, most: 4 });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 2, known)).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.same });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, { now: 2, seated: null })).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.unread });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, { now: null, seated: 4 })).toEqual({ of: m.THRESHOLD_ACTED.problem, problem: P.unread });
     expect(kr.calls).toBe(0);
     expect(thresholdProblem(4, known)).toBeNull();
     expect(thresholdProblem(1, known)).toBeNull();
@@ -282,7 +290,7 @@ describe('changing the approvals the company needs', () => {
   it('tells the wallet\'s refusal of the number apart from its other stops, and keeps the others\' reasons', async () => {
     const m = await load();
     kr.ended = stopped('act.change-threshold.why.refused');
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, known)).toEqual({ of: m.THRESHOLD_ACTED.walletRefused });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, known)).toEqual({ of: m.THRESHOLD_ACTED.walletRefused });
     for (const [refused, why, partial] of [
       ['act.change-threshold.why.no-seat', 'seat', false], ['act.change-threshold.why.not-approved', 'not-approved', false],
       ['act.change-threshold.why.not-raised', 'not-raised', false], ['act.change-threshold.why.not-carried', 'may-be-sent', true],
@@ -290,7 +298,7 @@ describe('changing the approvals the company needs', () => {
       [undefined, 'stopped', false], ['act.change-threshold.why.nobody-knows', 'other', false],
     ] as readonly (readonly [string | undefined, string, boolean])[]) {
       kr.ended = stopped(refused);
-      expect(await m.changeThreshold('u1', 'acc_Company00001', 3, known), String(refused)).toEqual({ of: m.PROPOSAL_ACTED.stopped, act: m.PROPOSAL_ACT.approve, why, partial, handedOver: false });
+      expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, known), String(refused)).toEqual({ of: m.PROPOSAL_ACTED.stopped, act: m.PROPOSAL_ACT.approve, why, partial, handedOver: false });
     }
   });
 
@@ -298,13 +306,13 @@ describe('changing the approvals the company needs', () => {
   it('asks the wallet nothing when the person is not signed in or the company is not finished, and tells an unreachable wallet', async () => {
     const m = await load();
     kr.calls = 0; kr.user = null;
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, known)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, known)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' }; kr.named = {};
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, known)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, known)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
     kr.named = { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) };
     kr.throws = new TypeError('fetch failed');
-    expect(await m.changeThreshold('u1', 'acc_Company00001', 3, known)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
+    expect(await m.changeThreshold('u1', aViewOf('acc_Company00001'), 3, known)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
     kr.throws = null;
   });
 });
@@ -320,11 +328,11 @@ describe('paying an approved run\'s leg', () => {
   it('asks the wallet once to pay exactly the leg shown, the form as private or public, the counts as whole numbers in decimal', async () => {
     const m = await load();
     kr.acts.length = 0; kr.calls = 0; kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'paid', paid: 2, owed: 0, unseen: 0, charge: 'none', approvals: 2, needed: 2 } };
-    expect(await m.payRun('u1', 'acc_Company00001', ask)).toEqual({ of: 'done', state: 'paid', paid: 2, owed: 0, unseen: 0 });
+    expect(await m.payRun('u1', aViewOf('acc_Company00001'), ask)).toEqual({ of: 'done', state: 'paid', paid: 2, owed: 0, unseen: 0 });
     expect(kr.acts).toEqual([{ ...wallet, ...wire }]);
     expect(kr.calls).toBe(1);
     kr.acts.length = 0;
-    await m.payRun('u1', 'acc_Company00001', { ...ask, form: 'unshielded', list: 'vendors' });
+    await m.payRun('u1', aViewOf('acc_Company00001'), { ...ask, form: 'unshielded', list: 'vendors' });
     expect(kr.acts).toEqual([{ ...wallet, ...wire, form: 'public', list: 'vendors' }]);
   });
 
@@ -333,7 +341,7 @@ describe('paying an approved run\'s leg', () => {
     const m = await load();
     kr.acts.length = 0; kr.calls = 0;
     for (const bad of [{ payees: 0 }, { payees: 1.5 }, { total: 0n }, { total: -5n }, { period: 'October' }, { form: null }, { proposal: '' }] as const) {
-      expect(await m.payRun('u1', 'acc_Company00001', { ...ask, ...bad } as never), Object.entries(bad).join()).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+      expect(await m.payRun('u1', aViewOf('acc_Company00001'), { ...ask, ...bad } as never), Object.entries(bad).join()).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     }
     expect(kr.calls).toBe(0);
   });
@@ -347,7 +355,7 @@ describe('paying an approved run\'s leg', () => {
       [{ state: 'awaiting-approvals', approvals: 1, needed: 2 }, { state: 'awaiting-approvals', paid: null, owed: null, unseen: null }],
     ] as const) {
       kr.ended = { of: 'done', steps: 5, relayed: 0, outcome };
-      expect(await m.payRun('u1', 'acc_Company00001', ask), outcome.state).toEqual({ of: 'done', ...told });
+      expect(await m.payRun('u1', aViewOf('acc_Company00001'), ask), outcome.state).toEqual({ of: 'done', ...told });
     }
   });
 
@@ -364,12 +372,12 @@ describe('paying an approved run\'s leg', () => {
       ['nobody-knows', m.WHY.other, false],
     ] as const) {
       kr.ended = { ...stopped(`act.pay-run.why.${code}`), outcome: { state: 'partly-paid', paid: 1, owed: 1, unseen: 0, charge: 'none' } };
-      expect(await m.payRun('u1', 'acc_Company00001', ask), code).toEqual({ of: 'stopped', why, partial, handedOver: false, paid: 1, owed: 1, unseen: 0 });
+      expect(await m.payRun('u1', aViewOf('acc_Company00001'), ask), code).toEqual({ of: 'stopped', why, partial, handedOver: false, paid: 1, owed: 1, unseen: 0 });
     }
     kr.ended = { ...stopped('act.pay-run.why.not-paid'), relayed: 1 };
-    expect(await m.payRun('u1', 'acc_Company00001', ask)).toEqual({ of: 'stopped', why: W.notPaid, partial: false, handedOver: true, paid: null, owed: null, unseen: null });
+    expect(await m.payRun('u1', aViewOf('acc_Company00001'), ask)).toEqual({ of: 'stopped', why: W.notPaid, partial: false, handedOver: true, paid: null, owed: null, unseen: null });
     kr.ended = stopped();
-    expect(await m.payRun('u1', 'acc_Company00001', ask)).toMatchObject({ of: 'stopped', why: m.WHY.stopped });
+    expect(await m.payRun('u1', aViewOf('acc_Company00001'), ask)).toMatchObject({ of: 'stopped', why: m.WHY.stopped });
   });
 });
 
@@ -389,7 +397,7 @@ describe('raising a retry of a run\'s people', () => {
     const m = await load();
     kr.acts.length = 0; kr.calls = 0;
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'raised', run: 'run_1', proposal: 'prop_3', approvals: 1, needed: 2 } };
-    expect(await m.retryRun('u1', 'acc_Company00001', retry, undefined, NOW)).toEqual({ of: 'done', state: 'raised', approvals: 1, needed: 2 });
+    expect(await m.retryRun('u1', aViewOf('acc_Company00001'), retry, undefined, NOW)).toEqual({ of: 'done', state: 'raised', approvals: 1, needed: 2 });
     expect(kr.acts).toEqual([{
       name: 'raise-run', record: 'acc_Company00001', company: 'label-1', account: 'c0'.repeat(32), run: 'run_1', period: '2026-11', list: 'employees', vault: VAULT, token: TOKEN,
       form: 'private', payees: '2', total: '7000000', indices: '1,3', opensAt: String(opens), closesAt: String(closes),
@@ -402,7 +410,7 @@ describe('raising a retry of a run\'s people', () => {
     const m = await load();
     kr.acts.length = 0; kr.calls = 0;
     for (const bad of [{ indices: [] }, { indices: [1, 1] }, { indices: [-1] }, { run: '' }, { total: 0n }, { period: 'x' }, { opensAt: BigInt(Math.floor(NOW / 1000)) }, { closesAt: BigInt(opens) }]) {
-      expect(await m.retryRun('u1', 'acc_Company00001', { ...retry, ...bad }, undefined, NOW), Object.keys(bad).join()).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+      expect(await m.retryRun('u1', aViewOf('acc_Company00001'), { ...retry, ...bad }, undefined, NOW), Object.keys(bad).join()).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     }
     expect(kr.calls).toBe(0);
   });
@@ -411,9 +419,9 @@ describe('raising a retry of a run\'s people', () => {
   it('tells a stop of the wallet by its reason, and whether anything was handed over', async () => {
     const m = await load();
     kr.ended = { of: 'stopped', step: 1, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.raise-run.why.not-as-shown' };
-    expect(await m.retryRun('u1', 'acc_Company00001', retry, undefined, NOW)).toEqual({ of: 'stopped', why: 'not-as-shown', handedOver: false });
+    expect(await m.retryRun('u1', aViewOf('acc_Company00001'), retry, undefined, NOW)).toEqual({ of: 'stopped', why: 'not-as-shown', handedOver: false });
     kr.ended = { ...(kr.ended as object), relayed: 1, refused: 'act.raise-run.why.raise-may-be-sent' };
-    expect(await m.retryRun('u1', 'acc_Company00001', retry, undefined, NOW)).toEqual({ of: 'stopped', why: 'may-be-sent', handedOver: true });
+    expect(await m.retryRun('u1', aViewOf('acc_Company00001'), retry, undefined, NOW)).toEqual({ of: 'stopped', why: 'may-be-sent', handedOver: true });
   });
 });
 
@@ -435,12 +443,12 @@ describe('raising a run the wallet draws', () => {
     const m = await load();
     kr.acts.length = 0; kr.calls = 0;
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'raised', run: 'run_9', proposal: 'prop_9', approvals: 1, needed: 2 } };
-    expect(await m.raiseRun('u1', 'acc_Company00001', run, undefined, NOW)).toEqual({ of: 'done', state: 'raised', approvals: 1, needed: 2 });
+    expect(await m.raiseRun('u1', aViewOf('acc_Company00001'), run, undefined, NOW)).toEqual({ of: 'done', state: 'raised', approvals: 1, needed: 2 });
     expect(kr.acts).toEqual([wire]);
     for (const named of ['run', 'payees', 'total', 'indices', 'proposal']) expect(kr.acts[0], named).not.toHaveProperty(named);
     expect(kr.calls).toBe(1);
     kr.acts.length = 0;
-    await m.raiseRun('u1', 'acc_Company00001', { ...run, form: 'unshielded', list: 'vendors' }, undefined, NOW);
+    await m.raiseRun('u1', aViewOf('acc_Company00001'), { ...run, form: 'unshielded', list: 'vendors' }, undefined, NOW);
     expect(kr.acts).toEqual([{ ...wire, form: 'public', list: 'vendors' }]);
   });
 
@@ -449,11 +457,11 @@ describe('raising a run the wallet draws', () => {
     const m = await load();
     kr.acts.length = 0; kr.calls = 0;
     for (const bad of [{ period: 'November' }, { period: '2026-13' }, { vault: '' }, { token: '' }, { opensAt: BigInt(Math.floor(NOW / 1000)) }, { opensAt: BigInt(opens - 9000) }, { closesAt: BigInt(opens) }, { closesAt: BigInt(opens - 1) }]) {
-      expect(await m.raiseRun('u1', 'acc_Company00001', { ...run, ...bad }, undefined, NOW), Object.keys(bad).join()).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+      expect(await m.raiseRun('u1', aViewOf('acc_Company00001'), { ...run, ...bad }, undefined, NOW), Object.keys(bad).join()).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     }
     expect(kr.calls).toBe(0);
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'raised' } };
-    expect(await m.raiseRun('u1', 'acc_Company00001', run, undefined, NOW)).toEqual({ of: 'done', state: 'raised', approvals: null, needed: null });
+    expect(await m.raiseRun('u1', aViewOf('acc_Company00001'), run, undefined, NOW)).toEqual({ of: 'done', state: 'raised', approvals: null, needed: null });
   });
 
   /* RED WHEN: a window left empty gets a default, an opening at or before now or a closing at or before the opening is let through, or the times typed are changed on their way to the wallet's seconds. */
@@ -479,12 +487,12 @@ describe('raising a run the wallet draws', () => {
       ['not-raised', W.notRaised], ['raise-may-be-sent', W.mayBeSent], ['nobody-knows', W.other],
     ] as const) {
       kr.ended = refusing(code);
-      expect(await m.raiseRun('u1', 'acc_Company00001', run, undefined, NOW), code).toEqual({ of: 'stopped', why, handedOver: false });
+      expect(await m.raiseRun('u1', aViewOf('acc_Company00001'), run, undefined, NOW), code).toEqual({ of: 'stopped', why, handedOver: false });
     }
     kr.ended = { ...refusing('raise-may-be-sent'), relayed: 1 };
-    expect(await m.raiseRun('u1', 'acc_Company00001', run, undefined, NOW)).toEqual({ of: 'stopped', why: W.mayBeSent, handedOver: true });
+    expect(await m.raiseRun('u1', aViewOf('acc_Company00001'), run, undefined, NOW)).toEqual({ of: 'stopped', why: W.mayBeSent, handedOver: true });
     kr.ended = { of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'declined' };
-    expect(await m.raiseRun('u1', 'acc_Company00001', run, undefined, NOW)).toEqual({ of: 'stopped', why: W.stopped, handedOver: false });
+    expect(await m.raiseRun('u1', aViewOf('acc_Company00001'), run, undefined, NOW)).toEqual({ of: 'stopped', why: W.stopped, handedOver: false });
   });
 });
 
@@ -502,10 +510,10 @@ describe('raising a one-off payment', () => {
     const m = await load();
     kr.acts = [];
     kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'raised', approvals: 1, needed: 2 } };
-    expect(await m.raiseOneOff('u1', 'acc_Company00001', { ...draft, payee: ` ${PUBLIC} `, reason: ' Chairs ' })).toEqual({ of: 'done', state: 'raised', approvals: 1, needed: 2 });
+    expect(await m.raiseOneOff('u1', aViewOf('acc_Company00001'), { ...draft, payee: ` ${PUBLIC} `, reason: ' Chairs ' })).toEqual({ of: 'done', state: 'raised', approvals: 1, needed: 2 });
     expect(kr.acts).toEqual([wire]);
     kr.acts = [];
-    await m.raiseOneOff('u1', 'acc_Company00001', { ...draft, payee: PRIVATE, payeeName: ' Chair Co ', vendor: 'ven_aa' });
+    await m.raiseOneOff('u1', aViewOf('acc_Company00001'), { ...draft, payee: PRIVATE, payeeName: ' Chair Co ', vendor: 'ven_aa' });
     expect(kr.acts).toEqual([{ ...wire, payee: PRIVATE, payeeName: 'Chair Co', vendor: 'ven_aa' }]);
   });
 
@@ -525,11 +533,11 @@ describe('raising a one-off payment', () => {
     for (const [over, field, problem] of cases) {
       expect(m.oneOffProblem({ ...draft, ...over }), JSON.stringify(over)).toEqual({ field, problem });
       kr.acts = [];
-      expect(await m.raiseOneOff('u1', 'acc_Company00001', { ...draft, ...over }), JSON.stringify(over)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+      expect(await m.raiseOneOff('u1', aViewOf('acc_Company00001'), { ...draft, ...over }), JSON.stringify(over)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
       expect(kr.acts).toEqual([]);
     }
     expect(m.oneOffProblem({ ...draft, amount: '0.000001', payee: PRIVATE, payeeName: 'n'.repeat(128), reason: 'x'.repeat(500) })).toBeNull();
-    expect(await m.raiseOneOff('u1', 'acc_Company00001', { ...draft, vault: '' })).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.raiseOneOff('u1', aViewOf('acc_Company00001'), { ...draft, vault: '' })).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
   });
 
   /* RED WHEN: an address is read as the wrong kind, so the screen says a public payment is private or the other way round. */
@@ -547,9 +555,9 @@ describe('raising a one-off payment', () => {
       ['outrun', W.outrun], ['nobody-knows', W.other],
     ] as const) {
       kr.ended = refusing(code);
-      expect(await m.raiseOneOff('u1', 'acc_Company00001', draft), code).toMatchObject({ of: 'stopped', why, handedOver: false });
+      expect(await m.raiseOneOff('u1', aViewOf('acc_Company00001'), draft), code).toMatchObject({ of: 'stopped', why, handedOver: false });
     }
     kr.ended = { ...refusing('raise-may-be-sent'), relayed: 1 };
-    expect(await m.raiseOneOff('u1', 'acc_Company00001', draft)).toMatchObject({ of: 'stopped', why: W.mayBeSent, partial: true, handedOver: true });
+    expect(await m.raiseOneOff('u1', aViewOf('acc_Company00001'), draft)).toMatchObject({ of: 'stopped', why: W.mayBeSent, partial: true, handedOver: true });
   });
 });

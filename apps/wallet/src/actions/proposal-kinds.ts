@@ -7,7 +7,8 @@
  *
  * Each kind brings only what is its own (`ProposalKind`): the lines the window shows, the checks of what it opens, the
  * approvals the account needs for it, and what carries it out once those are given. A change the wallet carries out
- * itself is carried out by the one carry step (`carryStep`), which reads the chain again first. Whether this seat's approval is
+ * itself is carried out by the one carry step (`carryStep`), which reads the chain again first and declares the move a
+ * kind that moves who holds the company names (`carries`, one table: holders-moved-here.ts). Whether this seat's approval is
  * already counted (a raise counts the seat that proved it) is read from the chain, by this seat's own approval marker
  * (`approvedHere`), never from a refused build. A recovery of the company's records is the one kind that brings its own
  * lines and steps instead (`ChainOnlyKind`): it runs on the chain and the person's own wallet alone.
@@ -15,12 +16,15 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
 import type { RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import { ApprovalNotOwed, nothingWasSentBy, WithdrawnWhileSent } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { SentStraightNotRecorded } from '../../../../packages/web-shared/src/hand-over.js';
+import { ApprovalNotOwed, WithdrawnWhileSent } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { addSignerKind, type AddSignerReach } from './add-signer-kind.js';
 import { thresholdKind } from './change-threshold.js';
 import { removalKind, type RemoveSignerReach } from './remove-signer.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import type { CompanyChain, CompanyReach, Handed } from './company-reach.js';
+import type { CompanyChain, CompanyReach } from './company-reach.js';
+import type { Handed } from './hand-over-in-the-wallet.js';
 import { codeOfError, StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { oneOffKind, type OneOffPaymentReach } from './one-off-payment.js';
 import { payrollKind } from './raise-run.js';
@@ -31,6 +35,7 @@ import { policyBarKind, spendingPolicyKind } from './policy-kinds.js';
 import { adoptVaultKind, vaultSecretKind, type StartKindsReach } from './start-kinds.js';
 import { payKeyKind } from './pay-key-kind.js';
 import { retireVaultKind, type RetireVaultReach } from './retire-vault.js';
+import { carriedCall, carryWrites, movesWhoHoldsByCircuit, type CarryMoves } from './holders-moved-here.js';
 
 /**
  * A proposal as this wallet opened it from the company's records: its id and its identity on the chain, and, for an
@@ -103,6 +108,11 @@ export interface ProposalKind {
   stateAt(atItsBar: boolean, approvedNow: boolean, outrun: boolean): string | null;
   /** The steps that carry it out once approved, sharing `here`; absent when another carries it out (the invitee, for a seat). */
   carry?(here: Approving, read: ReadCompany, intent: ActIntent): readonly ActionStep[];
+  /**
+   * For a kind whose carrying out moves who holds the company (`CARRIED_BY`), how it moves them. Absent, the carry
+   * step sends no call that does straight to the chain.
+   */
+  carries?(intent: ActIntent, round: RoundHere): CarryMoves;
   /**
    * What is still owed of it once the chain has closed it other than by a withdrawal, done here: the state the page is
    * told, or null when nothing is owed and the proposal is refused as closed. Absent, a closed proposal is refused.
@@ -211,19 +221,54 @@ export type CarryOut = (
 export const CARRY_STATE = { waiting: 'waiting-for-approvals', carried: 'carried-out' } as const;
 
 /**
+ * The carry step's context, and its word that the carrying out begins (`declare`): the move its kind names (`carries`)
+ * is declared then for the carry written through the view, and again, as one move under both, for that write and its
+ * own chain call right before that call goes straight to the chain, so a carry the service took nothing of and the
+ * wallet sent itself moves what the step read by exactly the same, once: a later write on the same proposal (its close)
+ * takes nothing. A call that moves who holds the company and is not this kind's carry is refused before anything is
+ * sent. `account` is the company's account, once read.
+ */
+const carrying = (ctx: StepContext, kind: ProposalKind, intent: ActIntent, round: RoundHere, account: () => string) => {
+  const moves = kind.carries?.(intent, round);
+  const declare = (): void => {
+    const writes = moves === undefined ? [] : carryWrites(round.id, moves);
+    if (writes.length > 0) ctx.movesWhoHolds(writes, moves!.move);
+  };
+  const carryingCtx: StepContext = {
+    ...ctx,
+    sendStraight: (send, into, call) => {
+      if (call !== undefined && movesWhoHoldsByCircuit(call.circuit)) {
+        const own = moves === undefined ? null : carriedCall(moves, account());
+        if (own === null || own.circuit !== call.circuit || own.contract !== call.contract.toLowerCase()) {
+          return Promise.reject(Object.assign(new Error(`the call ${call.circuit} is not what carries this proposal out, so this wallet sent nothing.`),
+            { nothingWasSent: true, thisSendNotSent: true }));
+        }
+        ctx.movesWhoHolds([...carryWrites(round.id, moves!), own], moves!.move);
+      }
+      return ctx.sendStraight(send, into, call);
+    },
+  };
+  return { ctx: carryingCtx, declare };
+};
+
+/**
  * **THE ONE CARRY STEP.** Carries out the change `here` names once the chain counts the approvals its kind needs, read
  * again from the chain through this wallet's own indexer, never from the service. A change the chain never held or has
  * closed, or one a removal since its raise has outrun, is refused before anything is built; one still short of its bar
  * is left for the others to approve, and nothing is sent. The page is told the approvals and the bar the chain showed,
- * and that the change was carried out, or the state its kind answered instead.
+ * and that the change was carried out, or the state its kind answered instead. What it carries out reads and sends
+ * through `carrying`, which holds the step's views to the move its kind names.
  */
 export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompany, here: Approving, title: Words, carryOut: CarryOut): ActionStep {
   return {
     title,
-    run: async (ctx) => {
+    run: async (outer) => {
       if (here.round === null) return;
-      const r = await read.at(ctx);
       const round = here.round;
+      let account = '';
+      const { ctx, declare } = carrying(outer, kind, intent, round, () => account);
+      const r = await read.at(ctx);
+      account = r.account;
       const now = await onTheChain(r, round.chainId);
       if (now === undefined || now.held === 'never') throw new StepRefused(kind.why('not-raised'));
       if (now.held === 'closed') throw new StepRefused(kind.why((now.closedBy ?? []).includes('cancel') ? 'withdrawn' : 'closed'));
@@ -238,11 +283,14 @@ export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompa
       }
       const handed: Handed = { over: false };
       let carried: void | { readonly state: string };
+      declare();
       try {
         carried = await carryOut(ctx, r, intent, round, handed, async () => { read.renew(); return read.at(ctx); });
       } catch (e) {
         if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
-        throw new StepRefused(kind.why(!handed.over || nothingWasSentBy(e) ? 'not-carried' : 'may-be-sent', { says: said(e) }), codeOfError(e));
+        /* A call our service may have sent, or that is on the chain, is never said as not carried. */
+        const mayBeSent = (handed.over && !nothingWasSentBy(e)) || e instanceof SentStraightNotRecorded;
+        throw new StepRefused(kind.why(mayBeSent ? 'may-be-sent' : 'not-carried', { says: said(e) }), codeOfError(e));
       }
       ctx.tell({ state: carried?.state ?? CARRY_STATE.carried, ...told });
     },

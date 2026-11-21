@@ -4,6 +4,8 @@ import type { RelayLabel, StepAt } from 'midnight-identity/profile/channel';
 import type { ReadKeysReleased } from 'midnight-identity/profile/read-keys-release';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { HeldKeyring } from '../keyring/held-keyring.js';
+import type { StepViews, StraightDoor, ViewFor } from './step-views.js';
+import type { CreationSource, InvitationSource } from '../../../../packages/web-shared/src/records-source.js';
 
 /**
  * WHAT ONE ACTION IS, FOR THE WALLET THAT RUNS IT.
@@ -98,8 +100,9 @@ export interface ActKeyring {
 }
 
 /**
- * What a step is given: the action, the opened wallet, where it is, how to hand a transaction over, how to ask the page
- * for a call to the service, and the person's saved keys when the ask carried them.
+ * What a step is given: the action, the opened wallet, where it is, how to hand a transaction over, its one view of a
+ * company and the asks made before there is one, and the person's saved keys when the ask carried them. A step makes
+ * no call to the service of its own: every one goes through its view or a named ask.
  *
  * **A STEP TAKEN UP AGAIN WORKS OUT WHAT IS DONE FROM THE CHAIN**, never from the counts an earlier run of the action
  * ended with: a transaction the page refused or did not answer was still handed to it, and may still land.
@@ -123,20 +126,42 @@ export interface StepContext {
    * whatever the step does with the error. Calls are handed over one at a time:
    * each waits for the page's answer to the one before. `label` says what the
    * transaction is for, from the action's list in `act-intents.ts`, and carries
-   * a second transaction sent in the same request.
+   * a second transaction sent in the same request. Before it is handed over, the
+   * step's views read the company again (the runner's gate): a change by another
+   * signer hands nothing over and stops the action.
    */
   relay(transaction: string, label?: RelayLabel): Promise<void>;
   /**
-   * Asks the page to make one call to the service, in turn with the relays and
-   * the keeps, and resolves with the status and body the page reports. Every
-   * answer is the page's word: a step relies on one only once it has checked it
-   * against what it read itself. A call the action's route list in
-   * `act-intents.ts` does not name is never sent. Throws `ActionStopped` if the
-   * page would not make it, did not answer in time, or the action was stopped
-   * first; after that every later call, relay and keep throws too. A call whose
-   * route carries a transaction is counted with the relays.
+   * The step's one view of a company: the step names the company, the doors it reads who holds it through and how the
+   * view reads which records the anchor holds, and the runner builds the view over its calls for this step. Everything
+   * the step reads of the company is read once through it, and every write it makes is checked first; it ends with the
+   * step.
    */
-  call(method: 'GET' | 'PUT' | 'POST', path: string, body?: string): Promise<{ readonly status: number; readonly body: unknown }>;
+  readonly viewFor: ViewFor;
+  /**
+   * The invitations the step asks about before it is one of the company's members, made over the runner's calls for this step
+   * with no view and no check of the company first: their offers, acceptances, seats and the directory of the company
+   * one names.
+   */
+  readonly invitations: InvitationSource;
+  /** The company being created, asked over the runner's calls for this step before its records are anyone's: its pay key and the proposal that raises it. */
+  readonly creation: CreationSource;
+  /**
+   * Says, before the step sends it, that the first of `sends` to go (each named exactly: a proposal's step or a vault's
+   * start written through the view, a call by its path, or a call sent straight to the chain by its circuit and contract) moves who
+   * holds the company, and how (`move`): once that send is handed over, the step's views expect the holders they last
+   * checked moved by `move` and by nothing else, so the step's next write is not refused as another signer's change,
+   * and a change by another signer at the same time still is. A send that goes nowhere drops the move.
+   */
+  readonly movesWhoHolds: StepViews['movesWhoHolds'];
+  /**
+   * The runner's one door for a transaction this wallet sends itself (`send`), into a vault (`into`) or not: the
+   * step's views read the company again first, and again when the send calls `door.ready()` after a wait, and the
+   * send counts as handed over once it calls `door.handedOver()`. A change by another signer, or a vault the account
+   * no longer adopts, throws before anything is sent and stops the action. `call` names the chain call it sends, for a
+   * move the step declared for it.
+   */
+  sendStraight<T>(send: (door: StraightDoor) => Promise<T>, into?: { readonly vault: string }, call?: { readonly circuit: string; readonly contract: string }): Promise<T>;
   /**
    * Says that this wallet has itself handed one transaction to the chain or to the company's own service, without the
    * page (`sentFromTheOwnWallet`). The page cannot see such a send, so without this an action that stops after one

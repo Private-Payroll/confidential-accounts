@@ -1,6 +1,4 @@
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
-import { api } from 'vaults-web-shared/keyring.js';
 import { chooseServiceInTheWallet, serviceOutcomeOf, SERVICE_STATE, type ServiceAsked } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import { companyServiceFiledHere, serviceOpenerOfSigner, type ServiceReach } from 'vaults-web-shared/company-service-here.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
@@ -8,9 +6,9 @@ import { canonical } from '../../../../src/core/crypto.js';
 import {
   companyServiceOf, serviceAddressRefusal, serviceAsked, serviceInForce, type CompanyService, type ServiceVersion,
 } from '../../../../src/midnight/company-service-record.js';
-import { namedFor } from './create-vault.js';
-import { keyringFor } from './keyring-person.js';
-import { ACT_REFUSAL, refusalOf, SEAT_REFUSALS, type ActRefusal } from './refusals.js';
+import { namedBefore } from './named-before.js';
+import type { PageView } from './filing-judge.js';
+import { refusalOf, SEAT_REFUSALS, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { seatAndRecordsHere } from './vault-private-money.js';
 
@@ -53,15 +51,15 @@ type ServiceRead = Awaited<ReturnType<typeof companyServiceFiledHere>>;
 const wasUnread = (got: ServiceRead): got is Extract<ServiceRead, { readonly unread: string }> => typeof (got as { readonly unread?: unknown }).unread === 'string';
 
 /** Reads the company's choice of service as the wallet reads it, from the page's own seat and the company's directory. */
-export async function readService(personId: string, companyId: string): Promise<ServiceHeld> {
+export async function readService(personId: string, view: PageView): Promise<ServiceHeld> {
   try {
-    const here = await seatAndRecordsHere(personId, companyId);
+    const here = await seatAndRecordsHere(personId, view);
     if (typeof here === 'string') return { of: SERVICE_READ.refused, why: here };
     const companyKeys: CompanyKeyHere = here.viewingKey;
     const reach: ServiceReach = {
-      accountId: companyId, api: (path) => api(path), judges: { directoryHereFor: () => here.directory }, label: here.company, account: here.account,
+      accountId: view.company, records: (asked) => view.records(asked), judges: { directoryHereFor: () => here.directory }, label: here.company, account: here.account,
       companyKeys, roster: async () => here.opened,
-      opener: serviceOpenerOfSigner(companyId, here.mine, companyKeys),
+      opener: serviceOpenerOfSigner(view.company, here.mine, companyKeys),
     };
     const got = await companyServiceFiledHere(reach);
     if (wasUnread(got)) return { of: SERVICE_READ.unread, why: got.unread, canFileOver: got.fileOver !== undefined };
@@ -133,21 +131,15 @@ function problemWith(asked: ServiceAsked): ServiceProblem | null {
   return companyServiceOf({ service: asked.service }) === null ? SERVICE_PROBLEM.notAChoice : null;
 }
 
-async function namedBefore(personId: string, companyId: string): Promise<{ record: string; company: CompanyLabel; account: AccountAddress } | ActRefusal> {
-  if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
-  if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
-  const named = await namedFor(companyId);
-  return named === null ? ACT_REFUSAL.didNotFinish : { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
-}
 
 /** Files the company's choice of service through the wallet. The page then reads it again; what it shows is that read, not this act's count. */
 export async function chooseService(
-  personId: string, companyId: string, asked: ServiceAsked, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, asked: ServiceAsked, onStep?: (step: number, steps: number) => void,
 ): Promise<ServiceActed> {
   const wrong = problemWith(asked);
   if (wrong !== null) return { of: SERVICE_ACTED.problem, problem: wrong };
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return { of: SERVICE_ACTED.refused, why: named };
     const step = onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) };
     return actedOf(await chooseServiceInTheWallet({ ...named, ...asked }, ACCOUNT_ORIGIN, step));

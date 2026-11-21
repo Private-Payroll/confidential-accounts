@@ -20,12 +20,13 @@ import {
   GRANTS_RECORD, grantsInForceOf, openGrants, readerIdOf, type Grants, type GrantsCount, type GrantsInForce, type GrantsQuorum, type GrantsVersion,
 } from '../../../src/midnight/grants-record.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
-import { companyWirePaths, fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { judgeIn, kindAsked, type DirectoryHere, type DirectoryRead } from './vault-page-doors.js';
 import { barReadable } from '../../../src/midnight/seat-quorum.js';
 import { countAsAnchoredFor, versionsWithheldIn } from './signed-record-here.js';
+import type { CompanyRecordAsked } from './records-source.js';
 
 /**
  * A reader's purpose keys, by key epoch, unwrapped from the grants in force: what the keys-by-purpose seam answers for a
@@ -204,12 +205,17 @@ export async function revokedAtHere(doors: {
   return opened.revokedAt;
 }
 
-/** Every version of the company's grants record the service serves, each read off the wire as a company record is; none when it serves none. */
-export const grantsServedBy = (api: (path: string) => Promise<unknown>, accountId: string) => async (): Promise<readonly SealedCompanyRecord[]> => {
-  const b = await api(companyWirePaths.versions(accountId, GRANTS_RECORD.kind, GRANTS_RECORD.id)) as { versions?: unknown } | null;
-  return Array.isArray(b?.versions)
-    ? b!.versions.map((m) => fromCompanyWire(m, { company: accountId, kind: GRANTS_RECORD.kind, id: GRANTS_RECORD.id }).sealed) : [];
+/** Every version of the company's grants record in a read of all its versions, each read off the wire as a company record is; none when the read holds none. */
+const grantsIn = (answer: unknown, accountId: string): readonly SealedCompanyRecord[] => {
+  const versions = (answer as { versions?: unknown } | null)?.versions;
+  return Array.isArray(versions)
+    ? versions.map((m) => fromCompanyWire(m, { company: accountId, kind: GRANTS_RECORD.kind, id: GRANTS_RECORD.id }).sealed) : [];
 };
+
+/** Every version of the company's grants record, read with the company's other records (`records`, a view's read of records by name). */
+export const grantsReadWith = (records: (asked: readonly CompanyRecordAsked[]) => Promise<readonly unknown[]>, accountId: string) =>
+  async (): Promise<readonly SealedCompanyRecord[]> =>
+    grantsIn((await records([{ kind: GRANTS_RECORD.kind, id: GRANTS_RECORD.id, every: true }]))[0], accountId);
 
 /** What a reader's own device finds in the grants: its keys, a grant in force that takes it away, or neither. */
 export type ReaderKeysFound =

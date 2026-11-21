@@ -85,6 +85,8 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'step-kept'; vault: string; secret: string; step: StepOnTheWire }
   | ({ id: number; network: string; ask: 'vault-rebuilt' } & VaultRebuildAsked)
   | { id: number; network: string; ask: 'vault-on-chain'; vault: string; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  /* Many vaults read together: their states, and the account's, in one request for each 256. */
+  | { id: number; network: string; ask: 'vaults-on-chain'; vaults: string[]; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }
   /* What a step out of the vault is built on, and the events it is judged by, read here at the indexer the wallet names. */
   | { id: number; network: string; ask: 'chain-at-one-block'; vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
@@ -264,6 +266,7 @@ export type VaultAnswer =
   | Answered<'step-kept', { kept: NoteOnTheWire | null }>
   | Answered<'vault-rebuilt', VaultRebuilt>
   | Answered<'vault-on-chain', { read: VaultOnChainOnTheWire }>
+  | Answered<'vaults-on-chain', { reads: Array<{ vault: string; read: VaultOnChainOnTheWire }> }>
   | Answered<'chain-at-one-block', { chain: PayoutChainOnTheWire | null }>
   | Answered<'events-of', { events: EventOnTheWire[] }>
   | Answered<'created-by', { found: { transactionHash: string; events: EventOnTheWire[] } | null }>

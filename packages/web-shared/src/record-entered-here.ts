@@ -22,11 +22,10 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import type { RunToFile } from '../../../src/core/run-filing.js';
 import {
-  ENTRIES_AT_ONCE, entryIdOf, manifestPaths, recordKeyOf, runEntry, signManifestEntry, SUPERSEDED, type ManifestEntry, type ManifestEntryBody,
+  ENTRIES_AT_ONCE, entryIdOf, recordKeyOf, runEntry, signManifestEntry, SUPERSEDED, type ManifestEntry, type ManifestEntryBody,
 } from '../../../src/midnight/record-manifest.js';
 import type { HeadersPage, ProofsAsk, ProofsGiven, RecordName, TreeHeader } from '../../../src/midnight/record-tree.js';
-
-type Api = (path: string, init?: RequestInit & { read?: boolean }) => Promise<any>;
+import { inParts } from './company-view-batch.js';
 
 /**
  * The company's manifest, as the service takes entries and says the newest
@@ -39,20 +38,13 @@ export interface ManifestService {
   enter(accountId: string, entries: readonly ManifestEntry[]): Promise<void>;
 }
 
-/** The service's manifest routes, over this page's own sign-in. */
-export const manifestServiceFor = (api: Api): ManifestService => ({
-  newest: async (accountId, records) => {
-    if (records.length === 0) return [];
-    const m = await api(manifestPaths.newest(accountId), { method: 'POST', body: JSON.stringify({ records }), read: true });
-    if (m === null || typeof m !== 'object' || !Array.isArray(m.versions) || m.versions.length !== records.length
-      || m.versions.some((v: unknown) => !Number.isSafeInteger(v) || (v as number) < 0)) {
-      throw new Error('the service did not answer with the newest version entered of each record asked');
-    }
-    return m.versions as number[];
-  },
-  enter: async (accountId, entries) => {
-    await api(manifestPaths.entries(accountId), { method: 'POST', body: JSON.stringify({ entries }) });
-  },
+/**
+ * The manifest of whichever view of the company `held` holds now, read at each ask: what is entered through it moves
+ * that view's baseline, and a view opened again after a send is followed.
+ */
+export const manifestFollowing = (held: { current(): { readonly manifest: ManifestService } }): ManifestService => Object.freeze<ManifestService>({
+  newest: (accountId, records) => held.current().manifest.newest(accountId, records),
+  enter: (accountId, entries) => held.current().manifest.enter(accountId, entries),
 });
 
 /**
@@ -69,33 +61,6 @@ export interface TreeService {
   /** Every entry newer than its record's leaf at `root`, as the service says; null when it keeps no header making that root. */
   pending(accountId: string, root: Hex): Promise<readonly unknown[] | null>;
 }
-
-/** The service's tree routes, over this page's own sign-in. */
-export const treeServiceFor = (api: Api): TreeService => ({
-  headersAfter: async (accountId, seq, limit) => {
-    const p = await api(`${manifestPaths.treeHeaders(accountId)}?after=${seq}&limit=${limit}`);
-    if (p === null || typeof p !== 'object' || !Array.isArray(p.headers) || !Array.isArray(p.entries) || !Array.isArray(p.leaves)) {
-      throw new Error('the service did not answer with a page of the company\'s record headers');
-    }
-    return { headers: p.headers, entries: p.entries, leaves: p.leaves };
-  },
-  fileHeader: async (accountId, header, entries) => {
-    await api(manifestPaths.treeHeaders(accountId), { method: 'POST', body: JSON.stringify(entries === undefined ? { header } : { header, entries }) });
-  },
-  proofs: async (accountId, ask) => {
-    const p = await api(manifestPaths.treeProofs(accountId), { method: 'POST', body: JSON.stringify(ask), read: true });
-    if (p?.refused === 'root-not-kept') return null;
-    if (p === null || typeof p !== 'object' || !Array.isArray(p.records) || !Array.isArray(p.kinds) || !Array.isArray(p.older)
-      || !Array.isArray(p.proof?.siblings)) throw new Error('the service did not answer with the proofs asked for');
-    return { records: p.records, kinds: p.kinds, older: p.older, proof: { siblings: p.proof.siblings } };
-  },
-  pending: async (accountId, root) => {
-    const p = await api(`${manifestPaths.treePending(accountId)}?root=${root}`);
-    if (p?.refused === 'root-not-kept') return null;
-    if (p === null || typeof p !== 'object' || !Array.isArray(p.entries)) throw new Error('the service did not answer with the entries not yet anchored');
-    return p.entries;
-  },
-});
 
 /** A filing to enter: an entry, or a run, whose version is the count of its entries so far. */
 export type Filed = ManifestEntryBody | { readonly store: 'run'; readonly run: RunToFile };
@@ -137,7 +102,8 @@ const why = (e: unknown): string => (e as Error)?.message ?? String(e);
 /**
  * **THE ONE CALL EVERY FILER MAKES** once its store has the filing. A run is
  * kept whole and changed in place, so its version is read from the manifest:
- * the one after the newest entry the run has.
+ * the one after the newest entry the run has, asked in parts of `READ_AT_ONCE`
+ * runs, one request for each.
  */
 export const recordsEnteredFor = (
   manifest: ManifestService, accountId: string, signingSecret: Hex,
@@ -157,7 +123,7 @@ export const recordsEnteredFor = (
     try {
       const runs = filed.filter((f): f is { store: 'run'; run: RunToFile } => 'run' in f);
       const names = [...new Map(runs.map((f) => [f.run.id, { store: 'run' as const, kind: 'run', id: f.run.id }])).values()];
-      const versions = await manifest.newest(accountId, names);
+      const versions = await inParts(names, (part) => manifest.newest(accountId, part));
       const newest = new Map(names.map((r, i) => [recordKeyOf(r), versions[i]!] as const));
       bodies = filed.map((f) => {
         if (!('run' in f)) return f;
@@ -179,7 +145,3 @@ export const recordsEnteredFor = (
     }
   },
 });
-
-/** The one filing call over this page's own sign-in, for a company and the seat filing for it. */
-export const recordsEnteredOver = (api: Api, accountId: string, signingSecret: Hex, stops?: () => Promise<string | null>): RecordsEntered =>
-  recordsEnteredFor(manifestServiceFor(api), accountId, signingSecret, stops);

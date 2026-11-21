@@ -354,7 +354,7 @@ describe('signing out while reads of the service are in flight', () => {
     const { held, answer } = inFlight();
     answers['/api/slow'] = answer;
     answers['/api/auth/logout'] = reply(200, { ok: true });
-    const k = await import('vaults-web-shared/keyring.js');
+    const k = await import('vaults-web-shared/service-transport.js');
     const read = k.api('/api/slow');
     await settle();
     const out = m.signOut();
@@ -387,7 +387,7 @@ describe('signing out while reads of the service are in flight', () => {
     const m = await load();
     answers['/api/never'] = () => new Promise<Response>(() => {});
     answers['/api/auth/logout'] = reply(200, { ok: true });
-    const k = await import('vaults-web-shared/keyring.js');
+    const k = await import('vaults-web-shared/service-transport.js');
     vi.useFakeTimers();
     try {
       void k.api('/api/never').catch(() => {});
@@ -527,12 +527,13 @@ describe('who holds a company, asked of the account with nothing shown', () => {
   it('asks in a hidden frame of its own, shows nothing and says nothing is waiting, and takes the frame away', async () => {
     const m = await load();
     const keyring = await import('vaults-web-shared/keyring.js');
+    const walletAsks = await import('vaults-web-shared/wallet-asks.js');
     keyring.signedInByAnotherScreen({ user: { id: 'u1', email: null, name: 'x' }, address: 'mn_addr_a' });
     const seen: boolean[] = [];
     const stop = m.onWaiting((w) => seen.push(w));
     const company = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071';
     const account = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
-    const asking = keyring.holdersFromTheWallet(ACCOUNT, { company: company as never, account: account as never });
+    const asking = walletAsks.holdersFromTheWallet(ACCOUNT, { company: company as never, account: account as never });
     const frame = document.querySelector('iframe') as HTMLIFrameElement;
     expect(frame).not.toBeNull();
     expect(frame.hidden).toBe(true);
@@ -648,8 +649,10 @@ describe('the names of a person\'s companies, read as a page loads', () => {
       const { ACT_REFUSAL, refusalOf } = await import('./refusals.js');
       return {
         ACT_REFUSAL, refusalOf,
+        /* Each company is read through a view of its own; the wallet says nothing of who holds it here. */
+        readThroughAViewOf: (company: string, read: (view: unknown) => Promise<unknown>) => read({ company, holders: async () => { throw new Error('the wallet could not read the account'); } }),
         openedHere: async () => { asked.withTheWallet += 1; return null; },
-        openedQuietly: async (row: { id: string }) => {
+        openedQuietly: async (_view: unknown, row: { id: string }) => {
           asked.quietly.push(row.id);
           if (row.id === 'c_changed') throw Object.assign(new Error('not opened'), { name: 'CompanyKeyNotOpened' });
           return { id: row.id, name: 'Acme' };

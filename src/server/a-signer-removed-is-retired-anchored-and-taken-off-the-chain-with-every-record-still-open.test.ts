@@ -19,8 +19,10 @@
  * company and its stand-ins as `a-company-whose-signers-change-on-the-chain`
  * names them. Each assertion names the step whose loss turns it red.
  */
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect } from 'vitest';
-import { removeSignerOnDevice, seatsLeavingHere } from 'vaults-web-shared/governed-call-on-device.js';
+import { seatsLeavingHere } from 'vaults-web-shared/seats-leaving-here.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { rosterHere } from 'vaults-web-shared/roster-here.js';
 import { attestedIn } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
@@ -52,7 +54,7 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
   it('CY IS RETIRED IN THE DIRECTORY, ANCHORED, TAKEN OFF THE CHAIN AND LEFT OUT OF THE ROSTER, AND THE POLICY CY FILED STILL OPENS FOR ADA AND BO; BO\'S DEVICE THEN CHANGES THE KEY, AND THE SERVICE STORES NONE OF IT IN THE CLEAR', async () => {
     /* Before: Cy files a policy record and anchors it from Cy's own seat. */
     await CY.entered.enter([await aRecordFiledBy(CY, 'pol_filed_by_cy')]);
-    expect((await anchorTheRecordsHere(anchorDoorsOf(CY))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(anchorDoorsOf(CY)))).anchored).toBeGreaterThan(0);
     /* Then, filed and not anchored when the removal is raised: Cy's spending policy, sealed to all three seats, and a directory version. */
     expect(await aPolicyFiledBy(CY, [ADA, BO, CY])).toBe(1);
     const pending = await aSecondEntryForAdasSeat();

@@ -12,9 +12,9 @@ vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => {
       'name-a-vault': {
         fields: { company: 'record' },
         calls: [
-          { method: 'GET', path: '/api/accounts/:company' },
-          { method: 'POST', path: '/api/accounts/:company/vaults', sends: true },
-          { method: 'POST', path: '/api/accounts/:company/proposals', sends: true, sendsWith: 'tx' },
+          { method: 'GET', path: '/api/invites/:invitation/offer' },
+          { method: 'POST', path: '/api/invites/:invitation/seat', sends: true },
+          { method: 'POST', path: '/api/invites/:invitation/filed-to', sends: true, sendsWith: 'tx' },
         ],
         outcome: { vault: 'vault' },
       },
@@ -68,9 +68,9 @@ describe('a call goes to the page only where the action\'s entry names it', () =
   it('hands a listed call over and gives the step the service\'s status and body as the page reports them', async () => {
     const { channel, posted, ended } = channelThat(async () => ({ of: 'answered', status: 404, body: { error: 'none' } }));
     let seen: unknown = null;
-    await go(channel, [stepThat(async (c) => { seen = await c.call('GET', '/api/accounts/acc_1'); })]);
+    await go(channel, [stepThat(async (c) => { seen = await c.invitations.offer('inv_1'); })]);
     /* RED WHEN: a listed call is not handed to the page, or its answer does not reach the step as the page gave it. */
-    expect(posted).toEqual(['GET /api/accounts/acc_1']);
+    expect(posted).toEqual(['GET /api/invites/inv_1/offer']);
     expect(seen).toEqual({ status: 404, body: { error: 'none' } });
     expect(ended[0]).toMatchObject({ ended: 'done', relayed: 0 });
   });
@@ -79,7 +79,7 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     const { channel, posted, ended } = channelThat(() => ok());
     const after: string[] = [];
     await go(channel, [stepThat(async (c) => {
-      await c.call('GET', '/api/me/keys').catch(() => undefined);
+      await c.invitations.acceptPayee('inv_1', {}).catch(() => undefined);
       await c.relay('AAAA').catch(() => { after.push('relay refused'); });
     })]);
     /* RED WHEN: the wallet asks the page for a call outside the action's route list. */
@@ -91,11 +91,11 @@ describe('a call goes to the page only where the action\'s entry names it', () =
 
   it('a call the page refuses stops the action, and so does one it does not answer in time', async () => {
     const refused = channelThat(async () => 'refused');
-    await go(refused.channel, [stepThat(async (c) => { await c.call('GET', '/api/accounts/acc_1'); })]);
+    await go(refused.channel, [stepThat(async (c) => { await c.invitations.offer('inv_1'); })]);
     /* RED WHEN: a page's refusal to make a call lets the action carry on as if it had been answered. */
     expect(refused.ended[0]).toMatchObject({ ended: 'stopped', why: 'call-refused' });
     const quiet = channelThat(() => new Promise<CalledOver>(() => {}));
-    const ran = go(quiet.channel, [stepThat(async (c) => { await c.call('POST', '/api/accounts/acc_1/vaults', '{"tx":"AAAA"}'); })]);
+    const ran = go(quiet.channel, [stepThat(async (c) => { await c.invitations.seat('inv_1', JSON.parse('{"tx":"AAAA"}')); })]);
     await vi.advanceTimersByTimeAsync(RELAY_PATIENCE_MS + 1);
     await ran;
     /* RED WHEN: a call left unanswered waits for ever, or a transaction in it is not counted as unconfirmed. */
@@ -106,8 +106,8 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     const { channel, ended } = channelThat(async () => 'unreached');
     const told: unknown[] = [];
     await go(channel, [stepThat(async (c) => {
-      await c.call('GET', '/api/accounts/acc_1').catch((e: { unreached?: unknown; nothingWasSent?: unknown }) => { told.push({ unreached: e.unreached, nothingWasSent: e.nothingWasSent }); });
-      await c.call('POST', '/api/accounts/acc_1/proposals', '{"tx":"AAAA"}').catch((e: { unreached?: unknown; nothingWasSent?: unknown }) => { told.push({ unreached: e.unreached, nothingWasSent: e.nothingWasSent }); });
+      await c.invitations.offer('inv_1').catch((e: { unreached?: unknown; nothingWasSent?: unknown }) => { told.push({ unreached: e.unreached, nothingWasSent: e.nothingWasSent }); });
+      await c.invitations.filedTo('inv_1', JSON.parse('{"tx":"AAAA"}')).catch((e: { unreached?: unknown; nothingWasSent?: unknown }) => { told.push({ unreached: e.unreached, nothingWasSent: e.nothingWasSent }); });
       await c.relay('AAAA');
     })]);
     /* RED WHEN: a read the service did not answer is said to have handed something over, or a transaction said to have handed nothing. */
@@ -115,7 +115,7 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     /* RED WHEN: a service that gave no answer stops a step that went another way. */
     expect(ended[0]).toMatchObject({ ended: 'done', relayed: 1 });
     const left = channelThat(async () => 'unreached');
-    await go(left.channel, [stepThat(async (c) => { await c.call('GET', '/api/accounts/acc_1'); })]);
+    await go(left.channel, [stepThat(async (c) => { await c.invitations.offer('inv_1'); })]);
     /* RED WHEN: a step that could not go around the service stops as anything but a call with no answer. */
     expect(left.ended[0]).toMatchObject({ ended: 'stopped', why: 'no-call-answer' });
   });
@@ -128,8 +128,8 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     });
     const told: unknown[] = [];
     await go(channel, [stepThat(async (c) => {
-      await c.call('POST', '/api/accounts/acc_1/proposals', '{"tx":"AAAA"}');
-      await c.call('GET', '/api/accounts/acc_1').catch((e: { nothingWasSent?: unknown }) => { told.push(e.nothingWasSent); });
+      await c.invitations.filedTo('inv_1', JSON.parse('{"tx":"AAAA"}'));
+      await c.invitations.offer('inv_1').catch((e: { nothingWasSent?: unknown }) => { told.push(e.nothingWasSent); });
     })]);
     /* RED WHEN: a read with no answer after a hand-over lets the step tell the person nothing was sent. */
     expect(told).toEqual([false]);
@@ -139,12 +139,12 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     let status = 409;
     const { channel, ended } = channelThat(async () => ({ of: 'answered', status, body: {} }));
     await go(channel, [stepThat(async (c) => {
-      await c.call('POST', '/api/accounts/acc_1/vaults', '{"tx":"AAAA"}');
+      await c.invitations.seat('inv_1', JSON.parse('{"tx":"AAAA"}'));
       status = 201;
-      await c.call('POST', '/api/accounts/acc_1/vaults', '{"tx":"BBBB"}');
-      await c.call('GET', '/api/accounts/acc_1');
+      await c.invitations.seat('inv_1', JSON.parse('{"tx":"BBBB"}'));
+      await c.invitations.offer('inv_1');
       status = 500;
-      await c.call('GET', '/api/accounts/acc_1');
+      await c.invitations.offer('inv_1');
       /* Stopped here, so the end carries its counts: an act that runs to its end has nothing unconfirmed. */
       throw new StepRefused({ key: 'act.approve-proposal.why.may-be-sent' });
     })]);
@@ -158,11 +158,11 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     let status = 500;
     const { channel, ended } = channelThat(async () => ({ of: 'answered', status, body: {} }));
     await go(channel, [stepThat(async (c) => {
-      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab"}');
-      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab","tx":"AAAA"}');
+      await c.invitations.filedTo('inv_1', JSON.parse('{"proposal":{},"salt":"ab"}'));
+      await c.invitations.filedTo('inv_1', JSON.parse('{"proposal":{},"salt":"ab","tx":"AAAA"}'));
       status = 201;
-      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab"}');
-      await c.call('POST', '/api/accounts/acc_1/proposals', '{"proposal":{},"salt":"ab","tx":"BBBB"}');
+      await c.invitations.filedTo('inv_1', JSON.parse('{"proposal":{},"salt":"ab"}'));
+      await c.invitations.filedTo('inv_1', JSON.parse('{"proposal":{},"salt":"ab","tx":"BBBB"}'));
       throw new StepRefused({ key: 'act.approve-proposal.why.may-be-sent' });
     })]);
     /* RED WHEN: a proposal written down with nothing for the chain counts as handed over, so the end says something may be out when nothing is. */
@@ -173,16 +173,16 @@ describe('a call goes to the page only where the action\'s entry names it', () =
     const answers: Array<() => void> = [];
     const { channel, posted } = channelThat(() => new Promise<CalledOver>((resolve) => { answers.push(() => resolve({ of: 'answered', status: 200, body: {} })); }));
     const ran = go(channel, [stepThat(async (c) => {
-      void c.call('GET', '/api/accounts/acc_1');
+      void c.invitations.offer('inv_1');
       void c.relay('AAAA');
-      await c.call('GET', '/api/accounts/acc_1');
+      await c.invitations.offer('inv_1');
     })]);
     await vi.advanceTimersByTimeAsync(0);
     /* RED WHEN: a relay overtakes a call still waiting for the page's answer. */
-    expect(posted).toEqual(['GET /api/accounts/acc_1']);
+    expect(posted).toEqual(['GET /api/invites/inv_1/offer']);
     answers.shift()!();
     await vi.advanceTimersByTimeAsync(0);
-    expect(posted).toEqual(['GET /api/accounts/acc_1', 'relay AAAA', 'GET /api/accounts/acc_1']);
+    expect(posted).toEqual(['GET /api/invites/inv_1/offer', 'relay AAAA', 'GET /api/invites/inv_1/offer']);
     answers.shift()!();
     await ran;
   });

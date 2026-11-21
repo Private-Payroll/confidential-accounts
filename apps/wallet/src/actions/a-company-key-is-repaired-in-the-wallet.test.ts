@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { readOutcome } from 'midnight-identity/profile/act-channel';
 import { intentShapeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { NO_VIEW_OPENED } from './step-views.test-support.js';
 
 /*
  * The company's key repaired from the wallet: a new key made from the newest one this seat holds, wrapped to every
@@ -32,7 +33,7 @@ const { repairCompanyKeyAction } = await import('./repair-company-key.js');
 
 const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
 const INTENT = { name: 'repair-company-key', fields: { record: 'acc_1', company: 'co_x', account: 'c0'.repeat(32) } } as unknown as ActIntent;
-const reachOf = () => ({ accountId: 'acc_1', api: async () => ({}), stepTo: () => {}, companyKeys: { newest: t.newest } });
+const reachOf = () => ({ accountId: 'acc_1', api: async () => ({}), stepView: NO_VIEW_OPENED, companyKeys: { newest: t.newest } });
 const action = () => repairCompanyKeyAction({ chain: () => ({}) as never, builder: () => ({}) as never, reachFor: async () => reachOf() as never });
 const runOf = async () => {
   const told: Array<Record<string, unknown>> = [];
@@ -66,7 +67,7 @@ describe('THE COMPANY\'S KEY IS REPAIRED IN THE WALLET', () => {
   it('a change of the key filed during the act\'s own upkeep files nothing more', async () => {
     let read = 0;
     t.newest = 1;
-    const bumped = () => ({ accountId: 'acc_1', api: async () => ({}), stepTo: () => {}, companyKeys: { newest: (read += 1) === 1 ? 1 : 2 } });
+    const bumped = () => ({ accountId: 'acc_1', api: async () => ({}), stepView: NO_VIEW_OPENED, companyKeys: { newest: (read += 1) === 1 ? 1 : 2 } });
     const told: Array<Record<string, unknown>> = [];
     const ctx = { intent: INTENT, tell: (x: Record<string, unknown>) => { told.push(x); }, confirm: async () => {} } as unknown as StepContext;
     const a = repairCompanyKeyAction({ chain: () => ({}) as never, builder: () => ({}) as never, reachFor: async () => bumped() as never });

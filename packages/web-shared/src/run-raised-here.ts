@@ -35,13 +35,14 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
 import type { RunMadeHere, VouchedHere } from './what-this-device-made.js';
 import { vouchedFreshOf, vouchedRefusal } from '../../../src/midnight/record-tree.js';
-import { theRoundAsked, type RaiseDoors, type RoundOnThePage } from './governed-call-on-device.js';
+import { theRoundAsked, type RoundOnThePage } from './governed-call-on-device.js';
+import type { RaiseDoors } from './payroll-run-on-device.js';
 import { handedOver } from './hand-over.js';
 import {
   checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere,
 } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay, type ReadForTheRound, type RoundToCheck } from './raise-checks-here.js';
-import { policyForARunHere, type PolicyForARun } from './spending-policy-here.js';
+import { policyForARunHere, type PolicyForARun } from './spending-policy-read-here.js';
 
 /** Why this device did not raise a leg. Nothing was written down, built or sent. */
 export class LegNotRaisedHere extends Error {

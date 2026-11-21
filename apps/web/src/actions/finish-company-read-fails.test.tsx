@@ -20,6 +20,10 @@ const kr = vi.hoisted(() => ({
   answer: (async () => { throw new Error('unset'); }) as () => Promise<unknown>,
   asked: 0,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => {
   const keyring = await real<typeof import('vaults-web-shared/keyring.js')>();
   return {
@@ -28,16 +32,19 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => {
     forgetLocally: () => { kr.who = null; },
     resumeSession: async () => kr.who,
     canOpenCompanies: () => true,
-    /* A company these saved keys keep, so a standing read shows where its action stands. */
-    companyBeingCreated: () => true,
-    companyBeingCreatedLabel: () => null,
-    companyAwaitingItsSecondPress: (id: string) => ({ accountId: id, account: null }),
-    companyCreationStanding: async () => { kr.asked += 1; return kr.answer(); },
   };
 });
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
+  /* A company these saved keys keep, so a standing read shows where its action stands. */
+  companyBeingCreated: () => true,
+  companyBeingCreatedLabel: () => null,
+  companyAwaitingItsSecondPress: (id: string) => ({ accountId: id, account: null }),
+  companyCreationStanding: async () => { kr.asked += 1; return kr.answer(); },
+}));
 vi.mock('../adapters/vault-builder.js', () => ({ theCreationBuilder: async () => null }));
 
-const { AuthError } = await import('vaults-web-shared/keyring.js');
+const { AuthError } = await import('vaults-web-shared/service-transport.js');
 const { FinishCompany } = await import('./finish-company.js');
 const { SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS } = await import('../adapters/creation-standing.js');
 

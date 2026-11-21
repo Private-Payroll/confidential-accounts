@@ -5,7 +5,7 @@ import { FIELD, payAssets, TERMS } from '../adapters/invite.js';
 import { changeVendor, PERSON_ACT, PERSON_ACTED, PERSON_KIND, VENDOR_CHANGE, type PersonActed, type VendorChange } from '../adapters/person-acts.js';
 import { Details } from '../records/details.js';
 import { CalendarDate, PaidWords, StandingBadge, TermsOf, useMoment, WithRecords } from '../records/parts.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { useSession } from '../session.js';
 import { DATE, DayForm, TermsChoice } from '../fields/form-fields.js';
 import { ActedSays, ActWorking, AdmitPerson, changesRecords, useAdmitBySays, useLockedSays, useProblemSays } from './admit.js';
@@ -35,8 +35,9 @@ export function VendorPanel({ id }: { id: string }) {
 }
 
 function Body({ vendor, reading }: { vendor: VendorRow; reading: boolean }) {
+  const view = useCompanyView();
   const t = useText();
-  const { person: me, company } = useSession();
+  const { person: me } = useSession();
   const { reload } = useCompanyRecords();
   const ids = { amount: useId(), asset: useId() };
   const problemSays = useProblemSays();
@@ -55,10 +56,10 @@ function Body({ vendor, reading }: { vendor: VendorRow; reading: boolean }) {
   const problem = answer !== null && answer.form === VENDOR_CHANGE.terms && answer.acted.of === PERSON_ACTED.problem ? problemSays[answer.acted.problem] : null;
 
   const run = async (change: VendorChange): Promise<void> => {
-    if (company === null || busy) return;
+    if (view === null || busy) return;
     setAnswer(null);
     setPhase({ form: change.kind, step: 0, steps: 0 });
-    const ended = await changeVendor(me.id, company, { id: vendor.id, name: vendor.name }, change, (step, steps) => setPhase({ form: change.kind, step, steps }));
+    const ended = await changeVendor(me.id, view, { id: vendor.id, name: vendor.name }, change, (step, steps) => setPhase({ form: change.kind, step, steps }));
     setPhase(null);
     setAnswer({ form: change.kind, acted: ended });
     if (changesRecords(ended)) reload();

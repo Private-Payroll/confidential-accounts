@@ -2,21 +2,22 @@ import { useEffect, useId, useState } from 'react';
 import { UserGroupIcon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, Button, CopyText, EmptyState, Field, FieldContent, FieldDescription, FieldLabel, FieldLegend, FieldSet, RadioGroup, RadioGroupItem, Section, SectionRow, Textarea, useText } from 'vaults-ui';
 import {
-  approveWaitingChange, CARRIES, GRANT_ACTED, GRANT_WHY, giveReadAccess, GRANTS_READ, namedBefore, READER_ROLES, readGrants, takeAwayReadAccess,
+  approveWaitingChange, CARRIES, GRANT_ACTED, GRANT_WHY, giveReadAccess, GRANTS_READ, READER_ROLES, readGrants, takeAwayReadAccess,
   type Carries, type ChangeWaiting, type GrantActed, type GrantsRead, type GrantWhy, type ReaderHeld,
 } from '../adapters/grants-here.js';
 import { ACT_REFUSAL } from '../adapters/refusals.js';
-import { watchPrivateMoneyReadable } from '../adapters/vault-private-money.js';
 import { ActRefused } from '../act-refused.js';
 import { PAGE } from '../pages.js';
 import { addressOf } from '../router.js';
 import { useSession } from '../session.js';
-import { useCompanyRecords } from './company-records.js';
+import type { PageView } from '../adapters/filing-judge.js';
+import { namedBefore } from '../adapters/named-before.js';
+import { useCompanyRecords, useCompanyView } from './company-records.js';
 import { ActOutcome, ActDone, ActStopped, type ActPhase } from './proposal-act.js';
 
 type Words = ReturnType<typeof useText>;
 type Shown = { readonly acted: GrantActed; readonly carries: Carries | null };
-type Run = (personId: string, companyId: string, onStep: (step: number, steps: number) => void) => Promise<Shown>;
+type Run = (personId: string, view: PageView, onStep: (step: number, steps: number) => void) => Promise<Shown>;
 
 const WHY_SAYS = (t: Words): Record<GrantWhy, string> => ({
   [GRANT_WHY.seat]: t('roles.why.seat'), [GRANT_WHY.notACode]: t('roles.why.not-a-code'), [GRANT_WHY.codeNotSigned]: t('roles.why.code-not-signed'),
@@ -39,14 +40,15 @@ const readsSays = (t: Words, role: string): string => (role === 'accountant' ? t
 
 /** One act at a time: the steps it has reached, and how it ended; the grants are read again once it changed or may have changed them. */
 function useGrantAct(onChanged: () => void): { readonly phase: ActPhase; readonly shown: Shown | null; readonly start: (run: Run) => void } {
-  const { person, company } = useSession();
+  const { person } = useSession();
+  const view = useCompanyView();
   const [phase, setPhase] = useState<ActPhase>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const start = (run: Run): void => {
-    if (company === null || phase !== null) return;
+    if (view === null || phase !== null) return;
     setShown(null);
     setPhase({ step: 0, steps: 0 });
-    void run(person.id, company, (step, steps) => setPhase({ step, steps })).then((ended) => {
+    void run(person.id, view, (step, steps) => setPhase({ step, steps })).then((ended) => {
       setPhase(null);
       setShown(ended);
       const a = ended.acted;
@@ -172,15 +174,16 @@ function GiveForm({ busy, onGive }: { busy: boolean; onGive: (code: string, role
 function ReaderLink() {
   const t = useText();
   const { person, company } = useSession();
+  const view = useCompanyView();
   const [link, setLink] = useState<string | null>(null);
   useEffect(() => {
-    if (company === null) return undefined;
+    if (company === null || view === null) return undefined;
     let alive = true;
-    void namedBefore(person.id, company).then((named) => {
+    void namedBefore(person.id, view).then((named) => {
       if (alive) setLink(typeof named === 'string' ? null : window.location.origin + addressOf(PAGE.readerSignUp, { id: company, label: named.company, account: named.account }));
     });
     return () => { alive = false; };
-  }, [person.id, company]);
+  }, [person.id, company, view]);
   if (link === null) return null;
   return (
     <Section title={t('roles.readerLink.title')} description={t('roles.readerLink.description')} list={false} data-reader-link>
@@ -192,8 +195,9 @@ function ReaderLink() {
 /** Who reads the company's records, the changes waiting for more signers, and the forms to give or take away access and to sign a waiting change. */
 export function ReadAccess() {
   const t = useText();
-  const { person, company } = useSession();
+  const { person } = useSession();
   const { openKeys } = useCompanyRecords();
+  const view = useCompanyView();
   const [read, setRead] = useState<GrantsRead | null>(null);
   const [reads, setReads] = useState(0);
   const [opening, setOpening] = useState(false);
@@ -201,13 +205,12 @@ export function ReadAccess() {
   const act = useGrantAct(again);
   const busy = act.phase !== null;
 
-  useEffect(() => (company === null ? undefined : watchPrivateMoneyReadable(company, again)), [company]);
   useEffect(() => {
-    if (company === null) return undefined;
+    if (view === null) return undefined;
     let alive = true;
-    void readGrants(person.id, company).then((r) => { if (alive) setRead(r); });
+    void readGrants(person.id, view).then((r) => { if (alive) setRead(r); });
     return () => { alive = false; };
-  }, [person.id, company, reads]);
+  }, [person.id, view, reads]);
 
   const open = async (): Promise<void> => { setOpening(true); await openKeys(); setOpening(false); again(); };
   const readNow = read?.of === GRANTS_READ.read ? read : null;

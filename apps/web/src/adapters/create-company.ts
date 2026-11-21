@@ -1,4 +1,4 @@
-import { startCompanyHeldFromTheStart } from 'vaults-web-shared/keyring.js';
+import { startCompanyHeldFromTheStart } from 'vaults-web-shared/company-creation.js';
 import { keyringFor } from './keyring-person.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';

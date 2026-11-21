@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Invoice01Icon } from '@hugeicons/core-free-icons';
 import { Button, EmptyState, PageHeader, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn } from 'vaults-ui/data-table';
-import type { RunRow } from '../adapters/company-records.js';
+import type { RunRow } from '../adapters/company-rows.js';
 import { RaiseRun } from '../actions/raise-run.js';
 import { PAGE } from '../pages.js';
 import { PageLink } from '../router.js';

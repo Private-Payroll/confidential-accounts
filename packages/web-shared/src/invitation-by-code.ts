@@ -14,10 +14,18 @@ import { readJoinCode, JOIN_CODE_REFUSAL, type JoinCode, type PayeeParts, type S
 import { payeeCodeFingerprint, seatKeyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { walletKeyProvedBy, type SeatOpening } from '../../../src/core/seat-opening.js';
 import { seatAddressSignedFor, type InviteAddressOf } from '../../../src/core/seat-address.js';
-import {
-  answered, filePayeeInvitation, fileSignerInvitation, payeeHandoverOf, refuseASeatThatMayNotInvite, refuseVaultsBeyondTheSeat,
-  type EmployeeSpec, type InvitationSend, type InvitingCompany, type InvitingSeat,
-} from './invitation-on-device.js';
+import type { CompanyWrites, InvitationSource } from './records-source.js';
+import { answered, filePayeeInvitation, fileSignerInvitation, refuseASeatThatMayNotInvite, refuseVaultsBeyondTheSeat, type EmployeeSpec, type InvitingCompany, type InvitingSeat } from './invitation-on-device.js';
+import { payeeHandoverOf } from './invitation-taken-on-device.js';
+
+/**
+ * How a code's person is added: the company's writes (the invitation filed through them), and the invitation's own
+ * acceptance, asked as its holder asks it.
+ */
+export interface CodeAsks {
+  readonly writes: CompanyWrites;
+  readonly invitations: Pick<InvitationSource, 'acceptSigner' | 'acceptPayee'>;
+}
 
 /** Thrown for a pasted code this device will not add anybody from; nothing was filed. */
 export class CodeNotTaken extends Error {
@@ -51,7 +59,7 @@ const codeFor = (text: string, company: InvitingCompany, kind: 'signer' | 'payee
  * with the one the person reads out.
  */
 export async function addSignerFromCodeHere(
-  company: InvitingCompany, seat: InvitingSeat, text: string, signer: { readonly name: string; readonly role: Role }, send: InvitationSend,
+  company: InvitingCompany, seat: InvitingSeat, text: string, signer: { readonly name: string; readonly role: Role }, asks: CodeAsks,
   /** The leaf each opening makes, worked out in this device's vault worker. */
   leaves: (openings: readonly SeatOpening[]) => Promise<readonly (string | null)[]>,
   /** The account's own function making an address from a coin key and a salt: the code's address is worked out again with it. */
@@ -85,7 +93,7 @@ export async function addSignerFromCodeHere(
   }
   refuseVaultsBeyondTheSeat(seat, undefined, '; invite this person by their address instead, naming vaults within your own');
   /* The invitation names the leaf the joiner's wallet signed, and the person it signed for. */
-  const made = await fileSignerInvitation(company, seat, { ...signer, person: code.person }, send, parts.leafCommitment);
+  const made = await fileSignerInvitation(company, seat, { ...signer, person: code.person }, asks.writes, parts.leafCommitment);
   /*
    * **THE PROOF HERE SAYS THIS DEVICE VOUCHED FOR EXACTLY THESE KEYS**, for
    * the sign-in the code names, under the invitation it has just made and holds
@@ -99,10 +107,8 @@ export async function addSignerFromCodeHere(
     name: signer.name, role: signer.role, ...keys, seatProof: proveSeatKeys(made.proved, keys, { person: code.person, invitationId: made.invited.terms.invitation }), person: code.person,
     opening, invited: made.invited, seatAddress,
   };
-  const b = answered(await send(`/api/invites/${made.id}/accept-signer`, {
-    method: 'POST',
-    body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), waiting: sealToInbox(waiting, inboxOf(made.sealing.key, company.id)), for: code.person }),
-  }), 201);
+  const b = answered(await asks.invitations.acceptSigner(made.id,
+    { acceptance: acceptanceProofOf(made.token), waiting: sealToInbox(waiting, inboxOf(made.sealing.key, company.id)), for: code.person }), 201);
   if (typeof b.id !== 'string') throw new Error('the service did not say which seat request it filed.');
   return { id: b.id, fingerprint: seatKeyFingerprint(keys) };
 }
@@ -114,12 +120,11 @@ export async function addSignerFromCodeHere(
  * act. Returns the person and the fingerprint of the address they are paid at.
  */
 export async function addPayeeFromCodeHere(
-  company: InvitingCompany, seat: InvitingSeat, text: string, spec: EmployeeSpec, send: InvitationSend,
+  company: InvitingCompany, seat: InvitingSeat, text: string, spec: EmployeeSpec, asks: CodeAsks,
 ): Promise<{ readonly person: string; readonly fingerprint: string }> {
   const code = codeFor(text, company, 'payee');
-  const made = await filePayeeInvitation(company, seat, spec, send);
-  answered(await send(`/api/invites/${made.id}/accept-payee`, {
-    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), handover: payeeHandoverOf(code, inboxOf(made.sealing.key, company.id)), kind: 'employee' }),
-  }), 201);
+  const made = await filePayeeInvitation(company, seat, spec, asks.writes);
+  answered(await asks.invitations.acceptPayee(made.id,
+    { acceptance: acceptanceProofOf(made.token), handover: payeeHandoverOf(code, inboxOf(made.sealing.key, company.id)), kind: 'employee' }), 201);
   return { person: made.person, fingerprint: payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }) };
 }

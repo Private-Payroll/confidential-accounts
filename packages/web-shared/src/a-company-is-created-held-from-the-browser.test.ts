@@ -37,6 +37,12 @@ import { signCompanyFiling, verifiedCompanyFiler } from '../../../src/midnight/s
 import { NO_ROSTER_RECORD } from './roster-here.js';
 import { secretCarried } from '../../../src/server/account-creation.js';
 import * as keyring from './keyring.js';
+import { openAccountWith } from './company-judges.js';
+import { companyViewFor } from './company-view.js';
+import { serviceSource } from './records-source.js';
+import * as creation from './company-creation.js';
+import * as transport from './service-transport.js';
+import * as walletAsks from './wallet-asks.js';
 import { openKeyring, sealKeyring, withCreation } from './keyring-blob.js';
 import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
@@ -204,6 +210,8 @@ function aService(opts: {
       case 'POST /api/accounts/acc_X/creation/pay-key': return json(200, { txRef: 'tx' });
       case 'POST /api/accounts/acc_X/creation/pay-key/proposal': return json(201, { proposal: { id: 'prp_PayKeyRecord' }, txRef: 'tx' });
       case 'GET /api/accounts/acc_X/directory': return json(200, { filings: [] });
+      case 'POST /api/accounts/acc_X/manifest/newest': return json(200, { versions: body.records.map(() => 0) });
+      case 'GET /api/accounts/acc_X/proposals': return json(200, []);
       default: return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
@@ -266,7 +274,7 @@ describe('THE FIRST PRESS', () => {
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const started = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     const made = madeOf(service);
     const drew = wallet.drew!;
     /* RED WHEN: the first press does not hand back the label the wallet drew, so the page cannot show the person the name their wallet gave the company. */
@@ -276,7 +284,7 @@ describe('THE FIRST PRESS', () => {
     expect(made).toMatchObject({ companyLabel: drew, foundingKey: key, name: 'Acme Ltd', threshold: 1 });
     /* RED WHEN: anything is sent to the chain, or any account is built, before the second press. */
     expect(service.sent('POST /api/accounts/acc_X/creation')).toEqual([]);
-    expect(keyring.companyAwaitingItsSecondPress(started.accountId)).toEqual({ accountId: started.accountId, account: null });
+    expect(creation.companyAwaitingItsSecondPress(started.accountId)).toEqual({ accountId: started.accountId, account: null });
     /* RED WHEN: the press opens more than the one window it always opened. */
     expect(wallet.asks.map((a) => a.kind)).toEqual(['keyring']);
   });
@@ -285,7 +293,7 @@ describe('THE FIRST PRESS', () => {
     aService();
     signIn();
     const wallet = new Wallet();
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     const ask = wallet.asks[0]!.body as KeyringRequest;
     /* RED WHEN: the wallet is not told what the company is called and who founds it, or is not handed the saved keys to keep the seat in. */
     expect(ask.founding).toEqual({ name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' } });
@@ -303,7 +311,7 @@ describe('THE FIRST PRESS', () => {
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     const made = madeOf(service);
     const id = made.founding.account.id as string;
     /* RED WHEN: the service is sent any secret, under any name, anywhere in the creation. */
@@ -338,7 +346,7 @@ describe('THE FIRST PRESS', () => {
     const wallet = new Wallet();
     wallet.givesNoFounding = true;
     /* RED WHEN: the wallet's answer with no founding is taken by the page's reader, so the page goes on without it. */
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US))
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US))
       .rejects.toThrow(/did not hand back what it founded the company with, so nothing was created\. Close the wallet's window, reload this page and start the company again\./u);
     expect(service.sent('POST /api/accounts')).toEqual([]);
     expect(service.sent('PUT /api/me/keys')).toEqual([]);
@@ -349,7 +357,7 @@ describe('THE FIRST PRESS', () => {
     signIn();
     answered.withoutFounding = true;
     /* RED WHEN: the page makes a founding of its own, or fails with something other than its own sentence, when it holds none for a new company. */
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US))
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US))
       .rejects.toThrow(/did not hand back what it founded it with, so nothing was created\. Close the wallet's window, reload this page and start the company again\./u);
     expect(service.sent('POST /api/accounts')).toEqual([]);
     expect(service.sent('PUT /api/me/keys')).toEqual([]);
@@ -359,14 +367,14 @@ describe('THE FIRST PRESS', () => {
     const service = aService({ refuses: { 'PUT /api/me/keys': () => ({ status: 409, body: { error: 'your saved keys changed since they were read' } }) } });
     signIn();
     /* RED WHEN: a company is sent whose founding seat is not in the saved keys the service keeps. */
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toThrow(/were not kept by the service: they changed on another device since this page read them, or the service refused them\. Nothing was created/u);
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toThrow(/were not kept by the service: they changed on another device since this page read them, or the service refused them\. Nothing was created/u);
     expect(service.sent('POST /api/accounts')).toEqual([]);
   });
 
   it('A COMPANY THE SERVICE DID NOT TAKE LEAVES ITS SEAT KEPT, AND NOTHING SENT TO THE CHAIN', async () => {
     const service = aService({ companyFails: () => true });
     signIn();
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toThrow('the service did not answer');
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toThrow('the service did not answer');
     const id = madeOf(service).founding.account.id as string;
     /* RED WHEN: the seat is kept only once the service has answered. */
     expect(keyring.seatHeldHere(id)).not.toBeNull();
@@ -382,7 +390,7 @@ describe('THE FIRST PRESS', () => {
       { ...A_COMPANY, threshold: 2 },
     ]) {
       /* RED WHEN: a second signer, or a threshold above one, reaches the wallet or the service. */
-      await expect(keyring.startCompanyHeldFromTheStart(spec, WALLET, wallet, US)).rejects.toThrow(/with you as its only signer/);
+      await expect(creation.startCompanyHeldFromTheStart(spec, WALLET, wallet, US)).rejects.toThrow(/with you as its only signer/);
     }
     expect(wallet.asks).toEqual([]);
     expect(service.sent('POST /api/accounts')).toEqual([]);
@@ -394,8 +402,8 @@ describe('THE SECOND PRESS IS ONE ACTION THE WALLET RUNS WHOLE', () => {
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    const { accountId, label } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
-    const ended = await keyring.finishCompanyInTheWallet(accountId, WALLET, {}, wallet, US);
+    const { accountId, label } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const ended = await creation.finishCompanyInTheWallet(accountId, WALLET, {}, wallet, US);
     expect(ended).toEqual({ of: 'done', steps: 5, relayed: 0 });
     const asks = wallet.asks.filter((a) => a.kind === 'act');
     /* RED WHEN: the press asks the wallet for more than one action, or names anything but the company's label. */
@@ -414,14 +422,14 @@ describe('THE SECOND PRESS IS ONE ACTION THE WALLET RUNS WHOLE', () => {
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     const body = JSON.stringify({ proposal: {}, proposalSalt: 'ab'.repeat(32), tx: 'VFgtAAAA' });
     wallet.actCalls = [
       { method: 'POST', path: `/api/accounts/${accountId}/creation/pay-key/proposal`, body },
       { method: 'POST', path: '/api/accounts/acc_BBBBBBBBBBBB/creation/pay-key/proposal', body },
       { method: 'POST', path: `/api/accounts/${accountId}/creation/pay-key`, body: '{"call":"approve","tx":"VFgtAAAA"}' },
     ];
-    await keyring.finishCompanyInTheWallet(accountId, WALLET, {}, wallet, US);
+    await creation.finishCompanyInTheWallet(accountId, WALLET, {}, wallet, US);
     /* RED WHEN: the record and its raise are not handed to the service as the wallet sealed and built them. */
     expect(service.sent('POST /api/accounts/acc_X/creation/pay-key/proposal').map((p) => p.body)).toEqual([JSON.parse(body)]);
     expect(wallet.called.map((c) => [c['n'], c['outcome'], c['status']])).toEqual([[1, 'answered', 201], [2, 'refused', undefined], [3, 'refused', undefined]]);
@@ -435,9 +443,9 @@ describe('THE SECOND PRESS IS ONE ACTION THE WALLET RUNS WHOLE', () => {
     signIn();
     const wallet = new Wallet();
     wallet.actEnds = { ended: 'stopped', step: 3, steps: 5, relayed: 2, unconfirmed: 0, why: 'stopped' };
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     /* RED WHEN: a stopped action is taken as done, or its step is lost. */
-    expect(await keyring.finishCompanyInTheWallet(accountId, WALLET, {}, wallet, US)).toEqual(expect.objectContaining({ of: 'stopped', step: 3, steps: 5 }));
+    expect(await creation.finishCompanyInTheWallet(accountId, WALLET, {}, wallet, US)).toEqual(expect.objectContaining({ of: 'stopped', step: 3, steps: 5 }));
   });
 
   it('IS REFUSED BY NAME FOR A COMPANY NOT KEPT HERE, OR ONE SOMEBODY ELSE STARTED', async () => {
@@ -445,12 +453,12 @@ describe('THE SECOND PRESS IS ONE ACTION THE WALLET RUNS WHOLE', () => {
     signIn();
     const wallet = new Wallet();
     /* RED WHEN: a tab the wallet has not read for asks the wallet about a company the service does not name. */
-    await expect(keyring.finishCompanyInTheWallet('acc_AAAAAAAAAAAA', WALLET, {}, wallet, US)).rejects.toThrow();
+    await expect(creation.finishCompanyInTheWallet('acc_AAAAAAAAAAAA', WALLET, {}, wallet, US)).rejects.toThrow();
     expect(wallet.asks).toEqual([]);
     await keyring.openKeysWithWallet(WALLET, wallet, US);
     const asked = wallet.asks.length;
     /* RED WHEN: the wallet is opened for a company a tab it read the saved keys for keeps nothing of. */
-    await expect(keyring.finishCompanyInTheWallet('acc_AAAAAAAAAAAA', WALLET, {}, wallet, US)).rejects.toBeInstanceOf(keyring.NoCreationKeptHere);
+    await expect(creation.finishCompanyInTheWallet('acc_AAAAAAAAAAAA', WALLET, {}, wallet, US)).rejects.toBeInstanceOf(creation.NoCreationKeptHere);
     expect(wallet.asks).toHaveLength(asked);
   });
 });
@@ -460,7 +468,7 @@ describe('EACH TRANSACTION THE WALLET HANDS BACK GOES WHERE THE WALLET SAYS IT G
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     return { service, accountId };
   };
 
@@ -468,8 +476,8 @@ describe('EACH TRANSACTION THE WALLET HANDS BACK GOES WHERE THE WALLET SAYS IT G
     const states: Record<string, unknown> = { standing: { account: null, state: 'not-created', replaceable: false } };
     const service = aService({ states });
     signIn();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
-    const relay = (tx: string, what: string, also?: string) => keyring.relayForTheCreation(accountId, tx, { what, ...(also === undefined ? {} : { also }) });
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
+    const relay = (tx: string, what: string, also?: string) => creation.relayForTheCreation(accountId, tx, { what, ...(also === undefined ? {} : { also }) });
     expect(await relay(DEPLOY, 'creation', INSERT)).toBe(true);
     expect(service.sent('POST /api/accounts/acc_X/creation').map((p) => p.body)).toEqual([{ deploy: DEPLOY, insert: INSERT }]);
     states['standing'] = { account: ACCOUNT, state: 'deploy-expired', replaceable: true };
@@ -496,11 +504,11 @@ describe('EACH TRANSACTION THE WALLET HANDS BACK GOES WHERE THE WALLET SAYS IT G
     const states: Record<string, unknown> = {};
     const service = aService({ states });
     signIn();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
     const where = async (what: string, standing: Record<string, unknown>): Promise<string> => {
       states['standing'] = standing;
       const before = service.order.length;
-      expect(await keyring.relayForTheCreation(accountId, DEPLOY, { what, also: INSERT })).toBe(true);
+      expect(await creation.relayForTheCreation(accountId, DEPLOY, { what, also: INSERT })).toBe(true);
       return service.order.slice(before).filter((r) => r.startsWith('POST'))[0]!;
     };
     expect(await where('creation-again', { account: null, state: 'not-created', replaceable: false })).toBe('POST /api/accounts/acc_X/creation');
@@ -512,9 +520,9 @@ describe('EACH TRANSACTION THE WALLET HANDS BACK GOES WHERE THE WALLET SAYS IT G
   it('REFUSES A TRANSACTION FOR NOTHING IT KNOWS, OR A DEPLOY WITHOUT ITS SECOND STEP, AND SENDS NOTHING', async () => {
     const { service, accountId } = await kept();
     /* RED WHEN: the page guesses where a transaction goes. */
-    expect(await keyring.relayForTheCreation(accountId, DEPLOY, { what: 'transfer' })).toBe(false);
-    expect(await keyring.relayForTheCreation(accountId, DEPLOY, {})).toBe(false);
-    expect(await keyring.relayForTheCreation(accountId, DEPLOY, { what: 'creation' })).toBe(false);
+    expect(await creation.relayForTheCreation(accountId, DEPLOY, { what: 'transfer' })).toBe(false);
+    expect(await creation.relayForTheCreation(accountId, DEPLOY, {})).toBe(false);
+    expect(await creation.relayForTheCreation(accountId, DEPLOY, { what: 'creation' })).toBe(false);
     expect(service.order.filter((r) => r.startsWith('POST /api/accounts/acc_X'))).toEqual([]);
   });
 
@@ -524,11 +532,11 @@ describe('EACH TRANSACTION THE WALLET HANDS BACK GOES WHERE THE WALLET SAYS IT G
     /* As the service answers: no creation route for a company it never took. */
     const service = aService({ companyFails: () => { if (fail) return true; held = true; return false; }, noRecord: () => !held });
     signIn();
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toThrow('the service did not answer');
-    const [stuck] = keyring.companiesBeingCreated();
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toThrow('the service did not answer');
+    const [stuck] = creation.companiesBeingCreated();
     fail = false;
     /* RED WHEN: the account is sent for a company the service has no record of, which it refuses. */
-    expect(await keyring.relayForTheCreation(stuck!, DEPLOY, { what: 'creation', also: INSERT })).toBe(true);
+    expect(await creation.relayForTheCreation(stuck!, DEPLOY, { what: 'creation', also: INSERT })).toBe(true);
     expect(service.order.filter((r) => r.startsWith('POST'))).toEqual(['POST /api/accounts', 'POST /api/accounts', 'POST /api/accounts/acc_X/creation']);
   });
 
@@ -536,12 +544,12 @@ describe('EACH TRANSACTION THE WALLET HANDS BACK GOES WHERE THE WALLET SAYS IT G
     const states: Record<string, unknown> = { standing: { account: ACCOUNT, state: 'finish-sent' } };
     const service = aService({ states });
     signIn();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
     /* RED WHEN: a second step already with the service is sent again, which it refuses and so stops the action. */
-    expect(await keyring.relayForTheCreation(accountId, INSERT, { what: 'creation-finish' })).toBe(true);
+    expect(await creation.relayForTheCreation(accountId, INSERT, { what: 'creation-finish' })).toBe(true);
     expect(service.sent('POST /api/accounts/acc_X/creation/finish')).toEqual([]);
     states['standing'] = { account: ACCOUNT, state: 'finish-owed' };
-    expect(await keyring.relayForTheCreation(accountId, INSERT, { what: 'creation-finish' })).toBe(true);
+    expect(await creation.relayForTheCreation(accountId, INSERT, { what: 'creation-finish' })).toBe(true);
     expect(service.sent('POST /api/accounts/acc_X/creation/finish')).toHaveLength(1);
   });
 });
@@ -554,22 +562,22 @@ describe('ANY NUMBER OF COMPANIES ARE KEPT, EACH ON ITS OWN, AND NONE STOPS ANOT
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    const first = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
-    const second = await keyring.startCompanyHeldFromTheStart(OTHER, WALLET, wallet, US);
+    const first = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const second = await creation.startCompanyHeldFromTheStart(OTHER, WALLET, wallet, US);
     expect(second.accountId).not.toBe(first.accountId);
-    expect(keyring.companiesBeingCreated()).toEqual([first.accountId, second.accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([first.accountId, second.accountId]);
     expect(service.sent('POST /api/accounts')).toHaveLength(2);
     keyring.forgetLocally();
     signIn();
     expect(keyring.canOpenCompanies()).toBe(false);
-    const third = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Third Ltd' }, WALLET, wallet, US);
+    const third = await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Third Ltd' }, WALLET, wallet, US);
     /* RED WHEN: a creation started with the keys shut replaces what the saved keys already hold: the wallet seals over the newest copy. */
-    expect(keyring.companiesBeingCreated()).toEqual([first.accountId, second.accountId, third.accountId]);
-    expect([first, second, third].map((c) => keyring.companyNameKeptHere(c.accountId))).toEqual(['Acme Ltd', 'Other Ltd', 'Third Ltd']);
+    expect(creation.companiesBeingCreated()).toEqual([first.accountId, second.accountId, third.accountId]);
+    expect([first, second, third].map((c) => creation.companyNameKeptHere(c.accountId))).toEqual(['Acme Ltd', 'Other Ltd', 'Third Ltd']);
     /* RED WHEN: a reload loses a creation, or finds it under another company. */
     await reload(wallet);
-    expect(keyring.companiesBeingCreated()).toEqual([first.accountId, second.accountId, third.accountId]);
-    for (const c of [first, second, third]) expect(keyring.companyAwaitingItsSecondPress(c.accountId)).toEqual({ accountId: c.accountId, account: null });
+    expect(creation.companiesBeingCreated()).toEqual([first.accountId, second.accountId, third.accountId]);
+    for (const c of [first, second, third]) expect(creation.companyAwaitingItsSecondPress(c.accountId)).toEqual({ accountId: c.accountId, account: null });
     for (const c of [first, second, third]) expect(keyring.seatHeldHere(c.accountId)).not.toBeNull();
   });
 
@@ -578,18 +586,18 @@ describe('ANY NUMBER OF COMPANIES ARE KEPT, EACH ON ITS OWN, AND NONE STOPS ANOT
     aService();
     signIn();
     const wallet = new Wallet();
-    const first = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
-    const second = await keyring.startCompanyHeldFromTheStart(OTHER, WALLET, wallet, US);
+    const first = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const second = await creation.startCompanyHeldFromTheStart(OTHER, WALLET, wallet, US);
     await plantSent(second.accountId);
-    expect(await keyring.startAnUnfinishedCreationAgain(first.accountId, WALLET, null, wallet, US)).toEqual({ of: 'dropped' });
-    expect(keyring.companiesBeingCreated()).toEqual([second.accountId]);
-    expect(keyring.companyNameKeptHere(second.accountId)).toBe('Other Ltd');
-    expect(keyring.companyAwaitingItsSecondPress(second.accountId)).toEqual({ accountId: second.accountId, account: ACCOUNT });
+    expect(await creation.startAnUnfinishedCreationAgain(first.accountId, WALLET, null, wallet, US)).toEqual({ of: 'dropped' });
+    expect(creation.companiesBeingCreated()).toEqual([second.accountId]);
+    expect(creation.companyNameKeptHere(second.accountId)).toBe('Other Ltd');
+    expect(creation.companyAwaitingItsSecondPress(second.accountId)).toEqual({ accountId: second.accountId, account: ACCOUNT });
     expect(keyring.seatHeldHere(first.accountId)).not.toBeNull();
     expect(keyring.seatHeldHere(second.accountId)).not.toBeNull();
     /* RED WHEN: the sent creation is dropped by the start again of the other, without its own chain read. */
-    await expect(keyring.forgetAnUnsentCreation(second.accountId)).rejects.toThrow(/signed or sent/);
-    expect(keyring.companiesBeingCreated()).toEqual([second.accountId]);
+    await expect(creation.forgetAnUnsentCreation(second.accountId)).rejects.toThrow(/signed or sent/);
+    expect(creation.companiesBeingCreated()).toEqual([second.accountId]);
   });
 
   /* RED WHEN: a creation that fails to send leaves the next company unable to start, or no longer kept beside it. */
@@ -598,11 +606,11 @@ describe('ANY NUMBER OF COMPANIES ARE KEPT, EACH ON ITS OWN, AND NONE STOPS ANOT
     aService({ companyFails: () => fail });
     signIn();
     const wallet = new Wallet();
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US)).rejects.toThrow('the service did not answer');
-    const [stuck] = keyring.companiesBeingCreated();
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US)).rejects.toThrow('the service did not answer');
+    const [stuck] = creation.companiesBeingCreated();
     fail = false;
-    const next = await keyring.startCompanyHeldFromTheStart(OTHER, WALLET, wallet, US);
-    expect(keyring.companiesBeingCreated()).toEqual([stuck, next.accountId]);
+    const next = await creation.startCompanyHeldFromTheStart(OTHER, WALLET, wallet, US);
+    expect(creation.companiesBeingCreated()).toEqual([stuck, next.accountId]);
   });
 });
 
@@ -611,13 +619,13 @@ describe('A CREATION FROM WHICH NOTHING REACHED THE CHAIN CAN BE STARTED AGAIN, 
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    const { accountId: id } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
-    await keyring.forgetAnUnsentCreation(id);
+    const { accountId: id } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    await creation.forgetAnUnsentCreation(id);
     /* RED WHEN: the creation is still kept after it is forgotten, so Create stays shut. */
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    expect(creation.companiesBeingCreated()).toEqual([]);
     /* RED WHEN: forgetting the creation also drops the seat's keys of a company the service already lists. */
     const secretOfTheFirst = seatSavedFor(id)!.signingSecret;
-    const again = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const again = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     expect(again.accountId).not.toBe(id);
     expect(service.sent('POST /api/accounts')).toHaveLength(2);
     /* RED WHEN: a new company's seat is sealed over the seats this person already holds instead of beside them. */
@@ -631,18 +639,18 @@ describe('A CREATION FROM WHICH NOTHING REACHED THE CHAIN CAN BE STARTED AGAIN, 
   it('REFUSES TO FORGET ONE WHOSE ACCOUNT WAS SENT, KEEPING IT', async () => {
     aService();
     signIn();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
     await plantSent(accountId);
     /* RED WHEN: a creation already sent to the chain is forgotten, so it can never be carried on or finished. */
-    await expect(keyring.forgetAnUnsentCreation(accountId)).rejects.toThrow(/signed or sent/);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    await expect(creation.forgetAnUnsentCreation(accountId)).rejects.toThrow(/signed or sent/);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('REFUSES A COMPANY THIS TAB KEEPS NO CREATION OF', async () => {
     aService();
     signIn();
     /* RED WHEN: forgetting a company that is not kept here is taken as done. */
-    await expect(keyring.forgetAnUnsentCreation('acc_AAAAAAAAAAAA')).rejects.toThrow(/keeps no creation/);
+    await expect(creation.forgetAnUnsentCreation('acc_AAAAAAAAAAAA')).rejects.toThrow(/keeps no creation/);
   });
 });
 
@@ -660,7 +668,7 @@ describe('A COMPANY BEING CREATED IS WRITTEN ONLY INTO THE SAVED KEYS OF WHOEVER
     const wallet = new Wallet();
     wallet.whileFounding = somebodyElseSignsIn;
     /* RED WHEN: the saved keys the wallet sealed for the starter are written as whoever is signed in by then, over their own. */
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US)).rejects.toThrow();
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US)).rejects.toThrow();
     expect(service.savesBy(B.id)).toEqual([]);
     expect(service.savesBy(A.id)).toEqual([]);
     expect(service.sent('POST /api/accounts')).toEqual([]);
@@ -670,9 +678,9 @@ describe('A COMPANY BEING CREATED IS WRITTEN ONLY INTO THE SAVED KEYS OF WHOEVER
     const service = aService({ during: { route: 'POST /api/accounts', run: somebodyElseSignsIn } });
     signIn();
     /* RED WHEN: the kept creation is written after the service answered into whoever's keys the tab holds then, leaving them holding a company that is not theirs. */
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toBeInstanceOf(keyring.CompanyStartedBySomebodyElse);
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US)).rejects.toBeInstanceOf(creation.CompanyStartedBySomebodyElse);
     expect(service.savesBy(B.id)).toEqual([]);
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    expect(creation.companiesBeingCreated()).toEqual([]);
   });
 });
 
@@ -685,12 +693,12 @@ describe('A COMPANY KEPT HERE THAT THE SERVICE NEVER STORED', () => {
     aService({ companyFails: () => true, noRecord: () => true });
     signIn();
     const wallet = new Wallet();
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US)).rejects.toThrow('the service did not answer');
-    const id = keyring.companiesBeingCreated()[0]!;
-    expect(await keyring.companyCreationStanding(id)).toEqual({ account: null, state: 'not-created' });
-    await expect(keyring.companyCreationStanding('acc_AAAAAAAAAAAA')).rejects.toBeInstanceOf(keyring.NotOnTheService);
-    await keyring.forgetAnUnsentCreation(id);
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US)).rejects.toThrow('the service did not answer');
+    const id = creation.companiesBeingCreated()[0]!;
+    expect(await creation.companyCreationStanding(id)).toEqual({ account: null, state: 'not-created' });
+    await expect(creation.companyCreationStanding('acc_AAAAAAAAAAAA')).rejects.toBeInstanceOf(transport.NotOnTheService);
+    await creation.forgetAnUnsentCreation(id);
+    expect(creation.companiesBeingCreated()).toEqual([]);
   });
 });
 
@@ -700,11 +708,11 @@ describe('THE LABEL THE WALLET DREW IS KEPT WITH THE CREATION, FOR THE SCREEN AF
     aService();
     signIn();
     const wallet = new Wallet();
-    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const started = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     /* RED WHEN: the label shown after the first press is not the one the wallet drew and the creation kept. */
-    expect(keyring.companyBeingCreatedLabel(started.accountId)).toBe(started.label);
+    expect(creation.companyBeingCreatedLabel(started.accountId)).toBe(started.label);
     /* RED WHEN: another company's step is shown this company's label. */
-    expect(keyring.companyBeingCreatedLabel('acc_AAAAAAAAAAAA')).toBeNull();
+    expect(creation.companyBeingCreatedLabel('acc_AAAAAAAAAAAA')).toBeNull();
   });
 });
 
@@ -713,12 +721,12 @@ describe('THE NAME THE PERSON GAVE A COMPANY IS KEPT WITH ITS CREATION, FOR EVER
     aService();
     signIn();
     const wallet = new Wallet();
-    expect(keyring.companyNameKeptHere('acc_AAAAAAAAAAAA')).toBeNull();
-    const started = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Test-001' }, WALLET, wallet, US);
+    expect(creation.companyNameKeptHere('acc_AAAAAAAAAAAA')).toBeNull();
+    const started = await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Test-001' }, WALLET, wallet, US);
     /* RED WHEN: a company kept here and not finished is not given the name the person typed for it. */
-    expect(keyring.companyNameKeptHere(started.accountId)).toBe('Test-001');
+    expect(creation.companyNameKeptHere(started.accountId)).toBe('Test-001');
     /* RED WHEN: another company is given the kept creation's name. */
-    expect(keyring.companyNameKeptHere('acc_AAAAAAAAAAAA')).toBeNull();
+    expect(creation.companyNameKeptHere('acc_AAAAAAAAAAAA')).toBeNull();
   });
 });
 
@@ -730,8 +738,8 @@ describe('A FINISHED COMPANY\'S KEPT CREATION IS FORGOTTEN ONLY ON THE WALLET\'S
     aService();
     signIn();
     const wallet = new Wallet();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
-    await plantSent(keyring.companiesBeingCreated()[0]!);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    await plantSent(creation.companiesBeingCreated()[0]!);
     return { accountId, wallet };
   };
   const holdersAsks = (w: Wallet) => w.asks.filter((a) => a.kind === 'holders').map((a) => a.body as HoldersRequest);
@@ -740,8 +748,8 @@ describe('A FINISHED COMPANY\'S KEPT CREATION IS FORGOTTEN ONLY ON THE WALLET\'S
     const { accountId, wallet } = await sentAndKept();
     wallet.commits[ACCOUNT] = COMMITTED;
     /* RED WHEN: a company the wallet confirms finished stays kept as a creation, so the person is stranded on its step. */
-    expect(await keyring.forgetAFinishedCreation(accountId, WALLET, wallet, US)).toBe(true);
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    expect(await creation.forgetAFinishedCreation(accountId, WALLET, wallet, US)).toBe(true);
+    expect(creation.companiesBeingCreated()).toEqual([]);
     /* RED WHEN: forgetting the creation drops the company's keys with it. */
     expect(keyring.seatHeldHere(accountId)).not.toBeNull();
     const asked = holdersAsks(wallet);
@@ -753,7 +761,7 @@ describe('A FINISHED COMPANY\'S KEPT CREATION IS FORGOTTEN ONLY ON THE WALLET\'S
     expect(asked[0]!.movements).toEqual([PAY_KEY_COMMITMENT_ENTRY]);
     const before = holdersAsks(wallet).length;
     /* RED WHEN: the wallet is asked, or an error thrown, for a company nothing is kept for. */
-    expect(await keyring.forgetAFinishedCreation(accountId, WALLET, wallet, US)).toBe(false);
+    expect(await creation.forgetAFinishedCreation(accountId, WALLET, wallet, US)).toBe(false);
     expect(holdersAsks(wallet)).toHaveLength(before);
   });
 
@@ -761,25 +769,25 @@ describe('A FINISHED COMPANY\'S KEPT CREATION IS FORGOTTEN ONLY ON THE WALLET\'S
     const { accountId, wallet } = await sentAndKept();
     wallet.commits[OTHER_ACCOUNT] = COMMITTED;
     /* RED WHEN: a creation is forgotten on the word of anything but the wallet's read of the kept account, so a service that names another finished account strands an unfinished company. */
-    await expect(keyring.forgetAFinishedCreation(accountId, WALLET, wallet, US)).rejects.toThrow(/does not show/);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    await expect(creation.forgetAFinishedCreation(accountId, WALLET, wallet, US)).rejects.toThrow(/does not show/);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
     expect(holdersAsks(wallet).map((a) => a.account)).toEqual([ACCOUNT]);
-    expect(await keyring.keptCreationShowsItsKeyCommitted(accountId, WALLET, wallet, US)).toBe(false);
+    expect(await creation.keptCreationShowsItsKeyCommitted(accountId, WALLET, wallet, US)).toBe(false);
   });
 
   it('KEEPS A CREATION THAT BUILT NO DEPLOY WITHOUT ASKING THE WALLET, AND READS NOTHING FOR A COMPANY NOT KEPT', async () => {
     aService();
     signIn();
     const wallet = new Wallet();
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
-    const id = keyring.companiesBeingCreated()[0]!;
+    await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const id = creation.companiesBeingCreated()[0]!;
     /* RED WHEN: a creation with no deploy is read at the wallet on an account the page made up, or counted as committed. */
-    expect(await keyring.keptCreationShowsItsKeyCommitted(id, WALLET, wallet, US)).toBe(false);
-    await expect(keyring.forgetAFinishedCreation(id, WALLET, wallet, US)).rejects.toThrow(/does not show/);
+    expect(await creation.keptCreationShowsItsKeyCommitted(id, WALLET, wallet, US)).toBe(false);
+    await expect(creation.forgetAFinishedCreation(id, WALLET, wallet, US)).rejects.toThrow(/does not show/);
     expect(holdersAsks(wallet)).toEqual([]);
-    expect(keyring.companiesBeingCreated()).toEqual([id]);
+    expect(creation.companiesBeingCreated()).toEqual([id]);
     /* RED WHEN: a company nothing is kept for is taken as read. */
-    expect(await keyring.keptCreationShowsItsKeyCommitted('acc_AAAAAAAAAAAA', WALLET, wallet, US)).toBeNull();
+    expect(await creation.keptCreationShowsItsKeyCommitted('acc_AAAAAAAAAAAA', WALLET, wallet, US)).toBeNull();
   });
 });
 
@@ -793,17 +801,17 @@ describe('A CREATION IS KEPT, ALSO WHEN THE SAVED KEYS WERE SHUT AT THE NEXT FIR
     const service = aService();
     signIn();
     const wallet = new Wallet();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     keyring.forgetLocally();
     signIn();
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    expect(creation.companiesBeingCreated()).toEqual([]);
     const posted = service.sent('POST /api/accounts').length;
     const writes = service.sent('PUT /api/me/keys').length;
-    const second = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const second = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     expect(service.sent('POST /api/accounts')).toHaveLength(posted + 1);
     expect(service.sent('PUT /api/me/keys').length).toBeGreaterThan(writes);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId, second.accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId, second.accountId]);
   });
 });
 
@@ -813,19 +821,27 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
   const servedAfterTheFirstPress = async () => {
     const service = aService();
     signIn();
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
+    await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
     const made = madeOf(service);
     return { made, served: { ...made.founding.account, contractAddress: ACCOUNT, roster: made.founding.roster } };
   };
   /** Who holds the account, as the founding signer's own wallet reads it: their seat, and the key the deploy held it by. */
   const holders = (leaf: string) => async () => ({
     committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: [leaf], approvals: 1, adoptedVaults: [],
-    founding: leaf, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: ACCOUNT,
+    vaultThresholds: [], policyBar: null, seatBar: 1, founding: leaf, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: ACCOUNT,
   }) as never;
+  /** The company opened as this device opens it: its roster read through one view of the company over the service. */
+  const openedThroughAView = (served: { readonly id: string }, holdersRead: ReturnType<typeof holders>) => {
+    const refuse = async (): Promise<never> => { throw new Error('this read reaches no chain and no builder'); };
+    const view = companyViewFor(serviceSource(transport.serviceCall, served.id), { holders: holdersRead, onChain: refuse, builder: { anchorHeads: refuse } }, refuse);
+    const doors = { view: () => view as never, keysFor: keyring.seatHeldHere, servedKeyFor: keyring.viewingKeyFor };
+    return (sealed: Parameters<typeof openAccountWith>[1]) =>
+      openAccountWith(doors, sealed, holdersRead, (id) => anchoredEntering(id), () => leavesOfTheContract);
+  };
 
   it('THE FOUNDING SIGNER\'S DEVICE READS THE FIRST ROSTER ON ITS OWN SIGNING KEY, BEFORE ITS DIRECTORY ENTRY IS FILED', async () => {
     const { made, served } = await servedAfterTheFirstPress();
-    const opened = await keyring.openAccount(served, holders(made.founding.seat.leaf), (id) => anchoredEntering(id), () => leavesOfTheContract);
+    const opened = await openedThroughAView(served, holders(made.founding.seat.leaf))(served);
     /* RED WHEN: the founding signer cannot read their own company before their entry is filed - they could then never set up their vault keys. */
     expect(opened?.signers.map((x) => [x.id, x.leafCommitment])).toEqual([[made.founding.seat.signerId, made.founding.seat.leaf]]);
     expect(opened?.name).toBe('Acme Ltd');
@@ -840,8 +856,8 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
     /* The signers as an account record carried them before they were a record: a list that opens with the company's key. */
     const unsigned = sealAccount(openAccount(made.founding.account, viewingKey, made.founding.roster), viewingKey, []).sealedRoster!;
     /* RED WHEN: a device reads a company's signers from anything but a roster record a seat signed. */
-    await expect(keyring.openAccount({ ...withoutIt, sealedRoster: unsigned }, holders(made.founding.seat.leaf), (id) => anchoredEntering(id), () => leavesOfTheContract)).rejects.toThrow(NO_ROSTER_RECORD);
-    await expect(keyring.openAccount(withoutIt, holders(made.founding.seat.leaf), (id) => anchoredEntering(id), () => leavesOfTheContract)).rejects.toThrow(NO_ROSTER_RECORD);
+    await expect(openedThroughAView(served, holders(made.founding.seat.leaf))({ ...withoutIt, sealedRoster: unsigned })).rejects.toThrow(NO_ROSTER_RECORD);
+    await expect(openedThroughAView(served, holders(made.founding.seat.leaf))(withoutIt)).rejects.toThrow(NO_ROSTER_RECORD);
   });
 
   it('A FIRST ROSTER NOT SIGNED BY THE FOUNDING SEAT IS REFUSED', async () => {
@@ -849,7 +865,7 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
     const { filedBy: _was, ...unsigned } = served.roster;
     const another = signCompanyFiling(unsigned, newSigningKeypair().secret);
     /* RED WHEN: a first roster signed by a key other than this device's own, with no founding entry to hold it to, is believed. */
-    await expect(keyring.openAccount({ ...served, roster: another }, holders(made.founding.seat.leaf), (id) => anchoredEntering(id), () => leavesOfTheContract)).rejects.toThrow(/does not believe the company's roster/u);
+    await expect(openedThroughAView(served, holders(made.founding.seat.leaf))({ ...served, roster: another })).rejects.toThrow(/does not believe the company's roster/u);
   });
 });
 
@@ -872,7 +888,7 @@ describe('A DIRECTORY ENTRY STILL OWED IS KEPT BY THE WALLET, NEVER BY THIS PAGE
   it('this page writes no owed entry into the saved keys, and the seat it read keeps no inviter or invitation of the page\'s', async () => {
     const service = aService();
     signIn();
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
+    await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
     const id = madeOf(service).founding.account.id as string;
     const signed = { committeeKey: { tag: 'schnorr', value: 'aa'.repeat(32) }, entry: { seat: 'ab'.repeat(32) } } as never;
     /* RED WHEN: this page writes an owed directory entry into the saved keys. */
@@ -895,32 +911,32 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     signIn();
     const wallet = new Wallet();
     const asked: Array<{ account: string; indexer: unknown; transactions: string[] }> = [];
-    const withPresence: keyring.AccountCreationBuilder = { accountPresence: async (input: { account: string; indexer: unknown; transactions: string[] }) => {
+    const withPresence: creation.AccountCreationBuilder = { accountPresence: async (input: { account: string; indexer: unknown; transactions: string[] }) => {
       asked.push(input);
       if (seen instanceof Error) throw seen;
       return seen;
     } };
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     await plantSent(accountId);
     return { service, states, wallet, accountId, b: withPresence, asked };
   };
   /** The wallet has named its indexer in an answer it completed, then cannot read the account. */
   const walletCannotRead = async (wallet: Wallet, accountId: string) => {
-    await keyring.holdersFromTheWallet(WALLET, { company: wallet.drew!, account: ACCOUNT as never }, wallet, US);
+    await walletAsks.holdersFromTheWallet(WALLET, { company: wallet.drew!, account: ACCOUNT as never }, wallet, US);
     wallet.refusesHolders = 'unreadable';
     void accountId;
   };
-  const again = (id: string, wallet: Wallet, b: keyring.AccountCreationBuilder | null) => keyring.startAnUnfinishedCreationAgain(id, WALLET, b, wallet, US);
+  const again = (id: string, wallet: Wallet, b: creation.AccountCreationBuilder | null) => creation.startAnUnfinishedCreationAgain(id, WALLET, b, wallet, US);
   const deploying = { account: null, state: 'deploy-expired' };
 
   it('DROPS A CREATION THAT WAS NEVER SIGNED OR SENT, WITHOUT ASKING THE CHAIN, KEEPING THE COMPANY\'S KEYS', async () => {
     aService();
     signIn();
     const wallet = new Wallet();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     /* RED WHEN: a creation nothing was signed for cannot be started again, which is how the first press stays refused. */
     expect(await again(accountId, wallet, null)).toEqual({ of: 'dropped' });
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    expect(creation.companiesBeingCreated()).toEqual([]);
     expect(keyring.seatHeldHere(accountId)).not.toBeNull();
     expect(wallet.asks.filter((a) => a.kind === 'holders')).toHaveLength(0);
   });
@@ -930,7 +946,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
       const { accountId, wallet, b, asked } = await sentWith({ account: ACCOUNT, state });
       /* RED WHEN: a company whose deploy is on the chain is set aside, and its account is left unfinished. */
       expect(await again(accountId, wallet, b)).toEqual({ of: 'on-the-chain' });
-      expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+      expect(creation.companiesBeingCreated()).toEqual([accountId]);
       expect(asked).toEqual([]);
     });
   }
@@ -939,7 +955,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     const { accountId, wallet, b, asked } = await sentWith(deploying);
     /* RED WHEN: the service's word alone that the deploy never landed is enough. */
     expect(await again(accountId, wallet, b)).toEqual({ of: 'on-the-chain' });
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
     expect(asked).toEqual([]);
   });
 
@@ -949,7 +965,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     /* RED WHEN: a failed read of the chain is taken for an account that is not there. */
     expect(await again(accountId, wallet, b)).toEqual({ of: 'not-confirmed' });
     expect(asked).toHaveLength(1);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('READS THE CHAIN AT THE INDEXER THE WALLET NAMED, WITH THE ACCOUNT AND BOTH KEPT TRANSACTIONS', async () => {
@@ -961,7 +977,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     expect(asked[0]!.indexer).toEqual({ indexerUri: 'https://indexer.example/api/v4/graphql', indexerWsUri: 'wss://indexer.example/api/v4/graphql/ws' });
     expect(asked[0]!.account).toBe(ACCOUNT);
     expect(asked[0]!.transactions).toHaveLength(2);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('KEEPS THE CREATION WHEN THE WALLET NEVER NAMED AN INDEXER: THERE IS NOWHERE TO READ THE CHAIN FROM', async () => {
@@ -971,7 +987,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     expect(await again(accountId, wallet, b)).toEqual({ of: 'not-confirmed' });
     expect(await again(accountId, wallet, null)).toEqual({ of: 'not-confirmed' });
     expect(asked).toEqual([]);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('KEEPS A DEPLOY THE CHAIN\'S OWN TIME SAYS CAN STILL LAND, THOUGH THE DEVICE CLOCK IS FAR AHEAD, AND SAYS HOW LONG TO WAIT', async () => {
@@ -981,7 +997,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     const r = await again(accountId, wallet, b);
     /* RED WHEN: the device's clock decides, so a clock that is far ahead sets aside a deploy that is still live. */
     expect(r).toEqual({ of: 'may-still-land', minutes: 6 });
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('KEEPS THE CREATION ONE MILLISECOND BEFORE THE SERVICE\'S MARGIN, AND SETS IT ASIDE AT IT', async () => {
@@ -989,7 +1005,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     await walletCannotRead(early.wallet, early.accountId);
     /* RED WHEN: the margin is shorter than the service's five minutes. */
     expect(await again(early.accountId, early.wallet, early.b)).toEqual({ of: 'may-still-land', minutes: 1 });
-    expect(keyring.companiesBeingCreated()).toEqual([early.accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([early.accountId]);
   });
 
   it('KEEPS THE CREATION WHEN A KEPT TRANSACTION\'S TIME TO LIVE CANNOT BE READ', async () => {
@@ -997,7 +1013,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     await walletCannotRead(wallet, accountId);
     /* RED WHEN: a transaction that cannot be read is taken for one that has run out. */
     expect(await again(accountId, wallet, b)).toEqual({ of: 'not-confirmed' });
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('SETS A CREATION ASIDE, NOT DELETES IT, ONCE A CLEAN READ SHOWS NO ACCOUNT PAST THE TIME TO LIVE AND THE MARGIN, KEEPING THE KEYS', async () => {
@@ -1005,26 +1021,26 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     await walletCannotRead(wallet, accountId);
     /* RED WHEN: a deploy that cannot land and shows no account keeps the person from creating another company. */
     expect(await again(accountId, wallet, b)).toEqual({ of: 'dropped' });
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    expect(creation.companiesBeingCreated()).toEqual([]);
     expect(keyring.seatHeldHere(accountId)).not.toBeNull();
     /* RED WHEN: a creation set aside loses the name the person gave the company, so it is listed with no name. */
-    expect(keyring.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
+    expect(creation.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
   });
 
   it('NEVER SETS ASIDE A CREATION WHILE A COPY THE WALLET BUILT AGAIN AND HANDED ON CAN STILL LAND, THOUGH THE COPY KEPT HERE HAS RUN OUT', async () => {
     const LATER = TTL + 30 * 60_000;
     const { accountId, wallet, asked } = await sentWith(deploying);
     /* The chain's newest block is past the kept copy's time and the margin; the copy carried again lives half an hour longer. */
-    const b: keyring.AccountCreationBuilder = { accountPresence: async (input: { account: string; indexer: unknown; transactions: string[] }) => {
+    const b: creation.AccountCreationBuilder = { accountPresence: async (input: { account: string; indexer: unknown; transactions: string[] }) => {
       asked.push(input);
       return absentAt(TTL + FIVE, input.transactions.includes('QUdBSU4=') ? LATER : TTL);
     } };
     await walletCannotRead(wallet, accountId);
-    expect(await keyring.relayForTheCreation(accountId, 'QUdBSU4=', { what: 'creation-again', also: 'SU5BR0FJTg==' })).toBe(true);
+    expect(await creation.relayForTheCreation(accountId, 'QUdBSU4=', { what: 'creation-again', also: 'SU5BR0FJTg==' })).toBe(true);
     /* RED WHEN: the page judges by its own older copy alone, sets the creation aside while the copy the wallet relayed can still land, and the person founds a second company beside it. */
     expect(await again(accountId, wallet, b)).toEqual({ of: 'may-still-land', minutes: Math.ceil((LATER + FIVE - (TTL + FIVE)) / 60_000) });
     expect(asked.at(-1)!.transactions).toEqual(expect.arrayContaining(['QUdBSU4=', 'SU5BR0FJTg==']));
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('NEVER SETS ASIDE A CREATION WHILE THE SERVICE SAYS THE DEPLOY IT HOLDS CAN STILL BE SENT, THOUGH THIS TAB NEVER SAW THAT COPY', async () => {
@@ -1032,19 +1048,19 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     await walletCannotRead(wallet, accountId);
     /* RED WHEN: a copy the wallet built again and relayed from another tab is not weighed, and a creation that can still land is set aside. */
     expect(await again(accountId, wallet, b)).toEqual({ of: 'not-confirmed' });
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('FINISHES A CREATION SET ASIDE IF ITS ACCOUNT LATER APPEARS: THE SERVICE READS THE DEPLOY LANDED AND THE CREATION COMES BACK', async () => {
     const { states, accountId, wallet, b, service } = await sentWith(deploying, absentAt(TTL + FIVE));
     await walletCannotRead(wallet, accountId);
     expect(await again(accountId, wallet, b)).toEqual({ of: 'dropped' });
-    expect(keyring.companiesBeingCreated()).toEqual([]);
+    expect(creation.companiesBeingCreated()).toEqual([]);
     /* RED WHEN: a creation set aside is lost, so an account that landed late can never be finished. */
     states.standing = { account: ACCOUNT, state: 'finish-owed' };
     void service;
-    expect(await keyring.takeUpACreationSetAside(accountId)).toBe(true);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(await creation.takeUpACreationSetAside(accountId)).toBe(true);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
   });
 
   it('LEAVES A CREATION SET ASIDE ALONE WHILE ITS DEPLOY IS NOT ON THE CHAIN, AND TAKES IT UP BESIDE ANOTHER WITHOUT TOUCHING THAT ONE', async () => {
@@ -1052,31 +1068,31 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     await walletCannotRead(wallet, accountId);
     expect(await again(accountId, wallet, b)).toEqual({ of: 'dropped' });
     /* RED WHEN: a creation set aside is taken up while the service reads its deploy as not landed. */
-    expect(await keyring.takeUpACreationSetAside('acc_AAAAAAAAAAAA')).toBe(false);
-    await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Other Ltd' }, WALLET, wallet, US);
-    const other = keyring.companiesBeingCreated()[0]!;
+    expect(await creation.takeUpACreationSetAside('acc_AAAAAAAAAAAA')).toBe(false);
+    await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Other Ltd' }, WALLET, wallet, US);
+    const other = creation.companiesBeingCreated()[0]!;
     expect(other).not.toBe(accountId);
     states.standing = { account: ACCOUNT, state: 'finish-owed' };
     /* RED WHEN: taking one up is refused because another is kept, or replaces it. */
-    expect(await keyring.takeUpACreationSetAside(accountId)).toBe(true);
-    expect(keyring.companiesBeingCreated()).toEqual([accountId, other]);
-    expect(keyring.companyNameKeptHere(other)).toBe('Other Ltd');
-    expect(keyring.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
+    expect(await creation.takeUpACreationSetAside(accountId)).toBe(true);
+    expect(creation.companiesBeingCreated()).toEqual([accountId, other]);
+    expect(creation.companyNameKeptHere(other)).toBe('Other Ltd');
+    expect(creation.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
   });
 
   it('SETS ONE CREATION ASIDE WITHOUT TOUCHING THE OTHER, AND READS BACK SAVED KEYS WRITTEN IN THE OLDER SHAPE WITH BOTH', async () => {
     const { states, accountId, wallet, b } = await sentWith(deploying, absentAt(TTL + FIVE));
     await walletCannotRead(wallet, accountId);
-    const other = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Other Ltd' }, WALLET, wallet, US);
+    const other = await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Other Ltd' }, WALLET, wallet, US);
     /* RED WHEN: starting one again sets aside, drops or changes the other creation. */
     expect(await again(accountId, wallet, b)).toEqual({ of: 'dropped' });
-    expect(keyring.companiesBeingCreated()).toEqual([other.accountId]);
-    expect(keyring.companyAwaitingItsSecondPress(other.accountId)).toEqual({ accountId: other.accountId, account: null });
-    expect(keyring.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
-    expect(keyring.companyBeingCreatedLabel(accountId)).toBeNull();
+    expect(creation.companiesBeingCreated()).toEqual([other.accountId]);
+    expect(creation.companyAwaitingItsSecondPress(other.accountId)).toEqual({ accountId: other.accountId, account: null });
+    expect(creation.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
+    expect(creation.companyBeingCreatedLabel(accountId)).toBeNull();
     /* RED WHEN: the change this tab asked for is not carried in its next ask, or the wallet does not make it. */
     await keyring.openKeysWithWallet(WALLET, wallet, US);
-    expect(keyring.companiesBeingCreated()).toEqual([other.accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([other.accountId]);
     /* The saved keys, as a build that kept the one set aside apart wrote them. */
     unsealing.rewrite = (plain) => {
       const k = JSON.parse(plain);
@@ -1087,23 +1103,23 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     };
     await reload(wallet);
     /* RED WHEN: a creation set aside in the older shape is lost when the keys are read, or read as one being finished. */
-    expect(keyring.companiesBeingCreated()).toEqual([other.accountId]);
-    expect(keyring.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
-    expect(keyring.companyNameKeptHere(other.accountId)).toBe('Other Ltd');
+    expect(creation.companiesBeingCreated()).toEqual([other.accountId]);
+    expect(creation.companyNameKeptHere(accountId)).toBe(A_COMPANY.name);
+    expect(creation.companyNameKeptHere(other.accountId)).toBe('Other Ltd');
     states.standing = { account: ACCOUNT, state: 'finish-owed' };
-    expect(await keyring.takeUpACreationSetAside(accountId)).toBe(true);
-    expect(keyring.companiesBeingCreated().sort()).toEqual([accountId, other.accountId].sort());
+    expect(await creation.takeUpACreationSetAside(accountId)).toBe(true);
+    expect(creation.companiesBeingCreated().sort()).toEqual([accountId, other.accountId].sort());
   });
 
   it('NEVER DROPS A SIGNED CREATION BECAUSE ANOTHER ONE WAS STARTED AGAIN: EACH IS READ ON THE CHAIN FOR ITSELF', async () => {
     const { accountId, wallet, b } = await sentWith(deploying, absentAt(TTL + FIVE - 1));
     await walletCannotRead(wallet, accountId);
-    const other = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Other Ltd' }, WALLET, wallet, US);
+    const other = await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Other Ltd' }, WALLET, wallet, US);
     /* RED WHEN: starting the unsent one again clears the sent one with it, or the sent one is dropped without its own chain read. */
     expect(await again(other.accountId, wallet, b)).toEqual({ of: 'dropped' });
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
     expect(await again(accountId, wallet, b)).toEqual({ of: 'may-still-land', minutes: 1 });
-    expect(keyring.companiesBeingCreated()).toEqual([accountId]);
+    expect(creation.companiesBeingCreated()).toEqual([accountId]);
     expect(keyring.seatHeldHere(other.accountId)).not.toBeNull();
   });
 
@@ -1111,7 +1127,7 @@ describe('STARTING AN UNFINISHED CREATION AGAIN SETS IT ASIDE ONLY WHEN THE CHAI
     const { accountId, wallet, b } = await sentWith(deploying, absentAt(TTL + FIVE));
     await walletCannotRead(wallet, accountId);
     /* RED WHEN: starting again a company that is not kept here is taken as done. */
-    await expect(keyring.startAnUnfinishedCreationAgain('acc_AAAAAAAAAAAA', WALLET, b, wallet, US)).rejects.toThrow(/keeps no creation/);
+    await expect(creation.startAnUnfinishedCreationAgain('acc_AAAAAAAAAAAA', WALLET, b, wallet, US)).rejects.toThrow(/keeps no creation/);
     keyring.signedInByAnotherScreen({ user: { id: 'usr_b', email: null, name: 'Sam' }, address: ADDRESS, created: true, session: {} });
     await keyring.openKeysWithWallet(WALLET, new Wallet(), US);
     /* RED WHEN: a person sets aside the creation another person started on the same browser. */

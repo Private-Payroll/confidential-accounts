@@ -2,11 +2,11 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { newInvitationToken } from '../../../../src/core/invitation.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import {
-  InvitationNotMade, InvitationRefused, reissueInvitationHere, SeatMayNotInvite, type InvitationSend, type InvitingCompany,
+  InvitationNotMade, InvitationRefused, reissueInvitationHere, SeatMayNotInvite, type InvitingCompany,
 } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, keptReach, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { proposalsAndSeatsOf } from './proposals-and-seats-read.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { invitingSeatOf } from './invite.js';
@@ -77,13 +77,12 @@ export function reissueInvitationAction(reach: ReissueInvitationReach): ActionDe
           }, r.companyKeys);
           const token = newInvitationToken();
           watchFor(token);
-          const send: InvitationSend = (path, init) => ctx.call(init.method, path, init.body);
           let link: string;
           let name: string;
           try {
             ({ link, name } = await reissueInvitationHere(company, inviting, {
               leaf: intent.fields['leaf']!.toLowerCase() as Hex, proposals, onTheChain,
-            }, ctx.asker.origin, send, { token }));
+            }, ctx.asker.origin, writesOfTheStep(r), { token }));
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof SeatMayNotInvite || e instanceof InvitationNotMade) throw new StepRefused(why('not-made', { says: said(e) }), codeOfError(e));

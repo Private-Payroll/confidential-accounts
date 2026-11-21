@@ -5,7 +5,7 @@ import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-
 import type { AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
 import { NIGHT, StaticAssetRegistry, type Asset } from '../../../../src/core/assets.js';
 import { CHAIN_SAID, DEPOSIT_STEP, type DepositNow, type LastDepositChecked } from '../adapters/deposit.js';
-import type { VaultStanding } from '../adapters/company-records.js';
+import type { VaultStanding } from '../adapters/company-rows.js';
 import { ACT_REFUSAL } from '../adapters/refusals.js';
 import { SessionProvider, type Session } from '../session.js';
 import { VIEWS } from '../pages.js';
@@ -24,6 +24,11 @@ const dp = vi.hoisted(() => ({
   set(now: unknown) { this.now = now; for (const w of [...this.watchers]) w(); },
 }));
 const kr = vi.hoisted(() => ({ asked: [] as unknown[][], next: null as Promise<unknown> | null }));
+/* The panel is shown without the page's frame, so the view the frame would hand it is handed here. */
+vi.mock('../records/company-records.js', async (real) => ({
+  ...(await real<typeof import('../records/company-records.js')>()),
+  useCompanyView: (await import('../adapters/page-view.test-support.js')).useTheViewOfTheTest,
+}));
 vi.mock('../adapters/account-balances.js', async (real) => ({
   ...(await real<typeof import('../adapters/account-balances.js')>()),
   askForAccountBalances: async (...args: unknown[]) => { kr.asked.push(args); return kr.next; },
@@ -297,7 +302,7 @@ describe('the amount', () => {
     const view = await atTheAmount('public');
     await type(view.container, '1.25');
     await click(putButton(view.container));
-    expect(dp.put[0]!.slice(1, 6)).toEqual(['c-1', VAULT, { code: NIGHT, kind: 'public' }, '1.25', 12_000_000n]);
+    expect(dp.put[0]!.slice(1, 6)).toEqual([expect.objectContaining({ company: 'c-1' }), VAULT, { code: NIGHT, kind: 'public' }, '1.25', 12_000_000n]);
   });
 });
 
@@ -621,7 +626,7 @@ describe('how it ended', () => {
       "Your wallet opens first, to open your company's records on this device. Nothing is paid. In your wallet, press Sign my records key.",
     );
     await click(q(view.container, '[data-action=check-last-deposit]'));
-    expect(dp.checks).toEqual([['u1', 'c-1', VAULT]]);
+    expect(dp.checks).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), VAULT]]);
     expect(q(view.container, '[data-check-says]')).not.toBeNull();
     await click(q(view.container, '[data-action=back-to-deposit]'));
     expect(q(view.container, '[data-wallet-window-named]')).toBeNull();
@@ -654,7 +659,7 @@ describe('how it ended', () => {
     dp.checkAnswer = { of: 'checked', deposit: 'still-on-its-way', until: Date.UTC(2026, 9, 23, 12, 0), notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: 'for support', deposited: null, unshown: null, earlier: [] } satisfies LastDepositChecked;
     const view = draw();
     await act(async () => { const b = q(view.container, '[data-action=check-last-deposit]')!; b.click(); b.click(); await Promise.resolve(); await Promise.resolve(); });
-    expect(dp.checks).toEqual([['u1', 'c-1', VAULT]]);
+    expect(dp.checks).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), VAULT]]);
     expect(q(view.container, '[data-check-says]')!.textContent).toContain('has not reached the vault yet');
     expect(q(view.container, '[data-check-says]')!.textContent).toContain('Do not put the same money in again.');
   });

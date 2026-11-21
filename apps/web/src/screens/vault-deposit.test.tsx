@@ -18,6 +18,11 @@ const state = vi.hoisted(() => ({
   /* Who is told when the person's wallet releases a company's key to this tab. */
   released: new Set<(accountId: string) => void>(),
 }));
+/* The page's own view and judges, with only what follows stood in for. */
+
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   watchCompanyKeyReleased: (watch: (accountId: string) => void) => { state.released.add(watch); return () => { state.released.delete(watch); }; },
@@ -33,6 +38,9 @@ vi.mock('../adapters/creation-standing.js', async (real) => ({
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => { state.companyReads += 1; return state.company; },
+}));
+vi.mock('../adapters/company-vaults-read.js', async (real) => ({
+  ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
   readVaultPublicMoney: async () => { state.publicReads += 1; return state.pub; },
   readVaultName: async () => null,
 }));
@@ -159,7 +167,7 @@ describe('the vault page\'s deposit', () => {
     dp.checkGate = new Promise((r) => { answer = r; });
     const c = await draw();
     await act(async () => { button(c, 'check-last-deposit').click(); button(c, 'check-last-deposit').click(); await Promise.resolve(); });
-    expect(dp.checks).toEqual([['u1', 'c-1', VAULT]]);
+    expect(dp.checks).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), VAULT]]);
     expect(button(c, 'check-last-deposit').disabled).toBe(true);
     expect(q(c, `[data-action=check-last-deposit] [data-slot=spinner][aria-label="${EN['deposit.check.waiting']}"]`)).not.toBeNull();
     expect(document.querySelector('[data-panel]')).toBeNull();
@@ -183,7 +191,7 @@ describe('the vault page\'s deposit', () => {
     );
     await act(async () => { fireEvent.click(document.querySelector('[data-panel] [data-action=check-last-deposit]')!); await Promise.resolve(); });
     await untilShown(() => document.querySelector('[data-panel] [data-deposit=checked]'), 'the answer of the check');
-    expect(dp.checks).toEqual([['u1', 'c-1', VAULT]]);
+    expect(dp.checks).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), VAULT]]);
   });
 
   /* RED WHEN: a deposit running for this vault is not shown on the page with its step, there is no way back to the panel from it, Check my last deposit stays pressable while it runs, or the line stays after the deposit is put away. */

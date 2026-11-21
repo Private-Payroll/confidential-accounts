@@ -5,6 +5,7 @@ import { HANDOVER, readHandover, type Handover } from '../adapters/handover-stat
 import { ACTED } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
 import { useSession } from '../session.js';
+import { useCompanyView } from '../records/company-records.js';
 
 /** What is said for each state the company can stand in when no change is owed to sign: what holds now, said plainly. */
 const HOLDS: Record<Exclude<Handover['of'], typeof HANDOVER.changeOwed>, (t: ReturnType<typeof useText>) => string> = {
@@ -29,6 +30,7 @@ const HOLDS: Record<Exclude<Handover['of'], typeof HANDOVER.changeOwed>, (t: Ret
 export function CommitteeChange({ onChanged }: { onChanged?: () => void }) {
   const t = useText();
   const { person, company } = useSession();
+  const view = useCompanyView();
   const [state, setState] = useState<Handover | null>(null);
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -36,14 +38,14 @@ export function CommitteeChange({ onChanged }: { onChanged?: () => void }) {
   const [result, setResult] = useState<Acted | null>(null);
 
   const read = useCallback(async () => {
-    setState(company === null ? null : await readHandover(person.id, company));
-  }, [person.id, company]);
+    setState(company === null || view === null ? null : await readHandover(person.id, view));
+  }, [person.id, company, view]);
   useEffect(() => { void read(); }, [read]);
 
   const sign = async (): Promise<void> => {
-    if (company === null) return;
+    if (company === null || view === null) return;
     setBusy(true); setAsking(false); setResult(null);
-    setResult(await signChange(person.id, company));
+    setResult(await signChange(person.id, view));
     await read();
     setBusy(false);
     onChanged?.();

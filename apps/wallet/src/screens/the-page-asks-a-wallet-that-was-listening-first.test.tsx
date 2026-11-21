@@ -31,6 +31,7 @@ import type { ChannelWindow } from 'midnight-identity/profile/channel';
 import { ApproveEntry } from './approve-entry.js';
 import { SessionProvider } from '../session.js';
 import * as keyring from '../../../../packages/web-shared/src/keyring.js';
+import * as walletAsks from '../../../../packages/web-shared/src/wallet-asks.js';
 import type { Openable, WalletDialog } from '../../../../packages/web-shared/src/wallet-sign-in.js';
 
 const PAGE = 'https://app.payroll.example';
@@ -133,7 +134,7 @@ beforeEach(() => {
   reachedTheWallet = [];
   walletListening = new Promise<void>((heard) => { heardTheWallet = heard; });
   dialogs.length = 0;
-  stopWatching = keyring.onWalletWaiting((d) => { if (d !== null) dialogs.push(d); });
+  stopWatching = walletAsks.onWalletWaiting((d) => { if (d !== null) dialogs.push(d); });
   written = [];
   vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
   console.warn = (line: unknown) => { written.push(String(line)); };

@@ -18,22 +18,29 @@
  * derivation hashes its tag FIRST, so two derivations can only meet by a hash
  * collision. And it computes the keys for real inputs and proves they differ.
  */
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { contractSourceText } from '../../scripts/contract-sources.mjs';
+
 import { pureCircuits } from '../managed/contract/index.js';
 
-const SRC = readFileSync(join(import.meta.dirname, '..', 'src', 'ConfidentialAccount.compact'), 'utf8');
+/* The account's main file and every file it brings in (scripts/contract-sources.mjs). */
+const SRC = contractSourceText(join(import.meta.dirname, '..', '..'), 'contracts/src/ConfidentialAccount.compact');
 const bytes = (n: number) => new Uint8Array(32).fill(n);
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-/** The body of one exported pure circuit, from its signature to the next top-level `}`. */
+/** The body of one exported circuit, from its signature to the brace that closes it, wherever it is indented. */
 const bodyOf = (name: string): string => {
   const at = SRC.indexOf(`export circuit ${name}(`);
   if (at < 0) throw new Error(`the contract has no circuit ${name}`);
-  return SRC.slice(at, SRC.indexOf('\n}\n', at) + 2);
+  let depth = 0;
+  for (let i = SRC.indexOf('{', at); i < SRC.length; i += 1) {
+    if (SRC[i] === '{') depth += 1;
+    if (SRC[i] === '}' && (depth -= 1) === 0) return SRC.slice(at, i + 1);
+  }
+  throw new Error(`${name}'s body is never closed`);
 };
 /** The domain tag a derivation hashes, as the contract spells it. */
 const tagOf = (name: string): string => {

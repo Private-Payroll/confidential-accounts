@@ -30,8 +30,12 @@ import { storedSignerLeaf } from '../../../../src/core/signer-leaf.js';
 import type { PendingSignerPayload } from '../../../../src/core/types.js';
 import { watchFor } from '../keyring/nothing-secret-crosses.js';
 import { heldAt } from './claim-by-address.js';
-import { handOverFor, handOverMarked, type CompanyChain } from './company-reach.js';
+import { handOverFor, handOverMarked } from './hand-over-in-the-wallet.js';
+import { seated } from './holders-moved-here.js';
+import { type CompanyChain } from './company-reach.js';
 import { handedOver } from '../../../../packages/web-shared/src/hand-over.js';
+import type { Answered } from '../../../../packages/web-shared/src/records-source.js';
+import { ActionStopped } from './run.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type StepContext, type Words } from './definition.js';
 import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 import { rightsRecordFor, type RightsRecord } from '../../../../src/core/seat-rights.js';
@@ -100,9 +104,12 @@ const leafTheChainLeft = (held: SavedAccountKeys | undefined, onChain: ReadonlyS
 
 /** The company's directory as the service serves it, for a seat this wallet held there; refused, never read as empty, when it cannot be read. */
 const directoryServed = async (ctx: StepContext, company: string): Promise<readonly unknown[]> => {
-  const got = await ctx.call('GET', `/api/accounts/${company}/directory`);
-  const filings = (got.body as { filings?: unknown } | null)?.filings;
-  return got.status === 200 && Array.isArray(filings) ? filings : refuse('directory-not-read');
+  try {
+    return await ctx.invitations.filings(company);
+  } catch (e) {
+    if (e instanceof ActionStopped) throw e;
+    return refuse('directory-not-read');
+  }
 };
 
 /** The words for an invitation the service says is closed, by the reason it gives: none of them is cured by trying again. */
@@ -119,9 +126,9 @@ interface Tried { readonly signingSecret: Hex; readonly leaf: Hex; readonly leaf
 const namedByTheCompany = async (ctx: StepContext, o: Opened, tried: readonly Tried[]): Promise<ReadonlySet<string>> => {
   const leaves = [...new Set(tried.flatMap((d) => [d.leaf, d.leafAtAll]))];
   const keys = tried.map((d) => signingPublicKeyOf(d.signingSecret).toLowerCase());
-  let answer: Awaited<ReturnType<StepContext['call']>>;
+  let answer: Answered;
   try {
-    answer = await ctx.call('POST', `/api/invites/${o.invitation}/seats-named`, JSON.stringify({ acceptance: o.acceptance, leaves, keys }));
+    answer = await ctx.invitations.seatsNamed(o.invitation, { acceptance: o.acceptance, leaves, keys });
   } catch {
     return refuse('no-slots');
   }
@@ -184,7 +191,7 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
         opened = { offer: j.offer as Opened['offer'], inbox: j.inbox, inviter: p!.invitedBy, label: j.label, account: j.account, invitation, acceptance };
         return opened;
       };
-      const got = await ctx.call('GET', `/api/invites/${invitation}/offer`);
+      const got = await ctx.invitations.offer(invitation);
       const sealed = (got.body as { offer?: Sealed } | null)?.offer;
       // A company that took the invitation back is believed even when a seat for it is kept (and then the words say that seat may be taken); any other closed or unreadable answer resumes from the kept offer.
       if (got.status === 410 && (got.body as { refused?: unknown } | null)?.refused === 'withdrawn') return refuse(fromKept() === null ? 'withdrawn' : 'withdrawn-kept');
@@ -349,14 +356,14 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
               return refuse('not-built', { says: String((e as Error)?.message ?? e) });
             }
             const viaService = async (): Promise<void> => {
-              const sent = await ctx.call('POST', `/api/invites/${o.invitation}/seat`,
-                JSON.stringify({ acceptance: o.acceptance, tx }));
+              const sent = await ctx.invitations.seat(o.invitation, { acceptance: o.acceptance, tx });
               if (sent.status !== 200) {
                 const said = (sent.body as { error?: unknown } | null)?.error;
                 refuse('not-sent', { says: typeof said === 'string' ? said : `the service answered ${sent.status}` });
               }
             };
             const handed = { over: false };
+            ctx.movesWhoHolds([ctx.invitations.seatCall(o.invitation), { circuit: 'seatInvited', contract: String(account) }], seated(s.leaf, Number(threshold)));
             const over = handOverMarked(handOverFor(ctx, reach.chain()), handed);
             try {
               await handedOver(over, {
@@ -394,8 +401,8 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
                 { person, invitationId: o.invitation }),
             };
             /* Asked again after an answer that never came back, the service gives back the id it gave the first time. */
-            const asked = await ctx.call('POST', `/api/invites/${o.invitation}/accept-signer`,
-              JSON.stringify({ acceptance: o.acceptance, waiting: sealToInbox(waiting, o.inbox), leaf: s.leaf }));
+            const asked = await ctx.invitations.acceptSigner(o.invitation,
+              { acceptance: o.acceptance, waiting: sealToInbox(waiting, o.inbox), leaf: s.leaf });
             const id = (asked.body as { id?: unknown } | null)?.id;
             if (asked.status !== 201 || typeof id !== 'string') {
               /* Already asked (the invitation reads used: the request was filed, and may already be admitted) or the

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from '../adapters/page-view.test-support.js';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
@@ -17,18 +18,25 @@ const kr = vi.hoisted(() => ({
   hold: null as Promise<void> | null, company: null as unknown, reads: 0, user: { id: 'u1' } as { id: string } | null,
   told: null as unknown, held: { of: 'unreadable' } as unknown,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
   actOnACompanyInTheWallet: async (intent: Record<string, string>, _origin: string, opts?: { onStep?: (at: { step: number; steps: number }) => void }) => {
     kr.acts.push(intent);
     for (const at of kr.steps) opts?.onStep?.(at);
     if (kr.hold !== null) await kr.hold;
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
 }));
 vi.mock('../adapters/proposal-acts.js', async (real) => {
   const actual = await real<typeof import('../adapters/proposal-acts.js')>();
@@ -293,7 +301,7 @@ describe('one vault\'s approvals', () => {
     kr.company = withVaults(2);
     const { changeThreshold } = await import('../adapters/proposal-acts.js');
     kr.told = null;
-    expect(await changeThreshold('u1', 'c-1', 2, { now: 2, seated: 4 }, undefined, VAULT)).toEqual({ of: 'problem', problem: 'same' });
+    expect(await changeThreshold('u1', aViewOf('c-1'), 2, { now: 2, seated: 4 }, undefined, VAULT)).toEqual({ of: 'problem', problem: 'same' });
     expect(kr.acts).toEqual([]);
     kr.told = { of: 'problem', problem: 'same' };
     await draw(vaultOf());

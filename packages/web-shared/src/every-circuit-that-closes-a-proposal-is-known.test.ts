@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { contractSourceText, contractSources } from '../../../scripts/contract-sources.mjs';
 import { PROPOSAL_CLOSING_CIRCUITS } from './governed-call-builder.js';
 
 /* The history reader binds a seat to an invitation only when the block that closed its proposal holds no other call
@@ -52,7 +53,10 @@ const exportedClosersOf = (compact: string): string[] => {
 
 describe('every circuit of the account that closes a proposal is one the history reader knows', () => {
   it('RED WHEN: a circuit of the account that closes a proposal is missing from what the history reader treats as one', () => {
-    const source = readFileSync(new URL('../../../contracts/src/ConfidentialAccount.compact', import.meta.url), 'utf8');
+    const source = contractSourceText(fileURLToPath(new URL('../../..', import.meta.url)), 'contracts/src/ConfidentialAccount.compact');
+    /* The text read is every file of the list: one module declaration for each file past the main one. */
+    expect(source.match(/^module \w+ \{/gm)?.length ?? 0)
+      .toBe(contractSources(fileURLToPath(new URL('../../..', import.meta.url)), 'contracts/src/ConfidentialAccount.compact').length - 1);
     const exported = exportedClosersOf(source);
     expect(exported).toContain('cancel');
     expect([...PROPOSAL_CLOSING_CIRCUITS].sort()).toEqual(exported);

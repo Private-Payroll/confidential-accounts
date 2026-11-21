@@ -5,6 +5,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext, type Words } from './definition.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
+import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A SPENDING POLICY, AND THE APPROVALS ANY POLICY CHANGE NEEDS, ARE APPROVED AND CARRIED OUT FROM THE WALLET.** One
@@ -38,8 +39,8 @@ vi.mock('../../../../packages/web-shared/src/vault-info-here.js', async (real) =
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-info-here.js')>()),
   vaultInfoHere: async (_doors: unknown, vault: string) => { t.namedFor.push(vault); return t.named; },
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/seats-leaving-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/seats-leaving-here.js')>()),
   seatsUnderARaisedRemovalHere: async (_doors: unknown, _key: unknown, strict?: unknown) => { t.leavingAsked.push(strict); return new Set<string>(); },
 }));
 const CHAIN_ID = 'dd'.repeat(32);
@@ -107,7 +108,7 @@ const intent = (fields: Record<string, string>): ActIntent => ({ name: 'approve-
 let company: { approvals: number; policyBar: number | null; seatBar: number };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
   api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({
@@ -132,7 +133,12 @@ const reachOf = () => ({
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
   const confirmed: Array<readonly Words[]> = [];
-  const ctx = {
+  /* What the step said its send moves: whether it names the carry of prp_1 and no other, and the bar it leaves from one of 1. */
+  const moves: Array<{ carry: boolean; chain: unknown[]; bar: number | null }> = [];
+  const ctx = stepOverItsCall({
+    movesWhoHolds: (sends: readonly object[], move: (h: { policyBar: number | null }) => { policyBar: number | null }) => {
+      moves.push({ carry: sends.some((s) => (s as { proposal?: string }).proposal === 'prp_1'), chain: sends.map((s) => (s as { circuit?: string }).circuit).filter(Boolean), bar: move({ policyBar: 1 }).policyBar });
+    },
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a policy change is sent through its calls, never a bare relay'); },
@@ -145,8 +151,8 @@ const ctxOf = (i: ActIntent) => {
       if (t.stops) throw new ActionStopped('stopped');
     },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
-  return { ctx, told, confirmed };
+  }) as unknown as StepContext;
+  return { ctx, told, confirmed, moves };
 };
 const reach = () => ({
   chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0, secrets: () => ({}) as never,
@@ -178,8 +184,10 @@ beforeEach(() => {
 describe('A SPENDING POLICY ANOTHER SIGNER RAISED IS APPROVED AND CARRIED OUT IN THE WALLET', () => {
   it('a second signer approves it through the one approval, and a step of its own carries it out once the chain counts two', async () => {
     const i = intent(POLICY);
-    const { ctx, told } = ctxOf(i);
+    const { ctx, told, moves } = ctxOf(i);
     await run(i, ctx);
+    /* RED WHEN: carrying the policy out does not say it raises the approvals a policy change needs to its highest band, or says it of another send. */
+    expect(moves).toEqual([{ carry: true, chain: [], bar: 3 }]);
     /* RED WHEN: the approval carries the policy out in the same call, or no step carries it out once the chain counts its bar. */
     expect(handed('spending-policy').map((c) => [c.input.approveOnly, c.input.stopBeforeCarry, c.input.carryOnly]))
       .toEqual([[CHAIN_ID, true, undefined], [CHAIN_ID, undefined, true]]);
@@ -295,8 +303,10 @@ describe('A SPENDING POLICY ANOTHER SIGNER RAISED IS APPROVED AND CARRIED OUT IN
 describe('THE APPROVALS ANY POLICY CHANGE NEEDS ARE APPROVED AND CARRIED OUT IN THE WALLET AT THE CHAIN\'S BAR', () => {
   it('a second signer approves a new bar and carries it out once the chain counts the seat bar', async () => {
     const i = intent({ kind: 'policy-bar', bar: '2' });
-    const { ctx, told } = ctxOf(i);
+    const { ctx, told, moves } = ctxOf(i);
     await run(i, ctx);
+    /* RED WHEN: carrying the bar out does not say it sets the bar to the number shown, or says it of another send. */
+    expect(moves).toEqual([{ carry: true, chain: [], bar: 2 }]);
     /* RED WHEN: the bar is approved or carried out other than as a step each, or for another number than the one shown. */
     expect(handed('policy-bar').map((c) => [c.input.newBar, c.input.seated, c.input.approveOnly, c.input.stopBeforeCarry, c.input.carryOnly]))
       .toEqual([[2, 3, CHAIN_ID, true, undefined], [2, 3, CHAIN_ID, undefined, true]]);

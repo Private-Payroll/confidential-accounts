@@ -177,6 +177,24 @@ export const ACCOUNT_KEYS_FOLDER = 'account';
 /** The folder under `/keys/` the vault circuits' files are vendored into. */
 export const VAULT_KEYS_FOLDER = 'vault';
 
+/**
+ * **WHETHER THIS WALLET HOLDS THE KEY A MERGE IS PROVED WITH**, read from the manifest of keys it serves itself: the
+ * prover and the circuit of the vault's `mergeNotes`, both pinned. A wallet whose keys were vendored before it proved
+ * merges answers no, and a run whose plan merges is then refused before it is charged.
+ */
+export const walletHoldsTheMergeKey = async (fetchFn: typeof fetch = fetch.bind(globalThis), base = '/keys'): Promise<boolean> => {
+  try {
+    const response = await fetchFn(`${base}/manifest.json`);
+    if (!response.ok) return false;
+    const pins = (await response.json()) as { artefacts?: Record<string, unknown> };
+    const held = (name: string): boolean => Object.prototype.hasOwnProperty.call(pins.artefacts ?? {}, `${VAULT_KEYS_FOLDER}/${name}`);
+    return held('mergeNotes.prover') && held('mergeNotes.bzkir');
+  } catch {
+    /* A manifest this wallet cannot fetch or read names no key, so the merge key is not one it holds: said as false. */
+    return false;
+  }
+};
+
 /** What a refused artefact says — one shape, so every failure names the
  * file, the reason, and the remedy in the same breath. */
 class KeyMaterialError extends Error {

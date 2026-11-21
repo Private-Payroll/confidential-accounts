@@ -92,9 +92,6 @@ export interface ProvingCapability {
  */
 export type SendProven = (job: Job, proven: Uint8Array) => Promise<{ txRef: string }>;
 
-/** Where this application's own service takes a transaction proved on a device, spelled once. */
-export const provenPathOf = (accountId: string): string => `/api/accounts/${encodeURIComponent(accountId)}/proven`;
-
 /**
  * A runner that proves on this device and sends through the service.
  *

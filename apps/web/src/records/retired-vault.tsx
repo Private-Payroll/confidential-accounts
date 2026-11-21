@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useText } from 'vaults-ui';
 import { emptyOnChain, ON_CHAIN, readRetiredVaultOnChain, type RetiredVaultOnChain } from '../adapters/retired-vault-on-chain.js';
+import { useCompanyView } from './company-records.js';
 
 /*
  * Whether a retired vault is still shown. A retired vault is listed, with Adopt again, unless the chain itself shows it
@@ -9,16 +10,17 @@ import { emptyOnChain, ON_CHAIN, readRetiredVaultOnChain, type RetiredVaultOnCha
  * retire is never hidden from every signer.
  */
 
-/** What the chain shows a retired vault holding, or null while it is read; a vault that is not retired is never read. */
-export function useRetiredVaultOnChain(company: string, vault: string, retired: boolean): RetiredVaultOnChain | null {
+/** What the chain shows a retired vault holding, read through the page's view of the company, or null while it is read; a vault that is not retired is never read. */
+export function useRetiredVaultOnChain(vault: string, retired: boolean): RetiredVaultOnChain | null {
+  const view = useCompanyView();
   const [read, setRead] = useState<RetiredVaultOnChain | null>(null);
   useEffect(() => {
-    if (!retired) return undefined;
+    if (!retired || view === null) return undefined;
     let alive = true;
     setRead(null);
-    void readRetiredVaultOnChain(company, vault).then((r) => { if (alive) setRead(r); });
+    void readRetiredVaultOnChain(view, vault).then((r) => { if (alive) setRead(r); });
     return () => { alive = false; };
-  }, [company, vault, retired]);
+  }, [view, vault, retired]);
   return read;
 }
 

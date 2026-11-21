@@ -1,4 +1,5 @@
-import type { CompanyRecords, ProposalRow } from '../adapters/company-records.js';
+import type { CompanyRecords } from '../adapters/company-records.js';
+import type { ProposalRow } from '../adapters/company-rows.js';
 import { wasRead } from '../adapters/reads.js';
 
 /*

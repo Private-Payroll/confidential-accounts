@@ -41,6 +41,12 @@ export const chainReadsAnswered = async (d: WorkerDeps, withNetwork: VaultBuilde
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
       return { id: ask.id, ok: true, ask: 'vault-on-chain', read: await readVaultOnChain(d, source, ask.vault, ask.account) };
     }
+    case 'vaults-on-chain': {
+      /* Every vault asked, their states and the account's read together, at the indexer the wallet names. */
+      const { readVaultsOnChain, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      return { id: ask.id, ok: true, ask: 'vaults-on-chain', reads: await readVaultsOnChain(d, source, ask.vaults, ask.account) };
+    }
     case 'chain-at-one-block': {
       /* What a step out of the vault is built on, at one block, from the indexer the wallet names: never the service's. */
       const { readChainAtOneBlock, vaultChainSourceAt } = await import('./vault-on-chain-here.js');

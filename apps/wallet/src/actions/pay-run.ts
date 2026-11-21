@@ -20,17 +20,18 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { assets as theAssets } from '../../../../src/core/assets.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { legChoiceOf, legOf } from '../../../../src/core/run-legs.js';
-import { notEnoughApprovalsYet, nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { notEnoughApprovalsYet } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { LegNotPayable, LegStopped, payAnApprovedLeg, type LegDoors, type LegPaid } from '../../../../packages/web-shared/src/leg-paid-here.js';
 import { legToPayHere, type PaymentsHereDeps } from '../../../../packages/web-shared/src/payments-made-here.js';
 import { ChargeNotYetSeen, RunNotChargedHere } from '../../../../packages/web-shared/src/run-charged-here.js';
 import { keptRunHere, payrollRoundsHere, proposalsListedHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
 import { PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, PaymentStillInFlight } from '../../../../packages/web-shared/src/vault-payment-in-flight.js';
 import { PublicPaymentNotYetSeen } from '../../../../packages/web-shared/src/vault-public-payout.js';
-import { VAULT_KEYS_FOLDER } from '../chain/key-material.js';
-import {
-  companyReachFor, companyRecordsFor, keptReach, paidAmongFor, pureCircuits, type CompanyReach, type Handed,
-} from './company-reach.js';
+import { walletHoldsTheMergeKey } from '../chain/key-material.js';
+import { companyReachFor, keptReach, type CompanyReach } from './company-reach.js';
+import { companyRecordsFor, paidAmongFor, pureCircuits } from './company-records-in-the-wallet.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { payDoorsFor } from './one-off-payment.js';
 import { atTheBar, onTheChain, type ReadCompany } from './proposal-kinds.js';
@@ -56,23 +57,6 @@ export const PAY_RUN_STATE = {
 
 /** Whether the run was charged to its vault's period here. */
 export const PAY_RUN_CHARGE = { charged: 'charged', none: 'none' } as const;
-
-/**
- * **WHETHER THIS WALLET HOLDS THE KEY A MERGE IS PROVED WITH**, read from the manifest of keys it serves itself: the
- * prover and the circuit of the vault's `mergeNotes`, both pinned. A wallet whose keys were vendored before it proved
- * merges answers no, and a run whose plan merges is then refused before it is charged.
- */
-export const walletHoldsTheMergeKey = async (fetchFn: typeof fetch = fetch.bind(globalThis), base = '/keys'): Promise<boolean> => {
-  try {
-    const response = await fetchFn(`${base}/manifest.json`);
-    if (!response.ok) return false;
-    const pins = (await response.json()) as { artefacts?: Record<string, unknown> };
-    const held = (name: string): boolean => Object.prototype.hasOwnProperty.call(pins.artefacts ?? {}, `${VAULT_KEYS_FOLDER}/${name}`);
-    return held('mergeNotes.prover') && held('mergeNotes.bzkir');
-  } catch {
-    return false;
-  }
-};
 
 /** What the check step found, carried to the payment step. */
 interface Paying {

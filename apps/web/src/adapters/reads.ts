@@ -8,6 +8,11 @@
 export const READ = { read: 'read', unreadable: 'unreadable' } as const;
 export type Read<T> = { of: typeof READ.read; value: T } | { of: typeof READ.unreadable };
 
+/** Settle a read on its own. */
+export async function alone<T>(read: () => Promise<T>): Promise<Read<T>> {
+  try { return { of: READ.read, value: await read() }; } catch { return { of: READ.unreadable }; }
+}
+
 /** Whether `read` was read. */
 export const wasRead = <T>(read: Read<T>): read is { of: typeof READ.read; value: T } => read.of === READ.read;
 

@@ -208,6 +208,7 @@ export const builder = (log: string[]): VaultBuilderClient => ({
   /* The vault's secret set by a run raised before any removal the chain counts. */
   secretSetAt: async () => 0,
   vaultOnChain: readOnTheDevice,
+  vaultsOnChain: async (i) => Promise.all(i.vaults.map((vault) => readOnTheDevice({ ...i, vault }))),
   chainAtOneBlock: async (i) => {
     log.push('read the block here');
     const at = await behindAt(i.indexer).payoutState(i.vault);

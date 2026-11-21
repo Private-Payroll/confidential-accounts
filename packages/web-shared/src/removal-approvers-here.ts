@@ -7,7 +7,7 @@
  */
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import { withBandsInForce, type ApproverRoster, type BandInForce } from '../../../src/core/vault-approvers.js';
-import type { GovernanceDoors } from './governed-call-on-device.js';
+import type { GovernanceDoors } from './company-change-on-device.js';
 import { NotOpenedOnThisDevice } from './round-opened-here.js';
 import { bandsInForceHere } from './spending-policy-here.js';
 

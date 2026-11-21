@@ -7,7 +7,7 @@ import { zkConfigOver, runtimeVersionOf } from '../../../../packages/web-shared/
 import { contractPieces } from './contract-pieces.js';
 import ACCOUNT_MANIFEST from '../../../../contracts/managed/compiler/contract-manifest.json' with { type: 'json' };
 import { NETWORK } from '../config.js';
-import { seatsInAccountState } from './company-label-on-chain.js';
+import { seatsInAccountState } from './view-doors.js';
 import { operationsFromContractState } from 'midnight-identity/profile/contract-keys';
 import type { ThisBuildsAccountKeys } from 'midnight-identity/profile/creation-sign';
 

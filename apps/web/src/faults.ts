@@ -22,6 +22,9 @@ export const FAULT = {
   noAccountToReadProposalsFrom: 'web-15-no-account-to-read-proposals-from',
   noIndexerToReadProposalsAt: 'web-16-no-indexer-to-read-proposals-at',
   policyReadReadsNothingElse: 'web-17-policy-read-reads-nothing-else',
+  directoryWithNoKeysHere: 'web-19-directory-with-no-keys-here',
+  readerHoldsNoSeat: 'web-20-reader-holds-no-seat',
+  judgeAskedAnotherCompany: 'web-21-judge-asked-another-company',
 } as const;
 
 export type FaultCode = (typeof FAULT)[keyof typeof FAULT];

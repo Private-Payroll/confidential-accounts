@@ -23,7 +23,7 @@ import {
   answerDigestOf, companyKeyHere, CompanyKeyBeingChanged, CompanyKeyNotBelieved, CompanyKeyNotOpened, keysInTheFilings, removalWaitsHere, rotateTheCompanyKeyHere,
   type RotationDoors, type SealedAnswer,
 } from './company-key-here.js';
-import { removeSignerOnDevice } from './governed-call-on-device.js';
+import { removeSignerOnDevice } from './signer-removed-on-device.js';
 import { keptRunHere } from './run-rebuilt-here.js';
 import type { DirectoryHere } from './vault-page-doors.js';
 import { runEntry, recordKeyOf } from '../../../src/midnight/record-manifest.js';

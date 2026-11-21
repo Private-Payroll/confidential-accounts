@@ -30,11 +30,17 @@ import type { SealedProposal } from '../../../../src/core/types.js';
 import { payKeyRoundOf, type PayKeyPure } from '../../../../src/midnight/pay-key-round.js';
 import { sealPayKeyTo } from '../../../../src/midnight/run-keys.js';
 import type { GovernedCallOrder, OpenedRound, RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import { ApprovalNotOwed, refuseARunALeaverRaisedHere } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import { refuseARunALeaverRaisedHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { believedFilerHere } from '../../../../packages/web-shared/src/round-opened-here.js';
 import { signedStateHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
 import { handedOver } from '../../../../packages/web-shared/src/hand-over.js';
-import { governanceDoorsFor, handOverMarked, pureCircuits, type CompanyReach, type Handed } from './company-reach.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { governanceDoorsFor, type CompanyReach } from './company-reach.js';
+import { AccountNotReadAtOneBlock } from '../chain/view-doors.js';
+import { takenOrThrown } from '../../../../packages/web-shared/src/records-source.js';
+import { handOverMarked, type Handed } from './hand-over-in-the-wallet.js';
+import { pureCircuits } from './company-records-in-the-wallet.js';
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
 import { carryStep, onTheChain, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
@@ -113,11 +119,10 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
   };
 
   /* One call built and proved here with this seat's own material, then handed to the service's creation route, or straight to the chain. */
-  const sent = async (r: CompanyReach, o: PayKeyOpened, order: GovernedCallOrder, handed: Handed): Promise<void> => {
-    const chain = await r.chain.callState(r.account);
-    if (chain === null) {
-      throw Object.assign(new Error('this wallet could not read the company\'s account at one block, so nothing was built or sent.'), { nothingWasSent: true });
-    }
+  const sent = async (ctx: StepContext, r: CompanyReach, o: PayKeyOpened, order: GovernedCallOrder, handed: Handed): Promise<void> => {
+    const chain = await governedCallServiceThrough(r.stepView).callState(r.accountId).catch((e: unknown) => {
+      throw e instanceof AccountNotReadAtOneBlock ? Object.assign(e, { nothingWasSent: true }) : e;
+    });
     const opened = {
       chainId: o.chainId, digest: o.digest, vault: o.noVault, salt: o.salt, summary: PAY_KEY_SUMMARY,
       governance: { kind: 'pay-key', commitment: o.commitment }, half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: ZERO },
@@ -130,9 +135,7 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
       tx, call: { kind: 'account-call', contract: r.account, circuit: order.circuit },
       viaService: async () => {
         handed.over = true;
-        await r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/creation/pay-key`, {
-          method: 'POST', body: JSON.stringify({ call: order.circuit, tx }),
-        });
+        takenOrThrown(await ctx.creation.payKey(r.accountId, { call: order.circuit, tx }));
       },
       after: async () => undefined,
     });
@@ -155,7 +158,7 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
     const o = await openedHere(ctx, r, intent);
     if (o.chainId !== round.chainId.toLowerCase()) throw new StepRefused(why('not-as-held'));
     const wrappingPublicKey = toHex(x25519.getPublicKey(fromHex(String(r.seat.wrappingSecret).toLowerCase()))) as Hex;
-    await sent(r, o, {
+    await sent(ctx, r, o, {
       circuit: 'sealPayKey', wrap: sealPayKeyTo(o.key, wrappingPublicKey), commitment: o.commitment, proposal: o.chainId, proposalSalt: o.salt,
     } as GovernedCallOrder, handed);
     await shown(ctx, r, o.chainId, (s) => s?.held === 'closed');
@@ -182,7 +185,7 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
       const now = await onTheChain(r, o.chainId);
       if (now?.held === 'closed') throw new ApprovalNotOwed('carried-out');
       if (now?.approvedHere === true) throw new ApprovalNotOwed('counted');
-      await sent(r, o, { circuit: 'approve', proposal: o.chainId, of: { governance: governance(o), proposalSalt: o.salt } } as GovernedCallOrder, handed);
+      await sent(ctx, r, o, { circuit: 'approve', proposal: o.chainId, of: { governance: governance(o), proposalSalt: o.salt } } as GovernedCallOrder, handed);
       /* This seat's own approval on the chain, never a count another signer's approval can also raise. */
       await shown(ctx, r, o.chainId, (s) => s?.approvedHere === true || s?.held === 'closed');
     },

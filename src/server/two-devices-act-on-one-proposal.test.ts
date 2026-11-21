@@ -3,7 +3,7 @@
  * MODULE AND THE SERVED ROUTES, AND THE RECORD IS RIGHT AFTERWARDS.**
  *
  * What runs is the page's device module - `sendRaiseFromDevice`, `approveOnDevice`
- * `withdrawOnDevice` and `governedCallServiceFor` - talking over real HTTP to
+ * `withdrawOnDevice` and `governedCallServiceThrough` - talking over real HTTP to
  * this server's raise, approval, standing and withdrawal relays, which take no
  * key, with two signed-in people and two tabs of one person. **Three pieces are
  * doubles, and they are named here**:
@@ -41,6 +41,8 @@ import { TEST_TOKEN } from '../testing/assets.js';
 import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { standingOnChainHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { noOneOffsHere } from '../testing/no-one-offs.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
+import { viewOver } from '../testing/writes-over-a-send.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -71,7 +73,10 @@ const { signedFoundingState } = await import('../core/founding-state.js');
 const { paysCommitmentOf, signProposalFiling } = await import('../core/proposal-filing.js');
 const { paymentChecked } = await import('../core/device-raise.js');
 const { runLegOf } = await import('../core/run-legs.js');
-const device = await import('vaults-web-shared/governed-call-on-device.js');
+const device = {
+  ...(await import('vaults-web-shared/governed-call-on-device.js')), ...(await import('vaults-web-shared/payroll-run-on-device.js')),
+  ...(await import('vaults-web-shared/proposal-approved-on-device.js')), ...(await import('vaults-web-shared/proposal-withdrawn-on-device.js')),
+};
 const { chainReadThroughTheWallet } = await import('vaults-web-shared/spending-policy-here.js');
 const { spendingPolicyKeysOf } = await import('vaults-web-shared/governed-call-builder.js');
 type Hex = import('../core/crypto.js').Hex;
@@ -331,9 +336,9 @@ const apiAs = (who: keyof typeof USERS) => async (path: string, init?: RequestIn
 /** A signer's device: `signingSecret` is its seat's filing secret, whose public key it sends with every relay. */
 const aDevice = (who: keyof typeof USERS, company: { account: string; records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere }, signer: string, signingSecret: string) => {
   const stages: string[] = [];
-  const doors: import('vaults-web-shared/governed-call-on-device.js').RaiseDoors = {
+  const doors: import('vaults-web-shared/payroll-run-on-device.js').RaiseDoors = {
     service: {
-      ...device.governedCallServiceFor(apiAs(who)),
+      ...governedCallServiceThrough(viewOver(apiAs(who), company.account)),
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
     },
     builder: {

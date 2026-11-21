@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SealedAccount } from '../../../src/core/types.js';
+import type { viewingKeyFor } from './keyring.js';
 
 /*
  * A PAGE LOAD READS A COMPANY WITHOUT ASKING THE WALLET. A company that has changed its key has a filing in its directory
@@ -30,13 +31,23 @@ vi.mock('./purpose-wraps.js', async (real) => ({
 const { companyJudges } = await import('./company-judges.js');
 const { CompanyKeyNotOpened } = await import('./company-key-here.js');
 const { RosterNotBelieved } = await import('./roster-here.js');
+const { companyViewFor } = await import('./company-view.js');
+const { serviceSource } = await import('./records-source.js');
 
 const CO = 'acc_changed';
 const sealed = { id: CO, companyLabel: `co_${'a7'.repeat(32)}`, contractAddress: 'b7'.repeat(32), wrappedKeys: [] } as unknown as SealedAccount;
 const rotation = { version: 1, change: { kind: 'rotate', epoch: 1, keyCheck: 'cc'.repeat(32), wraps: [], previous: 'dd', waiting: [] } };
 
-const judges = (open: (keys: (rec: SealedAccount) => Promise<unknown>) => Promise<unknown> = async () => null, filings: readonly unknown[] = [rotation]) => companyJudges({
-  api: async (path: string) => (path.endsWith('/records/grants/read-grants/versions') ? { versions: [] } : { filings }),
+const judges = (open: (keys: (rec: SealedAccount) => Promise<unknown>) => Promise<unknown> = async () => null, filings: readonly unknown[] = [rotation], more: object = {}) => companyJudges({
+  /* A fresh view for each read, so each read asks the service in memory as it stands. */
+  view: () => companyViewFor(serviceSource(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/manifest/newest')) return { versions: JSON.parse(String(init?.body)).records.map(() => 0) };
+    if (path.endsWith('/records/read')) return { records: JSON.parse(String(init?.body)).records.map(() => ({ versions: [] })) };
+    return { filings };
+  }, CO), {
+    holders: async () => ({ seats: [], approvals: 1, adoptedVaults: [], threshold: 1, committee: [], vaultThresholds: [], policyBar: null }) as never,
+    onChain: async () => ({}) as never, builder: { anchorHeads: async () => ({}) as never },
+  }, async () => ({}) as never),
   holders: async () => ({}) as never,
   indexer: async () => null,
   builder: async () => ({}) as never,
@@ -48,6 +59,7 @@ const judges = (open: (keys: (rec: SealedAccount) => Promise<unknown>) => Promis
   openAccount: (_rec: unknown, _h: unknown, _a: unknown, _l: unknown, keys?: (rec: SealedAccount) => Promise<unknown>) => open(keys!) as never,
   seatsAdmittedFor: async () => new Set(),
   noAccount: () => { throw new Error('no account'); },
+  ...more,
 } as never);
 
 beforeEach(() => { t.asked = 0; t.held = null; t.keyDoors.length = 0; t.notOpened = []; g.revokedAt = null; g.asked.length = 0; });
@@ -134,5 +146,68 @@ describe('A COMPANY THAT CANNOT BE OPENED BECAUSE A COPY OF ITS KEY IS NOT OPENE
   it('IS TOLD AS WHAT BROKE WHEN NO COPY IS LEFT UNOPENED', async () => {
     const quiet = judges(async (keys) => { await keys(sealed); throw new Error('the roster is not believed'); });
     await expect(quiet.openedQuietlyHere(sealed)).rejects.toThrow('the roster is not believed');
+  });
+});
+
+describe('A JUDGE ASKED ABOUT ANOTHER ACCOUNT THAN THE ONE ITS VIEW READS IS REFUSED', () => {
+  it('answers who holds the account its view reads, and refuses any other', async () => {
+    let asked: ((company: never, account: never) => Promise<unknown>) | null = null;
+    const ofTheView = { seats: [], approvals: 1, adoptedVaults: [], threshold: 1, committee: [], vaultThresholds: [], policyBar: null, account: sealed.contractAddress };
+    const j = companyJudges({
+      view: () => companyViewFor(serviceSource(async (path: string, init?: RequestInit) => {
+        if (path.endsWith('/manifest/newest')) return { versions: JSON.parse(String(init?.body)).records.map(() => 0) };
+        return { filings: [] };
+      }, CO), { holders: async () => ofTheView as never, onChain: async () => ({}) as never, builder: { anchorHeads: async () => ({}) as never } }, async () => ({}) as never),
+      holders: async () => ({}) as never, indexer: async () => null, builder: async () => ({}) as never,
+      keysFor: () => null, servedKeyFor: () => 'ee'.repeat(32) as never, released: () => null, askReleased: async () => null,
+      treeKept: () => ({}) as never, openAccount: async () => null,
+      seatsAdmittedFor: async (_rec: unknown, holders: typeof asked) => { asked = holders; return new Set(); },
+      noAccount: () => { throw new Error('no account'); },
+    } as never);
+    await j.seatsAdmittedOn(sealed);
+    await expect(asked!(sealed.companyLabel as never, sealed.contractAddress as never)).resolves.toMatchObject({ account: sealed.contractAddress });
+    /* RED WHEN: a judge asked about one account is answered with who holds another, the one its view reads. */
+    await expect(asked!(sealed.companyLabel as never, 'c8'.repeat(32) as never)).rejects.toThrow(/a judge asked about account/u);
+  });
+});
+
+describe('A SEAT AN INVITATION TOOK IS ASKED OF THE CHAIN ONCE FOR A READ OF THE COMPANY, AND AGAIN AFTER ANY WRITE', () => {
+  it('KEEPS THE ANSWER AMONG THE VIEW\'S READS OF THE CHAIN, SO A WRITE OF ANY KIND FORGETS IT', async () => {
+    let asked = 0;
+    const view = companyViewFor(serviceSource(async (path: string, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') !== 'GET' && !(init as { read?: boolean } | undefined)?.read) return { ok: true };
+      if (path.endsWith('/manifest/newest')) return { versions: JSON.parse(String(init?.body)).records.map(() => 0) };
+      if (path.endsWith('/records/read')) return { records: JSON.parse(String(init?.body)).records.map(() => ({ versions: [] })) };
+      return { filings: [] };
+    }, CO), {
+      holders: async () => ({ seats: [], approvals: 1, adoptedVaults: [], threshold: 1, committee: [], vaultThresholds: [], policyBar: null }) as never,
+      onChain: async () => ({}) as never, builder: { anchorHeads: async () => ({}) as never },
+    }, async () => ({}) as never);
+    const j = judges(undefined, undefined, {
+      view: () => view,
+      indexer: async () => ({ indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' }),
+      builder: async () => ({ invitedSeats: async (i: { proposals: readonly string[] }) => { asked += 1; return Object.fromEntries(i.proposals.map((p) => [p, null])); } }),
+    });
+    const read = j.invitedSeatsFor(sealed.companyLabel as never, sealed.contractAddress as never, CO);
+    await read(['p1']);
+    await read(['p1']);
+    expect(asked).toBe(1);
+    await view.write([{ to: 'vault-record', vault: 'v1', record: 'pool', version: 1, body: {} }] as never);
+    await read(['p1']);
+    /* RED WHEN: a proposal read as having taken no seat is still served after a write, so a seat just taken reads as not taken. */
+    expect(asked).toBe(2);
+  });
+});
+
+describe('THE COMPANY KEY SERVED TO A SEAT IS ASKED OF A SEALED ACCOUNT AS IT IS TYPED', () => {
+  it('takes the wrapped keys as wrapped keys, and nothing else', () => {
+    const served: Parameters<typeof companyJudges>[0]['servedKeyFor'] = () => 'ee'.repeat(32) as never;
+    /* RED WHEN: the key is asked of anything with an id, its wrapped keys unchecked, so a wrong shape reaches the unwrapping untyped. */
+    // @ts-expect-error a number is not a key wrapped to a seat
+    expect(served({ id: 'c1', wrappedKeys: [1] })).toBe('ee'.repeat(32));
+    /* RED WHEN: the page's own served key takes anything with an id, its wrapped keys unchecked. */
+    // @ts-expect-error a number is not a key wrapped to a seat
+    const onThePage: Parameters<typeof viewingKeyFor>[0] = { id: 'c1', wrappedKeys: [1] };
+    expect(onThePage.id).toBe('c1');
   });
 });

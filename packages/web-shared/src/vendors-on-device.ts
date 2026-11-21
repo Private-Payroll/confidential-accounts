@@ -30,10 +30,11 @@ import { companyRecordEntry, signedWithItsEntry } from '../../../src/midnight/re
 import type { PayeeParts } from 'midnight-identity/profile/join-code';
 import { judgeIn, kindAsked } from './vault-page-doors.js';
 import { mayFileHere } from './may-file-here.js';
-import { payeeAt } from './invitation-on-device.js';
+import { payeeAt, writtenOrRefused } from './invitation-on-device.js';
+import type { RecordWrite } from './records-source.js';
 import { signingPublicKeyOf } from '../../../src/core/crypto.js';
-import { madeHere, payeeCodeHandedOver, raisingWalletOf, type PeopleDevice } from './people-on-device.js';
-import { answered, at, believedVersionsOf, readVendorsHere, type VendorHere } from './vendors-read-here.js';
+import { madeHere, payeeCodeHandedOver, raisingWalletOf, readForTheAdmission, type PeopleDevice } from './people-on-device.js';
+import { believedVersionsOf, readVendorsHere, type VendorHere } from './vendors-read-here.js';
 
 export { readVendorsHere, readVendorsWithKeys, type VendorHere, type VendorsHere } from './vendors-read-here.js';
 
@@ -45,9 +46,9 @@ export class VendorNotChanged extends Error {
   }
 }
 
-/** The next version of a vendor, sealed and signed here and filed at `path` under `field`, then entered in the company's records; refused first when this seat's role may not file a vendor's entry. */
+/** The next version of a vendor, sealed and signed here and filed by the write `write` makes of it, then entered in the company's records; refused first when this seat's role may not file a vendor's entry. */
 const filedAndEntered = async (
-  d: PeopleDevice, path: string, method: 'POST' | 'PUT', field: 'vendor' | null, vendor: VendorRecord, version: number,
+  d: PeopleDevice, write: (wire: ReturnType<typeof toCompanyWire>) => RecordWrite, vendor: VendorRecord, version: number,
 ): Promise<VendorRecord> => {
   const refused = await mayFileHere(() => d.directory(), signingPublicKeyOf(d.signingSecret), 'vendor');
   if (refused?.why === 'role') throw new VendorNotChanged(refused.says);
@@ -55,7 +56,7 @@ const filedAndEntered = async (
   const sealing = sealingWith(d.company.viewingKey, d.company.keyEpoch);
   const rec = signedWithItsEntry(sealVendor(filed, version, sealing.epoch, sealing.key), d.signingSecret);
   const wire = toCompanyWire(rec);
-  answered(await d.send(path, { method, body: JSON.stringify(field === null ? wire : { [field]: wire }) }), 201);
+  await writtenOrRefused(d.writes, d.company.id, write(wire));
   await d.entered.enter([companyRecordEntry(rec)]);
   return filed;
 };
@@ -71,7 +72,7 @@ export async function admitVendorHere(d: PeopleDevice, here: VendorHere, readOut
   const v = here.vendor;
   if ((v.payeeCode ?? null) !== null) throw new VendorNotChanged(`${v.name} has already been admitted.`);
   if (v.status === 'leaver') throw new VendorNotChanged(`${v.name} is no longer a vendor of this company. Add them again.`);
-  const box = answered(await d.send(at(d, `/vendors/${encodeURIComponent(v.id)}/handover`), { method: 'GET' }), 200).inbox as Invite['handover'];
+  const box = ((await readForTheAdmission(`what ${v.name} handed over`, () => d.view.vendorHandovers([v.id])))[0] as { readonly inbox?: Invite['handover'] } | undefined)?.inbox;
   if (!box) throw new VendorNotChanged(`${v.name} has not handed anything over yet, so there is nothing to admit.`);
   const read = await readVendorsHere(d);
   const versions = await believedVersionsOf(d, v.id, judgeIn(await d.directory(kindAsked('company', 'vendor'))));
@@ -85,7 +86,7 @@ export async function admitVendorHere(d: PeopleDevice, here: VendorHere, readOut
   let handed: Awaited<ReturnType<typeof payeeCodeHandedOver>>;
   try { handed = await payeeCodeHandedOver(d, v, box, readOut, typed); } catch (e) { throw new VendorNotChanged(String((e as Error).message).replace(/ Nothing was filed\.$/u, '')); }
   const { code, claim } = handed;
-  const invites = answered(await d.send(at(d, '/invites'), { method: 'GET' }), 200) as unknown as (Invite & { subjectId?: string })[];
+  const invites = await readForTheAdmission('the company\'s invitations', () => d.view.list('invites')) as (Invite & { subjectId?: string })[];
   const invite = (Array.isArray(invites) ? invites : []).filter((i) => i.subjectId === v.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (invite === undefined) throw new VendorNotChanged(`there is no invitation on record for ${v.name}, so there is no way to tell who set this address. Add them again.`);
   if (typeof invite.revokedAt === 'string') throw new VendorNotChanged(`${v.name}'s invitation was taken back before this was admitted. Add them again if they are still a vendor.`);
@@ -111,7 +112,7 @@ export async function admitVendorHere(d: PeopleDevice, here: VendorHere, readOut
     handedOverBy: wallet, admittedBy: d.signedInAs, admittedAt: new Date().toISOString(),
     ...(claim !== null ? { addressClaim: claim } : {}),
   };
-  return filedAndEntered(d, at(d, `/vendors/${encodeURIComponent(v.id)}/admit`), 'POST', 'vendor', admitted, here.version + 1);
+  return filedAndEntered(d, (wire) => ({ to: 'vendor-admitted', id: v.id, body: { vendor: wire } }), admitted, here.version + 1);
 }
 
 /** What a seat may change about a vendor: their payment terms, their end date (`null` takes it away), or where they stand. */
@@ -160,5 +161,5 @@ export async function changeVendorHere(
     }
     next = { ...next, status: change.status };
   }
-  return filedAndEntered(d, at(d, `/records/vendor/${encodeURIComponent(v.id)}/${here.version + 1}`), 'PUT', null, next, here.version + 1);
+  return filedAndEntered(d, (wire) => ({ to: 'record', kind: 'vendor', id: v.id, version: here.version + 1, body: wire }), next, here.version + 1);
 }

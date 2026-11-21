@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +19,10 @@ const kr = vi.hoisted(() => ({
   named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, calls: 0,
   refusal: null as string | null, asked: [] as unknown[],
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+}));
 vi.mock('./approvers-on-page.js', () => ({
   seatThresholdRefusedOnThePage: async (_company: string, asked: unknown) => { kr.asked.push(asked); return kr.refusal; },
 }));
@@ -26,12 +31,15 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     kr.calls += 1;
     kr.acts.push(intent);
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => kr.named,
 }));
 
 async function load() {
@@ -69,7 +77,7 @@ describe('the ask made from the form', () => {
       expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', role, address: PRIVATE }, NAMED), role).toEqual({ of: 'problem', problem: 'role-reader', field: 'role' });
     }
     kr.calls = 0;
-    expect(await m.sendInvite('u1', 'acc_Company00001', { ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' })).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), { ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' })).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });
     expect(kr.calls).toBe(0);
   });
 
@@ -103,7 +111,7 @@ describe('sending an invitation', () => {
   it('gives back the link and the token of a filed invitation', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
-    const sent = await m.sendInvite('u1', 'acc_Company00001', draft(m));
+    const sent = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m));
     const token = kr.acts[0]!['token']!;
     expect(sent).toEqual({ of: 'done', token, already: false, link: invitationLink(window.location.origin, token as never) });
     expect(invitationIdOf(token as never)).toHaveLength(64);
@@ -113,7 +121,7 @@ describe('sending an invitation', () => {
   it('tells an invitation filed before', async () => {
     const m = await load();
     kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'already-filed' } };
-    expect(await m.sendInvite('u1', 'acc_Company00001', draft(m))).toMatchObject({ of: 'done', already: true });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toMatchObject({ of: 'done', already: true });
   });
 
   /* RED WHEN: a refusal that follows transactions the wallet handed the page (sent, or not confirmed as sent) is told as one that sent nothing, or a refusal that handed over none is told as one that did. */
@@ -121,7 +129,7 @@ describe('sending an invitation', () => {
     const m = await load();
     for (const [relayed, unconfirmed, handedOver] of [[0, 0, false], [1, 0, true], [0, 1, true], [2, 1, true]] as const) {
       kr.ended = { of: 'stopped', step: 3, steps: 4, relayed, unconfirmed, why: 'check-failed', refused: 'act.invite.why.offer-not-read' };
-      expect(await m.sendInvite('u1', 'acc_Company00001', draft(m)), `${relayed}/${unconfirmed}`).toMatchObject({ of: 'stopped', why: 'offer-not-read', handedOver });
+      expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m)), `${relayed}/${unconfirmed}`).toMatchObject({ of: 'stopped', why: 'offer-not-read', handedOver });
     }
   });
 
@@ -135,17 +143,17 @@ describe('sending an invitation', () => {
       ['act.invite.why.filed-not-entered', true, 'filed-not-entered'], ['act.invite.why.offer-not-read', true, 'offer-not-read'],
     ] as const) {
       stop(refused);
-      const sent = await m.sendInvite('u1', 'acc_Company00001', draft(m));
+      const sent = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m));
       expect(sent, why).toMatchObject({ of: 'stopped', why, keeps });
     }
     stop('act.invite.why.raised-not-filed');
-    const raised = await m.sendInvite('u1', 'acc_Company00001', draft(m)) as { link: string | null; token: string };
+    const raised = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m)) as { link: string | null; token: string };
     expect(raised.link).toBe(invitationLink(window.location.origin, raised.token as never));
     stop('act.invite.why.may-be-sent');
-    expect(((await m.sendInvite('u1', 'acc_Company00001', draft(m))) as { link: string | null }).link).toBeNull();
+    expect(((await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))) as { link: string | null }).link).toBeNull();
     for (const key of ['act.invite.why.filed-not-entered', 'act.invite.why.offer-not-read']) {
       stop(key);
-      expect(((await m.sendInvite('u1', 'acc_Company00001', draft(m))) as { link: string | null }).link, key).toBeNull();
+      expect(((await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))) as { link: string | null }).link, key).toBeNull();
     }
   });
 
@@ -154,12 +162,12 @@ describe('sending an invitation', () => {
     const m = await load();
     const kept = 'cd'.repeat(32);
     kr.acts.length = 0; kr.calls = 0; kr.ended = { of: 'done', steps: 1, relayed: 0 };
-    const sent = await m.sendInvite('u1', 'acc_Company00001', draft(m), kept);
+    const sent = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), kept);
     expect(kr.acts[0]!['token']).toBe(kept);
     expect(sent).toMatchObject({ of: 'done', token: kept });
     kr.calls = 0;
-    expect(await m.sendInvite('u1', 'acc_Company00001', draft(m), 'CD'.repeat(32))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
-    expect(await m.sendInvite('u1', 'acc_Company00001', draft(m), 'cd')).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), 'CD'.repeat(32))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), 'cd')).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
   });
 
@@ -168,9 +176,9 @@ describe('sending an invitation', () => {
     const m = await load();
     kr.calls = 0;
     kr.user = null;
-    expect(await m.sendInvite('u1', 'acc_Company00001', draft(m))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' }; kr.named = {};
-    expect(await m.sendInvite('u1', 'acc_Company00001', draft(m))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     kr.named = { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) };
     expect(kr.calls).toBe(0);
   });
@@ -263,7 +271,7 @@ describe('an invitation the wallet would refuse for its threshold is refused her
   it('stops at the threshold field with the check\'s own sentence, and asks the wallet nothing', async () => {
     const m = await load();
     kr.calls = 0; kr.asked.length = 0; kr.refusal = SAID;
-    expect(await m.sendInvite('u1', 'acc_Company00001', signer(m, 3))).toEqual({ of: 'problem', problem: 'threshold-refused', field: 'threshold', says: SAID });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), signer(m, 3))).toEqual({ of: 'problem', problem: 'threshold-refused', field: 'threshold', says: SAID });
     expect(kr.calls).toBe(0);
     expect(kr.asked).toEqual([{ role: 'approver', threshold: 3 }]);
   });
@@ -272,7 +280,7 @@ describe('an invitation the wallet would refuse for its threshold is refused her
   it('sends on to the wallet what the check passes', async () => {
     const m = await load();
     kr.calls = 0; kr.refusal = null; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
-    expect(await m.sendInvite('u1', 'acc_Company00001', signer(m, 3))).toMatchObject({ of: 'done' });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), signer(m, 3))).toMatchObject({ of: 'done' });
     expect(kr.calls).toBe(1);
   });
 
@@ -280,8 +288,8 @@ describe('an invitation the wallet would refuse for its threshold is refused her
   it('asks nothing of the check when no threshold is chosen or the person is not a signer', async () => {
     const m = await load();
     kr.asked.length = 0; kr.refusal = SAID; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
-    expect(await m.sendInvite('u1', 'acc_Company00001', signer(m, null))).toMatchObject({ of: 'done' });
-    expect(await m.sendInvite('u1', 'acc_Company00001', { ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '10', threshold: 2 })).toMatchObject({ of: 'done' });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), signer(m, null))).toMatchObject({ of: 'done' });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), { ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '10', threshold: 2 })).toMatchObject({ of: 'done' });
     expect(kr.asked).toEqual([]);
     kr.refusal = null;
   });

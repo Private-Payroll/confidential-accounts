@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as keyring from './keyring.js';
+import * as transport from './service-transport.js';
 
 /**
  * **A FEE THE SERVICE COULD NOT PAY IS SAID IN PLAIN WORDS, AND ONLY WHEN NOTHING WAS SENT.**
@@ -21,7 +22,7 @@ afterEach(() => { vi.unstubAllGlobals(); keyring.forgetLocally(); });
 
 describe('a refusal that says nothing was sent reaches the page with the reason it can say in plain words', () => {
   const codeOf = async () => {
-    const caught = await keyring.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e) as Error & { code?: unknown };
+    const caught = await transport.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e) as Error & { code?: unknown };
     expect(caught).toBeInstanceOf(Error);
     return caught.code;
   };

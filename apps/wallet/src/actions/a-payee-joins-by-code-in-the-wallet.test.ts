@@ -20,6 +20,7 @@ import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.j
 import { payslipKeyOfThisWallet } from '../screens/join-code-payslip-key.js';
 import { joinByCodeAction } from './join-by-code.js';
 import type { StepContext, Words } from './definition.js';
+import { stepOverItsCall } from './step-views.test-support.js';
 
 /* A person or vendor invited by link, or by a private address, joins from their own wallet: the wallet opens the offer
  * the inviter signed with the link's token, is paid at the private address the inviter typed only if it holds it, or
@@ -95,7 +96,7 @@ const run = async (
   const told: unknown[] = [];
   let held: Keyring = opts.keyring ?? { accounts: {} };
   const i = opts.intent ?? intent(o);
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: ASKER, person: 'usr_a',
     held: { identity, secret, ...(opts.account === undefined ? {} : { account: opts.account }) }, at: { step: 1, steps: 1 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a join sends no transaction'); },
@@ -112,7 +113,7 @@ const run = async (
       open: () => ({ read: () => structuredClone(held) }),
       keep: async (change: (k: Keyring) => Keyring) => { held = change(held); order.push('kept'); },
     },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   const action = joinByCodeAction({ network: NET });
   try {
     for (const s of action.steps(i)) await s.run(ctx);

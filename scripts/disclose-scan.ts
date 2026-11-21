@@ -14,8 +14,8 @@
  * figure opens the file it came from rather than a copy of it. Source-derived
  * and stale-derived are different things, and only the second one is dangerous.
  * (It used to say the gate hashed these sources into a digest. It did, and
- * `T-167` deleted the digest: a list of inputs was a proxy that was wrong three
- * times in one round.)
+ * the digest was deleted: a list of inputs was a proxy that was wrong three
+ * times over.)
  *
  * FOUR THINGS THAT LOOK LIKE DETAIL AND ARE NOT. Each was measured against the
  * two files rather than assumed:
@@ -33,7 +33,7 @@
  *      counting too, not only for the matching.
  *   3. `constructor` IS NOT THE KEYWORD `circuit`, and two real sites live in
  *      one — `:1590` in the account and `:263` in the vault. It was four until
- *      `S35d`; the account's constructor lost both of its threshold argument's
+ *      the account's constructor lost both of its threshold argument's
  *      disclosures with the argument. A scan for `circuit NAME(` alone silently
  *      drops the rest.
  *   4. `Vault.compact:88-126` IS A `contract Acct { … }` INTERFACE BLOCK whose
@@ -51,8 +51,11 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { blank, contractSources } from './contract-sources.mjs';
 
 export type DiscloseSite = {
+  /** The file the site was read from, when the scan read a contract's files (`scanSourceFile`). */
+  readonly file?: string;
   readonly line: number;
   /** The disclosed expression, as written, whitespace collapsed. */
   readonly text: string;
@@ -74,38 +77,7 @@ export type SourceCircuit = {
  * offset and every line number in the result still points at the real file.
  */
 export function blankNonCode(src: string): string {
-  const out = src.split('');
-  let i = 0;
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to && k < out.length; k += 1) if (out[k] !== '\n') out[k] = ' ';
-  };
-  while (i < src.length) {
-    const c = src[i];
-    if (c === '/' && src[i + 1] === '*') {
-      const e = src.indexOf('*/', i + 2);
-      const end = e === -1 ? src.length : e + 2;
-      blank(i, end);
-      i = end;
-      continue;
-    }
-    if (c === '/' && src[i + 1] === '/') {
-      const e = src.indexOf('\n', i);
-      const end = e === -1 ? src.length : e;
-      blank(i, end);
-      i = end;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      const q = c;
-      let j = i + 1;
-      while (j < src.length && src[j] !== q) j += src[j] === '\\' ? 2 : 1;
-      blank(i, Math.min(j + 1, src.length));
-      i = j + 1;
-      continue;
-    }
-    i += 1;
-  }
-  return out.join('');
+  return blank(src, true);
 }
 
 /** The index just past the `}` closing the `{` at `open`, over code with comments blanked. */
@@ -133,8 +105,85 @@ const lineOf = (code: string, at: number): number => code.slice(0, at).split('\n
  * anywhere downstream.
  */
 export function scanSource(text: string): SourceCircuit[] {
-  const code = blankNonCode(text);
-  const bodies: { name: string; exported: boolean; line: number; from: number; to: number }[] = [];
+  return link([{ text }]);
+}
+
+type Body = { name: string; exported: boolean; line: number; from: number; to: number; file: number };
+
+/** Every named body and disclose site across the given files, a helper's sites reaching every circuit that calls it, in any file. */
+function link(files: readonly { readonly text: string; readonly file?: string }[]): SourceCircuit[] {
+  const codes = files.map((f) => blankNonCode(f.text));
+  const bodies: Body[] = [];
+  codes.forEach((code, file) => bodies.push(...bodiesOf(code, file)));
+
+  // Innermost wins, so a nested body's sites are not also its parent's.
+  const owner = (file: number, at: number) =>
+    bodies
+      .filter((b) => b.file === file && at >= b.from && at < b.to)
+      .sort((a, b) => b.from - a.from)[0];
+
+  const own = new Map<string, DiscloseSite[]>();
+  const calls = new Map<string, Set<string>>();
+  for (const b of bodies) {
+    own.set(b.name, []);
+    calls.set(b.name, new Set());
+  }
+
+  const names = new Set(bodies.map((b) => b.name));
+  for (const b of bodies) {
+    const source = codes[b.file];
+    if (source === undefined) continue;
+    const body = source.slice(b.from, b.to);
+    for (const c of body.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+      const callee = c[1];
+      if (callee !== undefined && names.has(callee) && callee !== b.name) calls.get(b.name)?.add(callee);
+    }
+  }
+
+  codes.forEach((code, file) => {
+    const entry = files[file];
+    if (entry === undefined) return;
+    const text = entry.text;
+    for (const hit of code.matchAll(/\bdisclose\s*\(/g)) {
+      const at = hit.index ?? 0;
+      const b = owner(file, at);
+      if (!b) continue;
+      const openParen = at + hit[0].length - 1;
+      let d = 0;
+      let end = openParen;
+      for (let i = openParen; i < code.length; i += 1) {
+        if (code[i] === '(') d += 1;
+        else if (code[i] === ')') { d -= 1; if (d === 0) { end = i; break; } }
+      }
+      const where = entry.file;
+      own.get(b.name)?.push({
+        ...(where === undefined ? {} : { file: where }),
+        line: lineOf(code, at),
+        text: text.slice(openParen + 1, end).replace(/\s+/g, ' ').trim(),
+        via: [],
+      });
+    }
+  });
+
+  return bodies.map((b) => {
+    const seen = new Set<string>([b.name]);
+    const out = [...(own.get(b.name) ?? [])];
+    const step = (name: string, via: string[]) => {
+      for (const next of calls.get(name) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        for (const s of own.get(next) ?? []) out.push({ ...s, via: [...via, next] });
+        step(next, [...via, next]);
+      }
+    };
+    step(b.name, []);
+    return { name: b.name, exported: b.exported, line: b.line, discloses: out, calls: [...(calls.get(b.name) ?? [])] };
+  });
+}
+
+/** The named bodies in one file's blanked code. */
+function bodiesOf(code: string, file: number): Body[] {
+  const bodies: Body[] = [];
 
   const decl = /(export\s+)?\b(circuit|constructor)\b\s*([A-Za-z_][A-Za-z0-9_]*)?\s*\(/g;
   let m: RegExpExecArray | null;
@@ -159,65 +208,13 @@ export function scanSource(text: string): SourceCircuit[] {
     const open = parenEnd + brace;
     const close = braceEnd(code, open);
     if (close === -1) continue;
-    bodies.push({ name, exported: m[1] !== undefined, line: lineOf(code, m.index), from: open, to: close });
+    bodies.push({ name, exported: m[1] !== undefined, line: lineOf(code, m.index), from: open, to: close, file });
     decl.lastIndex = close;
   }
-
-  // Innermost wins, so a nested body's sites are not also its parent's.
-  const owner = (at: number) =>
-    bodies
-      .filter((b) => at >= b.from && at < b.to)
-      .sort((a, b) => b.from - a.from)[0];
-
-  const own = new Map<string, DiscloseSite[]>();
-  const calls = new Map<string, Set<string>>();
-  for (const b of bodies) {
-    own.set(b.name, []);
-    calls.set(b.name, new Set());
-  }
-
-  const names = new Set(bodies.map((b) => b.name));
-  for (const b of bodies) {
-    const body = code.slice(b.from, b.to);
-    for (const c of body.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
-      if (names.has(c[1]) && c[1] !== b.name) calls.get(b.name)?.add(c[1]);
-    }
-  }
-
-  for (const hit of code.matchAll(/\bdisclose\s*\(/g)) {
-    const at = hit.index ?? 0;
-    const b = owner(at);
-    if (!b) continue;
-    const openParen = at + hit[0].length - 1;
-    let d = 0;
-    let end = openParen;
-    for (let i = openParen; i < code.length; i += 1) {
-      if (code[i] === '(') d += 1;
-      else if (code[i] === ')') { d -= 1; if (d === 0) { end = i; break; } }
-    }
-    own.get(b.name)?.push({
-      line: lineOf(code, at),
-      text: text.slice(openParen + 1, end).replace(/\s+/g, ' ').trim(),
-      via: [],
-    });
-  }
-
-  return bodies.map((b) => {
-    const seen = new Set<string>([b.name]);
-    const out = [...(own.get(b.name) ?? [])];
-    const step = (name: string, via: string[]) => {
-      for (const next of calls.get(name) ?? []) {
-        if (seen.has(next)) continue;
-        seen.add(next);
-        for (const s of own.get(next) ?? []) out.push({ ...s, via: [...via, next] });
-        step(next, [...via, next]);
-      }
-    };
-    step(b.name, []);
-    return { name: b.name, exported: b.exported, line: b.line, discloses: out, calls: [...(calls.get(b.name) ?? [])] };
-  });
+  return bodies;
 }
 
+/** A contract read whole: its main file and every file it brings in (`scripts/contract-sources.mjs`), each site naming its file. */
 export function scanSourceFile(root: string, rel: string): SourceCircuit[] {
-  return scanSource(readFileSync(join(root, rel), 'utf8'));
+  return link(contractSources(root, rel).map((file: string) => ({ file, text: readFileSync(join(root, file), 'utf8') })));
 }

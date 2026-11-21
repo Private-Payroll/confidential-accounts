@@ -1,10 +1,9 @@
 import {
   COMMITTEE_CHANGE_REFUSAL, committeeChangeRefusal, signCommitteeChangeOnDevice, type CommitteeChangeView, type CommitteeTarget,
 } from 'vaults-web-shared/committee-change-on-device.js';
-import {
-  api, canOpenCompanies, companyKeysForVaults, holdersFromTheWallet, openKeysWithWallet, signCommitteeChangeFromTheWallet,
-} from 'vaults-web-shared/keyring.js';
-import { companyRoute, SERVICE } from './handover-state.js';
+import { canOpenCompanies, companyKeysForVaults, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
+import { signCommitteeChangeFromTheWallet } from 'vaults-web-shared/wallet-asks.js';
+import type { PageView } from './filing-judge.js';
 import { keyringFor } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -27,6 +26,9 @@ export type Acted = { of: typeof ACTED.done } | { of: typeof ACTED.refused; why:
 
 type Key = { tag: string; value: string };
 
+/** Where a change and its signatures are written through the view, and the two writes of it, sent and never shown. */
+const CHANGE = { to: 'committee-change', signatures: 'signatures', send: 'send' } as const;
+
 const refused = (why: ActRefusal): Acted => ({ of: ACTED.refused, why });
 
 /**
@@ -48,13 +50,16 @@ const committeeKeyFor = async (companyId: string): Promise<Key> => (await compan
  * current committee holds this person's wallet key. Their standing is that key on the account's committee as their own
  * wallet reads it; no seat, roster or vault-key offer is read.
  */
-export async function signChange(personId: string, companyId: string): Promise<Acted> {
+export async function signChange(personId: string, opening: PageView): Promise<Acted> {
+  const companyId = opening.company;
   try {
     const notHere = await signedInHere(personId);
     if (notHere !== null) return refused(notHere);
     /* The page's saved keys are opened so this person's wallet can be asked for its key for the company. */
     if (!canOpenCompanies()) await openKeysWithWallet(ACCOUNT_ORIGIN);
-    const view = async () => await api(companyRoute(companyId, SERVICE.change)) as CommitteeChangeView;
+    /* The change as the service keeps it, read through the opening's view: read once, and again after each write that can move it. */
+    const view = async () => await opening.committeeChange() as CommitteeChangeView;
+    const sent = async (act: typeof CHANGE.signatures | typeof CHANGE.send, body: unknown) => (await opening.write([{ to: CHANGE.to, act, body }]))[0];
     /*
      * The shared step's own check, asked first so that a refusal comes back as
      * a refusal rather than a thrown error; the step asks it again before the
@@ -64,11 +69,12 @@ export async function signChange(personId: string, companyId: string): Promise<A
     const released = await companyKeysForVaults(companyId, ACCOUNT_ORIGIN);
     /*
      * The committee a change may install is the one holding the company's account on the chain, as this person's own
-     * wallet reads it, and never one made from the signers or the roster. No change of the super admins in progress
-     * is read here, so the account's committee is the only target.
+     * wallet reads it afresh at each ask through the opening's view (which also checks nothing it read has moved), and
+     * never one made from the signers or the roster. No change of the super admins in progress is read here, so the
+     * account's committee is the only target.
      */
     const targetNow = async (): Promise<CommitteeTarget> => {
-      const { holders } = await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account });
+      const holders = await opening.stillAsRead();
       return { account: { committee: holders.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: holders.threshold }, inProgress: null };
     };
     const [now, mine, target] = [await view(), released.committeeKey, await targetNow()];
@@ -81,8 +87,8 @@ export async function signChange(personId: string, companyId: string): Promise<A
       walletKey: () => committeeKeyFor(companyId),
       target: targetNow,
       askWallet: (ask) => signCommitteeChangeFromTheWallet(ACCOUNT_ORIGIN, ask),
-      send: async (body) => await api(companyRoute(companyId, SERVICE.signatures), { method: SERVICE.post, body: JSON.stringify(body) }),
-      sendNow: async (update) => await api(companyRoute(companyId, SERVICE.send), { method: SERVICE.post, body: JSON.stringify(update) }),
+      send: async (body) => await sent(CHANGE.signatures, body) as { results: readonly Record<string, unknown>[] },
+      sendNow: async (update) => sent(CHANGE.send, update),
     });
     return { of: ACTED.done };
   } catch (e) {

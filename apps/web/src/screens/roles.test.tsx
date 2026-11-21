@@ -16,9 +16,9 @@ const st = vi.hoisted(() => ({
   read: null as unknown, readAfter: null as unknown, reads: 0, changed: false, keysOpened: 0, gives: [] as unknown[][], aways: [] as unknown[][], approvals: [] as unknown[][],
   gave: null as unknown, away: null as unknown, approved: null as unknown, named: 'not-set-up' as unknown,
 }));
+vi.mock('../adapters/named-before.js', () => ({ namedBefore: async () => st.named }));
 vi.mock('../adapters/grants-here.js', async (real) => ({
   ...(await real<typeof import('../adapters/grants-here.js')>()),
-  namedBefore: async () => st.named,
   readGrants: async () => { st.reads += 1; return st.changed && st.readAfter !== null ? st.readAfter : st.read; },
   giveReadAccess: async (...a: unknown[]) => { st.changed = true; st.gives.push(a); return st.gave; },
   takeAwayReadAccess: async (...a: unknown[]) => { st.changed = true; st.aways.push(a); return st.away; },
@@ -133,7 +133,7 @@ describe('giving and taking away access', () => {
     await type('[data-field="reader-code"]', 'CODE-TEXT');
     await press('[data-role="accountant"]');
     await press('[data-action="give-read"]');
-    expect(st.gives.map((a) => a.slice(0, 3))).toEqual([['u1', 'c-1', { code: 'CODE-TEXT', role: 'accountant' }]]);
+    expect(st.gives.map((a) => a.slice(0, 3))).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), { code: 'CODE-TEXT', role: 'accountant' }]]);
     expect(q('[data-grant-done="in-force"]')!.textContent).toContain(EN['roles.done.in-force']);
   });
 
@@ -167,7 +167,7 @@ describe('giving and taking away access', () => {
     await draw();
     expect(q('[data-take-away-says]')!.textContent).toBe(EN['roles.reader.takeAway.says']);
     await press(`[data-reader="${key(6)}"] [data-action="take-away"]`);
-    expect(st.aways.map((a) => a.slice(0, 3))).toEqual([['u1', 'c-1', key(6)]]);
+    expect(st.aways.map((a) => a.slice(0, 3))).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), key(6)]]);
   });
 
   /* RED WHEN: the readers are not read again after a change went in, so the list shows the old readers. */
@@ -207,7 +207,7 @@ describe('a change waiting for more signers, signed from a second seat', () => {
     await type('[data-field="waiting-code"]', 'CODE-AGAIN');
     expect((q('[data-action="sign-waiting"]') as HTMLButtonElement).disabled).toBe(false);
     await press('[data-action="sign-waiting"]');
-    expect(st.approvals.map((a) => a.slice(0, 3))).toEqual([['u1', 'c-1', { code: 'CODE-AGAIN', role: 'accountant' }]]);
+    expect(st.approvals.map((a) => a.slice(0, 3))).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), { code: 'CODE-AGAIN', role: 'accountant' }]]);
     expect(q('[data-grant-carries="signed"]')!.textContent).toBe(EN['roles.carries.signed']);
     st.approved = { acted: done({ signed: 1 }), carries: 'not-the-waiting-change' };
     await press('[data-action="sign-waiting"]');
@@ -220,7 +220,7 @@ describe('a change waiting for more signers, signed from a second seat', () => {
     await draw();
     expect(q('[data-field="waiting-code"]')).toBeNull();
     await press('[data-action="sign-waiting"]');
-    expect(st.approvals.map((a) => a.slice(0, 3))).toEqual([['u1', 'c-1', { takeAway: key(6) }]]);
+    expect(st.approvals.map((a) => a.slice(0, 3))).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), { takeAway: key(6) }]]);
   });
 
   /* RED WHEN: a waiting change that touches more than one reader can be signed from here by one reader's ask. */

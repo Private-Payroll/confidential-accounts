@@ -6,11 +6,10 @@ import { accountBuilding } from '../chain/account-builder-client.js';
 import { liveCreationChain } from '../chain/creation-chain.js';
 import { liveConstruction } from '../chain/account-as-constructed.js';
 import { builtAccountKeys, builtVerifierKeys } from '../chain/this-builds-account-keys.js';
-import { labelInAccountState } from '../chain/company-label-on-chain.js';
-import { NETWORK, INDEXER_HTTP_URL } from '../config.js';
+import { labelInAccountState, liveCompanyChain } from '../chain/view-doors.js';
+import { NETWORK, INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { giveVaultKeysAction } from './give-vault-keys.js';
 import { createVaultAction } from './create-vault.js';
-import { liveCompanyChain } from '../chain/company-chain.js';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { CompanyChain } from './company-reach.js';
 import { walletVaultBuilder } from '../chain/vault-builder-client.js';
@@ -71,7 +70,7 @@ export const pause = (ms: number, signal: AbortSignal): Promise<void> => new Pro
  */
 export const afterARemoval = (reach: VaultDoorsReach): Pick<RemoveSignerReach, 'afterCarried'> => Object.freeze({
   afterCarried: async (ctx, r, removed) =>
-    toldOf(await vaultSecretsChangedHere(ctx, r, reach, await rotationDoorsIn(r, r.api), 'raise', { leaf: removed.leaf })),
+    toldOf(await vaultSecretsChangedHere(ctx, r, reach, await rotationDoorsIn(r), 'raise', { leaf: removed.leaf })),
 });
 
 /**
@@ -80,8 +79,11 @@ export const afterARemoval = (reach: VaultDoorsReach): Pick<RemoveSignerReach, '
  */
 const ownWallet = (identity: Identity, account: number) => ({ ...ownWalletFrom(liveBalanceDoors(identity, account)), landed: landedOnTheChain() });
 
+/** The indexer this wallet reads the chain through. */
+const WALLET_INDEXER = Object.freeze({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
+
 /** The chain every action reads, with the person's own wallet for a call the act sends straight to it. */
-const companyChain = (): CompanyChain => Object.freeze({ ...liveCompanyChain(), ownWallet });
+const companyChain = (): CompanyChain => Object.freeze({ ...liveCompanyChain(WALLET_INDEXER), ownWallet });
 
 /** What the vault actions read the chain with, build in, and keep a new vault's secret in: this wallet's own. */
 const VAULTS = Object.freeze({
@@ -110,6 +112,28 @@ const INVITING = Object.freeze({
 });
 
 /**
+ * The chain a reader's action reads: the one every action reads, with no way to the person's own wallet, since reading
+ * a company's keys sends nothing and pays nothing.
+ */
+const readingChain = (): CompanyChain => liveCompanyChain(WALLET_INDEXER);
+
+/** What each action was given to reach, by its name, so what an action can reach is read and not remembered. */
+const REACHES: Record<string, unknown> = {};
+const given = <T>(name: ActIntentName, reach: T): T => {
+  REACHES[name] = reach;
+  return reach;
+};
+
+/** What the action of this name was given to reach; undefined for one given nothing. */
+export const reachOf = (name: string): unknown => REACHES[name];
+
+/**
+ * The doors through which an action can spend from the person's own accounts: the wallet that pays a call's fee, the
+ * chain that carries it, and the balance doors that move coins.
+ */
+export const SPENDING_DOORS = Object.freeze({ ownWallet, chain: companyChain, balance: liveBalanceDoors });
+
+/**
  * EVERY ACTION THIS WALLET RUNS, ONE DEFINITION PER ACTION A PAGE MAY NAME.
  *
  * Keyed by the same names the ask's parser accepts, and typed so that this
@@ -117,7 +141,7 @@ const INVITING = Object.freeze({
  * here. An ask naming an action with none is refused before anything is shown.
  */
 export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Object.freeze({
-  'finish-company': finishCompanyAction({
+  'finish-company': finishCompanyAction(given('finish-company', {
     build: accountBuilding(),
     chain: liveCreationChain(),
     ledger: async () => (await import('@midnightntwrk/ledger-v9')) as unknown as CreationLedger,
@@ -136,58 +160,58 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
       ]);
       return newestTimeToLive({ ledger: ledger as never }, [base64.decode(tx)]);
     },
-  }),
-  'give-vault-keys': giveVaultKeysAction(VAULTS),
-  'create-vault': createVaultAction(VAULTS),
-  'private-deposit': privateDepositAction({ ...VAULTS, balance: liveBalanceDoors }),
-  'one-off-payment': oneOffPaymentAction(VAULTS),
-  'claim-by-address': claimByAddressAction({ network: NETWORK }),
-  'join-by-code': joinByCodeAction({ network: NETWORK }),
-  'seat-invited': seatInvitedAction({
+  })),
+  'give-vault-keys': giveVaultKeysAction(given('give-vault-keys', VAULTS)),
+  'create-vault': createVaultAction(given('create-vault', VAULTS)),
+  'private-deposit': privateDepositAction(given('private-deposit', { ...VAULTS, balance: liveBalanceDoors })),
+  'one-off-payment': oneOffPaymentAction(given('one-off-payment', VAULTS)),
+  'claim-by-address': claimByAddressAction(given('claim-by-address', { network: NETWORK })),
+  'join-by-code': joinByCodeAction(given('join-by-code', { network: NETWORK })),
+  'seat-invited': seatInvitedAction(given('seat-invited', {
     chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK,
     commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
     payKeyWrapKeyOf: async () => ((await import('../../../../contracts/managed/contract/index.js')) as unknown as {
       pureCircuits: { payKeyWrapKeyOf(account: Uint8Array, sk: Uint8Array, part: bigint): Uint8Array };
     }).pureCircuits.payKeyWrapKeyOf,
-  }),
-  invite: inviteAction(INVITING),
-  'approve-proposal': approveProposalAction({
+  })),
+  invite: inviteAction(given('invite', INVITING)),
+  'approve-proposal': approveProposalAction(given('approve-proposal', {
     ...VAULTS,
     ...afterARemoval(VAULTS),
     commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
     recovery: RECOVERY,
-  }),
-  'change-threshold': changeThresholdAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
-  'retire-vault': retireVaultAction(VAULTS),
-  'set-spending-policy': setPolicyAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }, 'set-spending-policy'),
-  'set-policy-bar': setPolicyAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }, 'set-policy-bar'),
-  'remove-signer': removeSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause, ...afterARemoval(VAULTS) }),
-  'rotate-vault-secrets': rotateVaultSecretsAction(VAULTS),
-  'raise-run': raiseRunAction(VAULTS),
-  'pay-run': payRunAction(VAULTS),
-  'withdraw-proposal': withdrawProposalAction(VAULTS),
-  recovery: recoveryAction(RECOVERY),
-  'admit-signer': admitSignerAction({
+  })),
+  'change-threshold': changeThresholdAction(given('change-threshold', { chain: VAULTS.chain, builder: VAULTS.builder, pause })),
+  'retire-vault': retireVaultAction(given('retire-vault', VAULTS)),
+  'set-spending-policy': setPolicyAction(given('set-spending-policy', { chain: VAULTS.chain, builder: VAULTS.builder, pause }), 'set-spending-policy'),
+  'set-policy-bar': setPolicyAction(given('set-policy-bar', { chain: VAULTS.chain, builder: VAULTS.builder, pause }), 'set-policy-bar'),
+  'remove-signer': removeSignerAction(given('remove-signer', { chain: VAULTS.chain, builder: VAULTS.builder, pause, ...afterARemoval(VAULTS) })),
+  'rotate-vault-secrets': rotateVaultSecretsAction(given('rotate-vault-secrets', VAULTS)),
+  'raise-run': raiseRunAction(given('raise-run', VAULTS)),
+  'pay-run': payRunAction(given('pay-run', VAULTS)),
+  'withdraw-proposal': withdrawProposalAction(given('withdraw-proposal', VAULTS)),
+  recovery: recoveryAction(given('recovery', RECOVERY)),
+  'admit-signer': admitSignerAction(given('admit-signer', {
     chain: VAULTS.chain, builder: VAULTS.builder, pause,
     commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
-  }),
-  'admit-person': admitPersonAction({ chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK as never }),
-  'change-person': changePersonAction({
+  })),
+  'admit-person': admitPersonAction(given('admit-person', { chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK as never })),
+  'change-person': changePersonAction(given('change-person', {
     chain: VAULTS.chain, builder: VAULTS.builder, now: VAULTS.now, network: NETWORK as never,
     roundIdentity: async () => ((await import('../../../../contracts/managed/contract/index.js')) as unknown as { pureCircuits: RoundIdentity }).pureCircuits,
-  }),
-  'choose-company-service': chooseCompanyServiceAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
-  'grant-read': grantReadAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
-  'set-recovery-window': setRecoveryWindowAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause }),
-  'reader-keys': readerKeysAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
-  'change-role': changeRoleAction({ ...INVITING, ...afterARemoval(VAULTS) }),
+  })),
+  'choose-company-service': chooseCompanyServiceAction(given('choose-company-service', { chain: VAULTS.chain, builder: VAULTS.builder, pause })),
+  'grant-read': grantReadAction(given('grant-read', { chain: VAULTS.chain, builder: VAULTS.builder })),
+  'set-recovery-window': setRecoveryWindowAction(given('set-recovery-window', { chain: VAULTS.chain, builder: VAULTS.builder, pause })),
+  'reader-keys': readerKeysAction(given('reader-keys', { chain: readingChain, builder: VAULTS.builder })),
+  'change-role': changeRoleAction(given('change-role', { ...INVITING, ...afterARemoval(VAULTS) })),
   'drop-role-change': dropRoleChangeAction(),
-  'repair-company-key': repairCompanyKeyAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
-  'withdraw-waiting-signer': withdrawWaitingSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
-  'reissue-invitation': reissueInvitationAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
-  'take-reissue': takeReissueAction({ chain: VAULTS.chain, builder: VAULTS.builder }),
-  'add-signer-by-code': addSignerByCodeAction({ chain: VAULTS.chain, builder: VAULTS.builder, commitments: INVITING.commitments }),
-  'raise-waiting-signer': raiseWaitingSignerAction({ chain: VAULTS.chain, builder: VAULTS.builder, pause, commitments: INVITING.commitments }),
+  'repair-company-key': repairCompanyKeyAction(given('repair-company-key', { chain: VAULTS.chain, builder: VAULTS.builder })),
+  'withdraw-waiting-signer': withdrawWaitingSignerAction(given('withdraw-waiting-signer', { chain: VAULTS.chain, builder: VAULTS.builder })),
+  'reissue-invitation': reissueInvitationAction(given('reissue-invitation', { chain: VAULTS.chain, builder: VAULTS.builder })),
+  'take-reissue': takeReissueAction(given('take-reissue', { chain: VAULTS.chain, builder: VAULTS.builder })),
+  'add-signer-by-code': addSignerByCodeAction(given('add-signer-by-code', { chain: VAULTS.chain, builder: VAULTS.builder, commitments: INVITING.commitments })),
+  'raise-waiting-signer': raiseWaitingSignerAction(given('raise-waiting-signer', { chain: VAULTS.chain, builder: VAULTS.builder, pause, commitments: INVITING.commitments })),
 });
 
 /** The definition of the action with this name, or `null` when this wallet runs none by that name. */

@@ -13,19 +13,23 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { assets as theAssets, formatAmount, type Asset, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import type { GovernanceOnTheWire } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import {
-  ApprovalNotOwed, nothingWasSentBy, seatsUnderARaisedRemovalHere, WithdrawnWhileSent, withCompanyKeys, type GovernedOutcome,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import type { GovernedOutcome } from '../../../../packages/web-shared/src/company-change-on-device.js';
+import { ApprovalNotOwed, WithdrawnWhileSent } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import { seatsUnderARaisedRemovalHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { openTheRoundHere } from '../../../../packages/web-shared/src/round-opened-here.js';
 import {
   approveSpendingPolicyOnDevice, PolicyNotOpenedHere, policyReadHere, setPolicyBarOnDevice, type PolicyGovernanceDoors, type PolicyRead, type PolicySteps,
 } from '../../../../packages/web-shared/src/spending-policy-here.js';
 import { vaultInfoHere, vaultInfoRecordsFor, type VaultInfoRead } from '../../../../packages/web-shared/src/vault-info-here.js';
-import { governanceDoorsFor, type CompanyReach, type Handed } from './company-reach.js';
+import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import { governanceDoorsFor, type CompanyReach } from './company-reach.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { policiesInTheWallet } from './policy-doors-in-the-wallet.js';
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
 import { carryStep, type ApprovalStop, type CarryOut, type ProposalKind, type RoundHere } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
+import { policyBarSet, policySet } from './holders-moved-here.js';
 
 /** What approving a policy or its bar needs beyond the company: how to wait between reads of the chain. */
 export interface PolicyKindsReach {
@@ -76,7 +80,7 @@ const daysOf = (seconds: string): string => {
 export const vaultNameHere = async (r: CompanyReach, vault: string): Promise<VaultInfoRead> => {
   try {
     const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
-    return await vaultInfoHere({ companyKeys: r.companyKeys, records: vaultInfoRecordsFor(r.accountId, null, judge, () => null, r.send) }, vault);
+    return await vaultInfoHere({ companyKeys: r.companyKeys, records: vaultInfoRecordsFor(r.accountId, null, judge, readsJoinedIn(r.stepView)) }, vault);
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     return { state: 'unread', why: said(e), version: null };
@@ -225,6 +229,7 @@ export function spendingPolicyKind(reach: PolicyKindsReach): ProposalKind {
     },
     stateAt: (atItsBar) => (atItsBar ? POLICY_STATE.atItsBar : POLICY_STATE.waiting),
     carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.approve-policy.step.carry' }, carryOut)],
+    carries: (_intent, round) => ({ kind: 'spending-policy', move: policySet(Math.max(...policyReadOf(round).opening.terms.bands.map((b) => Number(b.approvals)))) }),
     why: kindWhy,
   };
   return kind;
@@ -311,6 +316,7 @@ export function policyBarKind(reach: PolicyKindsReach): ProposalKind {
     },
     stateAt: (atItsBar) => (atItsBar ? POLICY_STATE.atItsBar : POLICY_STATE.waiting),
     carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.approve-policy.step.carry' }, carryOut)],
+    carries: (intent) => ({ kind: 'policy-bar', move: policyBarSet(barOf(intent)) }),
     why: kindWhy,
   };
   return kind;

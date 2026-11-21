@@ -6,9 +6,9 @@ import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wi
 import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
 import { purposeKeysAt, type PurposeWrapsHeld } from './purpose-wraps.js';
 import { rosterFilerJudged } from './roster-filer-here.js';
-import { attestedIn, directoryFilingsFrom, directoryHere, type DirectoryHereDeps, type DirectoryRead } from './vault-page-doors.js';
+import { attestedIn, directoryHere, type DirectoryHereDeps, type DirectoryRead } from './vault-page-doors.js';
+import type { CompanyView } from './company-view.js';
 
-type Api = (path: string, init?: RequestInit) => Promise<unknown>;
 type Attested = readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[];
 
 /**
@@ -22,13 +22,13 @@ type Attested = readonly { committeeKey: CommitteeKey; statement: RecordsKeyStat
  * reader is given nothing: it is never read as if the seats had attested what the service says.
  */
 export interface ReaderDirectoryDoors {
-  readonly accountId: string;
+  /**
+   * The reader's one view of the company: its account and directory filings as the service keeps them, every answer
+   * of which is judged here, and who holds the company's account, read off the chain.
+   */
+  readonly view: Pick<CompanyView<AccountHoldersRead>, 'company' | 'account' | 'filings' | 'holders'>;
   readonly label: CompanyLabel;
   readonly account: AccountAddress;
-  /** The company's service, every answer of which is judged here. */
-  readonly api: Api;
-  /** Who holds the company's account, read off the chain. */
-  readonly holders: () => Promise<AccountHoldersRead>;
   /** Each seat opening's leaf, worked out as the chain does. */
   readonly leaves: DirectoryHereDeps['leaves'];
   /** The company's records as their anchor on the chain holds them. */
@@ -41,9 +41,9 @@ export interface ReaderDirectoryDoors {
 
 /** The statements of the roster's believed entries, or none when the roster is not opened or not believed. */
 async function rosterAttestedHere(base: Omit<DirectoryHereDeps, 'attested'>, held: PurposeWrapsHeld, d: ReaderDirectoryDoors): Promise<Attested> {
-  const account = await d.api(`/api/accounts/${encodeURIComponent(d.accountId)}`) as { roster?: SealedCompanyRecord | null } | null;
+  const account = await d.view.account() as { roster?: SealedCompanyRecord | null } | null;
   const roster = account?.roster ?? null;
-  if (roster === null || roster.company !== d.accountId || roster.kind !== 'roster' || roster.id !== ROSTER_ID) return [];
+  if (roster === null || roster.company !== d.view.company || roster.kind !== 'roster' || roster.id !== ROSTER_ID) return [];
   let signers: Signer[];
   try {
     signers = openRoster(roster, purposeKeysAt(held, roster.keyEpoch)).signers;
@@ -54,15 +54,15 @@ async function rosterAttestedHere(base: Omit<DirectoryHereDeps, 'attested'>, hel
   const read = await directoryHere({ ...base, attested: async () => [] }, {
     records: [{ store: 'company', kind: 'roster', id: ROSTER_ID }], founding: roster.version === 1,
   });
-  const judged = rosterFilerJudged({ signers }, read, roster, { accountId: d.accountId, label: d.label, account: d.account, own: null });
+  const judged = rosterFilerJudged({ signers }, read, roster, { accountId: d.view.company, label: d.label, account: d.account, own: null });
   return judged.why === null ? attestedIn({ signers: judged.attesting }) : [];
 }
 
-/** The directory a reader's wallet reads with the keys `held` its grant wraps, for `readerKeysHere`. */
+/** The directory a reader's wallet or page reads with the keys `held` its grant wraps (`readerKeysHere`, the reader's page). */
 export const readerDirectoryFor = (d: ReaderDirectoryDoors) => (held: PurposeWrapsHeld): DirectoryRead => (asked) => {
   const base: Omit<DirectoryHereDeps, 'attested'> = {
-    accountId: d.accountId, label: d.label, viewingKey: held, filings: () => directoryFilingsFrom(d.api, d.accountId),
-    holders: d.holders, leaves: d.leaves, anchored: d.anchored, invitedSeats: d.invitedSeats, proposalIdentity: d.proposalIdentity,
+    accountId: d.view.company, label: d.label, viewingKey: held, filings: () => d.view.filings(),
+    holders: () => d.view.holders(), leaves: d.leaves, anchored: d.anchored, invitedSeats: d.invitedSeats, proposalIdentity: d.proposalIdentity,
   };
   return directoryHere({ ...base, attested: () => rosterAttestedHere(base, held, d) }, asked);
 };

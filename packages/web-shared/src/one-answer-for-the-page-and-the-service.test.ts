@@ -25,10 +25,8 @@ import { deviceVaultHoldings, type ChainNotesView, type DeviceHoldingsDoors } fr
 import { paymentsFitNotes } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver } from './vault-worker-client.js';
-import {
-  sendRaiseFromDevice, sendRetryFromDevice,
-  type GovernedCallService, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire,
-} from './governed-call-on-device.js';
+import type { GovernedCallService } from './governed-call-on-device.js';
+import { sendRaiseFromDevice, sendRetryFromDevice, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire } from './payroll-run-on-device.js';
 import type { OpenedRound } from './governed-call-builder.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';

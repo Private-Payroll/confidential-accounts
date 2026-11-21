@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { grantEntryOf, GRANTS_RECORD } from '../midnight/grants-record.js';
 import { recordKeyOf } from '../midnight/record-manifest.js';
-import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { grantsHere } from 'vaults-web-shared/purpose-wraps.js';
 import { grantsChangeFiledHere, grantsWrappedAgainHere } from 'vaults-web-shared/grants-filed-here.js';
 import {

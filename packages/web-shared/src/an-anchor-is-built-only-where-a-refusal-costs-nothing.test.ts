@@ -16,7 +16,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CompactTypeBytes, CompactTypeMerkleTreeDigest, StateBoundedMerkleTree } from '@midnight-ntwrk/compact-runtime';
-import { anchorServiceFor } from './records-anchored-here.js';
+import { anchorServiceThrough } from './anchored-through-the-view.js';
+import { viewOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import {
@@ -322,12 +324,13 @@ describe('THE HEADS, MADE WITH THE ACCOUNT\'S OWN FUNCTIONS', () => {
   });
 });
 
-describe('THE ANCHOR\'S ROUTES, OVER THIS PAGE\'S OWN SIGN-IN', () => {
+describe('THE ANCHOR\'S ROUTES, THROUGH A VIEW OVER THE SERVICE', () => {
   it('builds the call on the account the call-state route serves and sends the proven anchor to the account\'s proven-call route', async () => {
     const asked: Array<[string, RequestInit | undefined]> = [];
-    const service = anchorServiceFor(async (path, init) => { asked.push([path, init]); return {}; });
-    await service.callState('acct one');
-    await service.sendProven('acct one', 'beef');
+    const view = viewOver(readRoutesOver(async (path, init) => { asked.push([path, init]); return {}; }, { directory: 'empty', newest: 'none-entered' }), 'acct one');
+    await anchorServiceThrough(view).callState('acct one');
+    /* The anchor's send, as each attempt writes it through its own view (`throughTheView`). */
+    await view.current().write([{ to: 'proven', tx: 'beef' }]);
     /* RED WHEN: the anchor reads another account's state, or is sent anywhere but the route that checks a proven call before it reaches the node. */
     expect(asked).toEqual([
       ['/api/accounts/acct%20one/call-state', undefined],

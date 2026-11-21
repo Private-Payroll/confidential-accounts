@@ -18,14 +18,15 @@ import { MemorySealedPoolStore, SealedNotePool, sealPool, type PoolSigner, type 
 import { commitmentForNote, changeAfterSpending } from '../../../src/midnight/vault-recovery.js';
 import { compiledOutputCommitment } from '../../../src/midnight/rebuild-from-records.js';
 import { nonceCircuitsFrom } from '../../../src/midnight/vault-coin-nonces.js';
-import { currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
+import { currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, refileNonceSecret, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
 import { depositNonceAt } from '../../../src/midnight/deposit-nonce.js';
 import { sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { recordsReaderOf } from './deposit-on-device.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
-import { coinsHandedOverHere, coinsToHandOverHere, vaultNotesHere, NOT_SEALED, type NotSealed, type NotesHere, type RebuildDoors } from './vault-notes-here.js';
+import { coinsHandedOverHere, coinsToHandOverHere, unnamedKeptIn, vaultNotesHere, NOT_SEALED, type NotSealed, type NotesHere, type RebuildDoors } from './vault-notes-here.js';
+import { treeKeptInMemory } from './tree-kept-here.js';
 import { coinsFileText, coinsKeptOnThisDevice } from './vault-coins-kept-here.js';
 import { inFlightInMemory, openInFlight } from './in-flight-on-this-device.js';
 
@@ -99,9 +100,12 @@ const aCompany = async (o: { signers?: PoolSigner[]; secretFiled?: boolean } = {
     eventsOf: async () => [],
   } as VaultBuilderClient;
   const signers = async () => o.signers ?? BOTH;
+  /* What this device keeps of the company, the notes looked for and named by no record among it. */
+  const keptHere = treeKeptInMemory();
   const doors = (me: typeof ADA, over: Partial<RebuildDoors> = {}): RebuildDoors => ({
     account: ACCOUNT as never, onChain: async () => ({ holders: { adoptedVaults: [VAULT] } as never }),
-    indexer: async () => INDEXER, builder, me, records: stores, signers, seatHere: async () => ({ role: 'admin', retired: null }), ...over,
+    indexer: async () => INDEXER, builder, me, records: stores, signers, seatHere: async () => ({ role: 'admin', retired: null }),
+    ...unnamedKeptIn({ company: 'acc_notes', stores: keptHere }), ...over,
   });
   const poolOf = (me: typeof ADA) => new SealedNotePool(stores('pool'), { signerId: me.signerId, wrappingSecret: me.wrappingSecret }, signers);
   /* A deposit Ada made: its coin derived from the vault's secret, journalled, and on the chain. */
@@ -181,6 +185,64 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     expect((await c.stores('pool').versions(VAULT)).length).toBe(1);
   });
 
+  it('A NOTE LOOKED FOR IN EVERY VERSION IS LOOKED FOR AGAIN ONCE THE RECORDS IT WAS LOOKED FOR IN HAVE A NEW VERSION', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    c.chain.notes.push('5d'.repeat(32));
+    const walks: number[] = [];
+    const spy = c.doors(ADA);
+    const counted = { ...spy, builder: { ...spy.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+    await vaultNotesHere(counted, VAULT);
+    await vaultNotesHere(counted, VAULT);
+    expect(walks).toEqual([0, 1, 0]);
+    await c.deposited(300n, 3);
+    await vaultNotesHere(counted, VAULT);
+    /* RED WHEN: a note once looked for is never looked for again, though a version filed since may name it. */
+    expect(walks).toEqual([0, 1, 0, 0, 1]);
+  });
+
+  it('A SLOW PASS THAT COULD NOT READ EVERY VERSION KEEPS NOTHING, AND THE NEXT OPEN NAMES THE NOTE AN OLDER VERSION NAMES', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    await c.deposited(500n, 1);
+    /* The journal's newest version no longer names the deposit: only every version does. */
+    await c.stores('deposit-journal').put(VAULT, sealPool(VAULT, { notes: [] } as never, BOTH, 2, 'deposit-journal'));
+    const journal = c.stores('deposit-journal');
+    let failing = 1;
+    const once = Object.assign(Object.create(journal) as SealedPoolStore, {
+      versions: async (v: string) => { if (failing-- > 0) throw new Error('the service answered 503'); return journal.versions(v); },
+    });
+    const walks: number[] = [];
+    const viewer = c.doors(BO, { seatHere: async () => ({ role: 'limited', retired: null }), records: (r: WireRecord) => (r === 'deposit-journal' ? once : c.stores(r)) });
+    const counted = { ...viewer, builder: { ...viewer.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+    const first = await vaultNotesHere(counted, VAULT);
+    expect(first.of !== 'not-read' && first.unexplained).toBe(1);
+    const second = await vaultNotesHere(counted, VAULT);
+    /* RED WHEN: a pass that swallowed a failed read is kept as having looked, so the note is never looked for again on this device. */
+    expect(walks).toEqual([0, 1, 0, 1]);
+    expect(second.of !== 'not-read' && [second.unexplained, second.notes.length]).toEqual([0, 1]);
+  });
+
+  it('A NOTE ONE SIGNER LOOKED FOR IS LOOKED FOR AGAIN BY ANOTHER ON THE SAME DEVICE, AND AGAIN ONCE THE NONCE SECRET HAS A NEW VERSION', async () => {
+    const c = await aCompany();
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    c.chain.notes.push('5e'.repeat(32));
+    const walks: number[] = [];
+    const counted = (me: typeof ADA) => {
+      const d = c.doors(me);
+      return { ...d, builder: { ...d.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+    };
+    await vaultNotesHere(counted(ADA), VAULT);
+    await vaultNotesHere(counted(BO), VAULT);
+    /* RED WHEN: one signer's look is kept for every signer, though versions the first could not open may open for the second. */
+    expect(walks).toEqual([0, 1, 0, 1]);
+    const filed = (await c.stores('nonce-secret').get(VAULT))!;
+    await c.stores('nonce-secret').put(VAULT, refileNonceSecret(filed, VAULT, recordsKeypairFrom(COMPANY_KEY), filed.version + 1));
+    await vaultNotesHere(counted(ADA), VAULT);
+    /* RED WHEN: a new version of the nonce secret, which may hold a secret that names the note, is not looked in. */
+    expect(walks).toEqual([0, 1, 0, 1, 0, 1]);
+  });
+
   it('A READ WITH NOTES BUT NO SPLIT JOURNAL OR COMMITMENT IS NOT READ, NEVER AN EMPTY JOURNAL', async () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
@@ -195,7 +257,7 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
       .rejects.toThrow(/a journal not read is not an empty one/);
   });
 
-  it('A SLOW PASS THAT NAMES SOME NOTES AND FILES NOTHING IS REMEMBERED BY WHAT THE FAST PASS LEFT UNNAMED', async () => {
+  it('A SLOW PASS THAT NAMES SOME NOTES AND FILES NOTHING KEEPS ONLY THE NOTE IT LEFT UNNAMED, AND THE NEXT OPEN STILL HOLDS THE ONES IT NAMED', async () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
     await c.deposited(400n, 1);
@@ -208,9 +270,10 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     /* A limited seat's open finds both deposits, holds them in memory and files nothing. */
     expect(first.of).toBe('not-filed');
     expect(first.of !== 'not-read' && first.notes.length).toBe(2);
-    await vaultNotesHere(counted, VAULT);
-    /* RED WHEN: the memory is stored under the slow pass's unnamed notes, which the next fast pass never matches. */
-    expect(walks).toEqual([0, 1, 0]);
+    const second = await vaultNotesHere(counted, VAULT);
+    /* RED WHEN: a note the slow pass named is kept as one nobody names, so the next open skips the slow pass and drops it. */
+    expect(second.of !== 'not-read' && second.notes.length).toBe(2);
+    expect(walks).toEqual([0, 1, 0, 1]);
     expect((await c.stores('pool').versions(VAULT)).length).toBe(1);
   });
 

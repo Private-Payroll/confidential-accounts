@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { describe, expect, it, vi } from 'vitest';
 import { SEED_ASSETS } from '../../../../src/core/assets.js';
 import { ACT_REFUSAL } from './refusals.js';
@@ -12,18 +13,25 @@ const kr = vi.hoisted(() => ({
   user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
   named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, calls: 0, throws: null as Error | null,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     kr.calls += 1;
     kr.acts.push(intent);
     if (kr.throws !== null) throw kr.throws;
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => kr.named,
 }));
 
 async function load() {
@@ -42,7 +50,7 @@ describe('admitting a person', () => {
   it('asks the wallet to admit exactly the person pressed, with the fingerprint read out', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'admitted' } };
-    expect(await m.admitPerson('u1', COMPANY, { id: 'emp_ana', name: 'Ana', admitBy: 'fingerprint', fingerprint: ` ${FINGERPRINT.toLowerCase().replaceAll('-', ' ')} ` })).toEqual({ of: m.PERSON_ACTED.done, state: 'admitted' });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), { id: 'emp_ana', name: 'Ana', admitBy: 'fingerprint', fingerprint: ` ${FINGERPRINT.toLowerCase().replaceAll('-', ' ')} ` })).toEqual({ of: m.PERSON_ACTED.done, state: 'admitted' });
     expect(kr.acts).toEqual([{
       name: m.PERSON_ACT.admit, record: COMPANY, company: 'label-1', account: 'c0'.repeat(32), kind: 'employee', person: 'emp_ana', personName: 'Ana', fingerprint: FINGERPRINT,
     }]);
@@ -52,7 +60,7 @@ describe('admitting a person', () => {
   it('sends no fingerprint for a person admitted on their wallet\'s signed claim, even if one was typed', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: 'already-admitted' } };
-    expect(await m.admitPerson('u1', COMPANY, { id: 'emp_bo', name: 'Bo', admitBy: 'claim', fingerprint: FINGERPRINT })).toEqual({ of: 'done', state: 'already-admitted' });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), { id: 'emp_bo', name: 'Bo', admitBy: 'claim', fingerprint: FINGERPRINT })).toEqual({ of: 'done', state: 'already-admitted' });
     expect(kr.acts).toEqual([{ name: m.PERSON_ACT.admit, record: COMPANY, company: 'label-1', account: 'c0'.repeat(32), kind: 'employee', person: 'emp_bo', personName: 'Bo' }]);
   });
 
@@ -60,7 +68,7 @@ describe('admitting a person', () => {
   it('asks the wallet for nothing when the fingerprint is missing or is not one, and says which', async () => {
     const m = await load();
     kr.calls = 0;
-    const by = (fingerprint?: string) => m.admitPerson('u1', COMPANY, { id: 'emp_ana', name: 'Ana', admitBy: 'fingerprint', ...(fingerprint === undefined ? {} : { fingerprint }) });
+    const by = (fingerprint?: string) => m.admitPerson('u1', aViewOf(COMPANY), { id: 'emp_ana', name: 'Ana', admitBy: 'fingerprint', ...(fingerprint === undefined ? {} : { fingerprint }) });
     expect(await by()).toEqual({ of: m.PERSON_ACTED.problem, problem: m.PROBLEM.noFingerprint });
     expect(await by('   ')).toEqual({ of: m.PERSON_ACTED.problem, problem: m.PROBLEM.noFingerprint });
     expect(await by('ABCD-EFGH')).toEqual({ of: m.PERSON_ACTED.problem, problem: m.PROBLEM.badFingerprint });
@@ -71,7 +79,7 @@ describe('admitting a person', () => {
   /* RED WHEN: the wallet's stop is lost, a stop that may have filed part of the admission is told as nothing done, or another act's key is taken for this one's. */
   it('gives back the wallet\'s reason, and says which stops may have gone part of the way', async () => {
     const m = await load();
-    const ask = () => m.admitPerson('u1', COMPANY, { id: 'emp_bo', name: 'Bo', admitBy: 'claim' });
+    const ask = () => m.admitPerson('u1', aViewOf(COMPANY), { id: 'emp_bo', name: 'Bo', admitBy: 'claim' });
     for (const [refused, why, partial] of [
       ['act.admit-person.why.not-believed', 'not-believed', false], ['act.admit-person.why.not-found', 'not-found', false], ['act.admit-person.why.not-as-shown', 'not-as-shown', false],
       ['act.admit-person.why.no-fingerprint', 'fingerprint-needed', false], ['act.admit-person.why.fingerprint-not-checked', 'fingerprint-not-needed', false],
@@ -88,7 +96,7 @@ describe('admitting a person', () => {
 });
 
 describe('changing a person', () => {
-  const ask = (m: Awaited<ReturnType<typeof load>>, change: Parameters<Awaited<ReturnType<typeof load>>['changePerson']>[3]) => m.changePerson('u1', COMPANY, ANA, change);
+  const ask = (m: Awaited<ReturnType<typeof load>>, change: Parameters<Awaited<ReturnType<typeof load>>['changePerson']>[3]) => m.changePerson('u1', aViewOf(COMPANY), ANA, change);
   const base = { name: 'change-person', record: COMPANY, company: 'label-1', account: 'c0'.repeat(32), kind: 'employee', person: 'emp_ana', personName: 'Ana' };
 
   /* RED WHEN: a new salary is sent in the entered text instead of the token's smallest unit, in another token than the person's own, or without the day it applies from. */
@@ -119,7 +127,7 @@ describe('changing a person', () => {
   it('asks the wallet for nothing when the person\'s token is not one the app knows', async () => {
     const m = await load();
     kr.calls = 0;
-    expect(await m.changePerson('u1', COMPANY, { ...ANA, asset: 'f0'.repeat(32) }, { kind: m.CHANGE.pay, amount: '5', from: '2027-01-01' })).toEqual({ of: m.PERSON_ACTED.problem, problem: m.PROBLEM.noAsset });
+    expect(await m.changePerson('u1', aViewOf(COMPANY), { ...ANA, asset: 'f0'.repeat(32) }, { kind: m.CHANGE.pay, amount: '5', from: '2027-01-01' })).toEqual({ of: m.PERSON_ACTED.problem, problem: m.PROBLEM.noAsset });
     expect(kr.calls).toBe(0);
   });
 
@@ -182,8 +190,8 @@ describe('admitting a vendor', () => {
   it('asks the wallet to admit the vendor pressed, as a vendor, on a fingerprint or on their claim', async () => {
     const m = await load();
     kr.acts.length = 0; kr.ended = { of: 'done', steps: 4, relayed: 1, outcome: { state: 'admitted' } };
-    expect(await m.admitPerson('u1', COMPANY, { id: 'ven_vee', name: 'Vee', kind: m.PERSON_KIND.vendor, admitBy: 'fingerprint', fingerprint: FINGERPRINT })).toEqual({ of: m.PERSON_ACTED.done, state: 'admitted' });
-    expect(await m.admitPerson('u1', COMPANY, { id: 'ven_wes', name: 'Wes', kind: m.PERSON_KIND.vendor, admitBy: 'claim', fingerprint: FINGERPRINT })).toEqual({ of: 'done', state: 'admitted' });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), { id: 'ven_vee', name: 'Vee', kind: m.PERSON_KIND.vendor, admitBy: 'fingerprint', fingerprint: FINGERPRINT })).toEqual({ of: m.PERSON_ACTED.done, state: 'admitted' });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), { id: 'ven_wes', name: 'Wes', kind: m.PERSON_KIND.vendor, admitBy: 'claim', fingerprint: FINGERPRINT })).toEqual({ of: 'done', state: 'admitted' });
     const base = { name: m.PERSON_ACT.admit, record: COMPANY, company: 'label-1', account: 'c0'.repeat(32), kind: 'vendor' };
     expect(kr.acts).toEqual([{ ...base, person: 'ven_vee', personName: 'Vee', fingerprint: FINGERPRINT }, { ...base, person: 'ven_wes', personName: 'Wes' }]);
   });
@@ -191,7 +199,7 @@ describe('admitting a vendor', () => {
 
 describe('changing a vendor', () => {
   const VEE = { id: 'ven_vee', name: 'Vee' };
-  const ask = (m: Awaited<ReturnType<typeof load>>, change: Parameters<Awaited<ReturnType<typeof load>>['changeVendor']>[3]) => m.changeVendor('u1', COMPANY, VEE, change);
+  const ask = (m: Awaited<ReturnType<typeof load>>, change: Parameters<Awaited<ReturnType<typeof load>>['changeVendor']>[3]) => m.changeVendor('u1', aViewOf(COMPANY), VEE, change);
   const base = { name: 'change-person', record: COMPANY, company: 'label-1', account: 'c0'.repeat(32), kind: 'vendor', person: 'ven_vee', personName: 'Vee' };
 
   /* RED WHEN: monthly terms are sent in the entered text instead of the token's smallest unit, in a token typed as anything but the registry's, or one-off terms carry an amount. */
@@ -249,16 +257,16 @@ describe('before either act reaches the wallet', () => {
     const who = { id: 'emp_bo', name: 'Bo', admitBy: 'claim' } as const;
     const change = { kind: m.CHANGE.endDate, day: null } as const;
     kr.user = null;
-    expect(await m.admitPerson('u1', COMPANY, who)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
-    expect(await m.changePerson('u1', COMPANY, ANA, change)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), who)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.changePerson('u1', aViewOf(COMPANY), ANA, change)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' }; kr.named = {};
-    expect(await m.admitPerson('u1', COMPANY, who)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
-    expect(await m.changePerson('u1', COMPANY, ANA, change)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), who)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.changePerson('u1', aViewOf(COMPANY), ANA, change)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.calls).toBe(0);
     kr.named = { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) };
     kr.throws = new TypeError('fetch failed');
-    expect(await m.admitPerson('u1', COMPANY, who)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
-    expect(await m.changePerson('u1', COMPANY, ANA, change)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), who)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
+    expect(await m.changePerson('u1', aViewOf(COMPANY), ANA, change)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
     kr.throws = null;
   });
 
@@ -269,8 +277,8 @@ describe('before either act reaches the wallet', () => {
     vi.doMock('./session.js', async (real) => ({ ...(await real<typeof import('./session.js')>()), ACCOUNT_ORIGIN: '' }));
     kr.calls = 0;
     const m = await import('./person-acts.js');
-    expect(await m.admitPerson('u1', COMPANY, { id: 'emp_bo', name: 'Bo', admitBy: 'claim' })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
-    expect(await m.changePerson('u1', COMPANY, ANA, { kind: m.CHANGE.endDate, day: null })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
+    expect(await m.admitPerson('u1', aViewOf(COMPANY), { id: 'emp_bo', name: 'Bo', admitBy: 'claim' })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
+    expect(await m.changePerson('u1', aViewOf(COMPANY), ANA, { kind: m.CHANGE.endDate, day: null })).toEqual({ of: 'refused', why: ACT_REFUSAL.notSetUp });
     expect(kr.calls).toBe(0);
     vi.doUnmock('./session.js');
   });
@@ -282,10 +290,10 @@ describe('a stop after the wallet handed over transactions', () => {
     const m = await load();
     for (const [relayed, unconfirmed, handedOver] of [[0, 0, false], [1, 0, true], [0, 1, true], [2, 1, true]] as const) {
       kr.ended = { ...stopped('act.admit-person.why.not-found'), relayed, unconfirmed };
-      expect(await m.admitPerson('u1', COMPANY, { id: 'emp_bo', name: 'Bo', admitBy: 'claim' }), `admit ${relayed}/${unconfirmed}`)
+      expect(await m.admitPerson('u1', aViewOf(COMPANY), { id: 'emp_bo', name: 'Bo', admitBy: 'claim' }), `admit ${relayed}/${unconfirmed}`)
         .toEqual({ of: m.PERSON_ACTED.stopped, act: m.PERSON_ACT.admit, why: 'not-found', partial: false, handedOver });
       kr.ended = { ...stopped('act.change-person.why.date-raised'), relayed, unconfirmed };
-      expect(await m.changePerson('u1', COMPANY, ANA, { kind: m.CHANGE.endDate, day: null }), `change ${relayed}/${unconfirmed}`)
+      expect(await m.changePerson('u1', aViewOf(COMPANY), ANA, { kind: m.CHANGE.endDate, day: null }), `change ${relayed}/${unconfirmed}`)
         .toEqual({ of: m.PERSON_ACTED.stopped, act: m.PERSON_ACT.change, why: 'date-raised', partial: false, handedOver });
     }
   });

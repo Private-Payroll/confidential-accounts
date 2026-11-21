@@ -13,6 +13,10 @@ import { ENGLISH } from '../english.test-support.js';
  */
 
 vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => {
   const keyring = await real<typeof import('vaults-web-shared/keyring.js')>();
   return {
@@ -20,12 +24,15 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => {
     currentUser: () => ({ id: 'u1' }),
     resumeSession: async () => ({ id: 'u1' }),
     canOpenCompanies: () => true,
-    companyBeingCreated: () => null,
-    companyBeingCreatedLabel: () => null,
-    companyAwaitingItsSecondPress: () => null,
-    companyCreationStanding: async () => ({ account: null, state: 'deploy-sent' }),
   };
 });
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
+  companyBeingCreated: () => null,
+  companyBeingCreatedLabel: () => null,
+  companyAwaitingItsSecondPress: () => null,
+  companyCreationStanding: async () => ({ account: null, state: 'deploy-sent' }),
+}));
 vi.mock('../adapters/vault-builder.js', () => ({ theCreationBuilder: async () => null }));
 /* The step drawn while the wallet's action runs: each look says it waits on the account's deploy. */
 vi.mock('../adapters/finish-company.js', async (real) => ({

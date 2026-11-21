@@ -10,6 +10,7 @@ import { keysReadForThePage } from './read-for-the-page.js';
 import { refuseIfItCarriesASecret } from './nothing-secret-crosses.js';
 import type { KeyringMark, KeyringMarks } from './held-keyring.js';
 import * as keyring from '../../../../packages/web-shared/src/keyring.js';
+import * as creation from '../../../../packages/web-shared/src/company-creation.js';
 import type { Openable } from '../../../../packages/web-shared/src/wallet-sign-in.js';
 import { MemoryStore } from '../../../../src/core/store.js';
 import { MemoryCompanyRecordStore } from '../../../../src/server/company-records-route.js';
@@ -115,7 +116,7 @@ describe('A COMPANY CREATED FROM THE PAGE', () => {
     const service = theService();
     keyring.signedInByAnotherScreen({ user: PERSON, address: ADDRESS, created: true, session: {} });
 
-    const started = await keyring.startCompanyHeldFromTheStart(
+    const started = await creation.startCompanyHeldFromTheStart(
       { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1 }, WALLET, new WalletAsItAnswers(), PAGE,
     );
 

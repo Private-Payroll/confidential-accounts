@@ -6,7 +6,7 @@ import type { FromTheChainDoors } from './governance-from-the-chain.js';
 /** How long a call sent is waited for on the chain before it is said not to have landed: two minutes, about twenty blocks. */
 export const LANDED_WITHIN_MS = 2 * 60 * 1000;
 /** How often the chain is read while a call sent is waited for. */
-const LANDED_EVERY_MS = 5 * 1000;
+export const LANDED_EVERY_MS = 5 * 1000;
 
 /**
  * **WHAT THE CHAIN SHOWS OF A CALL SENT, WAITED FOR**: `went` read at the

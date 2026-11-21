@@ -11,7 +11,7 @@ import { OPENED, READ } from '../adapters/reads.js';
 import { ActRefused } from '../act-refused.js';
 import { PayField, TermsChoice } from '../fields/form-fields.js';
 import { useCalendarDay } from '../records/parts.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { useSession } from '../session.js';
 import { PAGE } from '../pages.js';
 import { PageLink } from '../router.js';
@@ -149,7 +149,7 @@ function InviteOpener({ kinds, fixed, onInvited }: { kinds: readonly InviteKind[
 const atAddressOf = (d: InviteDraft): boolean => d.kind === INVITE_KIND.signer || ((d.kind === INVITE_KIND.employee || d.kind === INVITE_KIND.vendor) && d.way === INVITE_WAY.address);
 
 function InviteForm({ kinds, onInvited, onHandedOver, onLeave }: { kinds: readonly InviteKind[]; onInvited: () => void; onHandedOver: () => void; onLeave?: () => void }) {
-  const t = useText();
+  const t = useText(), view = useCompanyView();
   const whySays = useWhySays();
   const kindSays = useKindSays();
   const classSays = useClassSays();
@@ -186,10 +186,9 @@ function InviteForm({ kinds, onInvited, onHandedOver, onLeave }: { kinds: readon
   useEffect(() => { if (wrong !== null) document.getElementById(idOfField[wrong.field] ?? '')?.focus(); }, [wrong]);
 
   const send = async (): Promise<void> => {
-    if (company === null || busy) return;
-    setWrong(null); setStopped(null); setRefused(null);
-    setPhase({ of: FORM.busy, step: 0, steps: 0 });
-    const ended = await sendInvite(person.id, company, draft, token, (step, steps) => setPhase({ of: FORM.busy, step, steps }), seated);
+    if (view === null || busy) return;
+    setWrong(null); setStopped(null); setRefused(null); setPhase({ of: FORM.busy, step: 0, steps: 0 });
+    const ended = await sendInvite(person.id, view, draft, token, (step, steps) => setPhase({ of: FORM.busy, step, steps }), seated);
     if (ended.of === INVITED.done) {
       setToken(undefined);
       setPhase({ of: FORM.sent, link: ended.link, already: ended.already, draft });

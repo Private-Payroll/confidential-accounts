@@ -35,11 +35,15 @@ import { COMPANY_RECORD_KINDS, WIRE_RECORDS } from '../../../src/midnight/sealed
 import type { RetirementTerms } from '../../../src/core/proposal-filing.js';
 import type { KeptDirectoryChange } from './tree-kept-here.js';
 import type { GovernedCallOrder, OpenedRound, RoundOnChain } from './governed-call-builder.js';
-import {
-  approveOnDevice, governOnDevice, leavingBoundariesHere, LeavingNotRead, RemovalRaisedAgain, removeSignerOnDevice, RetirementNotYetSigned, seatsLeavingHere,
-  type RemovalDoors, type RemovalOutcome, type RetirementSignaturesKept, type RoundOnThePage,
-} from './governed-call-on-device.js';
-import * as onDevice from './governed-call-on-device.js';
+import type { RoundOnThePage } from './governed-call-on-device.js';
+import { governOnDevice } from './company-change-on-device.js';
+import { approveOnDevice } from './proposal-approved-on-device.js';
+import { RetirementNotYetSigned, type RetirementSignaturesKept } from './retirement-signed-here.js';
+import { leavingBoundariesHere, LeavingNotRead, seatsLeavingHere } from './seats-leaving-here.js';
+import { RemovalRaisedAgain, removeSignerOnDevice, type RemovalDoors, type RemovalOutcome } from './signer-removed-on-device.js';
+import * as seatsLeaving from './seats-leaving-here.js';
+import * as retirementSigned from './retirement-signed-here.js';
+const onDevice = { ...seatsLeaving, ...retirementSigned };
 import { signProposalFiling } from '../../../src/core/proposal-filing.js';
 import { setPolicyBarOnDevice } from './spending-policy-here.js';
 import { chargeTheRunHere } from './run-charged-here.js';
@@ -863,7 +867,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     const co = aCompany();
     await co.deviceOf(ADA).remove(BO);
     co.approvedOnTheChain();
-    const { changeThresholdOnDevice } = await import('./governed-call-on-device.js');
+    const { changeThresholdOnDevice } = await import('./company-change-on-device.js');
     /* RED WHEN: the account's threshold is raised past the bar while a removal is approved, taking back the approvals it has. */
     await expect(changeThresholdOnDevice(co.deviceOf(CY).doors, { viewingKey: KEY, newThreshold: 3, seated: 3 })).rejects.toThrow(/while a removal of a signer is approved/u);
     /* The control: a threshold at the bar waits for nothing. */
@@ -896,7 +900,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
   it('A SEAT RETIRED IN THE DIRECTORY THAT THE CHAIN STILL HOLDS IS A REMOVAL UNDER WAY, WITH NO REMOVAL RAISED', async () => {
     const co = aCompany();
     co.dir = { ...co.dir, seats: co.dir.seats.map((x) => (x.seat === BO.seat ? { ...x, retired: { 'spending-policy:pol_1': 1 } } : x)) };
-    const { changeThresholdOnDevice } = await import('./governed-call-on-device.js');
+    const { changeThresholdOnDevice } = await import('./company-change-on-device.js');
     /* RED WHEN: a retired seat the chain still holds is not read as a removal under way once its proposal is gone. */
     await expect(changeThresholdOnDevice(co.deviceOf(CY).doors, { viewingKey: KEY, newThreshold: 3, seated: 3 }))
       .rejects.toThrow(/while a signer's seat is retired in the company's directory and the chain still holds it/u);
@@ -915,7 +919,7 @@ describe('A SIGNER REMOVED, FROM EACH SIGNER\'S OWN DEVICE', () => {
     expect([...(await leavingBoundariesHere(cy, KEY)).keys()]).toEqual([]);
     /* RED WHEN: a policy filed by a seat a removal the chain never held is about is refused as a leaving seat's. */
     expect([...(await seatsLeavingHere(cy, KEY))]).toEqual([]);
-    const { changeThresholdOnDevice } = await import('./governed-call-on-device.js');
+    const { changeThresholdOnDevice } = await import('./company-change-on-device.js');
     /* RED WHEN: a removal the chain never held holds a rise of the bar up (here the rise is raised, and the test's chain shows nothing more). */
     const rise = await changeThresholdOnDevice(cy, { viewingKey: KEY, newThreshold: 3, seated: 3 }).catch((e: unknown) => e);
     expect(rise instanceof Error ? rise.message : '').not.toMatch(/while a removal of a signer is (raised|approved)/u);
@@ -952,7 +956,7 @@ describe('A REMOVAL FREEZES NOTHING UNTIL IT IS APPROVED', () => {
     /* RED WHEN: a staying device does not believe what the leaver filed while their removal waits for its approvals. */
     expect(judgeIn({ ...here, records: { ...here.records, leaving: await leavingBoundariesHere(cy.doors, KEY) } })(
       BO.signing.publicKey, 'spending-policy', 'spending-policy:pol_1', policyRead(2))).toBeNull();
-    const { changeThresholdOnDevice } = await import('./governed-call-on-device.js');
+    const { changeThresholdOnDevice } = await import('./company-change-on-device.js');
     /* RED WHEN: a removal waiting for its approvals holds a rise of the bar up. */
     const rise = await changeThresholdOnDevice(cy.doors, { viewingKey: KEY, newThreshold: 3, seated: 3 }).catch((e: unknown) => e);
     expect(rise instanceof Error ? rise.message : '').not.toMatch(/while a removal of a signer/u);
@@ -1526,7 +1530,8 @@ describe('A REMOVAL IS RAISED OVER A RECENT HEAD', () => {
 
 describe('NOTHING IN THE REMOVAL READS THE SUPER ADMINS', () => {
   it('THE REMOVAL\'S CODE NAMES NO COMMITTEE AND NO SUPER ADMIN', () => {
-    const source = readFileSync(new URL('./governed-call-on-device.ts', import.meta.url), 'utf8');
+    const source = ['./signer-removed-on-device.ts', './retirement-signed-here.ts', './seats-leaving-here.ts']
+      .map((file) => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     const removal = source.slice(source.indexOf('/* ── A SIGNER REMOVED, FROM THIS DEVICE'));
     expect(removal.length).toBeGreaterThan(1000);
     /* RED WHEN: a check, rule or refusal of a signer's removal reads the account's committee or the super admin role. */
@@ -1676,7 +1681,7 @@ describe('A PROPOSAL THIS DEVICE CANNOT OPEN IS NAMED WITH THE SEAT THAT RAISED 
 
 describe('A REMOVAL OF A SEAT WITHDRAWN BEFORE IS FOUND, SO THE PERSON RAISING IT AGAIN IS TOLD', () => {
   it('a removal the chain closed by a withdrawal is listed for its seat; an open one, or one of another seat, is not', async () => {
-    const { removalsOpenHere } = await import('./governed-call-on-device.js');
+    const { removalsOpenHere } = await import('./seats-leaving-here.js');
     const withdrawnOf = async (doors: Parameters<typeof removalsOpenHere>[0], leaf: string) =>
       (await removalsOpenHere(doors, KEY, false)).filter((x) => x.leaf === leaf && x.status === 'cancelled').map((x) => x.id);
     const co = aCompany({ bar: 2 });

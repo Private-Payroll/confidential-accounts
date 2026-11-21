@@ -4,6 +4,7 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { callOf, NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A NEW VAULT'S ADOPTION AND ITS FIRST SECRET RUN ARE APPROVED AND CARRIED OUT FROM THE WALLET BY ANOTHER SIGNER.**
@@ -52,8 +53,8 @@ vi.mock('../../../../packages/web-shared/src/vault-start-round.js', async (real)
     },
   };
 });
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/seats-leaving-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/seats-leaving-here.js')>()),
   refuseARunALeaverRaisedHere: async (_records: unknown, _account: string, _keys: unknown, id: string) => {
     t.leaverAsked.push(id);
     if (t.leaver !== null) throw t.leaver;
@@ -64,9 +65,9 @@ vi.mock('./create-vault.js', async (real) => ({
   /* The vault's own start's doors, stood in: each send is a call to the page, as the real ones make it. */
   vaultDoorsFor: (ctx: StepContext) => ({
     service: {
-      startAccountCall: async () => ctx.call('POST', `/api/accounts/acc_1/vaults/${PAYROLL}/start/account`, '{}'),
-      startSecret: async () => ctx.call('POST', `/api/accounts/acc_1/vaults/${PAYROLL}/start/secret`, '{}'),
-      startCopy: async () => ctx.call('POST', `/api/accounts/acc_1/vaults/${PAYROLL}/start/copy`, '{}'),
+      startAccountCall: async () => callOf(ctx)('POST', `/api/accounts/acc_1/vaults/${PAYROLL}/start/account`, '{}'),
+      startSecret: async () => callOf(ctx)('POST', `/api/accounts/acc_1/vaults/${PAYROLL}/start/secret`, '{}'),
+      startCopy: async () => callOf(ctx)('POST', `/api/accounts/acc_1/vaults/${PAYROLL}/start/copy`, '{}'),
     },
     approvers: async () => { throw new Error('the start\'s own count of the company, without its open runs'); },
   }),
@@ -101,7 +102,7 @@ const intent = (fields: Record<string, string>): ActIntent => ({ name: 'approve-
 let company: { approvals: number; vaultThresholds: Array<{ vault: string; threshold: number }> };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
   api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({
@@ -125,14 +126,14 @@ const reachOf = () => ({
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a round of a vault\'s start is sent through its calls, never a bare relay'); },
     call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 200, body: {} }; },
     tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const reach = (over: Record<string, unknown> = {}) => ({

@@ -4,6 +4,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf } from 'midnight-identity/profile/request';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { firstReadsAnswered, NO_VIEW_OPENED, viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **CREATING A VAULT IN THE WALLET BELIEVES NOTHING THE PAGE SAYS UNTIL ITS OWN READS AGREE.** Every service answer
@@ -28,15 +29,15 @@ vi.mock('../../../../src/core/vault-keys.js', async (real) => ({
   rosterVaultKeys: (account: { signers: Array<{ id: string; vaultKeys?: { recordsKey: string } }> }) =>
     account.signers.map((x) => ({ signerId: x.id, userId: null, name: x.id, filingKey: '00', keys: x.vaultKeys === undefined ? null : { recordsKey: x.vaultKeys.recordsKey } })),
 }));
-vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>()),
-  fileTheOwedDirectoryEntry: async (_api: unknown, _id: string, owed: { read(): unknown }) => {
+vi.mock('../../../../packages/web-shared/src/directory-filed-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/directory-filed-here.js')>()),
+  fileTheOwedDirectoryEntry: async (_id: string, owed: { read(): unknown }) => {
     t.order.push(owed.read() === null ? 'filed with nothing owed' : 'filed what was kept');
     return t.filed;
   },
 }));
-vi.mock('../../../../packages/web-shared/src/roster-here.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/roster-here.js')>()),
+vi.mock('../../../../packages/web-shared/src/roster-filed-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/roster-filed-here.js')>()),
   offerVaultKeysHere: async () => { t.order.push('offered'); },
   foldOffersHere: async () => { t.order.push('folded'); return { folded: [], refused: [] }; },
 }));
@@ -59,23 +60,24 @@ const intent = (fields: Record<string, string> = {}): ActIntent =>
 const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, unknown> } = {}) => {
   const calls: string[] = [];
   let keys = { accounts: { acc_1: SEAT }, counter: 1 } as Record<string, unknown>;
-  const ctx = {
+  const call = async (method: string, path: string) => {
+    calls.push(`${method} ${path}`);
+    const a = over.answers?.[`${method} ${path}`];
+    return a === undefined ? { status: 404, body: { error: 'none' } } : { status: 200, body: a };
+  };
+  const ctx = stepOverItsCall({
     intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, wallet: { drewTheLabel: () => true, pinnedFor: () => ({ account: ACCOUNT, created: true }), pin: async () => {} } },
     at: { step: 1, steps: 3 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a vault is created through calls, never a bare relay'); },
-    call: async (method: string, path: string) => {
-      calls.push(`${method} ${path}`);
-      const a = over.answers?.[`${method} ${path}`];
-      return a === undefined ? { status: 404, body: { error: 'none' } } : { status: 200, body: a };
-    },
+    call: firstReadsAnswered(call),
     tell: () => {},
     keyring: {
       open: () => ({ read: () => structuredClone(keys), metadata: () => ({}), seal: () => { throw new Error('not here'); }, letGo: () => {} }),
       keep: async (change: (k: never) => never) => { keys = change(structuredClone(keys) as never); t.order.push('kept'); },
     },
     ...over,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, calls, keysNow: () => keys };
 };
 const chainWith = (seats: string[] | { key: string }) => ({
@@ -120,7 +122,7 @@ const believing = (held: readonly string[], keys: Readonly<Record<string, string
   another: new Set(another), holders: { seats: held }, leafOf: () => null,
 });
 const reachParts = (over: Record<string, unknown> = {}) => ({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: LEAF, companyKey: '11'.repeat(32),
+  accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: LEAF, companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
   api: async () => { throw new Error('no call expected'); }, send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: [LEAF, 'bb'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
   judges: { directoryHereFor: () => async () => believing([LEAF, BO_LEAF]), filingJudgeFor: () => async () => null },
@@ -163,9 +165,28 @@ describe('the vault\'s secret is sealed only to the seats the wallet reads on th
     expect((await doors.secretReaders.directory()).readers).toEqual(['5a'.repeat(32)]);
   });
 
+  it('says the adoption\'s send adopts that vault, and says nothing of the approval sent on the same route', async () => {
+    const V = 'ab'.repeat(32);
+    const moves: Array<{ adoption: boolean; chain: readonly string[]; vaults: readonly string[] }> = [];
+    const r = viewOverItsApi(reachParts({ api: async () => ({ txRef: 'r1' }) })) as never;
+    const { ctx } = ctxWith({
+      movesWhoHolds: (sends: readonly object[], move: (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] }) => {
+        moves.push({ adoption: sends.some((s) => (s as { start?: string }).start === V), chain: (sends as Array<{ circuit?: string; contract?: string }>).filter((s) => s.circuit !== undefined).map((s) => `${s.circuit} ${s.contract}`), vaults: move({ adoptedVaults: [] }).adoptedVaults });
+      },
+    } as never);
+    const doors = vaultDoorsFor(ctx, r, { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'x' } as never);
+    await doors.service.startAccountCall!(V as never, { tx: 'AA', step: 'adoption', call: 'approve' });
+    await doors.service.startAccountCall!(V as never, { tx: 'BB', step: 'adoption', call: 'adopt' });
+    /*
+     * RED WHEN: the adoption's send is taken for another signer's change, whether our service sends it or the wallet sends
+     * the adopt straight to the chain after the service took nothing, or the approval before it is said to move who holds the company.
+     */
+    expect(moves).toEqual([{ adoption: true, chain: [`adopt ${ACCOUNT}`], vaults: [V] }]);
+  });
+
   it('never asks the service for the readers, and builds every call on the wallet\'s own read of the account', async () => {
     const asked: string[] = [];
-    const r = reach({ api: async (path: string) => { asked.push(path); return []; } });
+    const r = viewOverItsApi(reachParts({ api: async (path: string) => { asked.push(path); return []; } })) as never;
     const { ctx } = ctxWith();
     const doors = vaultDoorsFor(ctx, r, { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'https://indexer.example' } as never);
     // RED WHEN: the readers of the vault's secret are the service's list

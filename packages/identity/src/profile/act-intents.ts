@@ -84,6 +84,10 @@ const SEGMENT = /^[A-Za-z0-9._~-]{1,128}$/u;
  * and so does a query unless the route names each of its parameters, so a call
  * can never reach a path its route list does not name.
  */
+/** Whether `shape` lists `route` itself: the same method and the same path, as written in its list. */
+export const listsRoute = (shape: IntentShape, route: Pick<CallRoute, 'method' | 'path'>): boolean =>
+  (shape.calls ?? []).some((c) => c.method === route.method && c.path === route.path);
+
 export function routeOf(shape: IntentShape, method: string, path: string): CallRoute | null {
   if (typeof path !== 'string' || path.length > 512 || !path.startsWith('/api/')) return null;
   const [bare, query, more] = path.split('?');
@@ -124,15 +128,15 @@ export function sendsIn(route: CallRoute, body: string | undefined): boolean {
 }
 
 import {
-  FINISH_COMPANY_RELAYS, FINISH_COMPANY_CALLS, COMPANY_RECORD_CALLS, UPKEEP_CALLS, CREATE_VAULT_CALLS,
+  FINISH_COMPANY_RELAYS, FINISH_COMPANY_CALLS, CREATE_VAULT_CALLS,
   PRIVATE_DEPOSIT_CALLS, ONE_OFF_PAYMENT_CALLS, INVITE_CALLS, APPROVE_PROPOSAL_CALLS, CHANGE_THRESHOLD_CALLS, RETIRE_VAULT_CALLS,
   RAISE_RUN_CALLS, PAY_RUN_CALLS, WITHDRAW_PROPOSAL_CALLS, REMOVE_SIGNER_CALLS, ROTATE_VAULT_SECRETS_CALLS, SET_POLICY_CALLS,
   ADMIT_SIGNER_CALLS, ADMIT_PERSON_CALLS, CHANGE_PERSON_CALLS, CHOOSE_COMPANY_SERVICE_CALLS, GRANT_READ_CALLS, CHANGE_ROLE_CALLS,
   READER_KEYS_CALLS, WITHDRAW_WAITING_SIGNER_CALLS, REISSUE_INVITATION_CALLS, TAKE_REISSUE_CALLS, ADD_SIGNER_BY_CODE_CALLS,
-  RAISE_WAITING_SIGNER_CALLS,
+  RAISE_WAITING_SIGNER_CALLS, RECORDS_AND_UPKEEP_CALLS, SERVICE_CHOICE_READS, FEE_SPONSORED, FEE_SPONSORED_DONE,
 } from './act-intent-calls.js';
 
-export { FINISH_COMPANY_RELAYS };
+export { FINISH_COMPANY_RELAYS, SERVICE_CHOICE_READS, FEE_SPONSORED, FEE_SPONSORED_DONE };
 
 import { RETIREMENT_OUTCOME, UPKEEP_OUTCOME, VAULTS_CHANGED_OUTCOME } from './act-outcomes.js';
 
@@ -152,7 +156,7 @@ export const ACT_INTENTS = Object.freeze({
    */
   'give-vault-keys': Object.freeze({
     fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const }),
-    calls: Object.freeze([...COMPANY_RECORD_CALLS, ...UPKEEP_CALLS]),
+    calls: RECORDS_AND_UPKEEP_CALLS,
     outcome: UPKEEP_OUTCOME,
   }),
   /**
@@ -678,7 +682,7 @@ export const ACT_INTENTS = Object.freeze({
    */
   'repair-company-key': Object.freeze({
     fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const }),
-    calls: Object.freeze([...COMPANY_RECORD_CALLS, ...UPKEEP_CALLS]),
+    calls: RECORDS_AND_UPKEEP_CALLS,
     outcome: Object.freeze({ state: 'code' as const, epoch: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
   /*
@@ -708,7 +712,7 @@ export const ACT_INTENTS = Object.freeze({
    */
   'set-recovery-window': Object.freeze({
     fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, seconds: 'amount' as const }),
-    calls: Object.freeze([...COMPANY_RECORD_CALLS, ...UPKEEP_CALLS]),
+    calls: RECORDS_AND_UPKEEP_CALLS,
     outcome: Object.freeze({ state: 'code' as const, signed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
   }),
 }) satisfies Readonly<Record<string, IntentShape>>;

@@ -1,3 +1,4 @@
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect } from 'vitest';
 import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { identityFromSecret } from 'midnight-identity';
@@ -10,10 +11,11 @@ import { leafOfTheContract } from '../testing/directory-seats.js';
 import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
-import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { companyKeyHere, rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
-import { admitSignerHere } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere } from 'vaults-web-shared/roster-filed-here.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
 import { HttpCompanyRecordStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { directoryHere, judgeIn, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
@@ -21,6 +23,7 @@ import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js
 import { oneOffHere } from 'vaults-web-shared/one-off-here.js';
 import { fileOneOffHere, type OneOffFilingDoors } from 'vaults-web-shared/one-off-raised-here.js';
 import { ACME, acmeDirectoryDeps, ORIGIN, fromAda, peopleRecords } from './a-company-of-two-seats.test-support.js';
+import { writesOver, storeReachOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, ADA, anchorDoorsOf, BO, chains, CO, committeeKeyOfLeaf, companyKeyDoorsOf, CY, deviceOf, KEY, LABEL,
   rosterDoorsOf, sendAs, store,
@@ -45,11 +48,11 @@ const companyDirectory = (asked?: RecordsAsked): Promise<DirectoryHere> => direc
 
 /** A device's doors for reading a one-off: the company's directory, the service's store as `person` reads it, and the keys it holds. */
 const readingAs = (person: string, keys: KeysHeld) => {
-  const records = new HttpCompanyRecordStore(CO, (path, init) => sendAs(person)(path, init as never), null, async (asked) => judgeIn(await companyDirectory(asked)));
+  const records = new HttpCompanyRecordStore(CO, storeReachOver((path, init) => sendAs(person)(path, init as never), CO), null, async (asked) => judgeIn(await companyDirectory(asked)));
   return { accountId: CO, directory: companyDirectory, records: { at: (k: never, id: string, v: number) => records.at(k, id, v) }, keys, registry: REGISTRY, open: openOneOff };
 };
 const filingAs = (who: typeof ADA, keys: KeysHeld): OneOffFilingDoors => {
-  const records = new HttpCompanyRecordStore(CO, (path, init) => sendAs(who.person)(path, init as never), who.signingSecret as Hex,
+  const records = new HttpCompanyRecordStore(CO, storeReachOver((path, init) => sendAs(who.person)(path, init as never), CO), who.signingSecret as Hex,
     async (asked) => judgeIn(await companyDirectory(asked)));
   return {
     accountId: CO, directory: companyDirectory, records: { at: (k, id, v) => records.at(k, id, v), put: (rec) => records.put(rec), served: async () => null },
@@ -68,11 +71,11 @@ describe('A ONE-OFF SEALED BEFORE THE COMPANY\'S KEY CHANGES OPENS FOR A SIGNER 
     /* Before the change: Ada's device files a one-off sealed at epoch 0, and it is anchored. */
     const before = newOneOffId();
     expect(await fileOneOffHere(filingAs(ADA, KEY), { id: before, given: given(41n) })).toMatchObject({ state: 'filed', version: 1 });
-    await anchorTheRecordsHere(anchorDoorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(anchorDoorsOf(ADA)));
     expect((await peopleRecords.versions(CO, ONE_OFF_KIND, before)).map((r) => r.keyEpoch)).toEqual([0]);
 
     /* Dee accepts a seat and the chain seats her leaf; Cy is removed, and Bo's device changes the key. */
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, writesOver(fromAda));
     const kept: PendingSeat[] = [];
     const keys: NewSeatKeys[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
@@ -94,7 +97,7 @@ describe('A ONE-OFF SEALED BEFORE THE COMPANY\'S KEY CHANGES OPENS FOR A SIGNER 
     /* After the change, before Dee is admitted: Ada's device files a one-off sealed at epoch 1, and it is anchored. */
     const after = newOneOffId();
     expect(await fileOneOffHere(filingAs(ADA, ada), { id: after, given: given(42n) })).toMatchObject({ state: 'filed', version: 1 });
-    await anchorTheRecordsHere(anchorDoorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(anchorDoorsOf(ADA)));
     expect((await peopleRecords.versions(CO, ONE_OFF_KIND, after)).map((r) => r.keyEpoch)).toEqual([1]);
     /* Dee is admitted, and handed the key in force. */
     await admitSignerHere({ ...rosterDoorsOf(ADA), viewingKey: ada }, { signerId: accepted.signerId!, readOut: accepted.fingerprint });

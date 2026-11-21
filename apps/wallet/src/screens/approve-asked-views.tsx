@@ -21,10 +21,11 @@ import { receivingAddressesOf } from '../accounts/derived.js';
 import { NETWORK } from 'midnight-identity/network';
 import { StatusAlert } from '../components/status.js';
 import { FINGERPRINT_TEXT } from './approve-text.js';
-import { isPayingAsk } from './approve-slot.js';
-import { alsoUsedBy } from '../accounts/slot-choice.js';
+import { isPayingAsk, paysCoins } from './approve-slot.js';
+import { alsoUsedBy, chooseSlot } from '../accounts/slot-choice.js';
 import type { Profile } from 'midnight-identity/profile/model';
 import { PaysFromAccount, PaysWhenPicked } from './approve-pays-from.js';
+import type { PickedHow } from './approve-pays-from.js';
 import type { AskedScreen } from './approve-shape.js';
 
 /** For an ask that pays: the account picked before the passkey, checked against the wallet open now. Null for any other ask. */
@@ -38,7 +39,7 @@ const sharedWith = (profile: Profile | null, account: number, request: Ask): rea
  * page that asked.
  */
 export function actView(v: AskedScreen<Extract<Ask, { kind: 'act' }>>): ReactNode {
-  const { identity, secret, now, framing, setChannelState, channel, subwallet, thisWallet, profile, request, consent, walletRecord, say, atOnce } = v;
+  const { identity, secret, now, framing, setChannelState, channel, subwallet, thisWallet, profile, opened, request, consent, walletRecord, say, atOnce } = v;
   const action = actionFor(request.intent.name);
   if (action === null) {
     return (
@@ -48,16 +49,30 @@ export function actView(v: AskedScreen<Extract<Ask, { kind: 'act' }>>): ReactNod
     );
   }
   const decline = (): void => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); };
-  const runner = (account: number, paying: boolean): ReactNode => (
-    <ActionRunner
-      request={request} action={action} channel={channel} identity={identity} secret={secret} consent={consent} framing={framing}
-      atOnce={atOnce} now={now} wallet={walletRecord} account={account}
-      {...(paying ? { payingFrom: <PaysFromAccount secret={secret} account={account} shared={sharedWith(profile, account, request)} /> } : {})}
-      onDecline={decline}
-    />
-  );
-  if (!isPayingAsk(request)) return runner(subwallet, false);
-  return <PaysWhenPicked request={request} thisWallet={thisWallet} secret={secret} onDecline={decline} render={(account) => runner(account, true)} />;
+  /* The account this wallet offers the site, as an ask that pays only a fee paid from before it was picked here. */
+  const choice = profile === null ? null : chooseSlot(profile, request.requester.origin);
+  const recordUnread = opened !== null && opened.of === 'unopenable';
+  /* Left on that account, the act waits for a press beside the account when the account is one other sites were
+   * given, or when this wallet's record could not be read to know. */
+  const offeredAsks = choice !== null && (choice.because === 'every-slot-used' || recordUnread);
+  const runner = (account: number, how: PickedHow | null): ReactNode => {
+    const pressOnceOpen = how !== null && (paysCoins(request) || (how === 'offered' && offeredAsks));
+    return (
+      <ActionRunner
+        request={request} action={action} channel={channel} identity={identity} secret={secret} consent={consent} framing={framing}
+        atOnce={atOnce} now={now} wallet={walletRecord} account={account} pressOnceOpen={pressOnceOpen}
+        {...(how === null ? {} : {
+          payingFrom: <PaysFromAccount
+            request={request} how={how} secret={secret} account={account} shared={sharedWith(profile, account, request)}
+            recordUnread={recordUnread && pressOnceOpen}
+          />,
+        })}
+        onDecline={decline}
+      />
+    );
+  };
+  if (!isPayingAsk(request)) return runner(subwallet, null);
+  return <PaysWhenPicked request={request} thisWallet={thisWallet} secret={secret} onDecline={decline} offered={choice?.account ?? null} render={runner} />;
 }
 
 export function committeeView(v: AskedScreen<Extract<Ask, { kind: 'committee' }>>): ReactNode {
@@ -162,10 +177,10 @@ export function balanceView(v: AskedScreen<Extract<Ask, { kind: 'balance' }>>): 
   const { secret, setChannelState, thisWallet, payingChannel, request } = v;
   /* A payment pays from the account picked for it, in the wallet picked, and from nothing else. */
   const decline = (): void => { payingChannel?.refuse('declined'); setChannelState({ of: 'waiting' }); };
-  return <PaysWhenPicked request={request} thisWallet={thisWallet} secret={secret} onDecline={decline} render={(account) => balanceFrom(v, account)} />;
+  return <PaysWhenPicked request={request} thisWallet={thisWallet} secret={secret} onDecline={decline} offered={null} render={(account, how) => balanceFrom(v, account, how)} />;
 }
 
-function balanceFrom(v: AskedScreen<Extract<Ask, { kind: 'balance' }>>, account: number): ReactNode {
+function balanceFrom(v: AskedScreen<Extract<Ask, { kind: 'balance' }>>, account: number, how: PickedHow): ReactNode {
   const { identity, secret, now, readLabel, setChannelState, profile, portNow, payingChannel, setWalletLocked, request, consent, atOnce, whoIsAsking } = v;
   const shared = sharedWith(profile, account, request);
   return (
@@ -176,7 +191,7 @@ function balanceFrom(v: AskedScreen<Extract<Ask, { kind: 'balance' }>>, account:
       channel={payingChannel}
       consent={consent}
       whoIsAsking={whoIsAsking}
-      whichWallet={<PaysFromAccount secret={secret} account={account} shared={shared} />}
+      whichWallet={<PaysFromAccount request={request} how={how} secret={secret} account={account} shared={shared} />}
       onDecline={(why) => { payingChannel?.refuse(why ?? 'declined'); setChannelState({ of: 'waiting' }); }}
       onStage={(shown) => recordAsk(portNow.current, 'shown', shown, now())}
       onBusy={setWalletLocked}

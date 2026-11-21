@@ -9,6 +9,10 @@ import { fromHex, signingPublicKeyOf } from '../../../../src/core/crypto.js';
 import { openNonceSecrets, recordsKeypairFrom, startNonceSecret } from '../../../../src/midnight/company-nonce-secret.js';
 import { MemorySealedPoolStore } from '../../../../src/midnight/vault-pool.js';
 import { recordsReaderOf } from '../../../../packages/web-shared/src/deposit-on-device.js';
+import { NO_VIEW_OPENED, viewsOfTheStep, stepOverItsCall, callOf } from './step-views.test-support.js';
+import type { AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
+import type { CompanyReach } from './company-reach.js';
+import { vaultsReadInTheView } from '../../../../packages/web-shared/src/vaults-read-in-the-view.js';
 
 /*
  * **A SEAT ACTION DOES WHAT THE COMPANY IS OWED OF ITS SEAT, IN ITS OWN WINDOW, AND ANCHORS WHAT IT FILED AT ITS END.**
@@ -47,7 +51,7 @@ const t = vi.hoisted(() => ({
 }));
 vi.mock('./leaving-read-in-the-wallet.js', async (real) => ({
   ...(await real<typeof import('./leaving-read-in-the-wallet.js')>()),
-  leavingForTheAnchor: (_r: unknown, _api: unknown, _key: unknown, unread?: (why: string) => void) => async () => {
+  leavingForTheAnchor: (_r: unknown, _key: unknown, unread?: (why: string) => void) => async () => {
     if (!t.leavingRead) unread?.('the seat bar of the company was not read');
     return new Map([['ee'.repeat(32), {}]]);
   },
@@ -83,11 +87,14 @@ vi.mock('../../../../packages/web-shared/src/vault-notes-here.js', async (real) 
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-notes-here.js')>()),
   vaultNotesHere: async (doors: Record<string, any>, vault: string) => { t.order.push(`refile ${vault.slice(0, 4)}`); t.rebuilt.push({ doors, vault }); return t.notes; },
 }));
+vi.mock('../../../../packages/web-shared/src/anchored-on-the-way-in.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/anchored-on-the-way-in.js')>()),
+  anchoredOnTheWayIn: async (doors: Record<string, any>) => { t.order.push('anchor'); t.anchorDoors.push(doors); return typeof t.onTheWayIn === 'function' ? (t.onTheWayIn as (d: unknown) => unknown)(doors) : t.onTheWayIn; },
+  directoryChangeFiledHere: async (_doors: unknown, _change: unknown, signedFor: number) => { t.order.push(`filed the change ${signedFor}`); return { version: signedFor, anchor: {} }; },
+}));
 vi.mock('../../../../packages/web-shared/src/records-anchored-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/records-anchored-here.js')>()),
-  anchoredOnTheWayIn: async (doors: Record<string, any>) => { t.order.push('anchor'); t.anchorDoors.push(doors); return typeof t.onTheWayIn === 'function' ? (t.onTheWayIn as (d: unknown) => unknown)(doors) : t.onTheWayIn; },
   anchorTheRecordsHere: async () => { t.order.push('anchor now'); return t.anchorNow; },
-  directoryChangeFiledHere: async (_doors: unknown, _change: unknown, signedFor: number) => { t.order.push(`filed the change ${signedFor}`); return { version: signedFor, anchor: {} }; },
 }));
 vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => {
   const doors = await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>();
@@ -112,7 +119,7 @@ vi.mock('../../../../packages/web-shared/src/vault-secret-given.js', async (real
 });
 vi.mock('../../../../packages/web-shared/src/vault-keys-given.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-keys-given.js')>()),
-  ownEntryFiled: async (_api: unknown, _id: string, owed: { read(): unknown; settle(): Promise<void> }) => {
+  ownEntryFiled: async (_id: string, owed: { read(): unknown; settle(): Promise<void> }) => {
     t.owedFiled.push(owed.read());
     await owed.settle();
     return 'filed';
@@ -125,7 +132,7 @@ vi.mock('../../../../packages/web-shared/src/vault-keys-given.js', async (real) 
 }));
 
 const { anchorDoorsIn, rebuildDoorsIn, rotationDoorsIn, upkeepSteps, UPKEEP } = await import('./upkeep.js');
-const { apiOver, sendOver } = await import('./company-reach.js');
+const { viewOfTheStep } = await import('./company-reach.js');
 const { createVaultAction } = await import('./create-vault.js');
 const { giveVaultKeysAction } = await import('./give-vault-keys.js');
 const { privateDepositAction } = await import('./private-deposit.js');
@@ -141,33 +148,56 @@ const JOINER = 'bb'.repeat(32);
 const SEAT = { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) };
 const CHAIN_STATE = { blockHash: 'b1', accountState: 'AAAA', parameters: 'BBBB' };
 
+/* What a view of the company reads before its first answer: no directory filed yet, and no record entered. */
+const viewsFirstRead = (path: string, body?: string): { status: number; body: unknown } | undefined => {
+  if (path === '/api/accounts/acc_1/directory') return { status: 200, body: { filings: [] } };
+  if (path === '/api/accounts/acc_1/manifest/newest') return { status: 200, body: { versions: (JSON.parse(body!) as { records: unknown[] }).records.map(() => 0) } };
+  return undefined;
+};
+
+/** `reach` with its step's view of the company opened over `ctx`'s calls (or `call`, standing in for them), wired as the wallet wires it. */
+const withItsView = (reach: CompanyReach, ctx: StepContext, call: AnsweredCall = callOf(ctx)): CompanyReach => {
+  const later = { judges: reach.judges, roster: reach.roster };
+  const chain = { ...reach.chain, holders: async () => reach.holders() };
+  const stepView = viewOfTheStep({ ...ctx, ...viewsOfTheStep(call) }, { ...reach, chain }, later);
+  return { ...reach, stepView, vaultsHere: vaultsReadInTheView(() => stepView.current(), reach.builder) };
+};
+
 const ctxWith = (name: 'create-vault' | 'give-vault-keys' | 'private-deposit' | 'admit-signer' | 'approve-proposal', over: Record<string, unknown> = {}) => {
   const calls: string[] = [];
   const told: Record<string, unknown> = {};
   let keys = { accounts: { acc_1: SEAT }, counter: 1, ...(over['owed'] === undefined ? {} : { directoryEntriesOwed: { acc_1: over['owed'] } }) } as Record<string, any>;
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: { name, fields: { record: 'acc_1', company: LABEL, account: ACCOUNT } } as ActIntent,
     asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret }, at: { step: 1, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('upkeep sends through its calls, never a bare relay'); },
-    call: async (method: string, path: string) => {
+    call: async (method: string, path: string, body?: string) => {
       calls.push(`${method} ${path}`);
       const answer = (over['answer'] as ((m: string, p: string) => { status: number; body: unknown } | undefined) | undefined)?.(method, path);
-      return answer ?? { status: 200, body: {} };
+      return answer ?? viewsFirstRead(path, body) ?? { status: 200, body: {} };
     },
     tell: (o: Record<string, unknown>) => { Object.assign(told, o); },
     keyring: {
       open: () => ({ read: () => structuredClone(keys) }),
       keep: async (change: (k: never) => never) => { keys = change(structuredClone(keys) as never); t.order.push('kept'); },
     },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, calls, told, keysNow: () => keys };
+};
+
+/* A view that answers only a read of records, each never filed; every other read or write through it throws. */
+const GRANTS_NEVER_FILED = {
+  current: () => new Proxy(NO_VIEW_OPENED.current(), {
+    get: (v, name) => (name === 'records' ? async (asked: readonly unknown[]) => asked.map(() => ({ versions: [] })) : Reflect.get(v, name)),
+  }),
+  again: () => NO_VIEW_OPENED.again(''),
 };
 
 const reachWith = (over: Record<string, unknown> = {}) => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: LEAF, companyKey: '11'.repeat(32),
-  /* A read kept for a later step is handed to it; this one reaches no page, so there is nothing to hand over. */
-  stepTo: () => {},
+  /* The step's view of the company: this stand-in reads only the read grants through it, and none was ever filed. */
+  stepView: GRANTS_NEVER_FILED,
   api: async () => { throw new Error('upkeep calls through its own step, never an earlier one'); },
   send: async () => { throw new Error('upkeep sends through its own step, never an earlier one'); },
   holders: async () => ({ seats: [LEAF], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: VAULTS, account: ACCOUNT, founding: LEAF }),
@@ -176,7 +206,6 @@ const reachWith = (over: Record<string, unknown> = {}) => ({
     directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null }),
     directoryWithItsRecordsFor: () => async () => ({ dir: { seats: [] } }),
     filingJudgeFor: () => async () => null,
-    anchorsOnChainFor: () => async () => ({ landed: [], isTheWallets: true }),
     vouchingFor: () => ({ runs: async () => [], identity: async () => null }),
     tagSeatsFor: () => async () => new Map(),
     leavesFor: () => async () => [],
@@ -186,8 +215,13 @@ const reachWith = (over: Record<string, unknown> = {}) => ({
   },
   sealed: { id: 'acc_1' }, served: () => '22'.repeat(32), companyKeys: { isBeforeTheChange: true },
   roster: async () => ({ id: 'acc_1', signers: [] }),
-  builder: { isTheWalletsBuilder: true, roundsOnChain: async () => [] },
+  builder: {
+    isTheWalletsBuilder: true, roundsOnChain: async () => [],
+    anchorsOnChain: async (q: { indexer: { indexerUri: string } }) => ({ landed: [], isTheWallets: q.indexer.indexerUri === 'https://indexer.wallet.example' }),
+  },
   chain: { indexer: { indexerUri: 'https://indexer.wallet.example', indexerWsUri: 'wss://indexer.wallet.example' }, callState: async () => CHAIN_STATE },
+  /* The step's vaults, read only through a view a test opens (`withItsView`): this stand-in opens none. */
+  vaultsHere: { declare: () => undefined, read: async () => { throw new Error('no view of the company was opened to read the vaults through'); } },
   ...over,
 }) as never;
 
@@ -328,9 +362,9 @@ describe('the head changes the company\'s key first, then follows the roster, al
       answer: (_m: string, p: string) => (p === '/api/accounts/acc_1/people' ? { status: 200, body: { people: [] } } : p === '/api/accounts/acc_1' ? { status: 200, body: { id: 'acc_1', pendingSigners: [{ sealed: { box: 1 } }] } } : undefined),
     });
     const seats: Array<string | undefined> = [];
-    const reach = reachWith();
+    const reach = withItsView(reachWith(), ctx);
     (reach as any).builder = { ...(reach as any).builder, roundsOnChain: async (q: { seat?: string }) => { seats.push(q.seat); return {}; } };
-    const doors = await rotationDoorsIn(reach, apiOver(ctx));
+    const doors = await rotationDoorsIn(reach);
     /* RED WHEN: the change is signed with material the page handed over rather than the seat the saved keys hold. */
     expect(doors.material).toEqual({ signingSecret: SEAT.signingSecret });
     /* RED WHEN: where a proposal stands is read without this wallet's seat, so whether its approval is already counted is never said. */
@@ -344,8 +378,12 @@ describe('the head changes the company\'s key first, then follows the roster, al
     const before = calls.filter((c) => c === 'GET /api/accounts/acc_1').length;
     await doors.admitted!();
     await doors.admitted!();
-    /* RED WHEN: who the roster admitted is read once when the doors are made rather than afresh for each change of the key. */
-    expect(calls.filter((c) => c === 'GET /api/accounts/acc_1').length - before).toBe(2);
+    /* RED WHEN: the step reads the company's account more than once through its one view. */
+    expect(calls.filter((c) => c === 'GET /api/accounts/acc_1').length - before).toBe(0);
+    reach.stepView.again('the company key was changed');
+    await doors.admitted!();
+    /* RED WHEN: who the roster admitted is read from before a change of the key rather than afresh through the step's new view. */
+    expect(calls.filter((c) => c === 'GET /api/accounts/acc_1').length - before).toBe(1);
     await doors.file({ kind: 'rotate' } as never, 4);
     expect(t.order).toContain('filed the change 4');
     /* RED WHEN: the waiting answers are read on a route the action does not list, so the page could answer anything. */
@@ -498,7 +536,7 @@ describe('the tail files each vault again with this seat, then anchors what the 
       expect(typeof doors['seatHere']).toBe('function');
       /* RED WHEN: a deposit whose records the service withheld is known only in this wallet and never named in the vault's record. */
       expect(doors['kept']).toBe(coins);
-      expect(doors['builder']).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function) });
+      expect(doors['builder']).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function), anchorsOnChain: expect.any(Function) });
     }
     expect(t.order.at(-1)).toBe('anchor');
     expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
@@ -515,14 +553,14 @@ describe('the tail files each vault again with this seat, then anchors what the 
 
   it('builds the anchor on the account state this wallet read, and sends it through a listed call', async () => {
     const { ctx } = ctxWith('private-deposit');
-    const doors = await anchorDoorsIn(reachWith(), apiOver(ctx));
+    const doors = await anchorDoorsIn(withItsView(reachWith(), ctx));
     /* RED WHEN: the anchor is proved on an account state the page or the service handed over. */
     expect(await doors.service.callState('acc_1')).toEqual({ ...CHAIN_STATE, account: ACCOUNT });
     /* RED WHEN: the anchor is made with material other than the seat the saved keys hold. */
     expect(doors.material).toEqual({ signingSecret: SEAT.signingSecret, blinding: SEAT.blinding, scope: SEAT.scope });
     /* RED WHEN: the anchors on the chain are read through anything but this wallet's own indexer. */
     expect(await doors.onChain()).toEqual({ landed: [], isTheWallets: true });
-    expect(doors.builder).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function) });
+    expect(doors.builder).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function), anchorsOnChain: expect.any(Function) });
     for (const name of ['create-vault', 'give-vault-keys', 'private-deposit']) {
       const shape = intentShapeOf(name)!;
       /* RED WHEN: the anchor is sent on a route that is not counted as sending, so a refused send is never said. */
@@ -660,7 +698,7 @@ describe('the tail files each vault again with this seat, then anchors what the 
 
   it('reads a vault\'s records again with this seat\'s own signer and the coins of this wallet', () => {
     const { ctx } = ctxWith('private-deposit');
-    const doors = rebuildDoorsIn(ctx, reachWith(), apiOver(ctx), sendOver(ctx), { coins: () => undefined });
+    const doors = rebuildDoorsIn(ctx, reachWith(), { coins: () => undefined });
     /* RED WHEN: a vault is filed again without this seat, so it files nothing. */
     expect(typeof doors.seatHere).toBe('function');
     expect('kept' in doors).toBe(false);
@@ -712,45 +750,82 @@ describe('the upkeep says what it could not do, and stops only for what the page
   });
 
   it('stops at the step when the service did not confirm sending the anchor', async () => {
-    t.onTheWayIn = async (doors: { service: { sendProven(id: string, tx: string): Promise<unknown> } }) => {
-      try { await doors.service.sendProven('acc_1', 'AAAA'); } catch { return { notAnchored: 'not sent' }; }
+    /* The anchor's send, as each attempt writes it through the step's view. */
+    t.onTheWayIn = async (doors: { view: { current(): { write(b: readonly unknown[]): Promise<unknown> } } }) => {
+      try { await doors.view.current().write([{ to: 'proven', tx: 'AAAA' }]); } catch { return { notAnchored: 'not sent' }; }
       return { anchored: 1, head: '00' };
     };
     const { ctx, calls } = ctxWith('create-vault', { answer: (m: string, p: string) => (m === 'POST' && p.endsWith('/proven') ? { status: 502, body: { error: 'down' } } : undefined) });
-    const e = await upkeepSteps(company().doors, {}).last.run(ctx).catch((x: unknown) => x);
+    const e = await upkeepSteps(company([withItsView(reachWith() as never, ctx) as never]).doors, {}).last.run(ctx).catch((x: unknown) => x);
     expect(calls).toContain('POST /api/accounts/acc_1/proven');
     /* RED WHEN: an anchor that may have been sent is swallowed by the upkeep, so the page is told the action is done with nothing unconfirmed. */
     expect(e).toBeInstanceOf(StepRefused);
     expect((e as StepRefused).words.key).toBe('act.upkeep.why.not-confirmed');
   });
 
+  it('does not say an anchor may have been sent when the check before it was refused and nothing left', async () => {
+    /* The anchor's send, as each attempt writes it through the step's view. */
+    t.onTheWayIn = async (doors: { view: { current(): { write(b: readonly unknown[]): Promise<unknown> } } }) => {
+      try { await doors.view.current().write([{ to: 'proven', tx: 'AAAA' }]); } catch { return { notAnchored: 'not sent' }; }
+      return { anchored: 1, head: '00' };
+    };
+    let newest = 0;
+    /* The view's first read of the newest versions is answered; the check before the anchor's send is refused. */
+    const { ctx, calls } = ctxWith('create-vault', { answer: (m: string, p: string) => (m === 'POST' && p.endsWith('/manifest/newest') && (newest += 1) > 1 ? { status: 503, body: { error: 'down' } } : undefined) });
+    const e = await upkeepSteps(company([withItsView(reachWith() as never, ctx) as never]).doors, {}).last.run(ctx).catch((x: unknown) => x);
+    expect(calls).not.toContain('POST /api/accounts/acc_1/proven');
+    /* RED WHEN: a send the view's check stopped before it left is told to the page as one that may have been sent. */
+    expect((e as StepRefused | undefined)?.words?.key).not.toBe('act.upkeep.why.not-confirmed');
+  });
+
+  it('counts only the write that failed: a refused write that sends nothing, before a send in its batch, is not unconfirmed', async () => {
+    t.onTheWayIn = async (doors: { view: { current(): { write(b: readonly unknown[]): Promise<unknown> } } }) => {
+      const filing = { company: 'acc_1', version: 1, change: { kind: 'claim' } };
+      try { await doors.view.current().write([{ to: 'directory', filing }, { to: 'proven', tx: 'AAAA' }]); } catch { return { notAnchored: 'not sent' }; }
+      return { anchored: 1, head: '00' };
+    };
+    const { ctx, calls } = ctxWith('create-vault', { answer: (m: string, p: string) => (m === 'PUT' && p.endsWith('/directory/1') ? { status: 500, body: { error: 'down' } } : undefined) });
+    const e = await upkeepSteps(company([withItsView(reachWith() as never, ctx) as never]).doors, {}).last.run(ctx).catch((x: unknown) => x);
+    expect(calls).toContain('PUT /api/accounts/acc_1/directory/1');
+    expect(calls).not.toContain('POST /api/accounts/acc_1/proven');
+    /* RED WHEN: a batch is counted as a send that may be out because a write in it sends, though the write that failed sent nothing. */
+    expect((e as StepRefused | undefined)?.words?.key).not.toBe('act.upkeep.why.not-confirmed');
+  });
+
   it('counts a proposal call as unconfirmed only when it carried a transaction', async () => {
     const tried = (body: string) => async (d: Record<string, any>) => {
-      try { await d['api']('/api/accounts/acc_1/proposals', { method: 'POST', body }); } catch { /* the shared step swallows it */ }
+      try { await d['view'].current().write([{ to: 'proposal-filed', body: JSON.parse(body) }]); } catch { /* the shared step swallows it */ }
       return null;
     };
     const refusing = { answer: (m: string, p: string) => (m === 'POST' && p.endsWith('/proposals') ? { status: 500, body: { error: 'down' } } : undefined) };
     t.roster = tried('{"proposal":{},"salt":"ab"}');
     const bare = ctxWith('create-vault', refusing);
     /* RED WHEN: a proposal written down with nothing for the chain, refused by the service, stops the step as something that may have been sent. */
-    await expect(upkeepSteps(company().doors, {}).first.run(bare.ctx)).resolves.toBeUndefined();
+    await expect(upkeepSteps(company([withItsView(reachWith() as never, bare.ctx) as never]).doors, {}).first.run(bare.ctx)).resolves.toBeUndefined();
     expect(bare.calls).toContain('POST /api/accounts/acc_1/proposals');
     t.roster = tried('{"proposal":{},"salt":"ab","tx":"AAAA"}');
     const sent = ctxWith('create-vault', refusing);
-    const e = await upkeepSteps(company().doors, {}).first.run(sent.ctx).catch((x: unknown) => x);
+    const e = await upkeepSteps(company([withItsView(reachWith() as never, sent.ctx) as never]).doors, {}).first.run(sent.ctx).catch((x: unknown) => x);
     /* RED WHEN: a raise that may have been sent with its transaction is swallowed by the upkeep. */
     expect((e as StepRefused).words?.key).toBe('act.upkeep.why.not-confirmed');
   });
 
   it('never swallows a stop, even where the shared step it calls catches every error', async () => {
+    /* The stop reaches only the shared step's own read, which swallows it. */
+    const stopping = { on: false };
     t.roster = async (d) => {
-      try { await d['api']('/api/accounts/acc_1'); } catch { /* the shared step swallows it */ }
+      stopping.on = true;
+      try { await d['view'].current().list('vault-key-offers'); } catch { /* the shared step swallows it */ }
       return null;
     };
     const { ctx } = ctxWith('give-vault-keys');
-    (ctx as { call: unknown }).call = async () => { throw new ActionStopped('stopped'); };
+    const answered = callOf(ctx);
+    const stoppable: AnsweredCall = async (method, path, body) => {
+      if (stopping.on) throw new ActionStopped('stopped');
+      return answered(method, path, body);
+    };
     /* RED WHEN: Stop or the deadline reaching a call inside the upkeep is swallowed, and the action runs on after it. */
-    await expect(upkeepSteps(company().doors, {}).first.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
+    await expect(upkeepSteps(company([withItsView(reachWith() as never, ctx, stoppable) as never]).doors, {}).first.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
   });
 
   it('never swallows a stop reaching a vault secret being given', async () => {
@@ -761,11 +836,14 @@ describe('the upkeep says what it could not do, and stops only for what the page
     };
     const { ctx } = ctxWith('give-vault-keys');
     const calls = { n: 0 };
-    (ctx as { call: unknown }).call = async () => { calls.n += 1; throw new ActionStopped('stopped'); };
+    /* The person pressed Stop: the step's signal is aborted, and every call from then on throws. */
+    const stop = new AbortController();
+    const stopped: AnsweredCall = async () => { calls.n += 1; stop.abort(); throw new ActionStopped('stopped'); };
+    (ctx as { signal: unknown }).signal = stop.signal;
     /* RED WHEN: Stop reaching the giving of a vault's secret is swallowed, and the action goes on to anchor. */
-    await expect(upkeepSteps(company([r]).doors, {}).last.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
+    await expect(upkeepSteps(company([withItsView(r, ctx, stopped) as never]).doors, {}).last.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
     expect(t.order).not.toContain('anchor');
-    expect(calls.n).toBe(1);
+    expect(calls.n).toBeGreaterThan(0);
   });
 
   it('never swallows a stop raised by a read outside the step\'s watched calls while a secret is given', async () => {
@@ -774,5 +852,19 @@ describe('the upkeep says what it could not do, and stops only for what the page
     /* RED WHEN: a stop from the company's own reads (the directory or a record's judge), which the watched calls never see, is taken as a give left for later and the action goes on to anchor. */
     await expect(upkeepSteps(company([givingReach()]).doors, {}).last.run(ctx)).rejects.toBeInstanceOf(ActionStopped);
     expect(t.order).not.toContain('anchor');
+  });
+});
+
+describe('THE STEP\'S VIEW KNOWS THIS SEAT\'S FILING KEY ONCE THE REACH HAS FOUND THE SEAT', () => {
+  it('hands the view the filing key the reach found, and none before it is found', () => {
+    let doors: { readonly filer?: () => string | null } | null = null;
+    const ctx = { viewFor: (_c: string, d: typeof doors) => { doors = d; return NO_VIEW_OPENED; } } as never;
+    const later: { filer?: string } = {};
+    viewOfTheStep(ctx, { accountId: 'acc_1', label: 'co' as never, account: 'ac' as never, chain: {} as never, builder: {} as never }, later);
+    /* RED WHEN: a view takes a header's carried entries as its own before it knows whose they are. */
+    expect(doors!.filer?.()).toBeNull();
+    later.filer = 'ab'.repeat(32);
+    /* RED WHEN: the view is not told this seat's filing key, so its own lost entries filed again stop its next write. */
+    expect(doors!.filer?.()).toBe('ab'.repeat(32));
   });
 });

@@ -67,14 +67,15 @@ import type { SeatOpening } from '../../src/core/seat-opening.js';
 import { directoryOf, seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
 import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifest-route.js';
 import { MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
-import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource } from '../../packages/web-shared/src/records-source.js';
 import { readTransaction } from 'vaults-web-shared/vault-builder.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
 import { MemorySealedPoolStore, SealedNotePool } from '../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpSealedPoolStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
@@ -93,7 +94,7 @@ import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import { refusalForStartAccountCall, startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { proposalRelayRoutes } from '../../src/server/proposal-relays.js';
-import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
 import { believedFilerHere } from 'vaults-web-shared/round-opened-here.js';
 import { kindAsked, listedHere } from 'vaults-web-shared/vault-page-doors.js';
 import { openRecord } from '../../src/core/sealed-records.js';
@@ -102,6 +103,8 @@ import { approverRosterFrom, EVERY_RIGHT } from '../../src/core/vault-approvers.
 import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { anAccountBornHeld } from './an-account-born-held.js';
+import { viewOver, storeReachOver } from '../../src/testing/writes-over-a-send.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -578,7 +581,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
   });
   const records = (secret = signing.secret) => (record: WireRecord) =>
-    new HttpSealedPoolStore(record, wireAs('ada'), secret, judge(), recordsEnteredFor(manifestServiceFor(apiAs()), ACCOUNT_ID, secret));
+    new HttpSealedPoolStore(record, storeReachOver(wireAs('ada'), ACCOUNT_ID), secret, judge());
   /* The founding signer's own directory entry, signed by their wallet and filed from their device once the account is the committee's. */
   const fileEntry = () => fileOwnEntry({ viewingKey, signingSecret: signing.secret,
     api: apiAs(), accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label, account: company,
@@ -600,9 +603,9 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* Where the vault's adoption and first secret run are written down, by the founding seat under its own filing key. */
     proposals: (({ callState, send, file, sealedProposals }) => ({
       accountId: ACCOUNT_ID, directory: directoryHereNow(), companyKeys: viewingKey, signingSecret: signing.secret,
-      entered: recordsEnteredFor(manifestServiceFor(apiAs()), ACCOUNT_ID, signing.secret),
+      entered: recordsEnteredFor(manifestServiceOf(serviceSource(apiAs(), ACCOUNT_ID)), ACCOUNT_ID, signing.secret),
       service: { callState, send, file: file!, sealedProposals: sealedProposals! },
-    }))(governedCallServiceFor(apiAs())),
+    }))(governedCallServiceThrough(viewOver(apiAs(), ACCOUNT_ID))),
     /* What the founding signer's wallet gave, and reads off the chain afresh for each check: who holds the account and the vault. */
     secretReaders: {
       company: label,

@@ -8,23 +8,34 @@ import { sealRecord, type Purpose } from '../../../../src/core/sealed-records.js
  * them with. What is asked here is which keys open what, what a link that is not the company's does, and what "not found" says.
  */
 const t = vi.hoisted(() => ({
-  answers: {} as Record<string, unknown>, notFound: [] as string[], proposalArgs: [] as unknown[][],
+  answers: {} as Record<string, unknown>, notFound: [] as string[], proposalArgs: [] as unknown[][], walletAsked: 0,
 }));
-vi.mock('vaults-web-shared/keyring.js', async (real) => {
-  const actual = await real<typeof import('vaults-web-shared/keyring.js')>();
-  return {
+vi.mock('vaults-web-shared/service-transport.js', async (real) => {
+  const actual = await real<typeof import('vaults-web-shared/service-transport.js')>();
+  return (await import('./service-in-memory.test-support.js')).withTheView({
     ...actual,
     api: async (path: string) => {
       if (t.notFound.includes(path)) throw new actual.NotOnTheService('not found');
       if (!(path in t.answers)) throw new Error(`no answer for ${path}`);
       return t.answers[path];
     },
-  };
+  });
 });
-vi.mock('./filing-judge.js', () => ({ readerDirectoryHereFor: () => (held: unknown) => async () => ({ held }) }));
-vi.mock('./company-records.js', async (real) => ({
-  ...(await real<typeof import('./company-records.js')>()),
-  runsPaidFromTheChain: async (_sealed: unknown, runs: unknown) => runs,
+/* Who holds the company, as the reader's own wallet reads the chain: asked once for each opening of the page. */
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
+  holdersFromTheWallet: async () => {
+    t.walletAsked += 1;
+    return { holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], vaultThresholds: [], policyBar: null }, indexer: null };
+  },
+}));
+vi.mock('./reader-judge.js', async (real) => ({
+  ...(await real<typeof import('./reader-judge.js')>()),
+  readerDirectoryIn: (_view: unknown, _link: unknown, held: unknown) => async () => ({ held }),
+}));
+vi.mock('./company-proposals.js', async (real) => ({
+  ...(await real<typeof import('./company-proposals.js')>()),
+  runsPaidFromTheChain: async (_at: unknown, _sealed: unknown, runs: unknown) => runs,
   proposalsHere: async (...args: unknown[]) => {
     t.proposalArgs.push(args);
     const standing = { status: 'open', shown: 'open', approvals: 1, needed: 2, raisedAt: '2026-09-20T10:00:00.000Z', filer: '1a'.repeat(32), raised: true, outrun: false };
@@ -66,7 +77,7 @@ const account = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  t.notFound = []; t.proposalArgs = [];
+  t.notFound = []; t.proposalArgs = []; t.walletAsked = 0;
   t.answers = { [ROUTE()]: account(), [ROUTE('/runs')]: [sealedRun('r0', '2026-09', 1), sealedRun('r1', '2026-10', 1)], [ROUTE('/proposals')]: [] };
 });
 
@@ -79,6 +90,8 @@ describe('A READER READS A COMPANY WITH ITS PURPOSE KEYS', () => {
     expect(t.proposalArgs[0]![4]).toBe(ACCOUNTANT);
     /* RED WHEN: a proposal the page cannot open is left out of the list instead of listed as unreadable. */
     expect(read.of === READER_OF.open && read.proposals.of === 'read' ? read.proposals.value.map((p) => p.id) : null).toEqual(['p1', 'p9']);
+    /* RED WHEN: one opening of the reader's page asks the reader's wallet who holds the company more than once. */
+    expect(t.walletAsked).toBe(1);
   });
 
   it('SHOWS THE RUNS THAT OPEN AND LISTS A RUN SEALED AT AN EPOCH THE GRANT NEVER WRAPPED AS ONE THAT DID NOT', async () => {

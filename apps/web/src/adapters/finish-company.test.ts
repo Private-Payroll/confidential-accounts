@@ -28,6 +28,9 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   resumeSession: async () => { kr.who = { id: 'u1' }; return kr.who; },
   canOpenCompanies: () => kr.open,
   openKeysWithWallet: async () => { kr.calls.push('open-keys'); kr.open = true; },
+}));
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   companyAwaitingItsSecondPress: () => kr.awaiting,
   finishCompanyInTheWallet: async (id: string, _origin: string, opts: { onStep?: (at: { step: number; steps: number }) => void }) => {
     kr.calls.push(`act ${id}`);

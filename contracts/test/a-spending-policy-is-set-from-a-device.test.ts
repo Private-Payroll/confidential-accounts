@@ -51,7 +51,8 @@ import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } fr
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from 'vaults-web-shared/governed-call-builder.js';
 import type { PolicyGovernanceDoors } from 'vaults-web-shared/spending-policy-here.js';
 import type { GovernedCallService } from 'vaults-web-shared/governed-call-on-device.js';
-import { approveSpendingPolicyOnDevice, setSpendingPolicyOnDevice, setPolicyBarOnDevice, spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
+import { approveSpendingPolicyOnDevice, setSpendingPolicyOnDevice, setPolicyBarOnDevice } from 'vaults-web-shared/spending-policy-here.js';
+import { spendingPolicyHere } from 'vaults-web-shared/spending-policy-read-here.js';
 import { approverRosterFrom, EVERY_RIGHT } from '../../src/core/vault-approvers.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';

@@ -6,8 +6,9 @@
  * filed with it counts the two seats that stay, and the checks a vault's creation and a secret run make pass.
  */
 import { describe, it, expect } from 'vitest';
-import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
-import { fileTheRosterFollowedHere, rosterHere } from 'vaults-web-shared/roster-here.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
+import { rosterHere } from 'vaults-web-shared/roster-here.js';
+import { fileTheRosterFollowedHere } from 'vaults-web-shared/roster-filed-here.js';
 import { directoryHere, readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { companyKeyHere, rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { rosterVaultKeys } from '../core/vault-keys.js';

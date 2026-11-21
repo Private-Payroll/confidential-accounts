@@ -30,6 +30,7 @@ import { witnesses } from '../src/witnesses.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { fromHex, toHex } from '../../src/core/crypto.js';
 import { keysOnDisk } from './keys-on-disk.js';
+import { contractSourceText, contractSources } from '../../scripts/contract-sources.mjs';
 import { callsTheProductBuilds, readFrom } from './the-calls-the-product-builds.js';
 
 const A = privateStateFor(1);
@@ -47,7 +48,8 @@ const PAYROLL = bytes(0xa1);
 const TREASURY = bytes(0xb2);
 const STRANGER = bytes(0xc3);
 
-const CONTRACT_SOURCE = join(import.meta.dirname, '..', 'src', 'ConfidentialAccount.compact');
+/* The account's main file; its text is read with every file it brings in (scripts/contract-sources.mjs). */
+const CONTRACT_SOURCE = 'contracts/src/ConfidentialAccount.compact';
 const KEYS = join(import.meta.dirname, '..', 'managed', 'keys');
 
 /** Raises and approves a run of `payments` naming `vault`, with `approvers` voting; the first raises it, which counts as its approval. */
@@ -254,7 +256,7 @@ describe('the roads a payment could be recorded on without a vault paying, each 
     /* RED WHEN a `recordPayment` circuit is added back beside the new one. */
     expect(circuits).not.toContain('recordPayment');
     expect(circuits).toContain('recordPaymentFromVault');
-    expect(readFileSync(CONTRACT_SOURCE, 'utf8')).not.toMatch(/circuit recordPayment\s*\(/);
+    expect(contractSourceText(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE)).not.toMatch(/circuit recordPayment\s*\(/);
   });
 });
 
@@ -474,7 +476,9 @@ describe('the account moves no money of its own', () => {
   const MONEY = /\b(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|sendImmediateShielded|mintShieldedToken|mergeCoin|mergeCoinImmediate|createZswapInput|createZswapOutput|kernel\.(?:mint\w*|claim\w*|inc\w*))\b/g;
 
   it('only the two vault steps touch money, and each only to receive one receipt', () => {
-    const src = readFileSync(CONTRACT_SOURCE, 'utf8');
+    const src = contractSourceText(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE);
+    /* The text read is every file of the list: one module declaration for each file past the main one. */
+    expect(src.match(/^module \w+ \{/gm)?.length ?? 0).toBe(contractSources(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE).length - 1);
     /* Every top-level block that runs: each circuit, and the constructor. */
     const starts = [...src.matchAll(/^(?:export )?(?:circuit (\w+)\s*\(|(constructor)\s*\()/gm)];
     const touched: Record<string, string[]> = {};

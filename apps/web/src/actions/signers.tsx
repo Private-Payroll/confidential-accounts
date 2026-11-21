@@ -1,3 +1,4 @@
+import type { PageView } from '../adapters/filing-judge.js';
 import { useEffect, useId, useState } from 'react';
 import { AlertDescription, Badge, Button, Field, FieldDescription, FieldLabel, Input, Section, SectionRow, Textarea, useText } from 'vaults-ui';
 import { APPROVALS, approvalsSentence, INVITE_KIND, ROLE } from '../adapters/invite.js';
@@ -8,7 +9,7 @@ import {
 } from '../adapters/signer-acts.js';
 import { rightsAreOverEveryVault, thresholdChangesWaiting, type SignerInvited } from '../adapters/signers.js';
 import { vaultSecretsOwed, type VaultSecretsOwed } from '../adapters/vault-secrets-owed.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { useListSaid } from '../records/list-said.js';
 import { WithRecords } from '../records/parts.js';
 import { ActDone, ActOutcome, ActStopped, type ActStep } from '../records/proposal-act.js';
@@ -121,8 +122,9 @@ const same = (a: Pressed, b: Pressed): boolean => a.act === b.act && a.id === b.
  * there, and then draws the invitation form itself); neither draws a copy.
  */
 export function Signers({ leadTo, onChanged }: Partial<StepProps>) {
+  const view = useCompanyView();
   const t = useText();
-  const { person, company } = useSession();
+  const { person } = useSession();
   const { reload } = useCompanyRecords();
   const [phase, setPhase] = useState<Phase>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -134,20 +136,20 @@ export function Signers({ leadTo, onChanged }: Partial<StepProps>) {
   const whySays = useWhySays();
   /* The repair of the company's key is offered only where this seat's own read says it may: the wallet checks the same again before it files anything. */
   useEffect(() => {
-    if (company === null) return undefined;
+    if (view === null) return undefined;
     let alive = true;
-    void repairIsOffered(person.id, company).then((offered) => { if (alive) setRepairOffered(offered); });
-    void vaultSecretsOwed(person.id, company).then((read) => { if (alive) setOwed(read); });
+    void repairIsOffered(person.id, view).then((offered) => { if (alive) setRepairOffered(offered); });
+    void vaultSecretsOwed(person.id, view).then((read) => { if (alive) setOwed(read); });
     return () => { alive = false; };
-  }, [person.id, company, looked]);
+  }, [person.id, view, looked]);
   /* One act asks for one read of the company's records: a step that called this component re-reads them itself when told, and on the page the component does. */
   const changed = (): void => { setLooked((n) => n + 1); if (onChanged === undefined) reload(); else onChanged(); };
 
-  const run = async (on: Pressed, name: string, act: (onStep: (step: number, steps: number) => void) => Promise<SignerActed>): Promise<void> => {
-    if (company === null || busy) return;
+  const run = async (on: Pressed, name: string, act: (open: PageView, onStep: (step: number, steps: number) => void) => Promise<SignerActed>): Promise<void> => {
+    if (view === null || busy) return;
     setResult(null);
     setPhase({ on, step: 0, steps: 0 });
-    const ended = await act((step, steps) => setPhase({ on, step, steps }));
+    const ended = await act(view, (step, steps) => setPhase({ on, step, steps }));
     setPhase(null);
     setResult({ on, act: ended, name });
     if (on.act === SIGNER_ACT.approve && ended.of === SIGNER_ACTED.done) setApprovedHere((was) => new Set(was).add(on.id));
@@ -160,22 +162,22 @@ export function Signers({ leadTo, onChanged }: Partial<StepProps>) {
         {(records) => (
           <>
             <StandingList records={records} busy={busy} result={result} phase={phase}
-              onFinish={(s) => { void run({ act: SIGNER_ACT.admit, id: s.id }, s.name, (onStep) => admitSigner(person.id, company ?? '', { id: s.id, name: s.name }, onStep)); }}
-              onWithdraw={(s) => { void run({ act: SIGNER_ACT.withdraw, id: s.id }, s.name, (onStep) => withdrawWaitingSigner(person.id, company ?? '', { id: s.id, name: s.name }, onStep)); }}
-              onReissue={(s, leaf) => { void run({ act: SIGNER_ACT.reissue, id: s.id }, s.name, (onStep) => reissueInvitation(person.id, company ?? '', { leaf, name: s.name }, onStep)); }}
-              onGiveKeys={(s) => { void run({ act: SIGNER_ACT.giveKeys, id: s.id }, s.name, (onStep) => giveYourKeys(person.id, company ?? '', onStep)); }}
+              onFinish={(s) => { void run({ act: SIGNER_ACT.admit, id: s.id }, s.name, (open, onStep) => admitSigner(person.id, open, { id: s.id, name: s.name }, onStep)); }}
+              onWithdraw={(s) => { void run({ act: SIGNER_ACT.withdraw, id: s.id }, s.name, (open, onStep) => withdrawWaitingSigner(person.id, open, { id: s.id, name: s.name }, onStep)); }}
+              onReissue={(s, leaf) => { void run({ act: SIGNER_ACT.reissue, id: s.id }, s.name, (open, onStep) => reissueInvitation(person.id, open, { leaf, name: s.name }, onStep)); }}
+              onGiveKeys={(s) => { void run({ act: SIGNER_ACT.giveKeys, id: s.id }, s.name, (open, onStep) => giveYourKeys(person.id, open, onStep)); }}
               onRemove={(s, leaf, threshold) => {
-                void run({ act: SIGNER_ACT.remove, id: s.id }, s.name, (onStep) => removeSigner(person.id, company ?? '', { leaf, ...(threshold === undefined ? {} : { threshold }) }, onStep));
+                void run({ act: SIGNER_ACT.remove, id: s.id }, s.name, (open, onStep) => removeSigner(person.id, open, { leaf, ...(threshold === undefined ? {} : { threshold }) }, onStep));
               }} />
             <VaultSecrets busy={busy} result={result} phase={phase} owed={owed} records={records}
-              onChange={() => { void run({ act: SIGNER_ACT.rotate, id: VAULTS }, '', (onStep) => changeVaultSecrets(person.id, company ?? '', onStep)); }} />
-            {repairOffered ? <RepairKey busy={busy} result={result} phase={phase} onRepair={() => { void run({ act: SIGNER_ACT.repair, id: REPAIR }, '', (onStep) => repairCompanyKey(person.id, company ?? '', onStep)); }} /> : null}
+              onChange={() => { void run({ act: SIGNER_ACT.rotate, id: VAULTS }, '', (open, onStep) => changeVaultSecrets(person.id, open, onStep)); }} />
+            {repairOffered ? <RepairKey busy={busy} result={result} phase={phase} onRepair={() => { void run({ act: SIGNER_ACT.repair, id: REPAIR }, '', (open, onStep) => repairCompanyKey(person.id, open, onStep)); }} /> : null}
             <ThresholdNow records={records} />
             <Section title={t('changeThreshold.title')} description={t('changeThreshold.description')} list={false} box={false} data-signers-change-threshold>
               <ChangeThreshold {...(onChanged === undefined ? {} : { onChanged })} />
             </Section>
             <WaitingList records={records} busy={busy} result={result} phase={phase} approvedHere={approvedHere}
-              onApprove={(i) => { void run({ act: SIGNER_ACT.approve, id: i.proposal }, i.name, (onStep) => approveSigner(person.id, company ?? '', i, onStep)); }} />
+              onApprove={(i) => { void run({ act: SIGNER_ACT.approve, id: i.proposal }, i.name, (open, onStep) => approveSigner(person.id, open, i, onStep)); }} />
           </>
         )}
       </WithRecords>
@@ -601,9 +603,10 @@ type Ran = { readonly act: SignerAct; readonly ended: SignerActed } | null;
 
 /** The form that adds a signer from their code, then proposes their seat once they read out their fingerprint. */
 function AddSignerByCode({ onAdded, whySays }: { onAdded: () => void; whySays: Record<SignerWhy, string> }) {
+  const view = useCompanyView();
   const t = useText();
   const waitingSays = useWaitingWhySays();
-  const { person, company } = useSession();
+  const { person } = useSession();
   const ids = { code: useId(), name: useId(), readOut: useId() };
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
@@ -614,11 +617,11 @@ function AddSignerByCode({ onAdded, whySays }: { onAdded: () => void; whySays: R
   const [filed, setFiled] = useState<{ readonly id: string; readonly name: string } | null>(null);
   const busy = phase !== null;
 
-  const runAct = async (act: SignerAct, press: (onStep: (step: number, steps: number) => void) => Promise<SignerActed>): Promise<void> => {
-    if (company === null || busy) return;
+  const runAct = async (act: SignerAct, press: (open: PageView, onStep: (step: number, steps: number) => void) => Promise<SignerActed>): Promise<void> => {
+    if (view === null || busy) return;
     setRan(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await press((step, steps) => setPhase({ step, steps }));
+    const ended = await press(view, (step, steps) => setPhase({ step, steps }));
     setPhase(null);
     setRan({ act, ended });
     if (ended.of === SIGNER_ACTED.done) {
@@ -646,7 +649,7 @@ function AddSignerByCode({ onAdded, whySays }: { onAdded: () => void; whySays: R
             </Field>
             <div>
               <Button size="sm" variant="outline" disabled={busy || code.trim() === '' || name.trim() === ''} data-action="add-signer-by-code"
-                onClick={() => { void runAct(SIGNER_ACT.addByCode, (onStep) => addSignerByCode(person.id, company ?? '', { code, name: name.trim() }, onStep)); }}>
+                onClick={() => { void runAct(SIGNER_ACT.addByCode, (open, onStep) => addSignerByCode(person.id, open, { code, name: name.trim() }, onStep)); }}>
                 {t('signers.code.add')}
               </Button>
             </div>
@@ -660,7 +663,7 @@ function AddSignerByCode({ onAdded, whySays }: { onAdded: () => void; whySays: R
             </Field>
             <div>
               <Button size="sm" variant="outline" disabled={busy || readOut.trim() === ''} data-action="raise-waiting-signer"
-                onClick={() => { void runAct(SIGNER_ACT.raise, (onStep) => raiseWaitingSigner(person.id, company ?? '', { ...filed, readOut }, onStep)); }}>
+                onClick={() => { void runAct(SIGNER_ACT.raise, (open, onStep) => raiseWaitingSigner(person.id, open, { ...filed, readOut }, onStep)); }}>
                 {t('signers.code.raise')}
               </Button>
             </div>

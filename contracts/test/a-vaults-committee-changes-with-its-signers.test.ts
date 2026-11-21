@@ -57,14 +57,15 @@ import type { SeatOpening } from '../../src/core/seat-opening.js';
 import { directoryOf, seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
 import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifest-route.js';
 import { MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
-import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource } from '../../packages/web-shared/src/records-source.js';
 import { readTransaction } from 'vaults-web-shared/vault-builder.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
 import { MemorySealedPoolStore } from '../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpSealedPoolStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
@@ -90,7 +91,7 @@ import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import { refusalForStartAccountCall, startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { proposalRelayRoutes } from '../../src/server/proposal-relays.js';
-import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
 import { anAccountBornHeld } from './an-account-born-held.js';
 import { buildRun } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
@@ -102,6 +103,8 @@ import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/m
 import { approverRosterFrom, EVERY_RIGHT } from '../../src/core/vault-approvers.js';
 import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
+import { viewOver, storeReachOver } from '../../src/testing/writes-over-a-send.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -584,10 +587,10 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
   const api = async (path: string, init?: RequestInit) =>
     http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
   /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
-  const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, judgeOver({ viewingKey,
+  const records = (record: WireRecord) => new HttpSealedPoolStore(record, storeReachOver(wire, ACCOUNT_ID), signing.secret, judgeOver({ viewingKey,
     api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
-  }), recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret));
+  }));
   /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
   const walletReads = walletReadsOver(() => chain.contract(company), { state: () => deployed, label: () => LABEL });
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
@@ -620,9 +623,9 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
           api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
           roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
         }),
-        entered: recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret as Hex),
+        entered: recordsEnteredFor(manifestServiceOf(serviceSource(api, ACCOUNT_ID)), ACCOUNT_ID, signing.secret as Hex),
         service: { callState, send, file: file!, sealedProposals: sealedProposals! },
-      }))(governedCallServiceFor(api)),
+      }))(governedCallServiceThrough(viewOver(api, ACCOUNT_ID))),
       secretReaders: {
         company: LABEL,
         read: async (v: Hex) => ({

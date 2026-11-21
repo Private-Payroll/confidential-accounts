@@ -32,19 +32,22 @@ describe('an entry already on file, whatever the keys on this device hold', () =
       door: { read: () => (kept.settled ? null : kept as never), settle: async () => { kept.settled = true; } },
     };
   };
-  const filingsWith = (entry: ReturnType<typeof ENTRY>) => async () => ({ filings: [{ company: 'c1', version: 1, change: { kind: 'claim', entry: { statement: entry } } }] });
+  /* The step's view of the company, holding one filing of the directory: `entry` claimed. */
+  const filingsWith = (entry: ReturnType<typeof ENTRY>) => ({ current: () => ({
+    filings: async () => [{ company: 'c1', version: 1, change: { kind: 'claim', entry: { statement: entry } } }] as never, list: async () => [], write: async () => [],
+  }) });
 
   /* RED WHEN: a signer whose entry is already in the company's directory is told it is not filed, on every press, because the keys on this device hold no opening of their seat; or an entry that is not on file is taken for one that is. */
   it('says an entry already filed is there before it asks for the seat\'s opening, and an entry not filed is not yet', async () => {
-    const { fileTheOwedDirectoryEntry } = await vi.importActual<typeof import('vaults-web-shared/vault-page-doors.js')>('vaults-web-shared/vault-page-doors.js');
+    const { fileTheOwedDirectoryEntry } = await vi.importActual<typeof import('vaults-web-shared/directory-filed-here.js')>('vaults-web-shared/directory-filed-here.js');
     const entry = ENTRY('ab'.repeat(32));
     const keys = async () => null;
     const founding = async () => null;
     const filed = owed(entry);
-    expect(await fileTheOwedDirectoryEntry(filingsWith(entry) as never, 'c1', filed.door, keys, founding)).toBe('already-there');
+    expect(await fileTheOwedDirectoryEntry('c1', filed.door, keys, founding, filingsWith(entry))).toBe('already-there');
     expect(filed.kept.settled).toBe(true);
     const other = owed(entry);
-    const answer = await fileTheOwedDirectoryEntry(filingsWith(ENTRY('cd'.repeat(32))) as never, 'c1', other.door, keys, founding);
+    const answer = await fileTheOwedDirectoryEntry('c1', other.door, keys, founding, filingsWith(ENTRY('cd'.repeat(32))));
     expect(answer).toMatchObject({ notYet: expect.stringMatching(/holds no opening of its seat/u) });
     expect(other.kept.settled).toBe(false);
   });

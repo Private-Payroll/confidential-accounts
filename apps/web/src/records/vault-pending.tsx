@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, Section, SectionRow, Tooltip, TooltipContent, TooltipTrigger, useText } from 'vaults-ui';
-import { readVaultName, VAULT, type VaultRow, type VaultStanding } from '../adapters/company-records.js';
+import { VAULT, type VaultRow, type VaultStanding } from '../adapters/company-rows.js';
+import { readVaultName } from '../adapters/company-vaults-read.js';
 import { HOME } from '../pages.js';
-import { useCompanyRecords } from './company-records.js';
+import { useCompanyRecords, useCompanyView } from './company-records.js';
 import { go } from '../router.js';
 import { startSetupAt } from '../setup/asked.js';
 import type { StepId, StepProps } from '../setup/step-ids.js';
@@ -120,14 +121,15 @@ export function PendingPill({ vault }: { vault: Pick<VaultRow, 'vault' | 'standi
 export function VaultName({ company, vault, number }: { company: string | null; vault: Pick<VaultRow, 'vault' | 'adopted'>; number: number }) {
   const t = useText();
   const { person } = useSession();
+  const view = useCompanyView();
   const [name, setName] = useState<string | null>(null);
   const adopted = vault.adopted === true;
   useEffect(() => {
     let alive = true;
     setName(null);
-    if (adopted && company !== null) void readVaultName(person.id, company, vault.vault).then((n) => { if (alive) setName(n); });
+    if (adopted && view !== null && view.company === company) void readVaultName(person.id, view, vault.vault).then((n) => { if (alive) setName(n); });
     return () => { alive = false; };
-  }, [person.id, company, vault.vault, adopted]);
+  }, [person.id, company, view, vault.vault, adopted]);
   return <>{name ?? t('vaults.tile.name', { number })}</>;
 }
 

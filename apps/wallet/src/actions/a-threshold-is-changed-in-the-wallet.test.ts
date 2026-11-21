@@ -4,6 +4,7 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **THE APPROVALS NEEDED ARE CHANGED FROM THE WALLET, ONE WINDOW EACH.** The company's threshold, or one vault's, is
@@ -22,8 +23,8 @@ const t = vi.hoisted(() => ({
   outrun: {} as Record<string, number>,
   anchored: [] as string[],
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/company-change-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/company-change-on-device.js')>()),
   changeThresholdOnDevice: async (doors: any, input: any) => { t.onDevice.push({ kind: 'threshold', input, doors }); return t.outcome!('threshold', input); },
   changeVaultThresholdOnDevice: async (doors: any, input: any) => { t.onDevice.push({ kind: 'vault-threshold', input, doors }); return t.outcome!('vault-threshold', input); },
 }));
@@ -62,9 +63,9 @@ const intent = (name: string, fields: Record<string, string>): ActIntent => ({ n
 
 /* The company as this wallet reads it: three seats on the chain, the rights its directory holds for each, and the bars. */
 let company: { approvals: number; policyBar: number | null; seatBar: number; vaultThresholds: { vault: string; threshold: number }[]; rights: (unknown | undefined)[]; proposals: unknown[] };
-const reachOf = () => ({
+const reachOf = () => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: SEATS[0], companyKey: '11'.repeat(32),
   api: async (path: string, init?: RequestInit) => {
     t.called.push(`${init?.method ?? 'GET'} ${path}`);
     return path === '/api/accounts/acc_1/proposals' ? company.proposals : [];
@@ -93,17 +94,23 @@ const reachOf = () => ({
   },
   chain: { indexer: {}, callState: async () => null },
 });
+/* What a step said its send moves: whether it names the carry of prp_1 and no other, and the holders it leaves. */
+const HELD = { seats: ['aa', 'bb', 'cc'], approvals: 1, vaultThresholds: [] as { vault: string; threshold: number }[], policyBar: 2 as number | null };
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const moves: Array<{ carry: boolean; chain: unknown[]; left: typeof HELD }> = [];
+  const ctx = stepOverItsCall({
+    movesWhoHolds: (sends: readonly object[], move: (h: typeof HELD) => typeof HELD) => {
+      moves.push({ carry: sends.some((s) => (s as { proposal?: string }).proposal === 'prp_1'), chain: sends.map((s) => (s as { circuit?: string }).circuit).filter(Boolean), left: move({ ...HELD }) });
+    },
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a threshold change is sent through its calls, never a bare relay'); },
     call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 404, body: {} }; },
     tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
-  return { ctx, told };
+  }) as unknown as StepContext;
+  return { ctx, told, moves };
 };
 const reach = () => ({
   chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0, secrets: () => ({}) as never,
@@ -170,6 +177,19 @@ describe('THE COMPANY\'S THRESHOLD IS RAISED IN THE WALLET, AND CARRIED OUT AT I
     expect(t.onDevice.map((c) => [c.input.approveOnly, c.input.stopBeforeCarry, c.input.carryOnly]))
       .toEqual([[CHAIN_ID, true, undefined], [CHAIN_ID, undefined, true]]);
     expect(second.told).toContainEqual({ state: 'carried-out', approvals: 2, needed: 2 });
+    /* RED WHEN: carrying the change out does not say it sets the account's threshold to the number asked, and only that, or says it of another send. */
+    expect([...first.moves, ...second.moves]).toEqual([{ carry: true, chain: [], left: { ...HELD, approvals: 3 } }]);
+  });
+
+  it('carrying a vault\'s threshold out says it sets that vault\'s row and raises the approvals a policy change needs to it', async () => {
+    Object.assign(company, { approvals: 2, seatBar: 2 });
+    t.chain[CHAIN_ID] = { held: 'open', approvals: 2, needed: 2, raisedAt: 1 };
+    t.opened = { chainId: CHAIN_ID, governance: { kind: 'vault-threshold', vault: PAYROLL, threshold: '3' } };
+    const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'vault-threshold', vault: PAYROLL, threshold: '3' });
+    const { ctx, moves } = ctxOf(approve);
+    await run(approveProposalAction(reach() as never), approve, ctx);
+    /* RED WHEN: a vault's threshold carried out is taken for another signer's change, its row or the policy bar it raises left as they were. */
+    expect(moves).toEqual([{ carry: true, chain: [], left: { ...HELD, vaultThresholds: [{ vault: PAYROLL.toLowerCase(), threshold: 3 }], policyBar: 3 } }]);
   });
 
   it('a proposal under the name the page gave that changes anything else is not approved', async () => {

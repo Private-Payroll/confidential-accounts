@@ -53,9 +53,10 @@ const sealed = () => ({
   version: 5,
 });
 
-const request = (): ActRequest => ({
+/* An act that gives vault keys; or one that adds a signer from their code, whose acceptance a step asks with a body of its own. */
+const request = (name: 'give-vault-keys' | 'add-signer-by-code' = 'give-vault-keys'): ActRequest => ({
   schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: REQUESTER, purpose: 'A test.', nonce: 'n1',
-  expiresAt: START + 20 * 60_000, hearsProgress: true, intent: { name: 'give-vault-keys' as never, fields: {} },
+  expiresAt: START + 20 * 60_000, hearsProgress: true, intent: { name: name as never, fields: {} },
   person: 'usr_a', keyring: sealed(),
 });
 const marks = (): KeyringMarks => {
@@ -80,8 +81,8 @@ const aPage = () => {
 const actionOf = (steps: readonly ActionStep[]): ActionDefinition => ({
   headline: 'ask.act.headline', shown: async () => [], checks: [], check: async () => null, steps: () => steps,
 });
-const run = (steps: readonly ActionStep[], page: ReturnType<typeof aPage>) => runAction({
-  definition: actionOf(steps), request: request(), channel: page.channel, held, stop: new AbortController().signal, marks: marks(),
+const run = (steps: readonly ActionStep[], page: ReturnType<typeof aPage>, name?: 'add-signer-by-code') => runAction({
+  definition: actionOf(steps), request: request(name), channel: page.channel, held, stop: new AbortController().signal, marks: marks(),
 });
 const noSecretIn = (text: string): void => {
   for (const s of [SEAT.signingSecret, SEAT.wrappingSecret, SEAT.blinding, KEY]) expect(text.toLowerCase()).not.toContain(s);
@@ -96,9 +97,9 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
       title: { key: 'x' },
       run: async (c) => {
         const seat = c.keyring!.open().read().accounts['acc_A'];
-        await c.call('PUT', '/api/accounts/acc_A/vault-keys', JSON.stringify({ ...seat }));
+        await c.invitations.acceptSigner('inv_1', { ...seat });
       },
-    }], page);
+    }], page, 'add-signer-by-code');
     /* RED WHEN: the outgoing check is taken away, or the action's channel is not the checked one. */
     expect(page.handed).toEqual([]);
     expect(end.ended).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
@@ -158,8 +159,8 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
       const page = aPage();
       const end = await run([{
         title: { key: 'x' },
-        run: async (c) => { c.keyring!.open(); await c.call('PUT', '/api/accounts/acc_A/vault-keys', JSON.stringify({ link: `https://app.example/join/x#${token.toUpperCase()}` })); },
-      }], page);
+        run: async (c) => { c.keyring!.open(); await c.invitations.acceptSigner('inv_1', { link: `https://app.example/join/x#${token.toUpperCase()}` }); },
+      }], page, 'add-signer-by-code');
       /* RED WHEN: a token that opens a seat's offer can cross to the page in a call, as a kept invitation's or a role change's. */
       expect(page.handed).toEqual([]);
       expect(end.ended).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
@@ -182,8 +183,8 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
     const page = aPage();
     const end = await run([{
       title: { key: 'x' },
-      run: async (c) => { c.keyring!.open(); await c.call('PUT', '/api/accounts/acc_A/vault-keys', JSON.stringify({ x: '9d'.repeat(32) })); },
-    }], page);
+      run: async (c) => { c.keyring!.open(); await c.invitations.acceptSigner('inv_1', { x: '9d'.repeat(32) }); },
+    }], page, 'add-signer-by-code');
     /* RED WHEN: the check refuses what it was never given to watch. */
     expect(end.ended).toMatchObject({ ended: 'done' });
     expect(page.handed).toHaveLength(1);
