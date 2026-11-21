@@ -135,8 +135,8 @@ test('a subject line reads "kind: what changed", so prose is refused', () => {
 });
 
 test('the kind is one of the kinds, in lower case', () => {
-  refused(subjectProblem('wip: put the artefact back'), 'an unknown kind');
-  refused(subjectProblem('Fix: put the artefact back'), 'a kind in the wrong case');
+  refused(subjectProblem('wip(build): put the artefact back'), 'an unknown kind');
+  refused(subjectProblem('Fix(build): put the artefact back'), 'a kind in the wrong case');
   for (const kind of SUBJECT_KINDS) {
     accepted(subjectProblem(`${kind}(build): put the artefact back`), `the kind ${kind}`);
   }
